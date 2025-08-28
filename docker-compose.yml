@@ -1,4 +1,7 @@
+version: '3.8'
+
 services:
+  # TurboMCP Server (original service preserved)
   server:
     build: .
     image: turbomcp-server:latest
@@ -6,15 +9,25 @@ services:
     environment:
       - RUST_LOG=info
       - MCP_SSE_PORT=8080
+      - DATABASE_URL=postgres://turbomcp:dev_password_123@postgres:5432/turbomcp_dev
+      - REDIS_URL=redis://redis:6379
     stdin_open: true
     tty: true
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "sh", "-c", "curl -sf http://localhost:8080/health | grep -q healthy"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - turbomcp_net
 
+  # Development container (original service preserved)
   dev:
     build:
       context: .
@@ -25,6 +38,8 @@ services:
     environment:
       - RUST_LOG=info
       - PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - DATABASE_URL=postgres://turbomcp:dev_password_123@postgres:5432/turbomcp_dev
+      - REDIS_URL=redis://redis:6379
     volumes:
       - .:/app
       - cargo-registry:/usr/local/cargo/registry
@@ -32,9 +47,119 @@ services:
       - target-cache:/app/target
     stdin_open: true
     tty: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - turbomcp_net
+
+  # PostgreSQL 16 - Primary database for production-grade testing
+  postgres:
+    image: postgres:16-alpine
+    container_name: turbomcp_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: turbomcp_dev
+      POSTGRES_USER: turbomcp
+      POSTGRES_PASSWORD: dev_password_123
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U turbomcp -d turbomcp_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    command: >
+      postgres 
+        -c log_statement=all 
+        -c log_min_duration_statement=0
+        -c max_connections=200
+        -c shared_preload_libraries=pg_stat_statements
+    networks:
+      - turbomcp_net
+
+  # Redis 7 - For caching, sessions, and DPoP nonce storage
+  redis:
+    image: redis:7-alpine
+    container_name: turbomcp_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./scripts/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - turbomcp_net
+
+  # PostgreSQL for integration tests (separate database)
+  postgres_test:
+    image: postgres:16-alpine
+    container_name: turbomcp_postgres_test
+    restart: "no"
+    environment:
+      POSTGRES_DB: turbomcp_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8"
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./scripts/test-schema.sql:/docker-entrypoint-initdb.d/01-test-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d turbomcp_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=512m
+    networks:
+      - turbomcp_net
+
+  # Jaeger for distributed tracing (development)
+  jaeger:
+    image: jaegertracing/all-in-one:1.58
+    container_name: turbomcp_jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14250:14250"  # gRPC
+      - "14268:14268"  # HTTP
+      - "6831:6831/udp"  # UDP
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:16686/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - turbomcp_net
 
 volumes:
   cargo-registry: {}
   cargo-git: {}
   target-cache: {}
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
 
+networks:
+  turbomcp_net:
+    name: turbomcp_dev
+    driver: bridge

@@ -15,7 +15,7 @@ use crate::{McpError, McpResult};
 
 /// Client transport trait for sending elicitation requests to MCP clients
 #[async_trait::async_trait]
-pub trait ClientTransport: Send + Sync {
+pub trait ClientTransport: Send + Sync + std::fmt::Debug {
     /// Send an elicitation request to the connected MCP client
     async fn send_elicitation_request(&self, request: &ElicitationRequest) -> McpResult<()>;
 }
@@ -614,6 +614,7 @@ impl ElicitationManager {
             pending_requests: self.pending_requests.clone(),
             response_sender: self.response_sender.clone(),
             response_receiver: self.response_receiver.clone(),
+            client_transport: self.client_transport.clone(),
         }
     }
 

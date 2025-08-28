@@ -13,6 +13,8 @@ use redis::{AsyncCommands, Client, RedisResult};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "redis-storage")]
 use tracing::{debug, error, trace, warn};
+#[cfg(feature = "redis-storage")]
+use async_trait::async_trait;
 
 /// Redis-based nonce storage implementation with comprehensive DPoP tracking
 #[cfg(feature = "redis-storage")]
@@ -74,7 +76,7 @@ impl RedisNonceStorage {
             
         // Test connection
         let mut conn = client
-            .get_async_connection()
+            .get_multiplexed_async_connection()
             .await
             .map_err(|e| DpopError::StorageError {
                 reason: format!("Failed to connect to Redis: {}", e)
@@ -152,6 +154,7 @@ impl RedisNonceStorage {
     }
     
     /// Generate key for rate limiting
+    #[allow(dead_code)] // Reserved for future rate limiting feature
     fn rate_limit_key(&self, client_id: &str) -> String {
         format!("{}{}", self.rate_limit_prefix, client_id)
     }
@@ -166,6 +169,7 @@ impl RedisNonceStorage {
 }
 
 #[cfg(feature = "redis-storage")]
+#[async_trait]
 impl NonceStorage for RedisNonceStorage {
     async fn store_nonce(
         &self,
@@ -205,7 +209,7 @@ impl NonceStorage for RedisNonceStorage {
             let serialized = serialized.clone();
             
             Box::pin(async move {
-                let mut conn = client.get_async_connection().await?;
+                let mut conn = client.get_multiplexed_async_connection().await?;
                 
                 // Use Redis transaction for atomic operations
                 let (nonce_exists, jti_exists): (bool, bool) = redis::pipe()
@@ -230,13 +234,12 @@ impl NonceStorage for RedisNonceStorage {
                     
                 Ok(true)
             })
-        }).await.map(|success| {
+        }).await.inspect(|&success| {
             if success {
                 trace!("Stored DPoP nonce: {} for client: {}", nonce, client_id);
             } else {
                 warn!("DPoP replay attack detected: nonce {} for client {}", nonce, client_id);
             }
-            success
         })
     }
     
@@ -249,7 +252,7 @@ impl NonceStorage for RedisNonceStorage {
             let nonce_key = nonce_key.clone();
             
             Box::pin(async move {
-                let mut conn = client.get_async_connection().await?;
+                let mut conn = client.get_multiplexed_async_connection().await?;
                 conn.exists(&nonce_key).await
             })
         }).await
@@ -273,7 +276,7 @@ impl NonceStorage for RedisNonceStorage {
             let jti_prefix = jti_prefix.clone();
             
             Box::pin(async move {
-                let mut conn = client.get_async_connection().await?;
+                let mut conn = client.get_multiplexed_async_connection().await?;
                 
                 // Count keys using SCAN to avoid blocking Redis
                 let nonce_pattern = format!("{}*", nonce_prefix);
@@ -283,12 +286,16 @@ impl NonceStorage for RedisNonceStorage {
                 let mut jti_count = 0u64;
                 
                 // Use SCAN for non-blocking key counting
-                let mut nonce_iter: redis::Iter<String> = conn.scan_match(&nonce_pattern)?;
+                let mut nonce_iter: redis::AsyncIter<'_, String> = conn.scan_match(&nonce_pattern).await?;
+                #[allow(clippy::redundant_pattern_matching)] // Preserve drop semantics
                 while let Some(_) = nonce_iter.next_item().await {
                     nonce_count += 1;
                 }
                 
-                let mut jti_iter: redis::Iter<String> = conn.scan_match(&jti_pattern)?;
+                // Create new connection for second scan to avoid borrowing conflicts
+                let mut conn2 = client.get_multiplexed_async_connection().await?;
+                let mut jti_iter: redis::AsyncIter<'_, String> = conn2.scan_match(&jti_pattern).await?;
+                #[allow(clippy::redundant_pattern_matching)] // Preserve drop semantics
                 while let Some(_) = jti_iter.next_item().await {
                     jti_count += 1;
                 }

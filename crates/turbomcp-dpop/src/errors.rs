@@ -94,6 +94,13 @@ pub enum DpopError {
         reason: String,
     },
 
+    /// Nonce storage operation failed
+    #[error("Storage error: {reason}")]
+    StorageError {
+        /// Detailed reason for the storage failure
+        reason: String,
+    },
+
     /// Configuration error
     #[error("Configuration error: {reason}")]
     ConfigurationError {
@@ -173,6 +180,7 @@ impl DpopError {
             // Low severity errors (configuration/operational issues)
             Self::ConfigurationError { .. } => ErrorSeverity::Low,
             Self::KeyStorageError { .. } => ErrorSeverity::Low,
+            Self::StorageError { .. } => ErrorSeverity::Low,
             Self::IoError { .. } => ErrorSeverity::Low,
             Self::SerializationError { .. } => ErrorSeverity::Low,
 

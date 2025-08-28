@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-dpop"
-version = "1.1.0-exp.1"
+version = "1.1.0-exp.2"
 edition = "2021"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "RFC 9449 compliant Demonstration of Proof-of-Possession (DPoP) implementation for TurboMCP"
@@ -13,8 +13,8 @@ rust-version = "1.89.0"
 
 [dependencies]
 # Core TurboMCP dependencies
-turbomcp-core = { version = "1.1.0-exp.1", path = "../turbomcp-core" }
-turbomcp-protocol = { version = "1.1.0-exp.1", path = "../turbomcp-protocol" }
+turbomcp-core = { version = "1.1.0-exp.2", path = "../turbomcp-core" }
+turbomcp-protocol = { version = "1.1.0-exp.2", path = "../turbomcp-protocol" }
 
 # Async runtime
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
@@ -49,9 +49,9 @@ zeroize = "1.7"
 tracing = { workspace = true }
 
 # Optional features
-redis = { version = "0.25", optional = true }
+redis = { version = "0.25", features = ["aio", "tokio-comp"], optional = true }
+futures = "0.3"
 aws-sdk-kms = { version = "1.0", optional = true }
-pkcs11 = { version = "0.5", optional = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
@@ -70,8 +70,8 @@ key-rotation = []
 redis-storage = ["redis"]
 memory-storage = []
 
-# Enterprise features  
-hsm-support = ["pkcs11"]
+# Enterprise features (to be implemented when there's demand and proper testing infrastructure)
+# hsm-support = [] # Removed - was incomplete implementation violating zero-tolerance policy
 aws-kms = ["aws-sdk-kms"]
 
 # Development and testing

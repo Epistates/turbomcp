@@ -64,6 +64,10 @@ pub mod stdio;
 // Tower service integration
 pub mod tower;
 
+// Server features for handler management
+#[cfg(feature = "server")]
+pub mod server;
+
 #[cfg(feature = "http")]
 pub mod axum_integration;
 
@@ -112,6 +116,14 @@ pub use tls::{
 
 // Re-export Tower integration
 pub use tower::{SessionInfo, SessionManager, TowerTransportAdapter};
+
+// Re-export server features
+#[cfg(feature = "server")]
+pub use server::{
+    AuthContext, HandlerRegistry, PromptHandler, RequestContext, ResourceHandler, 
+    ResourceInfo, ResourceMetadata, SecurityContext, SecurityLevel, ToolCapabilities,
+    ToolHandler, TraceContext, TokenInfo
+};
 
 // Re-export Axum integration
 #[cfg(feature = "http")]

@@ -372,7 +372,7 @@ impl ContextFactory {
                 handler_type = %context.handler.handler_type,
                 handler_name = %context.handler.name
             );
-            // Note: In a real implementation, we'd attach the span to the context
+            // Span is created for tracing but not attached to context
         }
 
         Ok(context)
@@ -431,11 +431,8 @@ impl ContextFactory {
         request_context: RequestContext,
         handler_metadata: HandlerMetadata,
     ) -> McpResult<Context> {
-        // Create isolated container but inherit some services from parent
+        // Create isolated container for scoped context
         let scoped_container = Container::new();
-
-        // Copy essential services from shared container to scoped container
-        self.copy_essential_services_to_scoped(&scoped_container).await?;
 
         let context = Context::with_container(request_context, handler_metadata, scoped_container);
 
@@ -541,30 +538,6 @@ impl ContextFactory {
         &self.config
     }
     
-    /// Copy essential services from shared container to scoped container
-    async fn copy_essential_services_to_scoped(&self, scoped_container: &Container) -> McpResult<()> {
-        // Copy essential services that should be available in scoped contexts
-        let shared_container = self.shared_container.read().await;
-        
-        // Copy logging service if available
-        if let Ok(logging_service) = shared_container.get::<Box<dyn std::any::Any + Send + Sync>>("logging") {
-            scoped_container.register_singleton("logging", logging_service.clone())?;
-        }
-        
-        // Copy metrics service if available  
-        if let Ok(metrics_service) = shared_container.get::<Box<dyn std::any::Any + Send + Sync>>("metrics") {
-            scoped_container.register_singleton("metrics", metrics_service.clone())?;
-        }
-        
-        // Copy configuration service if available
-        if let Ok(config_service) = shared_container.get::<Box<dyn std::any::Any + Send + Sync>>("config") {
-            scoped_container.register_singleton("config", config_service.clone())?;
-        }
-        
-        debug!("Copied essential services to scoped container");
-        Ok(())
-    }
-    
     /// Reset context for reuse with new request data
     async fn reset_context_for_reuse(
         &self,
@@ -579,14 +552,11 @@ impl ContextFactory {
         *context = Context::with_container(new_request_context.clone(), handler_metadata, container);
         
         // Clear any request-specific cached state
-        if let Some(logging_service) = context.container.get_optional::<Box<dyn std::any::Any + Send + Sync>>("logging").ok().flatten() {
-            // Reset request-specific logging context if needed
-            debug!("Reset logging context for request reuse");
-        }
+        debug!("Reset logging context for request reuse");
         
         debug!(
-            "Reset context for reuse: correlation_id={}, handler={}",
-            new_request_context.correlation_id.as_str(),
+            "Reset context for reuse: request_id={}, handler={}",
+            new_request_context.request_id,
             context.handler.name
         );
         

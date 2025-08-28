@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp"
-version = "1.1.0-exp.1"
+version = "1.1.0-exp.2"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Rust SDK for Model Context Protocol (MCP) with ergonomic macros and SIMD acceleration"
@@ -30,8 +30,8 @@ thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Database dependencies (for examples)
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid"], optional = true }
+# Database dependencies - production-grade PostgreSQL integration
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "sqlite", "chrono", "uuid", "json", "migrate"], optional = true }
 
 # Transport dependencies
 reqwest = { version = "0.12", features = ["json", "stream"] }
@@ -48,7 +48,7 @@ tower-http = { version = "0.5", features = ["cors", "compression-gzip", "set-hea
 # Authentication dependencies - using battle-tested OAuth2 library
 oauth2 = "4.4"
 # DPoP support for enhanced OAuth security (optional)
-turbomcp-dpop = { version = "1.1.0-exp.1", path = "../turbomcp-dpop", optional = true }
+turbomcp-dpop = { version = "1.1.0-exp.2", path = "../turbomcp-dpop", optional = true }
 base64 = "0.22"
 sha2 = "0.10"
 urlencoding = "2.1"
@@ -68,11 +68,11 @@ sonic-rs = { workspace = true, optional = true }
 http = "1.0"
 
 # Internal dependencies
-turbomcp-core = { version = "1.1.0-exp.1", path = "../turbomcp-core", optional = true, features = ["simd"] }
-turbomcp-protocol = { version = "1.1.0-exp.1", path = "../turbomcp-protocol", optional = true }
-turbomcp-transport = { version = "1.1.0-exp.1", path = "../turbomcp-transport", optional = true }
-turbomcp-server = { version = "1.1.0-exp.1", path = "../turbomcp-server", optional = true }
-turbomcp-macros = { version = "1.1.0-exp.1", path = "../turbomcp-macros", optional = true }
+turbomcp-core = { version = "1.1.0-exp.2", path = "../turbomcp-core", optional = true, features = ["simd"] }
+turbomcp-protocol = { version = "1.1.0-exp.2", path = "../turbomcp-protocol", optional = true }
+turbomcp-transport = { version = "1.1.0-exp.2", path = "../turbomcp-transport", optional = true }
+turbomcp-server = { version = "1.1.0-exp.2", path = "../turbomcp-server", optional = true }
+turbomcp-macros = { version = "1.1.0-exp.2", path = "../turbomcp-macros", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -83,6 +83,9 @@ tempfile = "3.0"
 rand = "0.8"
 fxhash = "0.2"
 walkdir = { workspace = true }
+# Integration testing with real services
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres"] }
 
 [features]
 default = ["full", "simd"]  # Full includes all transports for convenience

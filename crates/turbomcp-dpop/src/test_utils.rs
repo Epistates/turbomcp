@@ -15,11 +15,19 @@ use std::sync::{Arc, RwLock};
 #[cfg(feature = "test-utils")]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(feature = "test-utils")]
-use ring::{rand, signature};
+use ring::rand;
+#[cfg(feature = "test-utils")]
+use ring::rand::SecureRandom;
+#[cfg(feature = "test-utils")]
+use p256::ecdsa::{SigningKey, VerifyingKey};
+#[cfg(feature = "test-utils")]
+use p256::elliptic_curve::rand_core::OsRng;
 #[cfg(feature = "test-utils")]
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 #[cfg(feature = "test-utils")]
 use serde_json::json;
+#[cfg(feature = "test-utils")]
+use async_trait::async_trait;
 
 /// Comprehensive mock key manager for testing DPoP key operations
 #[cfg(feature = "test-utils")]
@@ -69,6 +77,7 @@ pub struct MockNonceStorage {
 /// Test nonce information
 #[cfg(feature = "test-utils")]
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Test structure fields
 struct StoredTestNonce {
     nonce: String,
     jti: String,
@@ -80,8 +89,8 @@ struct StoredTestNonce {
 
 /// Mock storage statistics  
 #[cfg(feature = "test-utils")]
-#[derive(Debug, Default)]
-struct MockStorageStats {
+#[derive(Debug, Default, Clone)]
+pub struct MockStorageStats {
     store_operations: u64,
     lookup_operations: u64,
     cleanup_operations: u64,
@@ -102,28 +111,53 @@ impl MockKeyManager {
         let start_time = SystemTime::now();
         
         match algorithm {
-            DpopAlgorithm::Es256 => {
-                // Generate ECDSA P-256 key pair using ring
-                let rng = rand::SystemRandom::new();
-                let key_pair = signature::EcdsaKeyPair::generate_pkcs8(
-                    &signature::ECDSA_P256_SHA256_ASN1_SIGNING,
-                    &rng
-                ).map_err(|e| DpopError::KeyManagementError {
-                    reason: format!("Failed to generate ECDSA P-256 key: {}", e)
-                })?;
+            DpopAlgorithm::ES256 => {
+                // Generate ECDSA P-256 key pair using p256 crate
+                let signing_key = SigningKey::random(&mut OsRng);
+                let verifying_key = VerifyingKey::from(&signing_key);
                 
-                let private_key = key_pair.as_ref().to_vec();
-                let public_key = key_pair.public_key().as_ref().to_vec();
+                let private_key = signing_key.to_bytes().to_vec();
+                let public_key_bytes = verifying_key.to_encoded_point(false).as_bytes().to_vec();
                 
                 // Generate JWK thumbprint for key identification
-                let thumbprint = self.generate_jwk_thumbprint(&public_key, &algorithm)?;
+                let thumbprint = self.generate_jwk_thumbprint(&public_key_bytes, &algorithm)?;
                 
+                // Extract P-256 coordinates from public key (simplified for testing)
+                let x_bytes = if public_key_bytes.len() >= 64 {
+                    let mut x = [0u8; 32];
+                    x.copy_from_slice(&public_key_bytes[..32]);
+                    x
+                } else {
+                    [0u8; 32] // Fallback for test
+                };
+                let y_bytes = if public_key_bytes.len() >= 64 {
+                    let mut y = [0u8; 32];
+                    y.copy_from_slice(&public_key_bytes[32..64]);
+                    y
+                } else {
+                    [1u8; 32] // Different fallback for test
+                };
+
                 let dpop_key = DpopKeyPair {
+                    id: thumbprint.clone(),
+                    private_key: crate::DpopPrivateKey::EcdsaP256 {
+                        key_bytes: if private_key.len() >= 32 {
+                            let mut bytes = [0u8; 32];
+                            bytes.copy_from_slice(&private_key[..32]);
+                            bytes
+                        } else {
+                            [0u8; 32] // Fallback for test
+                        },
+                    },
+                    public_key: crate::DpopPublicKey::EcdsaP256 {
+                        x: x_bytes,
+                        y: y_bytes,
+                    },
+                    thumbprint: thumbprint.clone(),
                     algorithm,
-                    private_key,
-                    public_key,
-                    key_id: Some(thumbprint.clone()),
                     created_at: SystemTime::now(),
+                    expires_at: None,
+                    metadata: crate::DpopKeyMetadata::default(),
                 };
                 
                 // Store key for reuse in tests
@@ -143,23 +177,31 @@ impl MockKeyManager {
                 
                 Ok(dpop_key)
             }
-            DpopAlgorithm::Rs256 => {
+            DpopAlgorithm::RS256 | DpopAlgorithm::PS256 => {
                 // For testing, generate a minimal RSA key representation
                 // Note: ring doesn't support RSA key generation, so we simulate it
                 let rng = rand::SystemRandom::new();
                 let mut key_bytes = vec![0u8; 256]; // 2048-bit key simulation
-                rand::fill(&rng, &mut key_bytes).map_err(|e| DpopError::KeyManagementError {
+                rng.fill(&mut key_bytes).map_err(|e| DpopError::KeyManagementError {
                     reason: format!("Failed to generate random bytes: {}", e)
                 })?;
                 
                 let thumbprint = format!("test_rsa_{}", hex::encode(&key_bytes[..8]));
                 
                 let dpop_key = DpopKeyPair {
+                    id: thumbprint.clone(),
+                    private_key: crate::DpopPrivateKey::Rsa { 
+                        key_der: key_bytes.clone(),
+                    },
+                    public_key: crate::DpopPublicKey::Rsa {
+                        n: key_bytes[64..192].to_vec(),
+                        e: vec![0x01, 0x00, 0x01] // Standard RSA exponent
+                    },
+                    thumbprint: thumbprint.clone(),
                     algorithm,
-                    private_key: key_bytes.clone(),
-                    public_key: key_bytes[128..].to_vec(), // Simulate public key portion
-                    key_id: Some(thumbprint.clone()),
                     created_at: SystemTime::now(),
+                    expires_at: None,
+                    metadata: crate::DpopKeyMetadata::default(),
                 };
                 
                 {
@@ -196,8 +238,9 @@ impl MockKeyManager {
         // Create test JWT header
         let header = json!({
             "alg": match key_pair.algorithm {
-                DpopAlgorithm::Es256 => "ES256",
-                DpopAlgorithm::Rs256 => "RS256",
+                DpopAlgorithm::ES256 => "ES256", 
+                DpopAlgorithm::RS256 => "RS256",
+                DpopAlgorithm::PS256 => "PS256",
             },
             "typ": "dpop+jwt",
             "jwk": self.create_test_jwk(&key_pair.public_key, &key_pair.algorithm)?
@@ -205,7 +248,7 @@ impl MockKeyManager {
         
         // Create test JWT payload
         let mut payload = json!({
-            "jti": format!("test_jti_{}", rand::rand()),
+            "jti": format!("test_jti_{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()),
             "htm": http_method,
             "htu": http_uri,
             "iat": now,
@@ -250,7 +293,7 @@ impl MockKeyManager {
     /// Get test key statistics
     pub fn get_test_stats(&self) -> TestKeyStats {
         let stats = self.stats.read().unwrap();
-        stats.clone()
+        (*stats).clone()
     }
     
     /// Generate JWK thumbprint for key identification
@@ -261,21 +304,24 @@ impl MockKeyManager {
     }
     
     /// Create test JWK representation
-    fn create_test_jwk(&self, public_key: &[u8], algorithm: &DpopAlgorithm) -> Result<serde_json::Value> {
-        match algorithm {
-            DpopAlgorithm::Es256 => Ok(json!({
+    fn create_test_jwk(&self, public_key: &crate::DpopPublicKey, algorithm: &DpopAlgorithm) -> Result<serde_json::Value> {
+        match (public_key, algorithm) {
+            (crate::DpopPublicKey::EcdsaP256 { x, y }, DpopAlgorithm::ES256) => Ok(json!({
                 "kty": "EC",
                 "crv": "P-256", 
-                "x": URL_SAFE_NO_PAD.encode(&public_key[..32.min(public_key.len())]),
-                "y": URL_SAFE_NO_PAD.encode(&public_key[32..64.min(public_key.len())]),
+                "x": URL_SAFE_NO_PAD.encode(x),
+                "y": URL_SAFE_NO_PAD.encode(y),
                 "use": "sig"
             })),
-            DpopAlgorithm::Rs256 => Ok(json!({
+            (crate::DpopPublicKey::Rsa { n, e }, DpopAlgorithm::RS256 | DpopAlgorithm::PS256) => Ok(json!({
                 "kty": "RSA",
-                "n": URL_SAFE_NO_PAD.encode(public_key),
-                "e": URL_SAFE_NO_PAD.encode(b"AQAB"), // 65537
+                "n": URL_SAFE_NO_PAD.encode(n),
+                "e": URL_SAFE_NO_PAD.encode(e),
                 "use": "sig"
-            }))
+            })),
+            _ => Err(DpopError::CryptographicError {
+                reason: "Public key type does not match algorithm".to_string()
+            })
         }
     }
 }
@@ -300,7 +346,7 @@ impl MockNonceStorage {
     /// Get current storage statistics
     pub fn get_mock_stats(&self) -> MockStorageStats {
         let stats = self.stats.read().unwrap();
-        stats.clone()
+        (*stats).clone()
     }
     
     /// Clear all test data
@@ -313,13 +359,14 @@ impl MockNonceStorage {
 }
 
 #[cfg(feature = "test-utils")]
+#[async_trait]
 impl NonceStorage for MockNonceStorage {
     async fn store_nonce(
         &self,
         nonce: &str,
         jti: &str,
-        http_method: &str,
-        http_uri: &str,
+        _http_method: &str,
+        _http_uri: &str,
         client_id: &str,
         ttl: Option<Duration>,
     ) -> Result<bool> {

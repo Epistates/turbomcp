@@ -115,8 +115,7 @@ pub mod types;
 #[cfg_attr(docsrs, doc(cfg(feature = "redis-storage")))]
 pub mod redis_storage;
 
-#[cfg(feature = "hsm-support")]
-#[cfg_attr(docsrs, doc(cfg(feature = "hsm-support")))]
+// HSM module - currently not implemented (see module documentation)
 pub mod hsm;
 
 // Utilities and testing

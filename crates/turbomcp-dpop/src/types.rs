@@ -369,6 +369,99 @@ impl DpopProof {
         format!("{}.{}.{}", encoded_header, encoded_payload, self.signature)
     }
 
+    /// Parse and cryptographically validate DPoP proof from JWT string
+    ///
+    /// This method leverages the battle-tested jsonwebtoken crate for complete JWT parsing
+    /// and cryptographic signature verification using the embedded JWK. This implementation
+    /// follows RFC 9449 security requirements and validates signatures before processing claims.
+    /// 
+    /// Requires the `jwt-validation` feature to be enabled.
+    #[cfg(feature = "jwt-validation")]
+    pub fn from_jwt_string(jwt: &str) -> crate::Result<Self> {
+        use jsonwebtoken::{decode_header, decode, Validation, Algorithm};
+        
+        // Use jsonwebtoken crate to decode header (no validation yet)
+        let jwt_header = decode_header(jwt)
+            .map_err(|e| crate::DpopError::InvalidProofStructure {
+                reason: format!("Failed to decode JWT header: {}", e),
+            })?;
+
+        // Validate this is a DPoP JWT
+        if jwt_header.typ.as_deref() != Some(crate::DPOP_JWT_TYPE) {
+            return Err(crate::DpopError::InvalidProofStructure {
+                reason: format!(
+                    "Invalid JWT type: expected '{}', got '{:?}'",
+                    crate::DPOP_JWT_TYPE,
+                    jwt_header.typ
+                ),
+            });
+        }
+
+        // Convert jsonwebtoken::Header to our DpopHeader
+        let algorithm = match jwt_header.alg {
+            Algorithm::ES256 => DpopAlgorithm::ES256,
+            Algorithm::RS256 => DpopAlgorithm::RS256,
+            Algorithm::PS256 => DpopAlgorithm::PS256,
+            other => {
+                return Err(crate::DpopError::InvalidProofStructure {
+                    reason: format!("Unsupported DPoP algorithm: {:?}", other),
+                });
+            }
+        };
+
+        // Extract JWK from header - convert from jsonwebtoken::Jwk to our DpopJwk
+        let jwk_value = jwt_header.jwk
+            .ok_or_else(|| crate::DpopError::InvalidProofStructure {
+                reason: "Missing JWK in DPoP proof header".to_string(),
+            })?;
+
+        // Convert jsonwebtoken::Jwk to serde_json::Value first, then to our DpopJwk
+        let jwk_json = serde_json::to_value(&jwk_value)
+            .map_err(|e| crate::DpopError::InvalidProofStructure {
+                reason: format!("Failed to serialize JWK: {}", e),
+            })?;
+
+        let jwk: DpopJwk = serde_json::from_value(jwk_json)
+            .map_err(|e| crate::DpopError::InvalidProofStructure {
+                reason: format!("Invalid JWK in header: {}", e),
+            })?;
+
+        let header = DpopHeader {
+            typ: crate::DPOP_JWT_TYPE.to_string(),
+            algorithm,
+            jwk,
+        };
+
+        // CRITICAL SECURITY: Create proper DecodingKey from embedded JWK for signature validation
+        let decoding_key = create_decoding_key_from_jwk(&header.jwk)
+            .map_err(|e| crate::DpopError::CryptographicError {
+                reason: format!("Failed to create decoding key from JWK: {}", e),
+            })?;
+
+        // Use proper validation with signature verification enabled (RFC 9449 requirement)
+        let validation = Validation::new(jwt_header.alg);
+        
+        // Decode and validate JWT signature using the embedded public key
+        let token_data = decode::<DpopPayload>(jwt, &decoding_key, &validation)
+            .map_err(|e| crate::DpopError::ProofValidationFailed {
+                reason: format!("JWT signature validation failed: {}", e),
+            })?;
+
+        let payload = token_data.claims;
+
+        // Extract signature from JWT (jsonwebtoken doesn't expose this directly)
+        let parts: Vec<&str> = jwt.split('.').collect();
+        if parts.len() != 3 {
+            return Err(crate::DpopError::InvalidProofStructure {
+                reason: format!("Invalid JWT format: expected 3 parts, got {}", parts.len()),
+            });
+        }
+        let signature = parts[2].to_string();
+
+        // Create proof with cached JWT string for performance
+        Ok(Self::new_with_jwt(header, payload, signature, jwt.to_string()))
+    }
+
     /// Get the JWK thumbprint from this proof
     pub fn thumbprint(&self) -> crate::Result<String> {
         compute_jwk_thumbprint(&self.header.jwk)
@@ -472,6 +565,117 @@ fn is_valid_http_method(method: &str) -> bool {
 /// Validate HTTP URI format (basic validation)
 fn is_valid_http_uri(uri: &str) -> bool {
     uri.starts_with("https://") || uri.starts_with("http://")
+}
+
+/// Create jsonwebtoken DecodingKey from DPoP JWK
+///
+/// This function converts our DpopJwk to a DecodingKey that can be used
+/// with the jsonwebtoken crate for signature verification. This is critical
+/// for proper DPoP security as per RFC 9449 requirements.
+#[cfg(feature = "jwt-validation")]
+fn create_decoding_key_from_jwk(jwk: &DpopJwk) -> Result<jsonwebtoken::DecodingKey, Box<dyn std::error::Error>> {
+    use jsonwebtoken::DecodingKey;
+
+    match jwk {
+        DpopJwk::Rsa { n, e, .. } => {
+            // Use jsonwebtoken's RSA components method (expects base64url-encoded strings)
+            DecodingKey::from_rsa_components(n, e)
+                .map_err(|e| format!("Failed to create RSA decoding key: {}", e).into())
+        }
+        DpopJwk::Ec { x, y, .. } => {
+            // Use jsonwebtoken's EC components method (expects base64url-encoded strings)
+            DecodingKey::from_ec_components(x, y)
+                .map_err(|e| format!("Failed to create EC decoding key: {}", e).into())
+        }
+    }
+}
+
+/// Statistics about nonce storage usage and performance
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageStats {
+    /// Total number of nonces stored
+    pub total_nonces: u64,
+    /// Number of active (non-expired) nonces
+    pub active_nonces: u64,
+    /// Number of expired nonces that have been cleaned up
+    pub expired_nonces: u64,
+    /// Number of cleanup operations performed
+    pub cleanup_runs: u64,
+    /// Average age of stored nonces
+    pub average_nonce_age: Duration,
+    /// Estimated storage size in bytes
+    pub storage_size_bytes: u64,
+    /// Additional backend-specific metrics
+    pub additional_metrics: Vec<(String, String)>,
+}
+
+impl Default for StorageStats {
+    fn default() -> Self {
+        Self {
+            total_nonces: 0,
+            active_nonces: 0,
+            expired_nonces: 0,
+            cleanup_runs: 0,
+            average_nonce_age: Duration::ZERO,
+            storage_size_bytes: 0,
+            additional_metrics: Vec::new(),
+        }
+    }
+}
+
+/// Trait for DPoP nonce storage backends
+/// 
+/// This trait defines the interface for storing and managing DPoP nonces to prevent replay attacks.
+/// Implementations should ensure thread-safety and efficient concurrent access.
+#[async_trait::async_trait]
+pub trait NonceStorage: Send + Sync + std::fmt::Debug {
+    /// Store a nonce with associated metadata
+    ///
+    /// # Arguments
+    /// * `nonce` - The unique nonce value from the DPoP proof
+    /// * `jti` - The JWT ID (jti) claim from the DPoP proof
+    /// * `http_method` - The HTTP method for which this nonce is valid
+    /// * `http_uri` - The HTTP URI for which this nonce is valid
+    /// * `client_id` - The client identifier
+    /// * `ttl` - Time-to-live for the nonce (None uses default)
+    ///
+    /// # Returns
+    /// * `Ok(true)` - Nonce was successfully stored (first use)
+    /// * `Ok(false)` - Nonce already exists (replay attack detected)
+    /// * `Err(_)` - Storage operation failed
+    async fn store_nonce(
+        &self,
+        nonce: &str,
+        jti: &str,
+        http_method: &str,
+        http_uri: &str,
+        client_id: &str,
+        ttl: Option<Duration>,
+    ) -> crate::Result<bool>;
+
+    /// Check if a nonce has been used before
+    ///
+    /// # Arguments
+    /// * `nonce` - The nonce to check
+    /// * `client_id` - The client identifier
+    ///
+    /// # Returns
+    /// * `Ok(true)` - Nonce has been used before
+    /// * `Ok(false)` - Nonce is new
+    /// * `Err(_)` - Storage operation failed
+    async fn is_nonce_used(&self, nonce: &str, client_id: &str) -> crate::Result<bool>;
+
+    /// Clean up expired nonces
+    ///
+    /// # Returns
+    /// Number of expired nonces cleaned up
+    async fn cleanup_expired(&self) -> crate::Result<u64>;
+
+    /// Get storage usage statistics
+    ///
+    /// # Returns
+    /// Statistics about nonce storage usage and performance
+    async fn get_usage_stats(&self) -> crate::Result<StorageStats>;
 }
 
 #[cfg(test)]

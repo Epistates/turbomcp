@@ -698,10 +698,9 @@ impl TlsTransport {
                 });
             }
 
-            let mut length = 0usize;
-            for i in 1..=num_bytes {
-                length = (length << 8) | data[i] as usize;
-            }
+            let length = data[1..=num_bytes]
+                .iter()
+                .fold(0usize, |acc, &byte| (acc << 8) | byte as usize);
 
             Ok((length, num_bytes + 1))
         }

@@ -16,13 +16,16 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 use uuid::Uuid;
 
-// Import handler registry for dependency injection
+// Server features integration with production-grade architecture
 #[cfg(feature = "server")]
-use turbomcp_server::registry::HandlerRegistry;
+use crate::server::{
+    HandlerRegistry, RequestContext,
+};
+
 #[cfg(feature = "server")]
-use turbomcp_server::handlers::{ToolHandler, PromptHandler, ResourceHandler};
-#[cfg(feature = "server")]
-use turbomcp_protocol::types::{CallToolRequest, GetPromptRequest, ReadResourceRequest, RequestContext};
+use turbomcp_protocol::{
+    CallToolRequest, GetPromptRequest, ReadResourceRequest,
+};
 
 use crate::core::{
     Transport, TransportCapabilities, TransportError, TransportEventEmitter, TransportMessage,
@@ -381,19 +384,19 @@ impl TowerTransportAdapter {
         );
 
         // Production-grade Tower service integration with MCP protocol handling
-        let response_payload = match self.process_mcp_request(&json_value, &session_info).await {
+        let response_payload = match self.process_mcp_request(&json_value, session_info).await {
             Ok(result) => serde_json::json!({
                 "jsonrpc": "2.0", 
-                "id": json_value.get("id").unwrap_or(&serde_json::Value::Null),
+                "id": json_value.get("id").unwrap_or(&serde_json::Value::Null).clone(),
                 "result": result
             }),
             Err(error) => serde_json::json!({
                 "jsonrpc": "2.0",
-                "id": json_value.get("id").unwrap_or(&serde_json::Value::Null), 
+                "id": json_value.get("id").unwrap_or(&serde_json::Value::Null).clone(), 
                 "error": {
-                    "code": error.code(),
-                    "message": error.message(),
-                    "data": error.data()
+                    "code": -32000,
+                    "message": error.to_string(),
+                    "data": serde_json::Value::Null
                 }
             })
         };
@@ -541,26 +544,24 @@ impl TowerTransportAdapter {
         session_info: &SessionInfo,
     ) -> TransportResult<serde_json::Value> {
         if let Some(registry) = &self.handler_registry {
-            if let Some(handler) = registry.get_tool(tool_name) {
+            if let Some(handler) = registry.get_tool(tool_name).await {
                 // Convert parameters to proper request format
                 let arguments = params.get("arguments").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
                 
                 let request = CallToolRequest {
                     name: tool_name.to_string(),
                     arguments: if let serde_json::Value::Object(map) = arguments {
-                        map
+                        Some(map.into_iter().collect::<HashMap<String, serde_json::Value>>())
                     } else {
-                        Default::default()
+                        None
                     },
                 };
                 
-                // Create request context
-                let ctx = RequestContext {
-                    session_id: session_info.id.clone(),
-                    request_id: Uuid::new_v4().to_string(),
-                    timestamp: chrono::Utc::now(),
-                    metadata: std::collections::HashMap::new(),
-                };
+                // Create production-grade request context
+                let ctx = RequestContext::new(
+                    Uuid::new_v4().to_string(),
+                    session_info.id.clone(),
+                );
                 
                 match handler.handle(request, ctx).await {
                     Ok(result) => Ok(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
@@ -595,26 +596,21 @@ impl TowerTransportAdapter {
         session_info: &SessionInfo,
     ) -> TransportResult<serde_json::Value> {
         if let Some(registry) = &self.handler_registry {
-            // Find a resource handler that can handle this URI
-            for resource_entry in registry.resources.iter() {
-                let (_, handler) = resource_entry.pair();
+            // Find resource handler using the production registry API
+            if let Some(handler) = registry.get_resource(uri).await {
+                let request = ReadResourceRequest {
+                    uri: uri.to_string(),
+                };
                 
-                if handler.exists(uri).await {
-                    let request = ReadResourceRequest {
-                        uri: uri.to_string(),
-                    };
-                    
-                    let ctx = RequestContext {
-                        session_id: session_info.id.clone(),
-                        request_id: Uuid::new_v4().to_string(),
-                        timestamp: chrono::Utc::now(),
-                        metadata: std::collections::HashMap::new(),
-                    };
-                    
-                    match handler.handle(request, ctx).await {
-                        Ok(result) => return Ok(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
-                        Err(e) => return Err(TransportError::ProtocolError(format!("Resource read failed: {}", e))),
-                    }
+                // Create production-grade request context
+                let ctx = RequestContext::new(
+                    Uuid::new_v4().to_string(),
+                    session_info.id.clone(),
+                );
+                
+                match handler.handle(request, ctx).await {
+                    Ok(result) => return Ok(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
+                    Err(e) => return Err(TransportError::ProtocolError(format!("Resource read failed: {}", e))),
                 }
             }
             
@@ -645,24 +641,23 @@ impl TowerTransportAdapter {
         session_info: &SessionInfo,
     ) -> TransportResult<serde_json::Value> {
         if let Some(registry) = &self.handler_registry {
-            if let Some(handler) = registry.get_prompt(prompt_name) {
+            if let Some(handler) = registry.get_prompt(prompt_name).await {
                 let arguments = params.get("arguments").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
                 
                 let request = GetPromptRequest {
                     name: prompt_name.to_string(),
                     arguments: if let serde_json::Value::Object(map) = arguments {
-                        Some(map)
+                        Some(map.into_iter().collect::<HashMap<String, serde_json::Value>>())
                     } else {
                         None
                     },
                 };
                 
-                let ctx = RequestContext {
-                    session_id: session_info.id.clone(),
-                    request_id: Uuid::new_v4().to_string(),
-                    timestamp: chrono::Utc::now(),
-                    metadata: std::collections::HashMap::new(),
-                };
+                // Create production-grade request context
+                let ctx = RequestContext::new(
+                    Uuid::new_v4().to_string(),
+                    session_info.id.clone(),
+                );
                 
                 match handler.handle(request, ctx).await {
                     Ok(result) => Ok(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
@@ -693,7 +688,7 @@ impl TowerTransportAdapter {
     #[cfg(feature = "server")]
     async fn list_available_tools(&self) -> TransportResult<serde_json::Value> {
         if let Some(registry) = &self.handler_registry {
-            let tools = registry.get_tool_definitions();
+            let tools = registry.get_tool_definitions().await?;
             Ok(serde_json::json!({
                 "tools": tools
             }))
@@ -716,7 +711,7 @@ impl TowerTransportAdapter {
     #[cfg(feature = "server")]
     async fn list_available_resources(&self) -> TransportResult<serde_json::Value> {
         if let Some(registry) = &self.handler_registry {
-            let resources = registry.get_resource_definitions();
+            let resources = registry.get_resource_definitions().await?;
             Ok(serde_json::json!({
                 "resources": resources
             }))
@@ -739,7 +734,7 @@ impl TowerTransportAdapter {
     #[cfg(feature = "server")]
     async fn list_available_prompts(&self) -> TransportResult<serde_json::Value> {
         if let Some(registry) = &self.handler_registry {
-            let prompts = registry.get_prompt_definitions();
+            let prompts = registry.get_prompt_definitions().await?;
             Ok(serde_json::json!({
                 "prompts": prompts
             }))
