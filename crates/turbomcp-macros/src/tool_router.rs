@@ -64,11 +64,23 @@ pub fn generate_tool_router_impl(args: TokenStream, input: TokenStream) -> Token
                         std::sync::Arc::new(turbomcp::router::ToolHandlerWrapper::new(
                             |args| {
                                 Box::pin(async move {
-                                    // This would need more sophisticated argument handling in production
-                                    Ok(turbomcp::CallToolResult {
-                                        content: vec![turbomcp::mcp_text!("Tool executed")],
-                                        is_error: None,
-                                    })
+                                    // Production-grade argument parsing and validation
+                                    let parsed_args = turbomcp::router::parse_and_validate_tool_arguments(
+                                        &args,
+                                        &tool_metadata.input_schema
+                                    )?;
+                                    
+                                    // Execute tool with validated arguments and proper error handling
+                                    match self.#method_name(parsed_args).await {
+                                        Ok(result) => Ok(turbomcp::CallToolResult {
+                                            content: vec![turbomcp::mcp_text!(format!("{:?}", result))],
+                                            is_error: Some(false),
+                                        }),
+                                        Err(e) => Ok(turbomcp::CallToolResult {
+                                            content: vec![turbomcp::mcp_text!(format!("Tool execution failed: {}", e))],
+                                            is_error: Some(true),
+                                        })
+                                    }
                                 })
                             },
                             turbomcp::router::ToolMetadata {

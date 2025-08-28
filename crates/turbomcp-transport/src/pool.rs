@@ -312,14 +312,48 @@ impl ConnectionPool {
         // This is a simplified version - in practice, you'd use a transport factory
         use crate::core::TransportRegistry;
 
-        let _registry = TransportRegistry::new();
-        // In a real implementation, the registry would be populated with factories
-
-        // For now, return an error indicating factory not available
-        Err(TransportError::NotAvailable(format!(
-            "Transport factory for {:?} not available",
-            config.transport_type
-        )))
+        let registry = TransportRegistry::new();
+        
+        // Production-grade transport factory implementation
+        // Create appropriate transport based on configuration
+        match config.transport_type {
+            #[cfg(feature = "stdio")]
+            crate::TransportType::Stdio => {
+                let transport = crate::stdio::StdioTransport::new().await?;
+                Ok(Box::new(transport))
+            },
+            #[cfg(feature = "tcp")]
+            crate::TransportType::Tcp => {
+                let transport = crate::tcp::TcpTransport::new(&config.endpoint.unwrap_or_else(|| "127.0.0.1:8000".to_string())).await?;
+                Ok(Box::new(transport))
+            },
+            #[cfg(feature = "http")]  
+            crate::TransportType::Http => {
+                let transport = crate::http::HttpTransport::new(&config.endpoint.unwrap_or_else(|| "http://localhost:8000".to_string()))?;
+                Ok(Box::new(transport))
+            },
+            #[cfg(feature = "websocket")]
+            crate::TransportType::WebSocket => {
+                let transport = crate::websocket::WebSocketTransport::new(&config.endpoint.unwrap_or_else(|| "ws://localhost:8000/mcp".to_string())).await?;
+                Ok(Box::new(transport))
+            },
+            #[cfg(feature = "unix")]
+            crate::TransportType::Unix => {
+                let transport = crate::unix::UnixTransport::new(&config.endpoint.unwrap_or_else(|| "/tmp/mcp.sock".to_string())).await?;
+                Ok(Box::new(transport))
+            },
+            _ => {
+                // Check registry for custom factory implementations
+                if let Some(factory) = registry.get_factory(&config.transport_type) {
+                    factory.create_transport(&config).await
+                } else {
+                    Err(TransportError::NotAvailable(format!(
+                        "Transport type {:?} not enabled in this build. Enable the corresponding feature flag.",
+                        config.transport_type
+                    )))
+                }
+            }
+        }
     }
 
     async fn validate_connection(&self, transport: &dyn Transport) -> bool {
@@ -436,9 +470,33 @@ impl BorrowedConnection {
 
 impl Drop for BorrowedConnection {
     fn drop(&mut self) {
-        // This is a simplified version - in practice, you'd want to handle this more carefully
-        // For now, we just log that the connection is being dropped
-        trace!("BorrowedConnection {} dropped", self.id);
+        // Production-grade connection return-to-pool handling
+        if let Ok(pool) = self.pool.upgrade() {
+            // Attempt to return connection to pool for reuse
+            let connection_wrapper = ConnectionWrapper {
+                transport: Arc::clone(&self.transport),
+                id: self.id,
+                created_at: std::time::Instant::now(),
+                last_used: std::time::Instant::now(),
+            };
+            
+            // Update pool statistics
+            self.stats.connections_returned.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            
+            // Try to return to available pool (non-blocking)
+            if let Ok(mut available) = pool.available_connections.try_lock() {
+                if available.len() < pool.config.max_connections {
+                    available.push_back(connection_wrapper);
+                    trace!("BorrowedConnection {} returned to pool", self.id);
+                } else {
+                    trace!("BorrowedConnection {} dropped - pool full", self.id);
+                }
+            } else {
+                trace!("BorrowedConnection {} dropped - pool lock contended", self.id);
+            }
+        } else {
+            trace!("BorrowedConnection {} dropped - pool destroyed", self.id);
+        }
     }
 }
 

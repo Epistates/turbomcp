@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/turbomcp-cli.svg)](https://crates.io/crates/turbomcp-cli)
 [![Documentation](https://docs.rs/turbomcp-cli/badge.svg)](https://docs.rs/turbomcp-cli)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../LICENSE)
 
 **Command-line interface for interacting with MCP servers - list tools, call tools, and export schemas.**
 

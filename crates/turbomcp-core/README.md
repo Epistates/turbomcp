@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/turbomcp-core.svg)](https://crates.io/crates/turbomcp-core)
 [![Documentation](https://docs.rs/turbomcp-core/badge.svg)](https://docs.rs/turbomcp-core)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../LICENSE)
 
 **High-performance core abstractions and SIMD-accelerated message processing for the TurboMCP SDK.**
 

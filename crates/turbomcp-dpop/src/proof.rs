@@ -203,13 +203,61 @@ impl DpopProofGenerator {
         })
     }
 
-    /// Get or generate a default key pair
+    /// Get or generate a default key pair with rotation management
     async fn get_or_generate_default_key(&self) -> Result<DpopKeyPair> {
-        // For now, always generate a new key
-        // In production, this would maintain a default key with rotation
-        self.key_manager
-            .generate_key_pair(DpopAlgorithm::ES256)
-            .await
+        // Production-grade key management with automatic rotation
+        match self.key_manager.get_default_key().await {
+            Ok(key) => {
+                // Check if key needs rotation based on age and usage
+                if self.should_rotate_key(&key).await? {
+                    debug!("Rotating default DPoP key due to age or usage threshold");
+                    let new_key = self.key_manager
+                        .generate_key_pair(DpopAlgorithm::ES256)
+                        .await?;
+                    self.key_manager.set_default_key(&new_key).await?;
+                    Ok(new_key)
+                } else {
+                    Ok(key)
+                }
+            }
+            Err(_) => {
+                // No default key exists, generate one
+                debug!("Generating initial default DPoP key");
+                let new_key = self.key_manager
+                    .generate_key_pair(DpopAlgorithm::ES256)
+                    .await?;
+                self.key_manager.set_default_key(&new_key).await?;
+                Ok(new_key)
+            }
+        }
+    }
+    
+    /// Determine if a key should be rotated based on enterprise security policies
+    async fn should_rotate_key(&self, key: &DpopKeyPair) -> Result<bool> {
+        let now = SystemTime::now();
+        
+        // Check key age (rotate after 30 days)
+        if let Ok(age) = now.duration_since(key.created_at) {
+            if age > Duration::from_secs(30 * 24 * 3600) {
+                return Ok(true);
+            }
+        }
+        
+        // Check usage count (rotate after 10,000 signatures)
+        if let Ok(usage_count) = self.key_manager.get_key_usage_count(&key.key_id.as_deref().unwrap_or_default()).await {
+            if usage_count > 10_000 {
+                return Ok(true);
+            }
+        }
+        
+        // Check for security incidents or forced rotation flags
+        if let Ok(force_rotation) = self.key_manager.should_force_rotation(&key.key_id.as_deref().unwrap_or_default()).await {
+            if force_rotation {
+                return Ok(true);
+            }
+        }
+        
+        Ok(false)
     }
 
     /// Validate input parameters

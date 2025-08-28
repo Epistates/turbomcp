@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/turbomcp-macros.svg)](https://crates.io/crates/turbomcp-macros)
 [![Documentation](https://docs.rs/turbomcp-macros/badge.svg)](https://docs.rs/turbomcp-macros)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../LICENSE)
 
 **Zero-boilerplate procedural macros for ergonomic MCP server development with automatic schema generation and compile-time validation.**
 

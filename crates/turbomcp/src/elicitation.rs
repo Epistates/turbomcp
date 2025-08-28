@@ -13,6 +13,13 @@ use uuid::Uuid;
 
 use crate::{McpError, McpResult};
 
+/// Client transport trait for sending elicitation requests to MCP clients
+#[async_trait::async_trait]
+pub trait ClientTransport: Send + Sync {
+    /// Send an elicitation request to the connected MCP client
+    async fn send_elicitation_request(&self, request: &ElicitationRequest) -> McpResult<()>;
+}
+
 /// Elicitation request ID for tracking user input requests
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct ElicitationId(pub String);
@@ -421,6 +428,8 @@ pub struct ElicitationManager {
     /// Response receiver
     response_receiver:
         std::sync::Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<ElicitationResponse>>>,
+    /// Client transport for sending elicitation requests (production MCP client integration)
+    client_transport: Option<std::sync::Arc<dyn ClientTransport>>,
 }
 
 /// Internal structure for tracking pending requests
@@ -442,7 +451,14 @@ impl ElicitationManager {
             pending_requests: std::sync::Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             response_sender,
             response_receiver: std::sync::Arc::new(tokio::sync::Mutex::new(response_receiver)),
+            client_transport: None,
         }
+    }
+    
+    /// Set the client transport for production MCP client integration
+    pub fn with_client_transport(mut self, transport: std::sync::Arc<dyn ClientTransport>) -> Self {
+        self.client_transport = Some(transport);
+        self
     }
 
     /// Request user input
@@ -475,8 +491,11 @@ impl ElicitationManager {
             request.prompt
         );
 
-        // In production, client interaction would be handled by the MCP client
-        // For development/testing, you can use simulate_user_input method
+        // Production: Client interaction handled by registered MCP client transport
+        // Emit elicitation request event for MCP client to handle
+        if let Some(transport) = &self.client_transport {
+            transport.send_elicitation_request(&request).await?;
+        }
 
         // Wait for response with timeout
         match tokio::time::timeout(timeout, response_receiver).await {

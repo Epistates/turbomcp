@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/turbomcp-transport.svg)](https://crates.io/crates/turbomcp-transport)
 [![Documentation](https://docs.rs/turbomcp-transport/badge.svg)](https://docs.rs/turbomcp-transport)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../LICENSE)
 
 **Production-ready multi-protocol transport layer with enterprise security, circuit breakers, and comprehensive fault tolerance for MCP communications.**
 

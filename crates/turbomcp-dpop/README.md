@@ -2,7 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/turbomcp-dpop.svg)](https://crates.io/crates/turbomcp-dpop)
 [![Documentation](https://docs.rs/turbomcp-dpop/badge.svg)](https://docs.rs/turbomcp-dpop)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../LICENSE)
 
 **RFC 9449 compliant Demonstration of Proof-of-Possession (DPoP) implementation for TurboMCP**
 

@@ -1093,9 +1093,8 @@ impl OAuth2Provider {
         let provider_config = &self.oauth_client.provider_config;
 
         if let Some(_userinfo_endpoint) = &provider_config.userinfo_endpoint {
-            // Use provider-specific userinfo endpoint (implementation would go here)
-            // For now, fall back to standard method
-            self.get_user_info(access_token).await
+            // Use provider-specific userinfo endpoint for enhanced user data
+            self.get_provider_specific_user_info(access_token, _userinfo_endpoint).await
         } else {
             // Fall back to standard method
             self.get_user_info(access_token).await
@@ -1121,9 +1120,8 @@ impl OAuth2Provider {
                 self.is_token_expired(token)
             }
             RefreshBehavior::Custom => {
-                // Custom refresh logic would be implemented per provider
-                // For now, default to reactive behavior
-                self.is_token_expired(token)
+                // Custom refresh logic based on provider-specific token metrics and usage patterns
+                self.evaluate_custom_refresh_criteria(token)
             }
         }
     }
@@ -1131,6 +1129,103 @@ impl OAuth2Provider {
     /// Add token metadata for tracking and audit
     pub fn add_token_metadata(&self, token: &mut AccessToken, key: &str, value: serde_json::Value) {
         token.metadata.insert(key.to_string(), value);
+    }
+    
+    /// Get provider-specific user information using custom userinfo endpoint
+    async fn get_provider_specific_user_info(&self, access_token: &str, userinfo_endpoint: &str) -> McpResult<UserInfo> {
+        let client = reqwest::Client::new();
+        
+        let response = client
+            .get(userinfo_endpoint)
+            .bearer_auth(access_token)
+            .header("User-Agent", format!("TurboMCP/{}", env!("CARGO_PKG_VERSION")))
+            .send()
+            .await
+            .map_err(|e| McpError::AuthenticationFailed(format!("Failed to fetch user info: {}", e)))?;
+            
+        if !response.status().is_success() {
+            return Err(McpError::AuthenticationFailed(format!(
+                "Provider userinfo request failed: HTTP {}",
+                response.status()
+            )));
+        }
+        
+        let user_data: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| McpError::AuthenticationFailed(format!("Failed to parse user info: {}", e)))?;
+            
+        // Map provider-specific fields to our UserInfo structure
+        let user_info = UserInfo {
+            id: user_data.get("sub")
+                .or_else(|| user_data.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            username: user_data.get("preferred_username")
+                .or_else(|| user_data.get("login"))
+                .or_else(|| user_data.get("username"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            email: user_data.get("email")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            display_name: user_data.get("name")
+                .or_else(|| user_data.get("display_name"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            avatar_url: user_data.get("picture")
+                .or_else(|| user_data.get("avatar_url"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            metadata: user_data.as_object()
+                .unwrap_or(&serde_json::Map::new())
+                .clone()
+                .into_iter()
+                .collect(),
+        };
+        
+        debug!("Retrieved provider-specific user info for user: {}", user_info.id);
+        Ok(user_info)
+    }
+    
+    /// Evaluate custom refresh criteria based on token usage patterns and provider characteristics
+    fn evaluate_custom_refresh_criteria(&self, token: &AccessToken) -> bool {
+        // Check token age (refresh if older than 80% of expires_in time)
+        if let Some(issued_at) = token.metadata.get("issued_at") {
+            if let Some(issued_timestamp) = issued_at.as_i64() {
+                let token_age = chrono::Utc::now().timestamp() - issued_timestamp;
+                let max_age = token.expires_in as i64 * 8 / 10; // 80% of lifetime
+                if token_age > max_age {
+                    debug!("Token needs refresh: age={}, max_age={}", token_age, max_age);
+                    return true;
+                }
+            }
+        }
+        
+        // Check usage frequency (refresh high-use tokens proactively)
+        if let Some(usage_count) = token.metadata.get("usage_count") {
+            if let Some(count) = usage_count.as_u64() {
+                if count > 100 {
+                    debug!("Token needs refresh due to high usage: count={}", count);
+                    return true;
+                }
+            }
+        }
+        
+        // Check for provider-specific signals (rate limiting, etc.)
+        if let Some(provider_signal) = token.metadata.get("provider_refresh_signal") {
+            if let Some(should_refresh) = provider_signal.as_bool() {
+                if should_refresh {
+                    debug!("Token needs refresh due to provider signal");
+                    return true;
+                }
+            }
+        }
+        
+        // Default to standard expiration check
+        self.is_token_expired(token)
     }
 
     /// Get the OAuth provider type

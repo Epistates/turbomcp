@@ -115,13 +115,13 @@ impl TransportManager {
     where
         T: Transport + Send + Sync + 'static,
     {
-        // For now, we'll just accept the transport - connection pooling can be enhanced later
+        // Transport is accepted - connection pooling is not implemented
         Ok(())
     }
 
     /// Get transport by name (simplified implementation)
     pub async fn get_transport(&self, _name: &str) -> Option<Box<dyn Transport>> {
-        // For now, return None - this can be enhanced with actual pooling later
+        // Connection pooling is not implemented for this transport type
         None
     }
 
@@ -131,7 +131,7 @@ impl TransportManager {
         _transport_name: &str,
         _message: turbomcp_transport::TransportMessage,
     ) -> McpResult<()> {
-        // For now, just return Ok - this can be enhanced with actual routing later
+        // Message routing is not implemented - returns Ok
         Ok(())
     }
 }

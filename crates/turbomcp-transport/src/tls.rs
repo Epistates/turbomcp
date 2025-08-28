@@ -96,7 +96,7 @@ impl Default for CertValidationConfig {
             ca_bundle_path: None,
             client_ca_cert_path: None,
             ocsp_stapling: true,
-            ct_validation: false, // Optional for now
+            ct_validation: true, // Certificate Transparency validation for production security
         }
     }
 }

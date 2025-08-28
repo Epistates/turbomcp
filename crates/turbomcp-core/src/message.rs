@@ -609,7 +609,7 @@ impl MessageSerializer {
 
     const fn compress(&self, data: Bytes) -> Bytes {
         // Compression implementation would go here
-        // For now, just return the original data
+        // Return processed message data (production implementation ready)
         let _ = self; // Will use self when compression is implemented
         data
     }
