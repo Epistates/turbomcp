@@ -1503,11 +1503,18 @@ impl OAuth2Provider {
             }
             
             // Verify proof is not too old (prevent old proof reuse)
+            // Use configured proof lifetime (defaults to 60s per RFC 9449)
+            let max_proof_age = self.config.dpop_config
+                .as_ref()
+                .map(|config| config.proof_lifetime)
+                .unwrap_or(std::time::Duration::from_secs(60)); // RFC 9449 default
+                
             if let Ok(age) = now.duration_since(dpop_proof_data.issued_at) {
-                if age > std::time::Duration::from_secs(300) { // 5 minute max age
-                    return Err(McpError::Unauthorized(
-                        "DPoP proof is too old".to_string(),
-                    ));
+                if age > max_proof_age {
+                    return Err(McpError::Unauthorized(format!(
+                        "DPoP proof is too old: age {}s exceeds maximum {}s",
+                        age.as_secs(), max_proof_age.as_secs()
+                    )));
                 }
             }
             
