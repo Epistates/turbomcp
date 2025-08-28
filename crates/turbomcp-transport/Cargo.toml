@@ -84,6 +84,7 @@ tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
 serial_test = "3.0"
 tempfile = { workspace = true }
+rcgen = "0.13"
 
 [features]
 default = ["stdio"]

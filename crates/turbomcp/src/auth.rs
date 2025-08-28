@@ -1492,6 +1492,33 @@ impl OAuth2Provider {
             self.verify_access_token_hash(access_token, &dpop_proof_data.access_token_hash)
                 .await?;
 
+            // Additional time-based validation for security
+            let now = SystemTime::now();
+            
+            // Verify proof is not expired (additional check beyond JWT validation)
+            if now > dpop_proof_data.expires_at {
+                return Err(McpError::Unauthorized(
+                    "DPoP proof has expired".to_string(),
+                ));
+            }
+            
+            // Verify proof is not too old (prevent old proof reuse)
+            if let Ok(age) = now.duration_since(dpop_proof_data.issued_at) {
+                if age > std::time::Duration::from_secs(300) { // 5 minute max age
+                    return Err(McpError::Unauthorized(
+                        "DPoP proof is too old".to_string(),
+                    ));
+                }
+            }
+            
+            // Verify thumbprint matches the expected one for this token
+            if dpop_proof_data.thumbprint != ephemeral_token.dpop_thumbprint {
+                return Err(McpError::Unauthorized(format!(
+                    "DPoP thumbprint mismatch: expected '{}', got '{}'",
+                    ephemeral_token.dpop_thumbprint, dpop_proof_data.thumbprint
+                )));
+            }
+
             // Check for replay attacks using jti (JWT ID)
             if let Some(jti) = &dpop_proof_data.jti {
                 self.check_dpop_replay_attack(jti, _method, _uri).await?;
@@ -1937,6 +1964,7 @@ pub struct AuthManager {
     _cleanup_handle: Option<tokio::task::JoinHandle<()>>,
     /// DPoP proof generator (when Enhanced/Maximum security is enabled)
     #[cfg(feature = "dpop")]
+    #[allow(dead_code)]
     dpop_manager: Option<Arc<DpopProofGenerator>>,
 }
 

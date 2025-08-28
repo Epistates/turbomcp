@@ -10,52 +10,55 @@ mod tls_transport_tests {
     use crate::core::{TransportMessage, TransportMessageMetadata};
     use bytes::Bytes;
     use pretty_assertions::assert_eq;
+    use sha2::{Digest, Sha256};
     use std::fs;
     use std::net::SocketAddr;
     use std::time::Duration;
     use tempfile::TempDir;
     use turbomcp_core::MessageId;
 
-    /// Generate a self-signed certificate for testing
+    /// Generate a self-signed certificate for testing using rcgen
     async fn generate_test_certificate(
         temp_dir: &TempDir,
     ) -> (std::path::PathBuf, std::path::PathBuf) {
+        use rcgen::generate_simple_self_signed;
+        
         let cert_path = temp_dir.path().join("test_cert.pem");
         let key_path = temp_dir.path().join("test_key.pem");
 
-        // Generate a self-signed certificate using OpenSSL-compatible format
-        // This is a minimal implementation for testing purposes
-        let cert_pem = r#"-----BEGIN CERTIFICATE-----
-MIICljCCAX4CCQD5R9Q+5t5TvDANBgkqhkiG9w0BAQsFADANMQswCQYDVQQGEwJV
-UzAeFw0yNDA4MjcwMDAwMDBaFw0yNTA4MjcwMDAwMDBaMA0xCzAJBgNVBAYTAlVT
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwRx1x1x1x1x1x1x1x1x1
-x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
-x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
-x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
-x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
-x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1QIDAQAB
-MA0GCSqGSIb3DQEBCwUAA4IBAQB1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
-x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
-x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
-x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
-x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
------END CERTIFICATE-----"#;
-
-        let key_pem = r#"-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDBHHXHXHXHXHXH
-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXUCAwEAAQKCAQEA
-wRx1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
-x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
------END PRIVATE KEY-----"#;
+        // Generate a proper self-signed certificate using rcgen
+        let subject_alt_names = vec!["localhost".to_string()];
+        let certified_key = generate_simple_self_signed(subject_alt_names)
+            .expect("Failed to generate test certificate");
+        
+        let cert_pem = certified_key.cert.pem();
+        let key_pem = certified_key.key_pair.serialize_pem();
 
         fs::write(&cert_path, cert_pem).expect("Failed to write test certificate");
         fs::write(&key_path, key_pem).expect("Failed to write test key");
 
         (cert_path, key_path)
+    }
+    
+    /// Generate a test certificate and return its DER bytes and public key SHA256 hash  
+    fn generate_test_certificate_with_hash() -> (Vec<u8>, String) {
+        use rcgen::generate_simple_self_signed;
+        
+        // Generate a simple self-signed certificate for testing
+        let subject_alt_names = vec!["localhost".to_string()];
+        let certified_key = generate_simple_self_signed(subject_alt_names)
+            .expect("Failed to generate test certificate");
+        
+        let cert_der = certified_key.cert.der().to_vec();
+        
+        // Calculate SHA256 hash of the public key (not the certificate)
+        // For testing, we'll use a simplified approach that extracts the public key bytes
+        let public_key_der = certified_key.key_pair.public_key_der();
+        let hash = Sha256::digest(&public_key_der);
+        let hash_hex = hex::encode(hash);
+        let hash_string = format!("sha256:{}", hash_hex);
+        
+        (cert_der, hash_string)
     }
 
     #[tokio::test]
@@ -112,7 +115,7 @@ x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
         assert!(config.ca_bundle_path.is_none());
         assert!(config.client_ca_cert_path.is_none());
         assert!(config.ocsp_stapling);
-        assert!(!config.ct_validation);
+        assert!(config.ct_validation); // CT validation is enabled by default for security
     }
 
     #[tokio::test]
@@ -197,22 +200,37 @@ x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
 
     #[tokio::test]
     async fn test_certificate_pinning_validation() {
-        let pinning_config = CertPinningConfig {
-            allowed_hashes: vec!["sha256:abcdef1234567890".to_string()],
+        // Generate a real test certificate with proper hash
+        let (cert_der, hash_string) = generate_test_certificate_with_hash();
+        
+        // Test 1: Valid pinning configuration with correct hash - should pass
+        let valid_pinning_config = CertPinningConfig {
+            allowed_hashes: vec![hash_string.clone()],
             enforce: true,
         };
-
-        // Create mock certificate data
-        let cert_data = CertificateDer::from(vec![1, 2, 3, 4, 5]);
+        
+        let cert_data = CertificateDer::from(cert_der.clone());
         let peer_certs = vec![cert_data];
 
-        // Test certificate pinning validation
         #[cfg(feature = "tls")]
         {
-            let result = TlsTransport::validate_cert_pinning(&pinning_config, &peer_certs);
+            let result = TlsTransport::validate_cert_pinning(&valid_pinning_config, &peer_certs);
+            assert!(result.is_ok(), "Certificate pinning should succeed with correct hash");
+        }
+        
+        // Test 2: Invalid pinning configuration with wrong hash - should fail
+        let invalid_pinning_config = CertPinningConfig {
+            allowed_hashes: vec!["sha256:wronghashvalue1234567890abcdef".to_string()],
+            enforce: true,
+        };
+        
+        let cert_data_2 = CertificateDer::from(cert_der);
+        let peer_certs_2 = vec![cert_data_2];
 
-            // Should fail since hash won't match
-            assert!(result.is_err());
+        #[cfg(feature = "tls")]
+        {
+            let result = TlsTransport::validate_cert_pinning(&invalid_pinning_config, &peer_certs_2);
+            assert!(result.is_err(), "Certificate pinning should fail with wrong hash");
             match result.unwrap_err() {
                 TlsError::PinningFailed { reason } => {
                     assert!(reason.contains("Certificate pin validation failed"));
@@ -224,12 +242,16 @@ x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
 
     #[tokio::test]
     async fn test_certificate_pinning_non_enforced() {
+        // Generate a real test certificate
+        let (cert_der, _) = generate_test_certificate_with_hash();
+        
+        // Configure pinning with wrong hash but non-enforced mode
         let pinning_config = CertPinningConfig {
-            allowed_hashes: vec!["sha256:wrong_hash".to_string()],
+            allowed_hashes: vec!["sha256:wronghashvalue1234567890abcdef".to_string()],
             enforce: false, // Non-enforced mode
         };
 
-        let cert_data = CertificateDer::from(vec![1, 2, 3, 4, 5]);
+        let cert_data = CertificateDer::from(cert_der);
         let peer_certs = vec![cert_data];
 
         #[cfg(feature = "tls")]
@@ -237,7 +259,7 @@ x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1x1
             let result = TlsTransport::validate_cert_pinning(&pinning_config, &peer_certs);
 
             // Should succeed in non-enforced mode (just logs warning)
-            assert!(result.is_ok());
+            assert!(result.is_ok(), "Non-enforced pinning should always pass");
         }
     }
 
