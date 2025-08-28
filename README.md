@@ -24,7 +24,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.1.0-exp"
+turbomcp = "1.1.0-exp.2"
 tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -289,13 +289,13 @@ Optimize binary size by selecting only needed transports:
 
 ```toml
 # Minimal STDIO-only server
-turbomcp = { version = "1.1.0-exp", default-features = false, features = ["minimal"] }
+turbomcp = { version = "1.1.0-exp.2", default-features = false, features = ["minimal"] }
 
 # Network deployment with TCP + Unix
-turbomcp = { version = "1.1.0-exp", default-features = false, features = ["network"] }
+turbomcp = { version = "1.1.0-exp.2", default-features = false, features = ["network"] }
 
 # All transports for maximum flexibility  
-turbomcp = { version = "1.1.0-exp", default-features = false, features = ["all-transports"] }
+turbomcp = { version = "1.1.0-exp.2", default-features = false, features = ["all-transports"] }
 ```
 
 ## CLI Tools
