@@ -51,7 +51,7 @@ pub struct HsmStats;
 
 impl HsmKeyManager {
     /// Create a new HSM key manager instance
-    /// 
+    ///
     /// Returns a clear error message indicating HSM support is not implemented
     /// and suggesting alternative enterprise-grade key management solutions.
     pub async fn new(_config: HsmConfig) -> crate::Result<Self> {
@@ -66,41 +66,48 @@ impl HsmKeyManager {
                 "- Redis storage with encryption at rest (enable 'redis-storage' feature)\n",
                 "- In-memory key management with secure key rotation\n",
                 "\nFor HSM requirements, please file an issue with your specific use case."
-            ).to_string(),
+            )
+            .to_string(),
         })
     }
-    
+
     /// Generate key pair (not implemented)
-    pub async fn generate_key_pair(&self, _algorithm: crate::DpopAlgorithm) -> crate::Result<crate::DpopKeyPair> {
+    pub async fn generate_key_pair(
+        &self,
+        _algorithm: crate::DpopAlgorithm,
+    ) -> crate::Result<crate::DpopKeyPair> {
         Err(crate::DpopError::ConfigurationError {
-            reason: "HSM support not implemented - see HsmKeyManager::new() for alternatives".to_string(),
+            reason: "HSM support not implemented - see HsmKeyManager::new() for alternatives"
+                .to_string(),
         })
     }
-    
+
     /// Sign data (not implemented)
     pub async fn sign_data(&self, _key_id: &str, _data: &[u8]) -> crate::Result<Vec<u8>> {
         Err(crate::DpopError::ConfigurationError {
-            reason: "HSM support not implemented - see HsmKeyManager::new() for alternatives".to_string(),
+            reason: "HSM support not implemented - see HsmKeyManager::new() for alternatives"
+                .to_string(),
         })
     }
-    
+
     /// List keys (not implemented)
     pub async fn list_keys(&self) -> crate::Result<Vec<String>> {
         Err(crate::DpopError::ConfigurationError {
-            reason: "HSM support not implemented - see HsmKeyManager::new() for alternatives".to_string(),
+            reason: "HSM support not implemented - see HsmKeyManager::new() for alternatives"
+                .to_string(),
         })
     }
-    
+
     /// Get statistics (not implemented)
     pub fn get_stats(&self) -> HsmStats {
         HsmStats
     }
-    
+
     /// Check connection status (not implemented)
     pub async fn is_connected(&self) -> bool {
         false
     }
-    
+
     /// Disconnect (not implemented)
     pub async fn disconnect(&self) -> crate::Result<()> {
         Ok(())

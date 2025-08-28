@@ -1,14 +1,17 @@
 //! Integration tests for Database service using Testcontainers
 //!
-//! These tests demonstrate TurboMCP's zero-tolerance policy for mocks - 
+//! These tests demonstrate TurboMCP's zero-tolerance policy for mocks -
 //! we test against REAL PostgreSQL databases, not fake implementations.
 
 use std::collections::HashMap;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use testcontainers::{core::{WaitFor, ContainerPort}, runners::AsyncRunner, GenericImage, ImageExt};
-use tokio;
+use testcontainers::{
+    GenericImage, ImageExt,
+    core::{ContainerPort, WaitFor},
+    runners::AsyncRunner,
+};
 use turbomcp::injection::Database;
 
 /// Test data structure matching our database schema
@@ -31,26 +34,39 @@ struct TestTool {
 
 /// Waits for PostgreSQL to be healthy and ready to accept connections
 /// This replaces the brittle sleep approach with proper health checking
-async fn wait_for_postgres_health(connection_string: &str, timeout_secs: u64) -> Result<(), Box<dyn std::error::Error>> {
+async fn wait_for_postgres_health(
+    connection_string: &str,
+    timeout_secs: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
     let timeout_duration = Duration::from_secs(timeout_secs);
     let start = std::time::Instant::now();
-    
+
     loop {
         if start.elapsed() > timeout_duration {
-            return Err(format!("PostgreSQL health check timed out after {} seconds", timeout_secs).into());
+            return Err(format!(
+                "PostgreSQL health check timed out after {} seconds",
+                timeout_secs
+            )
+            .into());
         }
-        
+
         // Try to connect and execute a simple query
         match Database::new(connection_string).await {
             Ok(db) => {
                 // Use a simple non-SELECT statement for health check
-                match db.execute("CREATE TABLE IF NOT EXISTS health_check (id INTEGER)").await {
+                match db
+                    .execute("CREATE TABLE IF NOT EXISTS health_check (id INTEGER)")
+                    .await
+                {
                     Ok(_) => {
                         println!("PostgreSQL is healthy and ready");
                         return Ok(());
                     }
                     Err(e) => {
-                        println!("PostgreSQL connection established but query failed: {}, retrying...", e);
+                        println!(
+                            "PostgreSQL connection established but query failed: {}, retrying...",
+                            e
+                        );
                     }
                 }
             }
@@ -58,7 +74,7 @@ async fn wait_for_postgres_health(connection_string: &str, timeout_secs: u64) ->
                 println!("PostgreSQL connection failed: {}, retrying...", e);
             }
         }
-        
+
         // Wait before retrying
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
@@ -72,7 +88,7 @@ async fn test_database_real_postgresql_crud_operations() {
     let postgres = GenericImage::new("postgres", "16-alpine")
         .with_exposed_port(ContainerPort::Tcp(5432))
         .with_wait_for(WaitFor::message_on_stdout(
-            "database system is ready to accept connections"
+            "database system is ready to accept connections",
         ))
         .with_env_var("POSTGRES_USER", "test_user")
         .with_env_var("POSTGRES_PASSWORD", "test_password")
@@ -180,10 +196,14 @@ async fn test_database_real_postgresql_crud_operations() {
 
     assert_eq!(tools.len(), 1, "Expected exactly 1 tool");
     assert_eq!(tools[0].name, "echo_tool");
-    assert_eq!(tools[0].description, Some("A simple echo tool for testing".to_string()));
-    
+    assert_eq!(
+        tools[0].description,
+        Some("A simple echo tool for testing".to_string())
+    );
+
     // Verify JSON schema was preserved correctly
-    let expected_schema: serde_json::Value = serde_json::from_str(r#"
+    let expected_schema: serde_json::Value = serde_json::from_str(
+        r#"
         {
             "type": "object", 
             "properties": {
@@ -194,8 +214,10 @@ async fn test_database_real_postgresql_crud_operations() {
             }, 
             "required": ["message"]
         }
-    "#).unwrap();
-    
+    "#,
+    )
+    .unwrap();
+
     assert_eq!(tools[0].schema_definition, expected_schema);
 
     // Test 6: Update operations
@@ -234,14 +256,20 @@ async fn test_database_real_postgresql_crud_operations() {
     assert_eq!(remaining_users.len(), 0, "Expected no users after deletion");
 
     // Test 8: Security - verify that query() rejects non-SELECT statements
-    let malicious_insert = "INSERT INTO test_users (name, email) VALUES ('hacker', 'hack@evil.com')";
+    let malicious_insert =
+        "INSERT INTO test_users (name, email) VALUES ('hacker', 'hack@evil.com')";
     let query_result = database.query::<TestUser>(malicious_insert).await;
-    
-    assert!(query_result.is_err(), "query() should reject INSERT statements");
-    
+
+    assert!(
+        query_result.is_err(),
+        "query() should reject INSERT statements"
+    );
+
     let error_message = format!("{:?}", query_result.unwrap_err());
-    assert!(error_message.contains("Only SELECT statements allowed"), 
-            "Expected security error message");
+    assert!(
+        error_message.contains("Only SELECT statements allowed"),
+        "Expected security error message"
+    );
 
     // Test 9: Error handling for invalid SQL
     let invalid_sql = "INVALID SQL SYNTAX HERE";
@@ -251,9 +279,12 @@ async fn test_database_real_postgresql_crud_operations() {
     // Test 10: Empty SQL validation
     let empty_result = database.query::<TestUser>("").await;
     assert!(empty_result.is_err(), "Should reject empty SQL");
-    
+
     let empty_execute = database.execute("   ").await;
-    assert!(empty_execute.is_err(), "Should reject empty SQL in execute()");
+    assert!(
+        empty_execute.is_err(),
+        "Should reject empty SQL in execute()"
+    );
 }
 
 /// Test connection pooling and concurrent operations
@@ -263,7 +294,7 @@ async fn test_database_concurrent_operations() {
     let postgres = GenericImage::new("postgres", "16-alpine")
         .with_exposed_port(ContainerPort::Tcp(5432))
         .with_wait_for(WaitFor::message_on_stdout(
-            "database system is ready to accept connections"
+            "database system is ready to accept connections",
         ))
         .with_env_var("POSTGRES_USER", "concurrent_test")
         .with_env_var("POSTGRES_PASSWORD", "test_pwd")
@@ -277,7 +308,7 @@ async fn test_database_concurrent_operations() {
         "postgres://concurrent_test:test_pwd@localhost:{}/concurrent_db",
         port
     );
-    
+
     // Wait for PostgreSQL to be healthy and ready (replaces brittle sleep)
     wait_for_postgres_health(&connection_string, 30)
         .await
@@ -294,14 +325,14 @@ async fn test_database_concurrent_operations() {
                 id SERIAL PRIMARY KEY, 
                 value INTEGER NOT NULL,
                 created_at TIMESTAMPTZ DEFAULT NOW()
-            )"
+            )",
         )
         .await
         .expect("Failed to create concurrent test table");
 
     // Test concurrent database operations using the connection pool
     let database_clone = database.clone(); // This should work due to Arc<PgPool>
-    
+
     let handles: Vec<_> = (0..10)
         .map(|i| {
             let db = database_clone.clone();
@@ -338,7 +369,7 @@ async fn test_database_error_handling() {
     let postgres = GenericImage::new("postgres", "16-alpine")
         .with_exposed_port(ContainerPort::Tcp(5432))
         .with_wait_for(WaitFor::message_on_stdout(
-            "database system is ready to accept connections"
+            "database system is ready to accept connections",
         ))
         .with_env_var("POSTGRES_USER", "error_test")
         .with_env_var("POSTGRES_PASSWORD", "test_pwd")
@@ -348,11 +379,8 @@ async fn test_database_error_handling() {
         .expect("Failed to start PostgreSQL for error test");
 
     let port = postgres.get_host_port_ipv4(5432).await.unwrap();
-    let connection_string = format!(
-        "postgres://error_test:test_pwd@localhost:{}/error_db",
-        port
-    );
-    
+    let connection_string = format!("postgres://error_test:test_pwd@localhost:{}/error_db", port);
+
     // Wait for PostgreSQL to be healthy and ready (replaces brittle sleep)
     wait_for_postgres_health(&connection_string, 30)
         .await
@@ -372,7 +400,7 @@ async fn test_database_error_handling() {
             "CREATE TABLE unique_test (
                 id SERIAL PRIMARY KEY,
                 unique_value VARCHAR(50) UNIQUE NOT NULL
-            )"
+            )",
         )
         .await
         .expect("Failed to create unique test table");
@@ -386,13 +414,19 @@ async fn test_database_error_handling() {
     let constraint_violation = database
         .execute("INSERT INTO unique_test (unique_value) VALUES ('test_value')")
         .await;
-    assert!(constraint_violation.is_err(), "Should fail due to unique constraint");
+    assert!(
+        constraint_violation.is_err(),
+        "Should fail due to unique constraint"
+    );
 
     // Test 3: Table doesn't exist
     let table_not_found = database
         .query::<HashMap<String, String>>("SELECT * FROM non_existent_table")
         .await;
-    assert!(table_not_found.is_err(), "Should fail for non-existent table");
+    assert!(
+        table_not_found.is_err(),
+        "Should fail for non-existent table"
+    );
 }
 
 /// Test that demonstrates the anti-pattern we DON'T want
@@ -403,9 +437,9 @@ fn example_of_testing_fraud() {
     // ❌ THIS IS BAD - testing against fake data
     // let fake_database = FakeDatabaseMock::new();
     // fake_database.expect_query().returning(|| Ok(vec![]));
-    // 
+    //
     // This type of test passes but doesn't validate real functionality!
     // It tests the mock, not the actual database integration.
-    // 
+    //
     // TurboMCP's zero-tolerance policy: NO MOCKS FOR CRITICAL INFRASTRUCTURE
 }

@@ -150,7 +150,7 @@ impl DpopProofGenerator {
     ///
     /// This is the main high-level API that auth integrations should use.
     /// It combines JWT parsing and comprehensive DPoP validation in one call.
-    /// 
+    ///
     /// Requires the `jwt-validation` feature to be enabled.
     #[cfg(feature = "jwt-validation")]
     pub async fn parse_and_validate_jwt(
@@ -162,7 +162,7 @@ impl DpopProofGenerator {
     ) -> Result<DpopValidationResult> {
         // Parse the JWT string into a DPoP proof
         let proof = DpopProof::from_jwt_string(jwt_string)?;
-        
+
         // Validate the parsed proof
         self.validate_proof(&proof, method, uri, access_token).await
     }
@@ -230,7 +230,7 @@ impl DpopProofGenerator {
         // Production implementation: Generate key with proper algorithm selection
         // Key rotation would be handled by the key manager's internal policies
         debug!("Generating DPoP key pair for proof generation");
-        
+
         self.key_manager
             .generate_key_pair(DpopAlgorithm::ES256)
             .await
@@ -537,23 +537,23 @@ fn compute_access_token_hash(access_token: &str) -> Result<String> {
 /// for DPoP security as per RFC 9449 security requirements.
 fn constant_time_compare(a: &str, b: &str) -> bool {
     use std::cmp;
-    
+
     // If lengths differ, still do a constant-time comparison to avoid timing leaks
     let len_a = a.len();
     let len_b = b.len();
     let max_len = cmp::max(len_a, len_b);
-    
+
     let bytes_a = a.as_bytes();
     let bytes_b = b.as_bytes();
-    
+
     let mut result = (len_a != len_b) as u8;
-    
+
     for i in 0..max_len {
         let byte_a = bytes_a.get(i).copied().unwrap_or(0);
         let byte_b = bytes_b.get(i).copied().unwrap_or(0);
         result |= byte_a ^ byte_b;
     }
-    
+
     result == 0
 }
 

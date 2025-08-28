@@ -490,23 +490,23 @@ fn compute_thumbprint(public_key: &DpopPublicKey, algorithm: DpopAlgorithm) -> R
 /// on cryptographic values like thumbprints and other sensitive data.
 fn constant_time_compare(a: &str, b: &str) -> bool {
     use std::cmp;
-    
+
     // If lengths differ, still do a constant-time comparison to avoid timing leaks
     let len_a = a.len();
     let len_b = b.len();
     let max_len = cmp::max(len_a, len_b);
-    
+
     let bytes_a = a.as_bytes();
     let bytes_b = b.as_bytes();
-    
+
     let mut result = (len_a != len_b) as u8;
-    
+
     for i in 0..max_len {
         let byte_a = bytes_a.get(i).copied().unwrap_or(0);
         let byte_b = bytes_b.get(i).copied().unwrap_or(0);
         result |= byte_a ^ byte_b;
     }
-    
+
     result == 0
 }
 

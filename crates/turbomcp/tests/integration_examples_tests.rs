@@ -4,15 +4,16 @@
 //! and end-to-end functionality using real JSON-RPC over stdio.
 
 use serde_json::{Value, json};
-use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command as AsyncCommand;
-use tokio::time::{timeout, sleep};
+use tokio::time::timeout;
 
 /// Helper function to read a JSON response from stdout, filtering out log messages
-async fn read_json_response(reader: &mut BufReader<tokio::process::ChildStdout>) -> Result<Value, Box<dyn std::error::Error>> {
+async fn read_json_response(
+    reader: &mut BufReader<tokio::process::ChildStdout>,
+) -> Result<Value, Box<dyn std::error::Error>> {
     // Add timeout to prevent infinite waiting
     let result = timeout(Duration::from_secs(10), async {
         let mut line = String::new();
@@ -22,7 +23,7 @@ async fn read_json_response(reader: &mut BufReader<tokio::process::ChildStdout>)
             if bytes_read == 0 {
                 return Err("Unexpected end of stream".into());
             }
-            
+
             let trimmed = line.trim();
             // Skip log messages (they contain ANSI escape sequences or log prefixes)
             // Look for lines that start with '{' - these are JSON responses
@@ -33,8 +34,9 @@ async fn read_json_response(reader: &mut BufReader<tokio::process::ChildStdout>)
                 }
             }
         }
-    }).await;
-    
+    })
+    .await;
+
     match result {
         Ok(json_result) => json_result,
         Err(_) => Err("Timeout waiting for JSON response".into()),
@@ -273,19 +275,17 @@ fn test_examples_compile_and_spawn() {
 #[tokio::test]
 async fn test_jsonrpc_protocol_compliance() {
     // Test only valid JSON-RPC as servers may not respond to invalid requests
-    let requests = vec![
-        json!({
-            "jsonrpc": "2.0",
-            "method": "tools/list",
-            "params": {}
-        }),
-    ];
+    let requests = vec![json!({
+        "jsonrpc": "2.0",
+        "method": "tools/list",
+        "params": {}
+    })];
 
     let responses = test_example_jsonrpc("01_hello_world", requests)
         .await
         .expect("Should handle valid JSON-RPC");
 
-    assert!(responses.len() >= 1);
+    assert!(!responses.is_empty());
     // Server should respond to valid requests
     assert!(responses[0].get("result").is_some() || responses[0].get("error").is_some());
 }

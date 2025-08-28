@@ -1,14 +1,14 @@
 //! Core DPoP Security Tests - Essential Security Validations
 //!
-//! **Focused Security Testing:** This test suite validates the most critical 
+//! **Focused Security Testing:** This test suite validates the most critical
 //! DPoP security properties without performance-intensive operations.
 
 #![cfg(feature = "dpop")]
 
 use std::sync::Arc;
 use turbomcp_dpop::{
-    DpopAlgorithm, DpopError, DpopKeyManager, DpopProofGenerator, MemoryNonceTracker, 
-    ErrorSeverity, Result,
+    DpopAlgorithm, DpopError, DpopKeyManager, DpopProofGenerator, ErrorSeverity,
+    MemoryNonceTracker, Result,
 };
 
 /// Test 1: RFC 9449 Compliance - Core Structure Validation
@@ -28,7 +28,11 @@ async fn test_rfc_compliance_core() -> Result<()> {
     // Validate JWT has 3 parts
     let jwt_string = proof.to_jwt_string();
     let parts: Vec<&str> = jwt_string.split('.').collect();
-    assert_eq!(parts.len(), 3, "DPoP proof must be a valid JWT with 3 parts");
+    assert_eq!(
+        parts.len(),
+        3,
+        "DPoP proof must be a valid JWT with 3 parts"
+    );
 
     println!("✅ RFC 9449 compliance validated");
     Ok(())
@@ -47,9 +51,17 @@ async fn test_cryptographic_security() -> Result<()> {
 
     // Valid proof should pass validation
     let validation = proof_gen
-        .validate_proof(&proof, "GET", "https://api.example.com/data", Some("token-123"))
+        .validate_proof(
+            &proof,
+            "GET",
+            "https://api.example.com/data",
+            Some("token-123"),
+        )
         .await?;
-    assert!(validation.valid, "Valid proof must pass cryptographic validation");
+    assert!(
+        validation.valid,
+        "Valid proof must pass cryptographic validation"
+    );
 
     println!("✅ Cryptographic security validated");
     Ok(())
@@ -77,7 +89,7 @@ async fn test_replay_attack_prevention() -> Result<()> {
     let replay_result = proof_gen
         .validate_proof(&proof, "POST", "https://api.example.com/transfer", None)
         .await;
-    
+
     assert!(replay_result.is_err(), "Replay attack must be detected");
     match replay_result.unwrap_err() {
         DpopError::ReplayAttackDetected { .. } => {
@@ -101,21 +113,38 @@ async fn test_token_binding_security() -> Result<()> {
 
     // Generate proof bound to legitimate token
     let proof = proof_gen
-        .generate_proof("GET", "https://api.bank.com/balance", Some(legitimate_token))
+        .generate_proof(
+            "GET",
+            "https://api.bank.com/balance",
+            Some(legitimate_token),
+        )
         .await?;
 
     // Validation with correct token should succeed
     let valid_result = proof_gen
-        .validate_proof(&proof, "GET", "https://api.bank.com/balance", Some(legitimate_token))
+        .validate_proof(
+            &proof,
+            "GET",
+            "https://api.bank.com/balance",
+            Some(legitimate_token),
+        )
         .await?;
     assert!(valid_result.valid, "Legitimate token binding must work");
 
     // Validation with different token should fail
     let invalid_result = proof_gen
-        .validate_proof(&proof, "GET", "https://api.bank.com/balance", Some(malicious_token))
+        .validate_proof(
+            &proof,
+            "GET",
+            "https://api.bank.com/balance",
+            Some(malicious_token),
+        )
         .await;
-    
-    assert!(invalid_result.is_err(), "Token substitution attack must be prevented");
+
+    assert!(
+        invalid_result.is_err(),
+        "Token substitution attack must be prevented"
+    );
 
     println!("✅ Token binding security validated");
     Ok(())
@@ -185,21 +214,36 @@ async fn test_error_security_classification() -> Result<()> {
 #[tokio::test]
 async fn test_key_rotation_security() -> Result<()> {
     let key_manager = Arc::new(DpopKeyManager::new_memory().await?);
-    
+
     // Generate and rotate key
     let original_key = key_manager.generate_key_pair(DpopAlgorithm::ES256).await?;
     let rotated_key = key_manager.rotate_key_pair(&original_key.id).await?;
 
     // Verify rotation properties
-    assert_ne!(rotated_key.id, original_key.id, "Rotated key must have different ID");
-    assert_ne!(rotated_key.thumbprint, original_key.thumbprint, "Rotated key must have different thumbprint");
-    assert_eq!(rotated_key.algorithm, original_key.algorithm, "Algorithm must be preserved");
-    assert_eq!(rotated_key.metadata.rotation_generation, 1, "Generation counter must increment");
+    assert_ne!(
+        rotated_key.id, original_key.id,
+        "Rotated key must have different ID"
+    );
+    assert_ne!(
+        rotated_key.thumbprint, original_key.thumbprint,
+        "Rotated key must have different thumbprint"
+    );
+    assert_eq!(
+        rotated_key.algorithm, original_key.algorithm,
+        "Algorithm must be preserved"
+    );
+    assert_eq!(
+        rotated_key.metadata.rotation_generation, 1,
+        "Generation counter must increment"
+    );
 
     // Original key should be expired
     let retrieved_original = key_manager.get_key_pair(&original_key.id).await?;
     assert!(retrieved_original.is_some());
-    assert!(retrieved_original.unwrap().is_expired(), "Original key must be expired after rotation");
+    assert!(
+        retrieved_original.unwrap().is_expired(),
+        "Original key must be expired after rotation"
+    );
 
     println!("✅ Key rotation security validated");
     Ok(())
@@ -208,8 +252,12 @@ async fn test_key_rotation_security() -> Result<()> {
 /// Test 8: Algorithm Security
 #[tokio::test]
 async fn test_algorithm_security() -> Result<()> {
-    let algorithms = [DpopAlgorithm::ES256, DpopAlgorithm::RS256, DpopAlgorithm::PS256];
-    
+    let algorithms = [
+        DpopAlgorithm::ES256,
+        DpopAlgorithm::RS256,
+        DpopAlgorithm::PS256,
+    ];
+
     for algorithm in algorithms {
         let key_manager = Arc::new(DpopKeyManager::new_memory().await?);
         let key_pair = key_manager.generate_key_pair(algorithm).await?;
@@ -217,16 +265,28 @@ async fn test_algorithm_security() -> Result<()> {
 
         // Generate proof with specific algorithm
         let proof = proof_gen
-            .generate_proof_with_key("POST", "https://api.example.com/test", None, Some(&key_pair))
+            .generate_proof_with_key(
+                "POST",
+                "https://api.example.com/test",
+                None,
+                Some(&key_pair),
+            )
             .await?;
 
         // Validate proof works with the algorithm
         let validation = proof_gen
             .validate_proof(&proof, "POST", "https://api.example.com/test", None)
             .await?;
-        
-        assert!(validation.valid, "Algorithm {} must produce valid proofs", algorithm);
-        assert_eq!(validation.key_algorithm, algorithm, "Algorithm must match in validation");
+
+        assert!(
+            validation.valid,
+            "Algorithm {} must produce valid proofs",
+            algorithm
+        );
+        assert_eq!(
+            validation.key_algorithm, algorithm,
+            "Algorithm must match in validation"
+        );
     }
 
     println!("✅ Algorithm security validated for ES256, RS256, PS256");
@@ -241,38 +301,69 @@ async fn test_multi_attack_scenario() -> Result<()> {
     let proof_gen = DpopProofGenerator::with_nonce_tracker(key_manager, nonce_tracker);
 
     let token = "sensitive-banking-token";
-    
+
     // Legitimate operation
     let legitimate_proof = proof_gen
         .generate_proof("POST", "https://bank.api.com/transfer", Some(token))
         .await?;
-    
+
     let legitimate_result = proof_gen
-        .validate_proof(&legitimate_proof, "POST", "https://bank.api.com/transfer", Some(token))
+        .validate_proof(
+            &legitimate_proof,
+            "POST",
+            "https://bank.api.com/transfer",
+            Some(token),
+        )
         .await?;
     assert!(legitimate_result.valid, "Legitimate operation must succeed");
 
     // Attack 1: Replay the same proof
     let replay_attack = proof_gen
-        .validate_proof(&legitimate_proof, "POST", "https://bank.api.com/transfer", Some(token))
+        .validate_proof(
+            &legitimate_proof,
+            "POST",
+            "https://bank.api.com/transfer",
+            Some(token),
+        )
         .await;
     assert!(replay_attack.is_err(), "Replay attack must be prevented");
 
     // Attack 2: Use proof with different token
     let token_attack = proof_gen
-        .validate_proof(&legitimate_proof, "POST", "https://bank.api.com/transfer", Some("stolen-token"))
+        .validate_proof(
+            &legitimate_proof,
+            "POST",
+            "https://bank.api.com/transfer",
+            Some("stolen-token"),
+        )
         .await;
-    assert!(token_attack.is_err(), "Token substitution must be prevented");
+    assert!(
+        token_attack.is_err(),
+        "Token substitution must be prevented"
+    );
 
     // Attack 3: Use proof for different endpoint
     let endpoint_attack = proof_gen
-        .validate_proof(&legitimate_proof, "POST", "https://bank.api.com/account", Some(token))
+        .validate_proof(
+            &legitimate_proof,
+            "POST",
+            "https://bank.api.com/account",
+            Some(token),
+        )
         .await;
-    assert!(endpoint_attack.is_err(), "Endpoint confusion must be prevented");
+    assert!(
+        endpoint_attack.is_err(),
+        "Endpoint confusion must be prevented"
+    );
 
     // Attack 4: Use proof with different method
     let method_attack = proof_gen
-        .validate_proof(&legitimate_proof, "DELETE", "https://bank.api.com/transfer", Some(token))
+        .validate_proof(
+            &legitimate_proof,
+            "DELETE",
+            "https://bank.api.com/transfer",
+            Some(token),
+        )
         .await;
     assert!(method_attack.is_err(), "Method confusion must be prevented");
 
@@ -280,11 +371,19 @@ async fn test_multi_attack_scenario() -> Result<()> {
     let fresh_proof = proof_gen
         .generate_proof("POST", "https://bank.api.com/transfer", Some(token))
         .await?;
-    
+
     let fresh_result = proof_gen
-        .validate_proof(&fresh_proof, "POST", "https://bank.api.com/transfer", Some(token))
+        .validate_proof(
+            &fresh_proof,
+            "POST",
+            "https://bank.api.com/transfer",
+            Some(token),
+        )
         .await?;
-    assert!(fresh_result.valid, "Fresh legitimate operation must work after attacks");
+    assert!(
+        fresh_result.valid,
+        "Fresh legitimate operation must work after attacks"
+    );
 
     println!("✅ Multi-attack scenario - All attacks prevented, legitimate flow preserved");
     Ok(())
@@ -297,7 +396,7 @@ async fn test_performance_security() -> Result<()> {
     let proof_gen = DpopProofGenerator::new(key_manager);
 
     let start = std::time::Instant::now();
-    
+
     // Generate and validate a reasonable number of proofs
     for i in 0..5 {
         let proof = proof_gen
@@ -305,18 +404,30 @@ async fn test_performance_security() -> Result<()> {
             .await?;
 
         let validation = proof_gen
-            .validate_proof(&proof, "GET", &format!("https://api.example.com/item/{}", i), None)
+            .validate_proof(
+                &proof,
+                "GET",
+                &format!("https://api.example.com/item/{}", i),
+                None,
+            )
             .await?;
-        
+
         assert!(validation.valid, "Proof {} must be valid", i);
     }
 
     let duration = start.elapsed();
     let avg_ms = duration.as_millis() as f64 / 5.0;
-    
+
     // Performance check: should be reasonable (under 100ms per operation in debug mode)
-    assert!(avg_ms < 100.0, "DPoP operations too slow: {:.2}ms > 100ms per operation", avg_ms);
-    
-    println!("✅ Performance security validated - Average {:.2}ms per operation", avg_ms);
+    assert!(
+        avg_ms < 100.0,
+        "DPoP operations too slow: {:.2}ms > 100ms per operation",
+        avg_ms
+    );
+
+    println!(
+        "✅ Performance security validated - Average {:.2}ms per operation",
+        avg_ms
+    );
     Ok(())
 }

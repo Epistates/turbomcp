@@ -36,7 +36,7 @@ use turbomcp_dpop::{DpopAlgorithm, DpopKeyManager, DpopProofGenerator};
 // Cryptographic dependencies for DPoP token binding
 #[cfg(feature = "dpop")]
 use {
-    base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _},
+    base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD},
     sha2::{Digest, Sha256 as Sha256Hash},
 };
 
@@ -1116,7 +1116,8 @@ impl OAuth2Provider {
 
         if let Some(_userinfo_endpoint) = &provider_config.userinfo_endpoint {
             // Use provider-specific userinfo endpoint for enhanced user data
-            self.get_provider_specific_user_info(access_token, _userinfo_endpoint).await
+            self.get_provider_specific_user_info(access_token, _userinfo_endpoint)
+                .await
         } else {
             // Fall back to standard method
             self.get_user_info(access_token).await
@@ -1152,99 +1153,124 @@ impl OAuth2Provider {
     pub fn add_token_metadata(&self, token: &mut AccessToken, key: &str, value: serde_json::Value) {
         token.metadata.insert(key.to_string(), value);
     }
-    
+
     /// Get provider-specific user information using custom userinfo endpoint
-    async fn get_provider_specific_user_info(&self, access_token: &str, userinfo_endpoint: &str) -> McpResult<UserInfo> {
+    async fn get_provider_specific_user_info(
+        &self,
+        access_token: &str,
+        userinfo_endpoint: &str,
+    ) -> McpResult<UserInfo> {
         let client = reqwest::Client::new();
-        
+
         let response = client
             .get(userinfo_endpoint)
             .bearer_auth(access_token)
-            .header("User-Agent", format!("TurboMCP/{}", env!("CARGO_PKG_VERSION")))
+            .header(
+                "User-Agent",
+                format!("TurboMCP/{}", env!("CARGO_PKG_VERSION")),
+            )
             .send()
             .await
             .map_err(|e| McpError::internal(format!("Failed to fetch user info: {}", e)))?;
-            
+
         if !response.status().is_success() {
             return Err(McpError::internal(format!(
                 "Provider userinfo request failed: HTTP {}",
                 response.status()
             )));
         }
-        
+
         let user_data: serde_json::Value = response
             .json()
             .await
             .map_err(|e| McpError::internal(format!("Failed to parse user info: {}", e)))?;
-            
+
         // Map provider-specific fields to our UserInfo structure
         let user_info = UserInfo {
-            id: user_data.get("sub")
+            id: user_data
+                .get("sub")
                 .or_else(|| user_data.get("id"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string(),
-            username: user_data.get("preferred_username")
+            username: user_data
+                .get("preferred_username")
                 .or_else(|| user_data.get("login"))
                 .or_else(|| user_data.get("username"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string(),
-            email: user_data.get("email")
+            email: user_data
+                .get("email")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            display_name: user_data.get("name")
+            display_name: user_data
+                .get("name")
                 .or_else(|| user_data.get("display_name"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            avatar_url: user_data.get("picture")
+            avatar_url: user_data
+                .get("picture")
                 .or_else(|| user_data.get("avatar_url"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
-            metadata: user_data.as_object()
+            metadata: user_data
+                .as_object()
                 .unwrap_or(&serde_json::Map::new())
                 .clone()
                 .into_iter()
                 .collect(),
         };
-        
-        debug!("Retrieved provider-specific user info for user: {}", user_info.id);
+
+        debug!(
+            "Retrieved provider-specific user info for user: {}",
+            user_info.id
+        );
         Ok(user_info)
     }
-    
+
     /// Evaluate custom refresh criteria based on token usage patterns and provider characteristics
     fn evaluate_custom_refresh_criteria(&self, token: &AccessToken) -> bool {
         // Check token age (refresh if older than 80% of expires_in time)
         if let Some(issued_at) = token.metadata.get("issued_at")
-            && let Some(issued_timestamp) = issued_at.as_i64() {
-                let token_age = chrono::Utc::now().timestamp() - issued_timestamp;
-                if let Some(expires_at) = token.expires_at {
-                    let expires_timestamp = expires_at.duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default().as_secs() as i64;
-                    let max_age = expires_timestamp - issued_timestamp;
-                    if token_age > max_age * 4 / 5 { // Refresh at 80% of lifetime
-                        debug!("Token needs refresh: age={}, max_age={}", token_age, max_age);
-                        return true;
-                    }
+            && let Some(issued_timestamp) = issued_at.as_i64()
+        {
+            let token_age = chrono::Utc::now().timestamp() - issued_timestamp;
+            if let Some(expires_at) = token.expires_at {
+                let expires_timestamp = expires_at
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                let max_age = expires_timestamp - issued_timestamp;
+                if token_age > max_age * 4 / 5 {
+                    // Refresh at 80% of lifetime
+                    debug!(
+                        "Token needs refresh: age={}, max_age={}",
+                        token_age, max_age
+                    );
+                    return true;
                 }
             }
-        
+        }
+
         // Check usage frequency (refresh high-use tokens proactively)
         if let Some(usage_count) = token.metadata.get("usage_count")
             && let Some(count) = usage_count.as_u64()
-            && count > 100 {
-                debug!("Token needs refresh due to high usage: count={}", count);
-                return true;
-            }
-        
+            && count > 100
+        {
+            debug!("Token needs refresh due to high usage: count={}", count);
+            return true;
+        }
+
         // Check for provider-specific signals (rate limiting, etc.)
         if let Some(provider_signal) = token.metadata.get("provider_refresh_signal")
             && let Some(should_refresh) = provider_signal.as_bool()
-            && should_refresh {
-                debug!("Token needs refresh due to provider signal");
-                return true;
-            }
-        
+            && should_refresh
+        {
+            debug!("Token needs refresh due to provider signal");
+            return true;
+        }
+
         // Default to standard expiration check
         self.is_token_expired(token)
     }
@@ -1384,12 +1410,14 @@ impl OAuth2Provider {
 
         // Parse and validate DPoP proof with full JWT processing
         #[cfg(feature = "dpop")]
-        let _dpop_proof_data = self.parse_and_validate_dpop_proof(
-            _dpop_proof,
-            &intent.dpop_thumbprint,
-            "POST",
-            &self.config.token_url,
-        ).await?;
+        let _dpop_proof_data = self
+            .parse_and_validate_dpop_proof(
+                _dpop_proof,
+                &intent.dpop_thumbprint,
+                "POST",
+                &self.config.token_url,
+            )
+            .await?;
 
         #[cfg(not(feature = "dpop"))]
         let _dpop_proof_data = (); // Placeholder when DPoP feature disabled
@@ -1451,16 +1479,19 @@ impl OAuth2Provider {
         // Validate DPoP proof cryptographically with comprehensive security checks
         #[cfg(feature = "dpop")]
         {
-            let dpop_proof_data = self.parse_and_validate_dpop_proof(
-                _dpop_proof,
-                &ephemeral_token.dpop_thumbprint,
-                _method,
-                _uri,
-            ).await?;
-            
+            let dpop_proof_data = self
+                .parse_and_validate_dpop_proof(
+                    _dpop_proof,
+                    &ephemeral_token.dpop_thumbprint,
+                    _method,
+                    _uri,
+                )
+                .await?;
+
             // Verify access token hash in DPoP proof
-            self.verify_access_token_hash(access_token, &dpop_proof_data.access_token_hash).await?;
-            
+            self.verify_access_token_hash(access_token, &dpop_proof_data.access_token_hash)
+                .await?;
+
             // Check for replay attacks using jti (JWT ID)
             if let Some(jti) = &dpop_proof_data.jti {
                 self.check_dpop_replay_attack(jti, _method, _uri).await?;
@@ -1498,7 +1529,9 @@ impl OAuth2Provider {
         http_uri: &str,
     ) -> McpResult<DpopProofData> {
         // Get DPoP proof generator (should be available when dpop feature is enabled)
-        let dpop_manager = self.dpop_proof_generator.as_ref()
+        let dpop_manager = self
+            .dpop_proof_generator
+            .as_ref()
             .ok_or_else(|| McpError::internal("DPoP not configured for Enhanced security level"))?;
 
         // Use the high-level DPoP API for parsing and validation
@@ -1508,21 +1541,23 @@ impl OAuth2Provider {
             .map_err(|e| McpError::Unauthorized(format!("DPoP proof validation failed: {}", e)))?;
 
         if !validation_result.valid {
-            return Err(McpError::Unauthorized("DPoP proof validation failed".to_string()));
+            return Err(McpError::Unauthorized(
+                "DPoP proof validation failed".to_string(),
+            ));
         }
 
         // Verify thumbprint matches expected
         if validation_result.thumbprint != expected_thumbprint {
             return Err(McpError::Unauthorized(format!(
-                "DPoP key thumbprint mismatch: expected '{}', got '{}'", 
-                expected_thumbprint, 
-                validation_result.thumbprint
+                "DPoP key thumbprint mismatch: expected '{}', got '{}'",
+                expected_thumbprint, validation_result.thumbprint
             )));
         }
 
         // Parse the proof again to extract claims (this time we know it's valid)
-        let proof = turbomcp_dpop::DpopProof::from_jwt_string(dpop_proof)
-            .map_err(|e| McpError::Unauthorized(format!("Failed to parse validated DPoP proof: {}", e)))?;
+        let proof = turbomcp_dpop::DpopProof::from_jwt_string(dpop_proof).map_err(|e| {
+            McpError::Unauthorized(format!("Failed to parse validated DPoP proof: {}", e))
+        })?;
 
         // Extract proof data
         Ok(DpopProofData {
@@ -1547,16 +1582,16 @@ impl OAuth2Provider {
         let mut hasher = Sha256Hash::new();
         hasher.update(access_token.as_bytes());
         let hash = hasher.finalize();
-        
+
         // Base64url encode the hash (using new base64 engine API)
-        let calculated_hash = URL_SAFE_NO_PAD.encode(&hash);
-        
+        let calculated_hash = URL_SAFE_NO_PAD.encode(hash);
+
         if calculated_hash != expected_hash {
             return Err(McpError::Unauthorized(
-                "Access token hash mismatch in DPoP proof".to_string()
+                "Access token hash mismatch in DPoP proof".to_string(),
             ));
         }
-        
+
         Ok(())
     }
 
@@ -1570,27 +1605,26 @@ impl OAuth2Provider {
     ) -> McpResult<()> {
         // In a production environment, this would check against a distributed cache
         // or database to prevent replay attacks across multiple instances
-        
+
         // For now, check against our in-memory registry
         // This would need to be replaced with Redis/database in production
         let intent_registry = self.intent_registry.read().await;
-        
+
         // Check if this jti has been used recently
         for intent in intent_registry.values() {
-            if let Some(used_jti) = intent.metadata.get("used_jti") {
-                if let Some(used_jti_str) = used_jti.as_str() {
-                    if used_jti_str == jti {
-                        return Err(McpError::Unauthorized(
-                            "DPoP proof replay attack detected".to_string()
-                        ));
-                    }
-                }
+            if let Some(used_jti) = intent.metadata.get("used_jti")
+                && let Some(used_jti_str) = used_jti.as_str()
+                && used_jti_str == jti
+            {
+                return Err(McpError::Unauthorized(
+                    "DPoP proof replay attack detected".to_string(),
+                ));
             }
         }
-        
+
         // Mark this jti as used (in production, this would go to Redis with TTL)
         tracing::debug!("DPoP jti {} used for {} {}", jti, http_method, http_uri);
-        
+
         Ok(())
     }
 }

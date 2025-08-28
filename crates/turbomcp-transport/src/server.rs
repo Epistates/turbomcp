@@ -15,11 +15,11 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument, warn};
 use uuid::Uuid;
 
-use turbomcp_protocol::{Error, Result};
 use turbomcp_protocol::{
-    CallToolRequest, CallToolResult, GetPromptRequest, GetPromptResult,
-    ReadResourceRequest, ReadResourceResult,
+    CallToolRequest, CallToolResult, GetPromptRequest, GetPromptResult, ReadResourceRequest,
+    ReadResourceResult,
 };
+use turbomcp_protocol::{Error, Result};
 
 /// Production-grade request context containing all necessary metadata and state
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,35 +125,39 @@ pub trait ToolHandler: Send + Sync + std::fmt::Debug {
     fn name(&self) -> &str {
         "unknown_tool"
     }
-    
+
     /// Get tool description and schema
     async fn get_schema(&self) -> Result<serde_json::Value> {
         Err(Error::not_found("Tool schema not implemented"))
     }
-    
+
     /// Execute tool with full context and error handling
     #[instrument(skip(self, request, context))]
-    async fn handle(&self, request: CallToolRequest, context: RequestContext) -> Result<CallToolResult> {
+    async fn handle(
+        &self,
+        request: CallToolRequest,
+        context: RequestContext,
+    ) -> Result<CallToolResult> {
         let _ = (request, context);
         Err(Error::not_found("Tool handler not implemented"))
     }
-    
+
     /// Check if tool is available for given context
     async fn is_available(&self, _context: &RequestContext) -> bool {
         // Default implementation - tools are available unless overridden
         true
     }
-    
+
     /// Get tool capabilities and metadata
     async fn get_capabilities(&self) -> ToolCapabilities {
         ToolCapabilities::default()
     }
-    
+
     /// Initialize tool handler
     async fn initialize(&self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Shutdown tool handler gracefully
     async fn shutdown(&self) -> Result<()> {
         Ok(())
@@ -236,29 +240,33 @@ pub trait PromptHandler: Send + Sync + std::fmt::Debug {
     fn name(&self) -> &str {
         "unknown_prompt"
     }
-    
+
     /// Get prompt schema and metadata
     async fn get_schema(&self) -> Result<serde_json::Value> {
         Err(Error::not_found("Prompt schema not implemented"))
     }
-    
+
     /// Execute prompt with full context
     #[instrument(skip(self, request, context))]
-    async fn handle(&self, request: GetPromptRequest, context: RequestContext) -> Result<GetPromptResult> {
+    async fn handle(
+        &self,
+        request: GetPromptRequest,
+        context: RequestContext,
+    ) -> Result<GetPromptResult> {
         let _ = (request, context);
         Err(Error::not_found("Prompt handler not implemented"))
     }
-    
+
     /// Check if prompt is available for given context
     async fn is_available(&self, _context: &RequestContext) -> bool {
         true
     }
-    
+
     /// Initialize prompt handler
     async fn initialize(&self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Shutdown prompt handler gracefully
     async fn shutdown(&self) -> Result<()> {
         Ok(())
@@ -273,31 +281,35 @@ pub trait ResourceHandler: Send + Sync + std::fmt::Debug {
         let _ = uri;
         false
     }
-    
+
     /// Read resource with full context and error handling
     #[instrument(skip(self, request, context))]
-    async fn handle(&self, request: ReadResourceRequest, context: RequestContext) -> Result<ReadResourceResult> {
+    async fn handle(
+        &self,
+        request: ReadResourceRequest,
+        context: RequestContext,
+    ) -> Result<ReadResourceResult> {
         let _ = (request, context);
         Err(Error::not_found("Resource handler not implemented"))
     }
-    
+
     /// List available resources matching pattern
     async fn list_resources(&self, pattern: Option<&str>) -> Result<Vec<ResourceInfo>> {
         let _ = pattern;
         Ok(Vec::new())
     }
-    
+
     /// Get resource metadata
     async fn get_metadata(&self, uri: &str) -> Result<ResourceMetadata> {
         let _ = uri;
         Err(Error::not_found("Resource metadata not implemented"))
     }
-    
+
     /// Initialize resource handler
     async fn initialize(&self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Shutdown resource handler gracefully
     async fn shutdown(&self) -> Result<()> {
         Ok(())
@@ -411,7 +423,7 @@ impl HandlerRegistry {
     pub fn new() -> Self {
         Self::with_config(RegistryConfig::default())
     }
-    
+
     /// Create new handler registry with custom configuration
     pub fn with_config(config: RegistryConfig) -> Self {
         let metadata = RegistryMetadata {
@@ -419,7 +431,7 @@ impl HandlerRegistry {
             version: env!("CARGO_PKG_VERSION").to_string(),
             config,
         };
-        
+
         Self {
             tools: Arc::new(RwLock::new(HashMap::new())),
             prompts: Arc::new(RwLock::new(HashMap::new())),
@@ -428,17 +440,17 @@ impl HandlerRegistry {
             state: Arc::new(RwLock::new(RegistryState::Initializing)),
         }
     }
-    
+
     /// Initialize registry and all handlers
     #[instrument(skip(self))]
     pub async fn initialize(&self) -> Result<()> {
         info!("Initializing handler registry");
-        
+
         {
             let mut state = self.state.write().await;
             *state = RegistryState::Initializing;
         }
-        
+
         // Initialize all tool handlers
         let tools = self.tools.read().await;
         for (name, handler) in tools.iter() {
@@ -448,7 +460,7 @@ impl HandlerRegistry {
                 return Err(e);
             }
         }
-        
+
         // Initialize all prompt handlers
         let prompts = self.prompts.read().await;
         for (name, handler) in prompts.iter() {
@@ -458,7 +470,7 @@ impl HandlerRegistry {
                 return Err(e);
             }
         }
-        
+
         // Initialize all resource handlers
         let resources = self.resources.read().await;
         for handler in resources.iter() {
@@ -468,26 +480,26 @@ impl HandlerRegistry {
                 return Err(e);
             }
         }
-        
+
         {
             let mut state = self.state.write().await;
             *state = RegistryState::Ready;
         }
-        
+
         info!("Handler registry initialized successfully");
         Ok(())
     }
-    
+
     /// Shutdown registry and all handlers gracefully
     #[instrument(skip(self))]
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down handler registry");
-        
+
         {
             let mut state = self.state.write().await;
             *state = RegistryState::ShuttingDown;
         }
-        
+
         // Shutdown all handlers in reverse order
         let resources = self.resources.read().await;
         for handler in resources.iter() {
@@ -495,82 +507,88 @@ impl HandlerRegistry {
                 warn!("Error shutting down resource handler: {}", e);
             }
         }
-        
+
         let prompts = self.prompts.read().await;
         for (name, handler) in prompts.iter() {
             if let Err(e) = handler.shutdown().await {
                 warn!("Error shutting down prompt handler {}: {}", name, e);
             }
         }
-        
+
         let tools = self.tools.read().await;
         for (name, handler) in tools.iter() {
             if let Err(e) = handler.shutdown().await {
                 warn!("Error shutting down tool handler {}: {}", name, e);
             }
         }
-        
+
         {
             let mut state = self.state.write().await;
             *state = RegistryState::Shutdown;
         }
-        
+
         info!("Handler registry shutdown complete");
         Ok(())
     }
-    
+
     /// Register a tool handler
     pub async fn register_tool(&self, handler: Arc<dyn ToolHandler>) -> Result<()> {
         let name = handler.name().to_string();
         debug!("Registering tool handler: {}", name);
-        
+
         let mut tools = self.tools.write().await;
         if tools.contains_key(&name) {
-            return Err(Error::validation(format!("Tool '{}' already registered", name)));
+            return Err(Error::validation(format!(
+                "Tool '{}' already registered",
+                name
+            )));
         }
-        
+
         tools.insert(name.clone(), handler);
         info!("Tool handler '{}' registered successfully", name);
         Ok(())
     }
-    
+
     /// Register a prompt handler
     pub async fn register_prompt(&self, handler: Arc<dyn PromptHandler>) -> Result<()> {
         let name = handler.name().to_string();
         debug!("Registering prompt handler: {}", name);
-        
+
         let mut prompts = self.prompts.write().await;
         if prompts.contains_key(&name) {
-            return Err(Error::validation(format!("Prompt '{}' already registered", name)));
+            return Err(Error::validation(format!(
+                "Prompt '{}' already registered",
+                name
+            )));
         }
-        
+
         prompts.insert(name.clone(), handler);
         info!("Prompt handler '{}' registered successfully", name);
         Ok(())
     }
-    
+
     /// Register a resource handler
     pub async fn register_resource(&self, handler: Arc<dyn ResourceHandler>) -> Result<()> {
         debug!("Registering resource handler");
-        
+
         let mut resources = self.resources.write().await;
         resources.push(handler);
         info!("Resource handler registered successfully");
         Ok(())
     }
-    
+
     /// Get tool handler by name
     pub async fn get_tool(&self, name: &str) -> Option<Arc<dyn ToolHandler>> {
         let tools = self.tools.read().await;
         tools.get(name).cloned()
     }
-    
+
     /// Get prompt handler by name
     pub async fn get_prompt(&self, name: &str) -> Option<Arc<dyn PromptHandler>> {
         let prompts = self.prompts.read().await;
         prompts.get(name).cloned()
     }
-    
+
     /// Get resource handler for URI
     pub async fn get_resource(&self, uri: &str) -> Option<Arc<dyn ResourceHandler>> {
         let resources = self.resources.read().await;
@@ -581,62 +599,62 @@ impl HandlerRegistry {
         }
         None
     }
-    
+
     /// Get all tool definitions for capability announcement
     pub async fn get_tool_definitions(&self) -> Result<Vec<serde_json::Value>> {
         let tools = self.tools.read().await;
         let mut definitions = Vec::new();
-        
+
         for handler in tools.values() {
             match handler.get_schema().await {
                 Ok(schema) => definitions.push(schema),
                 Err(e) => warn!("Failed to get schema for tool {}: {}", handler.name(), e),
             }
         }
-        
+
         Ok(definitions)
     }
-    
+
     /// Get all prompt definitions for capability announcement
     pub async fn get_prompt_definitions(&self) -> Result<Vec<serde_json::Value>> {
         let prompts = self.prompts.read().await;
         let mut definitions = Vec::new();
-        
+
         for handler in prompts.values() {
             match handler.get_schema().await {
                 Ok(schema) => definitions.push(schema),
                 Err(e) => warn!("Failed to get schema for prompt {}: {}", handler.name(), e),
             }
         }
-        
+
         Ok(definitions)
     }
-    
+
     /// Get all resource definitions for capability announcement
     pub async fn get_resource_definitions(&self) -> Result<Vec<ResourceInfo>> {
         let resources = self.resources.read().await;
         let mut definitions = Vec::new();
-        
+
         for handler in resources.iter() {
             match handler.list_resources(None).await {
                 Ok(mut resources) => definitions.append(&mut resources),
                 Err(e) => warn!("Failed to list resources from handler: {}", e),
             }
         }
-        
+
         Ok(definitions)
     }
-    
+
     /// Get registry state
     pub async fn get_state(&self) -> RegistryState {
         self.state.read().await.clone()
     }
-    
+
     /// Check if registry is ready
     pub async fn is_ready(&self) -> bool {
         matches!(*self.state.read().await, RegistryState::Ready)
     }
-    
+
     /// Get registry metadata and configuration
     #[must_use]
     pub fn metadata(&self) -> &RegistryMetadata {
@@ -665,13 +683,9 @@ impl RequestContext {
             security_context: SecurityContext::public(),
         }
     }
-    
+
     /// Create request context with full information
-    pub fn with_auth(
-        request_id: String,
-        session_id: String,
-        auth_context: AuthContext,
-    ) -> Self {
+    pub fn with_auth(request_id: String, session_id: String, auth_context: AuthContext) -> Self {
         Self {
             request_id,
             session_id,
@@ -684,14 +698,14 @@ impl RequestContext {
             security_context: SecurityContext::authenticated(),
         }
     }
-    
+
     /// Check if user has required permission
     pub fn has_permission(&self, _permission: &str) -> bool {
         if let Some(auth) = &self.auth_context {
             // Check if user has the specific permission
             // In a real implementation, this would check against a permission system
-            auth.roles.contains(&"admin".to_string()) || 
-            self.security_context.required_permissions.is_empty()
+            auth.roles.contains(&"admin".to_string())
+                || self.security_context.required_permissions.is_empty()
         } else {
             // No authentication - check if this is a public resource
             matches!(self.security_context.security_level, SecurityLevel::Public)
@@ -709,7 +723,7 @@ impl TraceContext {
             baggage: HashMap::new(),
         }
     }
-    
+
     /// Create child trace context
     pub fn child(&self) -> Self {
         Self {
@@ -731,7 +745,7 @@ impl SecurityContext {
             rate_limit_info: None,
         }
     }
-    
+
     /// Create authenticated security context
     pub fn authenticated() -> Self {
         Self {
@@ -741,7 +755,7 @@ impl SecurityContext {
             rate_limit_info: None,
         }
     }
-    
+
     /// Create authorized security context
     pub fn authorized(permissions: Vec<String>) -> Self {
         Self {

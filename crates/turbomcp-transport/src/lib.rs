@@ -120,9 +120,9 @@ pub use tower::{SessionInfo, SessionManager, TowerTransportAdapter};
 // Re-export server features
 #[cfg(feature = "server")]
 pub use server::{
-    AuthContext, HandlerRegistry, PromptHandler, RequestContext, ResourceHandler, 
-    ResourceInfo, ResourceMetadata, SecurityContext, SecurityLevel, ToolCapabilities,
-    ToolHandler, TraceContext, TokenInfo
+    AuthContext, HandlerRegistry, PromptHandler, RequestContext, ResourceHandler, ResourceInfo,
+    ResourceMetadata, SecurityContext, SecurityLevel, TokenInfo, ToolCapabilities, ToolHandler,
+    TraceContext,
 };
 
 // Re-export Axum integration

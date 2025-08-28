@@ -87,18 +87,19 @@ impl DpopTransportExt for TransportMessage {
 
         // Return validation result indicating proof is structurally valid
         // Application layer should perform cryptographic validation
-        let thumbprint = proof.thumbprint()
-            .map_err(|e| TransportError::AuthenticationFailed(format!("Failed to compute JWK thumbprint: {}", e)))?;
-            
+        let thumbprint = proof.thumbprint().map_err(|e| {
+            TransportError::AuthenticationFailed(format!("Failed to compute JWK thumbprint: {}", e))
+        })?;
+
         Ok(Some(DpopValidationResult {
             valid: true,
             thumbprint,
             key_algorithm: proof.header.algorithm,
             issued_at: SystemTime::UNIX_EPOCH + Duration::from_secs(proof.payload.iat as u64),
-            expires_at: SystemTime::UNIX_EPOCH + Duration::from_secs(proof.payload.iat as u64 + 300), // 5 min default
+            expires_at: SystemTime::UNIX_EPOCH
+                + Duration::from_secs(proof.payload.iat as u64 + 300), // 5 min default
         }))
     }
-
 }
 
 /// Parse DPoP header value into DPoP proof structure

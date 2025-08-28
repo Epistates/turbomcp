@@ -18,14 +18,10 @@ use uuid::Uuid;
 
 // Server features integration with production-grade architecture
 #[cfg(feature = "server")]
-use crate::server::{
-    HandlerRegistry, RequestContext,
-};
+use crate::server::{HandlerRegistry, RequestContext};
 
 #[cfg(feature = "server")]
-use turbomcp_protocol::{
-    CallToolRequest, GetPromptRequest, ReadResourceRequest,
-};
+use turbomcp_protocol::{CallToolRequest, GetPromptRequest, ReadResourceRequest};
 
 use crate::core::{
     Transport, TransportCapabilities, TransportError, TransportEventEmitter, TransportMessage,
@@ -292,7 +288,7 @@ impl TowerTransportAdapter {
             handler_registry: None,
         }
     }
-    
+
     /// Set handler registry for dependency injection
     #[cfg(feature = "server")]
     pub fn with_handler_registry(mut self, registry: Arc<HandlerRegistry>) -> Self {
@@ -386,19 +382,19 @@ impl TowerTransportAdapter {
         // Production-grade Tower service integration with MCP protocol handling
         let response_payload = match self.process_mcp_request(&json_value, session_info).await {
             Ok(result) => serde_json::json!({
-                "jsonrpc": "2.0", 
+                "jsonrpc": "2.0",
                 "id": json_value.get("id").unwrap_or(&serde_json::Value::Null).clone(),
                 "result": result
             }),
             Err(error) => serde_json::json!({
                 "jsonrpc": "2.0",
-                "id": json_value.get("id").unwrap_or(&serde_json::Value::Null).clone(), 
+                "id": json_value.get("id").unwrap_or(&serde_json::Value::Null).clone(),
                 "error": {
                     "code": -32000,
                     "message": error.to_string(),
                     "data": serde_json::Value::Null
                 }
-            })
+            }),
         };
 
         // Debug echo is now only for unrecognized non-MCP messages
@@ -439,9 +435,15 @@ impl TowerTransportAdapter {
             .and_then(|m| m.as_str())
             .unwrap_or_default();
 
-        let params = request.get("params").cloned().unwrap_or(serde_json::Value::Null);
-        
-        trace!("Processing MCP request: method={}, session={}", method, session_info.id);
+        let params = request
+            .get("params")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+
+        trace!(
+            "Processing MCP request: method={}, session={}",
+            method, session_info.id
+        );
 
         match method {
             // MCP Core Protocol
@@ -469,19 +471,23 @@ impl TowerTransportAdapter {
                 trace!("Handling ping request");
                 Ok(serde_json::json!({}))
             }
-            
+
             // Tools
             "tools/list" => {
                 debug!("Handling tools/list request");
                 self.list_available_tools().await
             }
             "tools/call" => {
-                let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                let tool_name = params
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("unknown");
                 info!("Tool call request: {}", tool_name);
-                
-                self.handle_tool_call(tool_name, &params, session_info).await
+
+                self.handle_tool_call(tool_name, &params, session_info)
+                    .await
             }
-            
+
             // Resources
             "resources/list" => {
                 debug!("Handling resources/list request");
@@ -490,29 +496,36 @@ impl TowerTransportAdapter {
             "resources/read" => {
                 let uri = params.get("uri").and_then(|u| u.as_str()).unwrap_or("");
                 info!("Resource read request: {}", uri);
-                
+
                 self.handle_resource_read(uri, session_info).await
             }
-            
+
             // Prompts
             "prompts/list" => {
                 debug!("Handling prompts/list request");
                 self.list_available_prompts().await
             }
             "prompts/get" => {
-                let prompt_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("unknown");
+                let prompt_name = params
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("unknown");
                 info!("Prompt get request: {}", prompt_name);
-                
-                self.handle_prompt_get(prompt_name, &params, session_info).await
+
+                self.handle_prompt_get(prompt_name, &params, session_info)
+                    .await
             }
-            
+
             // Logging
             "logging/setLevel" => {
-                let level = params.get("level").and_then(|l| l.as_str()).unwrap_or("info");
+                let level = params
+                    .get("level")
+                    .and_then(|l| l.as_str())
+                    .unwrap_or("info");
                 info!("Logging level set to: {}", level);
                 Ok(serde_json::Value::Null)
             }
-            
+
             // Completion
             "completion/complete" => {
                 debug!("Handling completion request");
@@ -524,12 +537,13 @@ impl TowerTransportAdapter {
                     }
                 }))
             }
-            
+
             // Unknown method
             _ => {
                 warn!("Unknown MCP method: {}", method);
                 Err(TransportError::ProtocolError(format!(
-                    "Unknown method: {}", method
+                    "Unknown method: {}",
+                    method
                 )))
             }
         }
@@ -546,35 +560,48 @@ impl TowerTransportAdapter {
         if let Some(registry) = &self.handler_registry {
             if let Some(handler) = registry.get_tool(tool_name).await {
                 // Convert parameters to proper request format
-                let arguments = params.get("arguments").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
-                
+                let arguments = params
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Object(Default::default()));
+
                 let request = CallToolRequest {
                     name: tool_name.to_string(),
                     arguments: if let serde_json::Value::Object(map) = arguments {
-                        Some(map.into_iter().collect::<HashMap<String, serde_json::Value>>())
+                        Some(
+                            map.into_iter()
+                                .collect::<HashMap<String, serde_json::Value>>(),
+                        )
                     } else {
                         None
                     },
                 };
-                
+
                 // Create production-grade request context
-                let ctx = RequestContext::new(
-                    Uuid::new_v4().to_string(),
-                    session_info.id.clone(),
-                );
-                
+                let ctx = RequestContext::new(Uuid::new_v4().to_string(), session_info.id.clone());
+
                 match handler.handle(request, ctx).await {
-                    Ok(result) => Ok(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
-                    Err(e) => Err(TransportError::ProtocolError(format!("Tool execution failed: {}", e))),
+                    Ok(result) => {
+                        Ok(serde_json::to_value(result).unwrap_or(serde_json::Value::Null))
+                    }
+                    Err(e) => Err(TransportError::ProtocolError(format!(
+                        "Tool execution failed: {}",
+                        e
+                    ))),
                 }
             } else {
-                Err(TransportError::ProtocolError(format!("Tool '{}' not found", tool_name)))
+                Err(TransportError::ProtocolError(format!(
+                    "Tool '{}' not found",
+                    tool_name
+                )))
             }
         } else {
-            Err(TransportError::ProtocolError("No handler registry configured".to_string()))
+            Err(TransportError::ProtocolError(
+                "No handler registry configured".to_string(),
+            ))
         }
     }
-    
+
     /// Handle tool call requests when server feature is disabled
     #[cfg(not(feature = "server"))]
     async fn handle_tool_call(
@@ -584,10 +611,11 @@ impl TowerTransportAdapter {
         _session_info: &SessionInfo,
     ) -> TransportResult<serde_json::Value> {
         Err(TransportError::ProtocolError(format!(
-            "Tool '{}' not found - server feature not enabled", tool_name
+            "Tool '{}' not found - server feature not enabled",
+            tool_name
         )))
     }
-    
+
     /// Handle resource read requests through registered handlers
     #[cfg(feature = "server")]
     async fn handle_resource_read(
@@ -601,25 +629,34 @@ impl TowerTransportAdapter {
                 let request = ReadResourceRequest {
                     uri: uri.to_string(),
                 };
-                
+
                 // Create production-grade request context
-                let ctx = RequestContext::new(
-                    Uuid::new_v4().to_string(),
-                    session_info.id.clone(),
-                );
-                
+                let ctx = RequestContext::new(Uuid::new_v4().to_string(), session_info.id.clone());
+
                 match handler.handle(request, ctx).await {
-                    Ok(result) => return Ok(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
-                    Err(e) => return Err(TransportError::ProtocolError(format!("Resource read failed: {}", e))),
+                    Ok(result) => {
+                        return Ok(serde_json::to_value(result).unwrap_or(serde_json::Value::Null));
+                    }
+                    Err(e) => {
+                        return Err(TransportError::ProtocolError(format!(
+                            "Resource read failed: {}",
+                            e
+                        )));
+                    }
                 }
             }
-            
-            Err(TransportError::ProtocolError(format!("Resource '{}' not found", uri)))
+
+            Err(TransportError::ProtocolError(format!(
+                "Resource '{}' not found",
+                uri
+            )))
         } else {
-            Err(TransportError::ProtocolError("No handler registry configured".to_string()))
+            Err(TransportError::ProtocolError(
+                "No handler registry configured".to_string(),
+            ))
         }
     }
-    
+
     /// Handle resource read requests when server feature is disabled
     #[cfg(not(feature = "server"))]
     async fn handle_resource_read(
@@ -628,10 +665,11 @@ impl TowerTransportAdapter {
         _session_info: &SessionInfo,
     ) -> TransportResult<serde_json::Value> {
         Err(TransportError::ProtocolError(format!(
-            "Resource '{}' not found - server feature not enabled", uri
+            "Resource '{}' not found - server feature not enabled",
+            uri
         )))
     }
-    
+
     /// Handle prompt get requests through registered handlers
     #[cfg(feature = "server")]
     async fn handle_prompt_get(
@@ -642,35 +680,48 @@ impl TowerTransportAdapter {
     ) -> TransportResult<serde_json::Value> {
         if let Some(registry) = &self.handler_registry {
             if let Some(handler) = registry.get_prompt(prompt_name).await {
-                let arguments = params.get("arguments").cloned().unwrap_or(serde_json::Value::Object(Default::default()));
-                
+                let arguments = params
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Object(Default::default()));
+
                 let request = GetPromptRequest {
                     name: prompt_name.to_string(),
                     arguments: if let serde_json::Value::Object(map) = arguments {
-                        Some(map.into_iter().collect::<HashMap<String, serde_json::Value>>())
+                        Some(
+                            map.into_iter()
+                                .collect::<HashMap<String, serde_json::Value>>(),
+                        )
                     } else {
                         None
                     },
                 };
-                
+
                 // Create production-grade request context
-                let ctx = RequestContext::new(
-                    Uuid::new_v4().to_string(),
-                    session_info.id.clone(),
-                );
-                
+                let ctx = RequestContext::new(Uuid::new_v4().to_string(), session_info.id.clone());
+
                 match handler.handle(request, ctx).await {
-                    Ok(result) => Ok(serde_json::to_value(result).unwrap_or(serde_json::Value::Null)),
-                    Err(e) => Err(TransportError::ProtocolError(format!("Prompt execution failed: {}", e))),
+                    Ok(result) => {
+                        Ok(serde_json::to_value(result).unwrap_or(serde_json::Value::Null))
+                    }
+                    Err(e) => Err(TransportError::ProtocolError(format!(
+                        "Prompt execution failed: {}",
+                        e
+                    ))),
                 }
             } else {
-                Err(TransportError::ProtocolError(format!("Prompt '{}' not found", prompt_name)))
+                Err(TransportError::ProtocolError(format!(
+                    "Prompt '{}' not found",
+                    prompt_name
+                )))
             }
         } else {
-            Err(TransportError::ProtocolError("No handler registry configured".to_string()))
+            Err(TransportError::ProtocolError(
+                "No handler registry configured".to_string(),
+            ))
         }
     }
-    
+
     /// Handle prompt get requests when server feature is disabled
     #[cfg(not(feature = "server"))]
     async fn handle_prompt_get(
@@ -680,7 +731,8 @@ impl TowerTransportAdapter {
         _session_info: &SessionInfo,
     ) -> TransportResult<serde_json::Value> {
         Err(TransportError::ProtocolError(format!(
-            "Prompt '{}' not found - server feature not enabled", prompt_name
+            "Prompt '{}' not found - server feature not enabled",
+            prompt_name
         )))
     }
 
@@ -698,7 +750,7 @@ impl TowerTransportAdapter {
             }))
         }
     }
-    
+
     /// List available tools when server feature is disabled
     #[cfg(not(feature = "server"))]
     async fn list_available_tools(&self) -> TransportResult<serde_json::Value> {
@@ -706,7 +758,7 @@ impl TowerTransportAdapter {
             "tools": []
         }))
     }
-    
+
     /// List available resources from the handler registry
     #[cfg(feature = "server")]
     async fn list_available_resources(&self) -> TransportResult<serde_json::Value> {
@@ -721,7 +773,7 @@ impl TowerTransportAdapter {
             }))
         }
     }
-    
+
     /// List available resources when server feature is disabled  
     #[cfg(not(feature = "server"))]
     async fn list_available_resources(&self) -> TransportResult<serde_json::Value> {
@@ -729,7 +781,7 @@ impl TowerTransportAdapter {
             "resources": []
         }))
     }
-    
+
     /// List available prompts from the handler registry
     #[cfg(feature = "server")]
     async fn list_available_prompts(&self) -> TransportResult<serde_json::Value> {
@@ -744,7 +796,7 @@ impl TowerTransportAdapter {
             }))
         }
     }
-    
+
     /// List available prompts when server feature is disabled
     #[cfg(not(feature = "server"))]
     async fn list_available_prompts(&self) -> TransportResult<serde_json::Value> {

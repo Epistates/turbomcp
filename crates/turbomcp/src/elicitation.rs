@@ -454,7 +454,7 @@ impl ElicitationManager {
             client_transport: None,
         }
     }
-    
+
     /// Set the client transport for production MCP client integration
     pub fn with_client_transport(mut self, transport: std::sync::Arc<dyn ClientTransport>) -> Self {
         self.client_transport = Some(transport);

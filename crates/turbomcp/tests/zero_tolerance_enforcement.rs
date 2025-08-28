@@ -160,10 +160,9 @@ fn scan_file(path: &Path) -> FileViolations {
                         | "schemars::schema_for!"
                         | "generate_schema:<"
                         | "fn test_"
-                ) {
-                    if !is_test {
-                        continue; // Skip test-only patterns for non-test files
-                    }
+                ) && !is_test
+                {
+                    continue; // Skip test-only patterns for non-test files
                 }
 
                 // Special handling for legitimate patterns

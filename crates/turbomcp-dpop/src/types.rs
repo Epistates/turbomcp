@@ -374,15 +374,15 @@ impl DpopProof {
     /// This method leverages the battle-tested jsonwebtoken crate for complete JWT parsing
     /// and cryptographic signature verification using the embedded JWK. This implementation
     /// follows RFC 9449 security requirements and validates signatures before processing claims.
-    /// 
+    ///
     /// Requires the `jwt-validation` feature to be enabled.
     #[cfg(feature = "jwt-validation")]
     pub fn from_jwt_string(jwt: &str) -> crate::Result<Self> {
-        use jsonwebtoken::{decode_header, decode, Validation, Algorithm};
-        
+        use jsonwebtoken::{decode, decode_header, Algorithm, Validation};
+
         // Use jsonwebtoken crate to decode header (no validation yet)
-        let jwt_header = decode_header(jwt)
-            .map_err(|e| crate::DpopError::InvalidProofStructure {
+        let jwt_header =
+            decode_header(jwt).map_err(|e| crate::DpopError::InvalidProofStructure {
                 reason: format!("Failed to decode JWT header: {}", e),
             })?;
 
@@ -410,21 +410,24 @@ impl DpopProof {
         };
 
         // Extract JWK from header - convert from jsonwebtoken::Jwk to our DpopJwk
-        let jwk_value = jwt_header.jwk
+        let jwk_value = jwt_header
+            .jwk
             .ok_or_else(|| crate::DpopError::InvalidProofStructure {
                 reason: "Missing JWK in DPoP proof header".to_string(),
             })?;
 
         // Convert jsonwebtoken::Jwk to serde_json::Value first, then to our DpopJwk
-        let jwk_json = serde_json::to_value(&jwk_value)
-            .map_err(|e| crate::DpopError::InvalidProofStructure {
+        let jwk_json = serde_json::to_value(&jwk_value).map_err(|e| {
+            crate::DpopError::InvalidProofStructure {
                 reason: format!("Failed to serialize JWK: {}", e),
-            })?;
+            }
+        })?;
 
-        let jwk: DpopJwk = serde_json::from_value(jwk_json)
-            .map_err(|e| crate::DpopError::InvalidProofStructure {
+        let jwk: DpopJwk = serde_json::from_value(jwk_json).map_err(|e| {
+            crate::DpopError::InvalidProofStructure {
                 reason: format!("Invalid JWK in header: {}", e),
-            })?;
+            }
+        })?;
 
         let header = DpopHeader {
             typ: crate::DPOP_JWT_TYPE.to_string(),
@@ -433,19 +436,21 @@ impl DpopProof {
         };
 
         // CRITICAL SECURITY: Create proper DecodingKey from embedded JWK for signature validation
-        let decoding_key = create_decoding_key_from_jwk(&header.jwk)
-            .map_err(|e| crate::DpopError::CryptographicError {
+        let decoding_key = create_decoding_key_from_jwk(&header.jwk).map_err(|e| {
+            crate::DpopError::CryptographicError {
                 reason: format!("Failed to create decoding key from JWK: {}", e),
-            })?;
+            }
+        })?;
 
         // Use proper validation with signature verification enabled (RFC 9449 requirement)
         let validation = Validation::new(jwt_header.alg);
-        
+
         // Decode and validate JWT signature using the embedded public key
-        let token_data = decode::<DpopPayload>(jwt, &decoding_key, &validation)
-            .map_err(|e| crate::DpopError::ProofValidationFailed {
+        let token_data = decode::<DpopPayload>(jwt, &decoding_key, &validation).map_err(|e| {
+            crate::DpopError::ProofValidationFailed {
                 reason: format!("JWT signature validation failed: {}", e),
-            })?;
+            }
+        })?;
 
         let payload = token_data.claims;
 
@@ -459,7 +464,12 @@ impl DpopProof {
         let signature = parts[2].to_string();
 
         // Create proof with cached JWT string for performance
-        Ok(Self::new_with_jwt(header, payload, signature, jwt.to_string()))
+        Ok(Self::new_with_jwt(
+            header,
+            payload,
+            signature,
+            jwt.to_string(),
+        ))
     }
 
     /// Get the JWK thumbprint from this proof
@@ -573,7 +583,9 @@ fn is_valid_http_uri(uri: &str) -> bool {
 /// with the jsonwebtoken crate for signature verification. This is critical
 /// for proper DPoP security as per RFC 9449 requirements.
 #[cfg(feature = "jwt-validation")]
-fn create_decoding_key_from_jwk(jwk: &DpopJwk) -> Result<jsonwebtoken::DecodingKey, Box<dyn std::error::Error>> {
+fn create_decoding_key_from_jwk(
+    jwk: &DpopJwk,
+) -> Result<jsonwebtoken::DecodingKey, Box<dyn std::error::Error>> {
     use jsonwebtoken::DecodingKey;
 
     match jwk {
@@ -624,7 +636,7 @@ impl Default for StorageStats {
 }
 
 /// Trait for DPoP nonce storage backends
-/// 
+///
 /// This trait defines the interface for storing and managing DPoP nonces to prevent replay attacks.
 /// Implementations should ensure thread-safety and efficient concurrent access.
 #[async_trait::async_trait]

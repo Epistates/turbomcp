@@ -466,7 +466,8 @@ impl ContextFactory {
 
                 // Update context with new request data using production context reset logic
                 let mut updated_context = pooled.context;
-                self.reset_context_for_reuse(&mut updated_context, &request_context).await?;
+                self.reset_context_for_reuse(&mut updated_context, &request_context)
+                    .await?;
                 debug!("Reused pooled context with updated request data");
                 return Ok(updated_context);
             } else if self.config.enable_metrics {
@@ -537,7 +538,7 @@ impl ContextFactory {
     pub fn config(&self) -> &ContextFactoryConfig {
         &self.config
     }
-    
+
     /// Reset context for reuse with new request data
     async fn reset_context_for_reuse(
         &self,
@@ -547,19 +548,19 @@ impl ContextFactory {
         // Update request-specific data while preserving container and handler metadata
         let handler_metadata = context.handler.clone();
         let container = context.container.clone();
-        
+
         // Create new context with updated request data
-        *context = Context::with_container(new_request_context.clone(), handler_metadata, container);
-        
+        *context =
+            Context::with_container(new_request_context.clone(), handler_metadata, container);
+
         // Clear any request-specific cached state
         debug!("Reset logging context for request reuse");
-        
+
         debug!(
             "Reset context for reuse: request_id={}, handler={}",
-            new_request_context.request_id,
-            context.handler.name
+            new_request_context.request_id, context.handler.name
         );
-        
+
         Ok(())
     }
 }

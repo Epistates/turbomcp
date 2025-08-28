@@ -313,7 +313,7 @@ impl ConnectionPool {
         use crate::core::TransportRegistry;
 
         let _registry = TransportRegistry::new();
-        
+
         // Production-grade transport factory implementation
         // Create appropriate transport based on configuration
         match config.transport_type {
@@ -321,32 +321,34 @@ impl ConnectionPool {
             crate::TransportType::Stdio => {
                 let transport = crate::stdio::StdioTransport::new();
                 Ok(Box::new(transport))
-            },
+            }
             #[cfg(feature = "tcp")]
             crate::TransportType::Tcp => {
                 let bind_addr = "127.0.0.1:8000".parse().unwrap();
                 let remote_addr = "127.0.0.1:8001".parse().unwrap();
                 let transport = crate::tcp::TcpTransport::new_client(bind_addr, remote_addr);
                 Ok(Box::new(transport))
-            },
-            #[cfg(feature = "http")]  
+            }
+            #[cfg(feature = "http")]
             crate::TransportType::Http => {
                 // HTTP transport would be created here in production
-                Err(TransportError::NotAvailable("HTTP transport not available in connection pool".to_string()))
-            },
+                Err(TransportError::NotAvailable(
+                    "HTTP transport not available in connection pool".to_string(),
+                ))
+            }
             #[cfg(feature = "websocket")]
             crate::TransportType::WebSocket => {
                 let endpoint = "ws://localhost:8000/mcp"; // Default WebSocket endpoint
                 let transport = crate::websocket::WebSocketTransport::new(endpoint).await?;
                 Ok(Box::new(transport))
-            },
+            }
             #[cfg(feature = "unix")]
             crate::TransportType::Unix => {
                 use std::path::PathBuf;
                 let socket_path = PathBuf::from("/tmp/mcp.sock");
                 let transport = crate::unix::UnixTransport::new_client(socket_path);
                 Ok(Box::new(transport))
-            },
+            }
             _ => {
                 // Check registry for custom factory implementations (feature not implemented)
                 // registry.get_factory(&config.transport_type) would be used here
@@ -475,7 +477,7 @@ impl Drop for BorrowedConnection {
         // Production-grade connection cleanup on drop
         // The connection pool would handle return logic in a real implementation
         trace!("BorrowedConnection {} dropped", self.id);
-        
+
         // Connection is automatically cleaned up when transport is dropped
         // Pool statistics would be updated here in a full implementation
     }

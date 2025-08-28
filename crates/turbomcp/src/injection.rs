@@ -15,7 +15,7 @@ use crate::{Context, McpResult};
 
 // Database imports (conditional on feature)
 #[cfg(feature = "database")]
-use sqlx::{Row, Column, TypeInfo};
+use sqlx::{Column, Row, TypeInfo};
 
 /// Trait for types that can be injected into handler contexts
 #[async_trait]
@@ -222,7 +222,7 @@ impl Database {
     /// Create a new database instance from connection string
     pub async fn new(connection_string: &str) -> McpResult<Self> {
         use sqlx::postgres::PgPoolOptions;
-        
+
         let pool = PgPoolOptions::new()
             .max_connections(20)
             .min_connections(5)
@@ -232,21 +232,21 @@ impl Database {
             .connect(connection_string)
             .await
             .map_err(|e| crate::McpError::Tool(format!("Database connection failed: {}", e)))?;
-            
+
         // Test connection
         sqlx::query("SELECT 1")
             .execute(&pool)
             .await
             .map_err(|e| crate::McpError::Tool(format!("Database health check failed: {}", e)))?;
-            
+
         tracing::info!("Database connection pool established successfully");
-        
+
         Ok(Self {
             pool: std::sync::Arc::new(pool),
             connection_string: connection_string.to_string(),
         })
     }
-    
+
     /// Execute a SELECT query and return strongly-typed results
     pub async fn query<T>(&self, sql: &str) -> McpResult<Vec<T>>
     where
@@ -260,100 +260,137 @@ impl Database {
         let sql_lower = sql.trim().to_lowercase();
         if !sql_lower.starts_with("select") {
             return Err(crate::McpError::InvalidInput(
-                "Only SELECT statements allowed in query() method. Use execute() for DML.".to_string(),
+                "Only SELECT statements allowed in query() method. Use execute() for DML."
+                    .to_string(),
             ));
         }
 
         tracing::debug!("Executing SQL query: {}", sql);
-        
+
         let start = std::time::Instant::now();
-        
+
         // Execute query and fetch results as JSON
         let rows = sqlx::query(sql)
             .fetch_all(&*self.pool)
             .await
             .map_err(|e| crate::McpError::Tool(format!("Query execution failed: {}", e)))?;
-            
+
         let duration = start.elapsed();
         tracing::info!(
-            "Query executed in {}ms against: {}", 
+            "Query executed in {}ms against: {}",
             duration.as_millis(),
-            self.connection_string.split('@').nth(1).unwrap_or("[hidden]")
+            self.connection_string
+                .split('@')
+                .nth(1)
+                .unwrap_or("[hidden]")
         );
-        
+
         // Convert rows to JSON values, then deserialize to target type
         let mut results = Vec::new();
-        
+
         for row in rows {
             // Convert PostgreSQL row to JSON value
             let mut json_obj = serde_json::Map::new();
-            
+
             for (i, column) in row.columns().iter().enumerate() {
                 let column_name = column.name();
-                
+
                 // Handle different PostgreSQL types and convert to JSON
                 let json_value = match column.type_info().name() {
-                    "TEXT" | "VARCHAR" | "CHAR" => {
-                        row.try_get::<Option<String>, _>(i)
-                            .map_err(|e| crate::McpError::Tool(format!("Column '{}' conversion failed: {}", column_name, e)))?
-                            .map(serde_json::Value::String)
-                            .unwrap_or(serde_json::Value::Null)
-                    }
-                    "INT4" | "INT8" | "SERIAL" | "BIGSERIAL" => {
-                        row.try_get::<Option<i64>, _>(i)
-                            .map_err(|e| crate::McpError::Tool(format!("Column '{}' conversion failed: {}", column_name, e)))?
-                            .map(|n| serde_json::Value::Number(serde_json::Number::from(n)))
-                            .unwrap_or(serde_json::Value::Null)
-                    }
-                    "BOOL" => {
-                        row.try_get::<Option<bool>, _>(i)
-                            .map_err(|e| crate::McpError::Tool(format!("Column '{}' conversion failed: {}", column_name, e)))?
-                            .map(serde_json::Value::Bool)
-                            .unwrap_or(serde_json::Value::Null)
-                    }
-                    "TIMESTAMPTZ" | "TIMESTAMP" => {
-                        row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i)
-                            .map_err(|e| crate::McpError::Tool(format!("Column '{}' conversion failed: {}", column_name, e)))?
-                            .map(|dt| serde_json::Value::String(dt.to_rfc3339()))
-                            .unwrap_or(serde_json::Value::Null)
-                    }
-                    "UUID" => {
-                        row.try_get::<Option<uuid::Uuid>, _>(i)
-                            .map_err(|e| crate::McpError::Tool(format!("Column '{}' conversion failed: {}", column_name, e)))?
-                            .map(|u| serde_json::Value::String(u.to_string()))
-                            .unwrap_or(serde_json::Value::Null)
-                    }
-                    "JSONB" | "JSON" => {
-                        row.try_get::<Option<serde_json::Value>, _>(i)
-                            .map_err(|e| crate::McpError::Tool(format!("Column '{}' conversion failed: {}", column_name, e)))?
-                            .unwrap_or(serde_json::Value::Null)
-                    }
+                    "TEXT" | "VARCHAR" | "CHAR" => row
+                        .try_get::<Option<String>, _>(i)
+                        .map_err(|e| {
+                            crate::McpError::Tool(format!(
+                                "Column '{}' conversion failed: {}",
+                                column_name, e
+                            ))
+                        })?
+                        .map(serde_json::Value::String)
+                        .unwrap_or(serde_json::Value::Null),
+                    "INT4" | "INT8" | "SERIAL" | "BIGSERIAL" => row
+                        .try_get::<Option<i64>, _>(i)
+                        .map_err(|e| {
+                            crate::McpError::Tool(format!(
+                                "Column '{}' conversion failed: {}",
+                                column_name, e
+                            ))
+                        })?
+                        .map(|n| serde_json::Value::Number(serde_json::Number::from(n)))
+                        .unwrap_or(serde_json::Value::Null),
+                    "BOOL" => row
+                        .try_get::<Option<bool>, _>(i)
+                        .map_err(|e| {
+                            crate::McpError::Tool(format!(
+                                "Column '{}' conversion failed: {}",
+                                column_name, e
+                            ))
+                        })?
+                        .map(serde_json::Value::Bool)
+                        .unwrap_or(serde_json::Value::Null),
+                    "TIMESTAMPTZ" | "TIMESTAMP" => row
+                        .try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(i)
+                        .map_err(|e| {
+                            crate::McpError::Tool(format!(
+                                "Column '{}' conversion failed: {}",
+                                column_name, e
+                            ))
+                        })?
+                        .map(|dt| serde_json::Value::String(dt.to_rfc3339()))
+                        .unwrap_or(serde_json::Value::Null),
+                    "UUID" => row
+                        .try_get::<Option<uuid::Uuid>, _>(i)
+                        .map_err(|e| {
+                            crate::McpError::Tool(format!(
+                                "Column '{}' conversion failed: {}",
+                                column_name, e
+                            ))
+                        })?
+                        .map(|u| serde_json::Value::String(u.to_string()))
+                        .unwrap_or(serde_json::Value::Null),
+                    "JSONB" | "JSON" => row
+                        .try_get::<Option<serde_json::Value>, _>(i)
+                        .map_err(|e| {
+                            crate::McpError::Tool(format!(
+                                "Column '{}' conversion failed: {}",
+                                column_name, e
+                            ))
+                        })?
+                        .unwrap_or(serde_json::Value::Null),
                     _ => {
                         // For unknown types, try to get as string
                         row.try_get::<Option<String>, _>(i)
-                            .map_err(|e| crate::McpError::Tool(format!("Column '{}' conversion failed: {}", column_name, e)))?
+                            .map_err(|e| {
+                                crate::McpError::Tool(format!(
+                                    "Column '{}' conversion failed: {}",
+                                    column_name, e
+                                ))
+                            })?
                             .map(serde_json::Value::String)
                             .unwrap_or(serde_json::Value::Null)
                     }
                 };
-                
+
                 json_obj.insert(column_name.to_string(), json_value);
             }
-            
+
             // Deserialize JSON object to target type
-            let result: T = serde_json::from_value(serde_json::Value::Object(json_obj))
-                .map_err(|e| crate::McpError::Tool(format!("Result deserialization failed: {}", e)))?;
-                
+            let result: T =
+                serde_json::from_value(serde_json::Value::Object(json_obj)).map_err(|e| {
+                    crate::McpError::Tool(format!("Result deserialization failed: {}", e))
+                })?;
+
             results.push(result);
         }
-        
+
         Ok(results)
     }
-    
+
     /// Execute DML statements (INSERT, UPDATE, DELETE)
     pub async fn execute(&self, sql: &str) -> McpResult<u64> {
         if sql.trim().is_empty() {
-            return Err(crate::McpError::InvalidInput("Empty SQL statement".to_string()));
+            return Err(crate::McpError::InvalidInput(
+                "Empty SQL statement".to_string(),
+            ));
         }
 
         let sql_lower = sql.trim().to_lowercase();
@@ -364,31 +401,31 @@ impl Database {
         }
 
         tracing::debug!("Executing SQL statement: {}", sql);
-        
+
         let start = std::time::Instant::now();
-        
+
         let result = sqlx::query(sql)
             .execute(&*self.pool)
             .await
             .map_err(|e| crate::McpError::Tool(format!("Statement execution failed: {}", e)))?;
-            
+
         let duration = start.elapsed();
         let rows_affected = result.rows_affected();
-        
+
         tracing::info!(
-            "Statement executed in {}ms, {} rows affected", 
+            "Statement executed in {}ms, {} rows affected",
             duration.as_millis(),
             rows_affected
         );
-        
+
         Ok(rows_affected)
     }
-    
+
     /// Get database connection pool for advanced operations
     pub fn pool(&self) -> &sqlx::PgPool {
         &self.pool
     }
-    
+
     /// Check if database connection is healthy
     pub async fn health_check(&self) -> McpResult<()> {
         sqlx::query("SELECT 1")
@@ -413,7 +450,7 @@ impl Database {
             "Database feature not enabled. Add 'database' feature to Cargo.toml to use real database integration.".to_string()
         ))
     }
-    
+
     pub async fn query<T>(&self, _sql: &str) -> McpResult<Vec<T>>
     where
         T: for<'de> serde::Deserialize<'de> + std::fmt::Debug,
@@ -422,20 +459,19 @@ impl Database {
             "Database feature not enabled. Add 'database' feature to use real database integration.".to_string()
         ))
     }
-    
+
     pub async fn execute(&self, _sql: &str) -> McpResult<u64> {
         Err(crate::McpError::Tool(
-            "Database feature not enabled.".to_string()
+            "Database feature not enabled.".to_string(),
         ))
     }
-    
+
     pub async fn health_check(&self) -> McpResult<()> {
         Err(crate::McpError::Tool(
-            "Database feature not enabled.".to_string()
+            "Database feature not enabled.".to_string(),
         ))
     }
 }
-
 
 #[async_trait]
 #[cfg(feature = "database")]
@@ -446,9 +482,10 @@ impl Injectable for Database {
             Ok(db) => Ok(db),
             Err(_) => {
                 // Fall back to environment variable or default
-                let connection_string = std::env::var("DATABASE_URL")
-                    .unwrap_or_else(|_| "postgres://turbomcp:dev_password_123@localhost:5432/turbomcp_dev".to_string());
-                
+                let connection_string = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+                    "postgres://turbomcp:dev_password_123@localhost:5432/turbomcp_dev".to_string()
+                });
+
                 tracing::info!("Creating database connection with fallback configuration");
                 Self::new(&connection_string).await
             }
@@ -460,7 +497,7 @@ impl Injectable for Database {
 impl Injectable for Database {
     async fn inject(_ctx: &Context) -> McpResult<Self> {
         Err(crate::McpError::Tool(
-            "Database feature not enabled. Add 'database' feature to Cargo.toml.".to_string()
+            "Database feature not enabled. Add 'database' feature to Cargo.toml.".to_string(),
         ))
     }
 }

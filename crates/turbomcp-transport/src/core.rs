@@ -697,8 +697,12 @@ impl From<Box<turbomcp_core::Error>> for TransportError {
             turbomcp_core::ErrorKind::Protocol => Self::ProtocolError(err.message),
             turbomcp_core::ErrorKind::Transport => Self::ConnectionFailed(err.message),
             turbomcp_core::ErrorKind::Serialization => Self::SerializationFailed(err.message),
-            turbomcp_core::ErrorKind::NotFound => Self::ProtocolError(format!("Not found: {}", err.message)),
-            turbomcp_core::ErrorKind::Validation => Self::ProtocolError(format!("Validation failed: {}", err.message)),
+            turbomcp_core::ErrorKind::NotFound => {
+                Self::ProtocolError(format!("Not found: {}", err.message))
+            }
+            turbomcp_core::ErrorKind::Validation => {
+                Self::ProtocolError(format!("Validation failed: {}", err.message))
+            }
             turbomcp_core::ErrorKind::Authentication => Self::AuthenticationFailed(err.message),
             turbomcp_core::ErrorKind::Timeout => Self::Timeout,
             _ => Self::Internal(err.message),
