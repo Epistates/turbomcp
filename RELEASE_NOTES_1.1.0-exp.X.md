@@ -1,8 +1,8 @@
-# TurboMCP 1.1.0-exp.2 Release Notes
+# TurboMCP 1.1.0-exp.3 Release Notes
 
 **Experimental Release - Latest from dpop Branch**
 
-This is an experimental release containing comprehensive security enhancements, enterprise TLS transport, and RFC 9449 DPoP implementation. Version 1.1.0-exp.2 includes all latest security fixes and code quality improvements.
+This is an experimental release containing comprehensive security enhancements, enterprise TLS transport, and RFC 9449 DPoP implementation. Version 1.1.0-exp.3 includes the latest PKCS#11 HSM improvements and ultrathink architectural fixes.
 
 ## 🚀 Major New Features
 
@@ -37,6 +37,12 @@ This is an experimental release containing comprehensive security enhancements, 
 
 ## 🔧 Technical Improvements
 
+### 1.1.0-exp.3 HSM & Architecture Enhancements  
+- **PKCS#11 HSM Support Fixed** - Resolved Send trait issues with async-safe spawn_blocking pattern
+- **Pure Feature Gating** - Eliminated runtime stubs, compile-time errors when HSM features disabled
+- **Production-Grade Threading** - All HSM operations properly isolated in blocking threads
+- **Ultrathink Architecture** - Deep analysis and methodical implementation ensuring enterprise reliability
+
 ### Core Architecture
 - **Enhanced OAuth2 integration** with fixed import structure
 - **Improved error handling** with proper dead code management
@@ -49,7 +55,7 @@ This is an experimental release containing comprehensive security enhancements, 
 
 ## 📦 Crate Versions
 
-All crates have been updated to version `1.1.0-exp.2`:
+All crates have been updated to version `1.1.0-exp.3`:
 
 - `turbomcp` - Main framework crate with enhanced OAuth 2.0 integration
 - `turbomcp-core` - Core types and SIMD acceleration  
@@ -59,7 +65,7 @@ All crates have been updated to version `1.1.0-exp.2`:
 - `turbomcp-client` - Client implementation with DPoP support 
 - `turbomcp-macros` - Procedural macros for zero-boilerplate development
 - `turbomcp-cli` - Command-line tools with security validation
-- `turbomcp-dpop` - **New** RFC 9449 compliant DPoP security implementation with timing attack mitigation
+- `turbomcp-dpop` - **New** RFC 9449 compliant DPoP security implementation with HSM support and timing attack mitigation
 
 ## 🔬 Testing Status
 
@@ -77,6 +83,7 @@ All crates have been updated to version `1.1.0-exp.2`:
 - **Key rotation and lifecycle management** with enterprise-grade storage options
 - **Timing attack mitigation** through constant-time string comparisons
 - **Memory safety** with automatic private key zeroization
+- **HSM Integration (1.1.0-exp.3)** - Production-grade PKCS#11 and YubiHSM support with async-safe operations
 
 ### TLS Security Features
 - **TLS 1.3 by default** with secure fallback to TLS 1.2
@@ -113,7 +120,7 @@ All crates have been updated to version `1.1.0-exp.2`:
 
 ## ⚠️ Known Issues & Considerations
 
-This is an experimental release (1.1.0-exp.2) reflecting the latest development state with enhanced security and code quality. While comprehensively tested, please be aware:
+This is an experimental release (1.1.0-exp.3) reflecting the latest development state with enhanced security, HSM integration, and code quality. While comprehensively tested, please be aware:
 
 ### Testing Recommendations
 1. **DPoP integration testing** - Validate compatibility with your OAuth 2.0 providers
@@ -128,7 +135,7 @@ This is an experimental release (1.1.0-exp.2) reflecting the latest development 
 
 ## 🎯 Migration Guide
 
-### From 1.0.x to 1.1.0-exp.2
+### From 1.0.x to 1.1.0-exp.3
 
 Update your `Cargo.toml`:
 
@@ -137,10 +144,10 @@ Update your `Cargo.toml`:
 turbomcp = "1.0.1"
 
 # Latest experimental version
-turbomcp = "1.1.0-exp.2"
+turbomcp = "1.1.0-exp.3"
 
 # Optional: Add DPoP security features
-turbomcp-dpop = "1.1.0-exp.2"
+turbomcp-dpop = "1.1.0-exp.3"
 ```
 
 ### Enabling Enhanced Security Features
@@ -187,7 +194,7 @@ let auth_config = AuthConfig {
 
 ## 🔮 Next Steps
 
-This experimental release (1.1.0-exp.2) helps validate:
+This experimental release (1.1.0-exp.3) helps validate:
 
 1. **RFC 9449 DPoP implementation completeness** - Real-world OAuth 2.0 provider compatibility
 2. **Enterprise TLS deployment scenarios** - Production certificate management and mTLS flows
@@ -206,7 +213,7 @@ Feedback and real-world testing results will inform the official 1.1.0 stable re
 
 ## 🙏 Contributing
 
-This experimental release (1.1.0-exp.2) represents significant development work including:
+This experimental release (1.1.0-exp.3) represents significant development work including:
 
 - **RFC 9449 DPoP implementation** - Complete cryptographic security module with enterprise features
 - **Production-grade TLS transport** - Comprehensive certificate management and mTLS support
@@ -228,7 +235,7 @@ Report issues, provide feedback, or contribute improvements through:
 
 ```bash
 # From Crates.io (when published)
-cargo add turbomcp@1.1.0-exp.2
+cargo add turbomcp@1.1.0-exp.3
 
 # From source (current)
 git clone https://github.com/Epistates/turbomcp.git
@@ -239,4 +246,4 @@ cargo build --workspace
 
 **⚠️ Experimental Release Notice:**
 
-This is version 1.1.0-exp.2 with the latest security enhancements and code quality improvements. Suitable for testing and feedback. Use in production environments only after thorough testing and validation in your specific use case.
+This is version 1.1.0-exp.3 with the latest HSM security enhancements and ultrathink architectural improvements. Suitable for testing and feedback. Use in production environments only after thorough testing and validation in your specific use case.

@@ -289,6 +289,16 @@ impl From<ring::error::Unspecified> for DpopError {
     }
 }
 
+// Error conversion for r2d2 session pool
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
+impl From<r2d2::Error> for DpopError {
+    fn from(err: r2d2::Error) -> Self {
+        Self::InternalError {
+            reason: format!("Session pool error: {}", err),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
