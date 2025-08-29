@@ -55,7 +55,7 @@ urlencoding = "2.1"
 
 # Enterprise-grade distributed session management (2025 best practices)
 tower-sessions = { version = "0.14", optional = true }
-tower-sessions-redis-store = { version = "0.14", optional = true }
+tower-sessions-redis-store = { version = "0.16", optional = true }
 redis = { version = "0.27", features = ["aio", "tokio-comp"], optional = true }
 
 # JSON Schema generation
