@@ -24,7 +24,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.1.0-exp.2"
+turbomcp = "1.1.0-exp.3"
 tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```

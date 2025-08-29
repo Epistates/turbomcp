@@ -55,7 +55,7 @@
 //! ```
 
 #[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
-use crate::{DpopAlgorithm, DpopKeyPair, DpopError, Result};
+use crate::{DpopAlgorithm, DpopError, DpopKeyPair, Result};
 #[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -76,24 +76,24 @@ pub trait HsmOperations: Send + Sync {
     ///
     /// The private key never leaves the HSM, ensuring maximum security.
     async fn generate_key_pair(&self, algorithm: DpopAlgorithm) -> Result<DpopKeyPair>;
-    
+
     /// Sign data using an HSM-stored private key
     ///
     /// This performs the cryptographic signing operation entirely within the HSM.
     async fn sign_data(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>>;
-    
+
     /// List all DPoP keys stored in the HSM
     async fn list_keys(&self) -> Result<Vec<String>>;
-    
+
     /// Delete a key from the HSM
     async fn delete_key(&self, key_id: &str) -> Result<()>;
-    
+
     /// Check HSM connection and health status
     async fn health_check(&self) -> Result<HsmHealthStatus>;
-    
+
     /// Get HSM operation statistics
     fn get_stats(&self) -> HsmStats;
-    
+
     /// Get HSM information and capabilities
     async fn get_info(&self) -> Result<HsmInfo>;
 }
@@ -117,40 +117,40 @@ pub enum HsmConfig {
 pub struct Pkcs11Config {
     /// Path to PKCS#11 library (e.g., "/opt/cloudhsm/lib/libcloudhsm_pkcs11.so")
     pub library_path: PathBuf,
-    
+
     /// HSM slot number
     pub slot_id: u64,
-    
+
     /// HSM token label (optional, used for validation)
     pub token_label: Option<String>,
-    
+
     /// User PIN for HSM authentication
     #[cfg(feature = "hsm-pkcs11")]
     #[serde(skip)]
     pub user_pin: secrecy::SecretString,
-    
+
     /// User PIN as string (for deserialization)
     #[cfg(not(feature = "hsm-pkcs11"))]
     pub user_pin: String,
-    
+
     /// SO PIN for administrative operations (optional)
     #[cfg(feature = "hsm-pkcs11")]
     #[serde(skip)]
     pub so_pin: Option<secrecy::SecretString>,
-    
+
     /// SO PIN as string (for deserialization)
     #[cfg(not(feature = "hsm-pkcs11"))]
     pub so_pin: Option<String>,
-    
+
     /// Session pool configuration
     pub pool_config: PoolConfig,
-    
+
     /// Operation timeouts
     pub timeouts: TimeoutConfig,
-    
+
     /// Retry configuration
     pub retry_config: RetryConfig,
-    
+
     /// Vendor-specific configuration
     pub vendor_config: HashMap<String, String>,
 }
@@ -161,22 +161,22 @@ pub struct Pkcs11Config {
 pub struct YubiHsmConfig {
     /// Connection type (HTTP or USB)
     pub connector: YubiHsmConnector,
-    
+
     /// Authentication key ID
     pub auth_key_id: u16,
-    
+
     /// Authentication password
     #[cfg(feature = "hsm-yubico")]
     #[serde(skip)]
     pub password: secrecy::SecretString,
-    
+
     /// Password as string (for deserialization)
     #[cfg(not(feature = "hsm-yubico"))]
     pub password: String,
-    
+
     /// Operation timeouts
     pub timeouts: TimeoutConfig,
-    
+
     /// Retry configuration  
     pub retry_config: RetryConfig,
 }
@@ -186,9 +186,9 @@ pub struct YubiHsmConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum YubiHsmConnector {
     /// HTTP connector
-    Http { 
+    Http {
         /// HTTP URL for YubiHSM connector service
-        url: String 
+        url: String,
     },
     /// USB connector (default port)
     Usb,
@@ -300,9 +300,11 @@ impl<'de> serde::Deserialize<'de> for Pkcs11Config {
                     }
                 }
 
-                let library_path = library_path.ok_or_else(|| de::Error::missing_field("library_path"))?;
+                let library_path =
+                    library_path.ok_or_else(|| de::Error::missing_field("library_path"))?;
                 let slot_id = slot_id.ok_or_else(|| de::Error::missing_field("slot_id"))?;
-                let user_pin_str = user_pin_str.ok_or_else(|| de::Error::missing_field("user_pin"))?;
+                let user_pin_str =
+                    user_pin_str.ok_or_else(|| de::Error::missing_field("user_pin"))?;
                 let pool_config = pool_config.unwrap_or_default();
                 let timeout_config = timeout_config.unwrap_or_default();
                 let retry_config = retry_config.unwrap_or_default();
@@ -322,7 +324,21 @@ impl<'de> serde::Deserialize<'de> for Pkcs11Config {
             }
         }
 
-        deserializer.deserialize_struct("Pkcs11Config", &["library_path", "slot_id", "token_label", "user_pin", "so_pin", "pool_config", "timeout_config", "retry_config", "vendor_config"], Pkcs11ConfigVisitor)
+        deserializer.deserialize_struct(
+            "Pkcs11Config",
+            &[
+                "library_path",
+                "slot_id",
+                "token_label",
+                "user_pin",
+                "so_pin",
+                "pool_config",
+                "timeout_config",
+                "retry_config",
+                "vendor_config",
+            ],
+            Pkcs11ConfigVisitor,
+        )
     }
 }
 
@@ -400,8 +416,10 @@ impl<'de> serde::Deserialize<'de> for YubiHsmConfig {
                 }
 
                 let connector = connector.ok_or_else(|| de::Error::missing_field("connector"))?;
-                let auth_key_id = auth_key_id.ok_or_else(|| de::Error::missing_field("auth_key_id"))?;
-                let password_str = password_str.ok_or_else(|| de::Error::missing_field("password"))?;
+                let auth_key_id =
+                    auth_key_id.ok_or_else(|| de::Error::missing_field("auth_key_id"))?;
+                let password_str =
+                    password_str.ok_or_else(|| de::Error::missing_field("password"))?;
                 let timeout_config = timeout_config.unwrap_or_default();
                 let retry_config = retry_config.unwrap_or_default();
 
@@ -415,7 +433,17 @@ impl<'de> serde::Deserialize<'de> for YubiHsmConfig {
             }
         }
 
-        deserializer.deserialize_struct("YubiHsmConfig", &["connector", "auth_key_id", "password", "timeouts", "retry_config"], YubiHsmConfigVisitor)
+        deserializer.deserialize_struct(
+            "YubiHsmConfig",
+            &[
+                "connector",
+                "auth_key_id",
+                "password",
+                "timeouts",
+                "retry_config",
+            ],
+            YubiHsmConfigVisitor,
+        )
     }
 }
 
@@ -424,13 +452,13 @@ impl<'de> serde::Deserialize<'de> for YubiHsmConfig {
 pub struct PoolConfig {
     /// Maximum number of concurrent sessions
     pub max_sessions: u32,
-    
+
     /// Minimum number of sessions to keep alive
     pub min_sessions: u32,
-    
+
     /// Session idle timeout
     pub idle_timeout: Duration,
-    
+
     /// Maximum time to wait for an available session
     pub connection_timeout: Duration,
 }
@@ -440,10 +468,10 @@ pub struct PoolConfig {
 pub struct TimeoutConfig {
     /// Connection establishment timeout
     pub connect_timeout: Duration,
-    
+
     /// Individual operation timeout
     pub operation_timeout: Duration,
-    
+
     /// Health check timeout
     pub health_check_timeout: Duration,
 }
@@ -453,13 +481,13 @@ pub struct TimeoutConfig {
 pub struct RetryConfig {
     /// Maximum number of retry attempts
     pub max_attempts: u32,
-    
+
     /// Base delay between retries
     pub base_delay: Duration,
-    
+
     /// Maximum delay between retries
     pub max_delay: Duration,
-    
+
     /// Exponential backoff multiplier
     pub backoff_multiplier: f64,
 }
@@ -470,19 +498,19 @@ pub struct RetryConfig {
 pub struct HsmHealthStatus {
     /// Overall health status
     pub healthy: bool,
-    
+
     /// Number of active sessions
     pub active_sessions: u32,
-    
+
     /// Last successful operation timestamp
     pub last_operation: SystemTime,
-    
+
     /// Error count in the last period
     pub error_count: u64,
-    
+
     /// Detailed status message
     pub message: String,
-    
+
     /// Token-specific information
     pub token_info: Option<TokenInfo>,
 }
@@ -492,19 +520,19 @@ pub struct HsmHealthStatus {
 pub struct TokenInfo {
     /// Token label
     pub label: String,
-    
+
     /// Manufacturer ID
     pub manufacturer: String,
-    
+
     /// Model name
     pub model: String,
-    
+
     /// Serial number
     pub serial_number: String,
-    
+
     /// Available storage space
     pub free_memory: Option<u64>,
-    
+
     /// Total storage space
     pub total_memory: Option<u64>,
 }
@@ -515,19 +543,19 @@ pub struct TokenInfo {
 pub struct HsmInfo {
     /// HSM type and backend
     pub hsm_type: String,
-    
+
     /// HSM version information
     pub version: String,
-    
+
     /// Supported algorithms
     pub supported_algorithms: Vec<DpopAlgorithm>,
-    
+
     /// Maximum key length for each algorithm
     pub max_key_lengths: HashMap<DpopAlgorithm, u32>,
-    
+
     /// Additional capabilities
     pub capabilities: HashMap<String, bool>,
-    
+
     /// Hardware features
     pub hardware_features: Vec<String>,
 }
@@ -538,22 +566,22 @@ pub struct HsmInfo {
 pub struct HsmStats {
     /// Total keys generated
     pub keys_generated: u64,
-    
+
     /// Total signature operations
     pub signatures_created: u64,
-    
+
     /// Total verification operations  
     pub verifications_performed: u64,
-    
+
     /// Total failed operations
     pub failed_operations: u64,
-    
+
     /// Session statistics
     pub session_stats: SessionStats,
-    
+
     /// Performance metrics
     pub performance: PerformanceStats,
-    
+
     /// Error statistics
     pub error_stats: HashMap<String, u64>,
 }
@@ -563,16 +591,16 @@ pub struct HsmStats {
 pub struct SessionStats {
     /// Total sessions created
     pub sessions_created: u64,
-    
+
     /// Currently active sessions
     pub active_sessions: u32,
-    
+
     /// Sessions closed due to timeout
     pub timed_out_sessions: u64,
-    
+
     /// Sessions closed due to errors
     pub error_sessions: u64,
-    
+
     /// Average session lifetime
     pub avg_session_lifetime: Duration,
 }
@@ -582,16 +610,16 @@ pub struct SessionStats {
 pub struct PerformanceStats {
     /// Average operation latency
     pub avg_operation_latency: Duration,
-    
+
     /// 95th percentile latency
     pub p95_latency: Duration,
-    
+
     /// 99th percentile latency
     pub p99_latency: Duration,
-    
+
     /// Operations per second
     pub ops_per_second: f64,
-    
+
     /// Cache hit rate (0.0 - 1.0)
     pub cache_hit_rate: f64,
 }
@@ -619,7 +647,7 @@ impl HsmManager {
     pub async fn new(config: HsmConfig) -> Result<Self> {
         use tracing::info;
         info!("Initializing HSM manager with config: {:?}", config);
-        
+
         let inner: Box<dyn HsmOperations> = match &config {
             #[cfg(feature = "hsm-pkcs11")]
             HsmConfig::Pkcs11(pkcs11_config) => {
@@ -630,45 +658,45 @@ impl HsmManager {
                 Box::new(crate::hsm::yubihsm::YubiHsmManager::new(yubi_config.clone()).await?)
             }
         };
-        
+
         Ok(Self { inner, config })
     }
-    
+
     /// Generate a DPoP key pair in the HSM
     pub async fn generate_key_pair(&self, algorithm: DpopAlgorithm) -> Result<DpopKeyPair> {
         self.inner.generate_key_pair(algorithm).await
     }
-    
+
     /// Sign data using an HSM-stored private key
     pub async fn sign_data(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>> {
         self.inner.sign_data(key_id, data).await
     }
-    
+
     /// List all DPoP keys stored in the HSM
     pub async fn list_keys(&self) -> Result<Vec<String>> {
         self.inner.list_keys().await
     }
-    
+
     /// Delete a key from the HSM
     pub async fn delete_key(&self, key_id: &str) -> Result<()> {
         self.inner.delete_key(key_id).await
     }
-    
+
     /// Check HSM connection and health status
     pub async fn health_check(&self) -> Result<HsmHealthStatus> {
         self.inner.health_check().await
     }
-    
+
     /// Get HSM operation statistics
     pub fn get_stats(&self) -> HsmStats {
         self.inner.get_stats()
     }
-    
+
     /// Get HSM information and capabilities
     pub async fn get_info(&self) -> Result<HsmInfo> {
         self.inner.get_info().await
     }
-    
+
     /// Get the HSM configuration
     pub fn config(&self) -> &HsmConfig {
         &self.config
@@ -716,9 +744,9 @@ impl HsmConfig {
     pub fn pkcs11() -> Pkcs11ConfigBuilder {
         Pkcs11ConfigBuilder::default()
     }
-    
+
     /// Create a new YubiHSM configuration builder
-    #[cfg(feature = "hsm-yubico")]  
+    #[cfg(feature = "hsm-yubico")]
     pub fn yubihsm() -> YubiHsmConfigBuilder {
         YubiHsmConfigBuilder::default()
     }
@@ -728,6 +756,7 @@ impl HsmConfig {
 
 #[cfg(feature = "hsm-pkcs11")]
 #[derive(Debug, Default)]
+/// Builder for PKCS#11 HSM configuration
 pub struct Pkcs11ConfigBuilder {
     library_path: Option<PathBuf>,
     slot_id: u64,
@@ -742,60 +771,72 @@ pub struct Pkcs11ConfigBuilder {
 
 #[cfg(feature = "hsm-pkcs11")]
 impl Pkcs11ConfigBuilder {
+    /// Set the PKCS#11 library path
     pub fn library_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
         self.library_path = Some(path.into());
         self
     }
-    
+
+    /// Set the PKCS#11 slot ID for the token
     pub fn slot_id(mut self, slot_id: u64) -> Self {
         self.slot_id = slot_id;
         self
     }
-    
+
+    /// Set the PKCS#11 token label for identification
     pub fn token_label<S: Into<String>>(mut self, label: S) -> Self {
         self.token_label = Some(label.into());
         self
     }
-    
+
+    /// Set the user PIN for PKCS#11 token authentication
     pub fn user_pin<S: Into<String>>(mut self, pin: S) -> Self {
         self.user_pin = Some(secrecy::SecretString::new(pin.into()));
         self
     }
-    
+
+    /// Set the security officer (SO) PIN for PKCS#11 token administration
     pub fn so_pin<S: Into<String>>(mut self, pin: S) -> Self {
         self.so_pin = Some(secrecy::SecretString::new(pin.into()));
         self
     }
-    
+
+    /// Configure the connection pool settings for PKCS#11 sessions
     pub fn pool_config(mut self, config: PoolConfig) -> Self {
         self.pool_config = config;
         self
     }
-    
+
+    /// Set operation timeouts
     pub fn timeouts(mut self, timeouts: TimeoutConfig) -> Self {
         self.timeouts = timeouts;
         self
     }
-    
+
+    /// Set retry configuration
     pub fn retry_config(mut self, retry_config: RetryConfig) -> Self {
         self.retry_config = retry_config;
         self
     }
-    
+
+    /// Set vendor-specific configuration
     pub fn vendor_config(mut self, config: HashMap<String, String>) -> Self {
         self.vendor_config = config;
         self
     }
-    
+
+    /// Build the PKCS#11 configuration
     pub fn build(self) -> Result<HsmConfig> {
-        let library_path = self.library_path.ok_or_else(|| DpopError::ConfigurationError {
-            reason: "PKCS#11 library path is required".to_string(),
-        })?;
-        
+        let library_path = self
+            .library_path
+            .ok_or_else(|| DpopError::ConfigurationError {
+                reason: "PKCS#11 library path is required".to_string(),
+            })?;
+
         let user_pin = self.user_pin.ok_or_else(|| DpopError::ConfigurationError {
             reason: "User PIN is required".to_string(),
         })?;
-        
+
         Ok(HsmConfig::Pkcs11(Pkcs11Config {
             library_path,
             slot_id: self.slot_id,
@@ -812,6 +853,7 @@ impl Pkcs11ConfigBuilder {
 
 #[cfg(feature = "hsm-yubico")]
 #[derive(Debug, Default)]
+/// Builder for YubiHSM configuration
 pub struct YubiHsmConfigBuilder {
     connector: Option<YubiHsmConnector>,
     auth_key_id: u16,
@@ -822,42 +864,49 @@ pub struct YubiHsmConfigBuilder {
 
 #[cfg(feature = "hsm-yubico")]
 impl YubiHsmConfigBuilder {
+    /// Set HTTP connector with URL
     pub fn http_connector<S: Into<String>>(mut self, url: S) -> Self {
         self.connector = Some(YubiHsmConnector::Http { url: url.into() });
         self
     }
-    
+
+    /// Set USB connector
     pub fn usb_connector(mut self) -> Self {
         self.connector = Some(YubiHsmConnector::Usb);
         self
     }
-    
+
+    /// Set authentication key ID
     pub fn auth_key_id(mut self, key_id: u16) -> Self {
         self.auth_key_id = key_id;
         self
     }
-    
+
+    /// Set authentication password
     pub fn password<S: Into<String>>(mut self, password: S) -> Self {
         self.password = Some(secrecy::SecretString::new(password.into()));
         self
     }
-    
+
+    /// Set operation timeouts
     pub fn timeouts(mut self, timeouts: TimeoutConfig) -> Self {
         self.timeouts = timeouts;
         self
     }
-    
+
+    /// Set retry configuration
     pub fn retry_config(mut self, retry_config: RetryConfig) -> Self {
         self.retry_config = retry_config;
         self
     }
-    
+
+    /// Build the YubiHSM configuration
     pub fn build(self) -> Result<HsmConfig> {
         let connector = self.connector.unwrap_or(YubiHsmConnector::Usb);
         let password = self.password.ok_or_else(|| DpopError::ConfigurationError {
             reason: "Password is required".to_string(),
         })?;
-        
+
         Ok(HsmConfig::YubiHsm(YubiHsmConfig {
             connector,
             auth_key_id: self.auth_key_id,
@@ -869,6 +918,8 @@ impl YubiHsmConfigBuilder {
 }
 
 // HSM backend modules
+pub mod common;
+
 #[cfg(feature = "hsm-pkcs11")]
 pub mod pkcs11;
 
