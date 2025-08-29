@@ -1494,30 +1494,31 @@ impl OAuth2Provider {
 
             // Additional time-based validation for security
             let now = SystemTime::now();
-            
+
             // Verify proof is not expired (additional check beyond JWT validation)
             if now > dpop_proof_data.expires_at {
-                return Err(McpError::Unauthorized(
-                    "DPoP proof has expired".to_string(),
-                ));
+                return Err(McpError::Unauthorized("DPoP proof has expired".to_string()));
             }
-            
+
             // Verify proof is not too old (prevent old proof reuse)
             // Use configured proof lifetime (defaults to 60s per RFC 9449)
-            let max_proof_age = self.config.dpop_config
+            let max_proof_age = self
+                .config
+                .dpop_config
                 .as_ref()
                 .map(|config| config.proof_lifetime)
                 .unwrap_or(std::time::Duration::from_secs(60)); // RFC 9449 default
-                
+
             if let Ok(age) = now.duration_since(dpop_proof_data.issued_at) {
                 if age > max_proof_age {
                     return Err(McpError::Unauthorized(format!(
                         "DPoP proof is too old: age {}s exceeds maximum {}s",
-                        age.as_secs(), max_proof_age.as_secs()
+                        age.as_secs(),
+                        max_proof_age.as_secs()
                     )));
                 }
             }
-            
+
             // Verify thumbprint matches the expected one for this token
             if dpop_proof_data.thumbprint != ephemeral_token.dpop_thumbprint {
                 return Err(McpError::Unauthorized(format!(

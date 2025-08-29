@@ -22,7 +22,7 @@ mod tls_transport_tests {
         temp_dir: &TempDir,
     ) -> (std::path::PathBuf, std::path::PathBuf) {
         use rcgen::generate_simple_self_signed;
-        
+
         let cert_path = temp_dir.path().join("test_cert.pem");
         let key_path = temp_dir.path().join("test_key.pem");
 
@@ -30,7 +30,7 @@ mod tls_transport_tests {
         let subject_alt_names = vec!["localhost".to_string()];
         let certified_key = generate_simple_self_signed(subject_alt_names)
             .expect("Failed to generate test certificate");
-        
+
         let cert_pem = certified_key.cert.pem();
         let key_pem = certified_key.key_pair.serialize_pem();
 
@@ -39,25 +39,25 @@ mod tls_transport_tests {
 
         (cert_path, key_path)
     }
-    
+
     /// Generate a test certificate and return its DER bytes and public key SHA256 hash  
     fn generate_test_certificate_with_hash() -> (Vec<u8>, String) {
         use rcgen::generate_simple_self_signed;
-        
+
         // Generate a simple self-signed certificate for testing
         let subject_alt_names = vec!["localhost".to_string()];
         let certified_key = generate_simple_self_signed(subject_alt_names)
             .expect("Failed to generate test certificate");
-        
+
         let cert_der = certified_key.cert.der().to_vec();
-        
+
         // Calculate SHA256 hash of the public key (not the certificate)
         // For testing, we'll use a simplified approach that extracts the public key bytes
         let public_key_der = certified_key.key_pair.public_key_der();
         let hash = Sha256::digest(&public_key_der);
         let hash_hex = hex::encode(hash);
         let hash_string = format!("sha256:{}", hash_hex);
-        
+
         (cert_der, hash_string)
     }
 
@@ -202,35 +202,42 @@ mod tls_transport_tests {
     async fn test_certificate_pinning_validation() {
         // Generate a real test certificate with proper hash
         let (cert_der, hash_string) = generate_test_certificate_with_hash();
-        
+
         // Test 1: Valid pinning configuration with correct hash - should pass
         let valid_pinning_config = CertPinningConfig {
             allowed_hashes: vec![hash_string.clone()],
             enforce: true,
         };
-        
+
         let cert_data = CertificateDer::from(cert_der.clone());
         let peer_certs = vec![cert_data];
 
         #[cfg(feature = "tls")]
         {
             let result = TlsTransport::validate_cert_pinning(&valid_pinning_config, &peer_certs);
-            assert!(result.is_ok(), "Certificate pinning should succeed with correct hash");
+            assert!(
+                result.is_ok(),
+                "Certificate pinning should succeed with correct hash"
+            );
         }
-        
+
         // Test 2: Invalid pinning configuration with wrong hash - should fail
         let invalid_pinning_config = CertPinningConfig {
             allowed_hashes: vec!["sha256:wronghashvalue1234567890abcdef".to_string()],
             enforce: true,
         };
-        
+
         let cert_data_2 = CertificateDer::from(cert_der);
         let peer_certs_2 = vec![cert_data_2];
 
         #[cfg(feature = "tls")]
         {
-            let result = TlsTransport::validate_cert_pinning(&invalid_pinning_config, &peer_certs_2);
-            assert!(result.is_err(), "Certificate pinning should fail with wrong hash");
+            let result =
+                TlsTransport::validate_cert_pinning(&invalid_pinning_config, &peer_certs_2);
+            assert!(
+                result.is_err(),
+                "Certificate pinning should fail with wrong hash"
+            );
             match result.unwrap_err() {
                 TlsError::PinningFailed { reason } => {
                     assert!(reason.contains("Certificate pin validation failed"));
@@ -244,7 +251,7 @@ mod tls_transport_tests {
     async fn test_certificate_pinning_non_enforced() {
         // Generate a real test certificate
         let (cert_der, _) = generate_test_certificate_with_hash();
-        
+
         // Configure pinning with wrong hash but non-enforced mode
         let pinning_config = CertPinningConfig {
             allowed_hashes: vec!["sha256:wronghashvalue1234567890abcdef".to_string()],
