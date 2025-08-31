@@ -70,6 +70,46 @@
 
 ## Core Macros
 
+### MCP 2025-06-18 Enhanced Macros (v1.0.2)
+
+New macros for the latest MCP protocol features:
+
+#### `#[elicitation]` - User Input Requests
+```rust
+#[elicitation("Collect user preferences")]
+async fn get_preferences(&self, schema: serde_json::Value) -> McpResult<serde_json::Value> {
+    // Server requests structured input from client
+    Ok(serde_json::json!({"theme": "dark", "language": "en"}))
+}
+```
+
+#### `#[completion]` - Intelligent Autocompletion
+```rust
+#[completion("Complete file paths")]
+async fn complete_path(&self, partial: String) -> McpResult<Vec<String>> {
+    // Provide completion suggestions
+    Ok(vec!["config.json".to_string(), "data.txt".to_string()])
+}
+```
+
+#### `#[template]` - Resource Templates
+```rust
+#[template("users/{user_id}/profile")]
+async fn get_user_profile(&self, user_id: String) -> McpResult<String> {
+    // Dynamic resource with RFC 6570 URI template
+    Ok(format!("Profile for user: {}", user_id))
+}
+```
+
+#### `#[ping]` - Health Monitoring
+```rust
+#[ping("Health check")]
+async fn health_check(&self) -> McpResult<String> {
+    // Bidirectional health monitoring
+    Ok("Server is healthy".to_string())
+}
+```
+
 ### `#[server]` - Server Implementation
 
 Automatically implements the MCP server trait for a struct:

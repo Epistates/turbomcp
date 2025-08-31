@@ -45,6 +45,7 @@ pub mod versioning;
 
 // Re-export commonly used types
 pub use types::{
+    ArgumentInfo,
     CallToolRequest,
     CallToolResult,
     // Capability types
@@ -52,13 +53,22 @@ pub use types::{
     ClientNotification,
     // Core types
     ClientRequest,
+    // Completion types
+    CompleteRequestParams,
+    CompletionReference,
+    CompletionResponse,
     // Content types
     Content,
     // Sampling
     CreateMessageRequest,
     CreateMessageResult,
+    // Elicitation types
+    ElicitRequest,
+    ElicitRequestParams,
+    ElicitResult,
+    ElicitationAction,
+    ElicitationSchema,
     EmbeddedResource,
-
     GetPromptRequest,
     GetPromptResult,
     ImageContent,
@@ -71,6 +81,8 @@ pub use types::{
     ListPromptsRequest,
     ListPromptsResult,
 
+    ListResourceTemplatesRequest,
+    ListResourceTemplatesResult,
     ListResourcesRequest,
     ListResourcesResult,
     ListRootsRequest,
@@ -81,6 +93,10 @@ pub use types::{
     // Logging and progress
     LogLevel,
     LoggingNotification,
+    // Ping types
+    PingParams,
+    PingRequest,
+    PingResult,
     ProgressNotification,
     ProgressToken,
     // Prompt types
@@ -93,8 +109,9 @@ pub use types::{
     // Resource types
     Resource,
     ResourceContents,
+    // Resource Template types
+    ResourceTemplate,
     ResourceUpdatedNotification,
-
     // Roots
     Root,
     RootsListChangedNotification,

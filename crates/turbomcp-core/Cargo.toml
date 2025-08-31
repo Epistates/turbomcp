@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-core"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Core abstractions and optimized message processing for the TurboMCP SDK"
@@ -45,6 +45,7 @@ arc-swap = { workspace = true }
 # SIMD support
 simd-json = { workspace = true, optional = true }
 sonic-rs = { workspace = true, optional = true }
+simdutf8 = { version = "0.1", optional = true }
 
 # Time
 chrono = { workspace = true }
@@ -58,19 +59,24 @@ dashmap = { workspace = true }
 # Random number generation for jitter
 rand = "0.8"
 
+# Memory-mapped files (optional, requires unsafe feature)
+memmap2 = { version = "0.9", optional = true }
+
 [dev-dependencies]
 criterion = { workspace = true }
 tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
 
 [features]
-default = ["std", "simd"]
+default = ["std", "simd", "lock-free"]
 std = []
-simd = ["simd-json", "sonic-rs"]
+simd = ["simd-json", "sonic-rs", "simdutf8"]
 zero-copy = ["bytes/serde"]
 messagepack = ["rmp-serde"]
 tracing = ["dep:tracing-opentelemetry"]
 metrics = ["dep:metrics"]
 wasm = []
 fancy-errors = ["miette"]
+mmap = ["memmap2"]  # Enable memory-mapped file support
+lock-free = []  # Enable lock-free data structures (requires unsafe)
 

@@ -64,6 +64,7 @@ fn test_router_config_custom() {
         default_timeout_ms: 5_000,
         enable_tracing: false,
         max_concurrent_requests: 100,
+        enable_bidirectional: false,
     };
 
     assert!(!config.validate_requests);
@@ -431,6 +432,7 @@ async fn test_router_different_configurations() {
             default_timeout_ms: 1000,
             enable_tracing: false,
             max_concurrent_requests: 100,
+            enable_bidirectional: false,
         },
         RouterConfig {
             validate_requests: true,
@@ -438,6 +440,7 @@ async fn test_router_different_configurations() {
             default_timeout_ms: 60_000,
             enable_tracing: true,
             max_concurrent_requests: 10000,
+            enable_bidirectional: true,
         },
     ];
 

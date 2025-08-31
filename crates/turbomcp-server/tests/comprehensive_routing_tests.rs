@@ -116,6 +116,7 @@ fn test_router_config_custom() {
         default_timeout_ms: 60_000,
         enable_tracing: false,
         max_concurrent_requests: 500,
+        enable_bidirectional: false,
     };
 
     assert!(!config.validate_requests);
@@ -198,6 +199,7 @@ fn test_router_with_config() {
         default_timeout_ms: 45_000,
         enable_tracing: false,
         max_concurrent_requests: 750,
+        enable_bidirectional: false,
     };
 
     let router = RequestRouter::with_config(registry, config);

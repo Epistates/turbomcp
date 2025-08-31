@@ -11,6 +11,8 @@
 
 `turbomcp` is the main framework crate providing a high-level, ergonomic API for building Model Context Protocol servers. Built on a foundation of performance-optimized infrastructure crates, it offers zero-boilerplate development with production-ready features.
 
+**Full MCP 2025-06-18 protocol support** including bidirectional communication, server-initiated requests, and enhanced context management.
+
 ## Key Features
 
 ### 🚀 **High Performance**
@@ -79,7 +81,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.0"
+turbomcp = "1.0.2"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -213,6 +215,70 @@ async fn code_review_prompt(
         "Please review the following {} code:\n\n```{}\n{}\n```",
         language, language, code
     ))
+}
+```
+
+### MCP 2025-06-18 Enhanced Features (v1.0.2)
+
+#### Elicitation - Server-Initiated User Input
+
+```rust
+#[elicitation("Configure application settings")]
+async fn configure_app(&self, ctx: Context) -> McpResult<serde_json::Value> {
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "app_name": {"type": "string"},
+            "port": {"type": "integer", "minimum": 1024, "maximum": 65535}
+        },
+        "required": ["app_name"]
+    });
+    
+    // Server requests structured input from client
+    let user_input = ctx.elicit_input("Configure your app", schema).await?;
+    Ok(user_input)
+}
+```
+
+#### Completion - Intelligent Autocompletion
+
+```rust
+#[completion("Complete file paths")]
+async fn complete_file_path(&self, partial: String) -> McpResult<Vec<String>> {
+    let files = std::fs::read_dir(".")?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|name| name.starts_with(&partial))
+        .collect();
+    Ok(files)
+}
+```
+
+#### Resource Templates - Dynamic URIs
+
+```rust
+#[template("users/{user_id}/posts/{post_id}")]
+async fn get_user_post(&self, user_id: String, post_id: String) -> McpResult<Post> {
+    // RFC 6570 URI template with multiple parameters
+    let post = self.database.get_post(&user_id, &post_id).await?;
+    Ok(post)
+}
+```
+
+#### Ping - Bidirectional Health Monitoring
+
+```rust
+#[ping("Health check")]
+async fn health_check(&self, ctx: Context) -> McpResult<HealthStatus> {
+    let db_status = self.database.ping().await.is_ok();
+    let cache_status = self.cache.ping().await.is_ok();
+    
+    Ok(HealthStatus {
+        healthy: db_status && cache_status,
+        database: db_status,
+        cache: cache_status,
+        timestamp: ctx.timestamp(),
+    })
 }
 ```
 
@@ -479,7 +545,7 @@ Enable SIMD acceleration for maximum performance:
 
 ```toml
 [dependencies]
-turbomcp = { version = "1.0", features = ["simd"] }
+turbomcp = { version = "1.0.2", features = ["simd"] }
 ```
 
 Configure performance settings:

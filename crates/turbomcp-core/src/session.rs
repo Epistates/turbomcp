@@ -13,7 +13,9 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tokio::time::{Interval, interval};
 
-use crate::context::{ClientIdExtractor, ClientSession, RequestInfo};
+use crate::context::{
+    ClientIdExtractor, ClientSession, CompletionContext, ElicitationContext, RequestInfo,
+};
 
 /// Configuration for session management
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +87,10 @@ pub struct SessionManager {
     cleanup_timer: Arc<RwLock<Option<Interval>>>,
     /// Global statistics
     stats: Arc<RwLock<SessionStats>>,
+    /// Pending elicitations by client ID
+    pending_elicitations: Arc<DashMap<String, Vec<ElicitationContext>>>,
+    /// Active completions by client ID
+    active_completions: Arc<DashMap<String, Vec<CompletionContext>>>,
 }
 
 /// Internal statistics tracking
@@ -137,6 +143,8 @@ impl SessionManager {
             session_history: Arc::new(RwLock::new(VecDeque::new())),
             cleanup_timer: Arc::new(RwLock::new(None)),
             stats: Arc::new(RwLock::new(SessionStats::default())),
+            pending_elicitations: Arc::new(DashMap::new()),
+            active_completions: Arc::new(DashMap::new()),
         }
     }
 
@@ -153,12 +161,21 @@ impl SessionManager {
         let config = self.config.clone();
         let session_history = self.session_history.clone();
         let stats = self.stats.clone();
+        let pending_elicitations = self.pending_elicitations.clone();
+        let active_completions = self.active_completions.clone();
 
         tokio::spawn(async move {
             let mut timer = interval(config.cleanup_interval);
             loop {
                 timer.tick().await;
-                Self::cleanup_expired_sessions(&sessions, &config, &session_history, &stats);
+                Self::cleanup_expired_sessions(
+                    &sessions,
+                    &config,
+                    &session_history,
+                    &stats,
+                    &pending_elicitations,
+                    &active_completions,
+                );
             }
         });
     }
@@ -369,6 +386,10 @@ impl SessionManager {
             stats.total_session_duration += session.session_duration();
             drop(stats);
 
+            // Clean up associated elicitations and completions
+            self.pending_elicitations.remove(client_id);
+            self.active_completions.remove(client_id);
+
             self.record_session_event(
                 client_id.to_string(),
                 SessionEventType::Terminated,
@@ -399,6 +420,115 @@ impl SessionManager {
         events.iter().rev().take(limit).cloned().collect()
     }
 
+    // Elicitation Management
+
+    /// Add a pending elicitation for a client
+    pub fn add_pending_elicitation(&self, client_id: String, elicitation: ElicitationContext) {
+        self.pending_elicitations
+            .entry(client_id)
+            .or_default()
+            .push(elicitation);
+    }
+
+    /// Get all pending elicitations for a client
+    #[must_use]
+    pub fn get_pending_elicitations(&self, client_id: &str) -> Vec<ElicitationContext> {
+        self.pending_elicitations
+            .get(client_id)
+            .map(|entry| entry.clone())
+            .unwrap_or_default()
+    }
+
+    /// Update an elicitation state
+    pub fn update_elicitation_state(
+        &self,
+        client_id: &str,
+        elicitation_id: &str,
+        state: crate::context::ElicitationState,
+    ) -> bool {
+        if let Some(mut elicitations) = self.pending_elicitations.get_mut(client_id) {
+            for elicitation in elicitations.iter_mut() {
+                if elicitation.elicitation_id == elicitation_id {
+                    elicitation.set_state(state);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Remove completed elicitations for a client
+    pub fn remove_completed_elicitations(&self, client_id: &str) {
+        if let Some(mut elicitations) = self.pending_elicitations.get_mut(client_id) {
+            elicitations.retain(|e| !e.is_complete());
+        }
+    }
+
+    /// Clear all elicitations for a client
+    pub fn clear_elicitations(&self, client_id: &str) {
+        self.pending_elicitations.remove(client_id);
+    }
+
+    // Completion Management
+
+    /// Add an active completion for a client
+    pub fn add_active_completion(&self, client_id: String, completion: CompletionContext) {
+        self.active_completions
+            .entry(client_id)
+            .or_default()
+            .push(completion);
+    }
+
+    /// Get all active completions for a client
+    #[must_use]
+    pub fn get_active_completions(&self, client_id: &str) -> Vec<CompletionContext> {
+        self.active_completions
+            .get(client_id)
+            .map(|entry| entry.clone())
+            .unwrap_or_default()
+    }
+
+    /// Remove a specific completion
+    pub fn remove_completion(&self, client_id: &str, completion_id: &str) -> bool {
+        if let Some(mut completions) = self.active_completions.get_mut(client_id) {
+            let original_len = completions.len();
+            completions.retain(|c| c.completion_id != completion_id);
+            return completions.len() < original_len;
+        }
+        false
+    }
+
+    /// Clear all completions for a client
+    pub fn clear_completions(&self, client_id: &str) {
+        self.active_completions.remove(client_id);
+    }
+
+    /// Get session statistics including elicitations and completions
+    #[must_use]
+    pub fn get_enhanced_analytics(&self) -> SessionAnalytics {
+        let analytics = self.get_analytics();
+
+        // Add elicitation and completion counts
+        let mut _total_elicitations = 0;
+        let mut _pending_elicitations = 0;
+        let mut _total_completions = 0;
+
+        for entry in self.pending_elicitations.iter() {
+            let elicitations = entry.value();
+            _total_elicitations += elicitations.len();
+            _pending_elicitations += elicitations.iter().filter(|e| !e.is_complete()).count();
+        }
+
+        for entry in self.active_completions.iter() {
+            _total_completions += entry.value().len();
+        }
+
+        // TODO: Add these counts to SessionAnalytics struct when extending it
+        // Currently tracking: _total_elicitations, _pending_elicitations, _total_completions
+
+        analytics
+    }
+
     // Private helper methods
 
     fn cleanup_expired_sessions(
@@ -406,6 +536,8 @@ impl SessionManager {
         config: &SessionConfig,
         session_history: &Arc<RwLock<VecDeque<SessionEvent>>>,
         stats: &Arc<RwLock<SessionStats>>,
+        pending_elicitations: &Arc<DashMap<String, Vec<ElicitationContext>>>,
+        active_completions: &Arc<DashMap<String, Vec<CompletionContext>>>,
     ) {
         let cutoff_time = Utc::now() - config.session_timeout;
         let mut expired_sessions = Vec::new();
@@ -422,6 +554,10 @@ impl SessionManager {
                 let mut stats_guard = stats.write();
                 stats_guard.total_session_duration += session.session_duration();
                 drop(stats_guard);
+
+                // Clean up associated elicitations and completions
+                pending_elicitations.remove(&client_id);
+                active_completions.remove(&client_id);
 
                 // Record event
                 let event = SessionEvent {

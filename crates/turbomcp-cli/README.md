@@ -26,7 +26,7 @@
 cargo install turbomcp-cli
 
 # Install specific version
-cargo install turbomcp-cli --version 1.0.1
+cargo install turbomcp-cli --version 1.0.5
 ```
 
 ### From Source

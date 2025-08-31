@@ -21,6 +21,10 @@
 - **Memory-efficient processing** with `Bytes`-based message handling
 - **Minimal allocations** through careful lifetime management
 - **SmallVec and CompactStr** for optimized small data structures
+- **Lock-free data structures** for high-concurrency scenarios
+- **Buffer pooling** for reduced allocations
+- **Lazy JSON parsing** for on-demand deserialization
+- **Memory-mapped file support** for large data handling
 
 ### 🧵 **Thread-Safe Session Management**
 - **Concurrent session tracking** with thread-safe state management
@@ -36,6 +40,13 @@
 - **Built-in metrics hooks** for performance monitoring
 - **Tracing integration points** for distributed observability
 - **Request correlation IDs** for end-to-end tracking
+
+### 🎯 **Enhanced Context Types (v1.0.2)**
+- **ElicitationContext** - Server-initiated user input requests with JSON schema validation
+- **CompletionContext** - Intelligent autocompletion with reference tracking
+- **PingContext** - Bidirectional health monitoring and keepalive
+- **ResourceTemplateContext** - Dynamic resource generation with RFC 6570 templates
+- **BidirectionalContext** - Support for server-initiated requests to clients
 
 ## Architecture
 
@@ -136,7 +147,7 @@ Enable maximum performance with SIMD acceleration:
 
 ```toml
 [dependencies]
-turbomcp-core = { version = "1.0", features = ["simd"] }
+turbomcp-core = { version = "1.0.2", features = ["simd"] }
 ```
 
 **Note**: SIMD features require compatible CPU architectures (x86_64 with AVX2 or ARM with NEON).

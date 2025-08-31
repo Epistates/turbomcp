@@ -41,11 +41,15 @@
 
 use proc_macro::TokenStream;
 
+mod completion;
+mod elicitation;
 mod helpers;
+mod ping;
 mod prompt;
 mod resource;
 mod schema;
 mod server;
+mod template;
 mod tool;
 
 /// Marks an impl block as a TurboMCP server (idiomatic Rust)
@@ -207,4 +211,93 @@ pub fn mcp_error(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn tool_result(input: TokenStream) -> TokenStream {
     helpers::generate_tool_result(input)
+}
+
+/// Marks a method as an elicitation handler for gathering user input
+///
+/// Elicitation allows servers to request structured input from clients
+/// with JSON schema validation and optional default values.
+///
+/// # Example
+///
+/// ```ignore
+/// # use turbomcp_macros::elicitation;
+/// # struct MyServer;
+/// # impl MyServer {
+/// #[elicitation("Collect user preferences")]
+/// async fn get_preferences(&self, schema: serde_json::Value) -> turbomcp::McpResult<serde_json::Value> {
+///     // Implementation would send elicitation request to client
+///     // and return the structured user input
+///     Ok(serde_json::json!({"theme": "dark", "language": "en"}))
+/// }
+/// # }
+#[proc_macro_attribute]
+pub fn elicitation(args: TokenStream, input: TokenStream) -> TokenStream {
+    elicitation::generate_elicitation_impl(args, input)
+}
+
+/// Marks a method as a completion handler for argument autocompletion
+///
+/// Completion provides intelligent suggestions for tool parameters
+/// based on current context and partial input.
+///
+/// # Example
+///
+/// ```ignore
+/// # use turbomcp_macros::completion;
+/// # struct MyServer;
+/// # impl MyServer {
+/// #[completion("Complete file paths")]
+/// async fn complete_file_path(&self, partial: String) -> turbomcp::McpResult<Vec<String>> {
+///     // Return completion suggestions based on partial input
+///     Ok(vec!["config.json".to_string(), "data.txt".to_string()])
+/// }
+/// # }
+#[proc_macro_attribute]
+pub fn completion(args: TokenStream, input: TokenStream) -> TokenStream {
+    completion::generate_completion_impl(args, input)
+}
+
+/// Marks a method as a resource template handler
+///
+/// Resource templates use RFC 6570 URI templates for parameterized
+/// resource access, enabling dynamic resource URIs.
+///
+/// # Example
+///
+/// ```ignore
+/// # use turbomcp_macros::template;
+/// # struct MyServer;
+/// # impl MyServer {
+/// #[template("users/{user_id}/profile")]
+/// async fn get_user_profile(&self, user_id: String) -> turbomcp::McpResult<String> {
+///     // Return resource content for the templated URI
+///     Ok(format!("Profile for user: {}", user_id))
+/// }
+/// # }
+#[proc_macro_attribute]
+pub fn template(args: TokenStream, input: TokenStream) -> TokenStream {
+    template::generate_template_impl(args, input)
+}
+
+/// Marks a method as a ping handler for connection health monitoring
+///
+/// Ping handlers enable bidirectional health checks between
+/// clients and servers for connection monitoring.
+///
+/// # Example
+///
+/// ```ignore
+/// # use turbomcp_macros::ping;
+/// # struct MyServer;
+/// # impl MyServer {
+/// #[ping("Health check")]
+/// async fn health_check(&self) -> turbomcp::McpResult<String> {
+///     // Return health status information
+///     Ok("Server is healthy".to_string())
+/// }
+/// # }
+#[proc_macro_attribute]
+pub fn ping(args: TokenStream, input: TokenStream) -> TokenStream {
+    ping::generate_ping_impl(args, input)
 }

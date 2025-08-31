@@ -39,7 +39,10 @@
     unreachable_pub,
     clippy::all
 )]
-#![deny(unsafe_code)]
+#![cfg_attr(
+    all(not(feature = "mmap"), not(feature = "lock-free")),
+    deny(unsafe_code)
+)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(
     clippy::module_name_repetitions,
@@ -58,24 +61,38 @@
 )]
 
 pub mod context;
+pub mod enhanced_registry;
 pub mod error;
 pub mod error_utils;
+pub mod handlers;
+pub mod lock_free;
 pub mod message;
 pub mod registry;
 pub mod session;
 pub mod state;
 pub mod types;
 pub mod utils;
+pub mod zero_copy;
 
 #[cfg(feature = "fancy-errors")]
 pub mod config;
 
 // Re-export commonly used types
 pub use context::{
-    ClientId, ClientIdExtractor, ClientSession, RequestContext, RequestContextExt, RequestInfo,
-    ResponseContext,
+    BidirectionalContext, ClientCapabilities, ClientId, ClientIdExtractor, ClientSession,
+    CommunicationDirection, CommunicationInitiator, CompletionCapabilities, CompletionContext,
+    CompletionOption, CompletionReference, ConnectionMetrics, ElicitationContext, ElicitationState,
+    PingContext, PingOrigin, RequestContext, RequestContextExt, RequestInfo,
+    ResourceTemplateContext, ResponseContext, ServerInitiatedContext, ServerInitiatedType,
+    TemplateParameter,
 };
+pub use enhanced_registry::{EnhancedRegistry, HandlerStats};
 pub use error::{Error, ErrorKind, Result};
+pub use handlers::{
+    CompletionItem, CompletionProvider, ElicitationHandler, ElicitationResponse,
+    HandlerCapabilities, PingHandler, PingResponse, ResolvedResource, ResourceTemplate,
+    ResourceTemplateHandler, ServerInitiatedCapabilities, TemplateParam,
+};
 pub use message::{Message, MessageId, MessageMetadata};
 pub use session::{SessionAnalytics, SessionConfig, SessionManager};
 pub use state::StateManager;

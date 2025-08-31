@@ -247,6 +247,7 @@ fn test_annotations_with_values() {
         audience: Some(vec!["developers".to_string(), "users".to_string()]),
         priority: Some(1.5),
         custom,
+        ..Default::default()
     };
 
     assert_eq!(
@@ -266,6 +267,7 @@ fn test_annotations_serialization() {
         audience: Some(vec!["test".to_string()]),
         priority: Some(2.0),
         custom,
+        ..Default::default()
     };
 
     let json = serde_json::to_string(&annotations).unwrap();
@@ -677,6 +679,7 @@ fn test_tool_with_annotations() {
         audience: Some(vec!["developers".to_string()]),
         priority: Some(1.0),
         custom: HashMap::new(),
+        ..Default::default()
     };
 
     let tool = Tool {
@@ -872,9 +875,12 @@ fn test_client_request_variants() {
 
 #[test]
 fn test_server_request_variants() {
-    let ping = ServerRequest::Ping;
+    let ping = ServerRequest::Ping(PingParams::default());
     match ping {
-        ServerRequest::Ping => (),
+        ServerRequest::Ping(_) => (),
+        ServerRequest::CreateMessage(_) => (),
+        ServerRequest::ListRoots(_) => (),
+        ServerRequest::ElicitationCreate(_) => (),
     }
 }
 
@@ -976,6 +982,7 @@ fn test_comprehensive_serialization() {
                 custom.insert("category".to_string(), json!("utility"));
                 custom
             },
+            ..Default::default()
         }),
         meta: Some(meta),
     };
@@ -988,4 +995,309 @@ fn test_comprehensive_serialization() {
     assert_eq!(tool.description, deserialized.description);
     assert!(deserialized.annotations.is_some());
     assert!(deserialized.output_schema.is_some());
+}
+
+#[test]
+fn test_sampling_api_comprehensive_workflow() {
+    // Test complete CreateMessageRequest with all MCP 2025-06-18 fields
+    let sampling_message = SamplingMessage {
+        role: Role::User,
+        content: Content::Text(TextContent {
+            text: "Test message for sampling".to_string(),
+            annotations: None,
+            meta: None,
+        }),
+    };
+
+    let model_preferences = ModelPreferences {
+        hints: Some(vec![
+            ModelHint {
+                name: Some("claude-3-5-sonnet".to_string()),
+            },
+            ModelHint {
+                name: Some("fast".to_string()),
+            },
+        ]),
+        cost_priority: Some(0.3),
+        speed_priority: Some(0.8),
+        intelligence_priority: Some(0.9),
+    };
+
+    let mut metadata = HashMap::new();
+    metadata.insert("provider".to_string(), json!("anthropic"));
+    metadata.insert("region".to_string(), json!("us-east-1"));
+
+    let create_message_request = CreateMessageRequest {
+        messages: vec![sampling_message],
+        model_preferences: Some(model_preferences.clone()),
+        system_prompt: Some("You are a helpful assistant for testing.".to_string()),
+        include_context: Some(IncludeContext::ThisServer),
+        temperature: Some(0.7),
+        max_tokens: Some(1000),
+        stop_sequences: Some(vec!["STOP".to_string(), "END".to_string()]),
+        metadata: Some(metadata.clone()),
+    };
+
+    // Test serialization/deserialization
+    let json = serde_json::to_string_pretty(&create_message_request).unwrap();
+    let deserialized: CreateMessageRequest = serde_json::from_str(&json).unwrap();
+
+    // Verify all fields are preserved
+    assert_eq!(deserialized.messages.len(), 1);
+    assert_eq!(deserialized.messages[0].role, Role::User);
+
+    let model_prefs = deserialized.model_preferences.as_ref().unwrap();
+    assert_eq!(model_prefs.cost_priority, Some(0.3));
+    assert_eq!(model_prefs.speed_priority, Some(0.8));
+    assert_eq!(model_prefs.intelligence_priority, Some(0.9));
+    assert_eq!(model_prefs.hints.as_ref().unwrap().len(), 2);
+    assert_eq!(
+        model_prefs.hints.as_ref().unwrap()[0].name,
+        Some("claude-3-5-sonnet".to_string())
+    );
+
+    assert_eq!(
+        deserialized.system_prompt,
+        Some("You are a helpful assistant for testing.".to_string())
+    );
+    assert_eq!(
+        deserialized.include_context,
+        Some(IncludeContext::ThisServer)
+    );
+    assert_eq!(deserialized.temperature, Some(0.7));
+    assert_eq!(deserialized.max_tokens, Some(1000));
+    assert_eq!(deserialized.stop_sequences.as_ref().unwrap().len(), 2);
+    assert_eq!(
+        deserialized.metadata.as_ref().unwrap()["provider"],
+        json!("anthropic")
+    );
+}
+
+#[test]
+fn test_sampling_api_context_inclusion_serialization() {
+    // Test all IncludeContext variants serialize correctly per MCP spec
+    let test_cases = vec![
+        (IncludeContext::None, "\"none\""),
+        (IncludeContext::ThisServer, "\"thisserver\""),
+        (IncludeContext::AllServers, "\"allservers\""),
+    ];
+
+    for (context, expected_json) in test_cases {
+        let json = serde_json::to_string(&context).unwrap();
+        assert_eq!(json, expected_json);
+
+        let deserialized: IncludeContext = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, context);
+    }
+}
+
+#[test]
+fn test_sampling_api_model_preferences_validation() {
+    // Test priority value ranges per MCP spec (0.0 to 1.0)
+    let valid_prefs = ModelPreferences {
+        hints: None,
+        cost_priority: Some(0.0),
+        speed_priority: Some(1.0),
+        intelligence_priority: Some(0.5),
+    };
+
+    let json = serde_json::to_string(&valid_prefs).unwrap();
+    let deserialized: ModelPreferences = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(deserialized.cost_priority, Some(0.0));
+    assert_eq!(deserialized.speed_priority, Some(1.0));
+    assert_eq!(deserialized.intelligence_priority, Some(0.5));
+}
+
+#[test]
+fn test_create_message_result_complete() {
+    // Test CreateMessageResult with all fields
+    let result = CreateMessageResult {
+        role: Role::Assistant,
+        content: Content::Text(TextContent {
+            text: "This is a test response from the model.".to_string(),
+            annotations: None,
+            meta: None,
+        }),
+        model: Some("claude-3-5-sonnet-20241022".to_string()),
+        stop_reason: Some("stop_sequence".to_string()),
+    };
+
+    let json = serde_json::to_string_pretty(&result).unwrap();
+    let deserialized: CreateMessageResult = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(deserialized.role, Role::Assistant);
+    assert_eq!(
+        deserialized.model,
+        Some("claude-3-5-sonnet-20241022".to_string())
+    );
+    assert_eq!(deserialized.stop_reason, Some("stop_sequence".to_string()));
+
+    if let Content::Text(text_content) = &deserialized.content {
+        assert_eq!(text_content.text, "This is a test response from the model.");
+    } else {
+        panic!("Expected text content");
+    }
+}
+
+#[test]
+fn test_annotations_100_percent_compliance() {
+    // Test all MCP 2025-06-18 Annotations fields for 100% schema compliance
+    let annotations = Annotations {
+        audience: Some(vec!["user".to_string(), "assistant".to_string()]),
+        priority: Some(0.8),
+        last_modified: Some("2025-01-12T15:00:58Z".to_string()),
+        custom: {
+            let mut custom = HashMap::new();
+            custom.insert("category".to_string(), serde_json::json!("important"));
+            custom.insert("source".to_string(), serde_json::json!("manual"));
+            custom
+        },
+    };
+
+    // Test serialization includes all fields with correct JSON naming
+    let json = serde_json::to_string(&annotations).unwrap();
+    assert!(json.contains("\"audience\":[\"user\",\"assistant\"]"));
+    assert!(json.contains("\"priority\":0.8"));
+    assert!(json.contains("\"lastModified\":\"2025-01-12T15:00:58Z\""));
+    assert!(json.contains("\"category\":\"important\""));
+
+    // Test round-trip serialization maintains all data
+    let deserialized: Annotations = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized.audience, annotations.audience);
+    assert_eq!(deserialized.priority, annotations.priority);
+    assert_eq!(deserialized.last_modified, annotations.last_modified);
+    assert_eq!(deserialized.custom, annotations.custom);
+}
+
+#[test]
+fn test_tool_annotations_100_percent_compliance() {
+    // Test all MCP 2025-06-18 ToolAnnotations fields for 100% schema compliance
+    let tool_annotations = ToolAnnotations {
+        title: Some("Advanced File System Tool".to_string()),
+        audience: Some(vec!["developer".to_string()]),
+        priority: Some(1.0),
+        destructive_hint: Some(true),
+        idempotent_hint: Some(false),
+        open_world_hint: Some(false),
+        read_only_hint: Some(false),
+        custom: {
+            let mut custom = HashMap::new();
+            custom.insert("requires_auth".to_string(), serde_json::json!(true));
+            custom.insert("max_file_size".to_string(), serde_json::json!(1048576));
+            custom
+        },
+    };
+
+    // Test serialization includes all fields with correct JSON naming (camelCase hints)
+    let json = serde_json::to_string(&tool_annotations).unwrap();
+    assert!(json.contains("\"title\":\"Advanced File System Tool\""));
+    assert!(json.contains("\"audience\":[\"developer\"]"));
+    assert!(json.contains("\"priority\":1.0"));
+    assert!(json.contains("\"destructiveHint\":true"));
+    assert!(json.contains("\"idempotentHint\":false"));
+    assert!(json.contains("\"openWorldHint\":false"));
+    assert!(json.contains("\"readOnlyHint\":false"));
+    assert!(json.contains("\"requires_auth\":true"));
+    assert!(json.contains("\"max_file_size\":1048576"));
+
+    // Test round-trip serialization maintains all data
+    let deserialized: ToolAnnotations = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized.title, tool_annotations.title);
+    assert_eq!(deserialized.audience, tool_annotations.audience);
+    assert_eq!(deserialized.priority, tool_annotations.priority);
+    assert_eq!(
+        deserialized.destructive_hint,
+        tool_annotations.destructive_hint
+    );
+    assert_eq!(
+        deserialized.idempotent_hint,
+        tool_annotations.idempotent_hint
+    );
+    assert_eq!(
+        deserialized.open_world_hint,
+        tool_annotations.open_world_hint
+    );
+    assert_eq!(deserialized.read_only_hint, tool_annotations.read_only_hint);
+    assert_eq!(deserialized.custom, tool_annotations.custom);
+}
+
+#[test]
+fn test_tool_with_complete_annotations_integration() {
+    // Integration test: Tool with complete ToolAnnotations demonstrates full MCP compliance
+    let tool = Tool {
+        name: "file_manager".to_string(),
+        title: Some("File Manager Pro".to_string()),
+        description: Some("Advanced file management operations".to_string()),
+        input_schema: ToolInputSchema {
+            schema_type: "object".to_string(),
+            properties: Some({
+                let mut props = HashMap::new();
+                props.insert(
+                    "path".to_string(),
+                    serde_json::json!({"type": "string", "description": "File path"}),
+                );
+                props.insert("operation".to_string(), serde_json::json!({"type": "string", "enum": ["create", "read", "update", "delete"]}));
+                props
+            }),
+            required: Some(vec!["path".to_string(), "operation".to_string()]),
+            additional_properties: None,
+        },
+        output_schema: Some(ToolOutputSchema {
+            schema_type: "object".to_string(),
+            properties: Some({
+                let mut props = HashMap::new();
+                props.insert(
+                    "success".to_string(),
+                    serde_json::json!({"type": "boolean"}),
+                );
+                props.insert("message".to_string(), serde_json::json!({"type": "string"}));
+                props
+            }),
+            required: None,
+            additional_properties: None,
+        }),
+        annotations: Some(ToolAnnotations {
+            title: Some("File Manager with Full Annotations".to_string()),
+            audience: Some(vec!["developer".to_string(), "admin".to_string()]),
+            priority: Some(0.9),
+            destructive_hint: Some(true), // Can delete files
+            idempotent_hint: Some(false), // Multiple calls may have different effects
+            open_world_hint: Some(false), // Operates on closed file system
+            read_only_hint: Some(false),  // Can modify file system
+            custom: {
+                let mut custom = HashMap::new();
+                custom.insert("security_level".to_string(), serde_json::json!("high"));
+                custom.insert("requires_confirmation".to_string(), serde_json::json!(true));
+                custom
+            },
+        }),
+        meta: Some({
+            let mut meta = HashMap::new();
+            meta.insert("version".to_string(), serde_json::json!("2.1.0"));
+            meta.insert("last_updated".to_string(), serde_json::json!("2025-08-29"));
+            meta
+        }),
+    };
+
+    // Serialize tool with complete annotations
+    let json = serde_json::to_string_pretty(&tool).unwrap();
+
+    // Verify ToolAnnotations behavior hints are properly serialized
+    assert!(json.contains("\"destructiveHint\": true"));
+    assert!(json.contains("\"idempotentHint\": false"));
+    assert!(json.contains("\"openWorldHint\": false"));
+    assert!(json.contains("\"readOnlyHint\": false"));
+
+    // Verify custom fields are preserved
+    assert!(json.contains("\"security_level\": \"high\""));
+    assert!(json.contains("\"requires_confirmation\": true"));
+
+    // Test round-trip maintains all annotation data
+    let deserialized: Tool = serde_json::from_str(&json).unwrap();
+    let deserialized_annotations = deserialized.annotations.unwrap();
+    assert_eq!(deserialized_annotations.destructive_hint, Some(true));
+    assert_eq!(deserialized_annotations.idempotent_hint, Some(false));
+    assert_eq!(deserialized_annotations.open_world_hint, Some(false));
+    assert_eq!(deserialized_annotations.read_only_hint, Some(false));
 }

@@ -15,7 +15,7 @@ fn test_server_config_default() {
     let config = ServerConfig::default();
 
     assert_eq!(config.name, "turbomcp-server");
-    assert_eq!(config.version, "1.0.1");
+    assert_eq!(config.version, "1.0.2");
     assert_eq!(
         config.description,
         Some("Next generation MCP server".to_string())
@@ -230,7 +230,7 @@ fn test_builder_partial_configuration() {
     assert_eq!(config.port, 9000);
 
     // Should retain defaults for non-configured values
-    assert_eq!(config.version, "1.0.1");
+    assert_eq!(config.version, "1.0.2");
     assert_eq!(config.bind_address, "127.0.0.1");
     assert!(!config.enable_tls);
 }

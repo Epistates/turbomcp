@@ -96,7 +96,7 @@ fn test_cli_parsing_with_defaults() {
 
     match cli.command {
         Commands::ToolsList(conn) => {
-            assert!(matches!(conn.transport, None)); // None means auto-detection
+            assert!(conn.transport.is_none()); // None means auto-detection
             assert_eq!(conn.url, "http://localhost:8080/mcp"); // default
             assert!(conn.auth.is_none());
             assert!(!conn.json);
@@ -122,7 +122,7 @@ fn test_cli_parsing_tools_call_with_defaults() {
             name,
             arguments,
         } => {
-            assert!(matches!(conn.transport, None)); // None means auto-detection
+            assert!(conn.transport.is_none()); // None means auto-detection
             assert_eq!(conn.url, "http://localhost:8080/mcp"); // default
             assert!(conn.auth.is_none());
             assert!(!conn.json);
@@ -209,7 +209,10 @@ fn test_connection_args_parsing() {
 
     let parsed = TestArgs::try_parse_from(args).expect("Failed to parse args");
 
-    assert!(matches!(parsed.connection.transport, Some(TransportKind::Http)));
+    assert!(matches!(
+        parsed.connection.transport,
+        Some(TransportKind::Http)
+    ));
     assert_eq!(parsed.connection.url, "http://test.com");
     assert_eq!(parsed.connection.auth.as_ref().unwrap(), "token123");
     assert!(parsed.connection.json);
@@ -344,7 +347,7 @@ fn test_url_formats() {
     for url in urls {
         let conn = Connection {
             transport: Some(TransportKind::Http),
-        command: None,
+            command: None,
             url: url.to_string(),
             auth: None,
             json: false,
@@ -370,7 +373,7 @@ fn test_auth_token_formats() {
     for token in tokens {
         let conn = Connection {
             transport: Some(TransportKind::Http),
-        command: None,
+            command: None,
             url: "http://localhost:8080/test".to_string(),
             auth: if token.is_empty() {
                 None

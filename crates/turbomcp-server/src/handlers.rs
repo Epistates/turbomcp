@@ -7,15 +7,39 @@ use std::sync::Arc;
 use turbomcp_core::RequestContext;
 use turbomcp_protocol::LogLevel;
 use turbomcp_protocol::types::{
-    CallToolRequest, CallToolResult, CreateMessageRequest, CreateMessageResult, EmptyResult,
-    GetPromptRequest, GetPromptResult, LoggingCapabilities, Prompt, ReadResourceRequest,
-    ReadResourceResult, Resource, SamplingCapabilities, SetLevelRequest, Tool, ToolInputSchema,
+    CallToolRequest,
+    CallToolResult,
+    CompleteRequestParams,
+    CompletionResponse,
+    CreateMessageRequest,
+    CreateMessageResult,
+    // New MCP feature types
+    ElicitRequest,
+    ElicitResult,
+    EmptyResult,
+    GetPromptRequest,
+    GetPromptResult,
+    ListResourceTemplatesRequest,
+    ListResourceTemplatesResult,
+    LoggingCapabilities,
+    PingRequest,
+    PingResult,
+    Prompt,
+    ReadResourceRequest,
+    ReadResourceResult,
+    Resource,
+    ResourceTemplate,
+    SamplingCapabilities,
+    SetLevelRequest,
+    Tool,
+    ToolInputSchema,
 };
 
 use crate::ServerResult;
 
 /// Type alias for existence check functions to reduce complexity
-type ExistenceCheckFn = Arc<dyn Fn(&str) -> BoxFuture<bool> + Send + Sync>;
+type ExistenceCheckFn =
+    Arc<dyn Fn(&str) -> futures::future::BoxFuture<'static, bool> + Send + Sync>;
 
 /// Tool handler trait for processing tool calls
 #[async_trait]
@@ -117,6 +141,228 @@ pub trait LoggingHandler: Send + Sync {
     }
 }
 
+// ============================================================================
+// Enhanced Handler Traits for New MCP Features
+// ============================================================================
+
+/// Elicitation handler trait for server-initiated user input requests
+#[async_trait]
+pub trait ElicitationHandler: Send + Sync {
+    /// Handle an elicitation request (server-initiated user input)
+    async fn handle(
+        &self,
+        request: ElicitRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<ElicitResult>;
+
+    /// Validate elicitation schema (optional, default implementation allows all)
+    fn validate_schema(&self, _schema: &serde_json::Value) -> ServerResult<()> {
+        Ok(())
+    }
+
+    /// Get default timeout for user response in milliseconds
+    fn default_timeout_ms(&self) -> u64 {
+        60_000 // 1 minute default
+    }
+
+    /// Check if elicitation is cancellable
+    fn is_cancellable(&self) -> bool {
+        true
+    }
+
+    /// Handle elicitation cancellation
+    async fn handle_cancellation(
+        &self,
+        _request_id: &str,
+        _ctx: RequestContext,
+    ) -> ServerResult<()> {
+        Ok(())
+    }
+
+    /// Process user response for validation
+    async fn process_response(
+        &self,
+        _response: &HashMap<String, serde_json::Value>,
+        _schema: &serde_json::Value,
+        _ctx: RequestContext,
+    ) -> ServerResult<HashMap<String, serde_json::Value>> {
+        // Default implementation returns response as-is
+        Ok(_response.clone())
+    }
+}
+
+/// Completion handler trait for argument autocompletion
+#[async_trait]
+pub trait CompletionHandler: Send + Sync {
+    /// Handle a completion request
+    async fn handle(
+        &self,
+        request: CompleteRequestParams,
+        ctx: RequestContext,
+    ) -> ServerResult<CompletionResponse>;
+
+    /// Get maximum number of completions to return
+    fn max_completions(&self) -> usize {
+        50
+    }
+
+    /// Check if completion is supported for the given reference
+    fn supports_completion(&self, _reference: &str) -> bool {
+        true
+    }
+
+    /// Get completion suggestions based on context
+    async fn get_completions(
+        &self,
+        reference: &str,
+        argument: Option<&str>,
+        partial_value: Option<&str>,
+        ctx: RequestContext,
+    ) -> ServerResult<Vec<serde_json::Value>>;
+
+    /// Filter and rank completion options
+    fn filter_completions(
+        &self,
+        completions: Vec<serde_json::Value>,
+        partial_value: Option<&str>,
+    ) -> Vec<serde_json::Value> {
+        // Default implementation: simple prefix matching
+        if let Some(partial) = partial_value {
+            let partial_lower = partial.to_lowercase();
+            completions
+                .into_iter()
+                .filter(|comp| {
+                    if let Some(value) = comp.get("value").and_then(|v| v.as_str()) {
+                        value.to_lowercase().starts_with(&partial_lower)
+                    } else {
+                        false
+                    }
+                })
+                .take(self.max_completions())
+                .collect()
+        } else {
+            completions
+                .into_iter()
+                .take(self.max_completions())
+                .collect()
+        }
+    }
+}
+
+/// Resource template handler trait for parameterized resource access
+#[async_trait]
+pub trait ResourceTemplateHandler: Send + Sync {
+    /// Handle a list resource templates request
+    async fn handle(
+        &self,
+        request: ListResourceTemplatesRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<ListResourceTemplatesResult>;
+
+    /// Get available resource templates
+    async fn get_templates(&self, ctx: RequestContext) -> ServerResult<Vec<ResourceTemplate>>;
+
+    /// Get a specific template by name
+    async fn get_template(
+        &self,
+        name: &str,
+        ctx: RequestContext,
+    ) -> ServerResult<Option<ResourceTemplate>>;
+
+    /// Validate template URI pattern (RFC 6570)
+    fn validate_uri_template(&self, uri_template: &str) -> ServerResult<()> {
+        // Basic validation - can be overridden for more sophisticated checking
+        if uri_template.is_empty() {
+            return Err(crate::ServerError::Handler {
+                message: "URI template cannot be empty".to_string(),
+                context: None,
+            });
+        }
+        Ok(())
+    }
+
+    /// Expand URI template with parameters
+    fn expand_template(
+        &self,
+        uri_template: &str,
+        parameters: &HashMap<String, serde_json::Value>,
+    ) -> ServerResult<String> {
+        // Basic template expansion - should be overridden for full RFC 6570 support
+        let mut result = uri_template.to_string();
+
+        for (key, value) in parameters {
+            let placeholder = format!("{{{}}}", key);
+            if let Some(str_value) = value.as_str() {
+                result = result.replace(&placeholder, str_value);
+            } else {
+                result = result.replace(&placeholder, &value.to_string());
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Validate template parameters
+    async fn validate_parameters(
+        &self,
+        _template: &ResourceTemplate,
+        _parameters: &HashMap<String, serde_json::Value>,
+        _ctx: RequestContext,
+    ) -> ServerResult<()> {
+        // Default implementation - no validation
+        // Override in implementations to add specific parameter validation
+        Ok(())
+    }
+}
+
+/// Ping handler trait for bidirectional health monitoring
+#[async_trait]
+pub trait PingHandler: Send + Sync {
+    /// Handle a ping request
+    async fn handle(&self, request: PingRequest, ctx: RequestContext) -> ServerResult<PingResult>;
+
+    /// Get current health status
+    async fn get_health_status(&self, _ctx: RequestContext) -> ServerResult<serde_json::Value> {
+        Ok(serde_json::json!({
+            "status": "healthy",
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+        }))
+    }
+
+    /// Get connection metrics if available
+    async fn get_connection_metrics(
+        &self,
+        _ctx: RequestContext,
+    ) -> ServerResult<Option<serde_json::Value>> {
+        Ok(None) // Default: no metrics
+    }
+
+    /// Handle ping timeout
+    async fn handle_timeout(&self, _request_id: &str, _ctx: RequestContext) -> ServerResult<()> {
+        Ok(())
+    }
+
+    /// Check if ping should include detailed health information
+    fn include_health_details(&self) -> bool {
+        false
+    }
+
+    /// Get expected response time threshold in milliseconds
+    fn response_threshold_ms(&self) -> u64 {
+        5_000 // 5 seconds default
+    }
+
+    /// Process custom ping payload
+    async fn process_ping_payload(
+        &self,
+        payload: Option<&serde_json::Value>,
+        _ctx: RequestContext,
+    ) -> ServerResult<Option<serde_json::Value>> {
+        // Default: echo back the payload
+        Ok(payload.cloned())
+    }
+}
+
 /// Composite handler that can handle multiple types of requests
 pub trait CompositeHandler: Send + Sync {
     /// Get tool handler if this composite handles tools
@@ -141,6 +387,26 @@ pub trait CompositeHandler: Send + Sync {
 
     /// Get logging handler if this composite handles logging
     fn as_logging_handler(&self) -> Option<&dyn LoggingHandler> {
+        None
+    }
+
+    /// Get elicitation handler if this composite handles elicitation
+    fn as_elicitation_handler(&self) -> Option<&dyn ElicitationHandler> {
+        None
+    }
+
+    /// Get completion handler if this composite handles completion
+    fn as_completion_handler(&self) -> Option<&dyn CompletionHandler> {
+        None
+    }
+
+    /// Get resource template handler if this composite handles resource templates
+    fn as_resource_template_handler(&self) -> Option<&dyn ResourceTemplateHandler> {
+        None
+    }
+
+    /// Get ping handler if this composite handles ping
+    fn as_ping_handler(&self) -> Option<&dyn PingHandler> {
         None
     }
 }
@@ -291,7 +557,8 @@ impl FunctionToolHandler {
         F: Fn(CallToolRequest, RequestContext) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = ServerResult<CallToolResult>> + Send + 'static,
     {
-        let handler = Arc::new(move |req, ctx| Box::pin(handler(req, ctx)) as BoxFuture<_>);
+        let handler =
+            Arc::new(move |req, ctx| Box::pin(handler(req, ctx)) as futures::future::BoxFuture<_>);
         Self {
             tool,
             handler,
@@ -346,7 +613,8 @@ impl FunctionPromptHandler {
         F: Fn(GetPromptRequest, RequestContext) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = ServerResult<GetPromptResult>> + Send + 'static,
     {
-        let handler = Arc::new(move |req, ctx| Box::pin(handler(req, ctx)) as BoxFuture<_>);
+        let handler =
+            Arc::new(move |req, ctx| Box::pin(handler(req, ctx)) as futures::future::BoxFuture<_>);
         Self { prompt, handler }
     }
 }
@@ -395,8 +663,11 @@ impl FunctionResourceHandler {
         F: Fn(ReadResourceRequest, RequestContext) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = ServerResult<ReadResourceResult>> + Send + 'static,
     {
-        let handler = Arc::new(move |req, ctx| Box::pin(handler(req, ctx)) as BoxFuture<_>);
-        let exists_fn = Arc::new(move |_uri: &str| Box::pin(async move { true }) as BoxFuture<_>);
+        let handler =
+            Arc::new(move |req, ctx| Box::pin(handler(req, ctx)) as futures::future::BoxFuture<_>);
+        let exists_fn = Arc::new(move |_uri: &str| {
+            Box::pin(async move { true }) as futures::future::BoxFuture<'static, bool>
+        });
         Self {
             resource,
             handler,
@@ -427,9 +698,35 @@ impl ResourceHandler for FunctionResourceHandler {
 /// Utility functions for creating handlers
 pub mod utils {
     use super::{
-        CallToolRequest, CallToolResult, FunctionPromptHandler, FunctionResourceHandler,
-        FunctionToolHandler, GetPromptRequest, GetPromptResult, Prompt, ReadResourceRequest,
-        ReadResourceResult, RequestContext, Resource, ServerResult, Tool, ToolInputSchema,
+        CallToolRequest,
+        CallToolResult,
+        CompleteRequestParams,
+        CompletionResponse,
+        // New MCP feature handler types
+        ElicitRequest,
+        ElicitResult,
+        FunctionCompletionHandler,
+        FunctionElicitationHandler,
+        FunctionPingHandler,
+        FunctionPromptHandler,
+        FunctionResourceHandler,
+        FunctionResourceTemplateHandler,
+        FunctionToolHandler,
+        GetPromptRequest,
+        GetPromptResult,
+        ListResourceTemplatesRequest,
+        ListResourceTemplatesResult,
+        PingRequest,
+        PingResult,
+        Prompt,
+        ReadResourceRequest,
+        ReadResourceResult,
+        RequestContext,
+        Resource,
+        ResourceTemplate,
+        ServerResult,
+        Tool,
+        ToolInputSchema,
     };
 
     /// Create a tool handler with complete metadata
@@ -550,5 +847,254 @@ pub mod utils {
             meta: None,
         };
         FunctionResourceHandler::new(resource, handler)
+    }
+
+    // ========================================================================
+    // Enhanced Handler Factory Functions for New MCP Features
+    // ========================================================================
+
+    /// Create an elicitation handler with schema validation
+    pub fn elicitation<F, Fut>(schema: serde_json::Value, handler: F) -> FunctionElicitationHandler
+    where
+        F: Fn(ElicitRequest, RequestContext) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ServerResult<ElicitResult>> + Send + 'static,
+    {
+        FunctionElicitationHandler::new(schema, handler)
+    }
+
+    /// Create a completion handler for autocompletion
+    pub fn completion<F, Fut>(handler: F) -> FunctionCompletionHandler
+    where
+        F: Fn(CompleteRequestParams, RequestContext) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ServerResult<CompletionResponse>> + Send + 'static,
+    {
+        FunctionCompletionHandler::new(handler)
+    }
+
+    /// Create a resource template handler with templates
+    pub fn resource_template<F, Fut>(
+        templates: Vec<ResourceTemplate>,
+        handler: F,
+    ) -> FunctionResourceTemplateHandler
+    where
+        F: Fn(ListResourceTemplatesRequest, RequestContext) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ServerResult<ListResourceTemplatesResult>>
+            + Send
+            + 'static,
+    {
+        FunctionResourceTemplateHandler::new(templates, handler)
+    }
+
+    /// Create a ping handler for health monitoring
+    pub fn ping<F, Fut>(handler: F) -> FunctionPingHandler
+    where
+        F: Fn(PingRequest, RequestContext) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ServerResult<PingResult>> + Send + 'static,
+    {
+        FunctionPingHandler::new(handler)
+    }
+}
+
+// ============================================================================
+// Function-based Handler Implementations for New MCP Features
+// ============================================================================
+
+/// Function-based elicitation handler
+pub struct FunctionElicitationHandler {
+    /// Elicitation schema
+    schema: serde_json::Value,
+    /// Handler function
+    handler: Arc<
+        dyn Fn(ElicitRequest, RequestContext) -> BoxFuture<ServerResult<ElicitResult>>
+            + Send
+            + Sync,
+    >,
+}
+
+impl std::fmt::Debug for FunctionElicitationHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FunctionElicitationHandler")
+            .field("schema", &self.schema)
+            .finish()
+    }
+}
+
+impl FunctionElicitationHandler {
+    /// Create a new function-based elicitation handler
+    pub fn new<F, Fut>(schema: serde_json::Value, handler: F) -> Self
+    where
+        F: Fn(ElicitRequest, RequestContext) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ServerResult<ElicitResult>> + Send + 'static,
+    {
+        let handler =
+            Arc::new(move |req, ctx| Box::pin(handler(req, ctx)) as futures::future::BoxFuture<_>);
+        Self { schema, handler }
+    }
+}
+
+#[async_trait]
+impl ElicitationHandler for FunctionElicitationHandler {
+    async fn handle(
+        &self,
+        request: ElicitRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<ElicitResult> {
+        (self.handler)(request, ctx).await
+    }
+
+    fn validate_schema(&self, schema: &serde_json::Value) -> ServerResult<()> {
+        if schema != &self.schema {
+            return Err(crate::ServerError::Handler {
+                message: "Schema mismatch".to_string(),
+                context: Some("elicitation_validation".to_string()),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Function-based completion handler
+pub struct FunctionCompletionHandler {
+    /// Handler function
+    handler: Arc<
+        dyn Fn(CompleteRequestParams, RequestContext) -> BoxFuture<ServerResult<CompletionResponse>>
+            + Send
+            + Sync,
+    >,
+}
+
+impl std::fmt::Debug for FunctionCompletionHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FunctionCompletionHandler").finish()
+    }
+}
+
+impl FunctionCompletionHandler {
+    /// Create a new function-based completion handler
+    pub fn new<F, Fut>(handler: F) -> Self
+    where
+        F: Fn(CompleteRequestParams, RequestContext) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ServerResult<CompletionResponse>> + Send + 'static,
+    {
+        let handler =
+            Arc::new(move |req, ctx| Box::pin(handler(req, ctx)) as futures::future::BoxFuture<_>);
+        Self { handler }
+    }
+}
+
+#[async_trait]
+impl CompletionHandler for FunctionCompletionHandler {
+    async fn handle(
+        &self,
+        request: CompleteRequestParams,
+        ctx: RequestContext,
+    ) -> ServerResult<CompletionResponse> {
+        (self.handler)(request, ctx).await
+    }
+
+    async fn get_completions(
+        &self,
+        _reference: &str,
+        _argument: Option<&str>,
+        _partial_value: Option<&str>,
+        _ctx: RequestContext,
+    ) -> ServerResult<Vec<serde_json::Value>> {
+        // Default implementation - should be overridden
+        Ok(Vec::new())
+    }
+}
+
+/// Function-based resource template handler
+pub struct FunctionResourceTemplateHandler {
+    /// Available templates
+    templates: Vec<ResourceTemplate>,
+    /// Handler function
+    handler: Arc<
+        dyn Fn(
+                ListResourceTemplatesRequest,
+                RequestContext,
+            ) -> BoxFuture<ServerResult<ListResourceTemplatesResult>>
+            + Send
+            + Sync,
+    >,
+}
+
+impl std::fmt::Debug for FunctionResourceTemplateHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FunctionResourceTemplateHandler")
+            .field("templates", &self.templates.len())
+            .finish()
+    }
+}
+
+impl FunctionResourceTemplateHandler {
+    /// Create a new function-based resource template handler
+    pub fn new<F, Fut>(templates: Vec<ResourceTemplate>, handler: F) -> Self
+    where
+        F: Fn(ListResourceTemplatesRequest, RequestContext) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ServerResult<ListResourceTemplatesResult>>
+            + Send
+            + 'static,
+    {
+        let handler =
+            Arc::new(move |req, ctx| Box::pin(handler(req, ctx)) as futures::future::BoxFuture<_>);
+        Self { templates, handler }
+    }
+}
+
+#[async_trait]
+impl ResourceTemplateHandler for FunctionResourceTemplateHandler {
+    async fn handle(
+        &self,
+        request: ListResourceTemplatesRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<ListResourceTemplatesResult> {
+        (self.handler)(request, ctx).await
+    }
+
+    async fn get_templates(&self, _ctx: RequestContext) -> ServerResult<Vec<ResourceTemplate>> {
+        Ok(self.templates.clone())
+    }
+
+    async fn get_template(
+        &self,
+        name: &str,
+        _ctx: RequestContext,
+    ) -> ServerResult<Option<ResourceTemplate>> {
+        Ok(self.templates.iter().find(|t| t.name == name).cloned())
+    }
+}
+
+/// Function-based ping handler
+pub struct FunctionPingHandler {
+    /// Handler function
+    handler: Arc<
+        dyn Fn(PingRequest, RequestContext) -> BoxFuture<ServerResult<PingResult>> + Send + Sync,
+    >,
+}
+
+impl std::fmt::Debug for FunctionPingHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FunctionPingHandler").finish()
+    }
+}
+
+impl FunctionPingHandler {
+    /// Create a new function-based ping handler
+    pub fn new<F, Fut>(handler: F) -> Self
+    where
+        F: Fn(PingRequest, RequestContext) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = ServerResult<PingResult>> + Send + 'static,
+    {
+        let handler =
+            Arc::new(move |req, ctx| Box::pin(handler(req, ctx)) as futures::future::BoxFuture<_>);
+        Self { handler }
+    }
+}
+
+#[async_trait]
+impl PingHandler for FunctionPingHandler {
+    async fn handle(&self, request: PingRequest, ctx: RequestContext) -> ServerResult<PingResult> {
+        (self.handler)(request, ctx).await
     }
 }

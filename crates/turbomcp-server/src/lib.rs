@@ -69,7 +69,10 @@ pub mod server;
 // Re-export main types for convenience
 pub use config::{Configuration, ConfigurationBuilder, ServerConfig};
 pub use error::{ServerError, ServerResult};
-pub use handlers::{PromptHandler, ResourceHandler, SamplingHandler, ToolHandler};
+pub use handlers::{
+    CompletionHandler, ElicitationHandler, LoggingHandler, PingHandler, PromptHandler,
+    ResourceHandler, ResourceTemplateHandler, SamplingHandler, ToolHandler,
+};
 pub use lifecycle::{HealthStatus, ServerLifecycle, ShutdownSignal};
 pub use metrics::{MetricsCollector, ServerMetrics};
 pub use middleware::{

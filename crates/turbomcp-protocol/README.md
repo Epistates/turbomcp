@@ -36,6 +36,13 @@
 - **Feature negotiation** - Automatic capability matching
 - **Extension support** - Custom capability extensions
 
+### 🔄 **MCP 2025-06-18 Enhanced Features**
+- **Bidirectional communication** - Server-initiated requests to clients
+- **Elicitation support** - Server can request structured input from users
+- **Completion context** - Enhanced completion with references and metadata
+- **Resource templates** - Dynamic resource generation with parameters
+- **Ping/keepalive** - Connection health monitoring
+
 ## Architecture
 
 ```
@@ -75,6 +82,29 @@ use turbomcp_protocol::{
     ResourcesReadRequest, ResourcesReadResponse,
     PromptsListRequest, PromptsListResponse,
     PromptsGetRequest, PromptsGetResponse,
+};
+```
+
+### MCP 2025-06-18 Enhanced Types (v1.0.2)
+
+```rust
+use turbomcp_protocol::{
+    // Elicitation - Server requests user input
+    ElicitRequest, ElicitResult, ElicitationAction, ElicitationSchema,
+    
+    // Completion - Intelligent autocompletion
+    CompleteRequest, CompleteRequestParams, CompletionResponse,
+    CompletionReference, CompletionValue,
+    
+    // Resource Templates - Dynamic resources
+    ListResourceTemplatesRequest, ListResourceTemplatesResult,
+    ResourceTemplate, ResourceTemplateParameter,
+    
+    // Ping - Bidirectional health monitoring
+    PingRequest, PingParams, PingResult,
+    
+    // Bidirectional communication support
+    ServerRequest, ClientRequest,
 };
 ```
 

@@ -84,7 +84,7 @@ use turbomcp_server::{ServerBuilder, McpServer};
 // Simple server creation
 let server = ServerBuilder::new()
     .name("MyMCPServer")
-    .version("1.0.0")
+    .version("1.0.2")
     .build();
 
 // Run with STDIO transport

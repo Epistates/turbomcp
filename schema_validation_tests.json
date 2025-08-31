@@ -1,0 +1,99 @@
+{
+  "tests": {
+    "server_request_create_message": {
+      "description": "Server-initiated sampling request",
+      "data": {
+        "method": "sampling/createMessage",
+        "params": {
+          "messages": [
+            {
+              "role": "user",
+              "content": {
+                "type": "text",
+                "text": "Hello, please help me"
+              }
+            }
+          ],
+          "maxTokens": 1000,
+          "systemPrompt": "You are a helpful assistant.",
+          "temperature": 0.7,
+          "includeContext": "thisServer"
+        }
+      }
+    },
+    "server_request_list_roots": {
+      "description": "Server requests filesystem roots from client",
+      "data": {
+        "method": "roots/list",
+        "params": {
+          "_meta": {
+            "progressToken": "root-scan-001"
+          }
+        }
+      }
+    },
+    "server_request_elicit": {
+      "description": "Server requests user input via client",
+      "data": {
+        "method": "elicitation/create",
+        "params": {
+          "message": "Please provide your database credentials",
+          "requestedSchema": {
+            "type": "object",
+            "properties": {
+              "username": {
+                "type": "string",
+                "description": "Database username"
+              },
+              "password": {
+                "type": "string",
+                "description": "Database password"
+              }
+            },
+            "required": ["username", "password"]
+          }
+        }
+      }
+    },
+    "client_request_call_tool": {
+      "description": "Client calls a server tool",
+      "data": {
+        "method": "tools/call",
+        "params": {
+          "name": "file_search",
+          "arguments": {
+            "pattern": "*.py",
+            "directory": "/src"
+          }
+        }
+      }
+    },
+    "client_request_initialize": {
+      "description": "Client initializes connection",
+      "data": {
+        "method": "initialize",
+        "params": {
+          "protocolVersion": "2025-06-18",
+          "capabilities": {
+            "roots": {
+              "listChanged": true
+            },
+            "sampling": {}
+          },
+          "clientInfo": {
+            "name": "test-client",
+            "version": "1.0.0"
+          }
+        }
+      }
+    },
+    "annotation_with_lastmodified": {
+      "description": "Test annotation with lastModified field from schema",
+      "data": {
+        "audience": ["user", "assistant"],
+        "priority": 0.8,
+        "lastModified": "2025-08-29T12:00:00Z"
+      }
+    }
+  }
+}

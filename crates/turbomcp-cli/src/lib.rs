@@ -142,9 +142,14 @@ fn determine_transport(conn: &Connection) -> TransportKind {
     if let Some(transport) = &conn.transport {
         return transport.clone();
     }
-    
+
     // Auto-detect based on command/URL patterns
-    if conn.command.is_some() || (!conn.url.starts_with("http://") && !conn.url.starts_with("https://") && !conn.url.starts_with("ws://") && !conn.url.starts_with("wss://")) {
+    if conn.command.is_some()
+        || (!conn.url.starts_with("http://")
+            && !conn.url.starts_with("https://")
+            && !conn.url.starts_with("ws://")
+            && !conn.url.starts_with("wss://"))
+    {
         TransportKind::Stdio
     } else if conn.url.starts_with("ws://") || conn.url.starts_with("wss://") {
         TransportKind::Ws
@@ -175,7 +180,10 @@ pub async fn cmd_tools_call(
     }
 }
 
-pub async fn cmd_schema_export(conn: Connection, output_path: Option<String>) -> Result<(), String> {
+pub async fn cmd_schema_export(
+    conn: Connection,
+    output_path: Option<String>,
+) -> Result<(), String> {
     // Get schema data
     let transport = determine_transport(&conn);
     let schema_data = match transport {
@@ -183,19 +191,18 @@ pub async fn cmd_schema_export(conn: Connection, output_path: Option<String>) ->
         TransportKind::Ws => ws_get_schemas(&conn).await?,
         TransportKind::Http => http_get_schemas(&conn).await?,
     };
-    
+
     // Output to file or stdout
     if let Some(path) = output_path {
         use std::fs;
         let pretty_json = serde_json::to_string_pretty(&schema_data)
             .map_err(|e| format!("Failed to format JSON: {e}"))?;
-        fs::write(&path, pretty_json)
-            .map_err(|e| format!("Failed to write to {}: {e}", path))?;
+        fs::write(&path, pretty_json).map_err(|e| format!("Failed to write to {}: {e}", path))?;
         eprintln!("Schemas exported to {}", path);
     } else {
         output(&conn, &schema_data)?;
     }
-    
+
     Ok(())
 }
 
@@ -455,28 +462,28 @@ async fn stdio_send_request(
     let stdout = child.stdout.take().ok_or("Failed to get stdout handle")?;
     let mut reader = BufReader::new(stdout);
     let mut response_line = String::new();
-    
+
     // Read lines until we get valid JSON (ignore log lines)
     loop {
         response_line.clear();
         let bytes_read = reader
             .read_line(&mut response_line)
             .map_err(|e| format!("Failed to read response: {e}"))?;
-            
+
         if bytes_read == 0 {
             return Err("No JSON response received from server".to_string());
         }
-        
+
         // Try to parse as JSON - if it works, we found our response
-        if let Ok(_) = serde_json::from_str::<serde_json::Value>(&response_line) {
+        if serde_json::from_str::<serde_json::Value>(&response_line).is_ok() {
             break;
         }
-        
+
         // If line starts with '{' it might be JSON, try it anyway
         if response_line.trim().starts_with('{') {
             break;
         }
-        
+
         // Otherwise it's probably a log line, continue reading
     }
 

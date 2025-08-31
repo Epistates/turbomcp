@@ -168,7 +168,7 @@ fn test_cli_parsing_defaults() {
 
     match cli.command {
         Commands::ToolsList(conn) => {
-            assert!(matches!(conn.transport, None)); // None for auto-detection
+            assert!(conn.transport.is_none()); // None for auto-detection
             assert_eq!(conn.url, "http://localhost:8080/mcp");
             assert_eq!(conn.auth, None);
             assert!(!conn.json);

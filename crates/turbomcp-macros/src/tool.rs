@@ -183,8 +183,6 @@ struct FunctionAnalysis {
     #[allow(dead_code)]
     call_args: TokenStream2,
     #[allow(dead_code)]
-    _has_context: bool,
-    #[allow(dead_code)]
     has_self: bool,
 }
 
@@ -192,14 +190,12 @@ struct FunctionAnalysis {
 struct ParameterInfo {
     name: String,
     ty: Type,
-    _is_context: bool,
 }
 
 /// Analyze function signature to extract parameters and generate appropriate code
 fn analyze_function_signature(sig: &Signature) -> Result<FunctionAnalysis, syn::Error> {
     let mut parameters = Vec::new();
     let mut call_args = TokenStream2::new();
-    let mut has_context = false;
     let mut has_self = false;
     let mut first_param = true;
 
@@ -227,7 +223,6 @@ fn analyze_function_signature(sig: &Signature) -> Result<FunctionAnalysis, syn::
                     };
 
                     if is_context {
-                        has_context = true;
                         if !first_param {
                             call_args.extend(quote! { , });
                         }
@@ -236,7 +231,6 @@ fn analyze_function_signature(sig: &Signature) -> Result<FunctionAnalysis, syn::
                         parameters.push(ParameterInfo {
                             name: param_name.to_string(),
                             ty: (**ty).clone(),
-                            _is_context: false,
                         });
 
                         if !first_param {
@@ -254,7 +248,6 @@ fn analyze_function_signature(sig: &Signature) -> Result<FunctionAnalysis, syn::
     Ok(FunctionAnalysis {
         parameters,
         call_args,
-        _has_context: has_context,
         has_self,
     })
 }

@@ -7,11 +7,36 @@ use turbomcp_core::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion},
     types::{
-        CallToolRequest, CreateMessageRequest, EmptyResult, GetPromptRequest, Implementation,
-        InitializeRequest, InitializeResult, ListPromptsResult, ListResourcesResult,
-        ListRootsResult, ListToolsResult, LoggingCapabilities, PromptsCapabilities,
-        ReadResourceRequest, ResourcesCapabilities, Root, ServerCapabilities, SetLevelRequest,
-        SubscribeRequest, ToolsCapabilities, UnsubscribeRequest,
+        CallToolRequest,
+        CompleteRequestParams,
+        CompletionResponse,
+        CreateMessageRequest,
+        // New MCP feature types
+        ElicitRequest,
+        ElicitResult,
+        EmptyResult,
+        GetPromptRequest,
+        Implementation,
+        InitializeRequest,
+        InitializeResult,
+        ListPromptsResult,
+        ListResourceTemplatesRequest,
+        ListResourceTemplatesResult,
+        ListResourcesResult,
+        ListRootsResult,
+        ListToolsResult,
+        LoggingCapabilities,
+        PingRequest,
+        PingResult,
+        PromptsCapabilities,
+        ReadResourceRequest,
+        ResourcesCapabilities,
+        Root,
+        ServerCapabilities,
+        SetLevelRequest,
+        SubscribeRequest,
+        ToolsCapabilities,
+        UnsubscribeRequest,
     },
 };
 
@@ -30,6 +55,8 @@ pub struct RequestRouter {
     custom_routes: HashMap<String, Arc<dyn RouteHandler>>,
     /// Resource subscription counters by URI
     resource_subscriptions: DashMap<String, usize>,
+    /// Server-initiated request dispatcher (for bidirectional communication)
+    server_request_dispatcher: Option<Arc<dyn ServerRequestDispatcher>>,
 }
 
 impl std::fmt::Debug for RequestRouter {
@@ -54,6 +81,8 @@ pub struct RouterConfig {
     pub enable_tracing: bool,
     /// Maximum concurrent requests
     pub max_concurrent_requests: usize,
+    /// Enable bidirectional routing (server-initiated requests)
+    pub enable_bidirectional: bool,
 }
 
 impl Default for RouterConfig {
@@ -64,8 +93,47 @@ impl Default for RouterConfig {
             default_timeout_ms: 30_000,
             enable_tracing: true,
             max_concurrent_requests: 1000,
+            enable_bidirectional: true,
         }
     }
+}
+
+/// Server request dispatcher trait for server-initiated requests
+#[async_trait::async_trait]
+pub trait ServerRequestDispatcher: Send + Sync {
+    /// Send an elicitation request to the client
+    async fn send_elicitation(
+        &self,
+        request: ElicitRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<ElicitResult>;
+
+    /// Send a ping request to the client
+    async fn send_ping(
+        &self,
+        request: PingRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<PingResult>;
+
+    /// Send a sampling create message request to the client
+    async fn send_create_message(
+        &self,
+        request: CreateMessageRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<turbomcp_protocol::types::CreateMessageResult>;
+
+    /// Send a roots list request to the client  
+    async fn send_list_roots(
+        &self,
+        request: turbomcp_protocol::types::ListRootsRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<ListRootsResult>;
+
+    /// Check if client supports bidirectional communication
+    fn supports_bidirectional(&self) -> bool;
+
+    /// Get client capabilities
+    async fn get_client_capabilities(&self) -> ServerResult<Option<serde_json::Value>>;
 }
 
 /// Route handler trait for custom routes
@@ -123,6 +191,7 @@ impl RequestRouter {
             config: RouterConfig::default(),
             custom_routes: HashMap::new(),
             resource_subscriptions: DashMap::new(),
+            server_request_dispatcher: None,
         }
     }
 
@@ -134,7 +203,26 @@ impl RequestRouter {
             config,
             custom_routes: HashMap::new(),
             resource_subscriptions: DashMap::new(),
+            server_request_dispatcher: None,
         }
+    }
+
+    /// Set the server request dispatcher for bidirectional communication
+    pub fn set_server_request_dispatcher<D>(&mut self, dispatcher: D)
+    where
+        D: ServerRequestDispatcher + 'static,
+    {
+        self.server_request_dispatcher = Some(Arc::new(dispatcher));
+    }
+
+    /// Get the server request dispatcher  
+    pub fn get_server_request_dispatcher(&self) -> Option<&Arc<dyn ServerRequestDispatcher>> {
+        self.server_request_dispatcher.as_ref()
+    }
+
+    /// Check if bidirectional routing is enabled and supported
+    pub fn supports_bidirectional(&self) -> bool {
+        self.config.enable_bidirectional && self.server_request_dispatcher.is_some()
     }
 
     /// Add a custom route handler
@@ -195,6 +283,12 @@ impl RequestRouter {
 
             // Roots methods
             "roots/list" => self.handle_list_roots(request, ctx).await,
+
+            // Enhanced MCP features (new protocol methods)
+            "elicit/request" => self.handle_elicitation(request, ctx).await,
+            "complete/request" => self.handle_completion(request, ctx).await,
+            "resources/templates/list" => self.handle_list_resource_templates(request, ctx).await,
+            "ping/request" => self.handle_ping(request, ctx).await,
 
             // Custom routes
             method => {
@@ -589,6 +683,163 @@ impl RequestRouter {
         self.success_response(&request, result)
     }
 
+    // ========================================================================
+    // Enhanced MCP Feature Handlers
+    // ========================================================================
+
+    async fn handle_elicitation(
+        &self,
+        request: JsonRpcRequest,
+        _ctx: RequestContext,
+    ) -> JsonRpcResponse {
+        match self.parse_params::<ElicitRequest>(&request) {
+            Ok(_elicit_request) => {
+                // Default elicitation handler - returns decline action
+                // This should be overridden by applications with proper elicitation handlers
+                let result = ElicitResult {
+                    action: turbomcp_protocol::types::ElicitationAction::Decline,
+                    content: None,
+                    _meta: Some(serde_json::json!({
+                        "message": "Elicitation not supported - no handler registered"
+                    })),
+                };
+                self.success_response(&request, result)
+            }
+            Err(e) => self.error_response(&request, e),
+        }
+    }
+
+    async fn handle_completion(
+        &self,
+        request: JsonRpcRequest,
+        _ctx: RequestContext,
+    ) -> JsonRpcResponse {
+        match self.parse_params::<CompleteRequestParams>(&request) {
+            Ok(_complete_request) => {
+                // Default completion handler - returns empty completions
+                // This should be overridden by applications with proper completion handlers
+                let result = CompletionResponse {
+                    values: Vec::new(),
+                    has_more: Some(false),
+                    total: Some(0),
+                };
+                self.success_response(&request, result)
+            }
+            Err(e) => self.error_response(&request, e),
+        }
+    }
+
+    async fn handle_list_resource_templates(
+        &self,
+        request: JsonRpcRequest,
+        _ctx: RequestContext,
+    ) -> JsonRpcResponse {
+        match self.parse_params::<ListResourceTemplatesRequest>(&request) {
+            Ok(_template_request) => {
+                // Default resource template handler - returns empty templates
+                // This should be overridden by applications with proper resource template handlers
+                let result = ListResourceTemplatesResult {
+                    resource_templates: Vec::new(),
+                    next_cursor: None,
+                    _meta: Some(serde_json::json!({
+                        "message": "Resource templates not supported - no handler registered"
+                    })),
+                };
+                self.success_response(&request, result)
+            }
+            Err(e) => self.error_response(&request, e),
+        }
+    }
+
+    async fn handle_ping(&self, request: JsonRpcRequest, _ctx: RequestContext) -> JsonRpcResponse {
+        match self.parse_params::<PingRequest>(&request) {
+            Ok(_ping_request) => {
+                // Default ping handler - basic health check response
+                let result = PingResult {
+                    _meta: Some(serde_json::json!({
+                        "status": "healthy",
+                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                        "server": "turbomcp-server",
+                    })),
+                };
+                self.success_response(&request, result)
+            }
+            Err(e) => self.error_response(&request, e),
+        }
+    }
+
+    // ========================================================================
+    // Server-Initiated Request Methods (Bidirectional Communication)
+    // ========================================================================
+
+    /// Send an elicitation request to the client (server-initiated)
+    pub async fn send_elicitation_to_client(
+        &self,
+        request: ElicitRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<ElicitResult> {
+        if let Some(dispatcher) = &self.server_request_dispatcher {
+            dispatcher.send_elicitation(request, ctx).await
+        } else {
+            Err(ServerError::Handler {
+                message: "Server request dispatcher not configured for bidirectional communication"
+                    .to_string(),
+                context: Some("elicitation".to_string()),
+            })
+        }
+    }
+
+    /// Send a ping request to the client (server-initiated)
+    pub async fn send_ping_to_client(
+        &self,
+        request: PingRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<PingResult> {
+        if let Some(dispatcher) = &self.server_request_dispatcher {
+            dispatcher.send_ping(request, ctx).await
+        } else {
+            Err(ServerError::Handler {
+                message: "Server request dispatcher not configured for bidirectional communication"
+                    .to_string(),
+                context: Some("ping".to_string()),
+            })
+        }
+    }
+
+    /// Send a create message request to the client (server-initiated)
+    pub async fn send_create_message_to_client(
+        &self,
+        request: CreateMessageRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<turbomcp_protocol::types::CreateMessageResult> {
+        if let Some(dispatcher) = &self.server_request_dispatcher {
+            dispatcher.send_create_message(request, ctx).await
+        } else {
+            Err(ServerError::Handler {
+                message: "Server request dispatcher not configured for bidirectional communication"
+                    .to_string(),
+                context: Some("create_message".to_string()),
+            })
+        }
+    }
+
+    /// Send a list roots request to the client (server-initiated)
+    pub async fn send_list_roots_to_client(
+        &self,
+        request: turbomcp_protocol::types::ListRootsRequest,
+        ctx: RequestContext,
+    ) -> ServerResult<ListRootsResult> {
+        if let Some(dispatcher) = &self.server_request_dispatcher {
+            dispatcher.send_list_roots(request, ctx).await
+        } else {
+            Err(ServerError::Handler {
+                message: "Server request dispatcher not configured for bidirectional communication"
+                    .to_string(),
+                context: Some("list_roots".to_string()),
+            })
+        }
+    }
+
     // Helper methods
 
     fn get_server_capabilities(&self) -> ServerCapabilities {
@@ -766,6 +1017,7 @@ impl Clone for RequestRouter {
             config: self.config.clone(),
             custom_routes: self.custom_routes.clone(),
             resource_subscriptions: DashMap::new(),
+            server_request_dispatcher: self.server_request_dispatcher.clone(),
         }
     }
 }

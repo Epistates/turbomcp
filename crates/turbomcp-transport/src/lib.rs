@@ -56,6 +56,7 @@
     clippy::default_trait_access  // Default::default() is sometimes clearer
 )]
 
+pub mod bidirectional;
 pub mod core;
 
 #[cfg(feature = "stdio")]
@@ -78,6 +79,9 @@ pub mod unix;
 
 pub mod child_process;
 
+// Server-specific transport functionality
+pub mod server;
+
 #[cfg(feature = "compression")]
 pub mod compression;
 
@@ -86,10 +90,24 @@ pub mod metrics;
 pub mod pool;
 pub mod robustness;
 
+// Re-export bidirectional transport functionality
+pub use bidirectional::{
+    BidirectionalTransportWrapper, ConnectionState, CorrelationContext, MessageDirection,
+    MessageRouter, ProtocolDirectionValidator, RouteAction,
+};
+
 // Re-export core transport traits and types
 pub use core::{
-    Transport, TransportCapabilities, TransportConfig, TransportError, TransportEvent,
-    TransportMessage, TransportMetrics, TransportResult, TransportState, TransportType,
+    BidirectionalTransport, StreamingTransport, Transport, TransportCapabilities, TransportConfig,
+    TransportError, TransportEvent, TransportMessage, TransportMetrics, TransportResult,
+    TransportState, TransportType,
+};
+
+// Re-export server transport functionality
+pub use server::{
+    ServerTransportConfig, ServerTransportConfigBuilder, ServerTransportDispatcher,
+    ServerTransportEvent, ServerTransportEventListener, ServerTransportManager,
+    ServerTransportWrapper,
 };
 
 // Re-export transport implementations

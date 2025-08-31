@@ -1,0 +1,917 @@
+//! Interactive Configuration Wizard using MCP Elicitation
+//!
+//! This example demonstrates the powerful elicitation feature introduced in MCP 2025,
+//! showing how servers can request structured input from clients with JSON schema
+//! validation, default values, constraints, and progress tracking.
+//!
+//! Run with:
+//! ```bash
+//! cargo run --example 11_elicitation_wizard --features full
+//! ```
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+use serde_json::json;
+use tracing::{debug, error, info};
+use turbomcp::prelude::*;
+use turbomcp_core::{ElicitationContext, RequestContext};
+use turbomcp_protocol::{ElicitRequest, ElicitResult};
+use turbomcp_server::{ElicitationHandler, ServerBuilder, ServerResult};
+
+/// Configuration wizard server that guides users through complex setup
+#[derive(Clone)]
+struct ConfigWizardServer {
+    /// Stores completed configuration sections
+    configurations: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+    /// Tracks wizard progress
+    progress: Arc<RwLock<WizardProgress>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct WizardProgress {
+    current_step: usize,
+    total_steps: usize,
+    completed_sections: Vec<String>,
+    validation_errors: Vec<String>,
+}
+
+impl ConfigWizardServer {
+    fn new() -> Self {
+        Self {
+            configurations: Arc::new(RwLock::new(HashMap::new())),
+            progress: Arc::new(RwLock::new(WizardProgress {
+                current_step: 0,
+                total_steps: 4,
+                completed_sections: Vec::new(),
+                validation_errors: Vec::new(),
+            })),
+        }
+    }
+
+    /// Create JSON schema for database configuration
+    fn database_schema() -> serde_json::Value {
+        json!({
+            "type": "object",
+            "title": "Database Configuration",
+            "description": "Configure your database connection settings",
+            "required": ["host", "port", "database"],
+            "properties": {
+                "host": {
+                    "type": "string",
+                    "title": "Database Host",
+                    "description": "Hostname or IP address of the database server",
+                    "default": "localhost",
+                    "examples": ["localhost", "192.168.1.100", "db.example.com"]
+                },
+                "port": {
+                    "type": "integer",
+                    "title": "Port Number",
+                    "description": "Database server port",
+                    "default": 5432,
+                    "minimum": 1,
+                    "maximum": 65535
+                },
+                "database": {
+                    "type": "string",
+                    "title": "Database Name",
+                    "description": "Name of the database to connect to",
+                    "minLength": 1,
+                    "maxLength": 63,
+                    "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$"
+                },
+                "username": {
+                    "type": "string",
+                    "title": "Username",
+                    "description": "Database username for authentication",
+                    "minLength": 1
+                },
+                "password": {
+                    "type": "string",
+                    "title": "Password",
+                    "description": "Database password (will be encrypted)",
+                    "format": "password",
+                    "minLength": 8
+                },
+                "ssl_mode": {
+                    "type": "string",
+                    "title": "SSL Mode",
+                    "description": "SSL connection mode",
+                    "enum": ["disable", "require", "verify-ca", "verify-full"],
+                    "default": "require"
+                },
+                "connection_pool": {
+                    "type": "object",
+                    "title": "Connection Pool Settings",
+                    "properties": {
+                        "min_connections": {
+                            "type": "integer",
+                            "default": 2,
+                            "minimum": 1,
+                            "maximum": 100
+                        },
+                        "max_connections": {
+                            "type": "integer",
+                            "default": 10,
+                            "minimum": 1,
+                            "maximum": 1000
+                        },
+                        "idle_timeout": {
+                            "type": "integer",
+                            "description": "Idle timeout in seconds",
+                            "default": 300,
+                            "minimum": 0
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    /// Create JSON schema for API configuration
+    fn api_schema() -> serde_json::Value {
+        json!({
+            "type": "object",
+            "title": "API Configuration",
+            "description": "Configure your API server settings",
+            "required": ["port", "rate_limit"],
+            "properties": {
+                "port": {
+                    "type": "integer",
+                    "title": "API Port",
+                    "description": "Port for the API server to listen on",
+                    "default": 8080,
+                    "minimum": 1024,
+                    "maximum": 65535
+                },
+                "host": {
+                    "type": "string",
+                    "title": "Bind Address",
+                    "description": "IP address to bind the server to",
+                    "default": "0.0.0.0",
+                    "format": "ipv4"
+                },
+                "cors": {
+                    "type": "object",
+                    "title": "CORS Settings",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "default": true
+                        },
+                        "allowed_origins": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "format": "uri"
+                            },
+                            "default": ["http://localhost:3000"]
+                        },
+                        "allowed_methods": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+                            },
+                            "default": ["GET", "POST", "PUT", "DELETE"]
+                        }
+                    }
+                },
+                "rate_limit": {
+                    "type": "object",
+                    "title": "Rate Limiting",
+                    "required": ["requests_per_minute"],
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "default": true
+                        },
+                        "requests_per_minute": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 10000,
+                            "default": 60
+                        },
+                        "burst_size": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "default": 10
+                        }
+                    }
+                },
+                "authentication": {
+                    "type": "object",
+                    "title": "Authentication Settings",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": ["none", "api_key", "jwt", "oauth2"],
+                            "default": "api_key"
+                        },
+                        "jwt_secret": {
+                            "type": "string",
+                            "format": "password",
+                            "minLength": 32
+                        },
+                        "token_expiry": {
+                            "type": "integer",
+                            "description": "Token expiry in seconds",
+                            "default": 3600,
+                            "minimum": 60
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    /// Create JSON schema for monitoring configuration
+    fn monitoring_schema() -> serde_json::Value {
+        json!({
+            "type": "object",
+            "title": "Monitoring & Observability",
+            "description": "Configure monitoring, logging, and metrics",
+            "properties": {
+                "logging": {
+                    "type": "object",
+                    "title": "Logging Configuration",
+                    "required": ["level"],
+                    "properties": {
+                        "level": {
+                            "type": "string",
+                            "enum": ["trace", "debug", "info", "warn", "error"],
+                            "default": "info"
+                        },
+                        "format": {
+                            "type": "string",
+                            "enum": ["json", "text", "pretty"],
+                            "default": "json"
+                        },
+                        "output": {
+                            "type": "string",
+                            "enum": ["stdout", "stderr", "file"],
+                            "default": "stdout"
+                        },
+                        "file_path": {
+                            "type": "string",
+                            "description": "Log file path (if output is 'file')"
+                        },
+                        "rotation": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean",
+                                    "default": true
+                                },
+                                "max_size_mb": {
+                                    "type": "integer",
+                                    "default": 100,
+                                    "minimum": 1
+                                },
+                                "max_files": {
+                                    "type": "integer",
+                                    "default": 10,
+                                    "minimum": 1
+                                }
+                            }
+                        }
+                    }
+                },
+                "metrics": {
+                    "type": "object",
+                    "title": "Metrics Configuration",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "default": true
+                        },
+                        "export_format": {
+                            "type": "string",
+                            "enum": ["prometheus", "opentelemetry", "statsd"],
+                            "default": "prometheus"
+                        },
+                        "export_interval": {
+                            "type": "integer",
+                            "description": "Export interval in seconds",
+                            "default": 10,
+                            "minimum": 1
+                        },
+                        "port": {
+                            "type": "integer",
+                            "description": "Metrics endpoint port",
+                            "default": 9090,
+                            "minimum": 1024,
+                            "maximum": 65535
+                        }
+                    }
+                },
+                "tracing": {
+                    "type": "object",
+                    "title": "Distributed Tracing",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "default": false
+                        },
+                        "provider": {
+                            "type": "string",
+                            "enum": ["jaeger", "zipkin", "datadog", "newrelic"],
+                            "default": "jaeger"
+                        },
+                        "endpoint": {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Tracing collector endpoint"
+                        },
+                        "sample_rate": {
+                            "type": "number",
+                            "minimum": 0.0,
+                            "maximum": 1.0,
+                            "default": 0.1,
+                            "description": "Fraction of requests to trace (0.0-1.0)"
+                        }
+                    }
+                },
+                "alerts": {
+                    "type": "array",
+                    "title": "Alert Rules",
+                    "items": {
+                        "type": "object",
+                        "required": ["name", "condition", "action"],
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "minLength": 1
+                            },
+                            "condition": {
+                                "type": "string",
+                                "description": "Alert condition expression"
+                            },
+                            "severity": {
+                                "type": "string",
+                                "enum": ["info", "warning", "critical"],
+                                "default": "warning"
+                            },
+                            "action": {
+                                "type": "string",
+                                "enum": ["log", "email", "webhook", "pagerduty"],
+                                "default": "log"
+                            },
+                            "webhook_url": {
+                                "type": "string",
+                                "format": "uri"
+                            }
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    /// Create confirmation schema for final review
+    fn confirmation_schema() -> serde_json::Value {
+        json!({
+            "type": "object",
+            "title": "Configuration Review",
+            "description": "Review and confirm your configuration settings",
+            "required": ["confirm"],
+            "properties": {
+                "confirm": {
+                    "type": "boolean",
+                    "title": "Confirm Configuration",
+                    "description": "I have reviewed the configuration and want to proceed",
+                    "default": false
+                },
+                "save_to_file": {
+                    "type": "boolean",
+                    "title": "Save to File",
+                    "description": "Save configuration to config.yaml",
+                    "default": true
+                },
+                "backup_existing": {
+                    "type": "boolean",
+                    "title": "Backup Existing",
+                    "description": "Backup existing configuration before overwriting",
+                    "default": true
+                },
+                "environment": {
+                    "type": "string",
+                    "title": "Environment",
+                    "description": "Target environment for this configuration",
+                    "enum": ["development", "staging", "production"],
+                    "default": "development"
+                },
+                "notes": {
+                    "type": "string",
+                    "title": "Notes",
+                    "description": "Optional notes about this configuration",
+                    "maxLength": 500
+                }
+            }
+        })
+    }
+}
+
+/// Implement the server with elicitation support
+#[server(name = "ConfigWizard", version = "1.0.0")]
+impl ConfigWizardServer {
+    /// Start the configuration wizard
+    #[tool("Start configuration wizard")]
+    async fn start_wizard(&self, ctx: RequestContext) -> McpResult<String> {
+        let mut progress = self.progress.write().await;
+        progress.current_step = 1;
+        progress.completed_sections.clear();
+        progress.validation_errors.clear();
+
+        info!(
+            "Starting configuration wizard for session: {}",
+            ctx.session_id()
+        );
+
+        Ok(format!(
+            "Configuration wizard started! Progress: {}/{} steps",
+            progress.current_step, progress.total_steps
+        ))
+    }
+
+    /// Handle database configuration step
+    async fn configure_database(&self, ctx: RequestContext) -> McpResult<ElicitResult> {
+        debug!("Requesting database configuration from client");
+
+        let schema = Self::database_schema();
+        let defaults = json!({
+            "host": "localhost",
+            "port": 5432,
+            "ssl_mode": "require",
+            "connection_pool": {
+                "min_connections": 2,
+                "max_connections": 10,
+                "idle_timeout": 300
+            }
+        });
+
+        // Create elicitation context
+        let elicitation_ctx = ElicitationContext {
+            schema: schema.clone(),
+            prompt: Some("Please configure your database connection settings".to_string()),
+            constraints: Some(json!({
+                "require_ssl": true,
+                "min_pool_size": 1
+            })),
+            defaults: Some(serde_json::from_value(defaults).unwrap()),
+            required: true,
+            timeout_ms: Some(120_000), // 2 minute timeout
+            cancellable: true,
+            metadata: HashMap::from([
+                ("step".to_string(), json!(1)),
+                ("total_steps".to_string(), json!(4)),
+                ("section".to_string(), json!("database")),
+            ]),
+        };
+
+        // Store context for tracking
+        ctx.set_elicitation_context(elicitation_ctx);
+
+        // This would normally trigger client-side elicitation
+        // For demo, we'll return a sample configuration
+        let sample_config = json!({
+            "host": "db.production.example.com",
+            "port": 5432,
+            "database": "myapp_production",
+            "username": "app_user",
+            "password": "secure_password_123",
+            "ssl_mode": "verify-full",
+            "connection_pool": {
+                "min_connections": 5,
+                "max_connections": 20,
+                "idle_timeout": 600
+            }
+        });
+
+        // Store the configuration
+        self.configurations
+            .write()
+            .await
+            .insert("database".to_string(), sample_config.clone());
+
+        // Update progress
+        let mut progress = self.progress.write().await;
+        progress.current_step = 2;
+        progress.completed_sections.push("database".to_string());
+
+        Ok(ElicitResult {
+            content: sample_config,
+            metadata: Some(HashMap::from([
+                ("validated".to_string(), json!(true)),
+                ("next_step".to_string(), json!("api_configuration")),
+            ])),
+        })
+    }
+
+    /// Handle API configuration step
+    async fn configure_api(&self, ctx: RequestContext) -> McpResult<ElicitResult> {
+        debug!("Requesting API configuration from client");
+
+        let schema = Self::api_schema();
+
+        let elicitation_ctx = ElicitationContext {
+            schema: schema.clone(),
+            prompt: Some("Configure your API server settings and security options".to_string()),
+            constraints: None,
+            defaults: Some(HashMap::from([
+                ("port".to_string(), json!(8080)),
+                ("host".to_string(), json!("0.0.0.0")),
+            ])),
+            required: true,
+            timeout_ms: Some(120_000),
+            cancellable: true,
+            metadata: HashMap::from([
+                ("step".to_string(), json!(2)),
+                ("total_steps".to_string(), json!(4)),
+                ("section".to_string(), json!("api")),
+            ]),
+        };
+
+        ctx.set_elicitation_context(elicitation_ctx);
+
+        // Sample API configuration response
+        let sample_config = json!({
+            "port": 8080,
+            "host": "0.0.0.0",
+            "cors": {
+                "enabled": true,
+                "allowed_origins": ["https://app.example.com", "http://localhost:3000"],
+                "allowed_methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+            },
+            "rate_limit": {
+                "enabled": true,
+                "requests_per_minute": 100,
+                "burst_size": 20
+            },
+            "authentication": {
+                "type": "jwt",
+                "jwt_secret": "super-secret-key-change-in-production-please",
+                "token_expiry": 7200
+            }
+        });
+
+        self.configurations
+            .write()
+            .await
+            .insert("api".to_string(), sample_config.clone());
+
+        let mut progress = self.progress.write().await;
+        progress.current_step = 3;
+        progress.completed_sections.push("api".to_string());
+
+        Ok(ElicitResult {
+            content: sample_config,
+            metadata: Some(HashMap::from([
+                ("validated".to_string(), json!(true)),
+                ("next_step".to_string(), json!("monitoring_configuration")),
+            ])),
+        })
+    }
+
+    /// Handle monitoring configuration step
+    async fn configure_monitoring(&self, ctx: RequestContext) -> McpResult<ElicitResult> {
+        debug!("Requesting monitoring configuration from client");
+
+        let schema = Self::monitoring_schema();
+
+        let elicitation_ctx = ElicitationContext {
+            schema: schema.clone(),
+            prompt: Some("Set up monitoring, logging, and alerting preferences".to_string()),
+            constraints: None,
+            defaults: None,
+            required: false, // Monitoring is optional
+            timeout_ms: Some(90_000),
+            cancellable: true,
+            metadata: HashMap::from([
+                ("step".to_string(), json!(3)),
+                ("total_steps".to_string(), json!(4)),
+                ("section".to_string(), json!("monitoring")),
+            ]),
+        };
+
+        ctx.set_elicitation_context(elicitation_ctx);
+
+        // Sample monitoring configuration
+        let sample_config = json!({
+            "logging": {
+                "level": "info",
+                "format": "json",
+                "output": "stdout",
+                "rotation": {
+                    "enabled": true,
+                    "max_size_mb": 100,
+                    "max_files": 10
+                }
+            },
+            "metrics": {
+                "enabled": true,
+                "export_format": "prometheus",
+                "export_interval": 10,
+                "port": 9090
+            },
+            "tracing": {
+                "enabled": true,
+                "provider": "jaeger",
+                "endpoint": "http://jaeger-collector:14268/api/traces",
+                "sample_rate": 0.1
+            },
+            "alerts": [
+                {
+                    "name": "High Error Rate",
+                    "condition": "error_rate > 0.05",
+                    "severity": "critical",
+                    "action": "webhook",
+                    "webhook_url": "https://hooks.slack.com/services/XXX"
+                },
+                {
+                    "name": "High Memory Usage",
+                    "condition": "memory_usage > 0.9",
+                    "severity": "warning",
+                    "action": "email"
+                }
+            ]
+        });
+
+        self.configurations
+            .write()
+            .await
+            .insert("monitoring".to_string(), sample_config.clone());
+
+        let mut progress = self.progress.write().await;
+        progress.current_step = 4;
+        progress.completed_sections.push("monitoring".to_string());
+
+        Ok(ElicitResult {
+            content: sample_config,
+            metadata: Some(HashMap::from([
+                ("validated".to_string(), json!(true)),
+                ("next_step".to_string(), json!("confirmation")),
+            ])),
+        })
+    }
+
+    /// Final confirmation and save
+    async fn confirm_configuration(&self, ctx: RequestContext) -> McpResult<ElicitResult> {
+        debug!("Requesting final confirmation from client");
+
+        // Build summary of all configurations
+        let configs = self.configurations.read().await;
+        let summary = json!({
+            "database": configs.get("database"),
+            "api": configs.get("api"),
+            "monitoring": configs.get("monitoring")
+        });
+
+        let schema = Self::confirmation_schema();
+
+        let elicitation_ctx = ElicitationContext {
+            schema: schema.clone(),
+            prompt: Some(format!(
+                "Please review your configuration:\n\n{}\n\nConfirm to proceed with these settings.",
+                serde_json::to_string_pretty(&summary).unwrap()
+            )),
+            constraints: None,
+            defaults: Some(HashMap::from([
+                ("save_to_file".to_string(), json!(true)),
+                ("backup_existing".to_string(), json!(true)),
+                ("environment".to_string(), json!("development")),
+            ])),
+            required: true,
+            timeout_ms: Some(60_000),
+            cancellable: false, // Cannot cancel at confirmation step
+            metadata: HashMap::from([
+                ("step".to_string(), json!(4)),
+                ("total_steps".to_string(), json!(4)),
+                ("section".to_string(), json!("confirmation")),
+                ("configuration_summary".to_string(), summary),
+            ]),
+        };
+
+        ctx.set_elicitation_context(elicitation_ctx);
+
+        // Simulated user confirmation
+        let confirmation = json!({
+            "confirm": true,
+            "save_to_file": true,
+            "backup_existing": true,
+            "environment": "production",
+            "notes": "Initial production configuration setup"
+        });
+
+        // Mark wizard as complete
+        let mut progress = self.progress.write().await;
+        progress.current_step = 4;
+        progress.completed_sections.push("confirmation".to_string());
+
+        // In a real implementation, this would save the configuration
+        info!("Configuration wizard completed successfully!");
+
+        Ok(ElicitResult {
+            content: confirmation,
+            metadata: Some(HashMap::from([
+                ("wizard_complete".to_string(), json!(true)),
+                (
+                    "total_sections".to_string(),
+                    json!(progress.completed_sections.len()),
+                ),
+                ("saved_to".to_string(), json!("config.production.yaml")),
+            ])),
+        })
+    }
+
+    /// Get current wizard progress
+    #[tool("Get wizard progress")]
+    async fn get_progress(&self) -> McpResult<String> {
+        let progress = self.progress.read().await;
+        Ok(format!(
+            "Step {}/{}: Completed sections: {:?}",
+            progress.current_step, progress.total_steps, progress.completed_sections
+        ))
+    }
+
+    /// Reset wizard to start over
+    #[tool("Reset configuration wizard")]
+    async fn reset_wizard(&self) -> McpResult<String> {
+        self.configurations.write().await.clear();
+        let mut progress = self.progress.write().await;
+        *progress = WizardProgress::default();
+
+        Ok("Configuration wizard has been reset".to_string())
+    }
+
+    /// Export final configuration
+    #[tool("Export configuration as YAML")]
+    async fn export_configuration(&self) -> McpResult<String> {
+        let configs = self.configurations.read().await;
+
+        if configs.is_empty() {
+            return Err(mcp_error!(
+                "No configuration available. Please complete the wizard first."
+            ));
+        }
+
+        // Build complete configuration structure
+        let complete_config = json!({
+            "version": "1.0",
+            "environment": "production",
+            "database": configs.get("database"),
+            "api": configs.get("api"),
+            "monitoring": configs.get("monitoring"),
+            "metadata": {
+                "created_at": chrono::Utc::now().to_rfc3339(),
+                "wizard_version": "1.0.0"
+            }
+        });
+
+        // Convert to YAML format (in production, use serde_yaml)
+        let yaml_output = format!(
+            "# Configuration generated by MCP Configuration Wizard\n# {}\n\n{}",
+            chrono::Utc::now().to_rfc3339(),
+            serde_json::to_string_pretty(&complete_config).unwrap()
+        );
+
+        Ok(yaml_output)
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("turbomcp=debug".parse()?)
+                .add_directive("11_elicitation_wizard=debug".parse()?),
+        )
+        .init();
+
+    info!("🧙 Starting Configuration Wizard Server with Elicitation Support");
+
+    // Create the wizard server
+    let server = ConfigWizardServer::new();
+
+    // Build the MCP server with elicitation capabilities
+    let mcp_server = ServerBuilder::new(server.clone())
+        .name("Configuration Wizard")
+        .version("1.0.0")
+        .with_elicitation_support(true)
+        .with_timeout(std::time::Duration::from_secs(300))
+        .build()
+        .await?;
+
+    info!("✨ Configuration Wizard Features:");
+    info!("  • Multi-step configuration with progress tracking");
+    info!("  • JSON schema validation for all inputs");
+    info!("  • Default values and constraints");
+    info!("  • Timeout and cancellation support");
+    info!("  • Configuration export to YAML");
+
+    info!("\n📝 Available Commands:");
+    info!("  • start_wizard - Begin the configuration process");
+    info!("  • get_progress - Check current wizard progress");
+    info!("  • reset_wizard - Start over from the beginning");
+    info!("  • export_configuration - Export final config as YAML");
+
+    info!("\n🔄 Wizard Flow:");
+    info!("  1. Database Configuration - Connection settings, SSL, pooling");
+    info!("  2. API Configuration - Server settings, CORS, rate limiting, auth");
+    info!("  3. Monitoring Setup - Logging, metrics, tracing, alerts");
+    info!("  4. Review & Confirm - Final review and save options");
+
+    // Start the server on stdio transport
+    info!("\n🚀 Server running on stdio transport");
+    info!("   Ready to receive elicitation requests!");
+
+    // In production, this would start the actual transport
+    // For demo purposes, we'll simulate the wizard flow
+
+    // Simulate wizard interaction
+    info!("\n📋 Starting wizard demonstration...\n");
+
+    // Step 1: Start wizard
+    let ctx = RequestContext::new();
+    match server.start_wizard(ctx.clone()).await {
+        Ok(msg) => info!("✅ {}", msg),
+        Err(e) => error!("❌ Failed to start wizard: {}", e),
+    }
+
+    // Step 2: Configure database
+    info!("\n🗄️ Step 1: Database Configuration");
+    match server.configure_database(ctx.clone()).await {
+        Ok(result) => {
+            info!("✅ Database configured successfully");
+            if let Some(metadata) = result._meta {
+                debug!("Metadata: {:?}", metadata);
+            }
+        }
+        Err(e) => error!("❌ Database configuration failed: {}", e),
+    }
+
+    // Step 3: Configure API
+    info!("\n🌐 Step 2: API Configuration");
+    match server.configure_api(ctx.clone()).await {
+        Ok(result) => {
+            info!("✅ API configured successfully");
+            if let Some(metadata) = result._meta {
+                debug!("Metadata: {:?}", metadata);
+            }
+        }
+        Err(e) => error!("❌ API configuration failed: {}", e),
+    }
+
+    // Step 4: Configure monitoring
+    info!("\n📊 Step 3: Monitoring Configuration");
+    match server.configure_monitoring(ctx.clone()).await {
+        Ok(result) => {
+            info!("✅ Monitoring configured successfully");
+            if let Some(metadata) = result._meta {
+                debug!("Metadata: {:?}", metadata);
+            }
+        }
+        Err(e) => error!("❌ Monitoring configuration failed: {}", e),
+    }
+
+    // Step 5: Confirm configuration
+    info!("\n✔️ Step 4: Review and Confirmation");
+    match server.confirm_configuration(ctx.clone()).await {
+        Ok(result) => {
+            info!("✅ Configuration confirmed and saved");
+            if let Some(metadata) = result._meta {
+                if let Some(saved_to) = metadata.get("saved_to") {
+                    info!("📁 Configuration saved to: {}", saved_to);
+                }
+            }
+        }
+        Err(e) => error!("❌ Confirmation failed: {}", e),
+    }
+
+    // Show final progress
+    match server.get_progress().await {
+        Ok(progress) => info!("\n📈 Final Progress: {}", progress),
+        Err(e) => error!("❌ Failed to get progress: {}", e),
+    }
+
+    // Export configuration
+    info!("\n📤 Exporting configuration...");
+    match server.export_configuration().await {
+        Ok(yaml) => {
+            info!("✅ Configuration exported successfully!");
+            println!("\n{}", yaml);
+        }
+        Err(e) => error!("❌ Export failed: {}", e),
+    }
+
+    info!("\n🎉 Configuration Wizard demonstration complete!");
+    info!("This example showcased the powerful elicitation feature of MCP 2025.");
+    info!(
+        "In a real deployment, the client would display interactive forms based on the JSON schemas."
+    );
+
+    Ok(())
+}
