@@ -923,7 +923,7 @@ fn test_include_context_variants() {
 fn test_model_preferences() {
     let prefs = ModelPreferences {
         hints: Some(vec![ModelHint {
-            name: Some("fast".to_string()),
+            name: "fast".to_string(),
         }]),
         cost_priority: Some(0.8),
         speed_priority: Some(0.9),
@@ -1012,10 +1012,10 @@ fn test_sampling_api_comprehensive_workflow() {
     let model_preferences = ModelPreferences {
         hints: Some(vec![
             ModelHint {
-                name: Some("claude-3-5-sonnet".to_string()),
+                name: "claude-3-5-sonnet".to_string(),
             },
             ModelHint {
-                name: Some("fast".to_string()),
+                name: "fast".to_string(),
             },
         ]),
         cost_priority: Some(0.3),
@@ -1033,7 +1033,7 @@ fn test_sampling_api_comprehensive_workflow() {
         system_prompt: Some("You are a helpful assistant for testing.".to_string()),
         include_context: Some(IncludeContext::ThisServer),
         temperature: Some(0.7),
-        max_tokens: Some(1000),
+        max_tokens: 1000,
         stop_sequences: Some(vec!["STOP".to_string(), "END".to_string()]),
         metadata: Some(metadata.clone()),
     };
@@ -1053,7 +1053,7 @@ fn test_sampling_api_comprehensive_workflow() {
     assert_eq!(model_prefs.hints.as_ref().unwrap().len(), 2);
     assert_eq!(
         model_prefs.hints.as_ref().unwrap()[0].name,
-        Some("claude-3-5-sonnet".to_string())
+        "claude-3-5-sonnet".to_string()
     );
 
     assert_eq!(
@@ -1065,7 +1065,7 @@ fn test_sampling_api_comprehensive_workflow() {
         Some(IncludeContext::ThisServer)
     );
     assert_eq!(deserialized.temperature, Some(0.7));
-    assert_eq!(deserialized.max_tokens, Some(1000));
+    assert_eq!(deserialized.max_tokens, 1000);
     assert_eq!(deserialized.stop_sequences.as_ref().unwrap().len(), 2);
     assert_eq!(
         deserialized.metadata.as_ref().unwrap()["provider"],

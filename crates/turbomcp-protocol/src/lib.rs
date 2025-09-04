@@ -6,12 +6,79 @@
 //!
 //! ## Features
 //!
+//! ### Core Protocol Support
 //! - Complete MCP 2025-06-18 protocol implementation  
-//! - JSON-RPC 2.0 support with batching
-//! - Type-safe capability negotiation
-//! - Protocol versioning and compatibility
-//! - Fast serialization
-//! - Comprehensive validation
+//! - JSON-RPC 2.0 support with batching and notifications
+//! - Type-safe capability negotiation and compatibility checking
+//! - Protocol versioning with backward compatibility
+//! - Fast serialization with SIMD acceleration
+//!
+//! ### Advanced Protocol Features (New in 1.0.3)
+//! - **Elicitation Protocol** - Server-initiated user input requests with rich schema validation
+//! - **Sampling Support** - Bidirectional LLM sampling message types
+//! - **Roots Protocol** - Filesystem boundaries with `roots/list` support
+//! - **Comprehensive Schema Builders** - Type-safe builders for all schema types
+//!
+//! ### Validation & Security
+//! - Comprehensive validation constraints (min/max, patterns, required fields)
+//! - Type-safe schema builders with fluent API
+//! - Protocol method validation and error handling
+//! - Security-focused design with proper boundary checking
+//!
+//! ## Usage Examples
+//!
+//! ### Basic Protocol Types
+//!
+//! ```rust
+//! use turbomcp_protocol::types::{Tool, ToolInputSchema, CallToolRequest, CallToolResult};
+//! use std::collections::HashMap;
+//!
+//! // Define a tool schema
+//! let tool = Tool {
+//!     name: "calculate".to_string(),
+//!     title: Some("Calculator".to_string()),
+//!     description: Some("Perform mathematical calculations".to_string()),
+//!     input_schema: ToolInputSchema {
+//!         schema_type: "object".to_string(),
+//!         properties: Some({
+//!             let mut props = HashMap::new();
+//!             props.insert("operation".to_string(), serde_json::json!({
+//!                 "type": "string",
+//!                 "enum": ["add", "subtract", "multiply", "divide"]
+//!             }));
+//!             props
+//!         }),
+//!         required: Some(vec!["operation".to_string()]),
+//!         additional_properties: Some(false),
+//!     },
+//!     output_schema: None,
+//!     annotations: None,
+//!     meta: None,
+//! };
+//! ```
+//!
+//! ### Elicitation Schema Building
+//!
+//! ```rust
+//! use turbomcp_protocol::elicitation::{ElicitationSchema, EnumSchema, BooleanSchema, PrimitiveSchemaDefinition};
+//!
+//! // Build an elicitation schema with validation
+//! let schema = ElicitationSchema::new()
+//!     .add_property("theme".to_string(), PrimitiveSchemaDefinition::Enum(EnumSchema {
+//!         schema_type: "string".to_string(),
+//!         title: Some("Theme".to_string()),
+//!         description: Some("UI color theme".to_string()),
+//!         enum_values: vec!["light".to_string(), "dark".to_string(), "auto".to_string()],
+//!         enum_names: None,
+//!     }))
+//!     .add_property("notifications".to_string(), PrimitiveSchemaDefinition::Boolean(BooleanSchema {
+//!         schema_type: "boolean".to_string(),
+//!         title: Some("Notifications".to_string()),
+//!         description: Some("Enable push notifications".to_string()),
+//!         default: Some(true),
+//!     }))
+//!     .require(vec!["theme".to_string()]);
+//! ```
 
 #![warn(
     missing_docs,
@@ -38,6 +105,7 @@ pub use turbomcp_core::{Error, Result};
 
 // Core protocol modules
 pub mod capabilities;
+pub mod elicitation;
 pub mod jsonrpc;
 pub mod types;
 pub mod validation;

@@ -1050,9 +1050,9 @@ pub struct CreateMessageRequest {
     /// Temperature
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
-    /// Max tokens
-    #[serde(rename = "maxTokens", skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
+    /// Max tokens (required by MCP 2025-06-18 spec)
+    #[serde(rename = "maxTokens")]
+    pub max_tokens: u32,
     /// Stop sequences
     #[serde(rename = "stopSequences", skip_serializing_if = "Option::is_none")]
     pub stop_sequences: Option<Vec<String>>,
@@ -1084,8 +1084,8 @@ pub struct ModelPreferences {
 /// Model hint
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelHint {
-    /// Hint name
-    pub name: Option<String>,
+    /// Hint name (required by MCP 2025-06-18 spec)
+    pub name: String,
 }
 
 /// Include context options
@@ -2245,7 +2245,7 @@ mod tests {
         let json = serde_json::to_string(&paginated).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["total"].as_u64().unwrap(), 100);
-        assert_eq!(parsed["hasMore"].as_bool().unwrap(), true);
+        assert!(parsed["hasMore"].as_bool().unwrap());
         assert_eq!(parsed["values"].as_array().unwrap().len(), 2);
     }
 
@@ -2267,7 +2267,7 @@ mod tests {
         assert!(parsed["completion"].is_object());
         assert!(parsed["completion"]["values"].is_array());
         assert_eq!(parsed["completion"]["total"].as_u64().unwrap(), 50);
-        assert_eq!(parsed["completion"]["hasMore"].as_bool().unwrap(), false);
+        assert!(!parsed["completion"]["hasMore"].as_bool().unwrap());
 
         // Deserialize back
         let deserialized: CompleteResult = serde_json::from_str(&json).unwrap();
@@ -2499,8 +2499,10 @@ mod tests {
 
     #[test]
     fn test_resource_template_with_annotations() {
-        let mut annotations = Annotations::default();
-        annotations.priority = Some(1.0);
+        let annotations = Annotations {
+            priority: Some(1.0),
+            ..Default::default()
+        };
 
         let template =
             ResourceTemplate::new("important", "/critical/{id}").with_annotations(annotations);
