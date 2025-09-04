@@ -1,11 +1,12 @@
 [package]
 name = "turbomcp-cli"
-version = "1.0.5"
+version = "1.0.3"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Command-line tools for managing and testing MCP servers"
 license = "MIT"
 repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
 keywords = ["mcp", "cli", "tools", "testing", "management"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"

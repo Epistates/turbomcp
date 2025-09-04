@@ -1,11 +1,12 @@
 [package]
 name = "turbomcp-core"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Core abstractions and optimized message processing for the TurboMCP SDK"
 license = "MIT"
 repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
 keywords = ["mcp", "protocol", "core", "simd", "performance"]
 categories = ["development-tools", "data-structures"]
 readme = "README.md"
