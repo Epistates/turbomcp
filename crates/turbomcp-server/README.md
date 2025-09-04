@@ -84,7 +84,7 @@ use turbomcp_server::{ServerBuilder, McpServer};
 // Simple server creation
 let server = ServerBuilder::new()
     .name("MyMCPServer")
-    .version("1.0.2")
+    .version("1.0.3")
     .build();
 
 // Run with STDIO transport
@@ -448,7 +448,21 @@ struct ProductionServer {
 #[server]
 impl ProductionServer {
     #[tool("Process user data")]
-    async fn process_user(&self, ctx: Context, user_id: String) -> McpResult<User> {
+    async fn process_user(&self, ctx: Context, target_user_id: String) -> McpResult<User> {
+    // Example: Use Context API for authentication and user info
+    if !ctx.is_authenticated() {
+        return Err(McpError::Unauthorized("Authentication required".to_string()));
+    }
+    
+    let current_user = ctx.user_id().unwrap_or("anonymous");
+    let roles = ctx.roles();
+    
+    ctx.info(&format!("User {} accessing profile for {}", current_user, target_user_id)).await?;
+    
+    // Check permissions
+    if !roles.contains(&"admin".to_string()) && current_user != target_user_id {
+        return Err(McpError::Unauthorized("Insufficient permissions".to_string()));
+    }
         // Context provides:
         // - Authentication info: ctx.user_id(), ctx.permissions()
         // - Request correlation: ctx.request_id()

@@ -12,11 +12,12 @@
 
 ## Key Features
 
-### 🎯 **Zero Boilerplate**
+### 🎯 **Zero Boilerplate Design**
 - **Automatic registration** - Tools and resources registered automatically
 - **Schema generation** - JSON schemas generated from Rust types  
 - **Parameter extraction** - Type-safe parameter conversion and validation
 - **Error handling** - Automatic error type conversion and propagation
+- **Ergonomic Macros** - `elicit!` for user input, seamless Context API delegation
 
 ### ✅ **Compile-Time Validation**
 - **Type checking** - Parameter types validated at compile time
@@ -70,11 +71,34 @@
 
 ## Core Macros
 
-### MCP 2025-06-18 Enhanced Macros (v1.0.2)
+### MCP 2025-06-18 Enhanced Macros (v1.0.3)
 
 New macros for the latest MCP protocol features:
 
-#### `#[elicitation]` - User Input Requests
+#### `elicit!` - Elegant User Input (NEW)
+```rust
+use turbomcp::prelude::*;
+use turbomcp_protocol::elicitation::ElicitationSchema;
+
+#[tool("Configure user preferences")]
+async fn configure_preferences(&self, ctx: Context) -> McpResult<String> {
+    let schema = ElicitationSchema::new()
+        .add_string_property("theme", Some("Color theme preference"))
+        .add_boolean_property("notifications", Some("Enable notifications"));
+    
+    // Simple macro handles all protocol complexity
+    let result = elicit!(ctx, "Please configure your preferences", schema).await?;
+    
+    if let Some(data) = result.content {
+        let theme = data.get("theme").and_then(|v| v.as_str()).unwrap_or("default");
+        Ok(format!("Configured with {} theme", theme))
+    } else {
+        Err(McpError::Context("Configuration cancelled".to_string()))
+    }
+}
+```
+
+#### `#[elicitation]` - Attribute-based Elicitation
 ```rust
 #[elicitation("Collect user preferences")]
 async fn get_preferences(&self, schema: serde_json::Value) -> McpResult<serde_json::Value> {
@@ -380,7 +404,32 @@ async fn create_user(request: CreateUserRequest) -> McpResult<User> {
 }
 ```
 
-### Error Handling Macros
+### Helper Macros
+
+#### `elicit!` - Ergonomic Elicitation Macro (NEW)
+
+The `elicit!` macro provides elegant server-initiated user input:
+
+```rust
+use turbomcp::prelude::*;
+use turbomcp_protocol::elicitation::ElicitationSchema;
+
+// Build schema with type safety
+let schema = ElicitationSchema::new()
+    .add_string_property("name", Some("Your name"))
+    .add_boolean_property("subscribe", Some("Subscribe to newsletter"));
+
+// Clean, simple macro call
+let result = elicit!(ctx, "Please provide your information", schema).await?;
+```
+
+**Key Benefits:**
+- **Zero Protocol Complexity** - Handles all MCP elicitation protocol details
+- **Type Safe** - Compile-time validation of context and schema
+- **Ergonomic** - Simple 3-parameter syntax: `(context, message, schema)`
+- **Error Handling** - Automatic error conversion and propagation
+
+#### Error Handling Macros
 
 Ergonomic error creation macros:
 

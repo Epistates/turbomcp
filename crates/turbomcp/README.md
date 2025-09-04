@@ -21,11 +21,13 @@
 - **Efficient connection management** - Connection pooling and reuse
 - **Optimized request routing** - O(1) handler lookup with parameter injection
 
-### 🎯 **Zero Boilerplate**
-- **Procedural macros** - `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]`
+### 🎯 **Zero Boilerplate Design**
+- **Procedural macros** - `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]`  
 - **Automatic schema generation** - JSON schemas from Rust types
 - **Type-safe parameters** - Compile-time validation and conversion
 - **Context injection** - Request context available anywhere in signature
+- **Intuitive APIs** - `elicit!()` macro for user input, `ctx.create_message()` for sampling
+- **Perfect Context** - `ctx.user_id()`, `ctx.is_authenticated()`, full RequestContext delegation
 
 ### 🛡️ **Enterprise Security**
 - **OAuth 2.0 integration** - Google, GitHub, Microsoft providers
@@ -81,7 +83,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.0.2"
+turbomcp = "1.0.3"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -218,25 +220,92 @@ async fn code_review_prompt(
 }
 ```
 
-### MCP 2025-06-18 Enhanced Features (v1.0.2)
+### MCP 2025-06-18 Enhanced Features (New in v1.0.3)
+
+#### Roots Support - Filesystem Boundaries
+
+```rust
+#[server(
+    name = "filesystem-server",
+    version = "1.0.0", 
+    root = "file:///workspace:Project Workspace",
+    root = "file:///tmp:Temporary Files"
+)]
+impl FileSystemServer {
+    #[tool("List files in directory")]
+    async fn list_files(&self, ctx: Context, path: String) -> McpResult<Vec<String>> {
+        ctx.info(&format!("Listing files in: {}", path)).await?;
+        // Operations are bounded by configured roots
+        Ok(vec!["file1.txt".to_string(), "file2.txt".to_string()])
+    }
+}
+```
 
 #### Elicitation - Server-Initiated User Input
 
 ```rust
-#[elicitation("Configure application settings")]
-async fn configure_app(&self, ctx: Context) -> McpResult<serde_json::Value> {
-    let schema = json!({
-        "type": "object",
-        "properties": {
-            "app_name": {"type": "string"},
-            "port": {"type": "integer", "minimum": 1024, "maximum": 65535}
-        },
-        "required": ["app_name"]
+use turbomcp::prelude::*;
+use turbomcp_protocol::elicitation::ElicitationSchema;
+
+#[tool("Configure application settings")]
+async fn configure_app(&self, ctx: Context) -> McpResult<String> {
+    // Build elicitation schema with type safety
+    let schema = ElicitationSchema::new()
+        .add_string_property("theme", Some("Color theme preference"))
+        .add_boolean_property("notifications", Some("Enable push notifications"))
+        .add_required(["theme"]);
+    
+    // Simple, elegant elicitation with type safety
+    let result = elicit!(ctx, "Configure your preferences", schema).await?;
+    
+    // Process the structured response
+    if let Some(data) = result.content {
+        let theme = data.get("theme")
+            .and_then(|v| v.as_str())
+            .unwrap_or("default");
+        Ok(format!("Configured with {} theme", theme))
+    } else {
+        Err(McpError::Context("Configuration cancelled".to_string()))
+    }
+}
+```
+
+#### Sampling Support - Bidirectional LLM Communication
+
+```rust
+use turbomcp::prelude::*;
+
+#[tool("Get AI code review")]
+async fn code_review(&self, ctx: Context, code: String) -> McpResult<String> {
+    // Log the request with user context
+    let user = ctx.user_id().unwrap_or("anonymous");
+    ctx.info(&format!("User {} requesting code review", user)).await?;
+    
+    // Build sampling request with ergonomic JSON
+    let request = serde_json::json!({
+        "messages": [{
+            "role": "user",
+            "content": {
+                "type": "text",
+                "text": format!("Please review this code:\n\n{}", code)
+            }
+        }],
+        "maxTokens": 500,
+        "systemPrompt": "You are a senior code reviewer. Provide constructive feedback."
     });
     
-    // Server requests structured input from client
-    let user_input = ctx.elicit_input("Configure your app", schema).await?;
-    Ok(user_input)
+    // Request LLM assistance through the client
+    match ctx.create_message(request).await {
+        Ok(response) => {
+            ctx.info("AI review completed successfully").await?;
+            Ok(format!("AI Review: {:?}", response))
+        }
+        Err(_) => {
+            // Graceful fallback if sampling unavailable
+            let issues = code.matches("TODO").count() + code.matches("FIXME").count();
+            Ok(format!("Static analysis: {} lines, {} issues found", code.lines().count(), issues))
+        }
+    }
 }
 ```
 
@@ -545,7 +614,7 @@ Enable SIMD acceleration for maximum performance:
 
 ```toml
 [dependencies]
-turbomcp = { version = "1.0.2", features = ["simd"] }
+turbomcp = { version = "1.0.3", features = ["simd"] }
 ```
 
 Configure performance settings:

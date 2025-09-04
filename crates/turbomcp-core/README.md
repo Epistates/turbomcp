@@ -41,7 +41,7 @@
 - **Tracing integration points** for distributed observability
 - **Request correlation IDs** for end-to-end tracking
 
-### 🎯 **Enhanced Context Types (v1.0.2)**
+### 🎯 **Enhanced Context Types (v1.0.3)**
 - **ElicitationContext** - Server-initiated user input requests with JSON schema validation
 - **CompletionContext** - Intelligent autocompletion with reference tracking
 - **PingContext** - Bidirectional health monitoring and keepalive
@@ -103,8 +103,15 @@ let mut context = RequestContext::new();
 let json_data = br#"{"jsonrpc": "2.0", "method": "tools/list"}"#;
 let message = Message::parse_with_simd(json_data)?;
 
-// Context provides rich observability
+// Context provides rich observability and user information
 context.info("Processing request").await?;
+
+// Enhanced Context features (v1.0.3)
+if context.is_authenticated() {
+    let user = context.user().unwrap_or("unknown");
+    let roles = context.roles();
+    context.info(&format!("Authenticated user: {}, roles: {:?}", user, roles)).await?;
+}
 ```
 
 ### Advanced Session Management
@@ -147,7 +154,7 @@ Enable maximum performance with SIMD acceleration:
 
 ```toml
 [dependencies]
-turbomcp-core = { version = "1.0.2", features = ["simd"] }
+turbomcp-core = { version = "1.0.3", features = ["simd"] }
 ```
 
 **Note**: SIMD features require compatible CPU architectures (x86_64 with AVX2 or ARM with NEON).

@@ -85,7 +85,7 @@ use turbomcp_protocol::{
 };
 ```
 
-### MCP 2025-06-18 Enhanced Types (v1.0.2)
+### MCP 2025-06-18 Enhanced Types (v1.0.3)
 
 ```rust
 use turbomcp_protocol::{
