@@ -76,7 +76,7 @@ fi
 
 # Check if we're logged into crates.io
 if [ "$DRY_RUN" = "false" ]; then
-    if ! cargo login --list &> /dev/null; then
+    if [ ! -f ~/.cargo/credentials.toml ]; then
         print_error "Not logged into crates.io. Run 'cargo login' first"
         exit 1
     fi
@@ -203,15 +203,19 @@ done
 # Dry run package for each crate
 print_section "Package Verification"
 
-for crate in "${CRATES[@]}"; do
-    echo "Packaging $crate..."
-    if cargo package --manifest-path "crates/$crate/Cargo.toml" --no-verify; then
-        print_status "$crate packaged successfully"
-    else
-        print_error "Failed to package $crate"
-        exit 1
-    fi
-done
+if [ "$DRY_RUN" = "true" ]; then
+    for crate in "${CRATES[@]}"; do
+        echo "Packaging $crate..."
+        if cargo package --manifest-path "crates/$crate/Cargo.toml" --no-verify; then
+            print_status "$crate packaged successfully"
+        else
+            print_error "Failed to package $crate"
+            exit 1
+        fi
+    done
+else
+    print_status "Skipping package verification for production release (cargo publish will handle packaging)"
+fi
 
 # Publishing section
 print_section "Publishing Crates"
