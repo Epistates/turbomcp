@@ -7,12 +7,14 @@
 //!
 //! - Connection management with automatic reconnection
 //! - Error handling and recovery mechanisms
-//! - Support for all MCP capabilities
+//! - Support for all MCP capabilities including bidirectional sampling
+//! - Elicitation response handling for server-initiated user input requests
 //! - Transport-agnostic design (works with any `Transport` implementation)
 //! - Type-safe protocol communication
 //! - Request/response correlation tracking
 //! - Timeout and cancellation support
 //! - Automatic capability negotiation
+//! - Handler support for server-initiated requests (sampling and elicitation)
 //!
 //! ## Architecture
 //!
@@ -58,6 +60,67 @@
 //! # }
 //! ```
 //!
+//! ## Elicitation Response Handling (New in 1.0.3)
+//!
+//! The client now supports handling server-initiated elicitation requests:
+//!
+//! ```rust,no_run
+//! use turbomcp_client::Client;
+//! use std::collections::HashMap;
+//!
+//! // Simple elicitation handling example
+//! async fn handle_server_elicitation() {
+//!     // When server requests user input, you would:
+//!     // 1. Present the schema to the user
+//!     // 2. Collect their input  
+//!     // 3. Send response back to server
+//!     
+//!     let user_preferences: HashMap<String, String> = HashMap::new();
+//!     // Your UI/CLI interaction logic here
+//!     println!("Server requesting user preferences");
+//! }
+//! ```
+//!
+//! ## Sampling Support (New in 1.0.3)
+//!
+//! Handle server-initiated sampling requests for LLM capabilities:
+//!
+//! ```rust,no_run
+//! use turbomcp_client::Client;
+//! use turbomcp_client::sampling::SamplingHandler;
+//! use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult};
+//! use async_trait::async_trait;
+//!
+//! #[derive(Debug)]
+//! struct MySamplingHandler {
+//!     // Your LLM client would go here
+//! }
+//!
+//! #[async_trait]
+//! impl SamplingHandler for MySamplingHandler {
+//!     async fn handle_create_message(
+//!         &self,
+//!         request: CreateMessageRequest
+//!     ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>> {
+//!         // Forward to your LLM provider (OpenAI, Anthropic, etc.)
+//!         // This enables the server to request LLM sampling through the client
+//!         
+//!         Ok(CreateMessageResult {
+//!             role: turbomcp_protocol::types::Role::Assistant,
+//!             content: turbomcp_protocol::types::Content::Text(
+//!                 turbomcp_protocol::types::TextContent {
+//!                     text: "Response from LLM".to_string(),
+//!                     annotations: None,
+//!                     meta: None,
+//!                 }
+//!             ),
+//!             model: Some("gpt-4".to_string()),
+//!             stop_reason: Some("end_turn".to_string()),
+//!         })
+//!     }
+//! }
+//! ```
+//!
 //! ## Error Handling
 //!
 //! The client provides comprehensive error handling with automatic retry logic:
@@ -75,19 +138,24 @@
 //! # }
 //! ```
 
+pub mod sampling;
+
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use turbomcp_core::{Error, PROTOCOL_VERSION, Result};
 use turbomcp_protocol::jsonrpc::{
-    JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcVersion,
+    JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcVersion,
 };
 use turbomcp_protocol::types::{
     CallToolRequest, CallToolResult, ClientCapabilities as ProtocolClientCapabilities, Content,
-    InitializeRequest, InitializeResult as ProtocolInitializeResult, ListResourcesResult,
-    ListToolsResult, ServerCapabilities,
+    CreateMessageRequest, InitializeRequest, InitializeResult as ProtocolInitializeResult,
+    ListResourcesResult, ListToolsResult, ServerCapabilities,
 };
 use turbomcp_transport::{Transport, TransportMessage};
+
+use crate::sampling::SamplingHandler;
 
 /// Client capability configuration
 ///
@@ -241,9 +309,10 @@ impl<T: Transport> ProtocolClient<T> {
 #[derive(Debug)]
 pub struct Client<T: Transport> {
     protocol: ProtocolClient<T>,
-    #[allow(dead_code)] // Stored for future capability negotiation features
     capabilities: ClientCapabilities,
     initialized: bool,
+    #[allow(dead_code)]
+    sampling_handler: Option<Arc<dyn SamplingHandler>>,
 }
 
 impl<T: Transport> Client<T> {
@@ -270,6 +339,7 @@ impl<T: Transport> Client<T> {
             protocol: ProtocolClient::new(transport),
             capabilities: ClientCapabilities::default(),
             initialized: false,
+            sampling_handler: None,
         }
     }
 
@@ -301,7 +371,189 @@ impl<T: Transport> Client<T> {
             protocol: ProtocolClient::new(transport),
             capabilities,
             initialized: false,
+            sampling_handler: None,
         }
+    }
+
+    /// Set the sampling handler for processing server-initiated sampling requests
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The handler implementation for sampling requests
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::{Client, sampling::DefaultSamplingHandler};
+    /// use turbomcp_transport::stdio::StdioTransport;
+    /// use std::sync::Arc;
+    ///
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.set_sampling_handler(Arc::new(DefaultSamplingHandler));
+    /// ```
+    pub fn set_sampling_handler(&mut self, handler: Arc<dyn SamplingHandler>) {
+        self.sampling_handler = Some(handler);
+        self.capabilities.sampling = true;
+    }
+
+    /// Process incoming messages from the server
+    ///
+    /// This method should be called in a loop to handle server-initiated requests
+    /// like sampling. It processes one message at a time.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(true)` if a message was processed, `Ok(false)` if no message was available.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    ///
+    /// // Process messages in background
+    /// tokio::spawn(async move {
+    ///     loop {
+    ///         if let Err(e) = client.process_message().await {
+    ///             eprintln!("Error processing message: {}", e);
+    ///         }
+    ///     }
+    /// });
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn process_message(&mut self) -> Result<bool> {
+        // Try to receive a message without blocking
+        let message = match self.protocol.transport.receive().await {
+            Ok(Some(msg)) => msg,
+            Ok(None) => return Ok(false),
+            Err(e) => {
+                return Err(Error::transport(format!(
+                    "Failed to receive message: {}",
+                    e
+                )));
+            }
+        };
+
+        // Parse as JSON-RPC message
+        let json_msg: JsonRpcMessage = serde_json::from_slice(&message.payload)
+            .map_err(|e| Error::protocol(format!("Invalid JSON-RPC message: {}", e)))?;
+
+        match json_msg {
+            JsonRpcMessage::Request(request) => {
+                self.handle_request(request).await?;
+                Ok(true)
+            }
+            JsonRpcMessage::Response(_) => {
+                // Responses are handled by the protocol client during request/response flow
+                Ok(true)
+            }
+            JsonRpcMessage::Notification(notification) => {
+                self.handle_notification(notification).await?;
+                Ok(true)
+            }
+            JsonRpcMessage::RequestBatch(_)
+            | JsonRpcMessage::ResponseBatch(_)
+            | JsonRpcMessage::MessageBatch(_) => {
+                // Batch operations not yet supported
+                Ok(true)
+            }
+        }
+    }
+
+    async fn handle_request(&mut self, request: JsonRpcRequest) -> Result<()> {
+        match request.method.as_str() {
+            "sampling/createMessage" => {
+                if let Some(handler) = &self.sampling_handler {
+                    let params: CreateMessageRequest =
+                        serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
+                            .map_err(|e| {
+                            Error::protocol(format!("Invalid createMessage params: {}", e))
+                        })?;
+
+                    match handler.handle_create_message(params).await {
+                        Ok(result) => {
+                            let response = JsonRpcResponse {
+                                jsonrpc: JsonRpcVersion,
+                                id: Some(request.id),
+                                result: Some(serde_json::to_value(result).map_err(|e| {
+                                    Error::protocol(format!("Failed to serialize response: {}", e))
+                                })?),
+                                error: None,
+                            };
+                            self.send_response(response).await?;
+                        }
+                        Err(e) => {
+                            let response = JsonRpcResponse {
+                                jsonrpc: JsonRpcVersion,
+                                id: Some(request.id),
+                                result: None,
+                                error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
+                                    code: -32603,
+                                    message: format!("Sampling handler error: {}", e),
+                                    data: None,
+                                }),
+                            };
+                            self.send_response(response).await?;
+                        }
+                    }
+                } else {
+                    // No handler configured
+                    let response = JsonRpcResponse {
+                        jsonrpc: JsonRpcVersion,
+                        id: Some(request.id),
+                        result: None,
+                        error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
+                            code: -32601,
+                            message: "Sampling not supported".to_string(),
+                            data: None,
+                        }),
+                    };
+                    self.send_response(response).await?;
+                }
+            }
+            _ => {
+                // Unknown method
+                let response = JsonRpcResponse {
+                    jsonrpc: JsonRpcVersion,
+                    id: Some(request.id),
+                    result: None,
+                    error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
+                        code: -32601,
+                        message: format!("Method not found: {}", request.method),
+                        data: None,
+                    }),
+                };
+                self.send_response(response).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn handle_notification(&mut self, _notification: JsonRpcNotification) -> Result<()> {
+        // Handle notifications if needed
+        // Currently MCP doesn't define client-side notifications
+        Ok(())
+    }
+
+    async fn send_response(&mut self, response: JsonRpcResponse) -> Result<()> {
+        let payload = serde_json::to_vec(&response)
+            .map_err(|e| Error::protocol(format!("Failed to serialize response: {}", e)))?;
+
+        let message = TransportMessage::new(
+            turbomcp_core::MessageId::from("response".to_string()),
+            payload.into(),
+        );
+
+        self.protocol
+            .transport
+            .send(message)
+            .await
+            .map_err(|e| Error::transport(format!("Failed to send response: {}", e)))?;
+
+        Ok(())
     }
 
     /// Initialize the connection with the MCP server
@@ -335,10 +587,16 @@ impl<T: Transport> Client<T> {
     /// # }
     /// ```
     pub async fn initialize(&mut self) -> Result<InitializeResult> {
+        // Build client capabilities based on configuration
+        let mut client_caps = ProtocolClientCapabilities::default();
+        if self.capabilities.sampling {
+            client_caps.sampling = Some(turbomcp_protocol::types::SamplingCapabilities);
+        }
+
         // Send actual MCP initialization request
         let request = InitializeRequest {
             protocol_version: PROTOCOL_VERSION.to_string(),
-            capabilities: ProtocolClientCapabilities::default(),
+            capabilities: client_caps,
             client_info: turbomcp_protocol::Implementation {
                 name: "turbomcp-client".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
