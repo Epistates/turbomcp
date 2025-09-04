@@ -16,7 +16,10 @@ TurboMCP is a production-ready Rust implementation of the [Model Context Protoco
 - **⚡ Zero-Overhead Macros** - Ergonomic `#[server]`, `#[tool]`, `#[resource]` attributes  
 - **🔗 Multi-Transport** - STDIO, HTTP/SSE, WebSocket, TCP, Unix sockets
 - **🎯 Type Safety** - Compile-time validation with automatic schema generation
+- **📁 Roots Support** - MCP-compliant filesystem boundaries with OS-aware defaults
 - **🔄 Production Ready** - Circuit breakers, graceful shutdown, session management
+- **🎭 Elicitation Support** - Server-initiated interactive user input (New in 1.0.3)
+- **🤖 Sampling Protocol** - Bidirectional LLM sampling capabilities
 
 ## Quick Start
 
@@ -37,7 +40,13 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct Calculator;
 
-#[server]
+#[server(
+    name = "calculator-server",
+    version = "1.0.0",
+    description = "A simple calculator with filesystem access",
+    root = "file:///workspace:Workspace",
+    root = "file:///tmp:Temporary Files"
+)]
 impl Calculator {
     #[tool("Add two numbers")]
     async fn add(&self, a: i32, b: i32) -> McpResult<i32> {
@@ -249,6 +258,88 @@ TurboMCP is organized into focused crates:
 
 ## Advanced Usage
 
+### Roots & Filesystem Boundaries (New in 1.0.3)
+
+Configure filesystem roots for secure server operations:
+
+```rust
+use turbomcp::prelude::*;
+
+// Method 1: Using macro attributes (recommended)
+#[server(
+    name = "filesystem-server",
+    version = "1.0.0",
+    root = "file:///workspace:Project Workspace",
+    root = "file:///tmp:Temporary Files",
+    root = "file:///Users/shared:Shared Documents"
+)]
+impl FileSystemServer {
+    #[tool("List files in directory")]
+    async fn list_files(&self, ctx: Context, path: String) -> McpResult<Vec<String>> {
+        ctx.info(&format!("Listing files in: {}", path)).await?;
+        // File operations are bounded by configured roots
+        Ok(vec!["file1.txt".to_string(), "file2.txt".to_string()])
+    }
+}
+
+// Method 2: Using ServerBuilder API
+use turbomcp_server::ServerBuilder;
+use turbomcp_protocol::types::Root;
+
+let server = ServerBuilder::new()
+    .name("filesystem-server")
+    .version("1.0.0")
+    .root("file:///workspace", Some("Workspace".to_string()))
+    .roots(vec![
+        Root { uri: "file:///tmp".to_string(), name: Some("Temp".to_string()) }
+    ])
+    .build();
+```
+
+**Roots Features:**
+- 📁 **Multiple Configuration Methods** - Macro attributes, builder API, and runtime
+- 🖥️ **OS-Aware Defaults** - Automatic platform-specific roots (Linux: `/`, macOS: `/`, `/Volumes`, Windows: drive letters)
+- 🔒 **Security Foundation** - Establish filesystem operation boundaries
+- 🔗 **MCP Compliance** - Full support for `roots/list` protocol method
+
+### Elicitation (New in 1.0.3)
+
+Server-initiated requests for interactive user input:
+
+```rust
+use turbomcp::prelude::*;
+use turbomcp::elicitation_api::{ElicitationResult, string, boolean};
+
+#[tool("Configure deployment")]
+async fn deploy(&self, ctx: Context, project: String) -> McpResult<String> {
+    // Request deployment configuration from user
+    let config = elicit!("Configure deployment for {}", project)
+        .field("environment", string()
+            .enum_values(vec!["dev", "staging", "production"])
+            .description("Target environment")
+            .build())
+        .field("auto_scale", boolean()
+            .description("Enable auto-scaling")
+            .build())
+        .field("replicas", integer()
+            .range(1.0, 10.0)
+            .description("Number of replicas")
+            .build())
+        .require(vec!["environment"])
+        .send(&ctx.request)
+        .await?;
+    
+    match config {
+        ElicitationResult::Accept(data) => {
+            let env = data.get::<String>("environment")?;
+            let replicas = data.get::<i64>("replicas").unwrap_or(1);
+            Ok(format!("Deployed {} to {} with {} replicas", project, env, replicas))
+        }
+        _ => Err(mcp_error!("Deployment cancelled"))
+    }
+}
+```
+
 ### Schema Generation
 
 Automatic JSON schema generation with validation:
@@ -323,6 +414,22 @@ turbomcp-cli schema-export --url http://localhost:8080/mcp --output schemas.json
 - **Memory Efficiency** - Zero-copy message handling with `Bytes`
 - **Concurrency** - Tokio-based async runtime with efficient task scheduling  
 - **Reliability** - Circuit breakers and connection pooling
+
+## Examples
+
+Explore comprehensive examples in the [`crates/turbomcp/examples/`](./crates/turbomcp/examples/) directory:
+
+- **[client_server_e2e.rs](./crates/turbomcp/examples/client_server_e2e.rs)** - Complete E2E client-server demonstration
+- **[feature_roots_builder.rs](./crates/turbomcp/examples/feature_roots_builder.rs)** - Filesystem roots configuration
+- **[elicitation_websocket_demo.rs](./crates/turbomcp/examples/elicitation_websocket_demo.rs)** - Interactive elicitation over WebSocket
+- **[sampling_ai_code_assistant.rs](./crates/turbomcp/examples/sampling_ai_code_assistant.rs)** - AI assistant with sampling
+- **[transport_http_sse.rs](./crates/turbomcp/examples/transport_http_sse.rs)** - HTTP Server-Sent Events transport
+
+**Run any example:**
+```bash
+cargo run --example client_server_e2e
+cargo run --example feature_roots_builder
+```
 
 ## Development
 

@@ -3,10 +3,13 @@
 //! A complete demonstration of ALL TurboMCP framework capabilities.
 //! This server showcases every feature type: tools, resources, prompts, and edge cases.
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use turbomcp::prelude::*;
+// The elicitation API is available but requires context integration
+// use turbomcp::elicitation_api::{elicit, string, boolean, integer};
 
 /// Comprehensive development assistant server showcasing all TurboMCP features
 #[derive(Clone)]
@@ -355,6 +358,171 @@ impl TurboMCPDemo {
     // ═══════════════════════════════════════════════════════════════
     // PROMPT GENERATION TOOLS - Testing AI-Assisted Development
     // ═══════════════════════════════════════════════════════════════
+
+    // ═══════════════════════════════════════════════════════════════
+    // ELICITATION FEATURES - New in TurboMCP v1.0.3!
+    // ═══════════════════════════════════════════════════════════════
+    
+    /// Interactive project configuration demonstration
+    #[tool("Configure a new project (elicitation demonstration)")]
+    async fn configure_project(&self) -> McpResult<String> {
+        tracing::info!("Starting interactive project configuration with elicitation");
+        
+        // Use elicitation to gather project configuration
+        let result = elicit("Let's configure your new project!")
+            .field(
+                "project_name",
+                string()
+                    .min_length(1)
+                    .max_length(50)
+                    .pattern("^[a-zA-Z0-9-_]+$")
+                    .description("Project name (alphanumeric, dash, underscore)")
+                    .build(),
+            )
+            .field(
+                "project_type",
+                string()
+                    .enum_values(vec![
+                        "cli".to_string(),
+                        "library".to_string(),
+                        "web_app".to_string(),
+                        "api_service".to_string(),
+                    ])
+                    .description("Type of project")
+                    .build(),
+            )
+            .field(
+                "enable_testing",
+                boolean()
+                    .description("Include test configuration?")
+                    .build(),
+            )
+            .field(
+                "ci_provider",
+                string()
+                    .enum_values(vec![
+                        "github_actions".to_string(),
+                        "gitlab_ci".to_string(),
+                        "jenkins".to_string(),
+                        "none".to_string(),
+                    ])
+                    .description("CI/CD provider")
+                    .build(),
+            )
+            .field(
+                "min_rust_version",
+                string()
+                    .pattern("^1\\.[0-9]+\\.[0-9]+$")
+                    .description("Minimum Rust version (e.g., 1.75.0)")
+                    .build(),
+            )
+            .require(vec!["project_name", "project_type"])
+            .build_request();
+            
+        // For demonstration, show what would happen with user input
+        let (project_name, project_type, enable_testing, ci_provider, min_rust) = 
+            ("my-awesome-project".to_string(), 
+             "web_app".to_string(), 
+             true, 
+             "github_actions".to_string(), 
+             "1.75.0".to_string());
+        
+        Ok(format!("🎉 Project Configuration Complete!\n\
+                           ═══════════════════════════════════════════════\n\
+                           📦 Name: {}\n\
+                           🎯 Type: {}\n\
+                           🧪 Testing: {}\n\
+                           🔧 CI/CD: {}\n\
+                           🦀 Min Rust: {}\n\n\
+                           ✅ Your project has been configured successfully!\n\
+                           💡 Next steps: Run 'cargo init' to create the project structure.",
+                           project_name,
+                           project_type,
+                           if enable_testing { "Enabled" } else { "Disabled" },
+                           ci_provider,
+                           min_rust))
+            }
+            ElicitationResult::Decline(reason) => {
+                Ok(format!("Configuration cancelled: {}", 
+                          reason.unwrap_or_else(|| "User declined".to_string())))
+            }
+            ElicitationResult::Cancel => {
+                Ok("Project configuration cancelled by user.".to_string())
+            }
+        }
+    }
+    
+    /// Code refactoring preferences demonstration
+    #[tool("Refactor code (elicitation demonstration)")]
+    async fn refactor_code(&self, code_snippet: String) -> McpResult<String> {
+        tracing::info!("Starting interactive code refactoring");
+        
+        // This demonstrates the elicitation API for gathering preferences
+        let _preferences = elicit("Select refactoring preferences")
+            .field(
+                "style",
+                string()
+                    .enum_values(vec![
+                        "idiomatic".to_string(),
+                        "performance".to_string(),
+                        "readability".to_string(),
+                        "minimal".to_string(),
+                    ])
+                    .description("Refactoring style preference")
+                    .build(),
+            )
+            .field(
+                "preserve_comments",
+                boolean()
+                    .description("Keep existing comments?")
+                    .default(true)
+                    .build(),
+            )
+            .field(
+                "max_line_length",
+                integer()
+                    .range(80.0, 120.0)
+                    .description("Maximum line length")
+                    .build(),
+            )
+            .field(
+                "use_unsafe",
+                boolean()
+                    .description("Allow unsafe code for optimization?")
+                    .default(false)
+                    .build(),
+            )
+            .require(vec!["style"])
+            .build_request();
+            
+        // For demonstration, simulate user preferences
+        let (style, preserve_comments, max_line, use_unsafe) = 
+            ("idiomatic".to_string(), true, 100usize, false);
+                
+                // Simulate refactoring based on preferences
+                let refactored = match style.as_str() {
+                    "idiomatic" => format!("// Idiomatic Rust refactoring\n{}", code_snippet),
+                    "performance" => format!("// Performance-optimized refactoring{}\n{}", 
+                                           if use_unsafe { " (with unsafe)" } else { "" }, code_snippet),
+                    "readability" => format!("// Readability-focused refactoring\n// Max line length: {}\n{}", 
+                                           max_line, code_snippet),
+                    "minimal" => format!("// Minimal refactoring\n{}", code_snippet),
+                    _ => code_snippet.clone(),
+                };
+                
+                Ok(format!("🔧 Code Refactored Successfully!\n\
+                           ═══════════════════════════════════════════════\n\
+                           Style: {}\n\
+                           Comments: {}\n\
+                           Line Length: {} chars\n\
+                           Unsafe Code: {}\n\n\
+                           ```rust\n{}\n```",
+                           style,
+                           if preserve_comments { "Preserved" } else { "Removed" },
+                           max_line,
+                           if use_unsafe { "Allowed" } else { "Forbidden" },
+                           refactored))
+    }
 
     /// Generate comprehensive documentation prompts
     #[tool("Generate AI prompts for documenting functions, tools, and code components")]

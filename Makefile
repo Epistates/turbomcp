@@ -44,7 +44,8 @@ GITHUB_ACTIONS ?= false
 .PHONY: all help setup build test clean fmt lint docs examples benchmarks \
 	    release docker security audit coverage install uninstall check-deps \
 		watch dev production stats report ci-prepare ci-test ci-build \
-		publish pre-commit git-hooks demo performance-test load-test
+		publish pre-commit git-hooks demo performance-test load-test \
+		test-integration test-integration-all test-enforce test-all
 
 # Default target
 all: build
@@ -145,8 +146,8 @@ test-unit: ## Run unit tests only
 	@echo "${CYAN}Running unit tests...${RESET}"
 	@$(CARGO) test $(WORKSPACE_FLAGS) --lib
 
-test-integration: ## Run integration tests only
-	@echo "${CYAN}Running integration tests...${RESET}"
+test-integration-all: ## Run all integration tests in workspace  
+	@echo "${CYAN}Running all integration tests...${RESET}"
 	@$(CARGO) test $(WORKSPACE_FLAGS) --tests
 
 test-docs: ## Test documentation examples

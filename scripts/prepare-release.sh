@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 DRY_RUN=${DRY_RUN:-true}
-VERSION="1.0.1"
+VERSION="1.0.3"
 
 # Crate publish order (dependencies first)
 CRATES=(
