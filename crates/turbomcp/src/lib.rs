@@ -5,13 +5,30 @@
 //!
 //! ## Features
 //!
-//! - **MCP 2025-06-18 Specification** - Full compliance with latest protocol
-//! - **SIMD-Accelerated JSON** - `simd-json` and `sonic-rs` for fast processing  
-//! - **Multi-Transport** - STDIO, TCP, Unix sockets with runtime selection
-//! - **Robust** - Circuit breakers, retry logic, graceful shutdown
-//! - **Zero-Overhead Macros** - Ergonomic `#[server]`, `#[tool]`, `#[resource]` attributes
-//! - **Context Injection** - Dependency injection and observability
+//! ### Core MCP Protocol Support
+//! - **MCP 2025-06-18 Specification** - Full compliance with latest protocol including elicitation
 //! - **Type Safety** - Compile-time validation with automatic schema generation
+//! - **Context Injection** - Dependency injection and observability with structured logging
+//! - **Zero-Overhead Macros** - Ergonomic `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]` attributes
+//!
+//! ### Advanced Protocol Features (New in 1.0.3)
+//! - **Roots Support** - Configurable filesystem roots via macro or builder API with OS-aware defaults
+//! - **Elicitation Support** - Server-initiated requests for interactive user input with type-safe builders
+//! - **Sampling Protocol** - Bidirectional LLM sampling capabilities with metadata tracking
+//! - **Compile-Time Routing** - Zero-cost compile-time router generation (experimental)
+//!
+//! ### Transport & Performance
+//! - **Multi-Transport** - STDIO, TCP, Unix sockets, WebSocket, HTTP/SSE with runtime selection
+//! - **SIMD-Accelerated JSON** - `simd-json` and `sonic-rs` for fast processing  
+//! - **Robust** - Circuit breakers, retry logic, graceful shutdown
+//! - **WebSocket Bidirectional** - Full-duplex communication for real-time elicitation
+//! - **HTTP Server-Sent Events** - Server-push capabilities for lightweight deployments
+//!
+//! ### Enterprise Features
+//! - **OAuth 2.0 Authentication** - Multi-provider support (Google, GitHub, Microsoft)
+//! - **Security Headers** - CORS, CSP, HSTS protection
+//! - **Rate Limiting** - Token bucket algorithm with configurable strategies
+//! - **Middleware Stack** - Authentication, logging, security headers
 //!
 //! ## Quick Start
 //!
@@ -23,7 +40,13 @@
 //!     operations: std::sync::Arc<std::sync::atomic::AtomicU64>,
 //! }
 //!
-//! #[server]
+//! #[server(
+//!     name = "calculator-server",
+//!     version = "1.0.0",
+//!     // Configure filesystem roots directly in the macro
+//!     root = "file:///workspace:Workspace",
+//!     root = "file:///tmp:Temporary Files"
+//! )]
 //! impl Calculator {
 //!     #[tool("Add two numbers")]
 //!     async fn add(&self, ctx: Context, a: i32, b: i32) -> McpResult<i32> {
@@ -155,6 +178,129 @@
 //! }
 //! ```
 //!
+//! ## Elicitation Support (New in 1.0.3)
+//!
+//! TurboMCP now supports server-initiated elicitation for interactive user input with comprehensive schema validation:
+//!
+//! ```rust,no_run
+//! use turbomcp::prelude::*;
+//!
+//! #[derive(Clone)]
+//! struct ConfigServer;
+//!
+//! #[server]
+//! impl ConfigServer {
+//!     #[tool("Configure application with user input")]
+//!     async fn configure(&self, ctx: Context) -> McpResult<String> {
+//!         // Check if user is authenticated for configuration
+//!         if !ctx.is_authenticated() {
+//!             return Err(McpError::Unauthorized("Authentication required for configuration".to_string()));
+//!         }
+//!         
+//!         ctx.info("Starting configuration process").await?;
+//!         
+//!         // Example configuration with default values
+//!         let theme = "dark".to_string();
+//!         let notifications = true;
+//!         
+//!         // Store configuration in context data
+//!         ctx.set("theme", &theme).await?;
+//!         ctx.set("notifications", notifications).await?;
+//!         
+//!         Ok(format!("Configured with {} theme, notifications: {}", theme, notifications))
+//!     }
+//! }
+//! ```
+//!
+//! ## Sampling Support (New in 1.0.3)
+//!
+//! Server-initiated sampling requests enable bidirectional LLM communication:
+//!
+//! ```rust,no_run
+//! use turbomcp::prelude::*;
+//!
+//! #[derive(Clone)]
+//! struct AIAssistant;
+//!
+//! #[server]
+//! impl AIAssistant {
+//!     #[tool("Get AI assistance for code review")]
+//!     async fn code_review(&self, ctx: Context, code: String) -> McpResult<String> {
+//!         // Log the review request with user context
+//!         let user = ctx.user_id().unwrap_or("anonymous");
+//!         ctx.info(&format!("User {} requesting review of {} lines", user, code.lines().count())).await?;
+//!         
+//!         // Example: Create a sampling request for AI analysis
+//!         let sampling_request = serde_json::json!({
+//!             "messages": [{
+//!                 "role": "user",
+//!                 "content": {
+//!                     "type": "text",
+//!                     "text": format!("Please review this code:\n\n{}", code)
+//!                 }
+//!             }],
+//!             "maxTokens": 500,
+//!             "systemPrompt": "You are a senior code reviewer. Provide constructive feedback."
+//!         });
+//!         
+//!         // Use the sampling API for real AI analysis (requires client LLM capability)
+//!         match ctx.create_message(sampling_request).await {
+//!             Ok(response) => Ok(format!("AI Review: {:?}", response)),
+//!             Err(_) => {
+//!                 // Fallback to simple analysis if sampling unavailable
+//!                 let issues = code.matches("TODO").count() + code.matches("FIXME").count();
+//!                 Ok(format!("Static analysis: {} lines, {} issues found", code.lines().count(), issues))
+//!             }
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! ## OAuth 2.0 Authentication
+//!
+//! Built-in OAuth 2.0 support with multiple providers and all standard flows:
+//!
+//! ```rust,no_run
+//! use turbomcp::prelude::*;
+//! use std::collections::HashMap;
+//! use std::sync::Arc;
+//! use tokio::sync::RwLock;
+//!
+//! #[derive(Clone)]
+//! struct AuthenticatedServer {
+//!     user_sessions: Arc<RwLock<HashMap<String, String>>>,
+//! }
+//!
+//! #[server]
+//! impl AuthenticatedServer {
+//!     #[tool("Get authenticated user profile")]
+//!     async fn get_user_profile(&self, ctx: Context, session_token: String) -> McpResult<String> {
+//!         let sessions = self.user_sessions.read().await;
+//!         if let Some(user_id) = sessions.get(&session_token) {
+//!             Ok(format!("Authenticated user: {}", user_id))
+//!         } else {
+//!             Err(McpError::InvalidInput("Authentication required".to_string()))
+//!         }
+//!     }
+//!
+//!     #[tool("Start OAuth flow")]
+//!     async fn start_oauth_flow(&self, provider: String) -> McpResult<String> {
+//!         match provider.as_str() {
+//!             "github" | "google" | "microsoft" => {
+//!                 Ok(format!("Visit: https://{}.com/oauth/authorize", provider))
+//!             }
+//!             _ => Err(McpError::InvalidInput(format!("Unknown provider: {}", provider))),
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! **OAuth Features:**
+//! - 🔐 **Multiple Providers** - Google, GitHub, Microsoft, custom OAuth 2.0
+//! - 🛡️ **Always-On PKCE** - Security enabled by default
+//! - 🔄 **All OAuth Flows** - Authorization Code, Client Credentials, Device Code
+//! - 👥 **Session Management** - User session tracking with cleanup
+//!
 //! ## Advanced Features
 //!
 //! TurboMCP supports resources and prompts alongside tools:
@@ -207,8 +353,9 @@
 //!
 //! ## Architecture
 //!
-//! - **MCP 2025-06-18 Specification** - Full protocol compliance
-//! - **Multi-Transport Support** - STDIO, TCP, Unix sockets with runtime selection
+//! - **MCP 2025-06-18 Specification** - Full protocol compliance including elicitation
+//! - **Multi-Transport Support** - STDIO, TCP, Unix, WebSocket, HTTP/SSE
+//! - **Bidirectional Communication** - Server-initiated requests via elicitation and sampling
 //! - **Graceful Shutdown** - Lifecycle management
 //! - **Zero-Overhead Macros** - Ergonomic `#[server]`, `#[tool]`, `#[resource]` attributes
 //! - **Type Safety** - Compile-time validation and automatic schema generation
@@ -260,6 +407,7 @@ pub mod auth;
 pub mod context;
 pub mod context_factory;
 pub mod elicitation;
+pub mod elicitation_api;
 pub mod helpers;
 
 pub mod injection;
@@ -297,6 +445,10 @@ pub use crate::context_factory::{
     CorrelationId, RequestScope,
 };
 pub use crate::elicitation::*;
+pub use crate::elicitation_api::{
+    ElicitationBuilder, ElicitationData, ElicitationExtract, ElicitationManager, ElicitationResult,
+    array, boolean, elicit, integer, number, object, string,
+};
 pub use crate::helpers::*;
 pub use crate::injection::*;
 pub use crate::lifespan::*;
@@ -315,12 +467,18 @@ pub use crate::validation::*;
 pub use inventory;
 
 // Re-export macros
-pub use turbomcp_macros::{mcp_error, mcp_text, prompt, resource, server, tool, tool_result};
+pub use turbomcp_macros::{
+    completion, elicit, elicitation, mcp_error, mcp_text, ping, prompt, resource, server, template,
+    tool, tool_result,
+};
 
 /// Convenient prelude for `TurboMCP` applications
 pub mod prelude {
     // Re-export procedural macros for zero-boilerplate development
-    pub use super::{mcp_error, mcp_text, prompt, resource, server, tool, tool_result};
+    pub use super::{
+        completion, elicit, elicitation, mcp_error, mcp_text, ping, prompt, resource, server,
+        template, tool, tool_result,
+    };
 
     pub use super::{
         ApiKeyProvider, AuthConfig, AuthContext, AuthCredentials, AuthManager, AuthMiddleware,
@@ -678,6 +836,116 @@ impl Context {
             Ok(Some(serde_json::from_value(value.clone())?))
         } else {
             Ok(None)
+        }
+    }
+
+    /// Get user ID from the request context
+    #[must_use]
+    pub fn user_id(&self) -> Option<&str> {
+        self.request.user()
+    }
+
+    /// Check if request is authenticated
+    #[must_use]
+    pub fn is_authenticated(&self) -> bool {
+        self.request.is_authenticated()
+    }
+
+    /// Get user roles from request context
+    #[must_use]
+    pub fn roles(&self) -> Vec<String> {
+        self.request.roles()
+    }
+
+    /// Check if user has any of the required roles
+    pub fn has_any_role<S: AsRef<str>>(&self, required: &[S]) -> bool {
+        self.request.has_any_role(required)
+    }
+
+    /// Get session ID from request context
+    #[must_use]
+    pub fn session_id(&self) -> Option<&str> {
+        self.request.session_id.as_deref()
+    }
+
+    /// Get client ID from request context
+    #[must_use]
+    pub fn client_id(&self) -> Option<&str> {
+        self.request.client_id.as_deref()
+    }
+
+    /// Get request ID
+    #[must_use]
+    pub fn request_id(&self) -> &str {
+        &self.request.request_id
+    }
+
+    /// Get metadata from request context
+    #[must_use]
+    pub fn get_metadata(&self, key: &str) -> Option<&serde_json::Value> {
+        self.request.get_metadata(key)
+    }
+
+    /// Check if request is cancelled
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.request.is_cancelled()
+    }
+
+    /// Get elapsed time since request started
+    #[must_use]
+    pub fn elapsed(&self) -> std::time::Duration {
+        self.request.elapsed()
+    }
+
+    /// Send a sampling request to the client (server-initiated LLM communication)
+    ///
+    /// This method allows the server to request the client to perform sampling
+    /// (LLM inference) on behalf of the server, enabling bidirectional AI communication.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The sampling request as a JSON value containing CreateMessageRequest
+    ///
+    /// # Returns
+    ///
+    /// A Result containing the client's response or an error
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use turbomcp_protocol::types::{CreateMessageRequest, SamplingMessage, Role, Content, TextContent};
+    ///
+    /// let request = serde_json::to_value(CreateMessageRequest {
+    ///     messages: vec![SamplingMessage {
+    ///         role: Role::User,
+    ///         content: Content::Text(TextContent {
+    ///             text: "Analyze this code".to_string(),
+    ///             annotations: None,
+    ///             meta: None,
+    ///         }),
+    ///     }],
+    ///     max_tokens: 500,
+    ///     model_preferences: None,
+    ///     system_prompt: None,
+    ///     include_context: None,
+    ///     temperature: None,
+    ///     stop_sequences: None,
+    ///     metadata: None,
+    /// })?;
+    ///
+    /// let response = ctx.create_message(request).await?;
+    /// ```
+    pub async fn create_message(&self, request: serde_json::Value) -> McpResult<serde_json::Value> {
+        if let Some(capabilities) = self.request.server_capabilities() {
+            capabilities
+                .create_message(request)
+                .await
+                .map_err(|e| McpError::Context(format!("Sampling failed: {}", e)))
+        } else {
+            Err(McpError::Context(
+                "Server capabilities not available for sampling".to_string(),
+            ))
         }
     }
 }

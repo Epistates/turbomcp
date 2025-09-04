@@ -33,10 +33,21 @@ static HANDLER_REGISTRY: Mutex<Vec<HandlerInfo>> = Mutex::new(Vec::new());
 
 /// Register a handler globally
 pub fn register_handler(info: HandlerInfo) {
-    HANDLER_REGISTRY.lock().unwrap().push(info);
+    if let Ok(mut registry) = HANDLER_REGISTRY.lock() {
+        registry.push(info);
+    } else {
+        // Mutex is poisoned - this is a critical error but we shouldn't panic
+        tracing::error!("Handler registry mutex poisoned - unable to register handler");
+    }
 }
 
 /// Get all registered handlers
 pub fn get_registered_handlers() -> Vec<HandlerInfo> {
-    HANDLER_REGISTRY.lock().unwrap().clone()
+    HANDLER_REGISTRY
+        .lock()
+        .map(|registry| registry.clone())
+        .unwrap_or_else(|_| {
+            tracing::error!("Handler registry mutex poisoned - returning empty registry");
+            Vec::new()
+        })
 }
