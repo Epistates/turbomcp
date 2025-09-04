@@ -102,7 +102,7 @@ async fn test_unix_transport_valid_path() {
 async fn test_http_transport_not_implemented() {
     let server = create_test_server();
 
-    // HTTP transport should return a configuration error
+    // HTTP transport should return a configuration error directing to use compile-time routing
     let result = server.run_http("127.0.0.1:8080").await;
     assert!(
         result.is_err(),
@@ -113,8 +113,8 @@ async fn test_http_transport_not_implemented() {
     if let Err(e) = result {
         let error_msg = e.to_string();
         assert!(
-            error_msg.contains("HTTP server transport not supported"),
-            "Should get specific HTTP not supported error, got: {error_msg}"
+            error_msg.contains("compile-time routing"),
+            "Should get compile-time routing redirect error, got: {error_msg}"
         );
     }
 }
