@@ -201,3 +201,55 @@ pub fn generate_tool_result(input: TokenStream) -> TokenStream {
 
     TokenStream::from(expanded)
 }
+
+/// Parse elicit! macro arguments (context, message, schema)
+struct ElicitArgs {
+    context: Expr,
+    message: Expr,
+    schema: Expr,
+}
+
+impl Parse for ElicitArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let context: Expr = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let message: Expr = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let schema: Expr = input.parse()?;
+
+        Ok(ElicitArgs {
+            context,
+            message,
+            schema,
+        })
+    }
+}
+
+/// Generate elicitation helper with automatic request handling
+pub fn generate_elicitation(input: TokenStream) -> TokenStream {
+    let elicit_args = parse_macro_input!(input as ElicitArgs);
+    let context = &elicit_args.context;
+    let message = &elicit_args.message;
+    let schema = &elicit_args.schema;
+
+    let expanded = quote! {
+        {
+            use ::turbomcp_protocol::elicitation::{ElicitationCreateRequest};
+
+            // Create the elicitation request
+            let elicitation_request = ElicitationCreateRequest {
+                message: #message.to_string(),
+                requested_schema: #schema,
+            };
+
+            // Use server capabilities to send elicitation
+            if let Some(capabilities) = #context.request.server_capabilities() {
+                capabilities.send_elicitation(elicitation_request).await
+            } else {
+                Err(::turbomcp_core::Error::handler("Server capabilities not available for elicitation".to_string()).into())
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}

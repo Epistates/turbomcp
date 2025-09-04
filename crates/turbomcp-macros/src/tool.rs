@@ -211,13 +211,11 @@ fn analyze_function_signature(sig: &Signature) -> Result<FunctionAnalysis, syn::
                 if let Pat::Ident(pat_ident) = pat.as_ref() {
                     let param_name = &pat_ident.ident;
 
-                    // Check if this is a Context parameter
+                    // Check if this is a Context/RequestContext parameter
                     let is_context = if let Type::Path(type_path) = ty.as_ref() {
-                        type_path
-                            .path
-                            .segments
-                            .last()
-                            .is_some_and(|seg| seg.ident == "Context")
+                        type_path.path.segments.last().is_some_and(|seg| {
+                            seg.ident == "Context" || seg.ident == "RequestContext"
+                        })
                     } else {
                         false
                     };

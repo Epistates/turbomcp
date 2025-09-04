@@ -5,13 +5,27 @@
 //!
 //! ## Features
 //!
+//! ### Core Macros
 //! - **`#[server]`** - Convert structs into MCP servers with transport methods and graceful shutdown
 //! - **`#[tool]`** - Mark methods as MCP tool handlers with automatic schema generation
 //! - **`#[prompt]`** - Mark methods as MCP prompt handlers with template support
 //! - **`#[resource]`** - Mark methods as MCP resource handlers with URI templates
-//! - **Helper macros** - `mcp_error!`, `mcp_text!`, `tool_result!` for ergonomic content creation
+//!
+//! ### Advanced Features (Enhanced in 1.0.3)
+//! - **Roots Configuration** - Declarative filesystem roots in `#[server]` macro: `root = "file:///path:Name"`
+//! - **Compile-Time Routing** - Zero-cost compile-time router generation (experimental)
+//! - **Enhanced Context System** - Improved async handling and error propagation
+//! - **Server Attributes** - Support for name, version, description, and roots in server macro
+//!
+//! ### Helper Macros
+//! - **`mcp_error!`** - Ergonomic error creation with formatting
+//! - **`mcp_text!`** - Text content creation helpers
+//! - **`tool_result!`** - Tool result formatting
+//! - **`elicit!`** - High-level elicitation macro for interactive user input
 //!
 //! ## Usage
+//!
+//! ### Basic Server with Tools
 //!
 //! ```ignore
 //! use turbomcp::prelude::*;
@@ -21,10 +35,17 @@
 //!     operations: std::sync::Arc<std::sync::atomic::AtomicU64>,
 //! }
 //!
-//! #[server]
+//! #[server(
+//!     name = "calculator-server",
+//!     version = "1.0.0",
+//!     description = "A mathematical calculator service",
+//!     root = "file:///workspace:Project Workspace",
+//!     root = "file:///tmp:Temporary Files"
+//! )]
 //! impl Calculator {
 //!     #[tool("Add two numbers")]
-//!     async fn add(&self, a: i32, b: i32) -> McpResult<i32> {
+//!     async fn add(&self, ctx: Context, a: i32, b: i32) -> McpResult<i32> {
+//!         ctx.info(&format!("Adding {} + {}", a, b)).await?;
 //!         self.operations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 //!         Ok(a + b)
 //!     }
@@ -36,11 +57,57 @@
 //!         }
 //!         Ok(a / b)
 //!     }
+//!
+//!     #[resource("calc://history/{operation}")]
+//!     async fn history(&self, operation: String) -> McpResult<String> {
+//!         Ok(format!("History for {} operations", operation))
+//!     }
+//!
+//!     #[prompt("Generate report for {operation} with {count} operations")]
+//!     async fn report(&self, operation: String, count: i32) -> McpResult<String> {
+//!         Ok(format!("Generated report for {} ({} operations)", operation, count))
+//!     }
+//! }
+//! ```
+//!
+//! ### Elicitation Support (New in 1.0.3)
+//!
+//! ```ignore
+//! use turbomcp::prelude::*;
+//! use turbomcp::elicitation_api::{string, boolean, ElicitationResult};
+//!
+//! #[derive(Clone)]
+//! struct InteractiveServer;
+//!
+//! #[server]
+//! impl InteractiveServer {
+//!     #[tool("Configure with user input")]
+//!     async fn configure(&self, ctx: Context) -> McpResult<String> {
+//!         let result = elicit!("Configure your preferences")
+//!             .field("theme", string()
+//!                 .enum_values(vec!["light", "dark"])
+//!                 .build())
+//!             .field("auto_save", boolean()
+//!                 .description("Enable auto-save")
+//!                 .build())
+//!             .send(&ctx.request)
+//!             .await?;
+//!
+//!         match result {
+//!             ElicitationResult::Accept(data) => {
+//!                 let theme = data.get::<String>("theme")?;
+//!                 Ok(format!("Configured with {} theme", theme))
+//!             }
+//!             _ => Err(mcp_error!("Configuration cancelled"))
+//!         }
+//!     }
 //! }
 //! ```
 
 use proc_macro::TokenStream;
 
+mod attrs;
+mod compile_time_router;
 mod completion;
 mod elicitation;
 mod helpers;
@@ -184,6 +251,35 @@ pub fn mcp_text(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn mcp_error(input: TokenStream) -> TokenStream {
     helpers::generate_error(input)
+}
+
+/// Ergonomic elicitation macro for server-initiated user input
+///
+/// This macro provides a simple way to request structured input from the client
+/// with automatic schema validation.
+///
+/// # Usage
+///
+/// ```ignore
+/// use turbomcp::prelude::*;
+/// use turbomcp_protocol::elicitation::ElicitationSchema;
+///
+/// let schema = ElicitationSchema::new()
+///     .add_string_property("theme", Some("Color theme"))
+///     .add_boolean_property("notifications", Some("Enable notifications"));
+///
+/// let result = elicit!(ctx, "Configure your preferences", schema).await?;
+/// ```
+///
+/// # Arguments
+///
+/// * `ctx` - The context object (must have server capabilities)
+/// * `message` - The message to display to the user
+/// * `schema` - The elicitation schema defining expected input
+///
+#[proc_macro]
+pub fn elicit(input: TokenStream) -> TokenStream {
+    helpers::generate_elicitation(input)
 }
 
 /// Helper macro for creating CallToolResult structures (advanced usage)
