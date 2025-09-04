@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use turbomcp::{McpError, McpResult, server, tool};
+use turbomcp::{Context, McpResult, mcp_error, server, tool};
 
 /// Calculator with comprehensive error handling
 #[derive(Clone)]
@@ -35,28 +35,28 @@ impl SafeCalculator {
     }
 
     #[tool("Divide two numbers with proper error handling")]
-    async fn safe_divide(&self, dividend: f64, divisor: f64) -> McpResult<f64> {
+    async fn safe_divide(&self, ctx: Context, dividend: f64, divisor: f64) -> McpResult<f64> {
+        ctx.info(&format!("Dividing {} by {}", dividend, divisor)).await?;
+        
         // Check for division by zero
         if divisor == 0.0 {
-            return Err(McpError::Tool(
-                "Division by zero is not allowed".to_string(),
-            ));
+            return Err(mcp_error!("Division by zero is not allowed").into());
         }
 
         // Check for overflow conditions
         if dividend == f64::MAX && divisor.abs() < 1.0 {
-            return Err(McpError::Tool("Operation would cause overflow".to_string()));
+            return Err(mcp_error!("Operation would cause overflow").into());
         }
 
         let result = dividend / divisor;
 
         // Check for invalid results
         if result.is_nan() {
-            return Err(McpError::Tool("Operation resulted in NaN".to_string()));
+            return Err(mcp_error!("Operation resulted in NaN").into());
         }
 
         if result.is_infinite() {
-            return Err(McpError::Tool("Operation resulted in infinity".to_string()));
+            return Err(mcp_error!("Operation resulted in infinity").into());
         }
 
         // Log successful operation
@@ -67,54 +67,54 @@ impl SafeCalculator {
     }
 
     #[tool("Parse and evaluate expression")]
-    async fn evaluate(&self, expression: String) -> McpResult<f64> {
+    async fn evaluate(&self, ctx: Context, expression: String) -> McpResult<f64> {
+        ctx.info(&format!("Evaluating expression: {}", expression)).await?;
+        
         // Validate input
         if expression.is_empty() {
-            return Err(McpError::Tool("Expression cannot be empty".to_string()));
+            return Err(mcp_error!("Expression cannot be empty").into());
         }
 
         if expression.len() > 1000 {
-            return Err(McpError::Tool(
-                "Expression too long (max 1000 characters)".to_string(),
-            ));
+            return Err(mcp_error!("Expression too long (max 1000 characters)").into());
         }
 
         // Simple expression parser using basic string operations
         let parts: Vec<&str> = expression.split_whitespace().collect();
 
         if parts.len() != 3 {
-            return Err(McpError::Tool(
-                "Expression must be: number operator number".to_string(),
-            ));
+            return Err(mcp_error!("Expression must be: number operator number").into());
         }
 
         let a = parts[0]
             .parse::<f64>()
-            .map_err(|_| McpError::Tool(format!("'{}' is not a valid number", parts[0])))?;
+            .map_err(|_| -> turbomcp::McpError { mcp_error!("'{}' is not a valid number", parts[0]).into() })?;
 
         let b = parts[2]
             .parse::<f64>()
-            .map_err(|_| McpError::Tool(format!("'{}' is not a valid number", parts[2])))?;
+            .map_err(|_| -> turbomcp::McpError { mcp_error!("'{}' is not a valid number", parts[2]).into() })?;
 
         match parts[1] {
             "+" => Ok(a + b),
             "-" => Ok(a - b),
             "*" => Ok(a * b),
-            "/" => self.safe_divide(a, b).await,
-            op => Err(McpError::Tool(format!(
-                "Unknown operator: '{}'. Use +, -, *, or /",
+            "/" => self.safe_divide(ctx, a, b).await,
+            op => Err(mcp_error!(
+                "Unknown operator: '{}'. Use +, -, *, or /", 
                 op
-            ))),
+            ).into()),
         }
     }
 
     #[tool("Get calculation history")]
-    async fn get_history(&self, limit: Option<usize>) -> McpResult<Vec<String>> {
+    async fn get_history(&self, ctx: Context, limit: Option<usize>) -> McpResult<Vec<String>> {
         let history = self.history.read().await;
         let limit = limit.unwrap_or(10);
 
+        ctx.info(&format!("Retrieving last {} history entries", limit)).await?;
+
         if limit == 0 {
-            return Err(McpError::Tool("Limit must be greater than 0".to_string()));
+            return Err(mcp_error!("Limit must be greater than 0").into());
         }
 
         let start = history.len().saturating_sub(limit);
@@ -122,12 +122,12 @@ impl SafeCalculator {
     }
 
     #[tool("Clear history with confirmation")]
-    async fn clear_history(&self, confirm: bool) -> McpResult<String> {
+    async fn clear_history(&self, ctx: Context, confirm: bool) -> McpResult<String> {
         if !confirm {
-            return Err(McpError::Tool(
-                "Set confirm=true to clear history".to_string(),
-            ));
+            return Err(mcp_error!("Set confirm=true to clear history").into());
         }
+
+        ctx.warn("Clearing calculation history").await?;
 
         let mut history = self.history.write().await;
         let count = history.len();
@@ -185,6 +185,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /* 📝 **Key Concepts:**
 
+**New Error Macro Usage (1.0.3):**
+- Use `mcp_error!("message", args).into()` for ergonomic error creation
+- Format string support: `mcp_error!("Value {} invalid", value)`  
+- Automatic type conversion with `.into()`
+- In closures, add type annotation: `|_| -> turbomcp::McpError { mcp_error!("...").into() }`
+
 **Error Types:**
 - McpError::Tool - Tool execution errors
 - McpError::Resource - Resource errors
@@ -192,15 +198,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - McpError::Protocol - Protocol errors
 
 **Validation Patterns:**
-- Check inputs early
-- Provide specific error messages
-- Include recovery hints
-- Validate ranges and formats
+- Check inputs early with mcp_error! macro
+- Provide specific error messages with context
+- Include recovery hints in error messages
+- Validate ranges and formats upfront
 
 **Error Messages:**
 - Be specific about what went wrong
 - Suggest how to fix it
-- Include relevant context
+- Include relevant context (use format args)
 - Avoid technical jargon
 
 **Recovery Strategies:**
