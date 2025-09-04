@@ -367,6 +367,8 @@ pub mod mmap {
             let actual_length = actual_length.min(file_size - offset);
 
             // Create memory map
+            // SAFETY: file handle is valid and opened for reading. memmap2 provides
+            // safe abstractions over POSIX mmap. The resulting mapping is read-only.
             let mmap = unsafe { MmapOptions::new().map(&file)? };
 
             Ok(Self {
@@ -440,6 +442,8 @@ pub mod mmap {
 
             // Create new memory map
             let file = File::open(path)?;
+            // SAFETY: file handle is valid and opened for reading. memmap2 provides
+            // safe abstractions over POSIX mmap. The resulting mapping is read-only.
             let mmap = unsafe { MmapOptions::new().map(&file)? };
             let mmap = Arc::new(mmap);
 
@@ -477,6 +481,8 @@ pub mod mmap {
         /// Create a batch from a memory-mapped file with JSON lines
         pub fn from_jsonl_file(path: &Path) -> io::Result<Self> {
             let file = File::open(path)?;
+            // SAFETY: file handle is valid and opened for reading. memmap2 provides
+            // safe abstractions over POSIX mmap. The resulting mapping is read-only.
             let mmap = unsafe { MmapOptions::new().map(&file)? };
 
             let mut messages = Vec::new();

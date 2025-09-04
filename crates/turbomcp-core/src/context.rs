@@ -62,8 +62,38 @@ use uuid::Uuid;
 
 use crate::types::Timestamp;
 
+/// Trait for server-initiated requests (sampling, elicitation, roots)
+/// This provides a type-safe way for tools to make requests to clients
+pub trait ServerCapabilities: Send + Sync + fmt::Debug {
+    /// Send a sampling/createMessage request to the client
+    fn create_message(
+        &self,
+        request: serde_json::Value,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>>,
+    >;
+
+    /// Send an elicitation request to the client
+    fn elicit(
+        &self,
+        request: serde_json::Value,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>>,
+    >;
+
+    /// List client's root capabilities
+    fn list_roots(
+        &self,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>>,
+    >;
+}
+
 /// Context information for request processing
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RequestContext {
     /// Unique request identifier
     pub request_id: String,
@@ -92,6 +122,25 @@ pub struct RequestContext {
 
     /// Cancellation token
     pub cancellation_token: Option<Arc<CancellationToken>>,
+
+    /// Server capabilities for server-initiated requests
+    /// This is used by turbomcp-server to provide access to sampling
+    #[doc(hidden)]
+    pub(crate) server_capabilities: Option<Arc<dyn ServerCapabilities>>,
+}
+
+impl fmt::Debug for RequestContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RequestContext")
+            .field("request_id", &self.request_id)
+            .field("user_id", &self.user_id)
+            .field("session_id", &self.session_id)
+            .field("client_id", &self.client_id)
+            .field("timestamp", &self.timestamp)
+            .field("metadata", &self.metadata)
+            .field("server_capabilities", &self.server_capabilities.is_some())
+            .finish()
+    }
 }
 
 /// Context information for response processing
@@ -620,6 +669,7 @@ impl RequestContext {
             #[cfg(feature = "tracing")]
             span: None,
             cancellation_token: None,
+            server_capabilities: None,
         }
     }
     /// Return true if the request is authenticated according to context metadata
@@ -684,6 +734,20 @@ impl RequestContext {
             request_id: id.into(),
             ..Self::new()
         }
+    }
+
+    /// Set the server capabilities for server-initiated requests
+    /// This is used internally by turbomcp-server
+    #[doc(hidden)]
+    pub fn with_server_capabilities(mut self, capabilities: Arc<dyn ServerCapabilities>) -> Self {
+        self.server_capabilities = Some(capabilities);
+        self
+    }
+
+    /// Get the server capabilities if present
+    #[doc(hidden)]
+    pub fn server_capabilities(&self) -> Option<&Arc<dyn ServerCapabilities>> {
+        self.server_capabilities.as_ref()
     }
 
     /// Set the user ID
@@ -759,6 +823,7 @@ impl RequestContext {
             #[cfg(feature = "tracing")]
             span: None,
             cancellation_token: self.cancellation_token.clone(),
+            server_capabilities: self.server_capabilities.clone(),
         }
     }
 

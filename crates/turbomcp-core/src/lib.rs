@@ -10,6 +10,7 @@
 //! - **Session Management** - Configurable LRU eviction and lifecycle management
 //! - **Zero-Copy Processing** - Memory-efficient message handling with `Bytes`
 //! - **Request Context** - Full request/response context tracking for observability
+//! - **Server Capabilities** - Support for server-initiated requests (sampling, elicitation)
 //! - **Performance Optimized** - Memory-bounded state management with cleanup tasks
 //! - **Observability Ready** - Built-in support for tracing and metrics collection
 //!
@@ -20,11 +21,33 @@
 //! ├── error/          # Error types and handling
 //! ├── message/        # Message types and serialization
 //! ├── types/          # Core protocol types
-//! ├── context/        # Request/response context
+//! ├── context/        # Request/response context with server capabilities
 //! ├── session/        # Session management
 //! ├── registry/       # Component registry
 //! ├── state/          # State management
 //! └── utils/          # Utility functions
+//! ```
+//!
+//! ## Server Capabilities
+//!
+//! The core provides a `ServerCapabilities` trait that enables server-initiated requests
+//! to clients, supporting bidirectional communication patterns like sampling and elicitation:
+//!
+//! ```rust,no_run
+//! use turbomcp_core::{RequestContext, ServerCapabilities};
+//!
+//! // Tools can access server capabilities through the context
+//! async fn my_tool(ctx: RequestContext) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//!     if let Some(capabilities) = ctx.server_capabilities() {
+//!         // Make a sampling request to the client
+//!         let request = serde_json::json!({
+//!             "messages": [{"role": "user", "content": "Hello"}],
+//!             "max_tokens": 100
+//!         });
+//!         let response = capabilities.create_message(request).await?;
+//!     }
+//!     Ok(())
+//! }
 //! ```
 //!
 //! ## Usage
@@ -83,8 +106,8 @@ pub use context::{
     CommunicationDirection, CommunicationInitiator, CompletionCapabilities, CompletionContext,
     CompletionOption, CompletionReference, ConnectionMetrics, ElicitationContext, ElicitationState,
     PingContext, PingOrigin, RequestContext, RequestContextExt, RequestInfo,
-    ResourceTemplateContext, ResponseContext, ServerInitiatedContext, ServerInitiatedType,
-    TemplateParameter,
+    ResourceTemplateContext, ResponseContext, ServerCapabilities, ServerInitiatedContext,
+    ServerInitiatedType, TemplateParameter,
 };
 pub use enhanced_registry::{EnhancedRegistry, HandlerStats};
 pub use error::{Error, ErrorKind, Result};
@@ -97,6 +120,9 @@ pub use message::{Message, MessageId, MessageMetadata};
 pub use session::{SessionAnalytics, SessionConfig, SessionManager};
 pub use state::StateManager;
 pub use types::{ContentType, ProtocolVersion, Timestamp};
+
+/// Alias for RequestContext for backward compatibility
+pub type Context = RequestContext;
 
 /// Current MCP protocol version supported by this SDK
 pub const PROTOCOL_VERSION: &str = "2025-06-18";

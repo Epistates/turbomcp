@@ -166,6 +166,8 @@ impl<T> LockFreeStack<T> {
         let guard = &epoch::pin();
         loop {
             let head = self.head.load(Ordering::Acquire, guard);
+            // SAFETY: head is protected by epoch guard, ensuring memory remains valid
+            // throughout this scope. crossbeam's epoch GC prevents use-after-free.
             match unsafe { head.as_ref() } {
                 None => return None,
                 Some(h) => {
@@ -175,6 +177,10 @@ impl<T> LockFreeStack<T> {
                         .compare_exchange(head, next, Ordering::Release, Ordering::Acquire, guard)
                         .is_ok()
                     {
+                        // SAFETY: We successfully CAS'd the head pointer, so we now own this node.
+                        // - guard.defer_destroy schedules safe deallocation after all guards are dropped
+                        // - ptr::read moves the value without calling drop on the original location
+                        // - No other thread can access this node after successful CAS
                         unsafe {
                             guard.defer_destroy(head);
                             return Some(std::ptr::read(&h.data));
