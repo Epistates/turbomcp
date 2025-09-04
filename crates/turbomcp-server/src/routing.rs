@@ -375,6 +375,11 @@ impl RequestRouter {
         request: JsonRpcRequest,
         ctx: RequestContext,
     ) -> JsonRpcResponse {
+        // Inject the router as server capabilities for server-initiated requests
+        let ctx = ctx.with_server_capabilities(
+            Arc::new(self.clone()) as Arc<dyn turbomcp_core::ServerCapabilities>
+        );
+
         match self.parse_params::<CallToolRequest>(&request) {
             Ok(call_request) => {
                 let tool_name = &call_request.name;
@@ -649,36 +654,45 @@ impl RequestRouter {
         request: JsonRpcRequest,
         _ctx: RequestContext,
     ) -> JsonRpcResponse {
-        // Provide basic filesystem roots for common OSes (best-effort)
-        let mut roots: Vec<Root> = Vec::new();
-        #[cfg(target_os = "linux")]
-        {
-            roots.push(Root {
-                uri: "file:///".to_string(),
-                name: Some("root".to_string()),
-            });
-        }
-        #[cfg(target_os = "macos")]
-        {
-            roots.push(Root {
-                uri: "file:///".to_string(),
-                name: Some("root".to_string()),
-            });
-            roots.push(Root {
-                uri: "file:///Volumes".to_string(),
-                name: Some("Volumes".to_string()),
-            });
-        }
-        #[cfg(target_os = "windows")]
-        {
-            // Common drive letters; clients can probe for availability
-            for drive in ['C', 'D', 'E', 'F', 'G', 'H'] {
-                roots.push(Root {
-                    uri: format!("file:///{}:/", drive),
-                    name: Some(format!("{}:", drive)),
+        // Get configured roots from registry
+        let roots = self.registry.get_roots();
+
+        // If no roots configured, provide OS-specific defaults
+        let roots = if roots.is_empty() {
+            let mut default_roots: Vec<Root> = Vec::new();
+            #[cfg(target_os = "linux")]
+            {
+                default_roots.push(Root {
+                    uri: "file:///".to_string(),
+                    name: Some("root".to_string()),
                 });
             }
-        }
+            #[cfg(target_os = "macos")]
+            {
+                default_roots.push(Root {
+                    uri: "file:///".to_string(),
+                    name: Some("root".to_string()),
+                });
+                default_roots.push(Root {
+                    uri: "file:///Volumes".to_string(),
+                    name: Some("Volumes".to_string()),
+                });
+            }
+            #[cfg(target_os = "windows")]
+            {
+                // Common drive letters; clients can probe for availability
+                for drive in ['C', 'D', 'E', 'F', 'G', 'H'] {
+                    default_roots.push(Root {
+                        uri: format!("file:///{}:/", drive),
+                        name: Some(format!("{}:", drive)),
+                    });
+                }
+            }
+            default_roots
+        } else {
+            roots
+        };
+
         let result = ListRootsResult { roots };
         self.success_response(&request, result)
     }
@@ -1019,6 +1033,67 @@ impl Clone for RequestRouter {
             resource_subscriptions: DashMap::new(),
             server_request_dispatcher: self.server_request_dispatcher.clone(),
         }
+    }
+}
+
+// Implementation of ServerCapabilities for RequestRouter
+// This enables tools to make server-initiated requests through the context
+impl turbomcp_core::ServerCapabilities for RequestRouter {
+    fn create_message(
+        &self,
+        request: serde_json::Value,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>>,
+    > {
+        Box::pin(async move {
+            let request: CreateMessageRequest = serde_json::from_value(request)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            let ctx = turbomcp_core::RequestContext::new();
+            let result = self
+                .send_create_message_to_client(request, ctx)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            serde_json::to_value(result)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        })
+    }
+
+    fn elicit(
+        &self,
+        request: serde_json::Value,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>>,
+    > {
+        Box::pin(async move {
+            let request: ElicitRequest = serde_json::from_value(request)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            let ctx = turbomcp_core::RequestContext::new();
+            let result = self
+                .send_elicitation_to_client(request, ctx)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            serde_json::to_value(result)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        })
+    }
+
+    fn list_roots(
+        &self,
+    ) -> futures::future::BoxFuture<
+        '_,
+        Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>>,
+    > {
+        Box::pin(async move {
+            let ctx = turbomcp_core::RequestContext::new();
+            let result = self
+                .send_list_roots_to_client(turbomcp_protocol::types::ListRootsRequest {}, ctx)
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)?;
+            serde_json::to_value(result)
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync>)
+        })
     }
 }
 

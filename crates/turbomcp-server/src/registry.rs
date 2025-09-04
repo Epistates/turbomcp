@@ -40,7 +40,7 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use turbomcp_protocol::types::{Prompt, Resource, Tool};
+use turbomcp_protocol::types::{Prompt, Resource, Root, Tool};
 
 use crate::handlers::{
     HandlerMetadata, LoggingHandler, PromptHandler, ResourceHandler, SamplingHandler, ToolHandler,
@@ -50,15 +50,17 @@ use crate::{ServerError, ServerResult};
 /// Handler registry for managing all server handlers
 pub struct HandlerRegistry {
     /// Tool handlers
-    pub tools: DashMap<String, Arc<dyn ToolHandler>>,
+    pub tools: DashMap<String, Arc<dyn ToolHandler + 'static>>,
     /// Prompt handlers  
-    pub prompts: DashMap<String, Arc<dyn PromptHandler>>,
+    pub prompts: DashMap<String, Arc<dyn PromptHandler + 'static>>,
     /// Resource handlers
-    pub resources: DashMap<String, Arc<dyn ResourceHandler>>,
+    pub resources: DashMap<String, Arc<dyn ResourceHandler + 'static>>,
     /// Sampling handlers
-    pub sampling: DashMap<String, Arc<dyn SamplingHandler>>,
+    pub sampling: DashMap<String, Arc<dyn SamplingHandler + 'static>>,
     /// Logging handlers
-    pub logging: DashMap<String, Arc<dyn LoggingHandler>>,
+    pub logging: DashMap<String, Arc<dyn LoggingHandler + 'static>>,
+    /// Filesystem roots
+    pub roots: Arc<RwLock<Vec<Root>>>,
     /// Handler metadata
     metadata: DashMap<String, HandlerMetadata>,
     /// Registry configuration
@@ -73,6 +75,7 @@ impl std::fmt::Debug for HandlerRegistry {
             .field("resources_count", &self.resources.len())
             .field("sampling_count", &self.sampling.len())
             .field("logging_count", &self.logging.len())
+            .field("roots_count", &self.roots.read().len())
             .finish()
     }
 }
@@ -169,6 +172,7 @@ impl HandlerRegistry {
             resources: DashMap::new(),
             sampling: DashMap::new(),
             logging: DashMap::new(),
+            roots: Arc::new(RwLock::new(Vec::new())),
             metadata: DashMap::new(),
             config: Arc::new(RwLock::new(RegistryConfig::default())),
         }
@@ -183,6 +187,7 @@ impl HandlerRegistry {
             resources: DashMap::new(),
             sampling: DashMap::new(),
             logging: DashMap::new(),
+            roots: Arc::new(RwLock::new(Vec::new())),
             metadata: DashMap::new(),
             config: Arc::new(RwLock::new(config)),
         }
@@ -486,6 +491,27 @@ impl HandlerRegistry {
             .iter()
             .map(|entry| entry.value().resource_definition())
             .collect()
+    }
+
+    /// Add a root to the registry
+    pub fn add_root(&self, root: Root) {
+        self.roots.write().push(root);
+    }
+
+    /// Set multiple roots at once
+    pub fn set_roots(&self, roots: Vec<Root>) {
+        *self.roots.write() = roots;
+    }
+
+    /// Get all registered roots
+    #[must_use]
+    pub fn get_roots(&self) -> Vec<Root> {
+        self.roots.read().clone()
+    }
+
+    /// Clear all roots
+    pub fn clear_roots(&self) {
+        self.roots.write().clear();
     }
 
     /// Unregister a tool handler
