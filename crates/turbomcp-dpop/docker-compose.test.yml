@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7.2-alpine
+    container_name: turbomcp-dpop-redis-test
+    ports:
+      - "16379:6379"
+    command: redis-server --appendonly yes --requirepass turbomcp_test_password
+    volumes:
+      - redis_data:/data
+    environment:
+      - REDIS_PASSWORD=turbomcp_test_password
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "turbomcp_test_password", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - turbomcp_test
+
+  redis-cluster:
+    image: redis:7.2-alpine
+    container_name: turbomcp-dpop-redis-cluster-test
+    ports:
+      - "16380:6379"
+      - "16381:6380"  
+      - "16382:6381"
+    command: >
+      sh -c "
+      redis-server --port 6379 --cluster-enabled yes --cluster-config-file nodes-6379.conf --cluster-node-timeout 5000 --appendonly yes --requirepass turbomcp_cluster_password --masterauth turbomcp_cluster_password &
+      redis-server --port 6380 --cluster-enabled yes --cluster-config-file nodes-6380.conf --cluster-node-timeout 5000 --appendonly yes --requirepass turbomcp_cluster_password --masterauth turbomcp_cluster_password &
+      redis-server --port 6381 --cluster-enabled yes --cluster-config-file nodes-6381.conf --cluster-node-timeout 5000 --appendonly yes --requirepass turbomcp_cluster_password --masterauth turbomcp_cluster_password &
+      wait
+      "
+    volumes:
+      - redis_cluster_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "-a", "turbomcp_cluster_password", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - turbomcp_test
+
+volumes:
+  redis_data:
+    name: turbomcp_dpop_redis_test_data
+  redis_cluster_data:
+    name: turbomcp_dpop_redis_cluster_test_data
+
+networks:
+  turbomcp_test:
+    name: turbomcp_dpop_test_network
+    driver: bridge

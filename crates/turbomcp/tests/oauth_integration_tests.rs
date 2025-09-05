@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 use turbomcp::McpError;
 use turbomcp::auth::{
     AccessToken, AuthProvider, OAuth2Config, OAuth2FlowType, OAuth2Provider, ProviderType,
-    TokenStorage,
+    SecurityLevel, TokenStorage,
 };
 
 /// Test implementation of TokenStorage for comprehensive testing
@@ -83,7 +83,7 @@ impl TestTokenStorage {
 }
 
 /// Create a test OAuth provider for comprehensive testing
-fn create_test_oauth_provider(provider_type: ProviderType) -> Result<OAuth2Provider, McpError> {
+async fn create_test_oauth_provider(provider_type: ProviderType) -> Result<OAuth2Provider, McpError> {
     let config = OAuth2Config {
         client_id: "test_client_id".to_string(),
         client_secret: "test_client_secret".to_string(),
@@ -97,6 +97,9 @@ fn create_test_oauth_provider(provider_type: ProviderType) -> Result<OAuth2Provi
             params
         },
         flow_type: OAuth2FlowType::AuthorizationCode,
+        security_level: SecurityLevel::Standard,
+        #[cfg(feature = "dpop")]
+        dpop_config: None,
     };
 
     let token_storage: Arc<dyn TokenStorage> = Arc::new(TestTokenStorage::new());
@@ -110,7 +113,7 @@ fn create_test_oauth_provider(provider_type: ProviderType) -> Result<OAuth2Provi
         ProviderType::Generic => "generic_provider".to_string(),
     };
 
-    OAuth2Provider::new(provider_name, config, provider_type, token_storage)
+    OAuth2Provider::new(provider_name, config, provider_type, token_storage).await
 }
 
 #[tokio::test]
@@ -124,7 +127,7 @@ async fn test_oauth_provider_creation_all_types() {
     ];
 
     for provider_type in provider_types {
-        let provider = create_test_oauth_provider(provider_type.clone());
+        let provider = create_test_oauth_provider(provider_type.clone()).await;
         assert!(
             provider.is_ok(),
             "Failed to create {:?} provider",
@@ -138,7 +141,7 @@ async fn test_oauth_provider_creation_all_types() {
 
 #[tokio::test]
 async fn test_authorization_flow_url_generation() {
-    let provider = create_test_oauth_provider(ProviderType::Google).unwrap();
+    let provider = create_test_oauth_provider(ProviderType::Google).await.unwrap();
 
     // Test authorization URL generation
     let auth_result = provider.start_authorization().await;
@@ -211,7 +214,7 @@ async fn test_token_storage_integration() {
 
 #[tokio::test]
 async fn test_token_expiration_logic() {
-    let provider = create_test_oauth_provider(ProviderType::Google).unwrap();
+    let provider = create_test_oauth_provider(ProviderType::Google).await.unwrap();
 
     // Test expired token
     let expired_token = AccessToken::new(
@@ -251,7 +254,7 @@ async fn test_token_expiration_logic() {
 
 #[tokio::test]
 async fn test_refresh_behavior_logic() {
-    let provider = create_test_oauth_provider(ProviderType::Google).unwrap();
+    let provider = create_test_oauth_provider(ProviderType::Google).await.unwrap();
 
     // Test proactive refresh behavior (should refresh before expiry)
     let soon_to_expire_token = AccessToken::new(
@@ -285,7 +288,7 @@ async fn test_refresh_behavior_logic() {
 
 #[tokio::test]
 async fn test_token_metadata_management() {
-    let provider = create_test_oauth_provider(ProviderType::GitHub).unwrap();
+    let provider = create_test_oauth_provider(ProviderType::GitHub).await.unwrap();
 
     let mut token = AccessToken::new("test_token".to_string(), None, vec![], HashMap::new());
 
@@ -315,7 +318,7 @@ async fn test_token_metadata_management() {
 
 #[tokio::test]
 async fn test_session_cleanup() {
-    let provider = create_test_oauth_provider(ProviderType::Microsoft).unwrap();
+    let provider = create_test_oauth_provider(ProviderType::Microsoft).await.unwrap();
 
     // Start multiple auth sessions
     let _auth1 = provider.start_authorization().await.unwrap();
@@ -331,9 +334,9 @@ async fn test_session_cleanup() {
 #[tokio::test]
 async fn test_multi_provider_configuration() {
     // Test different provider configurations
-    let google_provider = create_test_oauth_provider(ProviderType::Google).unwrap();
-    let github_provider = create_test_oauth_provider(ProviderType::GitHub).unwrap();
-    let microsoft_provider = create_test_oauth_provider(ProviderType::Microsoft).unwrap();
+    let google_provider = create_test_oauth_provider(ProviderType::Google).await.unwrap();
+    let github_provider = create_test_oauth_provider(ProviderType::GitHub).await.unwrap();
+    let microsoft_provider = create_test_oauth_provider(ProviderType::Microsoft).await.unwrap();
 
     // Each provider should have distinct configurations
     assert_eq!(google_provider.get_provider_type(), ProviderType::Google);
@@ -356,7 +359,7 @@ async fn test_multi_provider_configuration() {
 #[tokio::test]
 async fn test_device_authorization_flow() {
     let provider =
-        create_test_oauth_provider(ProviderType::Custom("device_test".to_string())).unwrap();
+        create_test_oauth_provider(ProviderType::Custom("device_test".to_string())).await.unwrap();
 
     // Test device authorization flow (this will fail without actual OAuth server, but tests the API)
     let result = provider.device_code_flow().await;
@@ -379,7 +382,7 @@ async fn test_device_authorization_flow() {
 #[tokio::test]
 async fn test_client_credentials_flow() {
     let provider =
-        create_test_oauth_provider(ProviderType::Custom("client_test".to_string())).unwrap();
+        create_test_oauth_provider(ProviderType::Custom("client_test".to_string())).await.unwrap();
 
     // Test client credentials flow
     let result = provider.client_credentials_flow().await;
@@ -415,6 +418,9 @@ async fn test_oauth_config_validation() {
         scopes: vec!["read".to_string()],
         additional_params: HashMap::new(),
         flow_type: OAuth2FlowType::AuthorizationCode,
+        security_level: SecurityLevel::Standard,
+        #[cfg(feature = "dpop")]
+        dpop_config: None,
     };
 
     let token_storage: Arc<dyn TokenStorage> = Arc::new(TestTokenStorage::new());
@@ -424,7 +430,7 @@ async fn test_oauth_config_validation() {
         config,
         ProviderType::Custom("config_test".to_string()),
         token_storage,
-    );
+    ).await;
 
     assert!(
         provider.is_ok(),
@@ -435,7 +441,7 @@ async fn test_oauth_config_validation() {
 #[tokio::test]
 async fn test_comprehensive_oauth_workflow() {
     // This test validates the complete OAuth workflow integration
-    let provider = create_test_oauth_provider(ProviderType::Google).unwrap();
+    let provider = create_test_oauth_provider(ProviderType::Google).await.unwrap();
     let token_storage = TestTokenStorage::new();
 
     // Step 1: Start authorization
@@ -498,6 +504,9 @@ async fn test_oauth_error_handling() {
         scopes: vec![],
         additional_params: HashMap::new(),
         flow_type: OAuth2FlowType::AuthorizationCode,
+        security_level: SecurityLevel::Standard,
+        #[cfg(feature = "dpop")]
+        dpop_config: None,
     };
 
     let token_storage: Arc<dyn TokenStorage> = Arc::new(TestTokenStorage::new());
@@ -506,7 +515,7 @@ async fn test_oauth_error_handling() {
         invalid_config,
         ProviderType::Custom("error_test".to_string()),
         token_storage,
-    );
+    ).await;
 
     // Our robust implementation validates URLs during creation
     // Invalid URLs should cause provider creation to fail
@@ -537,7 +546,7 @@ async fn test_oauth_provider_names() {
     ];
 
     for (provider_type, expected_name) in providers {
-        let provider = create_test_oauth_provider(provider_type).unwrap();
+        let provider = create_test_oauth_provider(provider_type).await.unwrap();
         assert_eq!(provider.name(), expected_name);
     }
 }
@@ -546,7 +555,7 @@ async fn test_oauth_provider_names() {
 async fn test_concurrent_oauth_operations() {
     use tokio::task;
 
-    let provider = Arc::new(create_test_oauth_provider(ProviderType::GitHub).unwrap());
+    let provider = Arc::new(create_test_oauth_provider(ProviderType::GitHub).await.unwrap());
     let mut handles = vec![];
 
     // Spawn multiple concurrent authorization requests
