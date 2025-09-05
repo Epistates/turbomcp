@@ -2,8 +2,8 @@
 
 [![Crates.io](https://img.shields.io/crates/v/turbomcp.svg)](https://crates.io/crates/turbomcp)
 [![Documentation](https://docs.rs/turbomcp/badge.svg)](https://docs.rs/turbomcp)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://img.shields.io/github/workflow/status/Epistates/turbomcp/CI)](https://github.com/Epistates/turbomcp/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Tests](https://github.com/Epistates/turbomcp/actions/workflows/test.yml/badge.svg)](https://github.com/Epistates/turbomcp/actions/workflows/test.yml)
 
 **High-performance Rust SDK for the Model Context Protocol (MCP)** with SIMD acceleration, enterprise security, and ergonomic APIs.
 
