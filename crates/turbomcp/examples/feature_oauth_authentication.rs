@@ -46,7 +46,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use turbomcp::auth::{
-    AccessToken, OAuth2Config, OAuth2FlowType, OAuth2Provider, ProviderType, SecurityLevel, TokenStorage,
+    AccessToken, OAuth2Config, OAuth2FlowType, OAuth2Provider, ProviderType, SecurityLevel,
+    TokenStorage,
 };
 use turbomcp::prelude::*;
 
@@ -348,7 +349,8 @@ impl AuthenticatedServer {
                 google_config,
                 ProviderType::Google,
                 Arc::clone(&token_storage),
-            ).await?;
+            )
+            .await?;
 
             oauth_providers.insert("google".to_string(), google_provider);
             println!("✅ Google OAuth configured");
@@ -382,7 +384,8 @@ impl AuthenticatedServer {
                 github_config,
                 ProviderType::GitHub,
                 Arc::clone(&token_storage),
-            ).await?;
+            )
+            .await?;
 
             oauth_providers.insert("github".to_string(), github_provider);
             println!("✅ GitHub OAuth configured");
