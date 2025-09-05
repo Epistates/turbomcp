@@ -250,8 +250,6 @@ Our architecture prioritizes compile-time computation over runtime flexibility. 
 
 ### 📦 **Focused Crate Organization**
 
-TurboMCP is organized into focused crates:
-
 | Crate | Purpose | Key Features |
 |-------|---------|--------------|
 | [`turbomcp`](./crates/turbomcp/) | Main SDK | Procedural macros, prelude, integration |
