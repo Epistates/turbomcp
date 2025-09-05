@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-dpop"
-version = "1.1.0-rc.1"
+version = "1.1.0-exp.4"
 edition = "2021"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "RFC 9449 compliant Demonstration of Proof-of-Possession (DPoP) implementation for TurboMCP"
@@ -14,8 +14,8 @@ rust-version = "1.89.0"
 
 [dependencies]
 # Core TurboMCP dependencies
-turbomcp-core = { version = "1.1.0-rc.1", path = "../turbomcp-core" }
-turbomcp-protocol = { version = "1.1.0-rc.1", path = "../turbomcp-protocol" }
+turbomcp-core = { version = "1.1.0-exp.4", path = "../turbomcp-core" }
+turbomcp-protocol = { version = "1.1.0-exp.4", path = "../turbomcp-protocol" }
 
 # Async runtime
 tokio = { workspace = true, features = ["sync", "time", "rt"] }
