@@ -243,6 +243,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Architecture
 
+TurboMCP's **modular, compile-time optimized architecture** separates concerns while maximizing performance:
+
+### 🎯 **Design Philosophy: "Compile-Time Complexity, Runtime Simplicity"**
+Our architecture prioritizes compile-time computation over runtime flexibility. While this creates a more sophisticated build process, it delivers unmatched runtime performance and predictability. Each crate is optimized for its specific role, with aggressive feature gating to ensure minimal production footprints.
+
+### 📦 **Focused Crate Organization**
+
 TurboMCP is organized into focused crates:
 
 | Crate | Purpose | Key Features |
@@ -408,12 +415,31 @@ turbomcp-cli tools-call --url http://localhost:8080/mcp --name add --arguments '
 turbomcp-cli schema-export --url http://localhost:8080/mcp --output schemas.json
 ```
 
-## Performance
+## Performance & Architecture Advantages
 
+TurboMCP's **leapfrog architecture** delivers superior performance through fundamental design choices:
+
+### 🏗️ **Compile-Time Optimization Philosophy**
+- **Zero-overhead abstractions** - All tool registration and schema generation happens at compile time
+- **Macro-powered efficiency** - `#[server]` and `#[tool]` macros eliminate runtime reflection overhead
+- **Type-driven performance** - Rust's type system enables aggressive optimizations impossible in dynamic languages
+- **Smart feature gating** - While our codebase is comprehensive, compile-time feature selection ensures lean production binaries
+
+### ⚡ **Runtime Performance**
 - **JSON Processing** - 2-3x faster than `serde_json` with SIMD acceleration
-- **Memory Efficiency** - Zero-copy message handling with `Bytes`
-- **Concurrency** - Tokio-based async runtime with efficient task scheduling  
-- **Reliability** - Circuit breakers and connection pooling
+- **Memory Efficiency** - Zero-copy message handling with `Bytes` eliminates unnecessary allocations
+- **Concurrency** - Tokio-based async runtime with efficient task scheduling
+- **Cold Start Speed** - Pre-computed schemas and handlers enable faster initialization
+- **Reliability** - Circuit breakers and connection pooling with intelligent failover
+
+### 🎯 **Architectural Superiority**
+Our **compile-time first** approach means:
+- **No runtime schema generation** - Schemas computed at compile time, not during requests
+- **Direct handler dispatch** - O(1) tool lookup without HashMap traversals or string matching
+- **Zero reflection** - All type information resolved statically
+- **Predictable performance** - No garbage collection pauses or dynamic allocation surprises
+
+**The TurboMCP advantage**: While some frameworks trade complexity for simplicity, we've engineered complexity away through compile-time optimization. Users get maximum performance with minimal cognitive overhead.
 
 ## Examples
 
