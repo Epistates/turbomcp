@@ -63,9 +63,14 @@ impl KnowledgeServer {
     }
 
     #[tool("Store a document in the knowledge base")]
-    async fn store_document(&self, ctx: Context, name: String, content: String) -> McpResult<String> {
+    async fn store_document(
+        &self,
+        ctx: Context,
+        name: String,
+        content: String,
+    ) -> McpResult<String> {
         ctx.info(&format!("Storing document: {}", name)).await?;
-        
+
         if name.is_empty() {
             return Err(mcp_error!("Document name cannot be empty").into());
         }
@@ -77,16 +82,24 @@ impl KnowledgeServer {
         let mut docs = self.documents.write().await;
         let was_update = docs.contains_key(&name);
         docs.insert(name.clone(), content.clone());
-        
+
         // Store metadata in context
         ctx.set("document_name", &name).await?;
         ctx.set("content_length", content.len()).await?;
         ctx.set("was_update", was_update).await?;
 
         if was_update {
-            Ok(format!("Updated document: {} ({} chars)", name, content.len()))
+            Ok(format!(
+                "Updated document: {} ({} chars)",
+                name,
+                content.len()
+            ))
         } else {
-            Ok(format!("Created document: {} ({} chars)", name, content.len()))
+            Ok(format!(
+                "Created document: {} ({} chars)",
+                name,
+                content.len()
+            ))
         }
     }
 
@@ -104,20 +117,25 @@ impl KnowledgeServer {
         ctx.info("Serving document list resource").await?;
         let docs = self.documents.read().await;
         let list: Vec<String> = docs.keys().cloned().collect();
-        Ok(format!("Available documents ({})::\n{}", list.len(), list.join("\n")))
+        Ok(format!(
+            "Available documents ({})::\n{}",
+            list.len(),
+            list.join("\n")
+        ))
     }
 
     #[resource("docs://content/{name}")]
     async fn get_document(&self, ctx: Context, name: String) -> McpResult<String> {
-        ctx.info(&format!("Serving document resource: {}", name)).await?;
-        
+        ctx.info(&format!("Serving document resource: {}", name))
+            .await?;
+
         let docs = self.documents.read().await;
         match docs.get(&name) {
             Some(content) => {
                 ctx.set("document_name", &name).await?;
                 ctx.set("content_length", content.len()).await?;
                 Ok(content.clone())
-            },
+            }
             None => {
                 ctx.warn(&format!("Document not found: {}", name)).await?;
                 Err(mcp_error!("Document '{}' not found", name).into())
@@ -127,16 +145,18 @@ impl KnowledgeServer {
 
     #[resource("docs://templates/{template}")]
     async fn get_template(&self, ctx: Context, template: String) -> McpResult<String> {
-        ctx.info(&format!("Serving template resource: {}", template)).await?;
-        
+        ctx.info(&format!("Serving template resource: {}", template))
+            .await?;
+
         let templates = self.templates.read().await;
         match templates.get(&template) {
             Some(content) => {
                 ctx.set("template_name", &template).await?;
                 Ok(content.clone())
-            },
+            }
             None => {
-                ctx.warn(&format!("Template not found: {}", template)).await?;
+                ctx.warn(&format!("Template not found: {}", template))
+                    .await?;
                 Err(mcp_error!("Template '{}' not found", template).into())
             }
         }
@@ -144,17 +164,24 @@ impl KnowledgeServer {
 
     #[prompt("Generate documentation summary for {document}")]
     async fn summarize_docs(&self, ctx: Context, document: String) -> McpResult<String> {
-        ctx.info(&format!("Generating summary prompt for document: {}", document)).await?;
+        ctx.info(&format!(
+            "Generating summary prompt for document: {}",
+            document
+        ))
+        .await?;
 
         let docs = self.documents.read().await;
         let available_docs: Vec<String> = docs.keys().cloned().collect();
-        
+
         ctx.set("target_document", &document).await?;
         ctx.set("available_docs", &available_docs).await?;
 
         if document == "all" {
             let doc_list = available_docs.join(", ");
-            Ok(format!("You are a technical documentation expert. Create a comprehensive summary of all documents in the knowledge base.\n\nAvailable documents: {}\n\nInstructions:\n- Review each document thoroughly\n- Extract key concepts and main points\n- Use clear bullet points for organization\n- Highlight important features and capabilities\n- Keep the summary concise but comprehensive\n- Group related information logically", doc_list))
+            Ok(format!(
+                "You are a technical documentation expert. Create a comprehensive summary of all documents in the knowledge base.\n\nAvailable documents: {}\n\nInstructions:\n- Review each document thoroughly\n- Extract key concepts and main points\n- Use clear bullet points for organization\n- Highlight important features and capabilities\n- Keep the summary concise but comprehensive\n- Group related information logically",
+                doc_list
+            ))
         } else if available_docs.contains(&document) {
             let content = docs.get(&document).unwrap();
             let preview = if content.len() > 200 {
@@ -162,26 +189,43 @@ impl KnowledgeServer {
             } else {
                 content.clone()
             };
-            
-            Ok(format!("You are a technical documentation expert. Create a detailed summary of the '{}' document.\n\nDocument preview:\n{}\n\nInstructions:\n- Extract the main purpose and key points\n- Identify important concepts and features\n- Summarize in clear, organized bullet points\n- Include relevant examples if present\n- Focus on practical information", document, preview))
+
+            Ok(format!(
+                "You are a technical documentation expert. Create a detailed summary of the '{}' document.\n\nDocument preview:\n{}\n\nInstructions:\n- Extract the main purpose and key points\n- Identify important concepts and features\n- Summarize in clear, organized bullet points\n- Include relevant examples if present\n- Focus on practical information",
+                document, preview
+            ))
         } else {
-            Err(mcp_error!("Document '{}' not found. Available: {}", document, available_docs.join(", ")).into())
+            Err(mcp_error!(
+                "Document '{}' not found. Available: {}",
+                document,
+                available_docs.join(", ")
+            )
+            .into())
         }
     }
 
     #[prompt("Answer question about {topic} using documentation")]
-    async fn answer_question(&self, ctx: Context, topic: String, question: String) -> McpResult<String> {
-        ctx.info(&format!("Generating Q&A prompt for topic '{}': {}", topic, question)).await?;
+    async fn answer_question(
+        &self,
+        ctx: Context,
+        topic: String,
+        question: String,
+    ) -> McpResult<String> {
+        ctx.info(&format!(
+            "Generating Q&A prompt for topic '{}': {}",
+            topic, question
+        ))
+        .await?;
 
         let docs = self.documents.read().await;
         let _templates = self.templates.read().await;
-        
+
         ctx.set("topic", &topic).await?;
         ctx.set("question", &question).await?;
 
         // Try to find relevant documentation
         let mut relevant_content = Vec::new();
-        
+
         for (doc_name, content) in docs.iter() {
             if doc_name.contains(&topic) || content.to_lowercase().contains(&topic.to_lowercase()) {
                 relevant_content.push((doc_name, content));
@@ -203,16 +247,28 @@ impl KnowledgeServer {
             info
         };
 
-        Ok(format!("You are a helpful technical assistant. Answer the following question about {}:\n\n**Question:** {}\n\n**Relevant Documentation:**\n{}\n\n**Instructions:**\n- Provide a clear, accurate answer based on the documentation\n- Include specific examples when helpful\n- If the documentation is insufficient, clearly state what information is missing\n- Structure your response with headings and bullet points for clarity\n- Be practical and actionable in your guidance", topic, question, context_info))
+        Ok(format!(
+            "You are a helpful technical assistant. Answer the following question about {}:\n\n**Question:** {}\n\n**Relevant Documentation:**\n{}\n\n**Instructions:**\n- Provide a clear, accurate answer based on the documentation\n- Include specific examples when helpful\n- If the documentation is insufficient, clearly state what information is missing\n- Structure your response with headings and bullet points for clarity\n- Be practical and actionable in your guidance",
+            topic, question, context_info
+        ))
     }
 
     #[prompt("Generate code review prompt using {language} template")]
-    async fn code_review_prompt(&self, ctx: Context, language: String, code: String) -> McpResult<String> {
-        ctx.info(&format!("Generating code review prompt for {} code", language)).await?;
-        
+    async fn code_review_prompt(
+        &self,
+        ctx: Context,
+        language: String,
+        code: String,
+    ) -> McpResult<String> {
+        ctx.info(&format!(
+            "Generating code review prompt for {} code",
+            language
+        ))
+        .await?;
+
         let templates = self.templates.read().await;
         let template = templates.get("code_review").unwrap();
-        
+
         ctx.set("language", &language).await?;
         ctx.set("code_length", code.len()).await?;
 
@@ -220,7 +276,7 @@ impl KnowledgeServer {
         let prompt = template
             .replace("{language}", &language)
             .replace("{code}", &code);
-            
+
         Ok(prompt)
     }
 }
@@ -255,13 +311,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //    Test Tools:
 //    - store_document { "name": "tutorial", "content": "Complete guide to TurboMCP usage..." }
 //    - list_documents {}
-//    
+//
 //    Test Resources:
 //    - docs://list (via Resource access)
 //    - docs://content/readme
 //    - docs://content/guide
 //    - docs://templates/code_review
-//    
+//
 //    Test Prompts:
 //    - summarize_docs { "document": "guide" }
 //    - summarize_docs { "document": "all" }

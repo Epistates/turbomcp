@@ -36,8 +36,9 @@ impl SafeCalculator {
 
     #[tool("Divide two numbers with proper error handling")]
     async fn safe_divide(&self, ctx: Context, dividend: f64, divisor: f64) -> McpResult<f64> {
-        ctx.info(&format!("Dividing {} by {}", dividend, divisor)).await?;
-        
+        ctx.info(&format!("Dividing {} by {}", dividend, divisor))
+            .await?;
+
         // Check for division by zero
         if divisor == 0.0 {
             return Err(mcp_error!("Division by zero is not allowed").into());
@@ -68,8 +69,9 @@ impl SafeCalculator {
 
     #[tool("Parse and evaluate expression")]
     async fn evaluate(&self, ctx: Context, expression: String) -> McpResult<f64> {
-        ctx.info(&format!("Evaluating expression: {}", expression)).await?;
-        
+        ctx.info(&format!("Evaluating expression: {}", expression))
+            .await?;
+
         // Validate input
         if expression.is_empty() {
             return Err(mcp_error!("Expression cannot be empty").into());
@@ -86,23 +88,20 @@ impl SafeCalculator {
             return Err(mcp_error!("Expression must be: number operator number").into());
         }
 
-        let a = parts[0]
-            .parse::<f64>()
-            .map_err(|_| -> turbomcp::McpError { mcp_error!("'{}' is not a valid number", parts[0]).into() })?;
+        let a = parts[0].parse::<f64>().map_err(|_| -> turbomcp::McpError {
+            mcp_error!("'{}' is not a valid number", parts[0]).into()
+        })?;
 
-        let b = parts[2]
-            .parse::<f64>()
-            .map_err(|_| -> turbomcp::McpError { mcp_error!("'{}' is not a valid number", parts[2]).into() })?;
+        let b = parts[2].parse::<f64>().map_err(|_| -> turbomcp::McpError {
+            mcp_error!("'{}' is not a valid number", parts[2]).into()
+        })?;
 
         match parts[1] {
             "+" => Ok(a + b),
             "-" => Ok(a - b),
             "*" => Ok(a * b),
             "/" => self.safe_divide(ctx, a, b).await,
-            op => Err(mcp_error!(
-                "Unknown operator: '{}'. Use +, -, *, or /", 
-                op
-            ).into()),
+            op => Err(mcp_error!("Unknown operator: '{}'. Use +, -, *, or /", op).into()),
         }
     }
 
@@ -111,7 +110,8 @@ impl SafeCalculator {
         let history = self.history.read().await;
         let limit = limit.unwrap_or(10);
 
-        ctx.info(&format!("Retrieving last {} history entries", limit)).await?;
+        ctx.info(&format!("Retrieving last {} history entries", limit))
+            .await?;
 
         if limit == 0 {
             return Err(mcp_error!("Limit must be greater than 0").into());
@@ -187,7 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 **New Error Macro Usage (1.0.3):**
 - Use `mcp_error!("message", args).into()` for ergonomic error creation
-- Format string support: `mcp_error!("Value {} invalid", value)`  
+- Format string support: `mcp_error!("Value {} invalid", value)`
 - Automatic type conversion with `.into()`
 - In closures, add type annotation: `|_| -> turbomcp::McpError { mcp_error!("...").into() }`
 

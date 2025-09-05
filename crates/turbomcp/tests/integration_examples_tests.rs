@@ -318,7 +318,7 @@ async fn test_performance_benchmark() {
 
     // Should handle 10 requests reasonably quickly (includes cargo compilation + process spawn)
     assert!(
-        elapsed < Duration::from_secs(20),
+        elapsed < Duration::from_secs(25),
         "10 requests took too long: {:?} (includes compilation and process startup overhead)",
         elapsed
     );

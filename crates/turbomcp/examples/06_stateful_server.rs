@@ -87,8 +87,9 @@ impl StatefulServer {
 
     #[tool("Update global theme")]
     async fn update_theme(&self, ctx: Context, theme: String) -> McpResult<String> {
-        ctx.info(&format!("Updating global theme to: {}", theme)).await?;
-        
+        ctx.info(&format!("Updating global theme to: {}", theme))
+            .await?;
+
         // Validate theme
         if !["light", "dark", "auto"].contains(&theme.as_str()) {
             ctx.error("Invalid theme provided").await?;
@@ -98,25 +99,29 @@ impl StatefulServer {
         let mut state = self.global_state.write().await;
         let old_theme = state.theme.clone();
         state.theme = theme.clone();
-        
+
         // Store action in context data
         ctx.set("previous_theme", &old_theme).await?;
         ctx.set("new_theme", &theme).await?;
-        
+
         Ok(format!("Theme updated from {} to {}", old_theme, theme))
     }
 
     #[tool("Create or update user session")]
-    async fn create_user_session(&self, ctx: Context, user_id: String, preferences: Option<AppState>) -> McpResult<String> {
-        ctx.info(&format!("Creating session for user: {}", user_id)).await?;
-        
+    async fn create_user_session(
+        &self,
+        ctx: Context,
+        user_id: String,
+        preferences: Option<AppState>,
+    ) -> McpResult<String> {
+        ctx.info(&format!("Creating session for user: {}", user_id))
+            .await?;
+
         let session = UserSession {
             user_id: user_id.clone(),
             preferences: preferences.unwrap_or_else(|| {
                 // Use global state as default
-                futures::executor::block_on(async {
-                    self.global_state.read().await.clone()
-                })
+                futures::executor::block_on(async { self.global_state.read().await.clone() })
             }),
             command_history: Vec::new(),
             last_activity: chrono::Utc::now(),
@@ -125,11 +130,11 @@ impl StatefulServer {
         let mut sessions = self.user_sessions.write().await;
         let is_new = !sessions.contains_key(&user_id);
         sessions.insert(user_id.clone(), session);
-        
+
         // Store session info in context
         ctx.set("user_id", &user_id).await?;
         ctx.set("session_created", chrono::Utc::now()).await?;
-        
+
         if is_new {
             Ok(format!("Created new session for user: {}", user_id))
         } else {
@@ -137,43 +142,61 @@ impl StatefulServer {
         }
     }
 
-    #[tool("Get user session info")]  
+    #[tool("Get user session info")]
     async fn get_user_session(&self, ctx: Context, user_id: String) -> McpResult<UserSession> {
-        ctx.info(&format!("Retrieving session for user: {}", user_id)).await?;
-        
+        ctx.info(&format!("Retrieving session for user: {}", user_id))
+            .await?;
+
         let sessions = self.user_sessions.read().await;
         match sessions.get(&user_id) {
             Some(session) => {
                 ctx.set("session_found", true).await?;
                 Ok(session.clone())
-            },
+            }
             None => {
-                ctx.warn(&format!("No session found for user: {}", user_id)).await?;
+                ctx.warn(&format!("No session found for user: {}", user_id))
+                    .await?;
                 Err(mcp_error!("User session not found: {}", user_id).into())
             }
         }
     }
 
     #[tool("Add command to user history")]
-    async fn add_to_history(&self, ctx: Context, user_id: String, command: String) -> McpResult<String> {
-        ctx.info(&format!("Adding command '{}' to user {} history", command, user_id)).await?;
-        
+    async fn add_to_history(
+        &self,
+        ctx: Context,
+        user_id: String,
+        command: String,
+    ) -> McpResult<String> {
+        ctx.info(&format!(
+            "Adding command '{}' to user {} history",
+            command, user_id
+        ))
+        .await?;
+
         let mut sessions = self.user_sessions.write().await;
         match sessions.get_mut(&user_id) {
             Some(session) => {
                 session.command_history.push(command.clone());
                 session.last_activity = chrono::Utc::now();
-                
+
                 // Limit history size
                 if session.command_history.len() > 100 {
                     session.command_history.remove(0);
                 }
-                
-                ctx.set("history_length", session.command_history.len()).await?;
-                Ok(format!("Added '{}' to user {} history ({} total)", command, user_id, session.command_history.len()))
-            },
+
+                ctx.set("history_length", session.command_history.len())
+                    .await?;
+                Ok(format!(
+                    "Added '{}' to user {} history ({} total)",
+                    command,
+                    user_id,
+                    session.command_history.len()
+                ))
+            }
             None => {
-                ctx.error(&format!("User session not found: {}", user_id)).await?;
+                ctx.error(&format!("User session not found: {}", user_id))
+                    .await?;
                 Err(mcp_error!("User session not found: {}", user_id).into())
             }
         }
@@ -182,15 +205,15 @@ impl StatefulServer {
     #[tool("Get server configuration")]
     async fn get_config(&self, ctx: Context, key: Option<String>) -> McpResult<serde_json::Value> {
         let config = self.config.read().await;
-        
+
         match key {
             Some(k) => {
                 ctx.info(&format!("Retrieving config key: {}", k)).await?;
                 match config.get(&k) {
                     Some(value) => Ok(value.clone()),
-                    None => Err(mcp_error!("Configuration key not found: {}", k).into())
+                    None => Err(mcp_error!("Configuration key not found: {}", k).into()),
                 }
-            },
+            }
             None => {
                 ctx.info("Retrieving all configuration").await?;
                 Ok(serde_json::to_value(&*config).unwrap())
@@ -202,10 +225,11 @@ impl StatefulServer {
     async fn list_sessions(&self, ctx: Context) -> McpResult<Vec<String>> {
         let sessions = self.user_sessions.read().await;
         let user_ids: Vec<String> = sessions.keys().cloned().collect();
-        
-        ctx.info(&format!("Found {} active sessions", user_ids.len())).await?;
+
+        ctx.info(&format!("Found {} active sessions", user_ids.len()))
+            .await?;
         ctx.set("session_count", user_ids.len()).await?;
-        
+
         Ok(user_ids)
     }
 }
