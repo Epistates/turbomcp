@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 DRY_RUN=${DRY_RUN:-true}
-VERSION=${VERSION:-"1.0.3"}
+VERSION=${VERSION:-"1.0.5"}
 
 # Crate publish order (dependencies first)
 CRATES=(
@@ -22,6 +22,7 @@ CRATES=(
     "turbomcp-protocol"
     "turbomcp-transport" 
     "turbomcp-macros"
+    "turbomcp-dpop"
     "turbomcp-server"
     "turbomcp-client"
     "turbomcp-cli"
