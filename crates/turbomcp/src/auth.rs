@@ -122,14 +122,14 @@ pub enum DpopKeyStorageConfig {
     /// In-memory storage (development)
     Memory,
     /// Redis storage (production)
-    Redis { 
+    Redis {
         /// Redis connection URL
-        url: String 
+        url: String,
     },
     /// HSM storage (high security)
-    Hsm { 
+    Hsm {
         /// HSM configuration parameters
-        config: serde_json::Value 
+        config: serde_json::Value,
     },
 }
 
@@ -397,6 +397,7 @@ pub struct OAuth2Provider {
     pending_auths: Arc<RwLock<HashMap<String, PendingAuth>>>,
     /// DPoP proof generator for enhanced security
     #[cfg(feature = "dpop")]
+    #[allow(dead_code)] // Prepared for future DPoP functionality
     dpop_generator: Option<Arc<DpopProofGenerator>>,
 }
 
@@ -792,8 +793,11 @@ impl OAuth2Provider {
                 if let Some(dpop_config) = &config.dpop_config {
                     let key_manager = match &dpop_config.key_storage {
                         DpopKeyStorageConfig::Memory => {
-                            Arc::new(DpopKeyManager::new_memory().await
-                                .map_err(|e| McpError::Server(turbomcp_server::ServerError::Internal(e.to_string())))?)
+                            Arc::new(DpopKeyManager::new_memory().await.map_err(|e| {
+                                McpError::Server(turbomcp_server::ServerError::Internal(
+                                    e.to_string(),
+                                ))
+                            })?)
                         }
                         DpopKeyStorageConfig::Redis { url: _url } => {
                             // Redis support requires additional implementation
