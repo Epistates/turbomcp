@@ -39,7 +39,10 @@ use oauth2::{
     PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl,
     basic::BasicClient, reqwest::async_http_client,
 };
-// Note: base64 and sha2 may be used by helper functions for PKCE
+
+// DPoP support (feature-gated)
+#[cfg(feature = "dpop")]
+use turbomcp_dpop::{DpopAlgorithm, DpopKeyManager, DpopProofGenerator};
 
 /// Authentication configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,16 +102,6 @@ impl Default for SecurityLevel {
     }
 }
 
-/// DPoP cryptographic algorithms
-#[cfg(feature = "dpop")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DpopAlgorithm {
-    /// ES256 - ECDSA using P-256 and SHA-256
-    ES256,
-    /// RS256 - RSASSA-PKCS1-v1_5 using SHA-256
-    RS256,
-}
-
 /// DPoP (Demonstration of Proof-of-Possession) configuration
 #[cfg(feature = "dpop")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,11 +129,6 @@ fn default_clock_skew() -> Duration {
     Duration::from_secs(300)
 }
 
-/// Default auto resource indicators setting (enabled for MCP compliance)
-fn default_auto_resource_indicators() -> bool {
-    true
-}
-
 /// DPoP key storage configuration  
 #[cfg(feature = "dpop")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,12 +138,12 @@ pub enum DpopKeyStorageConfig {
     /// Redis storage (production)
     Redis {
         /// Redis connection URL
-        url: String,
+        url: String
     },
     /// HSM storage (high security)
     Hsm {
         /// HSM configuration parameters
-        config: serde_json::Value,
+        config: serde_json::Value
     },
 }
 
@@ -308,6 +296,11 @@ pub struct OAuth2Config {
     /// is automatically included in all OAuth flows for MCP compliance
     #[serde(default = "default_auto_resource_indicators")]
     pub auto_resource_indicators: bool,
+}
+
+/// Default auto resource indicators setting (enabled for MCP compliance)
+fn default_auto_resource_indicators() -> bool {
+    true
 }
 
 /// Protected Resource Metadata (RFC 9728) for server-side discovery
@@ -793,6 +786,9 @@ pub struct OAuth2Provider {
     resource_registry: Option<Arc<McpResourceRegistry>>,
     /// Dynamic Client Registration (RFC 7591) manager
     dynamic_registration: Option<Arc<DynamicClientRegistration>>,
+    /// DPoP proof generator for enhanced security
+    #[cfg(feature = "dpop")]
+    dpop_generator: Option<Arc<DpopProofGenerator>>,
 }
 
 /// Production-grade OAuth2 client wrapper supporting all modern flows
@@ -1174,13 +1170,45 @@ impl OAuth2Client {
 
 impl OAuth2Provider {
     /// Create a production-grade OAuth 2.0 provider with comprehensive flow support
-    pub fn new(
+    pub async fn new(
         name: String,
         config: OAuth2Config,
         provider_type: ProviderType,
         token_storage: Arc<dyn TokenStorage>,
     ) -> McpResult<Self> {
         let oauth_client = OAuth2Client::new(&config, provider_type)?;
+
+        // Initialize DPoP generator for enhanced security levels
+        #[cfg(feature = "dpop")]
+        let dpop_generator = match config.security_level {
+            SecurityLevel::Enhanced | SecurityLevel::Maximum => {
+                if let Some(dpop_config) = &config.dpop_config {
+                    let key_manager = match &dpop_config.key_storage {
+                        DpopKeyStorageConfig::Memory => {
+                            Arc::new(DpopKeyManager::new_memory().await
+                                .map_err(|e| McpError::Server(turbomcp_server::ServerError::Internal(e.to_string())))?)
+                        }
+                        DpopKeyStorageConfig::Redis { url: _url } => {
+                            // Redis support requires additional implementation
+                            return Err(McpError::Server(turbomcp_server::ServerError::Internal(
+                                "Redis DPoP storage not yet implemented".to_string(),
+                            )));
+                        }
+                        DpopKeyStorageConfig::Hsm { config: _config } => {
+                            return Err(McpError::Server(turbomcp_server::ServerError::Internal(
+                                "HSM support not yet implemented".to_string(),
+                            )));
+                        }
+                    };
+                    Some(Arc::new(DpopProofGenerator::new(key_manager)))
+                } else {
+                    return Err(McpError::Server(turbomcp_server::ServerError::Internal(
+                        "DPoP config required for Enhanced/Maximum security levels".to_string(),
+                    )));
+                }
+            }
+            SecurityLevel::Standard => None,
+        };
 
         Ok(Self {
             name,
@@ -1190,6 +1218,8 @@ impl OAuth2Provider {
             pending_auths: Arc::new(RwLock::new(HashMap::new())),
             resource_registry: None, // Can be set later via with_resource_registry()
             dynamic_registration: None, // Can be set later via with_dynamic_registration()
+            #[cfg(feature = "dpop")]
+            dpop_generator,
         })
     }
 
@@ -1836,7 +1866,7 @@ impl OAuth2Provider {
         };
 
         // Create OAuth provider
-        let provider = Self::new(name, config, ProviderType::Generic, token_storage)?
+        let provider = Self::new(name, config, ProviderType::Generic, token_storage).await?
             .with_dynamic_registration(registration);
 
         Ok(provider)

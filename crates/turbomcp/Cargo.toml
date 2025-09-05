@@ -52,7 +52,7 @@ urlencoding = "2.1"
 url = "2.5"
 
 # DPoP support for enhanced OAuth security (optional)
-# turbomcp-dpop = { version = "1.1.0-exp.6", path = "../turbomcp-dpop", optional = true }
+turbomcp-dpop = { version = "1.0.10", path = "../turbomcp-dpop", optional = true }
 # JSON Schema generation
 schemars = { version = "1.0", features = ["chrono04", "uuid1"], optional = true }
 regex = { version = "1.0", optional = true }
@@ -121,6 +121,9 @@ context-injection = []                 # Enhanced Context API features
 uri-templates = ["regex"]             # URI template matching for resources
 # database feature removed - examples moved to separate crate for clean dependencies
 
+# Security enhancement features
+dpop = ["turbomcp-dpop"]              # DPoP (Demonstration of Proof-of-Possession) support
+
 # Transport protocols (progressive enhancement)
 stdio = ["turbomcp-transport/stdio", "turbomcp-server/stdio"]           # Standard MCP transport
 http = ["turbomcp-transport/http", "turbomcp-server/http"]               # HTTP/SSE for web apps  
@@ -130,10 +133,6 @@ unix = ["turbomcp-transport/unix", "turbomcp-server/unix"]               # Unix 
 
 # Performance
 simd = ["turbomcp-core/simd", "simd-json", "sonic-rs"]  # SIMD JSON acceleration
-
-# Security
-dpop = []  # DPoP (Demonstration of Proof-of-Possession) support for enhanced OAuth security
-
 # Advanced combinations
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]  # All transports without extra features
 
