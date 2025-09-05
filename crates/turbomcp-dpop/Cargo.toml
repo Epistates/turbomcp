@@ -6,6 +6,7 @@ authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "RFC 9449 compliant Demonstration of Proof-of-Possession (DPoP) implementation for TurboMCP"
 license = "MIT"
 repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
 keywords = ["mcp", "dpop", "oauth", "security", "proof-of-possession"]
 categories = ["cryptography", "authentication", "web-programming"]
 readme = "README.md"
