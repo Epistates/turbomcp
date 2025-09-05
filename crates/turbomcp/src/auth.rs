@@ -25,7 +25,10 @@ use oauth2::{
     PkceCodeVerifier, RedirectUrl, RefreshToken, Scope, TokenResponse, TokenUrl,
     basic::BasicClient, reqwest::async_http_client,
 };
-// Note: base64 and sha2 may be used by helper functions for PKCE
+
+// DPoP support (feature-gated)
+#[cfg(feature = "dpop")]
+use turbomcp_dpop::{DpopAlgorithm, DpopKeyManager, DpopProofGenerator};
 
 /// Authentication configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +69,87 @@ pub enum AuthProviderType {
     Jwt,
     /// Custom authentication provider
     Custom,
+}
+
+/// Security levels for OAuth 2.0 flows
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SecurityLevel {
+    /// Standard OAuth 2.0 with PKCE (existing behavior - no breaking changes)
+    Standard,
+    /// Enhanced security with DPoP token binding
+    Enhanced,
+    /// Maximum security with full DPoP + additional features
+    Maximum,
+}
+
+impl Default for SecurityLevel {
+    fn default() -> Self {
+        Self::Standard
+    }
+}
+
+/// DPoP (Demonstration of Proof-of-Possession) configuration
+#[cfg(feature = "dpop")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DpopConfig {
+    /// Cryptographic algorithm for DPoP proofs
+    pub key_algorithm: DpopAlgorithm,
+    /// Proof lifetime in seconds (default: 60s per RFC 9449)
+    #[serde(default = "default_proof_lifetime")]
+    pub proof_lifetime: Duration,
+    /// Maximum clock skew tolerance in seconds (default: 300s per RFC 9449)
+    #[serde(default = "default_clock_skew")]
+    pub clock_skew_tolerance: Duration,
+    /// Key storage backend selection
+    #[serde(default)]
+    pub key_storage: DpopKeyStorageConfig,
+}
+
+#[cfg(feature = "dpop")]
+fn default_proof_lifetime() -> Duration {
+    Duration::from_secs(60)
+}
+
+#[cfg(feature = "dpop")]
+fn default_clock_skew() -> Duration {
+    Duration::from_secs(300)
+}
+
+/// DPoP key storage configuration  
+#[cfg(feature = "dpop")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DpopKeyStorageConfig {
+    /// In-memory storage (development)
+    Memory,
+    /// Redis storage (production)
+    Redis { 
+        /// Redis connection URL
+        url: String 
+    },
+    /// HSM storage (high security)
+    Hsm { 
+        /// HSM configuration parameters
+        config: serde_json::Value 
+    },
+}
+
+#[cfg(feature = "dpop")]
+impl Default for DpopKeyStorageConfig {
+    fn default() -> Self {
+        Self::Memory
+    }
+}
+
+#[cfg(feature = "dpop")]
+impl Default for DpopConfig {
+    fn default() -> Self {
+        Self {
+            key_algorithm: DpopAlgorithm::ES256,
+            proof_lifetime: default_proof_lifetime(),
+            clock_skew_tolerance: default_clock_skew(),
+            key_storage: DpopKeyStorageConfig::default(),
+        }
+    }
 }
 
 /// Session configuration
@@ -183,6 +267,13 @@ pub struct OAuth2Config {
     pub flow_type: OAuth2FlowType,
     /// Additional parameters
     pub additional_params: HashMap<String, String>,
+    /// Security level for OAuth flow
+    #[serde(default)]
+    pub security_level: SecurityLevel,
+    /// DPoP configuration (when security_level is Enhanced or Maximum)
+    #[cfg(feature = "dpop")]
+    #[serde(default)]
+    pub dpop_config: Option<DpopConfig>,
 }
 
 /// Device authorization response for CLI/IoT flows
@@ -304,6 +395,9 @@ pub struct OAuth2Provider {
     token_storage: Arc<dyn TokenStorage>,
     /// Pending authorization requests with PKCE verifiers
     pending_auths: Arc<RwLock<HashMap<String, PendingAuth>>>,
+    /// DPoP proof generator for enhanced security
+    #[cfg(feature = "dpop")]
+    dpop_generator: Option<Arc<DpopProofGenerator>>,
 }
 
 /// Production-grade OAuth2 client wrapper supporting all modern flows
@@ -683,7 +777,7 @@ impl OAuth2Client {
 
 impl OAuth2Provider {
     /// Create a production-grade OAuth 2.0 provider with comprehensive flow support
-    pub fn new(
+    pub async fn new(
         name: String,
         config: OAuth2Config,
         provider_type: ProviderType,
@@ -691,12 +785,46 @@ impl OAuth2Provider {
     ) -> McpResult<Self> {
         let oauth_client = OAuth2Client::new(&config, provider_type)?;
 
+        // Initialize DPoP generator for enhanced security levels
+        #[cfg(feature = "dpop")]
+        let dpop_generator = match config.security_level {
+            SecurityLevel::Enhanced | SecurityLevel::Maximum => {
+                if let Some(dpop_config) = &config.dpop_config {
+                    let key_manager = match &dpop_config.key_storage {
+                        DpopKeyStorageConfig::Memory => {
+                            Arc::new(DpopKeyManager::new_memory().await
+                                .map_err(|e| McpError::Server(turbomcp_server::ServerError::Internal(e.to_string())))?)
+                        }
+                        DpopKeyStorageConfig::Redis { url: _url } => {
+                            // Redis support requires additional implementation
+                            return Err(McpError::Server(turbomcp_server::ServerError::Internal(
+                                "Redis DPoP storage not yet implemented".to_string(),
+                            )));
+                        }
+                        DpopKeyStorageConfig::Hsm { config: _config } => {
+                            return Err(McpError::Server(turbomcp_server::ServerError::Internal(
+                                "HSM support not yet implemented".to_string(),
+                            )));
+                        }
+                    };
+                    Some(Arc::new(DpopProofGenerator::new(key_manager)))
+                } else {
+                    return Err(McpError::Server(turbomcp_server::ServerError::Internal(
+                        "DPoP config required for Enhanced/Maximum security levels".to_string(),
+                    )));
+                }
+            }
+            SecurityLevel::Standard => None,
+        };
+
         Ok(Self {
             name,
             config,
             oauth_client,
             token_storage,
             pending_auths: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "dpop")]
+            dpop_generator,
         })
     }
 
@@ -1544,6 +1672,9 @@ mod tests {
             scopes: vec!["read".to_string(), "write".to_string()],
             flow_type: OAuth2FlowType::AuthorizationCode,
             additional_params: HashMap::new(),
+            security_level: SecurityLevel::Standard,
+            #[cfg(feature = "dpop")]
+            dpop_config: None,
         };
 
         assert_eq!(config.client_id, "test_client");

@@ -51,6 +51,9 @@ base64 = "0.22"
 sha2 = "0.10"
 urlencoding = "2.1"
 
+# DPoP support for enhanced OAuth security (optional)
+turbomcp-dpop = { version = "1.0.3", path = "../turbomcp-dpop", optional = true }
+
 # JSON Schema generation
 schemars = { version = "0.8", features = ["chrono", "uuid1"], optional = true }
 regex = { version = "1.0", optional = true }
@@ -100,6 +103,8 @@ schema-generation = ["schemars"]
 context-injection = []
 uri-templates = ["regex"]
 database = ["sqlx"]
+# Security enhancement features
+dpop = ["turbomcp-dpop"]
 # Transport features (progressive enhancement)
 stdio = ["turbomcp-transport/stdio", "turbomcp-server/stdio"]
 http = ["turbomcp-transport/http", "turbomcp-server/http"]

@@ -46,7 +46,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use turbomcp::auth::{
-    AccessToken, OAuth2Config, OAuth2FlowType, OAuth2Provider, ProviderType, TokenStorage,
+    AccessToken, OAuth2Config, OAuth2FlowType, OAuth2Provider, ProviderType, SecurityLevel, TokenStorage,
 };
 use turbomcp::prelude::*;
 
@@ -338,6 +338,9 @@ impl AuthenticatedServer {
                 ],
                 additional_params: std::collections::HashMap::new(),
                 flow_type: OAuth2FlowType::AuthorizationCode,
+                security_level: SecurityLevel::Standard,
+                #[cfg(feature = "dpop")]
+                dpop_config: None,
             };
 
             let google_provider = OAuth2Provider::new(
@@ -345,7 +348,7 @@ impl AuthenticatedServer {
                 google_config,
                 ProviderType::Google,
                 Arc::clone(&token_storage),
-            )?;
+            ).await?;
 
             oauth_providers.insert("google".to_string(), google_provider);
             println!("✅ Google OAuth configured");
@@ -369,6 +372,9 @@ impl AuthenticatedServer {
                 scopes: vec!["user:email".to_string()],
                 additional_params: std::collections::HashMap::new(),
                 flow_type: OAuth2FlowType::AuthorizationCode,
+                security_level: SecurityLevel::Standard,
+                #[cfg(feature = "dpop")]
+                dpop_config: None,
             };
 
             let github_provider = OAuth2Provider::new(
@@ -376,7 +382,7 @@ impl AuthenticatedServer {
                 github_config,
                 ProviderType::GitHub,
                 Arc::clone(&token_storage),
-            )?;
+            ).await?;
 
             oauth_providers.insert("github".to_string(), github_provider);
             println!("✅ GitHub OAuth configured");
