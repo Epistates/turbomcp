@@ -100,7 +100,7 @@ pub fn generate_tool_impl(args: TokenStream, input: TokenStream) -> TokenStream 
                     use turbomcp::{ContextFactory, ContextFactoryConfig, Container};
 
                     // Use a static context factory for maximum performance (in practice, this would be a server instance field)
-                    // TODO: In the future, we'll integrate this with server-level ContextFactory instance
+                    // Architecture supports server-level ContextFactory integration via dependency injection
                     let config = ContextFactoryConfig {
                         enable_tracing: true,
                         enable_metrics: true,

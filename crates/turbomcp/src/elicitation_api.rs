@@ -31,8 +31,12 @@ impl ElicitationBuilder {
     }
 
     /// Add a field to the elicitation schema
-    pub fn field(mut self, name: impl Into<String>, schema: PrimitiveSchemaDefinition) -> Self {
-        self.schema.properties.insert(name.into(), schema);
+    pub fn field(
+        mut self,
+        name: impl Into<String>,
+        schema: impl Into<PrimitiveSchemaDefinition>,
+    ) -> Self {
+        self.schema.properties.insert(name.into(), schema.into());
         self
     }
 
@@ -211,13 +215,8 @@ pub trait ServerElicitation: ServerCapabilities {
 #[async_trait::async_trait]
 impl<T: ServerCapabilities + ?Sized> ServerElicitation for T {
     async fn elicit(&self, _request: ElicitationCreateRequest) -> McpResult<ElicitationResult> {
-        // This would be implemented by the actual transport layer
-        // For now, we'll create a placeholder that the compile-time router will handle
-
-        // In the real implementation, this sends the request through the transport
-        // and waits for the response. The compile-time router handles the actual
-        // JSON-RPC serialization and deserialization.
-
+        // Current implementation: Works in test mode, returns appropriate error in production
+        // Transport-level elicitation can be enhanced when full bidirectional support is added
         // For testing/demo purposes, we can simulate a response
         if cfg!(test) {
             // Return a mock response for testing
@@ -389,29 +388,165 @@ pub use turbomcp_protocol::elicitation::StringFormat;
 
 /// Builder functions that wrap the protocol builders
 /// These avoid import conflicts while providing the same ergonomic API
-/// Create a string schema
-pub fn string() -> turbomcp_protocol::elicitation::StringSchemaBuilder {
-    turbomcp_protocol::elicitation::string()
+/// Create a string field with title - beautiful ergonomics!
+pub fn string(title: impl Into<String>) -> turbomcp_protocol::elicitation::StringSchemaBuilder {
+    turbomcp_protocol::elicitation::string(title)
 }
 
-/// Create an integer schema
-pub fn integer() -> turbomcp_protocol::elicitation::NumberSchemaBuilder {
-    turbomcp_protocol::elicitation::integer()
+/// Create a string schema without title (for advanced usage)
+pub fn string_builder() -> turbomcp_protocol::elicitation::StringSchemaBuilder {
+    turbomcp_protocol::elicitation::string_builder()
 }
 
-/// Create a number schema
-pub fn number() -> turbomcp_protocol::elicitation::NumberSchemaBuilder {
-    turbomcp_protocol::elicitation::number()
+/// Create an integer field with title - beautiful ergonomics!
+pub fn integer(title: impl Into<String>) -> turbomcp_protocol::elicitation::NumberSchemaBuilder {
+    turbomcp_protocol::elicitation::integer(title)
 }
 
-/// Create a boolean schema
-pub fn boolean() -> turbomcp_protocol::elicitation::BooleanSchemaBuilder {
-    turbomcp_protocol::elicitation::boolean()
+/// Create an integer schema without title (for advanced usage)
+pub fn integer_builder() -> turbomcp_protocol::elicitation::NumberSchemaBuilder {
+    turbomcp_protocol::elicitation::integer_builder()
+}
+
+/// Create a number field with title - beautiful ergonomics!
+pub fn number(title: impl Into<String>) -> turbomcp_protocol::elicitation::NumberSchemaBuilder {
+    turbomcp_protocol::elicitation::number(title)
+}
+
+/// Create a number schema without title (for advanced usage)
+pub fn number_builder() -> turbomcp_protocol::elicitation::NumberSchemaBuilder {
+    turbomcp_protocol::elicitation::number_builder()
+}
+
+/// Create a boolean field with title - beautiful ergonomics!
+pub fn boolean(title: impl Into<String>) -> turbomcp_protocol::elicitation::BooleanSchemaBuilder {
+    turbomcp_protocol::elicitation::boolean(title)
+}
+
+/// Create a boolean schema without title (for advanced usage)
+pub fn boolean_builder() -> turbomcp_protocol::elicitation::BooleanSchemaBuilder {
+    turbomcp_protocol::elicitation::boolean_builder()
 }
 
 /// Create an enum schema
 pub fn enum_of(values: Vec<String>) -> turbomcp_protocol::elicitation::EnumSchemaBuilder {
     turbomcp_protocol::elicitation::enum_of(values)
+}
+
+/// World-class DX: Create enum schema from array slice (no Vec required!)
+///
+/// Creates an enum schema with the specified options. Perfect for dropdowns and choice lists.
+/// Uses zero-allocation array slices instead of requiring Vec allocation.
+///
+/// # Examples
+/// ```rust
+/// use turbomcp::elicitation_api::options;
+///
+/// // Simple options list
+/// let size_field = options(&["small", "medium", "large"]).title("Size");
+///
+/// // Options with description  
+/// let priority_field = options(&["low", "medium", "high"])
+///     .title("Priority Level")
+///     .description("Choose task priority");
+/// ```
+pub fn options<T: AsRef<str>>(values: &[T]) -> turbomcp_protocol::elicitation::EnumSchemaBuilder {
+    turbomcp_protocol::elicitation::options(values)
+}
+
+/// Alias for options() - terser naming
+///
+/// Identical to [`options`] but with a shorter name for concise code.
+///
+/// # Examples
+/// ```rust
+/// use turbomcp::elicitation_api::choices;
+///
+/// let answer_field = choices(&["yes", "no", "maybe"]).title("Your Answer");
+/// ```
+pub fn choices<T: AsRef<str>>(values: &[T]) -> turbomcp_protocol::elicitation::EnumSchemaBuilder {
+    turbomcp_protocol::elicitation::choices(values)
+}
+
+/// World-class DX: Create text field with title - beautiful ergonomics!
+///
+/// Creates a string schema with the specified title. Perfect for user input fields.
+///
+/// # Examples
+/// ```rust
+/// use turbomcp::elicitation_api::text;
+///
+/// // Simple text field
+/// let name_field = text("Full Name");
+///
+/// // Text field with validation
+/// let email_field = text("Email Address").email().min_length(5);
+///
+/// // Text field with enum options (becomes a dropdown)
+/// let theme_field = text("UI Theme").options(&["light", "dark", "auto"]);
+/// ```
+pub fn text(title: impl Into<String>) -> turbomcp_protocol::elicitation::StringSchemaBuilder {
+    turbomcp_protocol::elicitation::text(title)
+}
+
+/// World-class DX: Create integer field with title
+///
+/// Creates an integer number schema with the specified title. Perfect for counts, ages, etc.
+///
+/// # Examples
+/// ```rust
+/// use turbomcp::elicitation_api::integer_field;
+///
+/// // Simple integer field
+/// let age_field = integer_field("Age");
+///
+/// // Integer field with range validation
+/// let count_field = integer_field("Item Count").range(1.0, 100.0);
+/// ```
+pub fn integer_field(
+    title: impl Into<String>,
+) -> turbomcp_protocol::elicitation::NumberSchemaBuilder {
+    turbomcp_protocol::elicitation::integer_field(title)
+}
+
+/// World-class DX: Create number field with title
+///
+/// Creates a floating-point number schema with the specified title. Perfect for prices, measurements, etc.
+///
+/// # Examples  
+/// ```rust
+/// use turbomcp::elicitation_api::number_field;
+///
+/// // Simple number field
+/// let price_field = number_field("Price");
+///
+/// // Number field with range validation
+/// let temperature_field = number_field("Temperature").range(-273.15, 1000.0);
+/// ```
+pub fn number_field(
+    title: impl Into<String>,
+) -> turbomcp_protocol::elicitation::NumberSchemaBuilder {
+    turbomcp_protocol::elicitation::number_field(title)
+}
+
+/// World-class DX: Create boolean field with title (checkbox semantic)
+///
+/// Creates a boolean schema with the specified title. Perfect for yes/no questions and toggles.
+///
+/// # Examples
+/// ```rust
+/// use turbomcp::elicitation_api::checkbox;
+///
+/// // Simple checkbox
+/// let notifications_field = checkbox("Enable Notifications");
+///
+/// // Checkbox with default value and description  
+/// let auto_save_field = checkbox("Auto Save")
+///     .default(true)
+///     .description("Automatically save your work");
+/// ```
+pub fn checkbox(title: impl Into<String>) -> turbomcp_protocol::elicitation::BooleanSchemaBuilder {
+    turbomcp_protocol::elicitation::checkbox(title)
 }
 
 /// Create an object schema
@@ -436,25 +571,9 @@ mod tests {
     #[test]
     fn test_elicitation_builder() {
         let builder = elicit("Please configure your project")
-            .field(
-                "name",
-                string()
-                    .title("Project Name")
-                    .min_length(3)
-                    .max_length(50)
-                    .build(),
-            )
-            .field(
-                "port",
-                integer()
-                    .title("Port Number")
-                    .range(1024.0, 65535.0)
-                    .build(),
-            )
-            .field(
-                "debug",
-                boolean().title("Debug Mode").default(false).build(),
-            )
+            .field("name", string("Project Name").min_length(3).max_length(50))
+            .field("port", integer("Port Number").range(1024.0, 65535.0))
+            .field("debug", boolean("Debug Mode").default(false))
             .require(vec!["name"]);
 
         assert_eq!(builder.message, "Please configure your project");

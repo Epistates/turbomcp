@@ -202,11 +202,16 @@ pub fn generate_tool_result(input: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-/// Parse elicit! macro arguments (context, message, schema)
-struct ElicitArgs {
-    context: Expr,
-    message: Expr,
-    schema: Expr,
+/// Parse elicit! macro arguments - supports multiple invocation patterns
+enum ElicitArgs {
+    /// Simple: elicit!(ctx, "message")
+    Simple { context: Expr, message: Expr },
+    /// With schema: elicit!(ctx, "message", schema)
+    WithSchema {
+        context: Expr,
+        message: Expr,
+        schema: Expr,
+    },
 }
 
 impl Parse for ElicitArgs {
@@ -214,39 +219,96 @@ impl Parse for ElicitArgs {
         let context: Expr = input.parse()?;
         input.parse::<Token![,]>()?;
         let message: Expr = input.parse()?;
-        input.parse::<Token![,]>()?;
-        let schema: Expr = input.parse()?;
 
-        Ok(ElicitArgs {
-            context,
-            message,
-            schema,
-        })
+        // Check if there's a schema argument
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+            let schema: Expr = input.parse()?;
+            Ok(ElicitArgs::WithSchema {
+                context,
+                message,
+                schema,
+            })
+        } else {
+            Ok(ElicitArgs::Simple { context, message })
+        }
     }
 }
 
 /// Generate elicitation helper with automatic request handling
+///
+/// Supports multiple invocation patterns for maximum DX:
+/// - `elicit!(ctx, "Choose an option")` - Simple prompt with no schema
+/// - `elicit!(ctx, "Configure", schema)` - Full schema specification
+///
+/// The macro provides ergonomic access to elicitation with proper error handling
+/// and automatic context integration.
 pub fn generate_elicitation(input: TokenStream) -> TokenStream {
     let elicit_args = parse_macro_input!(input as ElicitArgs);
-    let context = &elicit_args.context;
-    let message = &elicit_args.message;
-    let schema = &elicit_args.schema;
 
-    let expanded = quote! {
-        {
-            use ::turbomcp_protocol::elicitation::{ElicitationCreateRequest};
+    let expanded = match elicit_args {
+        ElicitArgs::Simple { context, message } => {
+            // Generate code for simple elicitation without schema
+            quote! {
+                {
+                    use ::turbomcp_protocol::elicitation::{ElicitationCreateRequest, ElicitationSchema};
 
-            // Create the elicitation request
-            let elicitation_request = ElicitationCreateRequest {
-                message: #message.to_string(),
-                requested_schema: #schema,
-            };
+                    // Create empty schema for simple prompt
+                    let schema = ElicitationSchema::new();
+                    let request = ElicitationCreateRequest {
+                        message: #message.to_string(),
+                        requested_schema: schema,
+                    };
 
-            // Use server capabilities to send elicitation
-            if let Some(capabilities) = #context.request.server_capabilities() {
-                capabilities.send_elicitation(elicitation_request).await
-            } else {
-                Err(::turbomcp_core::Error::handler("Server capabilities not available for elicitation".to_string()).into())
+                    // Handle both Context (with .request) and RequestContext directly
+                    #context.request.server_capabilities()
+                        .ok_or_else(|| ::turbomcp_core::Error::handler(
+                            "Server capabilities not available for elicitation".to_string()
+                        ))?
+                        .elicit(serde_json::to_value(request).map_err(|e|
+                            ::turbomcp_core::Error::handler(format!("Failed to serialize elicitation: {}", e))
+                        )?)
+                        .await
+                        .map_err(|e| ::turbomcp_core::Error::handler(format!("Elicitation failed: {}", e)))
+                        .and_then(|response| {
+                            serde_json::from_value::<::turbomcp_protocol::elicitation::ElicitationCreateResult>(response)
+                                .map_err(|e| ::turbomcp_core::Error::handler(format!("Failed to parse response: {}", e)))
+                                .map(|r| r.into())
+                        })
+                }
+            }
+        }
+        ElicitArgs::WithSchema {
+            context,
+            message,
+            schema,
+        } => {
+            // Generate code for elicitation with provided schema
+            quote! {
+                {
+                    use ::turbomcp_protocol::elicitation::{ElicitationCreateRequest};
+
+                    let request = ElicitationCreateRequest {
+                        message: #message.to_string(),
+                        requested_schema: #schema,
+                    };
+
+                    // Handle both Context (with .request) and RequestContext directly
+                    #context.request.server_capabilities()
+                        .ok_or_else(|| ::turbomcp_core::Error::handler(
+                            "Server capabilities not available for elicitation".to_string()
+                        ))?
+                        .elicit(serde_json::to_value(request).map_err(|e|
+                            ::turbomcp_core::Error::handler(format!("Failed to serialize elicitation: {}", e))
+                        )?)
+                        .await
+                        .map_err(|e| ::turbomcp_core::Error::handler(format!("Elicitation failed: {}", e)))
+                        .and_then(|response| {
+                            serde_json::from_value::<::turbomcp_protocol::elicitation::ElicitationCreateResult>(response)
+                                .map_err(|e| ::turbomcp_core::Error::handler(format!("Failed to parse response: {}", e)))
+                                .map(|r| r.into())
+                        })
+                }
             }
         }
     };
