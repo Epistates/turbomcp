@@ -115,3 +115,9 @@ pnpm-lock.yaml
 .nfs*
 
 .strategy
+
+# Benchmark and performance testing directories
+benchmarks/
+benchmark_results.md
+*.benchmark
+**/benchmark_results.md
