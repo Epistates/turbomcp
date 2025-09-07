@@ -382,69 +382,6 @@ pub trait TransportFactory: Send + Sync + std::fmt::Debug {
     }
 }
 
-/// Transport registry for managing multiple transport types
-#[derive(Debug)]
-pub struct TransportRegistry {
-    factories: HashMap<TransportType, Box<dyn TransportFactory>>,
-}
-
-impl TransportRegistry {
-    /// Create a new transport registry
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            factories: HashMap::new(),
-        }
-    }
-
-    /// Register a transport factory
-    pub fn register(&mut self, factory: Box<dyn TransportFactory>) {
-        let transport_type = factory.transport_type();
-        self.factories.insert(transport_type, factory);
-    }
-
-    /// Create a transport instance
-    pub fn create(&self, config: TransportConfig) -> TransportResult<Box<dyn Transport>> {
-        let factory = self
-            .factories
-            .get(&config.transport_type)
-            .ok_or_else(|| TransportError::NotAvailable(format!("{:?}", config.transport_type)))?;
-
-        if !factory.is_available() {
-            return Err(TransportError::NotAvailable(format!(
-                "{:?} transport is not available on this system",
-                config.transport_type
-            )));
-        }
-
-        factory.create(config)
-    }
-
-    /// Get available transport types
-    #[must_use]
-    pub fn available_transports(&self) -> Vec<TransportType> {
-        self.factories
-            .keys()
-            .filter(|&t| self.factories[t].is_available())
-            .copied()
-            .collect()
-    }
-
-    /// Check if a transport type is available
-    #[must_use]
-    pub fn is_available(&self, transport_type: TransportType) -> bool {
-        self.factories
-            .get(&transport_type)
-            .is_some_and(|f| f.is_available())
-    }
-}
-
-impl Default for TransportRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Transport event listener trait
 #[async_trait]
 pub trait TransportEventListener: Send + Sync {
@@ -723,15 +660,6 @@ mod tests {
         assert_eq!(metadata.headers.get("custom"), Some(&"value".to_string()));
         assert_eq!(metadata.priority, Some(5));
         assert_eq!(metadata.ttl, Some(30000));
-    }
-
-    #[test]
-    fn test_transport_registry() {
-        let registry = TransportRegistry::new();
-
-        // Initially empty
-        assert!(registry.available_transports().is_empty());
-        assert!(!registry.is_available(TransportType::Stdio));
     }
 
     #[test]

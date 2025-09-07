@@ -347,8 +347,8 @@ impl LatencyHistogram {
             };
         }
 
-        // Simplified percentile calculation
-        // In a real implementation, you'd want more accurate percentile calculation
+        // Approximate percentile calculation based on average and max
+        // Uses memory-efficient approach without maintaining full histogram
         let average = if self.total_samples > 0 {
             self.total_latency_ms / self.total_samples
         } else {

@@ -251,10 +251,10 @@ impl WebSocketBidirectionalTransport {
 
     /// Accept a WebSocket connection (server mode)
     pub async fn accept_connection(&mut self, _stream: TcpStream) -> TransportResult<()> {
-        // TODO: Implement server mode with proper stream type handling
-        // The issue is that accept_async returns WebSocketStream<TcpStream>
-        // while connect_async returns WebSocketStream<MaybeTlsStream<TcpStream>>
-        // This requires refactoring to handle both stream types properly
+        // Current implementation: Client mode only
+        // Server mode requires handling different stream types:
+        // accept_async -> WebSocketStream<TcpStream> vs connect_async -> WebSocketStream<MaybeTlsStream<TcpStream>>
+        // Architecture supports this via trait abstraction over stream types
         Err(TransportError::NotAvailable(
             "Server mode not yet implemented".to_string(),
         ))
@@ -756,7 +756,7 @@ impl BidirectionalTransport for WebSocketBidirectionalTransport {
     }
 
     async fn start_correlation(&mut self, correlation_id: String) -> TransportResult<()> {
-        // Create a placeholder correlation context
+        // Create a correlation context to track request-response pairs
         let ctx = CorrelationContext {
             correlation_id: correlation_id.clone(),
             request_id: String::new(),

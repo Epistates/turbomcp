@@ -12,7 +12,7 @@ use crate::core::{
     BidirectionalTransport, TransportError, TransportMessage, TransportResult, TransportType,
 };
 
-/// JSON-RPC request for server-initiated communication (simplified)
+/// JSON-RPC request structure for server-initiated communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerJsonRpcRequest {
     /// JSON-RPC version
@@ -26,7 +26,7 @@ pub struct ServerJsonRpcRequest {
     pub id: serde_json::Value,
 }
 
-/// JSON-RPC response for server-initiated communication (simplified)
+/// JSON-RPC response structure for server-initiated communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerJsonRpcResponse {
     /// JSON-RPC version
@@ -178,14 +178,17 @@ impl ServerTransportManager {
 
         for (client_id, transport) in connections.iter() {
             let client_id = client_id.clone();
-            let _message = message.clone();
-            let _transport = Arc::clone(transport);
+            let _message_clone = message.clone();
+            let _transport_arc = Arc::clone(transport);
 
             send_futures.push(async move {
-                // Note: This is a simplified approach. In production, you'd want
-                // to make the transport mutable or use interior mutability
-                // For now, we'll just record the attempt
-                (client_id, Ok::<(), TransportError>(()))
+                // Note: Transport trait requires mutable access for send operations
+                // Current Arc-based design doesn't support concurrent mutable access
+                // This requires architectural enhancement for true bidirectional transport
+                tracing::warn!("Broadcast to client {} skipped - requires mutable transport access", client_id);
+                (client_id, Err::<(), TransportError>(TransportError::NotAvailable(
+                    "Broadcast requires mutable transport access not available in current design".to_string()
+                )))
             });
         }
 
@@ -208,25 +211,36 @@ impl ServerTransportDispatcher for ServerTransportManager {
     async fn send_server_request(
         &self,
         request: ServerJsonRpcRequest,
-        _ctx: RequestContext,
+        ctx: RequestContext,
     ) -> TransportResult<ServerJsonRpcResponse> {
-        // For now, we'll send to the first available client
-        // In a real implementation, you'd need to specify which client to send to
+        // Send to the client specified in the request context, or first available client
         let connections = self.connections.read().await;
 
-        if let Some((client_id, _transport)) = connections.iter().next() {
+        // Try to find the specific client from context, otherwise use first available
+        let target_transport = if let Some(ref client_id) = ctx.client_id {
+            connections.get(client_id).cloned()
+        } else {
+            connections
+                .iter()
+                .next()
+                .map(|(_, transport)| transport.clone())
+        };
+
+        if let Some(_transport_arc) = target_transport {
+            let client_id = ctx.client_id.as_deref().unwrap_or("first_available");
             tracing::debug!(
-                "Sending server request to client {}: {:?}",
+                "Sending server request to client {}: {} {}",
                 client_id,
-                request
+                request.method,
+                request.id
             );
 
-            let _message = TransportMessage {
+            let _request_message = TransportMessage {
                 id: MessageId::from(Uuid::new_v4()),
                 payload: serde_json::to_vec(&request)
                     .map_err(|e| {
                         TransportError::SerializationFailed(format!(
-                            "Failed to serialize request: {}",
+                            "Failed to serialize server request: {}",
                             e
                         ))
                     })?
@@ -234,24 +248,54 @@ impl ServerTransportDispatcher for ServerTransportManager {
                 metadata: Default::default(),
             };
 
-            // Note: In a real implementation, you'd need to handle the bidirectional
-            // communication properly. For now, this is a placeholder.
             let _timeout = std::time::Duration::from_millis(self.config.server_request_timeout_ms);
 
-            // This is a simplified approach - would need proper implementation
-            // based on the actual transport's send_request method
-            Ok(ServerJsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id: request.id,
-                result: Some(serde_json::json!({
-                    "status": "acknowledged",
-                    "message": "Server request sent to client"
-                })),
-                error: None,
-            })
+            // Current implementation: Server-initiated requests not supported due to Arc<T> constraint
+            // Transport trait requires mutable access but Arc<T> provides shared immutable access
+            // Architecture supports this via enhanced trait design with interior mutability
+            Err(TransportError::NotAvailable(
+                "Server-initiated requests require enhanced bidirectional transport implementation"
+                    .to_string(),
+            ))
+            /*
+            match transport_arc.send_request(request_message, Some(timeout)).await {
+                Ok(response_message) => {
+                    // Parse the response payload as ServerJsonRpcResponse
+                    match serde_json::from_slice::<ServerJsonRpcResponse>(&response_message.payload) {
+                        Ok(response) => {
+                            tracing::debug!(
+                                "Received response from client {}: {:?}",
+                                client_id,
+                                response
+                            );
+                            Ok(response)
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to parse response from client {}: {}",
+                                client_id,
+                                e
+                            );
+                            Err(TransportError::SerializationFailed(format!(
+                                "Failed to parse client response: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to get response from client {}: {}",
+                        client_id,
+                        e
+                    );
+                    Err(e)
+                }
+            }
+            */
         } else {
             Err(TransportError::ConnectionFailed(
-                "No connected clients".to_string(),
+                "No connected clients available for server request".to_string(),
             ))
         }
     }

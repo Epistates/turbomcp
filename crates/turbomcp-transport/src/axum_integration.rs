@@ -1588,7 +1588,7 @@ async fn authentication_middleware(
 }
 
 #[cfg(not(feature = "http"))]
-/// Placeholder when HTTP feature is not enabled
+/// Empty struct when HTTP feature is disabled
 pub struct AxumMcpExt;
 
 // Re-export for convenience

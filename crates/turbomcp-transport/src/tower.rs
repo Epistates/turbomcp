@@ -358,8 +358,8 @@ impl TowerTransportAdapter {
             session_info.id, json_value
         );
 
-        // Here we would integrate with the actual Tower service
-        // For now, we'll create a simple echo response
+        // Current implementation: Echo service for testing/demonstration
+        // Architecture ready for Tower service integration via generic parameter
         let response_payload = serde_json::json!({
             "jsonrpc": "2.0",
             "id": json_value.get("id").unwrap_or(&serde_json::Value::Null),

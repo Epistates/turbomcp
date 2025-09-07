@@ -32,7 +32,6 @@
 //! ├── tcp/            # TCP socket transport implementation
 //! ├── unix/           # Unix domain socket implementation
 //! ├── compression/    # Message compression support
-//! ├── pool/           # Connection pooling utilities
 //! └── metrics/        # Transport performance metrics
 //! ```
 //!
@@ -171,7 +170,6 @@ pub mod compression;
 
 pub mod config;
 pub mod metrics;
-pub mod pool;
 pub mod robustness;
 
 // Re-export bidirectional transport functionality
@@ -224,7 +222,6 @@ pub use child_process::{ChildProcessConfig, ChildProcessTransport};
 
 // Re-export utilities
 pub use config::TransportConfigBuilder;
-pub use pool::ConnectionPool;
 pub use robustness::{
     CircuitBreakerConfig, CircuitBreakerStats, CircuitState, HealthCheckConfig, HealthInfo,
     HealthStatus, RetryConfig, RobustTransport,
