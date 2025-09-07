@@ -256,10 +256,19 @@ pub fn mcp_error(input: TokenStream) -> TokenStream {
 /// Ergonomic elicitation macro for server-initiated user input
 ///
 /// This macro provides a simple way to request structured input from the client
-/// with automatic schema validation.
+/// with automatic error handling and context integration.
 ///
-/// # Usage
+/// # Usage Patterns
 ///
+/// ## Simple Prompt (No Schema)
+/// ```ignore
+/// use turbomcp::prelude::*;
+///
+/// // Simple yes/no or text prompt
+/// let result = elicit!(ctx, "Continue with deployment?").await?;
+/// ```
+///
+/// ## With Schema Validation
 /// ```ignore
 /// use turbomcp::prelude::*;
 /// use turbomcp_protocol::elicitation::ElicitationSchema;
@@ -273,9 +282,28 @@ pub fn mcp_error(input: TokenStream) -> TokenStream {
 ///
 /// # Arguments
 ///
-/// * `ctx` - The context object (must have server capabilities)
+/// * `ctx` - The context object (RequestContext with server capabilities)
 /// * `message` - The message to display to the user
-/// * `schema` - The elicitation schema defining expected input
+/// * `schema` - (Optional) The elicitation schema defining expected input
+///
+/// # Returns
+///
+/// Returns `Result<ElicitationResult>` which can be:
+/// - `ElicitationResult::Accept(data)` - User provided input
+/// - `ElicitationResult::Decline(reason)` - User declined
+/// - `ElicitationResult::Cancel` - User cancelled
+///
+/// # When to Use
+///
+/// Use the macro for:
+/// - Simple prompts without complex schemas
+/// - Quick confirmation dialogs
+/// - Reduced boilerplate in tool handlers
+///
+/// Use the function API for:
+/// - Complex schemas with multiple fields
+/// - Reusable elicitation builders
+/// - Maximum control over schema construction
 ///
 #[proc_macro]
 pub fn elicit(input: TokenStream) -> TokenStream {

@@ -94,54 +94,6 @@ impl Default for TransportConfigBuilder {
     }
 }
 
-/// Ergonomic transport manager that wraps mcp-transport functionality
-pub struct TransportManager {
-    /// Use the production connection pool from mcp-transport (reserved for future use)
-    #[allow(dead_code)]
-    pool: turbomcp_transport::ConnectionPool,
-}
-
-impl TransportManager {
-    /// Create new transport manager
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            pool: turbomcp_transport::ConnectionPool::new(Default::default()),
-        }
-    }
-
-    /// Add transport to the pool (simplified implementation)
-    pub async fn add_transport<T>(&self, _name: String, _transport: T) -> McpResult<()>
-    where
-        T: Transport + Send + Sync + 'static,
-    {
-        // For now, we'll just accept the transport - connection pooling can be enhanced later
-        Ok(())
-    }
-
-    /// Get transport by name (simplified implementation)
-    pub async fn get_transport(&self, _name: &str) -> Option<Box<dyn Transport>> {
-        // For now, return None - this can be enhanced with actual pooling later
-        None
-    }
-
-    /// Send message via specific transport (simplified implementation)
-    pub async fn send_via(
-        &self,
-        _transport_name: &str,
-        _message: turbomcp_transport::TransportMessage,
-    ) -> McpResult<()> {
-        // For now, just return Ok - this can be enhanced with actual routing later
-        Ok(())
-    }
-}
-
-impl Default for TransportManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// Convenience macro for creating transports
 #[macro_export]
 macro_rules! transport {
@@ -179,14 +131,5 @@ mod tests {
         // Test that we can build a config - specific field checks removed
         // as the underlying TransportConfig fields may vary
         assert_eq!(config.connect_timeout, std::time::Duration::from_secs(30));
-    }
-
-    #[tokio::test]
-    async fn test_transport_manager() {
-        let manager = TransportManager::new();
-        let stdio = TransportFactory::stdio();
-
-        let result = manager.add_transport("test".to_string(), stdio).await;
-        assert!(result.is_ok());
     }
 }

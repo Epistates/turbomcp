@@ -11,9 +11,9 @@
 //! - **Context Injection** - Dependency injection and observability with structured logging
 //! - **Zero-Overhead Macros** - Ergonomic `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]` attributes
 //!
-//! ### Advanced Protocol Features (New in 1.0.3)
+//! ### Advanced Protocol Features
 //! - **Roots Support** - Configurable filesystem roots via macro or builder API with OS-aware defaults
-//! - **Elicitation Support** - Server-initiated requests for interactive user input with type-safe builders
+//! - **Zero Ceremony Elicitation** - Server-initiated user input with beautiful title-first builders (Enhanced 1.0.4)  
 //! - **Sampling Protocol** - Bidirectional LLM sampling capabilities with metadata tracking
 //! - **Compile-Time Routing** - Zero-cost compile-time router generation (experimental)
 //!
@@ -178,39 +178,54 @@
 //! }
 //! ```
 //!
-//! ## Elicitation Support (New in 1.0.3)
+//! ## Elicitation Support - Zero Ceremony Builders (Enhanced in 1.0.4)
 //!
-//! TurboMCP now supports server-initiated elicitation for interactive user input with comprehensive schema validation:
+//! TurboMCP provides world-class ergonomic elicitation with **zero ceremony builders** for beautiful, intuitive APIs:
 //!
 //! ```rust,no_run
 //! use turbomcp::prelude::*;
+//! use turbomcp::elicitation_api::{ElicitationResult, text, checkbox, integer_field};
+//! use turbomcp_macros::elicit;
 //!
 //! #[derive(Clone)]
 //! struct ConfigServer;
 //!
 //! #[server]
 //! impl ConfigServer {
-//!     #[tool("Configure application with user input")]
-//!     async fn configure(&self, ctx: Context) -> McpResult<String> {
-//!         // Check if user is authenticated for configuration
-//!         if !ctx.is_authenticated() {
-//!             return Err(McpError::Unauthorized("Authentication required for configuration".to_string()));
+//!     #[tool("Configure deployment")]
+//!     async fn deploy(&self, ctx: Context, project: String) -> McpResult<String> {
+//!         // 🎯 Simple elicit macro for quick confirmations
+//!         let confirmation = elicit!(ctx, "Deploy to production?")?;
+//!         if matches!(confirmation, ElicitationResult::Decline(_)) {
+//!             return Ok("Deployment cancelled".to_string());
 //!         }
+//!
+//!         // 🚀 Zero ceremony builders - beautiful title-first constructors!
+//!         let config = elicit("Configure deployment")
+//!             .field("environment", text("Environment").options(&["dev", "staging", "production"]))
+//!             .field("auto_scale", checkbox("Enable Auto-scaling").default(true))  
+//!             .field("replicas", integer_field("Replica Count").range(1.0, 10.0))
+//!             .require(vec!["environment"])
+//!             .send(&ctx.request)
+//!             .await?;
 //!         
-//!         ctx.info("Starting configuration process").await?;
-//!         
-//!         // Example configuration with default values
-//!         let theme = "dark".to_string();
-//!         let notifications = true;
-//!         
-//!         // Store configuration in context data
-//!         ctx.set("theme", &theme).await?;
-//!         ctx.set("notifications", notifications).await?;
-//!         
-//!         Ok(format!("Configured with {} theme, notifications: {}", theme, notifications))
+//!         match config {
+//!             ElicitationResult::Accept(data) => {
+//!                 let env = data.get::<String>("environment")?;
+//!                 let replicas = data.get::<i64>("replicas").unwrap_or(1);
+//!                 Ok(format!("Deployed {} to {} with {} replicas", project, env, replicas))
+//!             }
+//!             _ => Err(mcp_error!("Deployment cancelled"))
+//!         }
 //!     }
 //! }
 //! ```
+//!
+//! **Key Features:**
+//! - **Zero Ceremony**: `text("Title")`, `checkbox("Label")`, `integer_field("Name")`
+//! - **No Boilerplate**: Field method accepts builders directly via `Into<T>`
+//! - **Smart Constructors**: Title-first API eliminates nested parentheses
+//! - **Backward Compatible**: Builder variants available as `*_builder()`
 //!
 //! ## Sampling Support (New in 1.0.3)
 //!
@@ -446,8 +461,30 @@ pub use crate::context_factory::{
 };
 pub use crate::elicitation::*;
 pub use crate::elicitation_api::{
-    ElicitationBuilder, ElicitationData, ElicitationExtract, ElicitationManager, ElicitationResult,
-    array, boolean, elicit, integer, number, object, string,
+    ElicitationBuilder,
+    ElicitationData,
+    ElicitationExtract,
+    ElicitationManager,
+    ElicitationResult,
+    // Zero ceremony constructors - beautiful title-first API
+    array,
+    boolean,
+    // Advanced builder constructors for full control
+    boolean_builder,
+    checkbox,
+    choices,
+    elicit,
+    enum_of,
+    integer,
+    integer_builder,
+    integer_field,
+    number,
+    number_builder,
+    number_field,
+    object,
+    options,
+    string,
+    string_builder,
 };
 pub use crate::helpers::*;
 pub use crate::injection::*;
@@ -486,8 +523,8 @@ pub mod prelude {
         Context, ElicitationManager, HandlerMetadata, HandlerRegistration, McpError, McpResult,
         McpServer, OAuth2Config, OAuth2FlowType, OAuth2Provider, RequestContext, Server,
         ServerBuilder, ServerError, TokenInfo, Transport, TransportConfig, TransportFactory,
-        TransportManager, TurboMcpServer, UserInfo, error_text, handlers, prompt_result,
-        resource_result, text, tool_error, tool_success,
+        TurboMcpServer, UserInfo, error_text, handlers, prompt_result, resource_result, text,
+        tool_error, tool_success,
     };
 
     // Re-export essential types

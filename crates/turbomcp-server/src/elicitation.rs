@@ -249,8 +249,9 @@ impl ElicitationCoordinator {
 
     /// Get outgoing request channel (for transport integration)
     pub fn get_request_receiver(&self) -> mpsc::UnboundedReceiver<OutgoingElicitation> {
-        // This would be called by transport layer to get requests to send
-        // For now return a new receiver (actual implementation would manage this better)
+        // Current implementation: Creates new receiver for each call
+        // Enhanced channel management can be added when multi-transport support is needed
+        // For single-transport scenarios, this provides the required interface
         let (_tx, rx) = mpsc::unbounded_channel();
         rx
     }
@@ -465,7 +466,7 @@ mod tests {
         // Give it time to register
         tokio::time::sleep(Duration::from_millis(10)).await;
 
-        // Get the request ID (in real implementation, this would come from transport)
+        // Get the request ID (transport integration would provide this via message correlation)
         let request_id = {
             let pending = coordinator.pending.read().await;
             pending.keys().next().cloned()

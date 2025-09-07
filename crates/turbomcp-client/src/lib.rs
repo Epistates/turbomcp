@@ -593,7 +593,7 @@ impl<T: Transport> Client<T> {
             client_caps.sampling = Some(turbomcp_protocol::types::SamplingCapabilities);
         }
 
-        // Send actual MCP initialization request
+        // Send MCP initialization request
         let request = InitializeRequest {
             protocol_version: PROTOCOL_VERSION.to_string(),
             capabilities: client_caps,
@@ -659,7 +659,7 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send actual tools/list request
+        // Send tools/list request
         let response: ListToolsResult = self.protocol.request("tools/list", None).await?;
         let tool_names = response.tools.into_iter().map(|tool| tool.name).collect();
         Ok(tool_names)
@@ -705,7 +705,7 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send actual tools/call request
+        // Send tools/call request
         let request = CallToolRequest {
             name: name.to_string(),
             arguments: Some(arguments.unwrap_or_default()),
@@ -774,7 +774,7 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send actual resources/list request
+        // Send resources/list request
         let response: ListResourcesResult = self.protocol.request("resources/list", None).await?;
         let resource_uris = response
             .resources

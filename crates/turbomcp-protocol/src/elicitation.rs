@@ -388,29 +388,92 @@ impl ElicitationValue {
 // Builder Helpers for Ergonomic API
 // ============================================================================
 
-/// Create a string schema
-pub fn string() -> StringSchemaBuilder {
+/// Create a string field with title - beautiful ergonomics!
+///
+/// This is the primary string constructor for forms and UI elements.
+/// Use `string_builder()` if you need a title-less string schema.
+pub fn string(title: impl Into<String>) -> StringSchemaBuilder {
+    StringSchemaBuilder::new().title(title)
+}
+
+/// Create a string schema without title (for advanced usage)
+pub fn string_builder() -> StringSchemaBuilder {
     StringSchemaBuilder::new()
 }
 
-/// Create an integer schema
-pub fn integer() -> NumberSchemaBuilder {
+/// Alias for string() - text semantic is clearer for UI
+pub fn text(title: impl Into<String>) -> StringSchemaBuilder {
+    string(title)
+}
+
+/// Create an integer field with title - beautiful ergonomics!
+///
+/// This is the primary integer constructor for forms and UI elements.
+/// Use `integer_builder()` if you need a title-less integer schema.
+pub fn integer(title: impl Into<String>) -> NumberSchemaBuilder {
+    NumberSchemaBuilder::new_integer().title(title)
+}
+
+/// Create an integer schema without title (for advanced usage)
+pub fn integer_builder() -> NumberSchemaBuilder {
     NumberSchemaBuilder::new_integer()
 }
 
-/// Create a number schema
-pub fn number() -> NumberSchemaBuilder {
+/// Alias for integer() - field semantic is clearer for UI
+pub fn integer_field(title: impl Into<String>) -> NumberSchemaBuilder {
+    integer(title)
+}
+
+/// Create a number field with title - beautiful ergonomics!
+///
+/// This is the primary number constructor for forms and UI elements.
+/// Use `number_builder()` if you need a title-less number schema.
+pub fn number(title: impl Into<String>) -> NumberSchemaBuilder {
+    NumberSchemaBuilder::new_number().title(title)
+}
+
+/// Create a number schema without title (for advanced usage)
+pub fn number_builder() -> NumberSchemaBuilder {
     NumberSchemaBuilder::new_number()
 }
 
-/// Create a boolean schema
-pub fn boolean() -> BooleanSchemaBuilder {
+/// Alias for number() - field semantic is clearer for UI
+pub fn number_field(title: impl Into<String>) -> NumberSchemaBuilder {
+    number(title)
+}
+
+/// Create a boolean field with title - beautiful ergonomics!
+///
+/// This is the primary boolean constructor for forms and UI elements.
+/// Use `boolean_builder()` if you need a title-less boolean schema.
+pub fn boolean(title: impl Into<String>) -> BooleanSchemaBuilder {
+    BooleanSchemaBuilder::new().title(title)
+}
+
+/// Create a boolean schema without title (for advanced usage)
+pub fn boolean_builder() -> BooleanSchemaBuilder {
     BooleanSchemaBuilder::new()
+}
+
+/// Alias for boolean() - checkbox semantic is clearer for UI
+pub fn checkbox(title: impl Into<String>) -> BooleanSchemaBuilder {
+    boolean(title)
 }
 
 /// Create an enum schema
 pub fn enum_of(values: Vec<String>) -> EnumSchemaBuilder {
     EnumSchemaBuilder::new(values)
+}
+
+/// World-class DX: Create enum schema from array slice (no Vec required!)
+pub fn options<T: AsRef<str>>(values: &[T]) -> EnumSchemaBuilder {
+    let values: Vec<String> = values.iter().map(|v| v.as_ref().to_string()).collect();
+    EnumSchemaBuilder::new(values)
+}
+
+/// Alias for options() - terser naming
+pub fn choices<T: AsRef<str>>(values: &[T]) -> EnumSchemaBuilder {
+    options(values)
 }
 
 /// Create an object schema
@@ -431,6 +494,11 @@ impl StringSchemaBuilder {
     /// Create a new string schema builder
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create with title for maximum ergonomics
+    pub fn with_title(title: impl Into<String>) -> Self {
+        Self::new().title(title)
     }
 
     /// Set the display title for this string field
@@ -497,15 +565,42 @@ impl StringSchemaBuilder {
         if let Some(title) = self.0.title {
             builder = builder.title(title);
         }
-        if let Some(desc) = self.0.description {
-            builder = builder.description(desc);
+        if let Some(description) = self.0.description {
+            builder = builder.description(description);
         }
         builder
+    }
+
+    /// World-class DX: Convert to enum schema with array slice (no Vec required!)
+    pub fn options<T: AsRef<str>>(self, values: &[T]) -> EnumSchemaBuilder {
+        let values: Vec<String> = values.iter().map(|v| v.as_ref().to_string()).collect();
+        self.enum_values(values)
+    }
+
+    /// Alias for options() - even terser naming
+    pub fn choices<T: AsRef<str>>(self, values: &[T]) -> EnumSchemaBuilder {
+        self.options(values)
     }
 
     /// Build the string schema into a primitive schema definition
     pub fn build(self) -> PrimitiveSchemaDefinition {
         PrimitiveSchemaDefinition::String(self.0)
+    }
+}
+
+/// World-class DX: Eliminate .build() ceremony via Into trait
+impl From<StringSchemaBuilder> for PrimitiveSchemaDefinition {
+    fn from(val: StringSchemaBuilder) -> Self {
+        PrimitiveSchemaDefinition::String(val.0)
+    }
+}
+
+/// World-class DX: Direct conversion to ElicitationSchema for single field usage
+impl From<StringSchemaBuilder> for ElicitationSchema {
+    fn from(val: StringSchemaBuilder) -> Self {
+        let mut schema = ElicitationSchema::new();
+        schema.properties.insert("value".to_string(), val.into());
+        schema
     }
 }
 
@@ -561,6 +656,13 @@ impl NumberSchemaBuilder {
     }
 }
 
+/// World-class DX: Eliminate .build() ceremony via Into trait
+impl From<NumberSchemaBuilder> for PrimitiveSchemaDefinition {
+    fn from(val: NumberSchemaBuilder) -> Self {
+        PrimitiveSchemaDefinition::Number(val.0)
+    }
+}
+
 /// Builder for boolean schemas
 #[derive(Debug, Default)]
 pub struct BooleanSchemaBuilder(BooleanSchema);
@@ -592,6 +694,13 @@ impl BooleanSchemaBuilder {
     /// Build the boolean schema into a primitive schema definition
     pub fn build(self) -> PrimitiveSchemaDefinition {
         PrimitiveSchemaDefinition::Boolean(self.0)
+    }
+}
+
+/// World-class DX: Eliminate .build() ceremony via Into trait
+impl From<BooleanSchemaBuilder> for PrimitiveSchemaDefinition {
+    fn from(val: BooleanSchemaBuilder) -> Self {
+        PrimitiveSchemaDefinition::Boolean(val.0)
     }
 }
 
@@ -629,6 +738,13 @@ impl EnumSchemaBuilder {
     }
 }
 
+/// World-class DX: Eliminate .build() ceremony via Into trait
+impl From<EnumSchemaBuilder> for PrimitiveSchemaDefinition {
+    fn from(val: EnumSchemaBuilder) -> Self {
+        PrimitiveSchemaDefinition::Enum(val.0)
+    }
+}
+
 /// Builder for object schemas
 #[derive(Debug)]
 pub struct ObjectSchemaBuilder(ObjectSchema);
@@ -661,10 +777,10 @@ impl ObjectSchemaBuilder {
     pub fn build(self) -> ElicitationSchema {
         // Convert ObjectSchema properties to ElicitationSchema properties
         let mut props = HashMap::new();
-        for (key, _value) in self.0.properties {
-            // Convert JSON Value to PrimitiveSchemaDefinition if possible
-            // For now, we'll skip complex conversion
-            props.insert(key, PrimitiveSchemaDefinition::String(StringSchema::new()));
+        for (key, value) in self.0.properties {
+            // Convert JSON Value to PrimitiveSchemaDefinition based on the value's structure
+            let schema_def = convert_json_value_to_schema_definition(&value);
+            props.insert(key, schema_def);
         }
 
         ElicitationSchema {
@@ -730,11 +846,113 @@ impl ArraySchemaBuilder {
         };
 
         if let Some(items) = self.items {
-            // Store items as a property (array schemas in MCP are simplified)
+            // Store items as a property (MCP specification defines array schemas this way)
             schema.properties.insert("items".to_string(), *items);
         }
 
         schema
+    }
+}
+
+/// Convert JSON Value to PrimitiveSchemaDefinition
+fn convert_json_value_to_schema_definition(value: &serde_json::Value) -> PrimitiveSchemaDefinition {
+    use serde_json::Value;
+
+    match value {
+        Value::Object(obj) => {
+            // Check for "type" field to determine schema type
+            if let Some(type_val) = obj.get("type") {
+                if let Some(type_str) = type_val.as_str() {
+                    match type_str {
+                        "string" => {
+                            let mut schema = StringSchema::new();
+                            if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
+                                schema.title = Some(title.to_string());
+                            }
+                            if let Some(desc) = obj.get("description").and_then(|v| v.as_str()) {
+                                schema.description = Some(desc.to_string());
+                            }
+                            if let Some(min) = obj.get("minLength").and_then(|v| v.as_u64()) {
+                                schema.min_length = Some(min as u32);
+                            }
+                            if let Some(max) = obj.get("maxLength").and_then(|v| v.as_u64()) {
+                                schema.max_length = Some(max as u32);
+                            }
+                            if let Some(pattern) = obj.get("pattern").and_then(|v| v.as_str()) {
+                                schema.pattern = Some(pattern.to_string());
+                            }
+                            PrimitiveSchemaDefinition::String(schema)
+                        }
+                        "integer" => {
+                            let mut schema = NumberSchema::new_integer();
+                            if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
+                                schema.title = Some(title.to_string());
+                            }
+                            if let Some(desc) = obj.get("description").and_then(|v| v.as_str()) {
+                                schema.description = Some(desc.to_string());
+                            }
+                            if let Some(min) = obj.get("minimum").and_then(|v| v.as_f64()) {
+                                schema.minimum = Some(min);
+                            }
+                            if let Some(max) = obj.get("maximum").and_then(|v| v.as_f64()) {
+                                schema.maximum = Some(max);
+                            }
+                            PrimitiveSchemaDefinition::Number(schema)
+                        }
+                        "number" => {
+                            let mut schema = NumberSchema::new_number();
+                            if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
+                                schema.title = Some(title.to_string());
+                            }
+                            if let Some(desc) = obj.get("description").and_then(|v| v.as_str()) {
+                                schema.description = Some(desc.to_string());
+                            }
+                            if let Some(min) = obj.get("minimum").and_then(|v| v.as_f64()) {
+                                schema.minimum = Some(min);
+                            }
+                            if let Some(max) = obj.get("maximum").and_then(|v| v.as_f64()) {
+                                schema.maximum = Some(max);
+                            }
+                            PrimitiveSchemaDefinition::Number(schema)
+                        }
+                        "boolean" => {
+                            let mut schema = BooleanSchema::new();
+                            if let Some(title) = obj.get("title").and_then(|v| v.as_str()) {
+                                schema.title = Some(title.to_string());
+                            }
+                            if let Some(desc) = obj.get("description").and_then(|v| v.as_str()) {
+                                schema.description = Some(desc.to_string());
+                            }
+                            PrimitiveSchemaDefinition::Boolean(schema)
+                        }
+                        _ => {
+                            // Unknown type, default to string
+                            PrimitiveSchemaDefinition::String(StringSchema::new())
+                        }
+                    }
+                } else {
+                    // No type string, default to string
+                    PrimitiveSchemaDefinition::String(StringSchema::new())
+                }
+            } else {
+                // No type field, default to string
+                PrimitiveSchemaDefinition::String(StringSchema::new())
+            }
+        }
+        // For non-objects, infer type from the JSON value itself
+        Value::String(_) => PrimitiveSchemaDefinition::String(StringSchema::new()),
+        Value::Number(n) => {
+            if n.is_i64() || n.is_u64() {
+                PrimitiveSchemaDefinition::Number(NumberSchema::new_integer())
+            } else {
+                PrimitiveSchemaDefinition::Number(NumberSchema::new_number())
+            }
+        }
+        Value::Bool(_) => PrimitiveSchemaDefinition::Boolean(BooleanSchema::new()),
+        _ => {
+            // Null, arrays, or other types default to string
+            PrimitiveSchemaDefinition::String(StringSchema::new())
+        }
     }
 }
 
@@ -750,7 +968,7 @@ mod tests {
             requested_schema: ElicitationSchema::new()
                 .add_property(
                     "name".to_string(),
-                    string()
+                    string_builder()
                         .title("Project Name")
                         .min_length(3)
                         .max_length(50)
@@ -758,7 +976,7 @@ mod tests {
                 )
                 .add_property(
                     "port".to_string(),
-                    integer()
+                    integer_builder()
                         .title("Port Number")
                         .range(1024.0, 65535.0)
                         .build(),
@@ -820,7 +1038,7 @@ mod tests {
     #[test]
     fn test_schema_builders() {
         // String with email format
-        let email_schema = string().title("Email Address").email().build();
+        let email_schema = string_builder().title("Email Address").email().build();
 
         if let PrimitiveSchemaDefinition::String(s) = email_schema {
             assert_eq!(s.title, Some("Email Address".to_string()));
@@ -830,7 +1048,10 @@ mod tests {
         }
 
         // Integer with range
-        let port_schema = integer().title("Port").range(1024.0, 65535.0).build();
+        let port_schema = integer_builder()
+            .title("Port")
+            .range(1024.0, 65535.0)
+            .build();
 
         if let PrimitiveSchemaDefinition::Number(n) = port_schema {
             assert_eq!(n.schema_type, "integer");
@@ -841,7 +1062,10 @@ mod tests {
         }
 
         // Boolean with default
-        let bool_schema = boolean().title("Enable Debug").default(false).build();
+        let bool_schema = boolean_builder()
+            .title("Enable Debug")
+            .default(false)
+            .build();
 
         if let PrimitiveSchemaDefinition::Boolean(b) = bool_schema {
             assert_eq!(b.default, Some(false));
