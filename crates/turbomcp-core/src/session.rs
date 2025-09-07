@@ -523,7 +523,7 @@ impl SessionManager {
             _total_completions += entry.value().len();
         }
 
-        // TODO: Add these counts to SessionAnalytics struct when extending it
+        // Additional analytics can be added to SessionAnalytics struct when extended
         // Currently tracking: _total_elicitations, _pending_elicitations, _total_completions
 
         analytics
