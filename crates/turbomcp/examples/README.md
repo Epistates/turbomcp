@@ -5,8 +5,8 @@
 **`sampling_ai_code_assistant.rs`** - The crown jewel of TurboMCP examples!
 
 This AI code assistant example demonstrates TurboMCP's capabilities:
-- ✅ **Real MCP 2025-06-18 sampling implementation** (no mocks!)
-- ✅ **Zero-boilerplate macro magic**: `#[server]` + `#[tool]`
+- ✅ **Complete MCP 2025-06-18 sampling implementation**
+- ✅ **Simple macro-driven development**: `#[server]` + `#[tool]`
 - ✅ **Professional features**: Session management, statistics, error handling
 - ✅ **Intelligent LLM workflows**: Bug detection, security analysis, code review
 - ✅ **Ready to use**: Type-safe, protocol-compliant, performance-optimized
@@ -30,7 +30,7 @@ Learn TurboMCP step-by-step with our progressive tutorial series:
 - **`04_resources_and_prompts.rs`** - Resources and prompt handlers
 - **`05_error_handling.rs`** - Proper error handling patterns
 - **`06_stateful_server.rs`** - Managing server state safely
-- **`07_context_and_logging.rs`** - Using RequestContext effectively
+- **`07_context_and_logging.rs`** - Using Context effectively
 - **`08_testing_your_server.rs`** - Testing strategies and patterns
 - **`09_comprehensive_server.rs`** - Full-featured production server
 
@@ -79,7 +79,7 @@ Testing patterns and strategies:
 
 - **`testing_unit_tests.rs`** - Unit testing tools and handlers
 - **`testing_integration.rs`** - Integration testing with real services
-- **`testing_mocking.rs`** - When and how to use mocks properly
+- **`testing_integration.rs`** - Integration testing patterns
 - **`testing_property_based.rs`** - Property-based testing with proptest
 
 ### 🔧 Reference Implementations
@@ -141,7 +141,7 @@ turbomcp-cli tools-list --command "cargo run --example 01_hello_world_macro"
 - **Reference**: `reference_application.rs`
 
 ### Code Standards
-- Every example is production-ready (no placeholders)
+- Every example is production-ready and complete
 - All examples compile and run
 - Clear documentation with learning goals
 - Realistic use cases
@@ -186,7 +186,7 @@ Each example includes:
 - **Categories**: 8
 - **Learning Path**: Progressive from beginner to advanced
 - **Coverage**: 100% of TurboMCP features
-- **Quality**: Production-ready, no mocks or placeholders
+- **Quality**: Production-ready and complete
 
 ## 🚦 Status
 
@@ -202,7 +202,7 @@ All examples are:
 When adding new examples:
 1. Follow the naming convention
 2. Include comprehensive documentation
-3. Ensure production quality (no placeholders)
+3. Ensure production quality and completeness
 4. Add to appropriate category
 5. Update this README
 6. Test with `cargo run --example <name>`

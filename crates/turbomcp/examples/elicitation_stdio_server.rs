@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use turbomcp::elicitation_api::{ElicitationResult, boolean, string};
+use turbomcp::elicitation_api::{ElicitationResult, boolean_builder, string_builder};
 use turbomcp::{Context, McpResult, elicit, server, tool};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,7 +52,7 @@ impl TaskManager {
         let result = elicit("Create a new task")
             .field(
                 "title",
-                string()
+                string_builder()
                     .min_length(1)
                     .max_length(100)
                     .description("Task title")
@@ -60,11 +60,11 @@ impl TaskManager {
             )
             .field(
                 "description",
-                string().description("Task description").build(),
+                string_builder().description("Task description").build(),
             )
             .field(
                 "priority",
-                string()
+                string_builder()
                     .enum_values(vec![
                         "low".to_string(),
                         "medium".to_string(),
@@ -76,11 +76,11 @@ impl TaskManager {
             )
             .field(
                 "assign_to_someone",
-                boolean().description("Assign to someone?").build(),
+                boolean_builder().description("Assign to someone?").build(),
             )
             .field(
                 "assigned_to",
-                string()
+                string_builder()
                     .description("Who to assign to (if assigning)")
                     .build(),
             )
@@ -150,7 +150,7 @@ impl TaskManager {
         let result = elicit(format!("Update priority for: {}", task_title))
             .field(
                 "new_priority",
-                string()
+                string_builder()
                     .enum_values(vec![
                         "low".to_string(),
                         "medium".to_string(),

@@ -27,7 +27,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.0"
+turbomcp = "1.0.4"
 tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -43,9 +43,7 @@ struct Calculator;
 #[server(
     name = "calculator-server",
     version = "1.0.0",
-    description = "A simple calculator with filesystem access",
-    root = "file:///workspace:Workspace",
-    root = "file:///tmp:Temporary Files"
+    description = "A simple calculator"
 )]
 impl Calculator {
     #[tool("Add two numbers")]
@@ -307,29 +305,28 @@ let server = ServerBuilder::new()
 - 🔒 **Security Foundation** - Establish filesystem operation boundaries
 - 🔗 **MCP Compliance** - Full support for `roots/list` protocol method
 
-### Elicitation (New in 1.0.3)
+### Elicitation (Enhanced in 1.0.4)
 
-Server-initiated requests for interactive user input:
+Server-initiated requests for interactive user input with world-class ergonomics:
 
 ```rust
 use turbomcp::prelude::*;
-use turbomcp::elicitation_api::{ElicitationResult, string, boolean};
+use turbomcp::elicitation_api::{ElicitationResult, text, checkbox, integer_field};
+use turbomcp_macros::elicit;
 
 #[tool("Configure deployment")]
 async fn deploy(&self, ctx: Context, project: String) -> McpResult<String> {
-    // Request deployment configuration from user
-    let config = elicit!("Configure deployment for {}", project)
-        .field("environment", string()
-            .enum_values(vec!["dev", "staging", "production"])
-            .description("Target environment")
-            .build())
-        .field("auto_scale", boolean()
-            .description("Enable auto-scaling")
-            .build())
-        .field("replicas", integer()
-            .range(1.0, 10.0)
-            .description("Number of replicas")
-            .build())
+    // Simple elicit macro for quick prompts
+    let confirmation = elicit!(ctx, "Deploy to production?")?;
+    if matches!(confirmation, ElicitationResult::Decline(_)) {
+        return Ok("Deployment cancelled".to_string());
+    }
+
+    // Advanced form with beautiful ergonomic builders
+    let config = elicit("Configure deployment")
+        .field("environment", text("Environment").options(&["dev", "staging", "production"]))
+        .field("auto_scale", checkbox("Enable Auto-scaling").default(true))
+        .field("replicas", integer_field("Replica Count").range(1.0, 10.0))
         .require(vec!["environment"])
         .send(&ctx.request)
         .await?;
@@ -381,13 +378,13 @@ Optimize binary size by selecting only needed transports:
 
 ```toml
 # Minimal STDIO-only server
-turbomcp = { version = "1.0", default-features = false, features = ["minimal"] }
+turbomcp = { version = "1.0.3", default-features = false, features = ["minimal"] }
 
 # Network deployment with TCP + Unix
-turbomcp = { version = "1.0", default-features = false, features = ["network"] }
+turbomcp = { version = "1.0.3", default-features = false, features = ["network"] }
 
 # All transports for maximum flexibility  
-turbomcp = { version = "1.0", default-features = false, features = ["all-transports"] }
+turbomcp = { version = "1.0.3", default-features = false, features = ["all-transports"] }
 ```
 
 ## CLI Tools
@@ -445,12 +442,22 @@ Explore comprehensive examples in the [`crates/turbomcp/examples/`](./crates/tur
 
 - **[client_server_e2e.rs](./crates/turbomcp/examples/client_server_e2e.rs)** - Complete E2E client-server demonstration
 - **[feature_roots_builder.rs](./crates/turbomcp/examples/feature_roots_builder.rs)** - Filesystem roots configuration
+- **[feature_elicitation_server.rs](./crates/turbomcp/examples/feature_elicitation_server.rs)** - 🌟 **Production-grade elicitation server** with zero ceremony builders
+- **[simple_elicit_macro.rs](./crates/turbomcp/examples/simple_elicit_macro.rs)** - Simple elicit!() macro demonstration
+- **[10_elicitation_macro_demo.rs](./crates/turbomcp/examples/10_elicitation_macro_demo.rs)** - Complete elicitation API showcase
 - **[elicitation_websocket_demo.rs](./crates/turbomcp/examples/elicitation_websocket_demo.rs)** - Interactive elicitation over WebSocket
 - **[sampling_ai_code_assistant.rs](./crates/turbomcp/examples/sampling_ai_code_assistant.rs)** - AI assistant with sampling
 - **[transport_http_sse.rs](./crates/turbomcp/examples/transport_http_sse.rs)** - HTTP Server-Sent Events transport
 
 **Run any example:**
 ```bash
+# From workspace root:
+cargo run --example feature_elicitation_server --package turbomcp  # 🌟 Production example
+cargo run --example client_server_e2e --package turbomcp
+cargo run --example feature_roots_builder --package turbomcp
+
+# Or from crate directory:
+cd crates/turbomcp
 cargo run --example client_server_e2e
 cargo run --example feature_roots_builder
 ```

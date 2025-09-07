@@ -36,7 +36,7 @@ use turbomcp::{
     elicitation_api::{ElicitationManager, ElicitationResult},
     mcp_error, server, tool,
 };
-use turbomcp_protocol::elicitation::{boolean, integer, string};
+use turbomcp_protocol::elicitation::{boolean_builder, integer_builder, string_builder};
 use turbomcp_transport::{
     ReconnectConfig, Transport, TransportState, WebSocketBidirectionalConfig,
     WebSocketBidirectionalTransport,
@@ -101,7 +101,7 @@ impl AiAssistantServer {
         let basic_info = elicit("Let's set up your new project!")
             .field(
                 "name",
-                string()
+                string_builder()
                     .min_length(1)
                     .max_length(50)
                     .pattern("^[a-zA-Z0-9-_]+$")
@@ -110,7 +110,7 @@ impl AiAssistantServer {
             )
             .field(
                 "language",
-                string()
+                string_builder()
                     .enum_values(vec![
                         "rust".to_string(),
                         "typescript".to_string(),
@@ -122,7 +122,9 @@ impl AiAssistantServer {
             )
             .field(
                 "description",
-                string().description("Brief project description").build(),
+                string_builder()
+                    .description("Brief project description")
+                    .build(),
             )
             .require(vec!["name", "language"])
             .send(&ctx.request)
@@ -171,24 +173,26 @@ impl AiAssistantServer {
         let result = elicit("Configure your AI assistant preferences")
             .field(
                 "theme",
-                string()
+                string_builder()
                     .enum_values(vec!["light", "dark", "auto"])
                     .description("UI theme preference")
                     .build(),
             )
             .field(
                 "notifications",
-                boolean()
+                boolean_builder()
                     .description("Enable desktop notifications")
                     .build(),
             )
             .field(
                 "auto_save",
-                boolean().description("Auto-save work in progress").build(),
+                boolean_builder()
+                    .description("Auto-save work in progress")
+                    .build(),
             )
             .field(
                 "save_interval",
-                integer()
+                integer_builder()
                     .range(1.0, 60.0)
                     .description("Auto-save interval in minutes")
                     .build(),
@@ -196,11 +200,11 @@ impl AiAssistantServer {
             // Using individual fields for advanced settings
             .field(
                 "enable_telemetry",
-                boolean().description("Enable telemetry").build(),
+                boolean_builder().description("Enable telemetry").build(),
             )
             .field(
                 "enable_experimental",
-                boolean()
+                boolean_builder()
                     .description("Enable experimental features")
                     .build(),
             )
@@ -250,22 +254,24 @@ impl AiAssistantServer {
         let options = elicit("How should I generate this code?")
             .field(
                 "style",
-                string()
+                string_builder()
                     .enum_values(vec!["concise", "verbose", "documented"])
                     .description("Code style")
                     .build(),
             )
             .field(
                 "include_tests",
-                boolean().description("Generate unit tests").build(),
+                boolean_builder().description("Generate unit tests").build(),
             )
             .field(
                 "include_docs",
-                boolean().description("Generate documentation").build(),
+                boolean_builder()
+                    .description("Generate documentation")
+                    .build(),
             )
             .field(
                 "complexity",
-                string()
+                string_builder()
                     .enum_values(vec!["simple", "moderate", "advanced"])
                     .description("Code complexity level")
                     .build(),
@@ -318,7 +324,7 @@ impl AiAssistantServer {
         let result = elicit(format!("Select a framework for your {} project", language))
             .field(
                 "framework",
-                string()
+                string_builder()
                     .enum_values(frameworks.iter().map(|s| s.to_string()).collect())
                     .description("Web framework")
                     .build(),
@@ -351,7 +357,7 @@ impl AiAssistantServer {
         let result = elicit("Final configuration for your project")
             .field(
                 "port",
-                integer()
+                integer_builder()
                     .range(1024.0, 65535.0)
                     .description("Server port")
                     .build(),
@@ -359,7 +365,7 @@ impl AiAssistantServer {
             // Using a simple comma-separated string for features
             .field(
                 "features",
-                string()
+                string_builder()
                     .description("Comma-separated list of features")
                     .build(),
             )

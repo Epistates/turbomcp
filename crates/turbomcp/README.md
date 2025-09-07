@@ -26,8 +26,8 @@
 - **Automatic schema generation** - JSON schemas from Rust types
 - **Type-safe parameters** - Compile-time validation and conversion
 - **Context injection** - Request context available anywhere in signature
-- **Intuitive APIs** - `elicit!()` macro for user input, `ctx.create_message()` for sampling
-- **Perfect Context** - `ctx.user_id()`, `ctx.is_authenticated()`, full RequestContext delegation
+- **Intuitive APIs** - `elicit()` builder for user input, `ctx.create_message()` for sampling
+- **Perfect Context** - `ctx.user_id()`, `ctx.is_authenticated()`, full Context API
 
 ### 🛡️ **Enterprise Security**
 - **OAuth 2.0 integration** - Google, GitHub, Microsoft providers
@@ -83,7 +83,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.0.3"
+turbomcp = "1.0.4"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -220,7 +220,7 @@ async fn code_review_prompt(
 }
 ```
 
-### MCP 2025-06-18 Enhanced Features (New in v1.0.3)
+### MCP 2025-06-18 Enhanced Features (New in v1.0.4)
 
 #### Roots Support - Filesystem Boundaries
 
@@ -256,7 +256,11 @@ async fn configure_app(&self, ctx: Context) -> McpResult<String> {
         .add_required(["theme"]);
     
     // Simple, elegant elicitation with type safety
-    let result = elicit!(ctx, "Configure your preferences", schema).await?;
+    let result = elicit("Configure your preferences")
+        .field("theme", text("UI theme preference")
+            .options(&["light", "dark"]))
+        .send(&ctx)
+        .await?;
     
     // Process the structured response
     if let Some(data) = result.content {
@@ -614,7 +618,7 @@ Enable SIMD acceleration for maximum performance:
 
 ```toml
 [dependencies]
-turbomcp = { version = "1.0.3", features = ["simd"] }
+turbomcp = { version = "1.0.4", features = ["simd"] }
 ```
 
 Configure performance settings:

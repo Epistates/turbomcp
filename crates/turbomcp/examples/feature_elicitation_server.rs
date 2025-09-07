@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use turbomcp::elicitation_api::{ElicitationResult, boolean, integer, string};
+use turbomcp::elicitation_api::{
+    ElicitationResult, boolean_builder, integer_builder, string_builder,
+};
 use turbomcp::{Context, McpError, McpResult, elicit, server, tool};
 
 /// Project Setup Wizard - Uses elicitation for configuration
@@ -53,7 +55,7 @@ impl SetupWizard {
         let result = elicit("Let's set up your new project!")
             .field(
                 "name",
-                string()
+                string_builder()
                     .min_length(1)
                     .max_length(50)
                     .pattern("^[a-zA-Z0-9-_]+$")
@@ -62,7 +64,7 @@ impl SetupWizard {
             )
             .field(
                 "project_type",
-                string()
+                string_builder()
                     .enum_values(vec![
                         "web_app".to_string(),
                         "cli_tool".to_string(),
@@ -74,7 +76,7 @@ impl SetupWizard {
             )
             .field(
                 "language",
-                string()
+                string_builder()
                     .enum_values(vec![
                         "rust".to_string(),
                         "typescript".to_string(),
@@ -86,13 +88,13 @@ impl SetupWizard {
             )
             .field(
                 "use_database",
-                boolean()
+                boolean_builder()
                     .description("Will this project use a database?")
                     .build(),
             )
             .field(
                 "database_type",
-                string()
+                string_builder()
                     .enum_values(vec![
                         "postgresql".to_string(),
                         "mysql".to_string(),
@@ -104,14 +106,16 @@ impl SetupWizard {
             )
             .field(
                 "port",
-                integer()
+                integer_builder()
                     .range(1024.0, 65535.0)
                     .description("Port number for the service")
                     .build(),
             )
             .field(
                 "enable_auth",
-                boolean().description("Enable authentication?").build(),
+                boolean_builder()
+                    .description("Enable authentication?")
+                    .build(),
             )
             .require(vec!["name", "project_type", "language", "port"])
             .send(&ctx.request)
@@ -194,7 +198,7 @@ impl SetupWizard {
         ))
         .field(
             "confirm",
-            boolean()
+            boolean_builder()
                 .description("Confirm project creation with defaults")
                 .build(),
         )
@@ -244,7 +248,7 @@ impl SetupWizard {
         let result = elicit("Select database configuration")
             .field(
                 "database_type",
-                string()
+                string_builder()
                     .enum_values(vec![
                         "postgresql".to_string(),
                         "mysql".to_string(),
@@ -257,11 +261,13 @@ impl SetupWizard {
             )
             .field(
                 "connection_pooling",
-                boolean().description("Enable connection pooling?").build(),
+                boolean_builder()
+                    .description("Enable connection pooling?")
+                    .build(),
             )
             .field(
                 "max_connections",
-                integer()
+                integer_builder()
                     .range(1.0, 100.0)
                     .description("Maximum connections in pool")
                     .build(),
@@ -361,7 +367,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n✅ Real Elicitation Server Ready!");
     println!("\n📋 How This Real Implementation Works:");
     println!("1. Tools use the `elicit()` builder to create requests");
-    println!("2. Schema builders (string(), boolean(), integer()) define fields");
+    println!(
+        "2. Schema builders (string_builder(), boolean_builder(), integer_builder()) define fields"
+    );
     println!("3. Context parameter enables elicitation via ctx.request");
     println!("4. ElicitationResult enum handles Accept/Decline/Cancel");
     println!("5. Data extraction uses type-safe getters");
