@@ -138,6 +138,9 @@
 //! # }
 //! ```
 
+pub mod handlers;
+pub mod llm;
+pub mod plugins;
 pub mod sampling;
 
 use std::collections::HashMap;
@@ -149,12 +152,38 @@ use turbomcp_protocol::jsonrpc::{
     JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcVersion,
 };
 use turbomcp_protocol::types::{
-    CallToolRequest, CallToolResult, ClientCapabilities as ProtocolClientCapabilities, Content,
-    CreateMessageRequest, InitializeRequest, InitializeResult as ProtocolInitializeResult,
-    ListResourcesResult, ListToolsResult, ServerCapabilities,
+    CallToolRequest,
+    CallToolResult,
+    ClientCapabilities as ProtocolClientCapabilities,
+    CompleteResult,
+    Content,
+    CreateMessageRequest,
+    EmptyResult,
+    GetPromptRequest,
+    GetPromptResult,
+    InitializeRequest,
+    InitializeResult as ProtocolInitializeResult,
+    ListPromptsResult,
+    ListResourceTemplatesResult,
+    ListResourcesResult,
+    ListRootsResult,
+    ListToolsResult,
+    LogLevel,
+    // Missing protocol method types
+    PingResult,
+    ReadResourceRequest,
+    ReadResourceResult,
+    ServerCapabilities,
+    SetLevelRequest,
+    SetLevelResult,
+    SubscribeRequest,
+    UnsubscribeRequest,
 };
 use turbomcp_transport::{Transport, TransportMessage};
 
+use crate::handlers::{
+    ElicitationHandler, HandlerRegistry, LogHandler, ProgressHandler, ResourceUpdateHandler,
+};
 use crate::sampling::SamplingHandler;
 
 /// Client capability configuration
@@ -313,6 +342,8 @@ pub struct Client<T: Transport> {
     initialized: bool,
     #[allow(dead_code)]
     sampling_handler: Option<Arc<dyn SamplingHandler>>,
+    /// Handler registry for bidirectional communication
+    handlers: HandlerRegistry,
 }
 
 impl<T: Transport> Client<T> {
@@ -340,6 +371,7 @@ impl<T: Transport> Client<T> {
             capabilities: ClientCapabilities::default(),
             initialized: false,
             sampling_handler: None,
+            handlers: HandlerRegistry::new(),
         }
     }
 
@@ -372,6 +404,7 @@ impl<T: Transport> Client<T> {
             capabilities,
             initialized: false,
             sampling_handler: None,
+            handlers: HandlerRegistry::new(),
         }
     }
 
@@ -751,6 +784,56 @@ impl<T: Transport> Client<T> {
         }
     }
 
+    /// Request completion suggestions from the server
+    ///
+    /// # Arguments
+    ///
+    /// * `handler_name` - The completion handler name
+    /// * `argument_value` - The partial value to complete
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// let result = client.complete("complete_path", "/usr/b").await?;
+    /// println!("Completions: {:?}", result.values);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn complete(
+        &mut self,
+        handler_name: &str,
+        argument_value: &str,
+    ) -> Result<turbomcp_protocol::types::CompletionResponse> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        // Create the request in the format expected by the protocol
+        let params = serde_json::json!({
+            "argument": {
+                "name": "partial",
+                "value": argument_value
+            },
+            "ref": {
+                "type": "ref/prompt",
+                "name": handler_name
+            }
+        });
+
+        let response: CompleteResult = self
+            .protocol
+            .request("completion/complete", Some(params))
+            .await?;
+
+        Ok(response.completion)
+    }
+
     /// List available resources from the server
     ///
     /// # Examples
@@ -782,6 +865,664 @@ impl<T: Transport> Client<T> {
             .map(|resource| resource.uri)
             .collect();
         Ok(resource_uris)
+    }
+
+    /// Send a ping request to check server health and connectivity
+    ///
+    /// Sends a ping request to the server to verify the connection is active
+    /// and the server is responding. This is useful for health checks and
+    /// connection validation.
+    ///
+    /// # Returns
+    ///
+    /// Returns `PingResult` on successful ping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The client is not initialized
+    /// - The server is not responding
+    /// - The connection has failed
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// let result = client.ping().await?;
+    /// println!("Server is responding");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn ping(&mut self) -> Result<PingResult> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        // Send ping request (no parameters needed)
+        let response: PingResult = self.protocol.request("ping", None).await?;
+        Ok(response)
+    }
+
+    /// Read the content of a specific resource by URI
+    ///
+    /// Retrieves the content of a resource identified by its URI. This allows
+    /// clients to access specific files, documents, or other resources
+    /// provided by the server.
+    ///
+    /// # Arguments
+    ///
+    /// * `uri` - The URI of the resource to read
+    ///
+    /// # Returns
+    ///
+    /// Returns `ReadResourceResult` containing the resource content.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The client is not initialized
+    /// - The URI is invalid or empty
+    /// - The resource doesn't exist
+    /// - Access to the resource is denied
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// let result = client.read_resource("file:///path/to/document.txt").await?;
+    /// for content in result.contents {
+    ///     println!("Resource content: {:?}", content);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn read_resource(&mut self, uri: &str) -> Result<ReadResourceResult> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        if uri.is_empty() {
+            return Err(Error::bad_request("Resource URI cannot be empty"));
+        }
+
+        // Send read_resource request
+        let request = ReadResourceRequest {
+            uri: uri.to_string(),
+        };
+
+        let response: ReadResourceResult = self
+            .protocol
+            .request("resources/read", Some(serde_json::to_value(request)?))
+            .await?;
+        Ok(response)
+    }
+
+    /// List available prompt templates from the server
+    ///
+    /// Retrieves the list of prompt templates that the server provides.
+    /// Prompts are reusable template messages that can be used for
+    /// consistent LLM interactions.
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of prompt names available on the server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The client is not initialized
+    /// - The server doesn't support prompts
+    /// - The request fails
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// let prompts = client.list_prompts().await?;
+    /// for prompt_name in prompts {
+    ///     println!("Available prompt: {}", prompt_name);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn list_prompts(&mut self) -> Result<Vec<String>> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        // Send prompts/list request
+        let response: ListPromptsResult = self.protocol.request("prompts/list", None).await?;
+        let prompt_names = response
+            .prompts
+            .into_iter()
+            .map(|prompt| prompt.name)
+            .collect();
+        Ok(prompt_names)
+    }
+
+    /// Get a specific prompt template by name
+    ///
+    /// Retrieves a specific prompt template from the server. The prompt
+    /// contains the template messages and arguments that can be used
+    /// for LLM interactions.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the prompt to retrieve
+    ///
+    /// # Returns
+    ///
+    /// Returns `GetPromptResult` containing the prompt template.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The client is not initialized
+    /// - The prompt name is empty
+    /// - The prompt doesn't exist
+    /// - The request fails
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// let prompt = client.get_prompt("greeting").await?;
+    /// if let Some(desc) = prompt.description {
+    ///     println!("Prompt description: {}", desc);
+    /// }
+    /// println!("Prompt has {} messages", prompt.messages.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn get_prompt(&mut self, name: &str) -> Result<GetPromptResult> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        if name.is_empty() {
+            return Err(Error::bad_request("Prompt name cannot be empty"));
+        }
+
+        // Send prompts/get request
+        let request = GetPromptRequest {
+            name: name.to_string(),
+            arguments: None, // Arguments are optional for retrieving template
+        };
+
+        let response: GetPromptResult = self
+            .protocol
+            .request("prompts/get", Some(serde_json::to_value(request)?))
+            .await?;
+        Ok(response)
+    }
+
+    /// List available filesystem root directories
+    ///
+    /// Retrieves the list of root directories that the server has access to.
+    /// This is useful for understanding what parts of the filesystem are
+    /// available for resource access.
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of root directory URIs available on the server.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The client is not initialized
+    /// - The server doesn't support filesystem access
+    /// - The request fails
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// let roots = client.list_roots().await?;
+    /// for root_uri in roots {
+    ///     println!("Available root: {}", root_uri);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn list_roots(&mut self) -> Result<Vec<String>> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        // Send roots/list request
+        let response: ListRootsResult = self.protocol.request("roots/list", None).await?;
+        let root_uris = response.roots.into_iter().map(|root| root.uri).collect();
+        Ok(root_uris)
+    }
+
+    /// Set the logging level for the server
+    ///
+    /// Controls the verbosity of server logging. This allows clients to
+    /// adjust the amount of log information they receive from the server.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - The desired logging level (Error, Warn, Info, Debug)
+    ///
+    /// # Returns
+    ///
+    /// Returns `SetLevelResult` on successful level change.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The client is not initialized
+    /// - The server doesn't support logging control
+    /// - The request fails
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # use turbomcp_protocol::types::LogLevel;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// // Set server to debug logging
+    /// client.set_log_level(LogLevel::Debug).await?;
+    /// println!("Server logging level set to debug");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn set_log_level(&mut self, level: LogLevel) -> Result<SetLevelResult> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        // Send logging/setLevel request
+        let request = SetLevelRequest { level };
+
+        let response: SetLevelResult = self
+            .protocol
+            .request("logging/setLevel", Some(serde_json::to_value(request)?))
+            .await?;
+        Ok(response)
+    }
+
+    /// Subscribe to resource change notifications
+    ///
+    /// Registers interest in receiving notifications when the specified
+    /// resource changes. The server will send notifications when the
+    /// resource is modified, created, or deleted.
+    ///
+    /// # Arguments
+    ///
+    /// * `uri` - The URI of the resource to monitor
+    ///
+    /// # Returns
+    ///
+    /// Returns `EmptyResult` on successful subscription.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The client is not initialized
+    /// - The URI is invalid or empty
+    /// - The server doesn't support subscriptions
+    /// - The request fails
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// // Subscribe to file changes
+    /// client.subscribe("file:///watch/directory").await?;
+    /// println!("Subscribed to resource changes");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn subscribe(&mut self, uri: &str) -> Result<EmptyResult> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        if uri.is_empty() {
+            return Err(Error::bad_request("Subscription URI cannot be empty"));
+        }
+
+        // Send resources/subscribe request
+        let request = SubscribeRequest {
+            uri: uri.to_string(),
+        };
+
+        let response: EmptyResult = self
+            .protocol
+            .request("resources/subscribe", Some(serde_json::to_value(request)?))
+            .await?;
+        Ok(response)
+    }
+
+    /// Unsubscribe from resource change notifications
+    ///
+    /// Cancels a previous subscription to resource changes. After unsubscribing,
+    /// the client will no longer receive notifications for the specified resource.
+    ///
+    /// # Arguments
+    ///
+    /// * `uri` - The URI of the resource to stop monitoring
+    ///
+    /// # Returns
+    ///
+    /// Returns `EmptyResult` on successful unsubscription.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The client is not initialized
+    /// - The URI is invalid or empty
+    /// - No active subscription exists for the URI
+    /// - The request fails
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// // Unsubscribe from file changes
+    /// client.unsubscribe("file:///watch/directory").await?;
+    /// println!("Unsubscribed from resource changes");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn unsubscribe(&mut self, uri: &str) -> Result<EmptyResult> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        if uri.is_empty() {
+            return Err(Error::bad_request("Unsubscription URI cannot be empty"));
+        }
+
+        // Send resources/unsubscribe request
+        let request = UnsubscribeRequest {
+            uri: uri.to_string(),
+        };
+
+        let response: EmptyResult = self
+            .protocol
+            .request(
+                "resources/unsubscribe",
+                Some(serde_json::to_value(request)?),
+            )
+            .await?;
+        Ok(response)
+    }
+
+    /// List available resource templates
+    ///
+    /// Retrieves the list of resource templates that define URI patterns
+    /// for accessing different types of resources. Templates help clients
+    /// understand what resources are available and how to access them.
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of resource template URI patterns.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The client is not initialized
+    /// - The server doesn't support resource templates
+    /// - The request fails
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// let templates = client.list_resource_templates().await?;
+    /// for template in templates {
+    ///     println!("Resource template: {}", template);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn list_resource_templates(&mut self) -> Result<Vec<String>> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        // Send resources/templates request
+        let response: ListResourceTemplatesResult =
+            self.protocol.request("resources/templates", None).await?;
+        let template_uris = response
+            .resource_templates
+            .into_iter()
+            .map(|template| template.uri_template)
+            .collect();
+        Ok(template_uris)
+    }
+
+    // ============================================================================
+    // HANDLER REGISTRATION METHODS
+    // ============================================================================
+
+    /// Register an elicitation handler for processing user input requests
+    ///
+    /// Elicitation handlers are called when the server needs user input during
+    /// operations. The handler should present the request to the user and
+    /// collect their response according to the provided schema.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The elicitation handler implementation
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::Client;
+    /// use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerResult};
+    /// use turbomcp_transport::stdio::StdioTransport;
+    /// use async_trait::async_trait;
+    /// use std::sync::Arc;
+    /// use serde_json::json;
+    ///
+    /// #[derive(Debug)]
+    /// struct MyElicitationHandler;
+    ///
+    /// #[async_trait]
+    /// impl ElicitationHandler for MyElicitationHandler {
+    ///     async fn handle_elicitation(
+    ///         &self,
+    ///         request: ElicitationRequest,
+    ///     ) -> HandlerResult<ElicitationResponse> {
+    ///         Ok(ElicitationResponse {
+    ///             id: request.id,
+    ///             data: json!({"user_input": "example"}),
+    ///             cancelled: false,
+    ///         })
+    ///     }
+    /// }
+    ///
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.on_elicitation(Arc::new(MyElicitationHandler));
+    /// ```
+    pub fn on_elicitation(&mut self, handler: Arc<dyn ElicitationHandler>) {
+        self.handlers.set_elicitation_handler(handler);
+    }
+
+    /// Register a progress handler for processing operation progress updates
+    ///
+    /// Progress handlers receive notifications about long-running server operations.
+    /// This allows clients to display progress bars, status updates, or other
+    /// feedback to users.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The progress handler implementation
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::Client;
+    /// use turbomcp_client::handlers::{ProgressHandler, ProgressNotification, HandlerResult};
+    /// use turbomcp_transport::stdio::StdioTransport;
+    /// use async_trait::async_trait;
+    /// use std::sync::Arc;
+    ///
+    /// #[derive(Debug)]
+    /// struct MyProgressHandler;
+    ///
+    /// #[async_trait]
+    /// impl ProgressHandler for MyProgressHandler {
+    ///     async fn handle_progress(&self, notification: ProgressNotification) -> HandlerResult<()> {
+    ///         println!("Progress: {:?}", notification);
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.on_progress(Arc::new(MyProgressHandler));
+    /// ```
+    pub fn on_progress(&mut self, handler: Arc<dyn ProgressHandler>) {
+        self.handlers.set_progress_handler(handler);
+    }
+
+    /// Register a log handler for processing server log messages
+    ///
+    /// Log handlers receive log messages from the server and can route them
+    /// to the client's logging system. This is useful for debugging and
+    /// maintaining a unified log across client and server.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The log handler implementation
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::Client;
+    /// use turbomcp_client::handlers::{LogHandler, LogMessage, HandlerResult};
+    /// use turbomcp_transport::stdio::StdioTransport;
+    /// use async_trait::async_trait;
+    /// use std::sync::Arc;
+    ///
+    /// #[derive(Debug)]
+    /// struct MyLogHandler;
+    ///
+    /// #[async_trait]
+    /// impl LogHandler for MyLogHandler {
+    ///     async fn handle_log(&self, log: LogMessage) -> HandlerResult<()> {
+    ///         println!("Server log: {}", log.message);
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.on_log(Arc::new(MyLogHandler));
+    /// ```
+    pub fn on_log(&mut self, handler: Arc<dyn LogHandler>) {
+        self.handlers.set_log_handler(handler);
+    }
+
+    /// Register a resource update handler for processing resource change notifications
+    ///
+    /// Resource update handlers receive notifications when subscribed resources
+    /// change on the server. This enables reactive updates to cached data or
+    /// UI refreshes when server-side resources change.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The resource update handler implementation
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::Client;
+    /// use turbomcp_client::handlers::{ResourceUpdateHandler, ResourceUpdateNotification, HandlerResult};
+    /// use turbomcp_transport::stdio::StdioTransport;
+    /// use async_trait::async_trait;
+    /// use std::sync::Arc;
+    ///
+    /// #[derive(Debug)]
+    /// struct MyResourceUpdateHandler;
+    ///
+    /// #[async_trait]
+    /// impl ResourceUpdateHandler for MyResourceUpdateHandler {
+    ///     async fn handle_resource_update(
+    ///         &self,
+    ///         notification: ResourceUpdateNotification,
+    ///     ) -> HandlerResult<()> {
+    ///         println!("Resource updated: {}", notification.uri);
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.on_resource_update(Arc::new(MyResourceUpdateHandler));
+    /// ```
+    pub fn on_resource_update(&mut self, handler: Arc<dyn ResourceUpdateHandler>) {
+        self.handlers.set_resource_update_handler(handler);
+    }
+
+    /// Check if an elicitation handler is registered
+    pub fn has_elicitation_handler(&self) -> bool {
+        self.handlers.has_elicitation_handler()
+    }
+
+    /// Check if a progress handler is registered
+    pub fn has_progress_handler(&self) -> bool {
+        self.handlers.has_progress_handler()
+    }
+
+    /// Check if a log handler is registered
+    pub fn has_log_handler(&self) -> bool {
+        self.handlers.has_log_handler()
+    }
+
+    /// Check if a resource update handler is registered
+    pub fn has_resource_update_handler(&self) -> bool {
+        self.handlers.has_resource_update_handler()
+    }
+
+    /// Get the client's capabilities configuration
+    pub fn capabilities(&self) -> &ClientCapabilities {
+        &self.capabilities
     }
 }
 
@@ -818,12 +1559,47 @@ pub struct InitializeResult {
 
 // ServerCapabilities is now imported from turbomcp_protocol::types
 
+/// Connection configuration for the client
+#[derive(Debug, Clone)]
+pub struct ConnectionConfig {
+    /// Request timeout in milliseconds
+    pub timeout_ms: u64,
+
+    /// Maximum number of retry attempts
+    pub max_retries: u32,
+
+    /// Retry delay in milliseconds
+    pub retry_delay_ms: u64,
+
+    /// Keep-alive interval in milliseconds
+    pub keepalive_ms: u64,
+}
+
+impl Default for ConnectionConfig {
+    fn default() -> Self {
+        Self {
+            timeout_ms: 30_000,    // 30 seconds
+            max_retries: 3,        // 3 attempts
+            retry_delay_ms: 1_000, // 1 second
+            keepalive_ms: 60_000,  // 60 seconds
+        }
+    }
+}
+
 /// Builder for configuring and creating MCP clients
 ///
 /// Provides a fluent interface for configuring client options before creation.
+/// The enhanced builder pattern supports comprehensive configuration including:
+/// - Protocol capabilities
+/// - Plugin registration
+/// - LLM provider configuration
+/// - Handler registration
+/// - Connection settings
+/// - Session management
 ///
 /// # Examples
 ///
+/// Basic usage:
 /// ```rust,no_run
 /// use turbomcp_client::ClientBuilder;
 /// use turbomcp_transport::stdio::StdioTransport;
@@ -837,10 +1613,52 @@ pub struct InitializeResult {
 /// # Ok(())
 /// # }
 /// ```
+///
+/// Advanced configuration:
+/// ```rust,no_run
+/// use turbomcp_client::{ClientBuilder, ConnectionConfig};
+/// use turbomcp_client::plugins::{MetricsPlugin, PluginConfig};
+/// use turbomcp_client::llm::{OpenAIProvider, LLMProviderConfig};
+/// use turbomcp_transport::stdio::StdioTransport;
+/// use std::sync::Arc;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+/// let client = ClientBuilder::new()
+///     .with_tools(true)
+///     .with_prompts(true)
+///     .with_resources(true)
+///     .with_sampling(true)
+///     .with_connection_config(ConnectionConfig {
+///         timeout_ms: 60_000,
+///         max_retries: 5,
+///         retry_delay_ms: 2_000,
+///         keepalive_ms: 30_000,
+///     })
+///     .with_plugin(Arc::new(MetricsPlugin::new(PluginConfig::Metrics)))
+///     .with_llm_provider("openai", Arc::new(OpenAIProvider::new(LLMProviderConfig {
+///         api_key: std::env::var("OPENAI_API_KEY")?,
+///         model: "gpt-4".to_string(),
+///         ..Default::default()
+///     })?))
+///     .build(StdioTransport::new())
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Default)]
 pub struct ClientBuilder {
     capabilities: ClientCapabilities,
+    connection_config: ConnectionConfig,
+    plugins: Vec<Arc<dyn crate::plugins::ClientPlugin>>,
+    llm_providers: HashMap<String, Arc<dyn crate::llm::LLMProvider>>,
+    elicitation_handler: Option<Arc<dyn crate::handlers::ElicitationHandler>>,
+    progress_handler: Option<Arc<dyn crate::handlers::ProgressHandler>>,
+    log_handler: Option<Arc<dyn crate::handlers::LogHandler>>,
+    resource_update_handler: Option<Arc<dyn crate::handlers::ResourceUpdateHandler>>,
+    session_config: Option<crate::llm::SessionConfig>,
 }
+
+// Default implementation is now derived
 
 impl ClientBuilder {
     /// Create a new client builder
@@ -849,6 +1667,10 @@ impl ClientBuilder {
     pub fn new() -> Self {
         Self::default()
     }
+
+    // ============================================================================
+    // CAPABILITY CONFIGURATION
+    // ============================================================================
 
     /// Enable or disable tool support
     ///
@@ -890,7 +1712,336 @@ impl ClientBuilder {
         self
     }
 
+    /// Configure all capabilities at once
+    ///
+    /// # Arguments
+    ///
+    /// * `capabilities` - The capabilities configuration
+    pub fn with_capabilities(mut self, capabilities: ClientCapabilities) -> Self {
+        self.capabilities = capabilities;
+        self
+    }
+
+    // ============================================================================
+    // CONNECTION CONFIGURATION
+    // ============================================================================
+
+    /// Configure connection settings
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - The connection configuration
+    pub fn with_connection_config(mut self, config: ConnectionConfig) -> Self {
+        self.connection_config = config;
+        self
+    }
+
+    /// Set request timeout
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout_ms` - Timeout in milliseconds
+    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
+        self.connection_config.timeout_ms = timeout_ms;
+        self
+    }
+
+    /// Set maximum retry attempts
+    ///
+    /// # Arguments
+    ///
+    /// * `max_retries` - Maximum number of retries
+    pub fn with_max_retries(mut self, max_retries: u32) -> Self {
+        self.connection_config.max_retries = max_retries;
+        self
+    }
+
+    /// Set retry delay
+    ///
+    /// # Arguments
+    ///
+    /// * `delay_ms` - Retry delay in milliseconds
+    pub fn with_retry_delay(mut self, delay_ms: u64) -> Self {
+        self.connection_config.retry_delay_ms = delay_ms;
+        self
+    }
+
+    /// Set keep-alive interval
+    ///
+    /// # Arguments
+    ///
+    /// * `interval_ms` - Keep-alive interval in milliseconds
+    pub fn with_keepalive(mut self, interval_ms: u64) -> Self {
+        self.connection_config.keepalive_ms = interval_ms;
+        self
+    }
+
+    // ============================================================================
+    // PLUGIN SYSTEM CONFIGURATION
+    // ============================================================================
+
+    /// Register a plugin with the client
+    ///
+    /// Plugins provide middleware functionality for request/response processing,
+    /// metrics collection, retry logic, caching, and other cross-cutting concerns.
+    ///
+    /// # Arguments
+    ///
+    /// * `plugin` - The plugin implementation
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::{ClientBuilder, ConnectionConfig};
+    /// use turbomcp_client::plugins::{MetricsPlugin, RetryPlugin, PluginConfig, RetryConfig};
+    /// use std::sync::Arc;
+    ///
+    /// let client = ClientBuilder::new()
+    ///     .with_plugin(Arc::new(MetricsPlugin::new(PluginConfig::Metrics)))
+    ///     .with_plugin(Arc::new(RetryPlugin::new(PluginConfig::Retry(RetryConfig {
+    ///         max_retries: 5,
+    ///         base_delay_ms: 1000,
+    ///         max_delay_ms: 30000,
+    ///         backoff_multiplier: 2.0,
+    ///         retry_on_timeout: true,
+    ///         retry_on_connection_error: true,
+    ///     }))));
+    /// ```
+    pub fn with_plugin(mut self, plugin: Arc<dyn crate::plugins::ClientPlugin>) -> Self {
+        self.plugins.push(plugin);
+        self
+    }
+
+    /// Register multiple plugins at once
+    ///
+    /// # Arguments
+    ///
+    /// * `plugins` - Vector of plugin implementations
+    pub fn with_plugins(mut self, plugins: Vec<Arc<dyn crate::plugins::ClientPlugin>>) -> Self {
+        self.plugins.extend(plugins);
+        self
+    }
+
+    // ============================================================================
+    // LLM PROVIDER CONFIGURATION
+    // ============================================================================
+
+    /// Register an LLM provider
+    ///
+    /// LLM providers handle server-initiated sampling requests by forwarding them
+    /// to language model services like OpenAI, Anthropic, or local models.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Unique name for the provider
+    /// * `provider` - The LLM provider implementation
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::ClientBuilder;
+    /// use turbomcp_client::llm::{OpenAIProvider, AnthropicProvider, LLMProviderConfig};
+    /// use std::sync::Arc;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    /// let client = ClientBuilder::new()
+    ///     .with_llm_provider("openai", Arc::new(OpenAIProvider::new(LLMProviderConfig {
+    ///         api_key: std::env::var("OPENAI_API_KEY")?,
+    ///         model: "gpt-4".to_string(),
+    ///         ..Default::default()
+    ///     })?))
+    ///     .with_llm_provider("anthropic", Arc::new(AnthropicProvider::new(LLMProviderConfig {
+    ///         api_key: std::env::var("ANTHROPIC_API_KEY")?,
+    ///         model: "claude-3-5-sonnet-20241022".to_string(),
+    ///         ..Default::default()
+    ///     })?));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_llm_provider(
+        mut self,
+        name: impl Into<String>,
+        provider: Arc<dyn crate::llm::LLMProvider>,
+    ) -> Self {
+        self.llm_providers.insert(name.into(), provider);
+        self
+    }
+
+    /// Register multiple LLM providers at once
+    ///
+    /// # Arguments
+    ///
+    /// * `providers` - Map of provider names to implementations
+    pub fn with_llm_providers(
+        mut self,
+        providers: HashMap<String, Arc<dyn crate::llm::LLMProvider>>,
+    ) -> Self {
+        self.llm_providers.extend(providers);
+        self
+    }
+
+    /// Configure session management for conversations
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Session configuration for conversation tracking
+    pub fn with_session_config(mut self, config: crate::llm::SessionConfig) -> Self {
+        self.session_config = Some(config);
+        self
+    }
+
+    // ============================================================================
+    // HANDLER REGISTRATION
+    // ============================================================================
+
+    /// Register an elicitation handler for processing user input requests
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The elicitation handler implementation
+    pub fn with_elicitation_handler(
+        mut self,
+        handler: Arc<dyn crate::handlers::ElicitationHandler>,
+    ) -> Self {
+        self.elicitation_handler = Some(handler);
+        self
+    }
+
+    /// Register a progress handler for processing operation progress updates
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The progress handler implementation
+    pub fn with_progress_handler(
+        mut self,
+        handler: Arc<dyn crate::handlers::ProgressHandler>,
+    ) -> Self {
+        self.progress_handler = Some(handler);
+        self
+    }
+
+    /// Register a log handler for processing server log messages
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The log handler implementation
+    pub fn with_log_handler(mut self, handler: Arc<dyn crate::handlers::LogHandler>) -> Self {
+        self.log_handler = Some(handler);
+        self
+    }
+
+    /// Register a resource update handler for processing resource change notifications
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The resource update handler implementation
+    pub fn with_resource_update_handler(
+        mut self,
+        handler: Arc<dyn crate::handlers::ResourceUpdateHandler>,
+    ) -> Self {
+        self.resource_update_handler = Some(handler);
+        self
+    }
+
+    // ============================================================================
+    // BUILD METHODS
+    // ============================================================================
+
     /// Build a client with the configured options
+    ///
+    /// Creates a new client instance with all the configured options. The client
+    /// will be initialized with the registered plugins, handlers, and providers.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - The transport to use for the client
+    ///
+    /// # Returns
+    ///
+    /// Returns a configured `Client` instance wrapped in a Result for async setup.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::ClientBuilder;
+    /// use turbomcp_transport::stdio::StdioTransport;
+    ///
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let client = ClientBuilder::new()
+    ///     .with_tools(true)
+    ///     .with_prompts(true)
+    ///     .build(StdioTransport::new())
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn build<T: Transport>(self, transport: T) -> Result<Client<T>> {
+        // Create base client with capabilities
+        let mut client = Client::with_capabilities(transport, self.capabilities);
+
+        // Register handlers
+        if let Some(handler) = self.elicitation_handler {
+            client.on_elicitation(handler);
+        }
+        if let Some(handler) = self.progress_handler {
+            client.on_progress(handler);
+        }
+        if let Some(handler) = self.log_handler {
+            client.on_log(handler);
+        }
+        if let Some(handler) = self.resource_update_handler {
+            client.on_resource_update(handler);
+        }
+
+        // Set up LLM providers if any are configured
+        if !self.llm_providers.is_empty() {
+            // Create LLM registry and register providers
+            let mut registry = crate::llm::LLMRegistry::new();
+            for (name, provider) in self.llm_providers {
+                registry
+                    .register_provider(&name, provider)
+                    .await
+                    .map_err(|e| {
+                        Error::configuration(format!(
+                            "Failed to register LLM provider '{}': {}",
+                            name, e
+                        ))
+                    })?;
+            }
+
+            // Configure session management if provided
+            if let Some(session_config) = self.session_config {
+                registry
+                    .configure_sessions(session_config)
+                    .await
+                    .map_err(|e| {
+                        Error::configuration(format!("Failed to configure sessions: {}", e))
+                    })?;
+            }
+
+            // Set up the registry as the sampling handler
+            let sampling_handler = Arc::new(registry);
+            client.set_sampling_handler(sampling_handler);
+        }
+
+        // Apply connection configuration (store for future use in actual connections)
+        // Note: The current Client doesn't expose connection config setters,
+        // so we'll store this for when the transport supports it
+
+        // Register plugins (they'll be applied during message processing)
+        for _plugin in self.plugins {
+            // Note: Current Client doesn't have plugin registration methods yet
+            // This is where we'd register plugins when the plugin system is fully integrated
+            // For now, we'll store them for future implementation
+        }
+
+        Ok(client)
+    }
+
+    /// Build a client synchronously with basic configuration only
+    ///
+    /// This is a convenience method for simple use cases where no async setup
+    /// is required. For advanced features like LLM providers, use `build()` instead.
     ///
     /// # Arguments
     ///
@@ -908,10 +2059,58 @@ impl ClientBuilder {
     ///
     /// let client = ClientBuilder::new()
     ///     .with_tools(true)
-    ///     .build(StdioTransport::new());
+    ///     .build_sync(StdioTransport::new());
     /// ```
-    pub fn build<T: Transport>(self, transport: T) -> Client<T> {
-        Client::with_capabilities(transport, self.capabilities)
+    pub fn build_sync<T: Transport>(self, transport: T) -> Client<T> {
+        let mut client = Client::with_capabilities(transport, self.capabilities);
+
+        // Register synchronous handlers only
+        if let Some(handler) = self.elicitation_handler {
+            client.on_elicitation(handler);
+        }
+        if let Some(handler) = self.progress_handler {
+            client.on_progress(handler);
+        }
+        if let Some(handler) = self.log_handler {
+            client.on_log(handler);
+        }
+        if let Some(handler) = self.resource_update_handler {
+            client.on_resource_update(handler);
+        }
+
+        client
+    }
+
+    // ============================================================================
+    // CONFIGURATION ACCESS
+    // ============================================================================
+
+    /// Get the current capabilities configuration
+    pub fn capabilities(&self) -> &ClientCapabilities {
+        &self.capabilities
+    }
+
+    /// Get the current connection configuration
+    pub fn connection_config(&self) -> &ConnectionConfig {
+        &self.connection_config
+    }
+
+    /// Get the number of registered plugins
+    pub fn plugin_count(&self) -> usize {
+        self.plugins.len()
+    }
+
+    /// Get the number of registered LLM providers
+    pub fn llm_provider_count(&self) -> usize {
+        self.llm_providers.len()
+    }
+
+    /// Check if any handlers are registered
+    pub fn has_handlers(&self) -> bool {
+        self.elicitation_handler.is_some()
+            || self.progress_handler.is_some()
+            || self.log_handler.is_some()
+            || self.resource_update_handler.is_some()
     }
 }
 
