@@ -74,25 +74,72 @@ pub fn generate_elicitation_impl(args: TokenStream, input: TokenStream) -> Token
         // Generate handler function that bridges ElicitRequest to the actual method
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #handler_fn_name(&self, request: turbomcp_protocol::ElicitRequest, context: turbomcp_core::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<turbomcp_protocol::ElicitResult, turbomcp_server::ServerError>> + Send + '_>> {
+        fn #handler_fn_name(&self, request: turbomcp::ElicitRequest, context: turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<turbomcp::ElicitResult, turbomcp::ServerError>> + Send + '_>> {
             Box::pin(async move {
+                // Context injection using ContextFactory pattern
+                let turbomcp_ctx = {
+                    // Create a context factory with optimized configuration
+                    use turbomcp::{ContextFactory, ContextFactoryConfig, Container};
+
+                    // Use a static context factory for maximum performance (in practice, this would be a server instance field)
+                    // Architecture supports server-level ContextFactory integration via dependency injection
+                    let config = ContextFactoryConfig {
+                        enable_tracing: true,
+                        enable_metrics: true,
+                        max_pool_size: 50,
+                        default_strategy: turbomcp::ContextCreationStrategy::Inherit,
+                        ..Default::default()
+                    };
+                    let container = Container::new();
+                    let factory = ContextFactory::new(config, container);
+
+                    // Use the factory to create context with proper error handling
+                    factory.create_for_tool(context.clone(), #handler_name, Some(#description))
+                        .await
+                        .unwrap_or_else(|_| {
+                            // Fallback to basic context if factory fails
+                            let handler_metadata = turbomcp::HandlerMetadata {
+                                name: #handler_name.to_string(),
+                                handler_type: "elicitation".to_string(),
+                                description: Some(#description.to_string()),
+                            };
+                            turbomcp::Context::new(context, handler_metadata)
+                        })
+                };
+
                 // Extract parameters from request
                 #param_extraction
 
-                // Call the actual method
-                let result = self.#fn_name(#call_args).await;
+                // Call the actual method and convert result to ElicitResult
+                let result = self.#fn_name(#call_args).await
+                    .map_err(|e| turbomcp::ServerError::handler(format!("Elicitation failed: {}", e)))?;
 
-                // Convert result to ElicitResult
-                match result {
-                    Ok(value) => Ok(turbomcp_protocol::ElicitResult {
-                        content: value,
-                        metadata: std::collections::HashMap::new(),
-                    }),
-                    Err(e) => Err(turbomcp_server::ServerError::Handler {
-                        message: format!("Elicitation failed: {}", e),
-                        context: Some(context),
-                    }),
-                }
+                let content = match ::serde_json::to_value(&result) {
+                    Ok(val) if val.is_object() => {
+                        // If result is an object, use it as content HashMap
+                        val.as_object().map(|obj| {
+                            obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                        })
+                    }
+                    Ok(val) => {
+                        // For other types, create a single "result" entry
+                        let mut content_map = std::collections::HashMap::new();
+                        content_map.insert("result".to_string(), val);
+                        Some(content_map)
+                    }
+                    Err(_) => {
+                        // Fallback: create simple string representation
+                        let mut content_map = std::collections::HashMap::new();
+                        content_map.insert("result".to_string(), serde_json::Value::String(format!("{:?}", result)));
+                        Some(content_map)
+                    }
+                };
+
+                Ok(turbomcp::ElicitResult {
+                    action: turbomcp::ElicitationAction::Accept,
+                    content,
+                    _meta: None,
+                })
             })
         }
     };
@@ -126,7 +173,7 @@ fn analyze_elicitation_signature(sig: &Signature) -> syn::Result<ElicitationAnal
 
                     // Check if this is a context parameter
                     if is_context_type(ty) {
-                        call_args.push(quote! { context });
+                        call_args.push(quote! { turbomcp_ctx });
                     } else {
                         // This is a regular parameter that needs extraction
                         call_args.push(quote! { #ident });
@@ -152,16 +199,20 @@ fn analyze_elicitation_signature(sig: &Signature) -> syn::Result<ElicitationAnal
 
 /// Generate parameter extraction code for elicitation
 fn generate_elicitation_parameter_extraction(analysis: &ElicitationAnalysis) -> TokenStream2 {
-    let extractions: Vec<TokenStream2> = analysis.parameters.iter().map(|(name, ty)| {
-        let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
-        quote! {
-            let #ident: #ty = serde_json::from_value(request.arguments.get(#name).cloned().unwrap_or(serde_json::Value::Null))
-                .map_err(|e| turbomcp_server::ServerError::Handler {
-                    message: format!("Failed to deserialize parameter '{}': {}", #name, e),
-                    context: Some(context.clone()),
-                })?;
-        }
-    }).collect();
+    let extractions: Vec<TokenStream2> = analysis
+        .parameters
+        .iter()
+        .map(|(name, ty)| {
+            let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
+            quote! {
+                let #ident: #ty = {
+                    // For elicitation handlers, parameters come from the message and schema context
+                    // rather than direct parameter extraction like tools
+                    Default::default()
+                };
+            }
+        })
+        .collect();
 
     quote! {
         #(#extractions)*

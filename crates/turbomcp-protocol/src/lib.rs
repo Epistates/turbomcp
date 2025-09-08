@@ -213,7 +213,7 @@ pub use versioning::{VersionCompatibility, VersionManager, VersionRequirement};
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Supported MCP protocol versions
-pub const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2024-11-05"];
+pub const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
 /// Protocol feature flags
 pub mod features {

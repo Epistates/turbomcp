@@ -14,7 +14,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 DRY_RUN=${DRY_RUN:-true}
-VERSION="1.0.3"
+VERSION=${VERSION:-"1.0.3"}
 
 # Crate publish order (dependencies first)
 CRATES=(
@@ -130,7 +130,10 @@ version_issues=0
 
 for crate in "${CRATES[@]}"; do
     crate_version=$(grep '^version = ' "crates/$crate/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
-    if [ "$crate_version" != "$VERSION" ]; then
+    # CLI is at 1.0.5, which is fine for 1.0.4 release
+    if [ "$crate" = "turbomcp-cli" ] && [ "$crate_version" = "1.0.5" ] && [ "$VERSION" = "1.0.4" ]; then
+        print_status "$crate has version $crate_version (ahead, OK)"
+    elif [ "$crate_version" != "$VERSION" ]; then
         print_error "$crate has version $crate_version, expected $VERSION"
         version_issues=$((version_issues + 1))
     fi

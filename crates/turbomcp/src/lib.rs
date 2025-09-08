@@ -36,9 +36,7 @@
 //! use turbomcp::prelude::*;
 //!
 //! #[derive(Clone)]
-//! struct Calculator {
-//!     operations: std::sync::Arc<std::sync::atomic::AtomicU64>,
-//! }
+//! struct Calculator;
 //!
 //! #[server(
 //!     name = "calculator-server",
@@ -55,17 +53,13 @@
 //!         // - Structured logging with metadata
 //!         // - Performance monitoring and metrics
 //!         ctx.info(&format!("Adding {} + {}", a, b)).await?;
-//!         
-//!         self.operations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 //!         Ok(a + b)
 //!     }
 //! }
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let server = Calculator {
-//!         operations: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
-//!     };
+//!     let server = Calculator;
 //!     server.run_stdio().await?;
 //!     Ok(())
 //! }
@@ -215,7 +209,7 @@
 //!                 let replicas = data.get::<i64>("replicas").unwrap_or(1);
 //!                 Ok(format!("Deployed {} to {} with {} replicas", project, env, replicas))
 //!             }
-//!             _ => Err(mcp_error!("Deployment cancelled"))
+//!             _ => Err(mcp_error!("Deployment cancelled").into())
 //!         }
 //!     }
 //! }
@@ -405,9 +399,10 @@ pub use turbomcp_protocol::jsonrpc::{
     JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
 };
 pub use turbomcp_protocol::types::{
-    CallToolRequest, CallToolResult, ClientCapabilities, Content, ImageContent, Implementation,
-    InitializeRequest, InitializeResult, PromptMessage, Resource, ServerCapabilities, TextContent,
-    Tool, ToolInputSchema,
+    CallToolRequest, CallToolResult, ClientCapabilities, CompleteRequest, CompleteResult,
+    CompletionResponse, Content, ElicitRequest, ElicitResult, ElicitationAction, ImageContent,
+    Implementation, InitializeRequest, InitializeResult, PingRequest, PingResult, PromptMessage,
+    Resource, ServerCapabilities, TextContent, Tool, ToolInputSchema,
 };
 pub use turbomcp_server::{
     McpServer, McpServer as Server, ServerBuilder, ServerError, ServerResult, ShutdownHandle,

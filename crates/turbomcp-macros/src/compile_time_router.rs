@@ -91,18 +91,27 @@ pub fn generate_router(
         where
             Self: Clone + Send + Sync + 'static,
         {
-            /// Convert server into an Axum router (compile-time routing)
+            /// Convert server into an Axum router with default "/mcp" path (compile-time routing)
             ///
             /// This method generates a static dispatch router with zero runtime overhead.
             /// All handler dispatch is done at compile time via match statements.
             #[cfg(feature = "http")]
             pub fn into_router(self: ::std::sync::Arc<Self>) -> axum::Router {
+                self.into_router_with_path("/mcp")
+            }
+
+            /// Convert server into an Axum router with custom path (compile-time routing)
+            ///
+            /// This method generates a static dispatch router with zero runtime overhead.
+            /// All handler dispatch is done at compile time via match statements.
+            #[cfg(feature = "http")]
+            pub fn into_router_with_path(self: ::std::sync::Arc<Self>, path: &str) -> axum::Router {
                 use axum::{Json, routing::post, Router};
                 use ::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion, JsonRpcError};
                 use ::turbomcp_protocol::types::RequestId;
 
                 Router::new()
-                    .route("/mcp", post(move |Json(req): Json<JsonRpcRequest>| {
+                    .route(path, post(move |Json(req): Json<JsonRpcRequest>| {
                         let server = self.clone();
                         async move {
                             let response = match req.method.as_str() {
@@ -384,13 +393,23 @@ pub fn generate_router(
 
             /// Run server with HTTP transport (compile-time routing, zero lifetime issues!)
             #[cfg(feature = "http")]
+            /// Run HTTP server with default "/mcp" endpoint
             pub async fn run_http<A: ::std::net::ToSocketAddrs>(
                 self,
                 addr: A
             ) -> Result<(), Box<dyn ::std::error::Error>> {
+                self.run_http_with_path(addr, "/mcp").await
+            }
+
+            /// Run HTTP server with configurable endpoint path
+            pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs>(
+                self,
+                addr: A,
+                path: &str
+            ) -> Result<(), Box<dyn ::std::error::Error>> {
                 use tokio::net::TcpListener;
 
-                let router = ::std::sync::Arc::new(self).into_router();
+                let router = ::std::sync::Arc::new(self).into_router_with_path(path);
 
                 // Resolve address
                 let socket_addr = addr
@@ -401,7 +420,7 @@ pub fn generate_router(
                 let listener = TcpListener::bind(socket_addr).await?;
 
                 tracing::info!("🚀 TurboMCP server on http://{}", socket_addr);
-                tracing::info!("  📡 MCP endpoint: http://{}/mcp", socket_addr);
+                tracing::info!("  📡 MCP endpoint: http://{}{}", socket_addr, path);
 
                 axum::serve(listener, router).await?;
                 Ok(())

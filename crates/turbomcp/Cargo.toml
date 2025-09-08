@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Rust SDK for Model Context Protocol (MCP) with ergonomic macros and SIMD acceleration"
@@ -66,11 +66,11 @@ sonic-rs = { workspace = true, optional = true }
 http = "1.0"
 
 # Internal dependencies
-turbomcp-core = { version = "1.0.4", path = "../turbomcp-core", optional = true, features = ["simd"] }
-turbomcp-protocol = { version = "1.0.4", path = "../turbomcp-protocol", optional = true }
-turbomcp-transport = { version = "1.0.4", path = "../turbomcp-transport", optional = true }
-turbomcp-server = { version = "1.0.4", path = "../turbomcp-server", optional = true }
-turbomcp-macros = { version = "1.0.4", path = "../turbomcp-macros", optional = true }
+turbomcp-core = { version = "1.0.5", path = "../turbomcp-core", optional = true, features = ["simd"] }
+turbomcp-protocol = { version = "1.0.5", path = "../turbomcp-protocol", optional = true }
+turbomcp-transport = { version = "1.0.5", path = "../turbomcp-transport", optional = true }
+turbomcp-server = { version = "1.0.5", path = "../turbomcp-server", optional = true }
+turbomcp-macros = { version = "1.0.5", path = "../turbomcp-macros", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -81,6 +81,7 @@ tempfile = "3.0"
 rand = "0.8"
 fxhash = "0.2"
 walkdir = { workspace = true }
+turbomcp-client = { version = "1.0.5", path = "../turbomcp-client" }
 
 [features]
 default = ["full", "simd"]  # Full includes all transports for convenience

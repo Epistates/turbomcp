@@ -74,22 +74,63 @@ pub fn generate_template_impl(args: TokenStream, input: TokenStream) -> TokenStr
         // Generate handler function that bridges resource template requests to the actual method
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #handler_fn_name(&self, uri: String, parameters: std::collections::HashMap<String, serde_json::Value>, context: turbomcp_core::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, turbomcp_server::ServerError>> + Send + '_>> {
+        fn #handler_fn_name(&self, uri: String, parameters: std::collections::HashMap<String, serde_json::Value>, context: turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, turbomcp::ServerError>> + Send + '_>> {
             Box::pin(async move {
+                // Context injection using ContextFactory pattern
+                let turbomcp_ctx = {
+                    // Create a context factory with optimized configuration
+                    use turbomcp::{ContextFactory, ContextFactoryConfig, Container};
+
+                    // Use a static context factory for maximum performance (in practice, this would be a server instance field)
+                    // Architecture supports server-level ContextFactory integration via dependency injection
+                    let config = ContextFactoryConfig {
+                        enable_tracing: true,
+                        enable_metrics: true,
+                        max_pool_size: 50,
+                        default_strategy: turbomcp::ContextCreationStrategy::Inherit,
+                        ..Default::default()
+                    };
+                    let container = Container::new();
+                    let factory = ContextFactory::new(config, container);
+
+                    // Use the factory to create context with proper error handling
+                    factory.create_for_tool(context.clone(), #handler_name, Some(#uri_template))
+                        .await
+                        .unwrap_or_else(|_| {
+                            // Fallback to basic context if factory fails
+                            let handler_metadata = turbomcp::HandlerMetadata {
+                                name: #handler_name.to_string(),
+                                handler_type: "template".to_string(),
+                                description: Some(#uri_template.to_string()),
+                            };
+                            turbomcp::Context::new(context, handler_metadata)
+                        })
+                };
+
                 // Extract parameters from URI template parameters
                 #param_extraction
 
-                // Call the actual method
-                let result = self.#fn_name(#call_args).await;
+                // Call the actual method and convert result
+                let result = self.#fn_name(#call_args).await
+                    .map_err(|e| turbomcp::ServerError::handler(format!("Template handler failed: {}", e)))?;
 
-                // Convert result to string content
-                match result {
-                    Ok(content) => Ok(content),
-                    Err(e) => Err(turbomcp_server::ServerError::Handler {
-                        message: format!("Template handler failed: {}", e),
-                        context: Some(context),
-                    }),
-                }
+                // Convert result to string content - properly serialize the result
+                let content = match ::serde_json::to_value(&result) {
+                    Ok(val) if val.is_string() => {
+                        // If result is already a string, use it directly
+                        val.as_str().unwrap_or("").to_string()
+                    }
+                    Ok(val) => {
+                        // For other types, use JSON representation
+                        ::serde_json::to_string(&val).unwrap_or_else(|_| format!("{:?}", result))
+                    }
+                    Err(_) => {
+                        // Fallback to Debug (Display not guaranteed for all types)
+                        format!("{:?}", result)
+                    }
+                };
+
+                Ok(content)
             })
         }
     };
@@ -123,7 +164,7 @@ fn analyze_template_signature(sig: &Signature) -> syn::Result<TemplateAnalysis> 
 
                     // Check if this is a context parameter
                     if is_context_type(ty) {
-                        call_args.push(quote! { context });
+                        call_args.push(quote! { turbomcp_ctx });
                     } else {
                         // This is a regular parameter that needs extraction from URI template
                         call_args.push(quote! { #ident });
@@ -149,24 +190,54 @@ fn analyze_template_signature(sig: &Signature) -> syn::Result<TemplateAnalysis> 
 
 /// Generate parameter extraction code for template
 fn generate_template_parameter_extraction(analysis: &TemplateAnalysis) -> TokenStream2 {
+    if analysis.parameters.is_empty() {
+        return quote! {};
+    }
+
     let extractions: Vec<TokenStream2> = analysis
         .parameters
         .iter()
         .map(|(name, ty)| {
             let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
-            quote! {
-                let #ident: #ty = parameters.get(#name)
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .ok_or_else(|| turbomcp_server::ServerError::Handler {
-                        message: format!("Missing required template parameter: {}", #name),
-                        context: Some(context.clone()),
-                    })?;
+
+            // Check if this is an optional parameter
+            let is_optional = is_option_type(ty);
+
+            if is_optional {
+                // For optional parameters, use None if not present
+                quote! {
+                    let #ident: #ty = parameters.get(#name)
+                        .and_then(|v| serde_json::from_value(v.clone()).ok());
+                }
+            } else {
+                // For required parameters, fail if not present
+                quote! {
+                    let #ident: #ty = parameters.get(#name)
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .ok_or_else(|| turbomcp::ServerError::handler(
+                            format!("Missing required template parameter: {}", #name)
+                        ))?;
+                }
             }
         })
         .collect();
 
     quote! {
         #(#extractions)*
+    }
+}
+
+/// Check if a type is Option<T>
+fn is_option_type(ty: &Type) -> bool {
+    match ty {
+        Type::Path(type_path) => {
+            if let Some(segment) = type_path.path.segments.last() {
+                segment.ident == "Option"
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 
