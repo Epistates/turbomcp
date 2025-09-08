@@ -8,10 +8,6 @@ use serde_json::json;
 use turbomcp::prelude::*;
 use turbomcp_macros::{server, tool};
 
-// =============================================================================
-// REAL MACRO SYSTEM TESTS - NO SCHEMARS, NO MOCKS, NO GASLIGHTING
-// =============================================================================
-
 #[derive(Clone)]
 struct MacroTestServer;
 

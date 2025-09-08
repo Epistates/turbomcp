@@ -1,7 +1,7 @@
 //! Zero-Tolerance Test Quality Enforcement System
 //!
 //! This test ensures that no fraudulent test patterns can ever be introduced
-//! into the TurboMCP codebase again. It scans all test files for forbidden
+//! into the TurboMCP codebase. It scans all test files for forbidden
 //! patterns and fails the build if any are detected.
 //!
 //! RIGOROUS TESTING REQUIRES RIGOROUS ENFORCEMENT
