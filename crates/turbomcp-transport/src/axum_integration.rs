@@ -141,7 +141,7 @@ pub trait McpService: Send + Sync + 'static {
     /// Get service capabilities
     fn get_capabilities(&self) -> serde_json::Value {
         serde_json::json!({
-            "protocol_version": "2024-11-05",
+            "protocol_version": "2025-06-18",
             "capabilities": {
                 "tools": true,
                 "resources": true,
