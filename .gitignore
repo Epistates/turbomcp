@@ -121,3 +121,5 @@ benchmarks/
 benchmark_results.md
 *.benchmark
 **/benchmark_results.md
+
+rig-integration
