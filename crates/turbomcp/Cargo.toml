@@ -85,6 +85,13 @@ turbomcp-client = { version = "1.0.5", path = "../turbomcp-client" }
 
 [features]
 default = ["full", "simd"]  # Full includes all transports for convenience
+
+# 🎯 RECOMMENDED FEATURE SETS (choose one):
+
+# For basic tool servers - minimal dependencies, works everywhere
+minimal = ["internal-deps", "stdio"]
+
+# For production servers - includes HTTP/SSE for web compatibility  
 full = [
     "schema-generation",
     "context-injection", 
@@ -97,23 +104,36 @@ full = [
     "tcp",
     "unix",
 ]
-schema-generation = ["schemars"]
-context-injection = []
-uri-templates = ["regex"]
-database = ["sqlx"]
-# Transport features (progressive enhancement)
-stdio = ["turbomcp-transport/stdio", "turbomcp-server/stdio"]
-http = ["turbomcp-transport/http", "turbomcp-server/http"]
-websocket = ["turbomcp-transport/websocket", "turbomcp-server/websocket"]
-tcp = ["turbomcp-transport/tcp", "turbomcp-server/tcp"]
-unix = ["turbomcp-transport/unix", "turbomcp-server/unix"]
-# Convenience minimal features for specialized deployments
-minimal = ["internal-deps", "stdio"]  # Just STDIO - works everywhere
-network = ["internal-deps", "stdio", "tcp"]  # STDIO + TCP for network deployment  
-server-only = ["internal-deps", "tcp", "unix"]  # TCP + Unix for server deployment (no STDIO)
-all-transports = ["stdio", "http", "websocket", "tcp", "unix"]  # All transports without other features
+
+# For network servers - STDIO + TCP only
+network = ["internal-deps", "stdio", "tcp"]
+
+# For system servers - TCP + Unix only (no STDIO)
+server-only = ["internal-deps", "tcp", "unix"]
+
+# 📦 INDIVIDUAL FEATURES:
+
+# Core functionality
+schema-generation = ["schemars"]       # JSON Schema generation (recommended)
+context-injection = []                 # Enhanced Context API features
+uri-templates = ["regex"]             # URI template matching for resources
+database = ["sqlx"]                   # Database examples and utilities
+
+# Transport protocols (progressive enhancement)
+stdio = ["turbomcp-transport/stdio", "turbomcp-server/stdio"]           # Standard MCP transport
+http = ["turbomcp-transport/http", "turbomcp-server/http"]               # HTTP/SSE for web apps  
+websocket = ["turbomcp-transport/websocket", "turbomcp-server/websocket"] # WebSocket bidirectional
+tcp = ["turbomcp-transport/tcp", "turbomcp-server/tcp"]                   # Raw TCP sockets
+unix = ["turbomcp-transport/unix", "turbomcp-server/unix"]               # Unix domain sockets
+
+# Performance
+simd = ["turbomcp-core/simd", "simd-json", "sonic-rs"]  # SIMD JSON acceleration
+
+# Internal (required for any usage)
 internal-deps = ["turbomcp-core", "turbomcp-protocol", "turbomcp-transport", "turbomcp-server", "turbomcp-macros"]
-simd = ["turbomcp-core/simd", "simd-json", "sonic-rs"]
+
+# Advanced combinations
+all-transports = ["stdio", "http", "websocket", "tcp", "unix"]  # All transports without extra features
 
 ## No examples currently shipped from the framework crate. See top-level examples.
 

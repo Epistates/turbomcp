@@ -342,23 +342,157 @@
 //! }
 //! ```
 //!
-//! ## Feature-Gated Transports
+//! ## 🎯 Feature Selection Guide
 //!
-//! Reduce binary size by selecting only the transports you need:
+//! Choose the right feature set for your use case to minimize dependencies:
 //!
+//! ### For Basic Tool Servers (Recommended for Beginners)
 //! ```toml
-//! # Cargo.toml - TCP-only server (no STDIO)
 //! [dependencies]
-//! turbomcp = { version = "1.0", default-features = false, features = ["tcp"] }
+//! turbomcp = { version = "1.0", default-features = false, features = ["minimal"] }
 //! ```
+//! **What you get:** STDIO transport, core macros, basic error handling  
+//! **Perfect for:** Simple MCP tools, CLI integrations, getting started  
+//! **Transport:** `server.run_stdio().await`
+//!
+//! ### For Production Web Servers
+//! ```toml
+//! [dependencies]
+//! turbomcp = { version = "1.0", features = ["full"] }
+//! ```
+//! **What you get:** All transports, authentication, databases, full feature set  
+//! **Perfect for:** Production deployments, web applications, enterprise usage  
+//! **Transports:** HTTP/SSE, WebSocket, TCP, Unix, STDIO
+//!
+//! ### Custom Feature Selection
+//! ```toml
+//! [dependencies]
+//! turbomcp = {
+//!     version = "1.0",
+//!     default-features = false,
+//!     features = ["minimal", "http", "schema-generation"]
+//! }
+//! ```
+//! **Mix and match:** Start with `minimal` and add only what you need
 //!
 //! Available feature combinations:
-//! - `minimal` - Just STDIO (works everywhere)
-//! - `network` - STDIO + TCP
-//! - `server-only` - TCP + Unix (no STDIO)
-//! - `all-transports` - Maximum flexibility
+//! - **`minimal`** - Just STDIO (works everywhere, 📦 smallest footprint)
+//! - **`network`** - STDIO + TCP (network deployment ready)
+//! - **`server-only`** - TCP + Unix (headless servers, no STDIO)
+//! - **`full`** - Everything included (⚡ maximum functionality)
 //!
 //! For more examples and advanced usage, see the [examples directory](https://github.com/Epistates/turbomcp/tree/main/crates/turbomcp/examples).
+//!
+//! ## 📚 Generated Methods Reference
+//!
+//! The `#[server]` macro generates several key methods for your server implementation:
+//!
+//! ### Transport Methods
+//!
+//! The macro automatically generates transport methods that let you run your server
+//! over different protocols. **All transport changes are one-line swaps:**
+//!
+//! ```rust,no_run
+//! # use turbomcp::prelude::*;
+//! # #[derive(Clone)]
+//! # struct MyServer;
+//! #
+//! # #[server]
+//! # impl MyServer {
+//! #   #[tool("Example tool")]
+//! #   async fn example(&self) -> McpResult<String> { Ok("test".to_string()) }
+//! # }
+//! #
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Each transport method consumes the server, so choose one:
+//!
+//! // STDIO (standard MCP transport)
+//! MyServer.run_stdio().await?;
+//!
+//! // Or HTTP with Server-Sent Events (web-compatible)
+//! // MyServer.run_http("127.0.0.1:8080").await?;
+//! // MyServer.run_http_with_path("0.0.0.0:3000", "/api/mcp").await?;
+//!
+//! // Or TCP sockets (high-performance)
+//! // MyServer.run_tcp("127.0.0.1:9000").await?;
+//!
+//! // Or Unix domain sockets (local IPC)
+//! // MyServer.run_unix("/tmp/mcp.sock").await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### Metadata and Testing Methods
+//!
+//! ```rust,ignore
+//! # use turbomcp::prelude::*;
+//! # #[derive(Clone)] struct MyServer;
+//! # #[server(name="test", version="1.0.0")] impl MyServer {
+//! #   #[tool("Test")] async fn test(&self) -> McpResult<String> { Ok("test".to_string()) }
+//! # }
+//! // Get server information (name, version, description)
+//! let (name, version, description) = MyServer::server_info();
+//!
+//! // Get tool metadata for testing and introspection
+//! let metadata = MyServer::__turbomcp_tool_metadata_test();
+//!
+//! // Test tool handlers directly (bypasses transport layer)
+//! use turbomcp::CallToolRequest;
+//! let server = MyServer;
+//! let request = CallToolRequest {
+//!     name: "test".to_string(),
+//!     arguments: None
+//! };
+//! let result = server.__turbomcp_tool_handler_test(request, Default::default()).await;
+//! ```
+//!
+//! ### Handler Registration
+//!
+//! The macro implements the `HandlerRegistration` trait automatically:
+//!
+//! ```rust,ignore
+//! # use turbomcp::prelude::*;
+//! # #[derive(Clone)] struct MyServer;
+//! # #[server] impl MyServer {}
+//! use turbomcp::{HandlerRegistration, ServerBuilder};
+//!
+//! let server = MyServer;
+//! let mut builder = ServerBuilder::new();
+//!
+//! // All #[tool], #[resource], and #[prompt] methods are registered automatically
+//! server.register_handlers(&mut builder).unwrap();
+//! ```
+//!
+//! ### Feature-Gated Methods
+//!
+//! Some methods are only available when the corresponding features are enabled:
+//!
+//! - **`run_http()`, `run_http_with_path()`** - Requires `http` feature
+//! - **`run_tcp()`** - Requires `tcp` feature  
+//! - **`run_unix()`** - Requires `unix` feature (Unix systems only)
+//!
+//! ### Context Injection
+//!
+//! The macro automatically detects `Context` parameters and injects them properly:
+//!
+//! ```rust,ignore
+//! # use turbomcp::prelude::*;
+//! # #[derive(Clone)] struct Server;
+//! # #[server] impl Server {
+//! #[tool("Context can appear anywhere in parameters")]
+//! async fn flexible_context(&self, name: String, ctx: Context, age: u32) -> McpResult<String> {
+//!     ctx.info("Context works at any position").await?;
+//!     Ok(format!("Hello {} ({})", name, age))
+//! }
+//!
+//! #[tool("Context is optional")]  
+//! async fn no_context(&self, message: String) -> McpResult<String> {
+//!     Ok(format!("Received: {}", message))
+//! }
+//! # }
+//! ```
+//!
+//! This generates the correct handler functions that extract parameters and inject context appropriately.
 //!
 //! ## Architecture
 //!
@@ -505,6 +639,35 @@ pub use turbomcp_macros::{
 };
 
 /// Convenient prelude for `TurboMCP` applications
+///
+/// This prelude includes everything needed for most MCP integrations,
+/// eliminating the need for complex import chains from multiple crates.
+///
+/// ## Key Features
+/// - **Zero-boilerplate server setup**: Use `#[server]` and `#[tool]` macros
+/// - **Rich error handling**: Built-in `From` implementations and extension methods
+/// - **Complete type coverage**: All MCP protocol types included
+/// - **Ergonomic error conversion**: `.tool_error()`, `.network_error()` methods
+///
+/// ## Basic Usage
+/// ```rust
+/// use turbomcp::prelude::*;
+///
+/// #[derive(Clone)]
+/// struct MyServer;
+///
+/// #[server(name = "my-server", version = "1.0.0")]
+/// impl MyServer {
+///     #[tool("My tool")]
+///     async fn my_tool(&self, ctx: Context) -> McpResult<String> {
+///         // Automatic error conversion with context
+///         let data = std::fs::read_to_string("file.txt")
+///             .tool_error("Failed to read configuration")?;
+///         
+///         Ok(format!("Data: {}", data))
+///     }
+/// }
+/// ```
 pub mod prelude {
     // Re-export procedural macros for zero-boilerplate development
     pub use super::{
@@ -515,18 +678,19 @@ pub mod prelude {
     pub use super::{
         ApiKeyProvider, AuthConfig, AuthContext, AuthCredentials, AuthManager, AuthMiddleware,
         AuthProvider, AuthProviderConfig, AuthProviderType, CallToolRequest, CallToolResult,
-        Context, ElicitationManager, HandlerMetadata, HandlerRegistration, McpError, McpResult,
-        McpServer, OAuth2Config, OAuth2FlowType, OAuth2Provider, RequestContext, Server,
+        Context, ElicitationManager, HandlerMetadata, HandlerRegistration, McpError, McpErrorExt,
+        McpResult, McpServer, OAuth2Config, OAuth2FlowType, OAuth2Provider, RequestContext, Server,
         ServerBuilder, ServerError, TokenInfo, Transport, TransportConfig, TransportFactory,
         TurboMcpServer, UserInfo, error_text, handlers, prompt_result, resource_result, text,
         tool_error, tool_success,
     };
 
-    // Re-export essential types
+    // Re-export essential protocol types to avoid manual imports
     pub use turbomcp_protocol::types::{
         Content, GetPromptResult, Prompt, ReadResourceResult, Resource, TextContent, Tool,
     };
 
+    // Re-export commonly needed external types
     pub use async_trait::async_trait;
     pub use serde::{Deserialize, Serialize};
 }
@@ -650,6 +814,32 @@ impl From<Box<turbomcp_core::Error>> for McpError {
     }
 }
 
+// Add From implementations for common error types to reduce boilerplate
+impl From<std::io::Error> for McpError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Transport(format!("IO error: {err}"))
+    }
+}
+
+impl From<reqwest::Error> for McpError {
+    fn from(err: reqwest::Error) -> Self {
+        Self::Network(format!("Network error: {err}"))
+    }
+}
+
+#[cfg(feature = "uri-templates")]
+impl From<regex::Error> for McpError {
+    fn from(err: regex::Error) -> Self {
+        Self::InvalidInput(format!("Regex error: {err}"))
+    }
+}
+
+impl From<chrono::ParseError> for McpError {
+    fn from(err: chrono::ParseError) -> Self {
+        Self::InvalidInput(format!("Date parse error: {err}"))
+    }
+}
+
 impl Clone for McpError {
     fn clone(&self) -> Self {
         match self {
@@ -677,6 +867,46 @@ impl Clone for McpError {
                 Self::Serialization(serde_json::Error::io(io_error))
             }
         }
+    }
+}
+
+/// Extension trait for convenient error conversion
+pub trait McpErrorExt<T> {
+    /// Convert any error to a Tool error with context
+    fn tool_error(self, context: impl Into<String>) -> McpResult<T>;
+
+    /// Convert any error to a Protocol error with context
+    fn protocol_error(self, context: impl Into<String>) -> McpResult<T>;
+
+    /// Convert any error to a Resource error with context
+    fn resource_error(self, context: impl Into<String>) -> McpResult<T>;
+
+    /// Convert any error to a Network error with context
+    fn network_error(self, context: impl Into<String>) -> McpResult<T>;
+
+    /// Convert any error to a Transport error with context
+    fn transport_error(self, context: impl Into<String>) -> McpResult<T>;
+}
+
+impl<T, E: std::fmt::Display> McpErrorExt<T> for Result<T, E> {
+    fn tool_error(self, context: impl Into<String>) -> McpResult<T> {
+        self.map_err(|e| McpError::Tool(format!("{}: {}", context.into(), e)))
+    }
+
+    fn protocol_error(self, context: impl Into<String>) -> McpResult<T> {
+        self.map_err(|e| McpError::Protocol(format!("{}: {}", context.into(), e)))
+    }
+
+    fn resource_error(self, context: impl Into<String>) -> McpResult<T> {
+        self.map_err(|e| McpError::Resource(format!("{}: {}", context.into(), e)))
+    }
+
+    fn network_error(self, context: impl Into<String>) -> McpResult<T> {
+        self.map_err(|e| McpError::Network(format!("{}: {}", context.into(), e)))
+    }
+
+    fn transport_error(self, context: impl Into<String>) -> McpResult<T> {
+        self.map_err(|e| McpError::Transport(format!("{}: {}", context.into(), e)))
     }
 }
 
