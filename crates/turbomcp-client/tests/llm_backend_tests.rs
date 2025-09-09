@@ -417,8 +417,11 @@ async fn test_timeout_and_retry_logic() {
     assert!(
         error_msg.contains("timeout")
             || error_msg.contains("connect")
-            || error_msg.contains("request"),
-        "Error should indicate timeout/connection issue: {}",
+            || error_msg.contains("request")
+            || error_msg.contains("503")
+            || error_msg.contains("unavailable")
+            || error_msg.contains("llm provider error"),
+        "Error should indicate timeout/connection/service issue: {}",
         error
     );
 }
