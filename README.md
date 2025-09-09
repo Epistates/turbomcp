@@ -438,28 +438,38 @@ Our **compile-time first** approach means:
 
 ## Examples
 
-Explore comprehensive examples in the [`crates/turbomcp/examples/`](./crates/turbomcp/examples/) directory:
+TurboMCP includes 12 carefully crafted examples that guide you from basics to production deployment. See the [Examples Guide](crates/turbomcp/examples/EXAMPLES_GUIDE.md) for a complete learning path.
 
-- **[client_server_e2e.rs](./crates/turbomcp/examples/client_server_e2e.rs)** - Complete E2E client-server demonstration
-- **[feature_roots_builder.rs](./crates/turbomcp/examples/feature_roots_builder.rs)** - Filesystem roots configuration
-- **[feature_elicitation_server.rs](./crates/turbomcp/examples/feature_elicitation_server.rs)** - 🌟 **Production-grade elicitation server** with zero ceremony builders
-- **[simple_elicit_macro.rs](./crates/turbomcp/examples/simple_elicit_macro.rs)** - Simple elicit!() macro demonstration
-- **[10_elicitation_macro_demo.rs](./crates/turbomcp/examples/10_elicitation_macro_demo.rs)** - Complete elicitation API showcase
-- **[elicitation_websocket_demo.rs](./crates/turbomcp/examples/elicitation_websocket_demo.rs)** - Interactive elicitation over WebSocket
-- **[sampling_ai_code_assistant.rs](./crates/turbomcp/examples/sampling_ai_code_assistant.rs)** - AI assistant with sampling
-- **[transport_http_sse.rs](./crates/turbomcp/examples/transport_http_sse.rs)** - HTTP Server-Sent Events transport
+### Foundation (Start Here)
+- **[01_hello_world](./crates/turbomcp/examples/01_hello_world.rs)** - Your first MCP server
+- **[02_clean_server](./crates/turbomcp/examples/02_clean_server.rs)** - Minimal server using macros
+- **[03_basic_tools](./crates/turbomcp/examples/03_basic_tools.rs)** - Tool parameters and validation
+
+### Core MCP Features
+- **[04_resources_and_prompts](./crates/turbomcp/examples/04_resources_and_prompts.rs)** - Resources and prompts system
+- **[05_stateful_patterns](./crates/turbomcp/examples/05_stateful_patterns.rs)** - State management patterns
+- **[06_architecture_patterns](./crates/turbomcp/examples/06_architecture_patterns.rs)** - Builder vs Macro APIs
+- **[07_transport_showcase](./crates/turbomcp/examples/07_transport_showcase.rs)** - All transport methods
+
+### Advanced Features
+- **[08_elicitation_complete](./crates/turbomcp/examples/08_elicitation_complete.rs)** - Server-initiated prompts
+- **[09_bidirectional_communication](./crates/turbomcp/examples/09_bidirectional_communication.rs)** - All handler types
+- **[10_protocol_mastery](./crates/turbomcp/examples/10_protocol_mastery.rs)** - Complete protocol coverage
+
+### Production Ready
+- **[11_production_deployment](./crates/turbomcp/examples/11_production_deployment.rs)** - Enterprise features
+- **[06b_architecture_client](./crates/turbomcp/examples/06b_architecture_client.rs)** - HTTP client example
 
 **Run any example:**
 ```bash
-# From workspace root:
-cargo run --example feature_elicitation_server --package turbomcp  # 🌟 Production example
-cargo run --example client_server_e2e --package turbomcp
-cargo run --example feature_roots_builder --package turbomcp
+# Basic examples
+cargo run --example 01_hello_world
+cargo run --example 02_clean_server
 
-# Or from crate directory:
-cd crates/turbomcp
-cargo run --example client_server_e2e
-cargo run --example feature_roots_builder
+# Architecture comparison (run in separate terminals)
+cargo run --example 06_architecture_patterns builder  # Terminal 1
+cargo run --example 06_architecture_patterns macro    # Terminal 2
+cargo run --example 06b_architecture_client          # Terminal 3 - test client
 ```
 
 ## Development
