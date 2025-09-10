@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-core"
-version = "1.0.5"
+version = "1.0.6"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Core abstractions and optimized message processing for the TurboMCP SDK"

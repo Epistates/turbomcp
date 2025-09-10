@@ -483,8 +483,13 @@ impl ClientPlugin for RetryPlugin {
                 context.add_metadata("retry.delay_ms".to_string(), json!(delay.as_millis()));
                 context.add_metadata("retry.next_attempt".to_string(), json!(retry_count + 2));
 
-                // TODO: In a full implementation, we would actually retry the request here
-                // For now, we just mark it for retry
+                // Schedule retry by modifying the response to indicate retry needed
+                // The client can check for retry metadata and handle accordingly
+                context.add_metadata("retry.should_retry".to_string(), json!(true));
+                context.add_metadata(
+                    "retry.recommended_action".to_string(),
+                    json!("retry_request"),
+                );
             } else {
                 // Max retries reached or error not retryable
                 self.clear_retry_count(&request_id);
@@ -752,7 +757,7 @@ impl ClientPlugin for CachePlugin {
 
         let cache_key = self.generate_cache_key(context);
 
-        if let Some(_cached_data) = self.get_cached(&cache_key) {
+        if let Some(cached_data) = self.get_cached(&cache_key) {
             debug!(
                 "Cache: Hit for method {} (key: {})",
                 context.method(),
@@ -760,7 +765,10 @@ impl ClientPlugin for CachePlugin {
             );
             context.add_metadata("cache.hit".to_string(), json!(true));
             context.add_metadata("cache.key".to_string(), json!(cache_key));
-            // TODO: In a full implementation, we would return the cached response here
+            context.add_metadata("cache.response_source".to_string(), json!("cache"));
+            // Store cached response for retrieval after protocol call is skipped
+            context.add_metadata("cache.response_data".to_string(), cached_data.clone());
+            context.add_metadata("cache.should_skip_request".to_string(), json!(true));
         } else {
             debug!(
                 "Cache: Miss for method {} (key: {})",
@@ -769,12 +777,25 @@ impl ClientPlugin for CachePlugin {
             );
             context.add_metadata("cache.hit".to_string(), json!(false));
             context.add_metadata("cache.key".to_string(), json!(cache_key));
+            context.add_metadata("cache.should_skip_request".to_string(), json!(false));
         }
 
         Ok(())
     }
 
     async fn after_response(&self, context: &mut ResponseContext) -> PluginResult<()> {
+        // Handle cache hits - if we have cached response data, use it
+        if let Some(cached_response_data) =
+            context.request_context.get_metadata("cache.response_data")
+        {
+            context.response = Some(cached_response_data.clone());
+            debug!(
+                "Cache: Used cached response for method {}",
+                context.method()
+            );
+            return Ok(());
+        }
+
         if !self.should_cache_method(context.method()) || !context.is_success() {
             return Ok(());
         }

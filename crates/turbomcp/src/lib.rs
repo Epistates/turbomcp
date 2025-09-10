@@ -521,7 +521,7 @@
 // Issue deprecation warning for internal-deps feature
 #[cfg(feature = "internal-deps")]
 #[deprecated(
-    since = "1.0.5",
+    since = "1.0.6",
     note = "⚠️  The 'internal-deps' feature is deprecated and will be removed in 2.0.0.\n\
            ✨ SOLUTION: Remove 'internal-deps' from your features - core dependencies are automatic!\n\
            📖 MIGRATION: features = ['stdio'] or features = ['minimal'] (no internal-deps needed)\n\

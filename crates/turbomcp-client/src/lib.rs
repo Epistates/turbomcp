@@ -344,6 +344,8 @@ pub struct Client<T: Transport> {
     sampling_handler: Option<Arc<dyn SamplingHandler>>,
     /// Handler registry for bidirectional communication
     handlers: HandlerRegistry,
+    /// Plugin registry for middleware and extensibility
+    plugin_registry: crate::plugins::PluginRegistry,
 }
 
 impl<T: Transport> Client<T> {
@@ -372,6 +374,7 @@ impl<T: Transport> Client<T> {
             initialized: false,
             sampling_handler: None,
             handlers: HandlerRegistry::new(),
+            plugin_registry: crate::plugins::PluginRegistry::new(),
         }
     }
 
@@ -405,6 +408,7 @@ impl<T: Transport> Client<T> {
             initialized: false,
             sampling_handler: None,
             handlers: HandlerRegistry::new(),
+            plugin_registry: crate::plugins::PluginRegistry::new(),
         }
     }
 
@@ -692,8 +696,8 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send tools/list request
-        let response: ListToolsResult = self.protocol.request("tools/list", None).await?;
+        // Send tools/list request with plugin middleware
+        let response: ListToolsResult = self.execute_with_plugins("tools/list", None).await?;
         let tool_names = response.tools.into_iter().map(|tool| tool.name).collect();
         Ok(tool_names)
     }
@@ -738,49 +742,228 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send tools/call request
-        let request = CallToolRequest {
+        // Prepare request for plugin system
+        let request_data = CallToolRequest {
             name: name.to_string(),
             arguments: Some(arguments.unwrap_or_default()),
         };
 
-        let response: CallToolResult = self
-            .protocol
-            .request("tools/call", Some(serde_json::to_value(request)?))
-            .await?;
+        // Create JSON-RPC request for plugin context
+        let json_rpc_request = turbomcp_protocol::jsonrpc::JsonRpcRequest {
+            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
+            id: turbomcp_core::MessageId::Number(1),
+            method: "tools/call".to_string(),
+            params: Some(serde_json::to_value(request_data.clone())?),
+        };
 
+        // 1. Create request context for plugins
+        let mut req_ctx =
+            crate::plugins::RequestContext::new(json_rpc_request, std::collections::HashMap::new());
+
+        // 2. Execute before_request plugin middleware
+        if let Err(e) = self
+            .plugin_registry
+            .execute_before_request(&mut req_ctx)
+            .await
+        {
+            return Err(Error::bad_request(format!(
+                "Plugin before_request failed: {}",
+                e
+            )));
+        }
+
+        // 3. Execute the actual MCP protocol call
+        let start_time = std::time::Instant::now();
+        let protocol_result: Result<CallToolResult> = self
+            .protocol
+            .request("tools/call", req_ctx.params().cloned())
+            .await;
+
+        // 4. Prepare response context
+        let duration = start_time.elapsed();
+        let mut resp_ctx = match protocol_result {
+            Ok(ref response) => {
+                let response_value = serde_json::to_value(response.clone())?;
+                crate::plugins::ResponseContext::new(req_ctx, Some(response_value), None, duration)
+            }
+            Err(ref e) => {
+                crate::plugins::ResponseContext::new(req_ctx, None, Some(*e.clone()), duration)
+            }
+        };
+
+        // 5. Execute after_response plugin middleware
+        if let Err(e) = self
+            .plugin_registry
+            .execute_after_response(&mut resp_ctx)
+            .await
+        {
+            return Err(Error::bad_request(format!(
+                "Plugin after_response failed: {}",
+                e
+            )));
+        }
+
+        // 6. Return the final result, checking for plugin modifications
+        match protocol_result {
+            Ok(ref response) => {
+                // Check if plugins modified the response
+                if let Some(modified_response) = resp_ctx.response {
+                    // Try to deserialize back to CallToolResult if plugins modified it
+                    if let Ok(modified_result) =
+                        serde_json::from_value::<CallToolResult>(modified_response.clone())
+                    {
+                        return Ok(self.extract_tool_content(&modified_result));
+                    } else {
+                        // Plugins returned a custom response format
+                        return Ok(modified_response);
+                    }
+                }
+
+                // No plugin modifications, use original response
+                Ok(self.extract_tool_content(response))
+            }
+            Err(e) => {
+                // Check if plugins provided an error recovery response
+                if let Some(recovery_response) = resp_ctx.response {
+                    Ok(recovery_response)
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    /// Execute a protocol method with plugin middleware
+    ///
+    /// This is a generic helper for wrapping protocol calls with plugin middleware.
+    async fn execute_with_plugins<R>(
+        &mut self,
+        method_name: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<R>
+    where
+        R: serde::de::DeserializeOwned + serde::Serialize + Clone,
+    {
+        // Create JSON-RPC request for plugin context
+        let json_rpc_request = turbomcp_protocol::jsonrpc::JsonRpcRequest {
+            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
+            id: turbomcp_core::MessageId::Number(1),
+            method: method_name.to_string(),
+            params: params.clone(),
+        };
+
+        // 1. Create request context for plugins
+        let mut req_ctx =
+            crate::plugins::RequestContext::new(json_rpc_request, std::collections::HashMap::new());
+
+        // 2. Execute before_request plugin middleware
+        if let Err(e) = self
+            .plugin_registry
+            .execute_before_request(&mut req_ctx)
+            .await
+        {
+            return Err(Error::bad_request(format!(
+                "Plugin before_request failed: {}",
+                e
+            )));
+        }
+
+        // 3. Execute the actual protocol call
+        let start_time = std::time::Instant::now();
+        let protocol_result: Result<R> = self
+            .protocol
+            .request(method_name, req_ctx.params().cloned())
+            .await;
+        let duration = start_time.elapsed();
+
+        // 4. Prepare response context
+        let mut resp_ctx = match protocol_result {
+            Ok(ref response) => {
+                let response_value = serde_json::to_value(response.clone())?;
+                crate::plugins::ResponseContext::new(req_ctx, Some(response_value), None, duration)
+            }
+            Err(ref e) => {
+                crate::plugins::ResponseContext::new(req_ctx, None, Some(*e.clone()), duration)
+            }
+        };
+
+        // 5. Execute after_response plugin middleware
+        if let Err(e) = self
+            .plugin_registry
+            .execute_after_response(&mut resp_ctx)
+            .await
+        {
+            return Err(Error::bad_request(format!(
+                "Plugin after_response failed: {}",
+                e
+            )));
+        }
+
+        // 6. Return the final result, checking for plugin modifications
+        match protocol_result {
+            Ok(ref response) => {
+                // Check if plugins modified the response
+                if let Some(modified_response) = resp_ctx.response {
+                    // Try to deserialize the modified response
+                    if let Ok(modified_result) =
+                        serde_json::from_value::<R>(modified_response.clone())
+                    {
+                        return Ok(modified_result);
+                    }
+                }
+
+                // No plugin modifications, use original response
+                Ok(response.clone())
+            }
+            Err(e) => {
+                // Check if plugins provided an error recovery response
+                if let Some(recovery_response) = resp_ctx.response {
+                    if let Ok(recovery_result) = serde_json::from_value::<R>(recovery_response) {
+                        Ok(recovery_result)
+                    } else {
+                        Err(e)
+                    }
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    /// Helper method to extract content from CallToolResult
+    fn extract_tool_content(&self, response: &CallToolResult) -> serde_json::Value {
         // Extract content from response - for simplicity, return the first text content
         if let Some(content) = response.content.first() {
             match content {
-                Content::Text(text_content) => Ok(serde_json::json!({
+                Content::Text(text_content) => serde_json::json!({
                     "text": text_content.text,
                     "is_error": response.is_error.unwrap_or(false)
-                })),
-                Content::Image(image_content) => Ok(serde_json::json!({
+                }),
+                Content::Image(image_content) => serde_json::json!({
                     "image": image_content.data,
                     "mime_type": image_content.mime_type,
                     "is_error": response.is_error.unwrap_or(false)
-                })),
-                Content::Resource(resource_content) => Ok(serde_json::json!({
+                }),
+                Content::Resource(resource_content) => serde_json::json!({
                     "resource": resource_content.resource,
                     "annotations": resource_content.annotations,
                     "is_error": response.is_error.unwrap_or(false)
-                })),
-                Content::Audio(audio_content) => Ok(serde_json::json!({
+                }),
+                Content::Audio(audio_content) => serde_json::json!({
                     "audio": audio_content.data,
                     "mime_type": audio_content.mime_type,
                     "is_error": response.is_error.unwrap_or(false)
-                })),
-                Content::ResourceLink(resource_link) => Ok(serde_json::json!({
+                }),
+                Content::ResourceLink(resource_link) => serde_json::json!({
                     "resource_uri": resource_link.uri,
                     "is_error": response.is_error.unwrap_or(false)
-                })),
+                }),
             }
         } else {
-            Ok(serde_json::json!({
+            serde_json::json!({
                 "message": "No content returned",
                 "is_error": response.is_error.unwrap_or(false)
-            }))
+            })
         }
     }
 
@@ -826,12 +1009,101 @@ impl<T: Transport> Client<T> {
             }
         });
 
-        let response: CompleteResult = self
-            .protocol
-            .request("completion/complete", Some(params))
-            .await?;
+        // Create JSON-RPC request for plugin context
+        let json_rpc_request = turbomcp_protocol::jsonrpc::JsonRpcRequest {
+            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
+            id: turbomcp_core::MessageId::Number(1),
+            method: "completion/complete".to_string(),
+            params: Some(params.clone()),
+        };
 
-        Ok(response.completion)
+        // 1. Create request context for plugins
+        let mut req_ctx =
+            crate::plugins::RequestContext::new(json_rpc_request, std::collections::HashMap::new());
+
+        // 2. Execute before_request plugin middleware
+        if let Err(e) = self
+            .plugin_registry
+            .execute_before_request(&mut req_ctx)
+            .await
+        {
+            return Err(Error::bad_request(format!(
+                "Plugin before_request failed: {}",
+                e
+            )));
+        }
+
+        // 3. Execute the actual MCP protocol call
+        let start_time = std::time::Instant::now();
+        let protocol_result: Result<CompleteResult> = self
+            .protocol
+            .request("completion/complete", req_ctx.params().cloned())
+            .await;
+        let duration = start_time.elapsed();
+
+        // 4. Prepare response context
+        let mut resp_ctx = match protocol_result {
+            Ok(ref response) => {
+                let response_value = serde_json::to_value(response.clone())?;
+                crate::plugins::ResponseContext::new(req_ctx, Some(response_value), None, duration)
+            }
+            Err(ref e) => {
+                crate::plugins::ResponseContext::new(req_ctx, None, Some(*e.clone()), duration)
+            }
+        };
+
+        // 5. Execute after_response plugin middleware
+        if let Err(e) = self
+            .plugin_registry
+            .execute_after_response(&mut resp_ctx)
+            .await
+        {
+            return Err(Error::bad_request(format!(
+                "Plugin after_response failed: {}",
+                e
+            )));
+        }
+
+        // 6. Return the final result, checking for plugin modifications
+        match protocol_result {
+            Ok(ref response) => {
+                // Check if plugins modified the response
+                if let Some(modified_response) = resp_ctx.response {
+                    // Try to deserialize back to CompleteResult if plugins modified it
+                    if let Ok(modified_result) =
+                        serde_json::from_value::<CompleteResult>(modified_response.clone())
+                    {
+                        return Ok(modified_result.completion);
+                    } else {
+                        // If plugins returned a different format, try to extract CompletionResponse
+                        if let Ok(completion_response) = serde_json::from_value::<
+                            turbomcp_protocol::types::CompletionResponse,
+                        >(modified_response)
+                        {
+                            return Ok(completion_response);
+                        }
+                    }
+                }
+
+                // No plugin modifications, use original response
+                Ok(response.completion.clone())
+            }
+            Err(e) => {
+                // Check if plugins provided an error recovery response
+                if let Some(recovery_response) = resp_ctx.response {
+                    if let Ok(completion_response) = serde_json::from_value::<
+                        turbomcp_protocol::types::CompletionResponse,
+                    >(recovery_response)
+                    {
+                        Ok(completion_response)
+                    } else {
+                        Err(e)
+                    }
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     /// List available resources from the server
@@ -857,8 +1129,10 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send resources/list request
-        let response: ListResourcesResult = self.protocol.request("resources/list", None).await?;
+        // Execute with plugin middleware
+        let response: ListResourcesResult =
+            self.execute_with_plugins("resources/list", None).await?;
+
         let resource_uris = response
             .resources
             .into_iter()
@@ -903,8 +1177,8 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send ping request (no parameters needed)
-        let response: PingResult = self.protocol.request("ping", None).await?;
+        // Send ping request with plugin middleware (no parameters needed)
+        let response: PingResult = self.execute_with_plugins("ping", None).await?;
         Ok(response)
     }
 
@@ -961,8 +1235,7 @@ impl<T: Transport> Client<T> {
         };
 
         let response: ReadResourceResult = self
-            .protocol
-            .request("resources/read", Some(serde_json::to_value(request)?))
+            .execute_with_plugins("resources/read", Some(serde_json::to_value(request)?))
             .await?;
         Ok(response)
     }
@@ -1005,8 +1278,8 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send prompts/list request
-        let response: ListPromptsResult = self.protocol.request("prompts/list", None).await?;
+        // Execute with plugin middleware
+        let response: ListPromptsResult = self.execute_with_plugins("prompts/list", None).await?;
         let prompt_names = response
             .prompts
             .into_iter()
@@ -1063,17 +1336,14 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Prompt name cannot be empty"));
         }
 
-        // Send prompts/get request
+        // Send prompts/get request with plugin middleware
         let request = GetPromptRequest {
             name: name.to_string(),
             arguments: None, // Arguments are optional for retrieving template
         };
 
-        let response: GetPromptResult = self
-            .protocol
-            .request("prompts/get", Some(serde_json::to_value(request)?))
-            .await?;
-        Ok(response)
+        self.execute_with_plugins("prompts/get", Some(serde_json::to_value(request).unwrap()))
+            .await
     }
 
     /// List available filesystem root directories
@@ -1114,8 +1384,8 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send roots/list request
-        let response: ListRootsResult = self.protocol.request("roots/list", None).await?;
+        // Send roots/list request with plugin middleware
+        let response: ListRootsResult = self.execute_with_plugins("roots/list", None).await?;
         let root_uris = response.roots.into_iter().map(|root| root.uri).collect();
         Ok(root_uris)
     }
@@ -1165,8 +1435,7 @@ impl<T: Transport> Client<T> {
         let request = SetLevelRequest { level };
 
         let response: SetLevelResult = self
-            .protocol
-            .request("logging/setLevel", Some(serde_json::to_value(request)?))
+            .execute_with_plugins("logging/setLevel", Some(serde_json::to_value(request)?))
             .await?;
         Ok(response)
     }
@@ -1217,16 +1486,16 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Subscription URI cannot be empty"));
         }
 
-        // Send resources/subscribe request
+        // Send resources/subscribe request with plugin middleware
         let request = SubscribeRequest {
             uri: uri.to_string(),
         };
 
-        let response: EmptyResult = self
-            .protocol
-            .request("resources/subscribe", Some(serde_json::to_value(request)?))
-            .await?;
-        Ok(response)
+        self.execute_with_plugins(
+            "resources/subscribe",
+            Some(serde_json::to_value(request).unwrap()),
+        )
+        .await
     }
 
     /// Unsubscribe from resource change notifications
@@ -1274,19 +1543,16 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Unsubscription URI cannot be empty"));
         }
 
-        // Send resources/unsubscribe request
+        // Send resources/unsubscribe request with plugin middleware
         let request = UnsubscribeRequest {
             uri: uri.to_string(),
         };
 
-        let response: EmptyResult = self
-            .protocol
-            .request(
-                "resources/unsubscribe",
-                Some(serde_json::to_value(request)?),
-            )
-            .await?;
-        Ok(response)
+        self.execute_with_plugins(
+            "resources/unsubscribe",
+            Some(serde_json::to_value(request).unwrap()),
+        )
+        .await
     }
 
     /// List available resource templates
@@ -1327,9 +1593,10 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send resources/templates request
-        let response: ListResourceTemplatesResult =
-            self.protocol.request("resources/templates", None).await?;
+        // Send resources/templates request with plugin middleware
+        let response: ListResourceTemplatesResult = self
+            .execute_with_plugins("resources/templates", None)
+            .await?;
         let template_uris = response
             .resource_templates
             .into_iter()
@@ -1523,6 +1790,146 @@ impl<T: Transport> Client<T> {
     /// Get the client's capabilities configuration
     pub fn capabilities(&self) -> &ClientCapabilities {
         &self.capabilities
+    }
+
+    // ============================================================================
+    // PLUGIN MANAGEMENT
+    // ============================================================================
+
+    /// Register a plugin with the client
+    ///
+    /// # Arguments
+    ///
+    /// * `plugin` - The plugin to register
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::plugins::{MetricsPlugin, PluginConfig};
+    /// use std::sync::Arc;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = turbomcp_client::Client::new(turbomcp_transport::stdio::StdioTransport::new());
+    /// let metrics_plugin = Arc::new(MetricsPlugin::new(PluginConfig::Metrics));
+    /// client.register_plugin(metrics_plugin).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn register_plugin(
+        &mut self,
+        plugin: std::sync::Arc<dyn crate::plugins::ClientPlugin>,
+    ) -> Result<()> {
+        self.plugin_registry
+            .register_plugin(plugin)
+            .await
+            .map_err(|e| Error::bad_request(format!("Failed to register plugin: {}", e)))
+    }
+
+    /// Check if a plugin is registered
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the plugin to check
+    pub fn has_plugin(&self, name: &str) -> bool {
+        self.plugin_registry.has_plugin(name)
+    }
+
+    /// Get plugin data for a specific plugin type
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the plugin
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::plugins::MetricsPlugin;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = turbomcp_client::Client::new(turbomcp_transport::stdio::StdioTransport::new());
+    /// if let Some(plugin) = client.get_plugin("metrics") {
+    ///     // Use plugin data
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_plugin(
+        &self,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn crate::plugins::ClientPlugin>> {
+        self.plugin_registry.get_plugin(name)
+    }
+
+    /// Initialize all registered plugins
+    ///
+    /// This should be called after registration but before using the client.
+    pub async fn initialize_plugins(&mut self) -> Result<()> {
+        // Set up client context for plugins with actual client capabilities
+        let mut capabilities = std::collections::HashMap::new();
+        capabilities.insert(
+            "protocol_version".to_string(),
+            serde_json::json!("2024-11-05"),
+        );
+        capabilities.insert(
+            "mcp_version".to_string(),
+            serde_json::json!(env!("CARGO_PKG_VERSION")),
+        );
+        capabilities.insert(
+            "supports_notifications".to_string(),
+            serde_json::json!(true),
+        );
+        capabilities.insert(
+            "supports_sampling".to_string(),
+            serde_json::json!(self.sampling_handler.is_some()),
+        );
+        capabilities.insert("supports_progress".to_string(), serde_json::json!(true));
+        capabilities.insert("supports_roots".to_string(), serde_json::json!(true));
+
+        // Extract client configuration
+        let mut config = std::collections::HashMap::new();
+        config.insert(
+            "client_name".to_string(),
+            serde_json::json!("turbomcp-client"),
+        );
+        config.insert(
+            "initialized".to_string(),
+            serde_json::json!(self.initialized),
+        );
+        config.insert(
+            "plugin_count".to_string(),
+            serde_json::json!(self.plugin_registry.plugin_count()),
+        );
+
+        let context = crate::plugins::PluginContext::new(
+            "turbomcp-client".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            capabilities,
+            config,
+            vec![], // Will be populated by the registry
+        );
+
+        self.plugin_registry.set_client_context(context);
+
+        // Note: Individual plugins are initialized automatically during registration
+        // via PluginRegistry::register_plugin(). This method ensures the registry
+        // has proper client context for any future plugin registrations.
+        Ok(())
+    }
+
+    /// Cleanup all registered plugins
+    ///
+    /// This should be called when the client is being shut down.
+    pub async fn cleanup_plugins(&mut self) -> Result<()> {
+        // Clear the plugin registry - plugins will be dropped and cleaned up automatically
+        // The Rust ownership system ensures proper cleanup when the Arc<dyn ClientPlugin>
+        // references are dropped.
+
+        // Note: The plugin system uses RAII (Resource Acquisition Is Initialization)
+        // pattern where plugins clean up their resources in their Drop implementation.
+        // No explicit cleanup is needed beyond clearing the registry.
+
+        self.plugin_registry = crate::plugins::PluginRegistry::new();
+        Ok(())
     }
 }
 
@@ -2028,11 +2435,19 @@ impl ClientBuilder {
         // Note: The current Client doesn't expose connection config setters,
         // so we'll store this for when the transport supports it
 
-        // Register plugins (they'll be applied during message processing)
-        for _plugin in self.plugins {
-            // Note: Current Client doesn't have plugin registration methods yet
-            // This is where we'd register plugins when the plugin system is fully integrated
-            // For now, we'll store them for future implementation
+        // Register plugins with the client
+        let has_plugins = !self.plugins.is_empty();
+        for plugin in self.plugins {
+            client.register_plugin(plugin).await.map_err(|e| {
+                Error::bad_request(format!("Failed to register plugin during build: {}", e))
+            })?;
+        }
+
+        // Initialize plugins after registration
+        if has_plugins {
+            client.initialize_plugins().await.map_err(|e| {
+                Error::bad_request(format!("Failed to initialize plugins during build: {}", e))
+            })?;
         }
 
         Ok(client)

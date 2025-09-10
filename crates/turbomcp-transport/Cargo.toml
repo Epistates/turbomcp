@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-transport"
-version = "1.0.5"
+version = "1.0.6"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Multi-protocol transport layer supporting HTTP, WebSocket, STDIO, and TCP for MCP communications"
