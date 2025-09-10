@@ -280,7 +280,7 @@ async fn test_performance_benchmark() {
 #[ignore] // TODO: Fix macro compilation with minimal features
 fn test_feature_flag_combinations() {
     // Just test that our main examples compile with different features
-    // Note: We need 'minimal' feature which includes internal-deps + stdio
+    // Note: We use 'minimal' feature for basic STDIO functionality (internal-deps deprecated)
     let examples = ["07_transport_showcase", "06_architecture_patterns"];
 
     for example in &examples {
@@ -293,7 +293,7 @@ fn test_feature_flag_combinations() {
                 "turbomcp",
                 "--no-default-features",
                 "--features",
-                "minimal", // Changed from "stdio" to "minimal" which includes internal-deps
+                "minimal", // Minimal feature includes STDIO transport
             ])
             .output()
             .expect("Failed to run cargo check");

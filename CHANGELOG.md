@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **New two-terminal HTTP examples**: `08_elicitation_server.rs` and `08_elicitation_client.rs` for real-world testing
 
 ### 🚀 Developer Experience Improvements
+- **📢 Deprecation: Simplified Feature System** - `internal-deps` feature flag is now deprecated (will be removed in 2.0.0)
+  - Core framework dependencies are now included automatically - no manual setup required!
+  - **Migration**: Remove `internal-deps` from your feature lists for cleaner configuration
+  - **Before**: `features = ["internal-deps", "stdio"]` → **After**: `features = ["minimal"]` or `features = ["stdio"]`
+  - **Backwards compatible**: Old feature combinations still work but show deprecation warnings
+  - **Rationale**: Eliminates user confusion since these dependencies were always required
 - **Enhanced Error Handling**: New `McpErrorExt` trait with ergonomic error conversion methods
   - `.tool_error("context")?` instead of verbose `.map_err()` calls
   - `.network_error()`, `.protocol_error()`, `.resource_error()`, `.transport_error()` methods
@@ -35,14 +41,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Context injection behavior and flexible parameter positioning
 
 ### ✨ New Features
-- **Client Plugin System**: Extensible plugin architecture for client customization
+
+#### 🎯 Complete MCP Protocol Support with New Attribute Macros
+**MAJOR: Four new attribute macros completing MCP protocol coverage**
+
+- **`#[completion]`** - Autocompletion handlers for intelligent parameter suggestions
+  ```rust
+  #[completion("Complete file paths")]
+  async fn complete_path(&self, partial: String) -> McpResult<Vec<String>> {
+      Ok(vec!["config.json".to_string(), "data.txt".to_string()])
+  }
+  ```
+- **`#[elicitation]`** - Structured input collection from clients with schema validation
+  ```rust
+  #[elicitation("Collect user preferences")]
+  async fn get_preferences(&self, schema: serde_json::Value) -> McpResult<serde_json::Value> {
+      Ok(serde_json::json!({"theme": "dark", "language": "en"}))
+  }
+  ```
+- **`#[ping]`** - Bidirectional health checks and connection monitoring
+  ```rust
+  #[ping("Health check")]
+  async fn health_check(&self) -> McpResult<String> {
+      Ok("Server is healthy".to_string())
+  }
+  ```
+- **`#[template]`** - Resource template handlers with RFC 6570 URI templates
+  ```rust
+  #[template("users/{user_id}/profile")]
+  async fn get_user_profile(&self, user_id: String) -> McpResult<String> {
+      Ok(format!("Profile for user: {}", user_id))
+  }
+  ```
+
+#### 🚀 Enhanced Client SDK with Completion Support
+**NEW: `complete()` method in turbomcp-client**
+```rust
+let completions = client.complete("complete_path", "/usr/b").await?;
+println!("Suggestions: {:?}", completions.values);
+```
+
+#### 🌐 Advanced Transport & Integration Features
+- **Configurable HTTP Routes**: Enhanced `/mcp` endpoint with `run_http_with_path()` for custom paths
+  - Default `/mcp` route maintained for compatibility
+  - Flexible routing with `into_router_with_path()` for Axum integration
+  - Support for existing router state preservation
+- **Advanced Axum Integration**: Production-grade integration layer for existing Axum applications
+  - State-preserving merge capabilities for "bring your own server" philosophy
+  - Zero-conflict route merging with existing stateful routers
+  - Tower service foundation for observability and error handling
+- **Streamable HTTP Transport**: MCP 2025-06-18 compliant HTTP/SSE transport with streaming capabilities
+- **Client Plugin System**: Extensible plugin architecture for client customization  
 - **LLM Integration**: Comprehensive LLM provider system with sampling protocol
 - **Bidirectional Handlers**: Full support for all 4 MCP handler types:
   - ElicitationHandler for server-initiated prompts
   - ProgressHandler for operation tracking
   - LogHandler for structured logging
   - ResourceUpdateHandler for file change notifications
-- **HTTP Transport**: MCP 2025-06-18 compliant streamable HTTP/SSE transport
 - **Enhanced Builder API**: Improved ServerBuilder and ClientBuilder patterns
 
 ### 🛠 Improvements

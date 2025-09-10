@@ -65,12 +65,12 @@ sonic-rs = { workspace = true, optional = true }
 # HTTP dependencies
 http = "1.0"
 
-# Internal dependencies
-turbomcp-core = { version = "1.0.5", path = "../turbomcp-core", optional = true, features = ["simd"] }
-turbomcp-protocol = { version = "1.0.5", path = "../turbomcp-protocol", optional = true }
-turbomcp-transport = { version = "1.0.5", path = "../turbomcp-transport", optional = true }
-turbomcp-server = { version = "1.0.5", path = "../turbomcp-server", optional = true }
-turbomcp-macros = { version = "1.0.5", path = "../turbomcp-macros", optional = true }
+# Internal dependencies (always required)
+turbomcp-core = { version = "1.0.5", path = "../turbomcp-core", features = ["simd"] }
+turbomcp-protocol = { version = "1.0.5", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "1.0.5", path = "../turbomcp-transport" }
+turbomcp-server = { version = "1.0.5", path = "../turbomcp-server" }
+turbomcp-macros = { version = "1.0.5", path = "../turbomcp-macros" }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -89,7 +89,7 @@ default = ["full", "simd"]  # Full includes all transports for convenience
 # 🎯 RECOMMENDED FEATURE SETS (choose one):
 
 # For basic tool servers - minimal dependencies, works everywhere
-minimal = ["internal-deps", "stdio"]
+minimal = ["stdio"]
 
 # For production servers - includes HTTP/SSE for web compatibility  
 full = [
@@ -97,7 +97,6 @@ full = [
     "context-injection", 
     "uri-templates",
     "database",
-    "internal-deps",
     "stdio",
     "http",
     "websocket",
@@ -106,10 +105,10 @@ full = [
 ]
 
 # For network servers - STDIO + TCP only
-network = ["internal-deps", "stdio", "tcp"]
+network = ["stdio", "tcp"]
 
 # For system servers - TCP + Unix only (no STDIO)
-server-only = ["internal-deps", "tcp", "unix"]
+server-only = ["tcp", "unix"]
 
 # 📦 INDIVIDUAL FEATURES:
 
@@ -129,11 +128,12 @@ unix = ["turbomcp-transport/unix", "turbomcp-server/unix"]               # Unix 
 # Performance
 simd = ["turbomcp-core/simd", "simd-json", "sonic-rs"]  # SIMD JSON acceleration
 
-# Internal (required for any usage)
-internal-deps = ["turbomcp-core", "turbomcp-protocol", "turbomcp-transport", "turbomcp-server", "turbomcp-macros"]
 
 # Advanced combinations
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]  # All transports without extra features
+
+# DEPRECATED (for backwards compatibility - scheduled for removal in 2.0.0)
+internal-deps = []  # No longer needed - core dependencies are always included
 
 ## No examples currently shipped from the framework crate. See top-level examples.
 
