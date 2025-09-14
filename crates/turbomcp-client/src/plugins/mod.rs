@@ -39,6 +39,7 @@
 
 pub mod core;
 pub mod examples;
+pub mod macros;
 pub mod middleware;
 pub mod registry;
 

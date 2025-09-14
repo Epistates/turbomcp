@@ -1301,3 +1301,125 @@ fn test_tool_with_complete_annotations_integration() {
     assert_eq!(deserialized_annotations.open_world_hint, Some(false));
     assert_eq!(deserialized_annotations.read_only_hint, Some(false));
 }
+
+// ============================================================================
+// Clean API Tests (Improved Ergonomics)
+// ============================================================================
+
+#[test]
+fn test_clean_tool_creation() {
+    // Clean tool creation with minimal code!
+    let tool = Tool::new("test_tool");
+
+    assert_eq!(tool.name, "test_tool");
+    assert_eq!(tool.input_schema.schema_type, "object");
+    assert!(tool.description.is_none());
+    assert!(tool.title.is_none());
+    assert!(tool.annotations.is_none());
+    assert!(tool.meta.is_none());
+}
+
+#[test]
+fn test_clean_tool_with_description() {
+    // Clean creation with helper method
+    let tool = Tool::with_description("test_tool", "A test tool");
+
+    assert_eq!(tool.name, "test_tool");
+    assert_eq!(tool.description.as_deref(), Some("A test tool"));
+
+    // 🎉 Only 3 lines of setup vs old 11+ lines!
+}
+
+#[test]
+fn test_turbomcp_tool_definition_conversion_clean() {
+    // Test clean tool creation patterns!
+    let turbomcp_tool = Tool::with_description("test_tool", "A test tool");
+
+    assert_eq!(turbomcp_tool.name, "test_tool");
+    assert_eq!(turbomcp_tool.description, Some("A test tool".to_string()));
+
+    // Success: Clean and simple API achieved!
+}
+
+#[test]
+fn test_turbomcp_tool_definition_conversion_no_description() {
+    // Clean test for tools without descriptions
+    let turbomcp_tool = Tool::new("test_tool");
+
+    assert_eq!(turbomcp_tool.name, "test_tool");
+    assert_eq!(turbomcp_tool.description, None);
+
+    // Defaults work perfectly!
+}
+
+#[test]
+fn test_input_schema_defaults() {
+    let schema = ToolInputSchema::default();
+
+    assert_eq!(schema.schema_type, "object");
+    assert!(schema.properties.is_none());
+    assert!(schema.required.is_none());
+    assert!(schema.additional_properties.is_none());
+}
+
+#[test]
+fn test_input_schema_builder_methods() {
+    // Test helper methods for common patterns
+    let empty_schema = ToolInputSchema::empty();
+    assert_eq!(empty_schema.schema_type, "object");
+
+    let props = HashMap::from([
+        ("x".to_string(), json!({"type": "number"})),
+        ("y".to_string(), json!({"type": "number"})),
+    ]);
+
+    let schema_with_props = ToolInputSchema::with_properties(props.clone());
+    assert_eq!(schema_with_props.properties, Some(props.clone()));
+
+    let required_schema = ToolInputSchema::with_required_properties(
+        props.clone(),
+        vec!["x".to_string(), "y".to_string()],
+    );
+    assert_eq!(required_schema.properties, Some(props));
+    assert_eq!(
+        required_schema.required,
+        Some(vec!["x".to_string(), "y".to_string()])
+    );
+}
+
+#[test]
+fn test_tool_name_validation() {
+    // Test that Tool::new validates the name
+    let tool = Tool::new("valid_name");
+    assert_eq!(tool.name, "valid_name");
+
+    // Test that Tool::with_description validates the name
+    let tool_with_desc = Tool::with_description("valid_name", "description");
+    assert_eq!(tool_with_desc.name, "valid_name");
+    assert_eq!(tool_with_desc.description, Some("description".to_string()));
+}
+
+#[test]
+#[should_panic(expected = "Tool name cannot be empty")]
+fn test_tool_new_empty_name_panics() {
+    Tool::new("");
+}
+
+#[test]
+#[should_panic(expected = "Tool name cannot be empty")]
+fn test_tool_new_whitespace_name_panics() {
+    Tool::new("   ");
+}
+
+#[test]
+#[should_panic(expected = "Tool name cannot be empty")]
+fn test_tool_with_description_empty_name_panics() {
+    Tool::with_description("", "description");
+}
+
+#[test]
+fn test_tool_default_has_valid_name() {
+    let tool = Tool::default();
+    assert_eq!(tool.name, "unnamed_tool");
+    assert!(!tool.name.trim().is_empty());
+}

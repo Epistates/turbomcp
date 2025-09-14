@@ -633,6 +633,60 @@ pub struct Tool {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
+impl Default for Tool {
+    fn default() -> Self {
+        Self {
+            name: "unnamed_tool".to_string(), // Must have a valid name for MCP compliance
+            title: None,
+            description: None,
+            input_schema: ToolInputSchema::default(),
+            output_schema: None,
+            annotations: None,
+            meta: None,
+        }
+    }
+}
+
+impl Tool {
+    /// Create a new tool with just a name and minimal schema
+    ///
+    /// # Panics
+    /// Panics if the name is empty, as this would create an invalid tool.
+    pub fn new(name: impl Into<String>) -> Self {
+        let name = name.into();
+        assert!(!name.trim().is_empty(), "Tool name cannot be empty");
+
+        Self {
+            name,
+            title: None,
+            description: None,
+            input_schema: ToolInputSchema::default(),
+            output_schema: None,
+            annotations: None,
+            meta: None,
+        }
+    }
+
+    /// Create a new tool with name and description
+    ///
+    /// # Panics
+    /// Panics if the name is empty, as this would create an invalid tool.
+    pub fn with_description(name: impl Into<String>, description: impl Into<String>) -> Self {
+        let name = name.into();
+        assert!(!name.trim().is_empty(), "Tool name cannot be empty");
+
+        Self {
+            name,
+            title: None,
+            description: Some(description.into()),
+            input_schema: ToolInputSchema::default(),
+            output_schema: None,
+            annotations: None,
+            meta: None,
+        }
+    }
+}
+
 /// Tool input schema definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolInputSchema {
@@ -651,6 +705,47 @@ pub struct ToolInputSchema {
         skip_serializing_if = "Option::is_none"
     )]
     pub additional_properties: Option<bool>,
+}
+
+impl Default for ToolInputSchema {
+    fn default() -> Self {
+        Self {
+            schema_type: "object".to_string(),
+            properties: None,
+            required: None,
+            additional_properties: None,
+        }
+    }
+}
+
+impl ToolInputSchema {
+    /// Create a simple input schema with no properties
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Create an input schema with properties
+    pub fn with_properties(properties: HashMap<String, serde_json::Value>) -> Self {
+        Self {
+            schema_type: "object".to_string(),
+            properties: Some(properties),
+            required: None,
+            additional_properties: None,
+        }
+    }
+
+    /// Create an input schema with properties and required fields
+    pub fn with_required_properties(
+        properties: HashMap<String, serde_json::Value>,
+        required: Vec<String>,
+    ) -> Self {
+        Self {
+            schema_type: "object".to_string(),
+            properties: Some(properties),
+            required: Some(required),
+            additional_properties: None,
+        }
+    }
 }
 
 /// Tool output schema definition

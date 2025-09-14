@@ -742,95 +742,21 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Prepare request for plugin system
+        // 🎉 TurboMCP v1.0.7: Clean plugin execution with macro!
         let request_data = CallToolRequest {
             name: name.to_string(),
             arguments: Some(arguments.unwrap_or_default()),
         };
 
-        // Create JSON-RPC request for plugin context
-        let json_rpc_request = turbomcp_protocol::jsonrpc::JsonRpcRequest {
-            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-            id: turbomcp_core::MessageId::Number(1),
-            method: "tools/call".to_string(),
-            params: Some(serde_json::to_value(request_data.clone())?),
-        };
+        with_plugins!(self, "tools/call", request_data, {
+            // Core protocol call - plugins execute automatically around this
+            let result: CallToolResult = self
+                .protocol
+                .request("tools/call", Some(serde_json::to_value(&request_data)?))
+                .await?;
 
-        // 1. Create request context for plugins
-        let mut req_ctx =
-            crate::plugins::RequestContext::new(json_rpc_request, std::collections::HashMap::new());
-
-        // 2. Execute before_request plugin middleware
-        if let Err(e) = self
-            .plugin_registry
-            .execute_before_request(&mut req_ctx)
-            .await
-        {
-            return Err(Error::bad_request(format!(
-                "Plugin before_request failed: {}",
-                e
-            )));
-        }
-
-        // 3. Execute the actual MCP protocol call
-        let start_time = std::time::Instant::now();
-        let protocol_result: Result<CallToolResult> = self
-            .protocol
-            .request("tools/call", req_ctx.params().cloned())
-            .await;
-
-        // 4. Prepare response context
-        let duration = start_time.elapsed();
-        let mut resp_ctx = match protocol_result {
-            Ok(ref response) => {
-                let response_value = serde_json::to_value(response.clone())?;
-                crate::plugins::ResponseContext::new(req_ctx, Some(response_value), None, duration)
-            }
-            Err(ref e) => {
-                crate::plugins::ResponseContext::new(req_ctx, None, Some(*e.clone()), duration)
-            }
-        };
-
-        // 5. Execute after_response plugin middleware
-        if let Err(e) = self
-            .plugin_registry
-            .execute_after_response(&mut resp_ctx)
-            .await
-        {
-            return Err(Error::bad_request(format!(
-                "Plugin after_response failed: {}",
-                e
-            )));
-        }
-
-        // 6. Return the final result, checking for plugin modifications
-        match protocol_result {
-            Ok(ref response) => {
-                // Check if plugins modified the response
-                if let Some(modified_response) = resp_ctx.response {
-                    // Try to deserialize back to CallToolResult if plugins modified it
-                    if let Ok(modified_result) =
-                        serde_json::from_value::<CallToolResult>(modified_response.clone())
-                    {
-                        return Ok(self.extract_tool_content(&modified_result));
-                    } else {
-                        // Plugins returned a custom response format
-                        return Ok(modified_response);
-                    }
-                }
-
-                // No plugin modifications, use original response
-                Ok(self.extract_tool_content(response))
-            }
-            Err(e) => {
-                // Check if plugins provided an error recovery response
-                if let Some(recovery_response) = resp_ctx.response {
-                    Ok(recovery_response)
-                } else {
-                    Err(e)
-                }
-            }
-        }
+            Ok(self.extract_tool_content(&result))
+        })
     }
 
     /// Execute a protocol method with plugin middleware
@@ -997,8 +923,8 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Create the request in the format expected by the protocol
-        let params = serde_json::json!({
+        // 🎉 TurboMCP v1.0.7: Clean plugin execution with macro!
+        let request_params = serde_json::json!({
             "argument": {
                 "name": "partial",
                 "value": argument_value
@@ -1009,101 +935,15 @@ impl<T: Transport> Client<T> {
             }
         });
 
-        // Create JSON-RPC request for plugin context
-        let json_rpc_request = turbomcp_protocol::jsonrpc::JsonRpcRequest {
-            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-            id: turbomcp_core::MessageId::Number(1),
-            method: "completion/complete".to_string(),
-            params: Some(params.clone()),
-        };
+        with_plugins!(self, "completion/complete", request_params, {
+            // Core protocol call - plugins execute automatically around this
+            let result: CompleteResult = self
+                .protocol
+                .request("completion/complete", Some(request_params))
+                .await?;
 
-        // 1. Create request context for plugins
-        let mut req_ctx =
-            crate::plugins::RequestContext::new(json_rpc_request, std::collections::HashMap::new());
-
-        // 2. Execute before_request plugin middleware
-        if let Err(e) = self
-            .plugin_registry
-            .execute_before_request(&mut req_ctx)
-            .await
-        {
-            return Err(Error::bad_request(format!(
-                "Plugin before_request failed: {}",
-                e
-            )));
-        }
-
-        // 3. Execute the actual MCP protocol call
-        let start_time = std::time::Instant::now();
-        let protocol_result: Result<CompleteResult> = self
-            .protocol
-            .request("completion/complete", req_ctx.params().cloned())
-            .await;
-        let duration = start_time.elapsed();
-
-        // 4. Prepare response context
-        let mut resp_ctx = match protocol_result {
-            Ok(ref response) => {
-                let response_value = serde_json::to_value(response.clone())?;
-                crate::plugins::ResponseContext::new(req_ctx, Some(response_value), None, duration)
-            }
-            Err(ref e) => {
-                crate::plugins::ResponseContext::new(req_ctx, None, Some(*e.clone()), duration)
-            }
-        };
-
-        // 5. Execute after_response plugin middleware
-        if let Err(e) = self
-            .plugin_registry
-            .execute_after_response(&mut resp_ctx)
-            .await
-        {
-            return Err(Error::bad_request(format!(
-                "Plugin after_response failed: {}",
-                e
-            )));
-        }
-
-        // 6. Return the final result, checking for plugin modifications
-        match protocol_result {
-            Ok(ref response) => {
-                // Check if plugins modified the response
-                if let Some(modified_response) = resp_ctx.response {
-                    // Try to deserialize back to CompleteResult if plugins modified it
-                    if let Ok(modified_result) =
-                        serde_json::from_value::<CompleteResult>(modified_response.clone())
-                    {
-                        return Ok(modified_result.completion);
-                    } else {
-                        // If plugins returned a different format, try to extract CompletionResponse
-                        if let Ok(completion_response) = serde_json::from_value::<
-                            turbomcp_protocol::types::CompletionResponse,
-                        >(modified_response)
-                        {
-                            return Ok(completion_response);
-                        }
-                    }
-                }
-
-                // No plugin modifications, use original response
-                Ok(response.completion.clone())
-            }
-            Err(e) => {
-                // Check if plugins provided an error recovery response
-                if let Some(recovery_response) = resp_ctx.response {
-                    if let Ok(completion_response) = serde_json::from_value::<
-                        turbomcp_protocol::types::CompletionResponse,
-                    >(recovery_response)
-                    {
-                        Ok(completion_response)
-                    } else {
-                        Err(e)
-                    }
-                } else {
-                    Err(e)
-                }
-            }
-        }
+            Ok(result.completion)
+        })
     }
 
     /// List available resources from the server
