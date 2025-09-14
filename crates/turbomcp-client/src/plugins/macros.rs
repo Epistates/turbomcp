@@ -15,27 +15,27 @@
 ///
 /// # Usage
 ///
-/// ```rust,no_run
-/// # use turbomcp_client::plugins::with_plugins;
-/// # use std::collections::HashMap;
-/// # struct Client { plugin_registry: (), protocol: () }
-/// # impl Client {
-/// pub async fn call_tool(&mut self, name: &str, args: Option<HashMap<String, serde_json::Value>>) -> turbomcp_core::Result<serde_json::Value> {
-///     let request_data = turbomcp_protocol::types::CallToolRequest {
-///         name: name.to_string(),
-///         arguments: Some(args.unwrap_or_default()),
-///     };
+/// ```rust,ignore
+/// use turbomcp_client::with_plugins;
+/// use std::collections::HashMap;
 ///
-///     with_plugins!(self, "tools/call", request_data, {
-///         // Your protocol call here - plugins execute automatically
-///         let result: turbomcp_protocol::types::CallToolResult = self.protocol
-///             .request("tools/call", Some(serde_json::to_value(&request_data)?))
-///             .await?;
-///         
-///         Ok(self.extract_tool_content(&result))
-///     })
+/// impl Client {
+///     pub async fn call_tool(&mut self, name: &str, args: Option<HashMap<String, serde_json::Value>>) -> turbomcp_core::Result<serde_json::Value> {
+///         let request_data = turbomcp_protocol::types::CallToolRequest {
+///             name: name.to_string(),
+///             arguments: Some(args.unwrap_or_default()),
+///         };
+///
+///         with_plugins!(self, "tools/call", request_data, {
+///             // Your protocol call here - plugins execute automatically
+///             let result: turbomcp_protocol::types::CallToolResult = self.protocol
+///                 .request("tools/call", Some(serde_json::to_value(&request_data)?))
+///                 .await?;
+///             
+///             Ok(self.extract_tool_content(&result))
+///         })
+///     }
 /// }
-/// # }
 /// ```
 ///
 /// The macro automatically:
@@ -154,16 +154,16 @@ macro_rules! with_plugins {
 ///
 /// # Usage
 ///
-/// ```rust,no_run
-/// # use turbomcp_client::plugins::with_simple_plugins;
-/// # struct Client { plugin_registry: (), protocol: () }
-/// # impl Client {
-/// pub async fn ping(&mut self) -> turbomcp_core::Result<()> {
-///     with_simple_plugins!(self, "ping", {
-///         self.protocol.request("ping", None).await
-///     })
+/// ```rust,ignore
+/// use turbomcp_client::with_simple_plugins;
+///
+/// impl Client {
+///     pub async fn ping(&mut self) -> turbomcp_core::Result<()> {
+///         with_simple_plugins!(self, "ping", {
+///             self.protocol.request("ping", None).await
+///         })
+///     }
 /// }
-/// # }
 /// ```
 #[macro_export]
 macro_rules! with_simple_plugins {
