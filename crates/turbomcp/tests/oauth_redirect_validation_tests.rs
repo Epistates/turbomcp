@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use turbomcp::auth::OAuth2Client;
-use turbomcp::auth::{OAuth2Config, OAuth2FlowType, ProviderType};
+use turbomcp::auth::{OAuth2Config, OAuth2FlowType, ProviderType, SecurityLevel};
 
 /// Test basic redirect URI validation functionality
 #[test]
@@ -26,6 +26,11 @@ fn test_valid_redirect_uris() {
             scopes: vec!["read".to_string()],
             flow_type: OAuth2FlowType::AuthorizationCode,
             additional_params: HashMap::new(),
+            security_level: SecurityLevel::Standard,
+            mcp_resource_uri: None,
+            auto_resource_indicators: false,
+            #[cfg(feature = "dpop")]
+            dpop_config: None,
         };
 
         // Should succeed for valid URIs
@@ -58,6 +63,11 @@ fn test_suspicious_redirect_uris_rejected() {
             scopes: vec!["read".to_string()],
             flow_type: OAuth2FlowType::AuthorizationCode,
             additional_params: HashMap::new(),
+            security_level: SecurityLevel::Standard,
+            mcp_resource_uri: None,
+            auto_resource_indicators: false,
+            #[cfg(feature = "dpop")]
+            dpop_config: None,
         };
 
         // Should fail for suspicious URIs
@@ -87,6 +97,11 @@ fn test_environment_host_whitelist() {
         scopes: vec!["read".to_string()],
         flow_type: OAuth2FlowType::AuthorizationCode,
         additional_params: HashMap::new(),
+        security_level: SecurityLevel::Standard,
+        mcp_resource_uri: None,
+        auto_resource_indicators: false,
+        #[cfg(feature = "dpop")]
+        dpop_config: None,
     };
 
     let config_untrusted = OAuth2Config {
@@ -98,6 +113,11 @@ fn test_environment_host_whitelist() {
         scopes: vec!["read".to_string()],
         flow_type: OAuth2FlowType::AuthorizationCode,
         additional_params: HashMap::new(),
+        security_level: SecurityLevel::Standard,
+        mcp_resource_uri: None,
+        auto_resource_indicators: false,
+        #[cfg(feature = "dpop")]
+        dpop_config: None,
     };
 
     // Should succeed for whitelisted host
@@ -148,6 +168,11 @@ fn test_main_domain_validation() {
             scopes: vec!["read".to_string()],
             flow_type: OAuth2FlowType::AuthorizationCode,
             additional_params: HashMap::new(),
+            security_level: SecurityLevel::Standard,
+            mcp_resource_uri: None,
+            auto_resource_indicators: false,
+            #[cfg(feature = "dpop")]
+            dpop_config: None,
         };
 
         let result = OAuth2Client::new(&config, ProviderType::Generic);
@@ -164,6 +189,11 @@ fn test_main_domain_validation() {
             scopes: vec!["read".to_string()],
             flow_type: OAuth2FlowType::AuthorizationCode,
             additional_params: HashMap::new(),
+            security_level: SecurityLevel::Standard,
+            mcp_resource_uri: None,
+            auto_resource_indicators: false,
+            #[cfg(feature = "dpop")]
+            dpop_config: None,
         };
 
         let result = OAuth2Client::new(&config, ProviderType::Generic);
@@ -196,6 +226,11 @@ fn test_localhost_always_allowed() {
             scopes: vec!["read".to_string()],
             flow_type: OAuth2FlowType::AuthorizationCode,
             additional_params: HashMap::new(),
+            security_level: SecurityLevel::Standard,
+            mcp_resource_uri: None,
+            auto_resource_indicators: false,
+            #[cfg(feature = "dpop")]
+            dpop_config: None,
         };
 
         let result = OAuth2Client::new(&config, ProviderType::Generic);
@@ -252,6 +287,11 @@ fn test_security_attack_vectors_blocked() {
             scopes: vec!["read".to_string()],
             flow_type: OAuth2FlowType::AuthorizationCode,
             additional_params: HashMap::new(),
+            security_level: SecurityLevel::Standard,
+            mcp_resource_uri: None,
+            auto_resource_indicators: false,
+            #[cfg(feature = "dpop")]
+            dpop_config: None,
         };
 
         let result = OAuth2Client::new(&config, ProviderType::Generic);
@@ -283,6 +323,11 @@ fn test_external_domains_require_whitelist() {
             scopes: vec!["read".to_string()],
             flow_type: OAuth2FlowType::AuthorizationCode,
             additional_params: HashMap::new(),
+            security_level: SecurityLevel::Standard,
+            mcp_resource_uri: None,
+            auto_resource_indicators: false,
+            #[cfg(feature = "dpop")]
+            dpop_config: None,
         };
 
         let result = OAuth2Client::new(&config, ProviderType::Generic);
