@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/turbomcp-server/badge.svg)](https://docs.rs/turbomcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Production-ready MCP server framework with OAuth 2.0 authentication, middleware pipeline, and enterprise lifecycle management.**
+**Production-ready MCP server framework with OAuth 2.1 MCP compliance, middleware pipeline, and enterprise lifecycle management.**
 
 ## Overview
 
@@ -18,8 +18,8 @@
 - **Schema generation** - Automatic JSON schema creation from handler signatures
 - **Hot reloading** - Dynamic handler registration and updates (development mode)
 
-### 🔐 **OAuth 2.0 Integration** 
-- **Multiple providers** - Google, GitHub, Microsoft, and custom OAuth 2.0 providers
+### 🔐 **OAuth 2.1 MCP Compliance** 
+- **Multiple providers** - Google, GitHub, Microsoft, and custom OAuth 2.1 providers
 - **PKCE security** - Proof Key for Code Exchange enabled by default
 - **All OAuth flows** - Authorization Code, Client Credentials, Device Code
 - **Session management** - Secure user session tracking with automatic cleanup
@@ -182,7 +182,7 @@ let server = ServerBuilder::new()
     .build();
 ```
 
-## OAuth 2.0 Authentication
+## OAuth 2.1 MCP Authentication
 
 ### Google OAuth Setup
 

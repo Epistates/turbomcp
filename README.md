@@ -13,7 +13,7 @@ TurboMCP is the **premium standard** for MCP implementation, delivering enterpri
 
 - **🏆 MCP 2025-06-18 Compliant** - **100% specification compliance** with next-generation features
 - **🚀 Ultra-High Performance** - **334,961 msg/sec** throughput with SIMD-accelerated JSON
-- **🛡️ Enterprise Security** - OAuth 2.0, CORS, rate limiting, security headers, TLS 1.3
+- **🛡️ Enterprise Security** - OAuth 2.1 MCP compliance, CORS, rate limiting, security headers, TLS 1.3
 - **⚡ Zero-Overhead Macros** - Ergonomic `#[server]`, `#[tool]`, `#[resource]` attributes
 - **🔗 World-Class Transports** - 5 production-ready protocols with bidirectional support
 - **🎯 Type Safety** - Compile-time validation with automatic schema generation
