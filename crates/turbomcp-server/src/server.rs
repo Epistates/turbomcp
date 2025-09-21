@@ -22,6 +22,15 @@ use turbomcp_transport::StdioTransport;
 use turbomcp_transport::core::{TransportError, TransportMessageMetadata};
 use turbomcp_transport::{Transport, TransportMessage};
 
+/// Check if logging should be enabled for STDIO transport
+///
+/// For MCP STDIO transport compliance, logging is disabled by default since stdout
+/// must be reserved exclusively for JSON-RPC messages. This can be overridden by
+/// setting the TURBOMCP_FORCE_LOGGING environment variable.
+fn should_log_for_stdio() -> bool {
+    std::env::var("TURBOMCP_FORCE_LOGGING").is_ok()
+}
+
 /// Handle for triggering graceful server shutdown
 ///
 /// Provides external control over server shutdown with support for:
@@ -227,18 +236,27 @@ impl McpServer {
 
     /// Run the server with STDIO transport
     pub async fn run_stdio(self) -> ServerResult<()> {
-        tracing::info!("Starting MCP server with STDIO transport");
+        // For STDIO transport, disable logging unless explicitly overridden
+        // STDIO stdout must be reserved exclusively for JSON-RPC messages per MCP protocol
+        if should_log_for_stdio() {
+            tracing::info!("Starting MCP server with STDIO transport");
+        }
         self.lifecycle.start().await;
 
         // Initialize STDIO transport
         let mut transport = StdioTransport::new();
         if let Err(e) = transport.connect().await {
-            tracing::error!(error = %e, "Failed to connect stdio transport");
+            if should_log_for_stdio() {
+                tracing::error!(error = %e, "Failed to connect stdio transport");
+            } else {
+                // Critical errors can go to stderr for debugging
+                eprintln!("TurboMCP STDIO transport failed to connect: {}", e);
+            }
             self.lifecycle.shutdown().await;
             return Err(e.into());
         }
 
-        self.run_with_transport(transport).await
+        self.run_with_transport_stdio_aware(transport).await
     }
 
     /// Get health status
@@ -426,6 +444,108 @@ impl McpServer {
         tracing::info!("Server shutdown complete");
         Ok(())
     }
+
+    /// STDIO-aware transport runner that respects MCP protocol logging requirements
+    async fn run_with_transport_stdio_aware<T: Transport>(
+        &self,
+        mut transport: T,
+    ) -> ServerResult<()> {
+        // Install signal handlers for graceful shutdown (Ctrl+C / SIGTERM)
+        let lifecycle_for_sigint = self.lifecycle.clone();
+        tokio::spawn(async move {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                if should_log_for_stdio() {
+                    tracing::warn!(error = %e, "Failed to install Ctrl+C handler");
+                }
+                return;
+            }
+            if should_log_for_stdio() {
+                tracing::info!("Ctrl+C received, initiating shutdown");
+            }
+            lifecycle_for_sigint.shutdown().await;
+        });
+
+        #[cfg(unix)]
+        {
+            let lifecycle_for_sigterm = self.lifecycle.clone();
+            tokio::spawn(async move {
+                use tokio::signal::unix::{SignalKind, signal};
+                match signal(SignalKind::terminate()) {
+                    Ok(mut sigterm) => {
+                        sigterm.recv().await;
+                        if should_log_for_stdio() {
+                            tracing::info!("SIGTERM received, initiating shutdown");
+                        }
+                        lifecycle_for_sigterm.shutdown().await;
+                    }
+                    Err(e) => {
+                        if should_log_for_stdio() {
+                            tracing::warn!(error = %e, "Failed to install SIGTERM handler");
+                        }
+                    }
+                }
+            });
+        }
+
+        // Shutdown signal
+        let mut shutdown = self.lifecycle.shutdown_signal();
+
+        // Main message processing loop
+        loop {
+            tokio::select! {
+                _ = shutdown.recv() => {
+                    if should_log_for_stdio() {
+                        tracing::info!("Shutdown signal received");
+                    }
+                    break;
+                }
+                res = transport.receive() => {
+                    match res {
+                        Ok(Some(message)) => {
+                            if let Err(e) = self.handle_transport_message_stdio_aware(&mut transport, message).await {
+                                if should_log_for_stdio() {
+                                    tracing::warn!(error = %e, "Failed to handle transport message");
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            // No message available; sleep briefly to avoid busy loop
+                            sleep(Duration::from_millis(5)).await;
+                        }
+                        Err(e) => {
+                            match e {
+                                TransportError::ReceiveFailed(msg) if msg.contains("disconnected") => {
+                                    if should_log_for_stdio() {
+                                        tracing::info!("Transport receive channel disconnected; shutting down");
+                                    }
+                                    break;
+                                }
+                                _ => {
+                                    if should_log_for_stdio() {
+                                        tracing::error!(error = %e, "Transport receive failed");
+                                    }
+                                    // Backoff on errors
+                                    sleep(Duration::from_millis(50)).await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Disconnect transport
+        if let Err(e) = transport.disconnect().await {
+            if should_log_for_stdio() {
+                tracing::warn!(error = %e, "Error while disconnecting transport");
+            }
+        }
+
+        if should_log_for_stdio() {
+            tracing::info!("Server shutdown complete");
+        }
+        Ok(())
+    }
 }
 
 impl McpServer {
@@ -583,6 +703,173 @@ impl McpServer {
             );
             if let Err(e) = transport.send(reply).await {
                 tracing::warn!(error = %e, "Failed to send response over transport");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// STDIO-aware message handler that respects MCP protocol logging requirements
+    async fn handle_transport_message_stdio_aware(
+        &self,
+        transport: &mut dyn Transport,
+        message: TransportMessage,
+    ) -> ServerResult<()> {
+        // Convert bytes to str
+        let json_str = match std::str::from_utf8(&message.payload) {
+            Ok(s) => s,
+            Err(e) => {
+                if should_log_for_stdio() {
+                    tracing::warn!(error = %e, "Invalid UTF-8 in incoming message");
+                }
+                return Ok(());
+            }
+        };
+
+        // Parse JSON-RPC
+        let parsed = serde_json::from_str::<JsonRpcMessage>(json_str);
+        let response_json = match parsed {
+            Ok(JsonRpcMessage::Request(req)) => {
+                let ctx = RequestContext::new().with_metadata("transport", "stdio");
+                // Process through middleware stack before routing
+                let (req, ctx) = match self.middleware.read().await.process_request(req, ctx).await
+                {
+                    Ok(tuple) => tuple,
+                    Err(e) => {
+                        // Convert middleware error to JSON-RPC error response
+                        let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                            code: e.error_code(),
+                            message: e.to_string(),
+                            data: None,
+                        };
+                        let response = turbomcp_protocol::jsonrpc::JsonRpcResponse {
+                            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
+                            id: None,
+                            result: None,
+                            error: Some(error),
+                        };
+                        let reply = TransportMessage::with_metadata(
+                            message.id,
+                            Bytes::from(
+                                serde_json::to_string(&response)
+                                    .unwrap_or_else(|_| "{}".to_string()),
+                            ),
+                            TransportMessageMetadata::with_content_type("application/json"),
+                        );
+                        let _ = transport.send(reply).await;
+                        return Ok(());
+                    }
+                };
+                // Process request through middleware
+                let (processed_req, updated_ctx) = match self
+                    .middleware
+                    .read()
+                    .await
+                    .process_request(req, ctx.clone())
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        // Return error response for middleware rejection
+                        let error_response = turbomcp_protocol::jsonrpc::JsonRpcResponse {
+                            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
+                            id: None,
+                            result: None,
+                            error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
+                                code: -32603,
+                                message: format!("Middleware error: {e}"),
+                                data: None,
+                            }),
+                        };
+                        let mut reply = TransportMessage::new(
+                            turbomcp_core::MessageId::from("error"),
+                            Bytes::from(
+                                serde_json::to_string(&error_response)
+                                    .unwrap_or_else(|_| "{}".to_string()),
+                            ),
+                        );
+                        reply.metadata =
+                            TransportMessageMetadata::with_content_type("application/json");
+                        let _ = transport.send(reply).await;
+                        return Ok(());
+                    }
+                };
+
+                let mut resp: JsonRpcResponse =
+                    self.router.route(processed_req, updated_ctx.clone()).await;
+                // Process response through middleware
+                resp = match self
+                    .middleware
+                    .read()
+                    .await
+                    .process_response(resp, &updated_ctx)
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(e) => turbomcp_protocol::jsonrpc::JsonRpcResponse {
+                        jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
+                        id: None,
+                        result: None,
+                        error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
+                            code: e.error_code(),
+                            message: e.to_string(),
+                            data: None,
+                        }),
+                    },
+                };
+
+                serde_json::to_string(&resp).ok()
+            }
+            Ok(JsonRpcMessage::RequestBatch(batch)) => {
+                // Convert batch to Vec<JsonRpcRequest>
+                let requests: Vec<JsonRpcRequest> = batch.items;
+                let ctx = RequestContext::new().with_metadata("transport", "stdio");
+                // Process each request through middleware by reusing the router's batch processing
+                let responses = self.router.route_batch(requests, ctx).await;
+                serde_json::to_string(&responses).ok()
+            }
+            Ok(JsonRpcMessage::Notification(_note)) => {
+                // No response for notifications
+                None
+            }
+            // Ignore responses from client (server-initiated only)
+            Ok(
+                JsonRpcMessage::Response(_)
+                | JsonRpcMessage::ResponseBatch(_)
+                | JsonRpcMessage::MessageBatch(_),
+            ) => None,
+            Err(e) => {
+                if should_log_for_stdio() {
+                    tracing::warn!(error = %e, "Failed to parse JSON-RPC message");
+                }
+                // Return proper JSON-RPC parse error response (RFC compliant)
+                let error_response = turbomcp_protocol::jsonrpc::JsonRpcResponse {
+                    jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
+                    id: None, // Parse error means we couldn't extract ID
+                    result: None,
+                    error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
+                        code: -32700, // Parse error as per JSON-RPC 2.0 spec
+                        message: "Parse error".to_string(),
+                        data: Some(serde_json::Value::String(format!(
+                            "Invalid JSON-RPC: {}",
+                            e
+                        ))),
+                    }),
+                };
+                serde_json::to_string(&error_response).ok()
+            }
+        };
+
+        if let Some(resp_str) = response_json {
+            let reply = TransportMessage::with_metadata(
+                message.id,
+                Bytes::from(resp_str),
+                TransportMessageMetadata::with_content_type("application/json"),
+            );
+            if let Err(e) = transport.send(reply).await {
+                if should_log_for_stdio() {
+                    tracing::warn!(error = %e, "Failed to send response over transport");
+                }
             }
         }
 
