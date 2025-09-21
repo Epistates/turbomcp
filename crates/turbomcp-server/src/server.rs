@@ -502,11 +502,10 @@ impl McpServer {
                 res = transport.receive() => {
                     match res {
                         Ok(Some(message)) => {
-                            if let Err(e) = self.handle_transport_message_stdio_aware(&mut transport, message).await {
-                                if should_log_for_stdio() {
+                            if let Err(e) = self.handle_transport_message_stdio_aware(&mut transport, message).await
+                                && should_log_for_stdio() {
                                     tracing::warn!(error = %e, "Failed to handle transport message");
                                 }
-                            }
                         }
                         Ok(None) => {
                             // No message available; sleep briefly to avoid busy loop
@@ -535,10 +534,10 @@ impl McpServer {
         }
 
         // Disconnect transport
-        if let Err(e) = transport.disconnect().await {
-            if should_log_for_stdio() {
-                tracing::warn!(error = %e, "Error while disconnecting transport");
-            }
+        if let Err(e) = transport.disconnect().await
+            && should_log_for_stdio()
+        {
+            tracing::warn!(error = %e, "Error while disconnecting transport");
         }
 
         if should_log_for_stdio() {
@@ -866,10 +865,10 @@ impl McpServer {
                 Bytes::from(resp_str),
                 TransportMessageMetadata::with_content_type("application/json"),
             );
-            if let Err(e) = transport.send(reply).await {
-                if should_log_for_stdio() {
-                    tracing::warn!(error = %e, "Failed to send response over transport");
-                }
+            if let Err(e) = transport.send(reply).await
+                && should_log_for_stdio()
+            {
+                tracing::warn!(error = %e, "Failed to send response over transport");
             }
         }
 
