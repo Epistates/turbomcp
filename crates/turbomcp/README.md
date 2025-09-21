@@ -2,8 +2,8 @@
 
 [![Crates.io](https://img.shields.io/crates/v/turbomcp.svg)](https://crates.io/crates/turbomcp)
 [![Documentation](https://docs.rs/turbomcp/badge.svg)](https://docs.rs/turbomcp)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://img.shields.io/github/workflow/status/Epistates/turbomcp/CI)](https://github.com/Epistates/turbomcp/actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../../LICENSE)
+[![Tests](https://github.com/Epistates/turbomcp/actions/workflows/test.yml/badge.svg)](https://github.com/Epistates/turbomcp/actions/workflows/test.yml)
 
 **World-class Rust SDK for the Model Context Protocol (MCP)** - the industry standard for MCP implementation with complete 2025-06-18 specification compliance and industry-exclusive features.
 
@@ -59,6 +59,13 @@
 - **Connection health monitoring** - Automatic failure detection
 - **Graceful degradation** - Fallback mechanisms
 
+### 🔄 **Shared Wrappers for Async Concurrency** (New in v1.0.9)
+- **SharedClient** - Thread-safe client access with clean APIs
+- **SharedTransport** - Concurrent transport sharing across async tasks
+- **SharedServer** - Server lifecycle management with consumption pattern
+- **Generic Shareable Pattern** - Shared<T> and ConsumableShared<T> abstractions
+- **Arc/Mutex Encapsulation** - Hide synchronization complexity from public APIs
+
 ## Architecture
 
 TurboMCP is built as a layered architecture with clear separation of concerns:
@@ -93,7 +100,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.0.4"
+turbomcp = "1.0.9"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -506,6 +513,91 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## Shared Wrappers for Async Concurrency (v1.0.9)
+
+TurboMCP v1.0.9 introduces comprehensive shared wrapper system that eliminates Arc/Mutex complexity from public APIs:
+
+### SharedClient - Thread-Safe Client Access
+
+```rust
+use turbomcp_client::{Client, SharedClient};
+use turbomcp_transport::StdioTransport;
+
+// Create shared client for concurrent access
+let transport = StdioTransport::new();
+let client = Client::new(transport);
+let shared = SharedClient::new(client);
+
+// Initialize once
+shared.initialize().await?;
+
+// Clone for concurrent usage
+let shared1 = shared.clone();
+let shared2 = shared.clone();
+
+// Both tasks can access the client concurrently
+let handle1 = tokio::spawn(async move {
+    shared1.list_tools().await
+});
+
+let handle2 = tokio::spawn(async move {
+    shared2.list_prompts().await
+});
+
+let (tools, prompts) = tokio::join!(handle1, handle2);
+```
+
+### SharedTransport - Concurrent Transport Access
+
+```rust
+use turbomcp_transport::{StdioTransport, SharedTransport};
+
+// Wrap any transport for sharing
+let transport = StdioTransport::new();
+let shared = SharedTransport::new(transport);
+
+// Connect once
+shared.connect().await?;
+
+// Share across tasks
+let shared1 = shared.clone();
+let shared2 = shared.clone();
+
+let handle1 = tokio::spawn(async move {
+    shared1.send(message).await
+});
+
+let handle2 = tokio::spawn(async move {
+    shared2.receive().await
+});
+```
+
+### Generic Shareable Pattern
+
+```rust
+use turbomcp_core::shared::{Shared, ConsumableShared};
+
+// Any type can be made shareable
+let counter = MyCounter::new();
+let shared = Shared::new(counter);
+
+// Use with closures for fine-grained control
+shared.with_mut(|c| c.increment()).await;
+let value = shared.with(|c| c.get()).await;
+
+// Consumable variant for one-time use
+let server = MyServer::new();
+let shared = ConsumableShared::new(server);
+let server = shared.consume().await?; // Extracts the value
+```
+
+### Benefits
+- **Clean APIs**: No exposed Arc/Mutex types
+- **Easy Sharing**: Clone for concurrent access
+- **Thread Safety**: Built-in synchronization
+- **Zero Overhead**: Same performance as direct usage
+- **MCP Compliant**: Preserves all protocol semantics
 
 ## Error Handling
 

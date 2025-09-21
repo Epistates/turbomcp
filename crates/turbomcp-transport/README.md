@@ -43,6 +43,13 @@
 - **Streaming Support** - Low-memory compression for large messages
 - **Compression Metrics** - Performance monitoring and optimization
 
+### 🔄 **SharedTransport for Async Concurrency** (New in v1.0.9)
+- **Thread-safe transport sharing** - Share transports across multiple async tasks
+- **Clean API surface** - Hide Arc/Mutex complexity from public interfaces
+- **Zero overhead** - Same performance as direct transport usage
+- **Protocol compliant** - Preserves all transport semantics exactly
+- **Clone support** - Easy sharing with simple `.clone()` operations
+
 ## Architecture
 
 ```
@@ -362,6 +369,115 @@ impl Transport for CustomTransport {
 | `compression` | Enable compression algorithms | ✅ |
 | `metrics` | Enable metrics collection | ✅ |
 | `circuit-breaker` | Enable circuit breaker pattern | ✅ |
+
+## SharedTransport for Async Concurrency (v1.0.9)
+
+TurboMCP v1.0.9 introduces SharedTransport - a thread-safe wrapper that eliminates Arc/Mutex complexity while preserving full transport functionality:
+
+### Basic SharedTransport Usage
+
+```rust
+use turbomcp_transport::{StdioTransport, SharedTransport};
+
+// Create and wrap any transport for sharing
+let transport = StdioTransport::new();
+let shared = SharedTransport::new(transport);
+
+// Connect once
+shared.connect().await?;
+
+// Clone for concurrent usage across tasks
+let shared1 = shared.clone();
+let shared2 = shared.clone();
+
+// Both tasks can use the transport concurrently
+let handle1 = tokio::spawn(async move {
+    shared1.send(message1).await
+});
+
+let handle2 = tokio::spawn(async move {
+    shared2.receive().await
+});
+
+let (send_result, message) = tokio::join!(handle1, handle2);
+```
+
+### Advanced Concurrent Patterns
+
+```rust
+use turbomcp_transport::SharedTransport;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+
+// Rate-limited concurrent transport operations
+let shared_transport = SharedTransport::new(transport);
+let semaphore = Arc::new(Semaphore::new(10)); // Max 10 concurrent operations
+
+let tasks = (0..50).map(|i| {
+    let transport = shared_transport.clone();
+    let semaphore = semaphore.clone();
+
+    tokio::spawn(async move {
+        let _permit = semaphore.acquire().await.unwrap();
+
+        let message = create_message(i);
+        transport.send(message).await?;
+        transport.receive().await
+    })
+}).collect::<Vec<_>>();
+
+// Wait for all operations to complete
+let results = futures::future::join_all(tasks).await;
+```
+
+### Integration with Multiple Clients
+
+```rust
+use turbomcp_transport::SharedTransport;
+use turbomcp_client::Client;
+
+// Share a single transport across multiple clients
+let transport = TcpTransport::connect("127.0.0.1:8080").await?;
+let shared_transport = SharedTransport::new(transport);
+
+// Create multiple clients sharing the same transport
+let client1 = Client::new(shared_transport.clone());
+let client2 = Client::new(shared_transport.clone());
+let client3 = Client::new(shared_transport.clone());
+
+// Initialize all clients concurrently
+let (result1, result2, result3) = tokio::try_join!(
+    client1.initialize(),
+    client2.initialize(),
+    client3.initialize()
+)?;
+
+// All clients can now operate independently
+tokio::spawn(async move {
+    loop {
+        let tools = client1.list_tools().await?;
+        // Process tools...
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+});
+
+tokio::spawn(async move {
+    loop {
+        let resources = client2.list_resources().await?;
+        // Process resources...
+        tokio::time::sleep(Duration::from_secs(45)).await;
+    }
+});
+```
+
+### Benefits
+
+- **Clean APIs**: No exposed Arc/Mutex types in transport interfaces
+- **Easy Sharing**: Simple `.clone()` for concurrent access
+- **Thread Safety**: Built-in synchronization for async operations
+- **Zero Overhead**: Same performance as direct transport usage
+- **Protocol Compliant**: Preserves all transport semantics exactly
+- **Universal Compatibility**: Works with all transport types (STDIO, HTTP, WebSocket, TCP, Unix)
 
 ## Performance Characteristics
 

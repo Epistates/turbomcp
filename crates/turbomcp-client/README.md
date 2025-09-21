@@ -42,6 +42,13 @@
 - **Reconnection logic** - Intelligent reconnection with state preservation
 - **Session persistence** - Optional session state persistence across connections
 
+### 🔄 **SharedClient for Async Concurrency** (New in v1.0.9)
+- **Thread-safe client sharing** - Share clients across multiple async tasks
+- **Clean API surface** - Hide Arc/Mutex complexity from public interfaces
+- **Zero overhead** - Same performance as direct client usage
+- **MCP compliant** - Preserves all protocol semantics exactly
+- **Clone support** - Easy sharing with simple `.clone()` operations
+
 ## Architecture
 
 ```
@@ -478,6 +485,118 @@ let client = ClientBuilder::new()
 
 // Session is automatically restored on reconnection
 ```
+
+## SharedClient for Async Concurrency (v1.0.9)
+
+TurboMCP v1.0.9 introduces SharedClient - a thread-safe wrapper that eliminates Arc/Mutex complexity while preserving full API compatibility:
+
+### Basic SharedClient Usage
+
+```rust
+use turbomcp_client::{Client, SharedClient};
+use turbomcp_transport::StdioTransport;
+
+// Create and initialize shared client
+let transport = StdioTransport::new();
+let client = Client::new(transport);
+let shared = SharedClient::new(client);
+
+// Initialize once
+shared.initialize().await?;
+
+// Clone for concurrent usage across tasks
+let shared1 = shared.clone();
+let shared2 = shared.clone();
+
+// Both tasks can access the client concurrently
+let handle1 = tokio::spawn(async move {
+    shared1.list_tools().await
+});
+
+let handle2 = tokio::spawn(async move {
+    shared2.list_prompts().await
+});
+
+let (tools, prompts) = tokio::join!(handle1, handle2);
+```
+
+### Advanced Concurrent Patterns
+
+```rust
+use turbomcp_client::SharedClient;
+use std::sync::Arc;
+use tokio::sync::Semaphore;
+
+// Rate-limited concurrent tool calls
+let shared_client = SharedClient::new(client);
+let semaphore = Arc::new(Semaphore::new(5)); // Max 5 concurrent calls
+
+let tasks = (0..20).map(|i| {
+    let client = shared_client.clone();
+    let semaphore = semaphore.clone();
+
+    tokio::spawn(async move {
+        let _permit = semaphore.acquire().await.unwrap();
+        client.call_tool("calculate", serde_json::json!({
+            "operation": "fibonacci",
+            "n": i
+        })).await
+    })
+}).collect::<Vec<_>>();
+
+// Wait for all tasks to complete
+let results = futures::future::join_all(tasks).await;
+```
+
+### Library Integration
+
+Perfect for embedding in other frameworks:
+
+```rust
+// Clean public API for library authors
+pub struct MyFrameworkClient<C>
+where
+    C: Clone + Send + Sync + 'static
+{
+    mcp_client: C,
+}
+
+impl<C> MyFrameworkClient<C>
+where
+    C: Clone + Send + Sync + 'static
+{
+    pub fn new(client: C) -> Self {
+        Self { mcp_client: client }
+    }
+
+    pub fn spawn_background_tasks(&self) {
+        let client1 = self.mcp_client.clone();
+        let client2 = self.mcp_client.clone();
+
+        tokio::spawn(async move {
+            // Background task 1 using client1
+        });
+
+        tokio::spawn(async move {
+            // Background task 2 using client2
+        });
+    }
+}
+
+// Usage with SharedClient
+let shared = SharedClient::new(client);
+let framework = MyFrameworkClient::new(shared);
+framework.spawn_background_tasks();
+```
+
+### Benefits
+
+- **Clean APIs**: No exposed Arc/Mutex types in public interfaces
+- **Easy Sharing**: Simple `.clone()` for concurrent access
+- **Thread Safety**: Built-in synchronization for async tasks
+- **Zero Overhead**: Same performance as direct Client usage
+- **MCP Compliant**: Preserves all protocol semantics exactly
+- **Drop-in Replacement**: Identical method signatures to Client
 
 ## Integration Examples
 

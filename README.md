@@ -23,6 +23,7 @@ TurboMCP is the **premium standard** for MCP implementation, delivering enterpri
 - **🤖 Sampling Protocol** - Bidirectional LLM sampling with streaming support
 - **🎵 AudioContent Support** - **Industry-exclusive** multimedia content handling
 - **📝 Enhanced Annotations** - Rich metadata with ISO 8601 timestamps
+- **🔄 Shared Wrappers** - Thread-safe async sharing (SharedClient, SharedTransport, SharedServer)
 
 ## Quick Start
 
@@ -30,7 +31,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.0.8"
+turbomcp = "1.0.9"
 tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -267,7 +268,7 @@ impl ProductionServer {
 
 ### World-Class Multi-Transport Support
 
-**TurboMCP 1.0.8** delivers **industry-leading transport layer implementation** with complete MCP 2025-06-18 specification compliance:
+**TurboMCP 1.0.9** delivers **industry-leading transport layer implementation** with complete MCP 2025-06-18 specification compliance:
 
 #### **🏆 Transport Layer Excellence**
 - **✅ 100% MCP Protocol Compliance** - All 5 transport types fully validated
@@ -375,6 +376,97 @@ Our architecture prioritizes compile-time computation over runtime flexibility. 
 | [`turbomcp-client`](./crates/turbomcp-client/) | Client library | Connection management, error recovery |
 | [`turbomcp-macros`](./crates/turbomcp-macros/) | Proc macros | `#[server]`, `#[tool]`, `#[resource]` |
 | [`turbomcp-cli`](./crates/turbomcp-cli/) | CLI tools | Testing, schema export, debugging |
+
+## Shared Wrappers for Async Concurrency (v1.0.9)
+
+TurboMCP v1.0.9 introduces comprehensive shared wrapper system that eliminates Arc/Mutex complexity while enabling thread-safe concurrent access:
+
+### SharedClient - Thread-Safe Client Access
+
+```rust
+use turbomcp_client::{Client, SharedClient};
+use turbomcp_transport::StdioTransport;
+
+// Create shared client for concurrent access
+let transport = StdioTransport::new();
+let client = Client::new(transport);
+let shared = SharedClient::new(client);
+
+// Initialize once
+shared.initialize().await?;
+
+// Clone for concurrent usage
+let shared1 = shared.clone();
+let shared2 = shared.clone();
+
+// Both tasks can access the client concurrently
+let handle1 = tokio::spawn(async move {
+    shared1.list_tools().await
+});
+
+let handle2 = tokio::spawn(async move {
+    shared2.list_prompts().await
+});
+
+let (tools, prompts) = tokio::join!(handle1, handle2);
+```
+
+### SharedTransport - Concurrent Transport Access
+
+```rust
+use turbomcp_transport::{SharedTransport, TcpTransport};
+
+// Wrap any transport for sharing
+let transport = TcpTransport::connect("127.0.0.1:8080").await?;
+let shared = SharedTransport::new(transport);
+
+// Connect once
+shared.connect().await?;
+
+// Share across multiple clients
+let client1 = Client::new(shared.clone());
+let client2 = Client::new(shared.clone());
+let client3 = Client::new(shared.clone());
+
+// All clients can operate independently
+tokio::try_join!(
+    client1.initialize(),
+    client2.initialize(),
+    client3.initialize()
+)?;
+```
+
+### SharedServer - Server Monitoring
+
+```rust
+use turbomcp_server::{McpServer, SharedServer};
+
+// Wrap server for monitoring while running
+let server = McpServer::new(config);
+let shared = SharedServer::new(server);
+
+// Clone for monitoring tasks
+let monitor = shared.clone();
+tokio::spawn(async move {
+    loop {
+        if let Some(health) = monitor.health().await {
+            println!("Server health: {:?}", health);
+        }
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+});
+
+// Run the server (consumes the shared wrapper)
+shared.run_stdio().await?;
+```
+
+### Benefits
+
+- **Clean APIs**: No exposed Arc/Mutex types in public interfaces
+- **Easy Sharing**: Simple `.clone()` for concurrent access
+- **Thread Safety**: Built-in synchronization for async tasks
+- **Zero Overhead**: Same performance as direct usage
+- **MCP Compliant**: Preserves all protocol semantics exactly
 
 ## Advanced Usage
 

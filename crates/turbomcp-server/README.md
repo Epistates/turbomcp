@@ -42,6 +42,13 @@
 - **Resource cleanup** - Proper cleanup of connections, files, and threads
 - **Health status** - Shutdown status reporting for load balancers
 
+### 🔄 **SharedServer for Async Concurrency** (New in v1.0.9)
+- **Thread-safe server sharing** - Share servers across multiple async tasks for monitoring
+- **Consumption pattern** - Safe server consumption for running while preserving access
+- **Clean monitoring APIs** - Access health, metrics, and configuration concurrently
+- **Zero overhead** - Same performance as direct server usage
+- **Lifecycle management** - Proper server extraction for running operations
+
 ## Architecture
 
 ```
@@ -542,6 +549,189 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `session-postgres` | Enable PostgreSQL session storage | ❌ |
 | `tracing` | Enable distributed tracing | ✅ |
 | `compression` | Enable response compression | ✅ |
+
+## SharedServer for Async Concurrency (v1.0.9)
+
+TurboMCP v1.0.9 introduces SharedServer - a thread-safe wrapper that enables concurrent monitoring while preserving the consumption pattern needed for server execution:
+
+### Basic SharedServer Usage
+
+```rust
+use turbomcp_server::{McpServer, SharedServer, ServerConfig};
+
+// Create and wrap server for monitoring
+let config = ServerConfig::default();
+let server = McpServer::new(config);
+let shared = SharedServer::new(server);
+
+// Clone for monitoring tasks
+let monitor1 = shared.clone();
+let monitor2 = shared.clone();
+
+// Concurrent monitoring operations
+let health_task = tokio::spawn(async move {
+    loop {
+        let health = monitor1.health().await;
+        println!("Server health: {:?}", health);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+});
+
+let metrics_task = tokio::spawn(async move {
+    loop {
+        if let Some(metrics) = monitor2.metrics().await {
+            println!("Server metrics: request_count={}", metrics.request_count());
+        }
+        tokio::time::sleep(Duration::from_secs(10)).await;
+    }
+});
+
+// Run the server (consumes the shared wrapper)
+shared.run_stdio().await?;
+```
+
+### Advanced Server Monitoring
+
+```rust
+use turbomcp_server::{SharedServer, HealthStatus};
+use std::sync::Arc;
+use tokio::sync::Notify;
+
+// Comprehensive server monitoring setup
+let shared_server = SharedServer::new(server);
+let shutdown_notify = Arc::new(Notify::new());
+
+// Health monitoring task
+let monitor = shared_server.clone();
+let notify = shutdown_notify.clone();
+let health_task = tokio::spawn(async move {
+    loop {
+        match monitor.health().await {
+            Some(HealthStatus::Healthy) => {
+                println!("✅ Server healthy");
+            }
+            Some(HealthStatus::Degraded(reason)) => {
+                println!("⚠️ Server degraded: {}", reason);
+            }
+            Some(HealthStatus::Unhealthy(reason)) => {
+                println!("❌ Server unhealthy: {}", reason);
+                // Trigger shutdown on health failure
+                notify.notify_one();
+                break;
+            }
+            None => {
+                println!("Server has been consumed");
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+});
+
+// Metrics collection task
+let metrics_monitor = shared_server.clone();
+let metrics_task = tokio::spawn(async move {
+    loop {
+        if let Some(metrics) = metrics_monitor.metrics().await {
+            // Send metrics to monitoring system
+            send_to_prometheus(metrics).await;
+        } else {
+            break; // Server consumed
+        }
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    }
+});
+
+// Run server with monitoring
+let server_task = tokio::spawn(async move {
+    shared_server.run_stdio().await
+});
+
+// Wait for shutdown signal or server completion
+tokio::select! {
+    _ = shutdown_notify.notified() => {
+        println!("Shutting down due to health check failure");
+    }
+    result = server_task => {
+        println!("Server completed: {:?}", result);
+    }
+}
+```
+
+### Management Dashboard Integration
+
+```rust
+use turbomcp_server::SharedServer;
+use axum::{Router, Json, response::Json as JsonResponse};
+
+// Web dashboard for server management
+async fn create_management_api(shared_server: SharedServer) -> Router {
+    let server_status = shared_server.clone();
+    let server_config = shared_server.clone();
+    let server_metrics = shared_server.clone();
+
+    Router::new()
+        .route("/status", get({
+            let server = server_status;
+            move || async move {
+                match server.health().await {
+                    Some(health) => JsonResponse(serde_json::json!({
+                        "status": "available",
+                        "health": health
+                    })),
+                    None => JsonResponse(serde_json::json!({
+                        "status": "running",
+                        "health": "consumed"
+                    }))
+                }
+            }
+        }))
+        .route("/config", get({
+            let server = server_config;
+            move || async move {
+                match server.config().await {
+                    Some(config) => JsonResponse(serde_json::json!(config)),
+                    None => JsonResponse(serde_json::json!({
+                        "error": "Server configuration unavailable"
+                    }))
+                }
+            }
+        }))
+        .route("/metrics", get({
+            let server = server_metrics;
+            move || async move {
+                match server.metrics().await {
+                    Some(metrics) => JsonResponse(serde_json::json!(metrics)),
+                    None => JsonResponse(serde_json::json!({
+                        "error": "Server metrics unavailable"
+                    }))
+                }
+            }
+        }))
+}
+
+// Usage
+let shared = SharedServer::new(server);
+let api = create_management_api(shared.clone()).await;
+
+// Start management API
+tokio::spawn(async move {
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
+    axum::serve(listener, api).await.unwrap();
+});
+
+// Run main server
+shared.run_stdio().await?;
+```
+
+### Benefits
+
+- **Concurrent Monitoring**: Access health, metrics, and config while server runs
+- **Consumption Safety**: Server can be safely consumed for running
+- **Clean APIs**: No exposed Arc/Mutex types in monitoring interfaces
+- **Zero Overhead**: Same performance as direct server usage
+- **Lifecycle Aware**: Proper handling of server consumption state
+- **Management Ready**: Perfect for building monitoring dashboards
 
 ## Development
 
