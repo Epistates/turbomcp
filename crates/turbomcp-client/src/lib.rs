@@ -926,23 +926,182 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // 🎉 TurboMCP v1.0.7: Clean plugin execution with macro!
-        let request_params = serde_json::json!({
-            "argument": {
-                "name": "partial",
-                "value": argument_value
-            },
-            "ref": {
-                "type": "ref/prompt",
-                "name": handler_name
-            }
-        });
+        // Create proper completion request using protocol types
+        use turbomcp_protocol::types::{
+            ArgumentInfo, CompleteRequestParams, CompletionReference, PromptReferenceData,
+        };
 
-        with_plugins!(self, "completion/complete", request_params, {
+        let request_params = CompleteRequestParams {
+            argument: ArgumentInfo {
+                name: "partial".to_string(),
+                value: argument_value.to_string(),
+            },
+            reference: CompletionReference::Prompt(PromptReferenceData {
+                name: handler_name.to_string(),
+                title: None,
+            }),
+            context: None,
+        };
+
+        let serialized_params = serde_json::to_value(&request_params)?;
+
+        with_plugins!(self, "completion/complete", serialized_params, {
             // Core protocol call - plugins execute automatically around this
             let result: CompleteResult = self
                 .protocol
-                .request("completion/complete", Some(request_params))
+                .request("completion/complete", Some(serialized_params))
+                .await?;
+
+            Ok(result.completion)
+        })
+    }
+
+    /// Complete a prompt argument with full MCP protocol support
+    ///
+    /// This method provides access to the complete MCP completion protocol,
+    /// allowing specification of argument names, prompt references, and context.
+    ///
+    /// # Arguments
+    ///
+    /// * `prompt_name` - Name of the prompt to complete for
+    /// * `argument_name` - Name of the argument being completed
+    /// * `argument_value` - Current value for completion matching
+    /// * `context` - Optional context with previously resolved arguments
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # use turbomcp_protocol::types::CompletionContext;
+    /// # use std::collections::HashMap;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// // Complete with context
+    /// let mut context_args = HashMap::new();
+    /// context_args.insert("language".to_string(), "rust".to_string());
+    /// let context = CompletionContext { arguments: Some(context_args) };
+    ///
+    /// let completions = client.complete_prompt(
+    ///     "code_review",
+    ///     "framework",
+    ///     "tok",
+    ///     Some(context)
+    /// ).await?;
+    ///
+    /// for completion in completions.values {
+    ///     println!("Suggestion: {}", completion);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn complete_prompt(
+        &mut self,
+        prompt_name: &str,
+        argument_name: &str,
+        argument_value: &str,
+        context: Option<turbomcp_protocol::types::CompletionContext>,
+    ) -> Result<turbomcp_protocol::types::CompletionResponse> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        use turbomcp_protocol::types::{
+            ArgumentInfo, CompleteRequestParams, CompletionReference, PromptReferenceData,
+        };
+
+        let request_params = CompleteRequestParams {
+            argument: ArgumentInfo {
+                name: argument_name.to_string(),
+                value: argument_value.to_string(),
+            },
+            reference: CompletionReference::Prompt(PromptReferenceData {
+                name: prompt_name.to_string(),
+                title: None,
+            }),
+            context,
+        };
+
+        let serialized_params = serde_json::to_value(&request_params)?;
+
+        with_plugins!(self, "completion/complete", serialized_params, {
+            let result: CompleteResult = self
+                .protocol
+                .request("completion/complete", Some(serialized_params))
+                .await?;
+
+            Ok(result.completion)
+        })
+    }
+
+    /// Complete a resource template URI with full MCP protocol support
+    ///
+    /// This method provides completion for resource template URIs, allowing
+    /// servers to suggest values for URI template variables.
+    ///
+    /// # Arguments
+    ///
+    /// * `resource_uri` - Resource template URI (e.g., "/files/{path}")
+    /// * `argument_name` - Name of the argument being completed
+    /// * `argument_value` - Current value for completion matching
+    /// * `context` - Optional context with previously resolved arguments
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// let completions = client.complete_resource(
+    ///     "/files/{path}",
+    ///     "path",
+    ///     "/home/user/doc",
+    ///     None
+    /// ).await?;
+    ///
+    /// for completion in completions.values {
+    ///     println!("Path suggestion: {}", completion);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn complete_resource(
+        &mut self,
+        resource_uri: &str,
+        argument_name: &str,
+        argument_value: &str,
+        context: Option<turbomcp_protocol::types::CompletionContext>,
+    ) -> Result<turbomcp_protocol::types::CompletionResponse> {
+        if !self.initialized {
+            return Err(Error::bad_request("Client not initialized"));
+        }
+
+        use turbomcp_protocol::types::{
+            ArgumentInfo, CompleteRequestParams, CompletionReference, ResourceTemplateReferenceData,
+        };
+
+        let request_params = CompleteRequestParams {
+            argument: ArgumentInfo {
+                name: argument_name.to_string(),
+                value: argument_value.to_string(),
+            },
+            reference: CompletionReference::ResourceTemplate(ResourceTemplateReferenceData {
+                uri: resource_uri.to_string(),
+            }),
+            context,
+        };
+
+        let serialized_params = serde_json::to_value(&request_params)?;
+
+        with_plugins!(self, "completion/complete", serialized_params, {
+            let result: CompleteResult = self
+                .protocol
+                .request("completion/complete", Some(serialized_params))
                 .await?;
 
             Ok(result.completion)
@@ -1491,7 +1650,7 @@ impl<T: Transport> Client<T> {
     ///
     /// ```rust,no_run
     /// use turbomcp_client::Client;
-    /// use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerResult};
+    /// use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, ElicitationAction, HandlerResult};
     /// use turbomcp_transport::stdio::StdioTransport;
     /// use async_trait::async_trait;
     /// use std::sync::Arc;
@@ -1507,9 +1666,8 @@ impl<T: Transport> Client<T> {
     ///         request: ElicitationRequest,
     ///     ) -> HandlerResult<ElicitationResponse> {
     ///         Ok(ElicitationResponse {
-    ///             id: request.id,
-    ///             data: json!({"user_input": "example"}),
-    ///             cancelled: false,
+    ///             action: ElicitationAction::Accept,
+    ///             content: Some(json!({"user_input": "example"})),
     ///         })
     ///     }
     /// }
@@ -2015,6 +2173,109 @@ impl<T: Transport> SharedClient<T> {
             .await
     }
 
+    /// Complete a prompt argument with full MCP protocol support
+    ///
+    /// This method provides access to the complete MCP completion protocol,
+    /// allowing specification of argument names, prompt references, and context.
+    ///
+    /// # Arguments
+    ///
+    /// * `prompt_name` - Name of the prompt to complete for
+    /// * `argument_name` - Name of the argument being completed
+    /// * `argument_value` - Current value for completion matching
+    /// * `context` - Optional context with previously resolved arguments
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::{Client, SharedClient};
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # use turbomcp_protocol::types::CompletionContext;
+    /// # use std::collections::HashMap;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let shared = SharedClient::new(Client::new(StdioTransport::new()));
+    /// shared.initialize().await?;
+    ///
+    /// // Complete with context
+    /// let mut context_args = HashMap::new();
+    /// context_args.insert("language".to_string(), "rust".to_string());
+    /// let context = CompletionContext { arguments: Some(context_args) };
+    ///
+    /// let completions = shared.complete_prompt(
+    ///     "code_review",
+    ///     "framework",
+    ///     "tok",
+    ///     Some(context)
+    /// ).await?;
+    ///
+    /// for completion in completions.values {
+    ///     println!("Suggestion: {}", completion);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn complete_prompt(
+        &self,
+        prompt_name: &str,
+        argument_name: &str,
+        argument_value: &str,
+        context: Option<turbomcp_protocol::types::CompletionContext>,
+    ) -> Result<turbomcp_protocol::types::CompletionResponse> {
+        self.inner
+            .lock()
+            .await
+            .complete_prompt(prompt_name, argument_name, argument_value, context)
+            .await
+    }
+
+    /// Complete a resource template URI with full MCP protocol support
+    ///
+    /// This method provides completion for resource template URIs, allowing
+    /// servers to suggest values for URI template variables.
+    ///
+    /// # Arguments
+    ///
+    /// * `resource_uri` - Resource template URI (e.g., "/files/{path}")
+    /// * `argument_name` - Name of the argument being completed
+    /// * `argument_value` - Current value for completion matching
+    /// * `context` - Optional context with previously resolved arguments
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::{Client, SharedClient};
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let shared = SharedClient::new(Client::new(StdioTransport::new()));
+    /// shared.initialize().await?;
+    ///
+    /// let completions = shared.complete_resource(
+    ///     "/files/{path}",
+    ///     "path",
+    ///     "/home/user/doc",
+    ///     None
+    /// ).await?;
+    ///
+    /// for completion in completions.values {
+    ///     println!("Path suggestion: {}", completion);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn complete_resource(
+        &self,
+        resource_uri: &str,
+        argument_name: &str,
+        argument_value: &str,
+        context: Option<turbomcp_protocol::types::CompletionContext>,
+    ) -> Result<turbomcp_protocol::types::CompletionResponse> {
+        self.inner
+            .lock()
+            .await
+            .complete_resource(resource_uri, argument_name, argument_value, context)
+            .await
+    }
+
     /// List filesystem roots available to the server
     ///
     /// Returns filesystem root directories that the server has access to.
@@ -2055,7 +2316,7 @@ impl<T: Transport> SharedClient<T> {
     ///
     /// ```rust,no_run
     /// use turbomcp_client::{Client, SharedClient};
-    /// use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerResult};
+    /// use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, ElicitationAction, HandlerResult};
     /// use turbomcp_transport::stdio::StdioTransport;
     /// use async_trait::async_trait;
     /// use std::sync::Arc;
@@ -2068,9 +2329,8 @@ impl<T: Transport> SharedClient<T> {
     ///     async fn handle_elicitation(&self, request: ElicitationRequest) -> HandlerResult<ElicitationResponse> {
     ///         // Process user input request and return response
     ///         Ok(ElicitationResponse {
-    ///             id: request.id,
-    ///             data: serde_json::json!({"name": "example"}),
-    ///             cancelled: false,
+    ///             action: ElicitationAction::Accept,
+    ///             content: Some(serde_json::json!({"name": "example"})),
     ///         })
     ///     }
     /// }
