@@ -53,10 +53,11 @@ use crate::{
 /// });
 ///
 /// let handle2 = tokio::spawn(async move {
-///     shared2.shutdown_handle()
+///     let _handle = shared2.shutdown_handle();
+///     "shutdown_ready"
 /// });
 ///
-/// let (health, shutdown_handle) = tokio::try_join!(handle1, handle2)?;
+/// let (health, _shutdown_ready) = tokio::try_join!(handle1, handle2).unwrap();
 ///
 /// // Run the server (consumes the shared server)
 /// // shared.run_stdio().await?;

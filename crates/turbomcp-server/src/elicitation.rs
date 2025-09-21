@@ -428,6 +428,7 @@ impl ElicitationBridge {
 ///
 /// ```rust,no_run
 /// use turbomcp_server::elicitation::{ElicitationCoordinator, SharedElicitationCoordinator};
+/// use turbomcp_core::shared::Shareable;
 /// use std::time::Duration;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {

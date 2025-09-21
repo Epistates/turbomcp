@@ -54,7 +54,7 @@ use crate::core::{
 ///     shared2.metrics().await
 /// });
 ///
-/// let (connected, metrics) = tokio::try_join!(handle1, handle2)?;
+/// let (connected, metrics) = tokio::try_join!(handle1, handle2).unwrap();
 /// # Ok(())
 /// # }
 /// ```
