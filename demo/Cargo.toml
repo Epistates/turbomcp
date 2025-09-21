@@ -1,14 +1,18 @@
 [package]
 name = "turbomcp-demo"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 description = "Demo project showcasing TurboMCP in action"
-
-[workspace]
 
 [dependencies]
 # Using the TurboMCP SDK for zero boilerplate
-turbomcp = { path = "../crates/turbomcp", features = ["full"] }
+turbomcp = { path = "../crates/turbomcp" }
+
+# Internal dependencies needed by the macro
+turbomcp-core = { path = "../crates/turbomcp-core" }
+turbomcp-protocol = { path = "../crates/turbomcp-protocol" }
+turbomcp-transport = { path = "../crates/turbomcp-transport" }
+turbomcp-server = { path = "../crates/turbomcp-server" }
 
 # Basic dependencies for a real project
 tokio = { version = "1.0", features = ["full"] }
@@ -19,3 +23,4 @@ serde_json = "1.0"
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 fastrand = "2.0"
+axum = { version = "0.7", features = ["ws"] }

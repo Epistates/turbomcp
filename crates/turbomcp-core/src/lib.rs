@@ -130,8 +130,8 @@ pub const PROTOCOL_VERSION: &str = "2025-06-18";
 /// Supported protocol versions for compatibility
 pub const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
-/// Maximum message size in bytes (16MB)
-pub const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+/// Maximum message size in bytes (1MB) - Reduced for security (DoS protection)
+pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 
 /// Default timeout for operations in milliseconds
 pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
@@ -163,8 +163,8 @@ mod tests {
             "MAX_MESSAGE_SIZE must be larger than 1KB"
         );
         const _: () = assert!(
-            MAX_MESSAGE_SIZE == 16 * 1024 * 1024,
-            "MAX_MESSAGE_SIZE must be 16MB"
+            MAX_MESSAGE_SIZE == 1024 * 1024,
+            "MAX_MESSAGE_SIZE must be 1MB for security"
         );
 
         // Verify timeout allows for reasonable operation completion

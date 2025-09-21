@@ -3,13 +3,14 @@
 [workspace]
 members = [
     "crates/turbomcp-core",
-    "crates/turbomcp-protocol", 
+    "crates/turbomcp-protocol",
     "crates/turbomcp-transport",
     "crates/turbomcp-server",
     "crates/turbomcp-client",
     "crates/turbomcp-cli",
     "crates/turbomcp",
     "crates/turbomcp-macros",
+    "demo",
 ]
 resolver = "2"
 
