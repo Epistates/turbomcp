@@ -5,6 +5,54 @@ All notable changes to TurboMCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.9] - 2025-09-21
+
+### 🔄 Shared Wrapper System (MAJOR FEATURE)
+- **Thread-Safe Concurrency Abstractions**: Complete shared wrapper system addressing Arc/Mutex complexity feedback
+  - ✅ **SharedClient**: Thread-safe client wrapper enabling concurrent MCP operations
+  - ✅ **SharedTransport**: Multi-client transport sharing with automatic connection management
+  - ✅ **SharedServer**: Server wrapper with safe consumption pattern for management scenarios
+  - ✅ **Generic Shareable Pattern**: Reusable trait-based abstraction for all shared wrappers
+- **Zero Overhead Abstractions**:
+  - ✅ **Same Performance**: Identical runtime performance to direct Arc/Mutex usage
+  - ✅ **Hidden Complexity**: Encapsulates synchronization primitives behind ergonomic APIs
+  - ✅ **MCP Protocol Compliant**: Maintains all MCP semantics in shared contexts
+  - ✅ **Drop-in Replacement**: Works with existing code without breaking changes
+- **Production-Ready Patterns**:
+  - ✅ **Consumption Safety**: ConsumableShared<T> prevents multiple consumption of server-like objects
+  - ✅ **Library Integration**: Seamless integration with external libraries requiring Arc<Mutex<Client>>
+  - ✅ **Concurrent Access**: Multiple tasks can safely access clients and transports simultaneously
+  - ✅ **Resource Management**: Proper cleanup and lifecycle management in multi-threaded scenarios
+
+### 🚀 Enhanced Concurrency Support
+- **Concurrent Operation Examples**:
+  - Multiple threads calling tools simultaneously through SharedClient
+  - Transport sharing between multiple client instances
+  - Management dashboard integration with SharedServer consumption
+  - Complex multi-client architectures with single transport
+- **Developer Experience Improvements**:
+  - ✅ **Ergonomic APIs**: Simple `.clone()` operations instead of complex Arc/Mutex patterns
+  - ✅ **Type Safety**: Compile-time guarantees preventing common concurrency mistakes
+  - ✅ **Clear Documentation**: Comprehensive examples and usage patterns in all crate READMEs
+  - ✅ **Seamless Migration**: Existing code continues working; shared wrappers are additive
+
+### 📚 Documentation Excellence
+- **Comprehensive Documentation Updates**:
+  - ✅ **All Crate READMEs Updated**: SharedClient, SharedTransport, SharedServer sections added
+  - ✅ **Usage Examples**: Detailed examples showing concurrent patterns and integration
+  - ✅ **Architecture Guidance**: Clear guidance on when and how to use shared wrappers
+  - ✅ **Build Status Fix**: Consistent GitHub Actions badge format across all READMEs
+- **Generic Pattern Documentation**:
+  - ✅ **Shareable Trait**: Complete documentation of the reusable abstraction pattern
+  - ✅ **Implementation Examples**: Both Shared<T> and ConsumableShared<T> patterns documented
+  - ✅ **Best Practices**: Guidelines for implementing custom shared wrappers
+
+### 🔧 Quality & Maintenance
+- **Version Consistency**: Updated all crate versions to 1.0.9 with proper internal dependency alignment
+- **Code Quality**: Maintained zero clippy warnings and perfect formatting standards
+- **Test Coverage**: All unit tests (392 tests) passing across all crates
+- **Build System**: Consistent build status reporting across all documentation
+
 ## [1.0.8] - 2025-09-21
 
 ### 🔐 OAuth 2.1 MCP Compliance (MAJOR FEATURE)

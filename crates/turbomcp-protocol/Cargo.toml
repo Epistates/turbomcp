@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-protocol"
-version = "1.0.8"
+version = "1.0.9"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Model Context Protocol (MCP) specification implementation with JSON-RPC and schema validation"
@@ -13,7 +13,7 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
-turbomcp-core = { version = "1.0.8", path = "../turbomcp-core" }
+turbomcp-core = { version = "1.0.9", path = "../turbomcp-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

@@ -24,7 +24,7 @@ async fn test_server_creation_default() {
 
     // Verify server components are initialized
     assert_eq!(server.config().name, "turbomcp-server");
-    assert_eq!(server.config().version, "1.0.8");
+    assert_eq!(server.config().version, "1.0.9");
 }
 
 #[tokio::test]
