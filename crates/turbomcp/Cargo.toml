@@ -3,7 +3,7 @@ name = "turbomcp"
 version = "1.0.8"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
-description = "Rust SDK for Model Context Protocol (MCP) with ergonomic macros and SIMD acceleration"
+description = "Rust SDK for Model Context Protocol (MCP) with OAuth 2.1 compliance, ergonomic macros and SIMD acceleration"
 license = "MIT"
 repository = "https://github.com/Epistates/turbomcp"
 homepage = "https://turbomcp.org"
@@ -132,6 +132,8 @@ unix = ["turbomcp-transport/unix", "turbomcp-server/unix"]               # Unix 
 # Performance
 simd = ["turbomcp-core/simd", "simd-json", "sonic-rs"]  # SIMD JSON acceleration
 
+# Security
+dpop = []  # DPoP (Demonstration of Proof-of-Possession) support for enhanced OAuth security
 
 # Advanced combinations
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]  # All transports without extra features

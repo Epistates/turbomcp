@@ -25,8 +25,9 @@
 //! - **HTTP Server-Sent Events** - Server-push capabilities for lightweight deployments
 //!
 //! ### Enterprise Features
-//! - **OAuth 2.0 Authentication** - Multi-provider support (Google, GitHub, Microsoft)
-//! - **Security Headers** - CORS, CSP, HSTS protection
+//! - **OAuth 2.1 MCP Compliance** - RFC 8707/9728/7591 compliant with MCP resource binding
+//! - **Multi-Provider OAuth** - Google, GitHub, Microsoft with PKCE and security hardening
+//! - **Security Headers** - CORS, CSP, HSTS protection with redirect attack prevention
 //! - **Rate Limiting** - Token bucket algorithm with configurable strategies
 //! - **Middleware Stack** - Authentication, logging, security headers
 //!
