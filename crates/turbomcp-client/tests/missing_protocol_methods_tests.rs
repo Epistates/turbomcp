@@ -117,7 +117,7 @@ async fn test_get_prompt_method_client_not_initialized() {
     let mut client = Client::new(transport);
 
     // Don't initialize client
-    let result = client.get_prompt("greeting").await;
+    let result = client.get_prompt("greeting", None).await;
 
     // Should fail with initialization error
     assert!(
@@ -138,7 +138,7 @@ async fn test_get_prompt_empty_name() {
     let mut client = Client::new(transport);
 
     // Test empty name - should fail even without initialization
-    let result = client.get_prompt("").await;
+    let result = client.get_prompt("", None).await;
     assert!(result.is_err(), "Should fail with empty prompt name");
 
     let error = result.unwrap_err();
@@ -350,7 +350,7 @@ async fn test_all_missing_methods_exist_and_handle_uninitialized_client() {
     let list_prompts_result = client.list_prompts().await;
     assert!(list_prompts_result.is_err());
 
-    let get_prompt_result = client.get_prompt("test").await;
+    let get_prompt_result = client.get_prompt("test", None).await;
     assert!(get_prompt_result.is_err());
 
     let list_roots_result = client.list_roots().await;
@@ -379,7 +379,7 @@ async fn test_all_methods_validate_empty_string_parameters() {
     let read_resource_result = client.read_resource("").await;
     assert!(read_resource_result.is_err());
 
-    let get_prompt_result = client.get_prompt("").await;
+    let get_prompt_result = client.get_prompt("", None).await;
     assert!(get_prompt_result.is_err());
 
     let subscribe_result = client.subscribe("").await;
@@ -400,8 +400,8 @@ async fn test_method_return_types_compilation() {
     // These calls verify return types compile correctly
     let _: Result<_, _> = client.ping().await;
     let _: Result<_, _> = client.read_resource("file:///test").await;
-    let _: Result<Vec<String>, _> = client.list_prompts().await;
-    let _: Result<_, _> = client.get_prompt("test").await;
+    let _: Result<Vec<turbomcp_protocol::types::Prompt>, _> = client.list_prompts().await;
+    let _: Result<_, _> = client.get_prompt("test", None).await;
     let _: Result<Vec<String>, _> = client.list_roots().await;
     let _: Result<_, _> = client.set_log_level(LogLevel::Info).await;
     let _: Result<_, _> = client.subscribe("file:///test").await;
