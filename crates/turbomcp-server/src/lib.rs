@@ -141,6 +141,7 @@ pub mod registry;
 pub mod routing;
 pub mod sampling;
 pub mod server;
+pub mod shared;
 // #[cfg(feature = "http")]
 // pub mod simple_http;
 
@@ -160,6 +161,7 @@ pub use middleware::{
 pub use registry::{HandlerRegistry, Registry, RegistryBuilder};
 pub use routing::{RequestRouter, Route, Router};
 pub use server::{McpServer, ServerBuilder, ShutdownHandle};
+pub use shared::SharedServer;
 
 // Re-export protocol types
 pub use turbomcp_protocol::jsonrpc::{
@@ -172,7 +174,7 @@ pub use turbomcp_protocol::types::{ClientCapabilities, ServerCapabilities};
 pub use turbomcp_core::{MessageId, RequestContext};
 
 // Elicitation support
-pub use elicitation::{ElicitationCoordinator, ElicitationTransport};
+pub use elicitation::{ElicitationCoordinator, ElicitationTransport, SharedElicitationCoordinator};
 
 /// Default server configuration
 #[must_use]

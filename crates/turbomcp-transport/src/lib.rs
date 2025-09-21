@@ -172,6 +172,7 @@ pub mod config;
 pub mod metrics;
 pub mod robustness;
 pub mod security;
+pub mod shared;
 
 // Re-export bidirectional transport functionality
 pub use bidirectional::{
@@ -232,6 +233,7 @@ pub use security::{
     RateLimiter, SecureSessionInfo, SecurityConfigBuilder, SecurityError, SecurityValidator,
     SessionSecurityConfig, SessionSecurityManager, validate_message_size,
 };
+pub use shared::SharedTransport;
 
 /// Transport feature detection
 #[derive(Debug)]

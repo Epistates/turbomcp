@@ -15,6 +15,7 @@ use turbomcp_protocol::elicitation::{
 };
 
 use crate::ServerError;
+use turbomcp_core::Shareable;
 
 /// Global elicitation coordinator for a server instance
 ///
@@ -416,6 +417,132 @@ impl ElicitationBridge {
     }
 }
 
+/// Thread-safe wrapper for sharing ElicitationCoordinator instances across async tasks
+///
+/// This wrapper provides a consistent API for sharing ElicitationCoordinator instances
+/// while maintaining the same interface. Although ElicitationCoordinator is already
+/// internally thread-safe (Clone + Arc), this wrapper follows the same pattern as
+/// other shared wrappers in TurboMCP for consistency.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use turbomcp_server::elicitation::{ElicitationCoordinator, SharedElicitationCoordinator};
+/// use std::time::Duration;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let coordinator = ElicitationCoordinator::with_config(Duration::from_secs(30));
+/// let shared = SharedElicitationCoordinator::new(coordinator);
+///
+/// // Clone for sharing across tasks
+/// let shared1 = shared.clone();
+/// let shared2 = shared.clone();
+///
+/// // Both tasks can use the coordinator concurrently
+/// let handle1 = tokio::spawn(async move {
+///     shared1.get_stats().await
+/// });
+///
+/// let handle2 = tokio::spawn(async move {
+///     shared2.get_stats().await
+/// });
+///
+/// let (stats1, stats2) = tokio::try_join!(handle1, handle2)?;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct SharedElicitationCoordinator {
+    inner: ElicitationCoordinator,
+}
+
+impl SharedElicitationCoordinator {
+    /// Send an elicitation request and wait for response
+    ///
+    /// This delegates to the inner coordinator's send_elicitation method.
+    pub async fn send_elicitation(
+        &self,
+        request: ElicitationCreateRequest,
+        tool_name: Option<String>,
+    ) -> Result<ElicitationCreateResult, ServerError> {
+        self.inner.send_elicitation(request, tool_name).await
+    }
+
+    /// Send with custom options
+    ///
+    /// This delegates to the inner coordinator's send_with_options method.
+    pub async fn send_with_options(
+        &self,
+        request: ElicitationCreateRequest,
+        tool_name: Option<String>,
+        timeout: Option<Duration>,
+        retry_count: u32,
+        max_retries: u32,
+    ) -> Result<ElicitationCreateResult, ServerError> {
+        self.inner
+            .send_with_options(request, tool_name, timeout, retry_count, max_retries)
+            .await
+    }
+
+    /// Process incoming elicitation response
+    ///
+    /// This delegates to the inner coordinator's handle_response method.
+    pub async fn handle_response(&self, response: IncomingElicitationResponse) {
+        self.inner.handle_response(response).await;
+    }
+
+    /// Get outgoing request channel (for transport integration)
+    ///
+    /// This delegates to the inner coordinator's get_request_receiver method.
+    pub fn get_request_receiver(&self) -> mpsc::UnboundedReceiver<OutgoingElicitation> {
+        self.inner.get_request_receiver()
+    }
+
+    /// Submit response from transport (for transport integration)
+    ///
+    /// This delegates to the inner coordinator's submit_response method.
+    pub async fn submit_response(&self, response: IncomingElicitationResponse) {
+        self.inner.submit_response(response).await;
+    }
+
+    /// Get statistics about pending elicitations
+    ///
+    /// This delegates to the inner coordinator's get_stats method.
+    pub async fn get_stats(&self) -> ElicitationStats {
+        self.inner.get_stats().await
+    }
+
+    /// Create with custom configuration
+    ///
+    /// This creates a new coordinator with the specified timeout and wraps it.
+    pub fn with_config(timeout: Duration) -> Self {
+        Self {
+            inner: ElicitationCoordinator::with_config(timeout),
+        }
+    }
+
+    /// Get the default timeout configured for this coordinator
+    pub fn default_timeout(&self) -> Duration {
+        self.inner.default_timeout
+    }
+
+    /// Check if there are any pending elicitations
+    pub async fn has_pending_requests(&self) -> bool {
+        self.get_stats().await.pending_count > 0
+    }
+
+    /// Create an elicitation bridge for ServerCapabilities integration
+    pub fn create_bridge(&self) -> ElicitationBridge {
+        ElicitationBridge::new(Arc::new(self.inner.clone()))
+    }
+}
+
+impl Shareable<ElicitationCoordinator> for SharedElicitationCoordinator {
+    fn new(inner: ElicitationCoordinator) -> Self {
+        Self { inner }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -525,5 +652,109 @@ mod tests {
         let stats = coordinator.get_stats().await;
         assert_eq!(stats.pending_count, 3);
         assert_eq!(stats.by_tool.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_shared_coordinator_creation() {
+        let coordinator = ElicitationCoordinator::new();
+        let shared = SharedElicitationCoordinator::new(coordinator);
+
+        let stats = shared.get_stats().await;
+        assert_eq!(stats.pending_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_shared_coordinator_cloning() {
+        let coordinator = ElicitationCoordinator::new();
+        let shared = SharedElicitationCoordinator::new(coordinator);
+
+        // Clone multiple times to test sharing behavior
+        let clones: Vec<_> = (0..10).map(|_| shared.clone()).collect();
+        assert_eq!(clones.len(), 10);
+
+        // All clones should reference the same underlying coordinator
+        for clone in clones {
+            let stats = clone.get_stats().await;
+            assert_eq!(stats.pending_count, 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_shared_coordinator_api_surface() {
+        let coordinator = ElicitationCoordinator::with_config(Duration::from_secs(30));
+        let shared = SharedElicitationCoordinator::new(coordinator);
+
+        // Test that SharedElicitationCoordinator provides the expected API surface
+        let _stats = shared.get_stats().await;
+        let _timeout = shared.default_timeout();
+        let _has_pending = shared.has_pending_requests().await;
+        let _bridge = shared.create_bridge();
+        let _receiver = shared.get_request_receiver();
+
+        assert_eq!(shared.default_timeout(), Duration::from_secs(30));
+        assert!(!shared.has_pending_requests().await);
+    }
+
+    #[tokio::test]
+    async fn test_shared_coordinator_with_config() {
+        let shared = SharedElicitationCoordinator::with_config(Duration::from_secs(45));
+        assert_eq!(shared.default_timeout(), Duration::from_secs(45));
+    }
+
+    #[tokio::test]
+    async fn test_shared_coordinator_default() {
+        let shared = SharedElicitationCoordinator::default();
+        assert_eq!(shared.default_timeout(), Duration::from_secs(60));
+    }
+
+    #[tokio::test]
+    async fn test_shared_coordinator_concurrent_access() {
+        let shared = SharedElicitationCoordinator::new(ElicitationCoordinator::new());
+
+        // Test that SharedElicitationCoordinator can be shared across threads safely
+        let shared1 = shared.clone();
+        let shared2 = shared.clone();
+
+        // Verify that concurrent access works correctly
+        let handle1 = tokio::spawn(async move { shared1.get_stats().await });
+
+        let handle2 = tokio::spawn(async move { shared2.get_stats().await });
+
+        let (stats1, stats2) = tokio::join!(handle1, handle2);
+        let stats1 = stats1.unwrap();
+        let stats2 = stats2.unwrap();
+
+        // Both should see identical stats (proving state consistency)
+        assert_eq!(stats1.pending_count, stats2.pending_count);
+        assert_eq!(stats1.total_retries, stats2.total_retries);
+    }
+
+    #[tokio::test]
+    async fn test_shared_coordinator_type_compatibility() {
+        let coordinator = ElicitationCoordinator::new();
+        let shared = SharedElicitationCoordinator::new(coordinator);
+
+        // Test that the SharedElicitationCoordinator can be used in generic contexts
+        fn takes_shared_coordinator<T>(_coordinator: T)
+        where
+            T: Clone + Send + Sync + 'static,
+        {
+        }
+
+        takes_shared_coordinator(shared);
+    }
+
+    #[tokio::test]
+    async fn test_shared_coordinator_send_sync() {
+        let coordinator = ElicitationCoordinator::new();
+        let shared = SharedElicitationCoordinator::new(coordinator);
+
+        // Test that SharedElicitationCoordinator can be moved across task boundaries
+        let handle = tokio::spawn(async move {
+            let _cloned = shared.clone();
+            // SharedElicitationCoordinator should be Send + Sync, allowing this to compile
+        });
+
+        handle.await.unwrap();
     }
 }
