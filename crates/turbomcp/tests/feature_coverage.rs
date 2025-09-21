@@ -301,6 +301,7 @@ async fn test_combined_features() {
 
     // Test using both features together
     #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+    #[allow(dead_code)]
     struct ResourceRequest {
         template: String,
         parameters: std::collections::HashMap<String, String>,
@@ -386,6 +387,7 @@ async fn test_schema_generation_performance() {
     use std::time::Instant;
 
     #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+    #[allow(dead_code)]
     struct TestStruct {
         field1: String,
         field2: i32,
@@ -438,6 +440,7 @@ async fn test_real_world_scenarios() {
 
     // Scenario 1: File system resource with schema
     #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+    #[allow(dead_code)]
     struct FileResource {
         path: String,
         size: u64,
@@ -482,6 +485,7 @@ async fn test_real_world_scenarios() {
 
     // Scenario 2: API endpoint with parameters
     #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+    #[allow(dead_code)]
     struct ApiResponse {
         success: bool,
         data: serde_json::Value,
@@ -527,6 +531,7 @@ async fn test_real_world_scenarios() {
 
     // Scenario 3: Database resource
     #[derive(Serialize, Deserialize, schemars::JsonSchema)]
+    #[allow(dead_code)]
     struct DatabaseRecord {
         id: u64,
         table: String,
