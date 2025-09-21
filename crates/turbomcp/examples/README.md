@@ -1,215 +1,130 @@
 # TurboMCP Examples
 
-## 🎆 Featured Example: Real AI Code Assistant
+This directory contains comprehensive examples demonstrating TurboMCP's capabilities, from basic "Hello World" servers to advanced transport implementations and production-ready deployments.
 
-**`sampling_ai_code_assistant.rs`** - The crown jewel of TurboMCP examples!
-
-This AI code assistant example demonstrates TurboMCP's capabilities:
-- ✅ **Complete MCP 2025-06-18 sampling implementation**
-- ✅ **Simple macro-driven development**: `#[server]` + `#[tool]`
-- ✅ **Professional features**: Session management, statistics, error handling
-- ✅ **Intelligent LLM workflows**: Bug detection, security analysis, code review
-- ✅ **Ready to use**: Type-safe, protocol-compliant, performance-optimized
-
-```bash
-cargo run --example sampling_ai_code_assistant
-```
-
-**Why this matters**: This example showcases TurboMCP's philosophy of "Implementation complexity ≠ User complexity." We handle the hard problems (protocol compliance, type safety, ergonomics) so you get beautiful, zero-boilerplate APIs.
-
----
-
-## 📚 Example Categories
+## 📚 Learning Path
 
 ### 🚀 Getting Started (Numbered Tutorial Series)
-Learn TurboMCP step-by-step with our progressive tutorial series:
 
-- **`01_hello_world_macro.rs`** - Simplest server using macros
-- **`02_hello_world_builder.rs`** - Same server using builder pattern  
-- **`03_tools_and_parameters.rs`** - Tool creation with various parameter types
-- **`04_resources_and_prompts.rs`** - Resources and prompt handlers
-- **`05_error_handling.rs`** - Proper error handling patterns
-- **`06_stateful_server.rs`** - Managing server state safely
-- **`07_context_and_logging.rs`** - Using Context effectively
-- **`08_testing_your_server.rs`** - Testing strategies and patterns
-- **`09_comprehensive_server.rs`** - Full-featured production server
+Follow these examples in order to learn TurboMCP step-by-step:
 
-### 🏗️ Architecture Patterns
-Different ways to structure your MCP server:
+1. **`01_hello_world.rs`** - Simplest possible MCP server with basic tool
+2. **`02_clean_server.rs`** - Well-structured server with proper organization
+3. **`03_basic_tools.rs`** - Multiple tools with various parameter types
+4. **`04_resources_and_prompts.rs`** - Resources and prompt handlers
+5. **`05_stateful_patterns.rs`** - Managing server state and persistence
+6. **`06_architecture_patterns.rs`** - Advanced architectural patterns
+7. **`07_transport_showcase.rs`** - Transport layer demonstration
+8. **`08_elicitation_*.rs`** - Interactive user input (server, client, complete)
+9. **`09_bidirectional_communication.rs`** - Two-way protocol communication
+10. **`10_protocol_mastery.rs`** - Advanced MCP protocol features
+11. **`11_production_deployment.rs`** - Production-ready deployment patterns
 
-- **`architecture_macro_based.rs`** - Full macro-driven development
-- **`architecture_builder_pattern.rs`** - Pure builder pattern approach
-- **`architecture_hybrid.rs`** - Combining macros and builders
-- **`architecture_modular.rs`** - Multi-module server organization
-- **`architecture_plugin_system.rs`** - Extensible plugin architecture
+### 🏗️ Transport Examples
 
-### 🔄 Transport Layers
-Various transport configurations:
+**Discrete Transport Implementations:**
+- **`transport_stdio_server.rs` / `transport_stdio_client.rs`** - Standard I/O transport
+- **`transport_tcp_server.rs` / `transport_tcp_client.rs`** - TCP socket transport
+- **`transport_http_server.rs` / `transport_http_client.rs`** - HTTP/SSE transport
+- **`transport_websocket_server.rs` / `transport_websocket_client.rs`** - WebSocket transport
+- **`transport_unix_server.rs` / `transport_unix_client.rs`** - Unix domain sockets
 
-- **`transport_stdio.rs`** - Standard input/output (default)
-- **`transport_http_sse.rs`** - HTTP with Server-Sent Events
-- **`transport_websocket.rs`** - WebSocket transport
-- **`transport_tcp.rs`** - Raw TCP socket transport
-- **`transport_child_process.rs`** - Child process communication
+**Legacy Transport Examples (being deprecated):**
+- `stdio_server.rs` / `stdio_client.rs` - Basic STDIO examples
+- `tcp_server.rs` / `tcp_client.rs` - Basic TCP examples
+- `http_server.rs` / `http_client.rs` - Basic HTTP examples
+- `websocket_server.rs` / `websocket_client.rs` - Basic WebSocket examples
+- `unix_socket_server.rs` / `unix_socket_client.rs` - Basic Unix socket examples
 
-### 🎯 Advanced Features
-MCP 2025 specification features:
+**Multi-Transport Demos:**
+- **`all_transports_demo.rs`** - Single server supporting all transport types
+- **`tcp_client_server_demo.rs`** - Complete TCP client-server demonstration
 
-- **`sampling_ai_code_assistant.rs`** - 🌟 Real AI Code Assistant using sampling
-- **`feature_sampling_server.rs`** - ⚠️ Redirects to real example above
-- **`feature_sampling_client.rs`** - Client handling sampling requests
-- **`feature_elicitation_server.rs`** - Server requesting user input
-- **`feature_elicitation_client.rs`** - Client handling elicitation
-- **`feature_oauth_authentication.rs`** - OAuth 2.0 implementation
-- **`feature_resource_templates.rs`** - RFC 6570 URI templates
-- **`feature_completion.rs`** - Autocompletion support
+### 🎯 Architecture Patterns
 
-### ⚡ Performance & Production
-Optimization and deployment:
+- **`06_architecture_patterns.rs`** - Various server architecture approaches
+- **`06b_architecture_client.rs`** - Client architecture patterns
 
-- **`performance_benchmarks.rs`** - Performance measurement
-- **`performance_optimization.rs`** - Optimization techniques
-- **`production_graceful_shutdown.rs`** - Clean shutdown handling
-- **`production_monitoring.rs`** - Health checks and metrics
-- **`production_deployment.rs`** - Deployment strategies
-- **`production_scaling.rs`** - Horizontal scaling patterns
+### 🔄 Advanced Features
 
-### 🧪 Testing Examples
-Testing patterns and strategies:
-
-- **`testing_unit_tests.rs`** - Unit testing tools and handlers
-- **`testing_integration.rs`** - Integration testing with real services
-- **`testing_integration.rs`** - Integration testing patterns
-- **`testing_property_based.rs`** - Property-based testing with proptest
-
-### 🔧 Reference Implementations
-Complete working servers:
-
-- **`reference_code_assistant.rs`** - AI-powered code analysis
-- **`reference_database_manager.rs`** - Database operations server
-- **`reference_file_system.rs`** - File system operations
-- **`reference_api_gateway.rs`** - API gateway server
-- **`reference_workflow_engine.rs`** - Workflow automation
+- **`08_elicitation_server.rs`** - Server-initiated user input requests
+- **`08_elicitation_client.rs`** - Client handling elicitation flows
+- **`08_elicitation_complete.rs`** - Complete elicitation demonstration
+- **`09_bidirectional_communication.rs`** - Two-way protocol communication
+- **`10_protocol_mastery.rs`** - Advanced MCP protocol features
 
 ## 🎯 Quick Start
 
 ```bash
 # Start with the basics
-cargo run --example 01_hello_world_macro
+cargo run --example 01_hello_world
 
-# Compare macro vs builder
-cargo run --example 01_hello_world_macro
-cargo run --example 02_hello_world_builder
+# Try different transports
+cargo run --example transport_stdio_server
+cargo run --example transport_tcp_server
 
-# Run a complete server
-cargo run --example 09_comprehensive_server
-
-# Test with turbomcp-cli
-turbomcp-cli tools-list --command "cargo run --example 01_hello_world_macro"
+# See advanced features
+cargo run --example 11_production_deployment
 ```
 
-## 📖 Learning Path
+## 🛠️ Testing Examples
 
-### Beginner (2 hours)
-1. Start with `01_hello_world_macro.rs`
-2. Compare with `02_hello_world_builder.rs` 
-3. Learn tools in `03_tools_and_parameters.rs`
-4. Add resources in `04_resources_and_prompts.rs`
+Test any example with turbomcp-cli:
 
-### Intermediate (4 hours)
-5. Master error handling in `05_error_handling.rs`
-6. Manage state in `06_stateful_server.rs`
-7. Use context in `07_context_and_logging.rs`
-8. Test your code in `08_testing_your_server.rs`
+```bash
+# Test a STDIO server
+turbomcp-cli tools-list --command "cargo run --example transport_stdio_server"
 
-### Advanced (8 hours)
-9. Build comprehensive servers with `09_comprehensive_server.rs`
-10. Explore architecture patterns in `architecture_*.rs`
-11. Implement advanced features in `feature_*.rs`
-12. Optimize for production in `production_*.rs`
+# Test initialization
+turbomcp-cli initialize --command "cargo run --example 01_hello_world"
+```
 
-## 🛠️ Example Conventions
+## 📖 Example Categories
 
-### Naming Convention
-- **Numbered tutorials**: `01_topic.rs` through `09_topic.rs`
-- **Architecture patterns**: `architecture_pattern_name.rs`
-- **Transport examples**: `transport_type.rs`
-- **Features**: `feature_name_role.rs` (e.g., `feature_sampling_server.rs`)
-- **Performance**: `performance_aspect.rs`
-- **Production**: `production_concern.rs`
-- **Testing**: `testing_strategy.rs`
-- **Reference**: `reference_application.rs`
+### By Transport Type
+- **STDIO**: `transport_stdio_*`, `stdio_*`
+- **TCP**: `transport_tcp_*`, `tcp_*`
+- **HTTP/SSE**: `transport_http_*`, `http_*`
+- **WebSocket**: `transport_websocket_*`, `websocket_*`
+- **Unix Sockets**: `transport_unix_*`, `unix_socket_*`
 
-### Code Standards
-- Every example is production-ready and complete
-- All examples compile and run
-- Clear documentation with learning goals
-- Realistic use cases
-- Proper error handling
-- No unnecessary complexity
-
-### Documentation Requirements
-Each example includes:
-- Purpose and learning goals
-- Prerequisites (if any)
-- Run instructions
-- Expected output
-- Related examples
-- Next steps
-
-## 🔍 Finding the Right Example
-
-### By Feature
-- **Macros**: `01_hello_world_macro.rs`, `architecture_macro_based.rs`
-- **Builder Pattern**: `02_hello_world_builder.rs`, `architecture_builder_pattern.rs`
-- **Tools**: `03_tools_and_parameters.rs`, all reference implementations
-- **Resources**: `04_resources_and_prompts.rs`, `feature_resource_templates.rs`
-- **Prompts**: `04_resources_and_prompts.rs`, `reference_code_assistant.rs`
-- **State Management**: `06_stateful_server.rs`, all reference implementations
-- **Error Handling**: `05_error_handling.rs`, `production_monitoring.rs`
-- **Testing**: All `testing_*.rs` examples
-- **Authentication**: `feature_oauth_authentication.rs`
-- **Sampling**: `feature_sampling_server.rs`, `feature_sampling_client.rs`
-- **Elicitation**: `feature_elicitation_server.rs`, `feature_elicitation_client.rs`
+### By Complexity Level
+- **Beginner**: `01_hello_world.rs` → `04_resources_and_prompts.rs`
+- **Intermediate**: `05_stateful_patterns.rs` → `07_transport_showcase.rs`
+- **Advanced**: `08_elicitation_*.rs` → `11_production_deployment.rs`
 
 ### By Use Case
-- **Simple CLI Tool**: Start with `01_hello_world_macro.rs`
-- **Database Operations**: See `reference_database_manager.rs`
-- **File Management**: See `reference_file_system.rs`
-- **AI Integration**: See `feature_sampling_server.rs`, `reference_code_assistant.rs`
-- **Web Service**: See `transport_http_sse.rs`, `reference_api_gateway.rs`
-- **Automation**: See `reference_workflow_engine.rs`
+- **Simple CLI Tool**: Start with `01_hello_world.rs`
+- **Web Service**: Use `transport_http_*` or `transport_websocket_*`
+- **Local IPC**: Use `transport_unix_*`
+- **Network Service**: Use `transport_tcp_*`
+- **Interactive Tools**: See `08_elicitation_*`
 
-## 📊 Example Metrics
+## 🔍 Example Standards
 
-- **Total Examples**: 45+
-- **Categories**: 8
-- **Learning Path**: Progressive from beginner to advanced
-- **Coverage**: 100% of TurboMCP features
-- **Quality**: Production-ready and complete
+All examples follow these standards:
+- ✅ **Production-ready code** - No shortcuts or placeholders
+- ✅ **Complete functionality** - Working end-to-end examples
+- ✅ **Comprehensive documentation** - Clear learning goals and usage
+- ✅ **MCP 2025-06-18 compliance** - Latest specification adherence
+- ✅ **Error handling** - Proper error management patterns
+- ✅ **Type safety** - Full compile-time validation
 
-## 🚦 Status
+## 📊 Summary
 
-All examples are:
-- ✅ Compiling with latest TurboMCP
-- ✅ Following best practices
-- ✅ Well-documented
-- ✅ Production-ready
-- ✅ Tested
-
-## 📝 Contributing
-
-When adding new examples:
-1. Follow the naming convention
-2. Include comprehensive documentation
-3. Ensure production quality and completeness
-4. Add to appropriate category
-5. Update this README
-6. Test with `cargo run --example <name>`
+- **Total Examples**: 35
+- **Transport Types**: 5 (STDIO, TCP, HTTP/SSE, WebSocket, Unix)
+- **Tutorial Progression**: 11 numbered examples
+- **Architecture Coverage**: Complete MCP specification
+- **Quality**: Production-ready, zero-tolerance for shortcuts
 
 ## 🔗 Related Documentation
 
-- [TurboMCP Documentation](https://docs.rs/turbomcp)
-- [MCP Specification](https://modelcontextprotocol.io)
-- [Architecture Guide](../../../docs/ARCHITECTURE.md)
-- [API Reference](../../../docs/API.md)
+- [TurboMCP Main Documentation](https://docs.rs/turbomcp)
+- [MCP 2025-06-18 Specification](https://modelcontextprotocol.io)
+- [Transport Guide](../../../docs/transports.md)
+- [Getting Started Guide](../../../README.md)
+
+---
+
+**Need help?** Start with `01_hello_world.rs` and work through the numbered examples in order!
