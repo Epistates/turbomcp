@@ -2008,7 +2008,11 @@ impl<T: Transport> SharedClient<T> {
         handler_name: &str,
         argument_value: &str,
     ) -> Result<turbomcp_protocol::types::CompletionResponse> {
-        self.inner.lock().await.complete(handler_name, argument_value).await
+        self.inner
+            .lock()
+            .await
+            .complete(handler_name, argument_value)
+            .await
     }
 
     /// List filesystem roots available to the server
@@ -2116,7 +2120,10 @@ impl<T: Transport> SharedClient<T> {
     /// # Arguments
     ///
     /// * `handler` - The resource update handler implementation
-    pub async fn on_resource_update(&self, handler: Arc<dyn crate::handlers::ResourceUpdateHandler>) {
+    pub async fn on_resource_update(
+        &self,
+        handler: Arc<dyn crate::handlers::ResourceUpdateHandler>,
+    ) {
         self.inner.lock().await.on_resource_update(handler);
     }
 
