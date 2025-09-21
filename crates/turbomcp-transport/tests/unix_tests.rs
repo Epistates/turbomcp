@@ -187,7 +187,7 @@ mod unix_tests {
 
         assert!(caps.supports_bidirectional);
         assert!(caps.supports_streaming);
-        assert_eq!(caps.max_message_size, Some(64 * 1024 * 1024)); // 64MB
+        assert_eq!(caps.max_message_size, Some(1024 * 1024)); // 1MB
     }
 
     #[test]
@@ -227,7 +227,10 @@ mod unix_tests {
 
         if let Err(err) = result {
             let error_msg = format!("{err}");
-            assert!(error_msg.contains("not connected") || error_msg.contains("ConnectionFailed"));
+            assert!(
+                error_msg.contains("No active Unix socket connections")
+                    || error_msg.contains("ConnectionFailed")
+            );
         }
     }
 
@@ -240,7 +243,10 @@ mod unix_tests {
 
         if let Err(err) = result {
             let error_msg = format!("{err}");
-            assert!(error_msg.contains("not connected") || error_msg.contains("ConnectionFailed"));
+            assert!(
+                error_msg.contains("Unix socket transport not connected")
+                    || error_msg.contains("ConnectionFailed")
+            );
         }
     }
 

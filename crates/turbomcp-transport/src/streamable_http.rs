@@ -9,7 +9,7 @@
 
 use axum::{
     Json,
-    extract::{State, TypedHeader},
+    extract::{State, TypedHeader, ConnectInfo},
     headers::HeaderMap,
     http::{StatusCode, header},
     response::{IntoResponse, Response, sse::{Event, KeepAlive, Sse}},
@@ -19,9 +19,25 @@ use axum::{
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
+
+use crate::security::{SecurityValidator, SecurityConfigBuilder, SecurityHeaders, SessionSecurityManager, SessionSecurityConfig};
+
+/// Convert axum HeaderMap to SecurityHeaders for validation
+fn convert_headers(headers: &HeaderMap) -> SecurityHeaders {
+    let mut security_headers = SecurityHeaders::new();
+
+    for (key, value) in headers.iter() {
+        if let Ok(value_str) = value.to_str() {
+            security_headers.insert(key.to_string(), value_str.to_string());
+        }
+    }
+
+    security_headers
+}
 
 /// Configuration for streamable HTTP transport
 #[derive(Clone, Debug)]
@@ -32,14 +48,35 @@ pub struct StreamableHttpConfig {
     pub base_path: String,
     /// SSE keep-alive interval
     pub keep_alive_secs: u64,
+    /// Security validator for request validation
+    pub security_validator: Arc<SecurityValidator>,
+    /// Session security manager for secure session handling
+    pub session_manager: Arc<SessionSecurityManager>,
 }
 
 impl Default for StreamableHttpConfig {
     fn default() -> Self {
+        // Create secure defaults with localhost-only access and rate limiting
+        let security_validator = Arc::new(
+            SecurityConfigBuilder::new()
+                .allow_localhost(true)
+                .allow_any_origin(false)
+                .require_authentication(false) // Start with auth disabled for backward compatibility
+                .with_rate_limit(100, std::time::Duration::from_secs(60)) // 100 requests per minute
+                .build()
+        );
+
+        // Create session security manager with secure defaults
+        let session_manager = Arc::new(
+            SessionSecurityManager::new(SessionSecurityConfig::default())
+        );
+
         Self {
             bind_addr: "127.0.0.1:8080".to_string(),
             base_path: "".to_string(),
             keep_alive_secs: 30,
+            security_validator,
+            session_manager,
         }
     }
 }
@@ -49,7 +86,7 @@ struct Session {
     id: String,
     created_at: std::time::Instant,
     last_event_id: Option<String>,
-    sse_sender: mpsc::UnboundedSender<SseMessage>,
+    sse_sender: mpsc::Sender<SseMessage>,
 }
 
 /// Message types for SSE
@@ -67,6 +104,8 @@ enum SseMessage {
 struct AppState {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
     pending_requests: Arc<RwLock<HashMap<String, serde_json::Value>>>,
+    security_validator: Arc<SecurityValidator>,
+    session_manager: Arc<SessionSecurityManager>,
 }
 
 /// Create router for streamable HTTP transport
@@ -74,6 +113,8 @@ pub fn create_router(config: StreamableHttpConfig) -> Router {
     let state = AppState {
         sessions: Arc::new(RwLock::new(HashMap::new())),
         pending_requests: Arc::new(RwLock::new(HashMap::new())),
+        security_validator: config.security_validator.clone(),
+        session_manager: config.session_manager.clone(),
     };
 
     let base = config.base_path;
@@ -88,33 +129,72 @@ pub fn create_router(config: StreamableHttpConfig) -> Router {
         .with_state(state)
 }
 
-/// SSE handler - establishes event stream
+/// SSE handler - establishes event stream with security validation
 async fn sse_handler(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-) -> Sse<impl Stream<Item = Result<Event, axum::Error>>> {
-    let (tx, mut rx) = mpsc::unbounded_channel::<SseMessage>();
+) -> Result<Sse<impl Stream<Item = Result<Event, axum::Error>>>, StatusCode> {
+    // CRITICAL SECURITY: Validate Origin header to prevent DNS rebinding attacks
+    // Per MCP 2025-06-18: "Servers MUST validate the Origin header"
+    let security_headers = convert_headers(&headers);
+    if let Err(e) = state.security_validator.validate_request(&security_headers, addr.ip()) {
+        tracing::warn!(
+            error = %e,
+            client_ip = %addr.ip(),
+            "Security validation failed for SSE connection"
+        );
+        return Err(StatusCode::from_u16(e.to_http_status()).unwrap_or(StatusCode::FORBIDDEN));
+    }
+    let (tx, mut rx) = mpsc::channel::<SseMessage>(100); // Bounded channel for backpressure control
     
-    // Get or create session using MCP standard header
-    let session_id = headers
+    // Handle secure session management
+    let user_agent = headers
+        .get("User-Agent")
+        .and_then(|v| v.to_str().ok());
+
+    let existing_session_id = headers
         .get("Mcp-Session-Id")
-        .and_then(|v| v.to_str().ok())
-        .map(String::from)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-    
+        .and_then(|v| v.to_str().ok());
+
+    // Create or validate secure session
+    let secure_session = match existing_session_id {
+        Some(session_id) => {
+            // Validate existing session
+            match state.session_manager.validate_session(session_id, addr.ip(), user_agent) {
+                Ok(session) => session,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        client_ip = %addr.ip(),
+                        "Session validation failed, creating new session"
+                    );
+                    // Create new session if validation fails
+                    state.session_manager.create_session(addr.ip(), user_agent)
+                        .map_err(|e| StatusCode::from_u16(e.to_http_status()).unwrap_or(StatusCode::FORBIDDEN))?
+                }
+            }
+        },
+        None => {
+            // Create new secure session
+            state.session_manager.create_session(addr.ip(), user_agent)
+                .map_err(|e| StatusCode::from_u16(e.to_http_status()).unwrap_or(StatusCode::FORBIDDEN))?
+        }
+    };
+
     let last_event_id = headers
         .get("Last-Event-Id")
         .and_then(|v| v.to_str().ok())
         .map(String::from);
-    
+
     let session = Session {
-        id: session_id.clone(),
+        id: secure_session.id.clone(),
         created_at: std::time::Instant::now(),
         last_event_id,
         sse_sender: tx.clone(),
     };
-    
-    state.sessions.write().await.insert(session_id.clone(), session);
+
+    state.sessions.write().await.insert(secure_session.id.clone(), session);
     
     // Create SSE stream
     let stream = async_stream::stream! {
@@ -122,7 +202,7 @@ async fn sse_handler(
         yield Ok(Event::default()
             .id(Uuid::new_v4().to_string())
             .event("session")
-            .data(session_id));
+            .data(secure_session.id.clone()));
         
         // Stream messages
         while let Some(msg) = rx.recv().await {
@@ -134,19 +214,63 @@ async fn sse_handler(
         }
     };
     
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 /// JSON-RPC handler - returns 202 for all notifications/responses per MCP 2025-06-18
 async fn json_rpc_handler(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     Json(request): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let session_id = headers
+    // CRITICAL SECURITY: Validate Origin header to prevent DNS rebinding attacks
+    // Per MCP 2025-06-18: "Servers MUST validate the Origin header"
+    let security_headers = convert_headers(&headers);
+    if let Err(e) = state.security_validator.validate_request(&security_headers, addr.ip()) {
+        tracing::warn!(
+            error = %e,
+            client_ip = %addr.ip(),
+            "Security validation failed for JSON-RPC request"
+        );
+        return (
+            StatusCode::from_u16(e.to_http_status()).unwrap_or(StatusCode::FORBIDDEN),
+            HeaderMap::new(),
+            Json(serde_json::json!({
+                "error": {
+                    "code": -32600,
+                    "message": "Security validation failed",
+                    "data": e.to_string()
+                }
+            }))
+        );
+    }
+    // Handle secure session validation for JSON-RPC requests
+    let user_agent = headers
+        .get("User-Agent")
+        .and_then(|v| v.to_str().ok());
+
+    let existing_session_id = headers
         .get("Mcp-Session-Id")
-        .and_then(|v| v.to_str().ok())
-        .map(String::from);
+        .and_then(|v| v.to_str().ok());
+
+    // Validate or create secure session for JSON-RPC
+    let secure_session = match existing_session_id {
+        Some(session_id) => {
+            match state.session_manager.validate_session(session_id, addr.ip(), user_agent) {
+                Ok(session) => Some(session),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        client_ip = %addr.ip(),
+                        "Session validation failed for JSON-RPC request"
+                    );
+                    None // Will handle gracefully below
+                }
+            }
+        },
+        None => None
+    };
     
     // Validate MCP-Protocol-Version header per 2025-06-18 specification
     let protocol_version = headers
@@ -176,8 +300,24 @@ async fn json_rpc_handler(
     if let Some(method) = request.get("method").and_then(|m| m.as_str()) {
         match method {
             "initialize" => {
-                // Return immediate response with session ID
-                let session_id = session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+                // Create or use existing secure session for initialization
+                let session_id = match secure_session {
+                    Some(ref session) => session.id.clone(),
+                    None => {
+                        // Create new session for initialization
+                        match state.session_manager.create_session(addr.ip(), user_agent) {
+                            Ok(session) => session.id,
+                            Err(e) => {
+                                tracing::error!(
+                                    error = %e,
+                                    client_ip = %addr.ip(),
+                                    "Failed to create session for initialization"
+                                );
+                                Uuid::new_v4().to_string() // Fallback
+                            }
+                        }
+                    }
+                };
                 
                 let mut response_headers = HeaderMap::new();
                 response_headers.insert("Mcp-Session-Id", session_id.parse().unwrap());
@@ -217,20 +357,20 @@ async fn json_rpc_handler(
     // MCP specification: return 202 Accepted for notifications and responses
     if is_notification || is_response {
         let mut response_headers = HeaderMap::new();
-        if let Some(sid) = &session_id {
-            response_headers.insert("Mcp-Session-Id", sid.parse().unwrap());
+        if let Some(ref session) = secure_session {
+            response_headers.insert("Mcp-Session-Id", session.id.parse().unwrap());
         }
         response_headers.insert("MCP-Protocol-Version", version_to_use.parse().unwrap());
         
         // Store for async processing if needed
-        if let Some(sid) = &session_id {
+        if let Some(ref session) = secure_session {
             let request_id = Uuid::new_v4().to_string();
             state.pending_requests.write().await.insert(request_id.clone(), request.clone());
-            
+
             // Send to SSE stream for processing
-            if let Some(session) = state.sessions.read().await.get(sid) {
-                let _ = session.sse_sender.send(SseMessage::Message { 
-                    data: request.clone() 
+            if let Some(sse_session) = state.sessions.read().await.get(&session.id) {
+                let _ = sse_session.sse_sender.send(SseMessage::Message {
+                    data: request.clone()
                 });
             }
         }
@@ -241,8 +381,8 @@ async fn json_rpc_handler(
     
     // For requests (have id, not responses): return immediate response
     let mut response_headers = HeaderMap::new();
-    if let Some(sid) = &session_id {
-        response_headers.insert("Mcp-Session-Id", sid.parse().unwrap());
+    if let Some(ref session) = secure_session {
+        response_headers.insert("Mcp-Session-Id", session.id.parse().unwrap());
     }
     response_headers.insert("MCP-Protocol-Version", version_to_use.parse().unwrap());
     
@@ -258,8 +398,19 @@ async fn json_rpc_handler(
 /// Delete session handler
 async fn delete_session(
     State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> StatusCode {
+    // CRITICAL SECURITY: Validate Origin header to prevent DNS rebinding attacks
+    let security_headers = convert_headers(&headers);
+    if let Err(e) = state.security_validator.validate_request(&security_headers, addr.ip()) {
+        tracing::warn!(
+            error = %e,
+            client_ip = %addr.ip(),
+            "Security validation failed for session deletion"
+        );
+        return StatusCode::from_u16(e.to_http_status()).unwrap_or(StatusCode::FORBIDDEN);
+    }
     if let Some(session_id) = headers
         .get("Mcp-Session-Id")
         .and_then(|v| v.to_str().ok())

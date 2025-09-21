@@ -171,6 +171,7 @@ pub mod compression;
 pub mod config;
 pub mod metrics;
 pub mod robustness;
+pub mod security;
 
 // Re-export bidirectional transport functionality
 pub use bidirectional::{
@@ -225,6 +226,11 @@ pub use config::TransportConfigBuilder;
 pub use robustness::{
     CircuitBreakerConfig, CircuitBreakerStats, CircuitState, HealthCheckConfig, HealthInfo,
     HealthStatus, RetryConfig, RobustTransport,
+};
+pub use security::{
+    AuthConfig, AuthMethod, EnhancedSecurityConfigBuilder, OriginConfig, RateLimitConfig,
+    RateLimiter, SecureSessionInfo, SecurityConfigBuilder, SecurityError, SecurityValidator,
+    SessionSecurityConfig, SessionSecurityManager, validate_message_size,
 };
 
 /// Transport feature detection

@@ -49,8 +49,8 @@ pub struct StdioTransport {
     /// Stdout writer
     stdout_writer: Option<FramedWrite<Stdout, LinesCodec>>,
 
-    /// Message receive channel
-    receive_channel: Option<mpsc::UnboundedReceiver<TransportMessage>>,
+    /// Message receive channel (bounded for backpressure)
+    receive_channel: Option<mpsc::Receiver<TransportMessage>>,
 
     /// Background task handle
     _task_handle: Option<tokio::task::JoinHandle<()>>,
@@ -157,8 +157,8 @@ impl StdioTransport {
         let stdout = tokio::io::stdout();
         self.stdout_writer = Some(FramedWrite::new(stdout, LinesCodec::new()));
 
-        // Setup message receive channel
-        let (tx, rx) = mpsc::unbounded_channel();
+        // Setup message receive channel (bounded for backpressure)
+        let (tx, rx) = mpsc::channel(1000);
         self.receive_channel = Some(rx);
 
         // Start background reader task
@@ -187,9 +187,20 @@ impl StdioTransport {
                                     // Emit event
                                     event_emitter.emit_message_received(message.id.clone(), size);
 
-                                    if sender.send(message).is_err() {
-                                        debug!("Receive channel closed, stopping reader task");
-                                        break;
+                                    // Use try_send with backpressure handling
+                                    match sender.try_send(message) {
+                                        Ok(()) => {}
+                                        Err(mpsc::error::TrySendError::Full(_)) => {
+                                            warn!(
+                                                "STDIO message channel full, applying backpressure"
+                                            );
+                                            // Apply backpressure by dropping this message
+                                            continue;
+                                        }
+                                        Err(mpsc::error::TrySendError::Closed(_)) => {
+                                            debug!("Receive channel closed, stopping reader task");
+                                            break;
+                                        }
                                     }
                                 }
                                 Err(e) => {
@@ -376,13 +387,12 @@ impl Transport for StdioTransport {
         }
 
         if let Some(receiver) = &mut self.receive_channel {
-            match receiver.try_recv() {
-                Ok(message) => {
+            match receiver.recv().await {
+                Some(message) => {
                     trace!("Received message: {} bytes", message.size());
                     Ok(Some(message))
                 }
-                Err(mpsc::error::TryRecvError::Empty) => Ok(None),
-                Err(mpsc::error::TryRecvError::Disconnected) => {
+                None => {
                     warn!("Receive channel disconnected");
                     self.set_state(TransportState::Failed {
                         reason: "Receive channel disconnected".to_string(),

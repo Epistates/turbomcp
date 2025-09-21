@@ -236,11 +236,11 @@ pub struct TowerTransportAdapter {
     /// Session manager
     session_manager: SessionManager,
 
-    /// Message receiver channel
-    receiver: Option<mpsc::UnboundedReceiver<TransportMessage>>,
+    /// Message receiver channel (bounded for backpressure)
+    receiver: Option<mpsc::Receiver<TransportMessage>>,
 
-    /// Message sender channel
-    sender: Option<mpsc::UnboundedSender<TransportMessage>>,
+    /// Message sender channel (bounded for backpressure)
+    sender: Option<mpsc::Sender<TransportMessage>>,
 
     /// Background task handle for cleanup
     _cleanup_task: Option<tokio::task::JoinHandle<()>>,
@@ -292,7 +292,7 @@ impl TowerTransportAdapter {
 
     /// Initialize the transport channels and background tasks
     pub fn initialize(&mut self) -> McpResult<()> {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(1000); // Bounded channel for backpressure control
         self.sender = Some(tx);
         self.receiver = Some(rx);
 
@@ -507,9 +507,20 @@ impl Transport for TowerTransportAdapter {
             let message_id = message.id.clone();
             let message_size = message.size();
 
-            sender
-                .send(message)
-                .map_err(|e| TransportError::SendFailed(e.to_string()))?;
+            // Use try_send with backpressure handling
+            match sender.try_send(message) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    return Err(TransportError::SendFailed(
+                        "Transport channel full, applying backpressure".to_string(),
+                    ));
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    return Err(TransportError::SendFailed(
+                        "Transport channel closed".to_string(),
+                    ));
+                }
+            }
 
             // Update metrics
             self.update_metrics(|m| {
@@ -539,16 +550,15 @@ impl Transport for TowerTransportAdapter {
         }
 
         if let Some(ref mut receiver) = self.receiver {
-            match receiver.try_recv() {
-                Ok(message) => {
+            match receiver.recv().await {
+                Some(message) => {
                     trace!(
                         "Received message via Tower transport: {} bytes",
                         message.size()
                     );
                     Ok(Some(message))
                 }
-                Err(mpsc::error::TryRecvError::Empty) => Ok(None),
-                Err(mpsc::error::TryRecvError::Disconnected) => {
+                None => {
                     warn!("Tower transport receiver disconnected");
                     self.set_state(TransportState::Failed {
                         reason: "Receiver channel disconnected".to_string(),

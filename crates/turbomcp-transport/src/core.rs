@@ -392,20 +392,29 @@ pub trait TransportEventListener: Send + Sync {
 /// Transport event emitter
 #[derive(Debug, Clone)]
 pub struct TransportEventEmitter {
-    sender: mpsc::UnboundedSender<TransportEvent>,
+    sender: mpsc::Sender<TransportEvent>,
 }
 
 impl TransportEventEmitter {
     /// Create a new event emitter
     #[must_use]
-    pub fn new() -> (Self, mpsc::UnboundedReceiver<TransportEvent>) {
-        let (sender, receiver) = mpsc::unbounded_channel();
+    pub fn new() -> (Self, mpsc::Receiver<TransportEvent>) {
+        let (sender, receiver) = mpsc::channel(500); // Bounded channel for backpressure control
         (Self { sender }, receiver)
     }
 
     /// Emit an event
     pub fn emit(&self, event: TransportEvent) {
-        let _ = self.sender.send(event);
+        // Use try_send with event backpressure - dropping events if channel is full
+        match self.sender.try_send(event) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                // Drop events when channel is full to prevent blocking
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                // Event receiver is closed, ignore silently
+            }
+        }
     }
 
     /// Emit a connection event

@@ -428,8 +428,8 @@ impl Transport for HttpSseTransport {
     }
 
     async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
-        // Receive from request channel
-        if let Ok(request) = self.request_receiver.lock().await.try_recv() {
+        // Properly block and wait for request from channel
+        if let Some(request) = self.request_receiver.lock().await.recv().await {
             Ok(Some(TransportMessage {
                 id: MessageId::from(uuid::Uuid::new_v4()),
                 payload: bytes::Bytes::from(serde_json::to_vec(&request.data).unwrap_or_default()),

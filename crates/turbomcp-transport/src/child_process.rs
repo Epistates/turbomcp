@@ -441,10 +441,10 @@ impl Transport for ChildProcessTransport {
             return Ok(None);
         }
 
-        // Try to receive from stdout channel
+        // Properly block and wait for messages from stdout channel
         if let Some(ref mut receiver) = self.stdout_receiver {
-            match receiver.try_recv() {
-                Ok(line) => {
+            match receiver.recv().await {
+                Some(line) => {
                     let payload = Bytes::from(line);
                     let message = TransportMessage::new(
                         MessageId::String(uuid::Uuid::new_v4().to_string()),
@@ -459,8 +459,7 @@ impl Transport for ChildProcessTransport {
                     trace!("Received message via child process transport");
                     Ok(Some(message))
                 }
-                Err(mpsc::error::TryRecvError::Empty) => Ok(None),
-                Err(mpsc::error::TryRecvError::Disconnected) => {
+                None => {
                     debug!("STDOUT channel disconnected");
                     Ok(None)
                 }

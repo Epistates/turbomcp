@@ -1,11 +1,15 @@
 //! TCP transport implementation for MCP
 
 use async_trait::async_trait;
-use bytes::BytesMut;
+use bytes::Bytes;
+use futures::{SinkExt, StreamExt};
+use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use tokio::io::{AsyncReadExt, BufReader};
+use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
+use tokio_util::codec::{Framed, LinesCodec};
 use tracing::{debug, error, info, warn};
 
 use crate::core::{
@@ -21,10 +25,12 @@ pub struct TcpTransport {
     bind_addr: SocketAddr,
     /// Remote address to connect to (for client mode)
     remote_addr: Option<SocketAddr>,
-    /// Message sender
-    sender: Option<mpsc::UnboundedSender<TransportMessage>>,
-    /// Message receiver
-    receiver: Option<mpsc::UnboundedReceiver<TransportMessage>>,
+    /// Message sender for incoming messages (bounded for backpressure)
+    sender: Option<mpsc::Sender<TransportMessage>>,
+    /// Message receiver for incoming messages (bounded for backpressure)
+    receiver: Option<mpsc::Receiver<TransportMessage>>,
+    /// Active connections map: addr -> outgoing message sender (bounded for backpressure)
+    connections: Arc<Mutex<HashMap<SocketAddr, mpsc::Sender<String>>>>,
     /// Transport capabilities
     capabilities: TransportCapabilities,
     /// Current state
@@ -42,10 +48,11 @@ impl TcpTransport {
             remote_addr: None,
             sender: None,
             receiver: None,
+            connections: Arc::new(Mutex::new(HashMap::new())),
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
-                max_message_size: Some(64 * 1024 * 1024), // 64MB
+                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
             state: TransportState::Disconnected,
@@ -61,10 +68,11 @@ impl TcpTransport {
             remote_addr: Some(remote_addr),
             sender: None,
             receiver: None,
+            connections: Arc::new(Mutex::new(HashMap::new())),
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
-                max_message_size: Some(64 * 1024 * 1024), // 64MB
+                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
             state: TransportState::Disconnected,
@@ -84,21 +92,30 @@ impl TcpTransport {
             TransportError::ConnectionFailed(format!("Failed to bind TCP listener: {e}"))
         })?;
 
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(1000); // Bounded channel for backpressure control
         self.sender = Some(tx.clone());
         self.receiver = Some(rx);
         self.state = TransportState::Connected;
 
         // Accept connections in background
+        let connections = self.connections.clone();
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
                         info!("Accepted TCP connection from {}", addr);
-                        let sender = tx.clone();
+                        let incoming_sender = tx.clone();
+                        let connections_ref = connections.clone();
                         // Handle connection in separate task
                         tokio::spawn(async move {
-                            if let Err(e) = handle_tcp_connection(stream, addr, sender).await {
+                            if let Err(e) = handle_tcp_connection_framed(
+                                stream,
+                                addr,
+                                incoming_sender,
+                                connections_ref,
+                            )
+                            .await
+                            {
                                 error!("TCP connection handler failed for {}: {}", addr, e);
                             }
                         });
@@ -130,14 +147,16 @@ impl TcpTransport {
             TransportError::ConnectionFailed(format!("Failed to connect to TCP server: {e}"))
         })?;
 
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(1000); // Bounded channel for backpressure control
         self.sender = Some(tx.clone());
         self.receiver = Some(rx);
         self.state = TransportState::Connected;
 
         // Handle connection
+        let connections = self.connections.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_tcp_connection(stream, remote_addr, tx).await {
+            if let Err(e) = handle_tcp_connection_framed(stream, remote_addr, tx, connections).await
+            {
                 error!("TCP client connection handler failed: {}", e);
             }
         });
@@ -146,90 +165,120 @@ impl TcpTransport {
     }
 }
 
-/// Handle a TCP connection with proper message framing
-async fn handle_tcp_connection(
+/// Handle a TCP connection using world-class tokio-util::codec::Framed with LinesCodec
+/// This provides production-grade newline-delimited JSON framing with proper bidirectional communication
+async fn handle_tcp_connection_framed(
     stream: TcpStream,
     addr: SocketAddr,
-    message_sender: mpsc::UnboundedSender<TransportMessage>,
+    incoming_sender: mpsc::Sender<TransportMessage>,
+    connections: Arc<Mutex<HashMap<SocketAddr, mpsc::Sender<String>>>>,
 ) -> TransportResult<()> {
-    debug!("Handling TCP connection from {}", addr);
+    debug!(
+        "Handling TCP connection from {} using Framed<TcpStream, LinesCodec>",
+        addr
+    );
 
-    let (read_half, _write_half) = stream.into_split();
-    let mut reader = BufReader::new(read_half);
+    // Create framed transport using LinesCodec for newline-delimited messages
+    let framed = Framed::new(stream, LinesCodec::new());
+    let (mut sink, mut stream) = framed.split();
 
-    let mut buffer = BytesMut::with_capacity(8192);
+    // Channel for outgoing messages to this specific connection (bounded for backpressure)
+    let (outgoing_sender, mut outgoing_receiver) = mpsc::channel::<String>(100);
 
-    loop {
-        // Read message length prefix (4 bytes, big-endian)
-        let mut length_bytes = [0u8; 4];
-        match reader.read_exact(&mut length_bytes).await {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                debug!("TCP connection closed by peer: {}", addr);
+    // Register this connection in the connections map
+    connections.lock().insert(addr, outgoing_sender);
+
+    // Clone for cleanup
+    let connections_cleanup = connections.clone();
+
+    // Spawn task to handle outgoing messages (responses from server to client)
+    let send_addr = addr;
+    let send_task = tokio::spawn(async move {
+        while let Some(message) = outgoing_receiver.recv().await {
+            debug!("Sending message to {}: {}", send_addr, message);
+
+            if let Err(e) = sink.send(message).await {
+                error!(
+                    "Failed to send message to TCP connection {}: {}",
+                    send_addr, e
+                );
                 break;
             }
-            Err(e) => {
-                error!("Failed to read message length: {}", e);
-                return Err(TransportError::ReceiveFailed(format!(
-                    "Read length error: {e}"
-                )));
-            }
         }
+        debug!("TCP send handler finished for {}", send_addr);
+    });
 
-        let message_length = u32::from_be_bytes(length_bytes) as usize;
+    // Handle incoming messages using StreamExt
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(line) => {
+                if line.is_empty() {
+                    continue;
+                }
 
-        // Validate message size
-        if message_length > 64 * 1024 * 1024 {
-            // 64MB limit
-            error!("Message too large: {} bytes from {}", message_length, addr);
-            return Err(TransportError::ProtocolError("Message too large".into()));
-        }
-
-        if message_length == 0 {
-            warn!("Received zero-length message from {}", addr);
-            continue;
-        }
-
-        // Read message payload
-        buffer.clear();
-        buffer.resize(message_length, 0);
-
-        match reader.read_exact(&mut buffer).await {
-            Ok(_) => {}
-            Err(e) => {
-                error!("Failed to read message payload: {}", e);
-                return Err(TransportError::ReceiveFailed(format!(
-                    "Read payload error: {e}"
-                )));
-            }
-        }
-
-        // Parse message to validate JSON format
-        match serde_json::from_slice::<serde_json::Value>(&buffer) {
-            Ok(value) => {
-                let id = value
-                    .get("id")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::Value::String(uuid::Uuid::new_v4().to_string()));
-                let message_id = match id {
-                    serde_json::Value::String(s) => MessageId::from(s),
-                    serde_json::Value::Number(n) => MessageId::from(n.as_i64().unwrap_or_default()),
-                    _ => MessageId::from(uuid::Uuid::new_v4()),
-                };
-                let transport_msg = TransportMessage::new(message_id, buffer.clone().freeze());
-
-                if message_sender.send(transport_msg).is_err() {
-                    warn!("Message receiver dropped, closing connection to {}", addr);
+                // Validate message size (1MB limit for security)
+                if let Err(e) = crate::security::validate_message_size(
+                    line.as_bytes(),
+                    turbomcp_core::MAX_MESSAGE_SIZE,
+                ) {
+                    error!("Message size validation failed from {}: {}", addr, e);
                     break;
+                }
+
+                debug!("Received message from {}: {}", addr, line);
+
+                // Parse and validate JSON-RPC message
+                match serde_json::from_str::<serde_json::Value>(&line) {
+                    Ok(value) => {
+                        // Extract message ID for transport tracking
+                        let id = value.get("id").cloned().unwrap_or_else(|| {
+                            serde_json::Value::String(uuid::Uuid::new_v4().to_string())
+                        });
+
+                        let message_id = match id {
+                            serde_json::Value::String(s) => MessageId::from(s),
+                            serde_json::Value::Number(n) => {
+                                MessageId::from(n.as_i64().unwrap_or_default())
+                            }
+                            _ => MessageId::from(uuid::Uuid::new_v4()),
+                        };
+
+                        // Create transport message with JSON bytes
+                        let transport_msg = TransportMessage::new(message_id, Bytes::from(line));
+
+                        // Use try_send with backpressure handling
+                        match incoming_sender.try_send(transport_msg) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                warn!(
+                                    "Message channel full, applying backpressure to connection {}",
+                                    addr
+                                );
+                                // Apply backpressure by dropping this message
+                                continue;
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                warn!("Message receiver dropped, closing connection to {}", addr);
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to parse JSON-RPC message from {}: {}", addr, e);
+                        // Skip invalid messages but keep connection open (resilient)
+                    }
                 }
             }
             Err(e) => {
-                error!("Failed to parse message from {}: {}", addr, e);
-                // Skip invalid messages but keep connection open
+                error!("Failed to read from TCP connection {}: {}", addr, e);
+                break;
             }
         }
     }
 
+    // Clean up connection
+    connections_cleanup.lock().remove(&addr);
+    send_task.abort();
     debug!("TCP connection handler finished for {}", addr);
     Ok(())
 }
@@ -268,31 +317,58 @@ impl Transport for TcpTransport {
     }
 
     async fn send(&mut self, message: TransportMessage) -> TransportResult<()> {
-        if let Some(ref sender) = self.sender {
-            self.metrics.messages_sent += 1;
-            self.metrics.bytes_sent += message.size() as u64;
+        self.metrics.messages_sent += 1;
+        self.metrics.bytes_sent += message.size() as u64;
 
-            sender.send(message).map_err(|e| {
-                TransportError::SendFailed(format!("Failed to send message via TCP: {e}"))
-            })?;
-            Ok(())
-        } else {
-            Err(TransportError::ConnectionFailed(
-                "TCP transport not connected".into(),
-            ))
+        // Convert transport message back to JSON string for sending
+        let json_str = String::from_utf8_lossy(&message.payload).to_string();
+
+        // Send to all active connections (broadcast for server mode)
+        // In client mode, there should be exactly one connection
+        let connections = self.connections.lock();
+        if connections.is_empty() {
+            return Err(TransportError::ConnectionFailed(
+                "No active TCP connections".into(),
+            ));
         }
+
+        let mut failed_connections = Vec::new();
+        for (addr, sender) in connections.iter() {
+            // Use try_send with backpressure handling
+            match sender.try_send(json_str.clone()) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    warn!("Connection {} channel full, applying backpressure", addr);
+                    // Don't mark as failed, just apply backpressure
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    warn!("Failed to send message to TCP connection {}", addr);
+                    failed_connections.push(*addr);
+                }
+            }
+        }
+
+        // Clean up failed connections
+        drop(connections);
+        if !failed_connections.is_empty() {
+            let mut connections = self.connections.lock();
+            for addr in failed_connections {
+                connections.remove(&addr);
+            }
+        }
+
+        Ok(())
     }
 
     async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
         if let Some(ref mut receiver) = self.receiver {
-            match receiver.try_recv() {
-                Ok(message) => {
+            match receiver.recv().await {
+                Some(message) => {
                     self.metrics.messages_received += 1;
                     self.metrics.bytes_received += message.size() as u64;
                     Ok(Some(message))
                 }
-                Err(mpsc::error::TryRecvError::Empty) => Ok(None),
-                Err(mpsc::error::TryRecvError::Disconnected) => {
+                None => {
                     self.state = TransportState::Failed {
                         reason: "Channel disconnected".into(),
                     };
