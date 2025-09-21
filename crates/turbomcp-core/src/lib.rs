@@ -92,6 +92,7 @@ pub mod lock_free;
 pub mod message;
 pub mod registry;
 pub mod session;
+pub mod shared;
 pub mod state;
 pub mod types;
 pub mod utils;
@@ -118,6 +119,7 @@ pub use handlers::{
 };
 pub use message::{Message, MessageId, MessageMetadata};
 pub use session::{SessionAnalytics, SessionConfig, SessionManager};
+pub use shared::{ConsumableShared, Shareable, Shared, SharedError};
 pub use state::StateManager;
 pub use types::{ContentType, ProtocolVersion, Timestamp};
 
