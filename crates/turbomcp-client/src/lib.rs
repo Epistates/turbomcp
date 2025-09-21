@@ -146,6 +146,7 @@ pub mod sampling;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::Mutex;
 
 use turbomcp_core::{Error, PROTOCOL_VERSION, Result};
 use turbomcp_protocol::jsonrpc::{
@@ -171,6 +172,8 @@ use turbomcp_protocol::types::{
     LogLevel,
     // Missing protocol method types
     PingResult,
+    Prompt,
+    PromptInput,
     ReadResourceRequest,
     ReadResourceResult,
     ServerCapabilities,
@@ -1082,13 +1085,18 @@ impl<T: Transport> Client<T> {
 
     /// List available prompt templates from the server
     ///
-    /// Retrieves the list of prompt templates that the server provides.
-    /// Prompts are reusable template messages that can be used for
-    /// consistent LLM interactions.
+    /// Retrieves the complete list of prompt templates that the server provides,
+    /// including all metadata: title, description, and argument schemas. This is
+    /// the MCP-compliant implementation that provides everything needed for UI generation
+    /// and dynamic form creation.
     ///
     /// # Returns
     ///
-    /// Returns a vector of prompt names available on the server.
+    /// Returns a vector of `Prompt` objects containing:
+    /// - `name`: Programmatic identifier
+    /// - `title`: Human-readable display name (optional)
+    /// - `description`: Description of what the prompt does (optional)
+    /// - `arguments`: Array of argument schemas with validation info (optional)
     ///
     /// # Errors
     ///
@@ -1107,40 +1115,46 @@ impl<T: Transport> Client<T> {
     /// client.initialize().await?;
     ///
     /// let prompts = client.list_prompts().await?;
-    /// for prompt_name in prompts {
-    ///     println!("Available prompt: {}", prompt_name);
+    /// for prompt in prompts {
+    ///     println!("Prompt: {} ({})", prompt.name, prompt.title.unwrap_or("No title".to_string()));
+    ///     if let Some(args) = prompt.arguments {
+    ///         println!("  Arguments: {:?}", args);
+    ///         for arg in args {
+    ///             let required = arg.required.unwrap_or(false);
+    ///             println!("    - {}: {} (required: {})", arg.name,
+    ///                     arg.description.unwrap_or("No description".to_string()), required);
+    ///         }
+    ///     }
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn list_prompts(&mut self) -> Result<Vec<String>> {
+    pub async fn list_prompts(&mut self) -> Result<Vec<Prompt>> {
         if !self.initialized {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Execute with plugin middleware
+        // Execute with plugin middleware - return full Prompt objects per MCP spec
         let response: ListPromptsResult = self.execute_with_plugins("prompts/list", None).await?;
-        let prompt_names = response
-            .prompts
-            .into_iter()
-            .map(|prompt| prompt.name)
-            .collect();
-        Ok(prompt_names)
+        Ok(response.prompts)
     }
 
-    /// Get a specific prompt template by name
+    /// Get a specific prompt template with argument support
     ///
-    /// Retrieves a specific prompt template from the server. The prompt
-    /// contains the template messages and arguments that can be used
-    /// for LLM interactions.
+    /// Retrieves a specific prompt template from the server with support for
+    /// parameter substitution. When arguments are provided, the server will
+    /// substitute them into the prompt template using {parameter} syntax.
+    ///
+    /// This is the MCP-compliant implementation that supports the full protocol specification.
     ///
     /// # Arguments
     ///
     /// * `name` - The name of the prompt to retrieve
+    /// * `arguments` - Optional parameters for template substitution
     ///
     /// # Returns
     ///
-    /// Returns `GetPromptResult` containing the prompt template.
+    /// Returns `GetPromptResult` containing the prompt template with parameters substituted.
     ///
     /// # Errors
     ///
@@ -1148,6 +1162,8 @@ impl<T: Transport> Client<T> {
     /// - The client is not initialized
     /// - The prompt name is empty
     /// - The prompt doesn't exist
+    /// - Required arguments are missing
+    /// - Argument types don't match schema
     /// - The request fails
     ///
     /// # Examples
@@ -1155,19 +1171,31 @@ impl<T: Transport> Client<T> {
     /// ```rust,no_run
     /// # use turbomcp_client::Client;
     /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # use turbomcp_protocol::PromptInput;
+    /// # use std::collections::HashMap;
     /// # async fn example() -> turbomcp_core::Result<()> {
     /// let mut client = Client::new(StdioTransport::new());
     /// client.initialize().await?;
     ///
-    /// let prompt = client.get_prompt("greeting").await?;
-    /// if let Some(desc) = prompt.description {
-    ///     println!("Prompt description: {}", desc);
-    /// }
-    /// println!("Prompt has {} messages", prompt.messages.len());
+    /// // Get prompt without arguments (template form)
+    /// let template = client.get_prompt("greeting", None).await?;
+    /// println!("Template has {} messages", template.messages.len());
+    ///
+    /// // Get prompt with arguments (substituted form)
+    /// let mut args = HashMap::new();
+    /// args.insert("name".to_string(), serde_json::Value::String("Alice".to_string()));
+    /// args.insert("greeting".to_string(), serde_json::Value::String("Hello".to_string()));
+    ///
+    /// let result = client.get_prompt("greeting", Some(args)).await?;
+    /// println!("Generated prompt with {} messages", result.messages.len());
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn get_prompt(&mut self, name: &str) -> Result<GetPromptResult> {
+    pub async fn get_prompt(
+        &mut self,
+        name: &str,
+        arguments: Option<PromptInput>,
+    ) -> Result<GetPromptResult> {
         if !self.initialized {
             return Err(Error::bad_request("Client not initialized"));
         }
@@ -1176,10 +1204,10 @@ impl<T: Transport> Client<T> {
             return Err(Error::bad_request("Prompt name cannot be empty"));
         }
 
-        // Send prompts/get request with plugin middleware
+        // Send prompts/get request with full argument support
         let request = GetPromptRequest {
             name: name.to_string(),
-            arguments: None, // Arguments are optional for retrieving template
+            arguments, // Support for parameter substitution
         };
 
         self.execute_with_plugins("prompts/get", Some(serde_json::to_value(request).unwrap()))
@@ -1770,6 +1798,197 @@ impl<T: Transport> Client<T> {
 
         self.plugin_registry = crate::plugins::PluginRegistry::new();
         Ok(())
+    }
+}
+
+/// Thread-safe wrapper for sharing Client across async tasks
+///
+/// This wrapper encapsulates the Arc/Mutex complexity and provides a clean API
+/// for concurrent access to MCP client functionality. It addresses the limitations
+/// identified in PR feedback where Client requires `&mut self` for all operations
+/// but needs to be shared across multiple async tasks.
+///
+/// # Design Rationale
+///
+/// All Client methods require `&mut self` because:
+/// - MCP connections maintain state (initialized flag, connection status)
+/// - Request correlation tracking for JSON-RPC requires mutation
+/// - Handler and plugin registries need mutable access
+///
+/// While Client implements Send + Sync, this only means it's safe to move/share
+/// between threads, not that multiple tasks can mutate it concurrently.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use turbomcp_client::{Client, SharedClient};
+/// use turbomcp_transport::stdio::StdioTransport;
+///
+/// # async fn example() -> turbomcp_core::Result<()> {
+/// let transport = StdioTransport::new();
+/// let client = Client::new(transport);
+/// let shared = SharedClient::new(client);
+///
+/// // Initialize once
+/// shared.initialize().await?;
+///
+/// // Clone for sharing across tasks
+/// let shared1 = shared.clone();
+/// let shared2 = shared.clone();
+///
+/// // Both tasks can use the client concurrently
+/// let handle1 = tokio::spawn(async move {
+///     shared1.list_tools().await
+/// });
+///
+/// let handle2 = tokio::spawn(async move {
+///     shared2.list_prompts().await
+/// });
+///
+/// let (tools, prompts) = tokio::try_join!(handle1, handle2).unwrap();
+/// # Ok(())
+/// # }
+/// ```
+pub struct SharedClient<T: Transport> {
+    inner: Arc<Mutex<Client<T>>>,
+}
+
+impl<T: Transport> SharedClient<T> {
+    /// Create a new shared client wrapper
+    ///
+    /// Takes ownership of a Client and wraps it for thread-safe sharing.
+    /// The original client can no longer be accessed directly after this call.
+    pub fn new(client: Client<T>) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(client)),
+        }
+    }
+
+    /// Initialize the MCP connection
+    ///
+    /// This method should be called once before using any other client operations.
+    /// It negotiates capabilities with the server and establishes the communication protocol.
+    pub async fn initialize(&self) -> Result<InitializeResult> {
+        self.inner.lock().await.initialize().await
+    }
+
+    /// List all available tools from the MCP server
+    ///
+    /// Returns a list of tool names that can be called using `call_tool()`.
+    /// Tools represent executable functions provided by the server.
+    pub async fn list_tools(&self) -> Result<Vec<String>> {
+        self.inner.lock().await.list_tools().await
+    }
+
+    /// Execute a tool with the given name and arguments
+    ///
+    /// Calls a specific tool on the MCP server with the provided arguments.
+    /// The arguments should match the tool's expected parameter schema.
+    pub async fn call_tool(
+        &self,
+        name: &str,
+        arguments: Option<HashMap<String, serde_json::Value>>,
+    ) -> Result<serde_json::Value> {
+        self.inner.lock().await.call_tool(name, arguments).await
+    }
+
+    /// List all available prompts from the MCP server
+    ///
+    /// Returns full Prompt objects with metadata including name, title, description,
+    /// and argument schemas. This information can be used to generate UI forms
+    /// for prompt parameter collection.
+    pub async fn list_prompts(&self) -> Result<Vec<Prompt>> {
+        self.inner.lock().await.list_prompts().await
+    }
+
+    /// Get a prompt with optional argument substitution
+    ///
+    /// Retrieves a prompt from the server. If arguments are provided, template
+    /// parameters (e.g., `{parameter}`) will be substituted with the given values.
+    /// Pass `None` for arguments to get the raw template form.
+    pub async fn get_prompt(
+        &self,
+        name: &str,
+        arguments: Option<PromptInput>,
+    ) -> Result<GetPromptResult> {
+        self.inner.lock().await.get_prompt(name, arguments).await
+    }
+
+    /// List available resources from the MCP server
+    ///
+    /// Resources represent data or content that can be read by the client.
+    /// Returns a list of resource identifiers and metadata.
+    pub async fn list_resources(&self) -> Result<Vec<String>> {
+        self.inner.lock().await.list_resources().await
+    }
+
+    /// Read a specific resource from the MCP server
+    ///
+    /// Retrieves the content of a resource identified by its URI.
+    /// The content format depends on the specific resource type.
+    pub async fn read_resource(&self, uri: &str) -> Result<ReadResourceResult> {
+        self.inner.lock().await.read_resource(uri).await
+    }
+
+    /// List resource templates from the MCP server
+    ///
+    /// Resource templates define patterns for generating resource URIs.
+    /// They allow servers to describe families of related resources.
+    pub async fn list_resource_templates(&self) -> Result<Vec<String>> {
+        self.inner.lock().await.list_resource_templates().await
+    }
+
+    /// Set the logging level for the MCP server
+    ///
+    /// Controls the verbosity of logs sent from the server to the client.
+    /// Higher log levels provide more detailed information.
+    pub async fn set_log_level(&self, level: LogLevel) -> Result<SetLevelResult> {
+        self.inner.lock().await.set_log_level(level).await
+    }
+
+    /// Subscribe to notifications from a specific URI
+    ///
+    /// Registers interest in receiving notifications when the specified
+    /// resource or endpoint changes. Used for real-time updates.
+    pub async fn subscribe(&self, uri: &str) -> Result<EmptyResult> {
+        self.inner.lock().await.subscribe(uri).await
+    }
+
+    /// Unsubscribe from notifications for a specific URI
+    ///
+    /// Removes a previously registered subscription to stop receiving
+    /// notifications for the specified resource or endpoint.
+    pub async fn unsubscribe(&self, uri: &str) -> Result<EmptyResult> {
+        self.inner.lock().await.unsubscribe(uri).await
+    }
+
+    /// Send a ping to test connection health
+    ///
+    /// Verifies that the MCP connection is still active and responsive.
+    /// Used for health checking and keepalive functionality.
+    pub async fn ping(&self) -> Result<PingResult> {
+        self.inner.lock().await.ping().await
+    }
+
+    /// Get the client's configured capabilities
+    ///
+    /// Returns the capabilities that this client supports.
+    /// These are negotiated during initialization.
+    pub async fn capabilities(&self) -> ClientCapabilities {
+        let client = self.inner.lock().await;
+        client.capabilities().clone()
+    }
+}
+
+impl<T: Transport> Clone for SharedClient<T> {
+    /// Clone the shared client for use in multiple async tasks
+    ///
+    /// This creates a new reference to the same underlying client,
+    /// allowing multiple tasks to share access safely.
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
     }
 }
 
