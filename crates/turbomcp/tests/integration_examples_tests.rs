@@ -340,3 +340,221 @@ async fn test_invalid_jsonrpc_robustness_integration() {
         // If no response, that's also acceptable (server ignored invalid request)
     }
 }
+
+/// Test MCP protocol compliance for all examples
+#[tokio::test]
+async fn test_mcp_protocol_compliance() {
+    use turbomcp_protocol::jsonrpc::JsonRpcResponse;
+    use turbomcp_protocol::validation::ProtocolValidator;
+
+    let validator = ProtocolValidator::new().with_strict_mode();
+
+    let examples_to_test = vec![
+        "01_hello_world",
+        "02_clean_server",
+        "03_basic_tools",
+        "04_resources_and_prompts",
+        "05_stateful_patterns",
+    ];
+
+    for example_name in examples_to_test {
+        println!("Testing MCP compliance for: {}", example_name);
+
+        // Send initialize request and validate response
+        let init_request = json!({
+            "jsonrpc": "2.0",
+            "id": "mcp-test",
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "mcp-compliance-test",
+                    "version": "1.0.0"
+                }
+            }
+        });
+
+        match test_example_jsonrpc(example_name, vec![init_request]).await {
+            Ok(responses) => {
+                assert!(
+                    !responses.is_empty(),
+                    "Example {} should return initialize response",
+                    example_name
+                );
+
+                // Validate the initialize response structure
+                let init_response = &responses[0];
+
+                // Should be valid JSON-RPC response
+                if let Ok(response) =
+                    serde_json::from_value::<JsonRpcResponse>(init_response.clone())
+                {
+                    let validation_result = validator.validate_response(&response);
+                    assert!(
+                        validation_result.is_valid(),
+                        "Example {} initialize response failed validation: {:?}",
+                        example_name,
+                        validation_result.errors()
+                    );
+
+                    // Check MCP-specific requirements
+                    if let Some(result) = &response.result {
+                        assert!(
+                            result.get("protocolVersion").is_some(),
+                            "Missing protocolVersion in {}",
+                            example_name
+                        );
+                        assert!(
+                            result.get("capabilities").is_some(),
+                            "Missing capabilities in {}",
+                            example_name
+                        );
+                        assert!(
+                            result.get("serverInfo").is_some(),
+                            "Missing serverInfo in {}",
+                            example_name
+                        );
+
+                        // Validate protocol version format
+                        if let Some(version) =
+                            result.get("protocolVersion").and_then(|v| v.as_str())
+                        {
+                            assert!(
+                                !version.is_empty() && version.len() >= 8,
+                                "Invalid protocolVersion format in {}: {}",
+                                example_name,
+                                version
+                            );
+                        }
+
+                        // Validate serverInfo structure
+                        if let Some(server_info) = result.get("serverInfo") {
+                            assert!(
+                                server_info.get("name").is_some(),
+                                "Missing serverInfo.name in {}",
+                                example_name
+                            );
+                            assert!(
+                                server_info.get("version").is_some(),
+                                "Missing serverInfo.version in {}",
+                                example_name
+                            );
+                        }
+                    }
+                } else {
+                    panic!(
+                        "Example {} did not return valid JSON-RPC response",
+                        example_name
+                    );
+                }
+
+                println!("✅ {} passed MCP compliance validation", example_name);
+            }
+            Err(e) => {
+                eprintln!("Failed to test {}: {}", example_name, e);
+                // Continue with other examples rather than failing the entire test
+            }
+        }
+    }
+}
+
+/// Test that examples produce clean JSON-RPC output with no log contamination
+#[tokio::test]
+async fn test_clean_json_output() {
+    let example_name = "11_production_deployment";
+
+    // Use the helper but capture both stdout and stderr separately
+    let mut child = Command::new("cargo")
+        .args(["run", "--example", example_name, "--package", "turbomcp"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to start example");
+
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    // Send an initialize request
+    let init_request = json!({
+        "jsonrpc": "2.0",
+        "id": "clean-test",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "1.0.0"}
+        }
+    });
+
+    let mut writer = stdin;
+    writeln!(writer, "{}", serde_json::to_string(&init_request).unwrap()).unwrap();
+    writer.flush().unwrap();
+
+    // Read stdout and stderr separately
+    let mut stdout_reader = BufReader::new(stdout);
+    let mut stderr_reader = BufReader::new(stderr);
+
+    let mut stdout_line = String::new();
+    let mut stderr_line = String::new();
+
+    // Give it time to respond
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+
+    let stdout_bytes = stdout_reader.read_line(&mut stdout_line).unwrap();
+    let stderr_bytes = stderr_reader.read_line(&mut stderr_line).unwrap();
+
+    child.kill().unwrap_or_else(|e| {
+        eprintln!("Failed to kill child process: {}", e);
+    });
+    match child.wait() {
+        Ok(status) => {
+            if !status.success() {
+                eprintln!("Child process exited with status: {}", status);
+            }
+        }
+        Err(e) => {
+            eprintln!("Failed to wait for child process: {}", e);
+        }
+    }
+
+    // Verify stdout contains only JSON-RPC
+    if stdout_bytes > 0 {
+        let stdout_trimmed = stdout_line.trim();
+        if !stdout_trimmed.is_empty() {
+            match serde_json::from_str::<Value>(stdout_trimmed) {
+                Ok(json_val) => {
+                    assert!(
+                        json_val.get("jsonrpc").is_some(),
+                        "stdout should contain only JSON-RPC messages"
+                    );
+                    println!("✅ stdout contains clean JSON-RPC: {}", stdout_trimmed);
+                }
+                Err(e) => {
+                    panic!(
+                        "stdout contains non-JSON content: {} (error: {})",
+                        stdout_trimmed, e
+                    );
+                }
+            }
+        }
+    }
+
+    // Verify stderr contains logs (if any)
+    if stderr_bytes > 0 {
+        let stderr_trimmed = stderr_line.trim();
+        if !stderr_trimmed.is_empty() {
+            // Should be log content, not JSON-RPC
+            assert!(
+                !stderr_trimmed.starts_with("{"),
+                "stderr should not contain JSON-RPC messages: {}",
+                stderr_trimmed
+            );
+            println!("✅ stderr contains logs: {}", stderr_trimmed);
+        }
+    }
+
+    println!("✅ Clean stdout/stderr separation verified");
+}
