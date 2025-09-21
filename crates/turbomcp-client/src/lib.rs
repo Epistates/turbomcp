@@ -1978,6 +1978,167 @@ impl<T: Transport> SharedClient<T> {
         let client = self.inner.lock().await;
         client.capabilities().clone()
     }
+
+    /// Request argument completion from the MCP server
+    ///
+    /// Provides autocompletion suggestions for prompt arguments and resource URIs.
+    /// This enables rich, IDE-like experiences with contextual suggestions.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler_name` - The completion handler name
+    /// * `argument_value` - The partial value to complete
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::{Client, SharedClient};
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let shared = SharedClient::new(Client::new(StdioTransport::new()));
+    /// shared.initialize().await?;
+    ///
+    /// let result = shared.complete("complete_path", "/usr/b").await?;
+    /// println!("Completions: {:?}", result.values);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn complete(
+        &self,
+        handler_name: &str,
+        argument_value: &str,
+    ) -> Result<turbomcp_protocol::types::CompletionResponse> {
+        self.inner.lock().await.complete(handler_name, argument_value).await
+    }
+
+    /// List filesystem roots available to the server
+    ///
+    /// Returns filesystem root directories that the server has access to.
+    /// This helps servers understand their operating boundaries and available
+    /// resources within the filesystem.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::{Client, SharedClient};
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let shared = SharedClient::new(Client::new(StdioTransport::new()));
+    /// shared.initialize().await?;
+    ///
+    /// let roots = shared.list_roots().await?;
+    /// for root_uri in roots {
+    ///     println!("Available root: {}", root_uri);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn list_roots(&self) -> Result<Vec<String>> {
+        self.inner.lock().await.list_roots().await
+    }
+
+    /// Register an elicitation handler for processing server requests for user information
+    ///
+    /// Elicitation handlers respond to server requests for additional information
+    /// from users during interactions. This enables interactive workflows where
+    /// servers can gather necessary information dynamically.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The elicitation handler implementation
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::{Client, SharedClient};
+    /// use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerResult};
+    /// use turbomcp_transport::stdio::StdioTransport;
+    /// use async_trait::async_trait;
+    /// use std::sync::Arc;
+    ///
+    /// #[derive(Debug)]
+    /// struct MyElicitationHandler;
+    ///
+    /// #[async_trait]
+    /// impl ElicitationHandler for MyElicitationHandler {
+    ///     async fn handle_elicitation(&self, request: ElicitationRequest) -> HandlerResult<ElicitationResponse> {
+    ///         // Process user input request and return response
+    ///         Ok(ElicitationResponse {
+    ///             id: request.id,
+    ///             data: serde_json::json!({"name": "example"}),
+    ///             cancelled: false,
+    ///         })
+    ///     }
+    /// }
+    ///
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let shared = SharedClient::new(Client::new(StdioTransport::new()));
+    /// shared.on_elicitation(Arc::new(MyElicitationHandler)).await;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn on_elicitation(&self, handler: Arc<dyn crate::handlers::ElicitationHandler>) {
+        self.inner.lock().await.on_elicitation(handler);
+    }
+
+    /// Register a progress handler for processing server progress notifications
+    ///
+    /// Progress handlers receive updates about long-running operations on the server.
+    /// This enables progress bars, status updates, and better user experience during
+    /// extended operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The progress handler implementation
+    pub async fn on_progress(&self, handler: Arc<dyn crate::handlers::ProgressHandler>) {
+        self.inner.lock().await.on_progress(handler);
+    }
+
+    /// Register a log handler for processing server log messages
+    ///
+    /// Log handlers receive log messages from the server and can route them
+    /// to the client's logging system. This is useful for debugging and
+    /// maintaining a unified log across client and server.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The log handler implementation
+    pub async fn on_log(&self, handler: Arc<dyn crate::handlers::LogHandler>) {
+        self.inner.lock().await.on_log(handler);
+    }
+
+    /// Register a resource update handler for processing resource change notifications
+    ///
+    /// Resource update handlers receive notifications when subscribed resources
+    /// change on the server. This enables reactive updates to cached data or
+    /// UI refreshes when server-side resources change.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The resource update handler implementation
+    pub async fn on_resource_update(&self, handler: Arc<dyn crate::handlers::ResourceUpdateHandler>) {
+        self.inner.lock().await.on_resource_update(handler);
+    }
+
+    /// Check if an elicitation handler is registered
+    pub async fn has_elicitation_handler(&self) -> bool {
+        self.inner.lock().await.has_elicitation_handler()
+    }
+
+    /// Check if a progress handler is registered
+    pub async fn has_progress_handler(&self) -> bool {
+        self.inner.lock().await.has_progress_handler()
+    }
+
+    /// Check if a log handler is registered
+    pub async fn has_log_handler(&self) -> bool {
+        self.inner.lock().await.has_log_handler()
+    }
+
+    /// Check if a resource update handler is registered
+    pub async fn has_resource_update_handler(&self) -> bool {
+        self.inner.lock().await.has_resource_update_handler()
+    }
 }
 
 impl<T: Transport> Clone for SharedClient<T> {

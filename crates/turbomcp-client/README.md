@@ -597,6 +597,7 @@ framework.spawn_background_tasks();
 - **Zero Overhead**: Same performance as direct Client usage
 - **MCP Compliant**: Preserves all protocol semantics exactly
 - **Drop-in Replacement**: Identical method signatures to Client
+- **Complete Protocol Support**: Full MCP 2025-06-18 compliance including completion, roots, and elicitation
 
 ## Integration Examples
 
