@@ -35,9 +35,9 @@ use std::time::Duration;
 use turbomcp_client::{
     ClientBuilder,
     handlers::{
-        ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerError, HandlerResult,
-        LogHandler, LogMessage, ProgressHandler, ProgressNotification, ResourceChangeType,
-        ResourceUpdateHandler, ResourceUpdateNotification,
+        ElicitationAction, ElicitationHandler, ElicitationRequest, ElicitationResponse,
+        HandlerError, HandlerResult, LogHandler, LogMessage, ProgressHandler, ProgressNotification,
+        ResourceChangeType, ResourceUpdateHandler, ResourceUpdateNotification,
     },
 };
 use turbomcp_protocol::types::{
@@ -158,9 +158,8 @@ impl InteractiveElicitationHandler {
         let response_data = self.prompt_user_input(&request.prompt, &request.schema)?;
 
         Ok(ElicitationResponse {
-            id: request.id.clone(),
-            data: response_data,
-            cancelled: false,
+            action: ElicitationAction::Accept,
+            content: Some(response_data),
         })
     }
 }

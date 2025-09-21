@@ -14,9 +14,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use turbomcp_client::Client;
 use turbomcp_client::handlers::{
-    ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerError, HandlerResult,
-    LogHandler, LogMessage, ProgressHandler, ProgressNotification, ResourceChangeType,
-    ResourceUpdateHandler, ResourceUpdateNotification,
+    ElicitationAction, ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerError,
+    HandlerResult, LogHandler, LogMessage, ProgressHandler, ProgressNotification,
+    ResourceChangeType, ResourceUpdateHandler, ResourceUpdateNotification,
 };
 use turbomcp_protocol::types::LogLevel;
 use turbomcp_transport::stdio::StdioTransport;
@@ -34,19 +34,17 @@ struct TestElicitationHandler {
 impl ElicitationHandler for TestElicitationHandler {
     async fn handle_elicitation(
         &self,
-        request: ElicitationRequest,
+        _request: ElicitationRequest,
     ) -> HandlerResult<ElicitationResponse> {
         if self.should_cancel {
             Ok(ElicitationResponse {
-                id: request.id,
-                data: serde_json::Value::Null,
-                cancelled: true,
+                action: ElicitationAction::Cancel,
+                content: None,
             })
         } else {
             Ok(ElicitationResponse {
-                id: request.id,
-                data: json!({"test_response": "handler_works"}),
-                cancelled: false,
+                action: ElicitationAction::Accept,
+                content: Some(json!({"test_response": "handler_works"})),
             })
         }
     }
@@ -522,7 +520,7 @@ async fn test_default_handler_behaviors() {
         metadata: HashMap::new(),
     };
     let response = decline_handler.handle_elicitation(request).await.unwrap();
-    assert!(response.cancelled);
+    assert_eq!(response.action, ElicitationAction::Decline);
 
     // Test logging progress handler
     let progress_handler = LoggingProgressHandler;

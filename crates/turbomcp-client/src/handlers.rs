@@ -105,17 +105,28 @@ pub struct ElicitationRequest {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
-/// Response structure for elicitation operations
+/// Elicitation response action indicating user's choice
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ElicitationAction {
+    /// User explicitly approved and submitted with data
+    Accept,
+    /// User explicitly declined the request
+    Decline,
+    /// User dismissed without making an explicit choice
+    Cancel,
+}
+
+/// Response structure for elicitation operations (MCP-compliant)
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ElicitationResponse {
-    /// The elicitation request ID this responds to
-    pub id: String,
+    /// User's action choice (accept, decline, or cancel)
+    pub action: ElicitationAction,
 
     /// User's response data (must conform to the request schema)
-    pub data: serde_json::Value,
-
-    /// Whether the user cancelled the operation
-    pub cancelled: bool,
+    /// Only present for "accept" actions
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<serde_json::Value>,
 }
 
 /// Handler for server-initiated elicitation requests
@@ -133,7 +144,7 @@ pub struct ElicitationResponse {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerResult};
+/// use turbomcp_client::handlers::{ElicitationAction, ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerResult};
 /// use async_trait::async_trait;
 /// use serde_json::json;
 ///
@@ -155,9 +166,8 @@ pub struct ElicitationResponse {
 ///         // 4. Return the structured response
 ///         
 ///         Ok(ElicitationResponse {
-///             id: request.id,
-///             data: json!({ "user_choice": "example_value" }),
-///             cancelled: false,
+///             action: ElicitationAction::Accept,
+///             content: Some(json!({ "user_choice": "example_value" })),
 ///         })
 ///     }
 /// }
@@ -579,9 +589,8 @@ impl ElicitationHandler for DeclineElicitationHandler {
     ) -> HandlerResult<ElicitationResponse> {
         warn!("Declining elicitation request: {}", request.prompt);
         Ok(ElicitationResponse {
-            id: request.id,
-            data: serde_json::Value::Null,
-            cancelled: true,
+            action: ElicitationAction::Decline,
+            content: None,
         })
     }
 }
@@ -666,12 +675,11 @@ mod tests {
     impl ElicitationHandler for TestElicitationHandler {
         async fn handle_elicitation(
             &self,
-            request: ElicitationRequest,
+            _request: ElicitationRequest,
         ) -> HandlerResult<ElicitationResponse> {
             Ok(ElicitationResponse {
-                id: request.id,
-                data: json!({"test": "response"}),
-                cancelled: false,
+                action: ElicitationAction::Accept,
+                content: Some(json!({"test": "response"})),
             })
         }
     }
@@ -719,8 +727,8 @@ mod tests {
         };
 
         let response = registry.handle_elicitation(request).await.unwrap();
-        assert_eq!(response.id, "test-123");
-        assert!(!response.cancelled);
+        assert_eq!(response.action, ElicitationAction::Accept);
+        assert!(response.content.is_some());
     }
 
     #[tokio::test]
@@ -744,7 +752,7 @@ mod tests {
         };
 
         let response = decline_handler.handle_elicitation(request).await.unwrap();
-        assert!(response.cancelled);
+        assert_eq!(response.action, ElicitationAction::Decline);
     }
 
     #[tokio::test]
