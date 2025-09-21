@@ -28,6 +28,7 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::Duration;
@@ -606,8 +607,12 @@ async fn simulate_resource_updates(client: &mut turbomcp_client::Client<StdioTra
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging for better demo experience
-    tracing_subscriber::fmt::init();
+    // CRITICAL: For MCP STDIO protocol, logs MUST go to stderr, not stdout
+    // stdout is reserved for pure JSON-RPC messages only
+    tracing_subscriber::fmt()
+        .with_env_filter("info")
+        .with_writer(std::io::stderr) // Fix: Send logs to stderr
+        .init();
 
     println!("🎯 TurboMCP Bidirectional Communication Demo");
     println!("============================================");

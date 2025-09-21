@@ -241,7 +241,8 @@ impl ProductionServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize production logging
+    // CRITICAL: For MCP STDIO protocol, logs MUST go to stderr, not stdout
+    // stdout is reserved for pure JSON-RPC messages only
     tracing_subscriber::fmt()
         .with_env_filter(
             std::env::var("RUST_LOG").unwrap_or_else(|_| "info,turbomcp=debug".to_string()),
@@ -249,6 +250,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_target(true)
         .with_thread_ids(true)
         .with_thread_names(true)
+        .with_writer(std::io::stderr) // Fix: Send logs to stderr
         .json()
         .init();
 

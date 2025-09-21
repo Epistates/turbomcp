@@ -283,8 +283,12 @@ impl KnowledgeServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    tracing_subscriber::fmt().with_env_filter("info").init();
+    // CRITICAL: For MCP STDIO protocol, logs MUST go to stderr, not stdout
+    // stdout is reserved for pure JSON-RPC messages only
+    tracing_subscriber::fmt()
+        .with_env_filter("info")
+        .with_writer(std::io::stderr) // Fix: Send logs to stderr
+        .init();
 
     tracing::info!("📚 Starting Tutorial 04: Resources and Prompts");
     tracing::info!("This server demonstrates:");

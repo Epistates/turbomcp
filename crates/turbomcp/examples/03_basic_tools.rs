@@ -210,17 +210,10 @@ impl CalculatorServer {
 
 #[tokio::main]
 async fn main() -> McpResult<()> {
-    // Enhanced logging to see parameter parsing and validation
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .with_target(false)
-        .init();
-
-    tracing::info!("🧮 Starting Calculator MCP Server");
-    tracing::info!(
-        "Available tools: add, divide, power, calculate, format_number, is_in_range, info"
-    );
-    tracing::info!("Try different parameter types and see error handling in action!");
+    // CRITICAL: For MCP STDIO protocol, do NOT initialize any logging
+    // stdout is reserved exclusively for JSON-RPC messages
+    // stderr should also be avoided as it may interfere with some clients
+    // Any output will break the MCP protocol communication
 
     let server = CalculatorServer;
     server

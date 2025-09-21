@@ -48,14 +48,10 @@ async fn hello(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging to see what's happening (respects RUST_LOG env var)
-    tracing_subscriber::fmt()
-        .with_env_filter(std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()))
-        .init();
-
-    tracing::info!("🚀 Starting Hello World MCP Server");
-    tracing::info!("This server provides a simple 'hello' tool");
-    tracing::info!("Connect from Claude Desktop to try it out!");
+    // CRITICAL: For MCP STDIO protocol, do NOT initialize any logging
+    // stdout is reserved exclusively for JSON-RPC messages
+    // stderr should also be avoided as it may interfere with some clients
+    // If logging is absolutely needed for debugging, use RUST_LOG=debug and stderr only
 
     // Create tool with complete schema
     let tool = Tool {

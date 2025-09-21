@@ -12,6 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use turbomcp::{Context, McpResult, mcp_error, server, tool};
@@ -236,8 +237,12 @@ impl StatefulServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    tracing_subscriber::fmt().with_env_filter("info").init();
+    // CRITICAL: For MCP STDIO protocol, logs MUST go to stderr, not stdout
+    // stdout is reserved for pure JSON-RPC messages only
+    tracing_subscriber::fmt()
+        .with_env_filter("info")
+        .with_writer(std::io::stderr) // Fix: Send logs to stderr
+        .init();
 
     tracing::info!("🏗️ Starting Tutorial 06: Stateful Server");
     tracing::info!("This server demonstrates:");
