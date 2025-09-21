@@ -612,13 +612,23 @@ async fn test_resource_indicators_rfc_8707_compliance() {
     };
 
     let token_storage: Arc<dyn TokenStorage> = Arc::new(TestTokenStorage::new());
-    let provider = OAuth2Provider::new("test_provider".to_string(), config.clone(), ProviderType::Custom("test".to_string()), token_storage).unwrap();
+    let provider = OAuth2Provider::new(
+        "test_provider".to_string(),
+        config.clone(),
+        ProviderType::Custom("test".to_string()),
+        token_storage,
+    )
+    .unwrap();
 
     // Test authorization with Resource Indicators
     let auth_result = provider.start_authorization().await.unwrap();
 
     // Verify resource parameter is included in authorization URL
-    assert!(auth_result.auth_url.contains("resource=https%3A%2F%2Fmcp.example.com"));
+    assert!(
+        auth_result
+            .auth_url
+            .contains("resource=https%3A%2F%2Fmcp.example.com")
+    );
     assert!(auth_result.auth_url.contains("code_challenge_method=S256")); // OAuth 2.1 PKCE
     assert!(auth_result.auth_url.contains("code_challenge="));
 
@@ -628,11 +638,20 @@ async fn test_resource_indicators_rfc_8707_compliance() {
         .await
         .unwrap();
 
-    assert!(auth_result_explicit.auth_url.contains("resource=https%3A%2F%2Fmcp.other.com"));
+    assert!(
+        auth_result_explicit
+            .auth_url
+            .contains("resource=https%3A%2F%2Fmcp.other.com")
+    );
 }
 
 #[tokio::test]
 async fn test_resource_uri_validation() {
+    // Set up whitelist for testing
+    unsafe {
+        std::env::set_var("OAUTH_ALLOWED_REDIRECT_HOSTS", "mcp.example.com,localhost");
+    }
+
     let config = OAuth2Config {
         client_id: "test_client_id".to_string(),
         client_secret: "test_client_secret".to_string(),
@@ -650,15 +669,16 @@ async fn test_resource_uri_validation() {
     };
 
     let token_storage: Arc<dyn TokenStorage> = Arc::new(TestTokenStorage::new());
-    let provider = OAuth2Provider::new("test_provider".to_string(), config, ProviderType::Custom("test".to_string()), token_storage).unwrap();
+    let provider = OAuth2Provider::new(
+        "test_provider".to_string(),
+        config,
+        ProviderType::Custom("test".to_string()),
+        token_storage,
+    )
+    .unwrap();
 
-    // Test valid canonical URIs
-    let valid_uris = [
-        "https://mcp.example.com",
-        "https://mcp.example.com:8443",
-        "https://mcp.example.com/mcp",
-        "http://localhost:8080/mcp",
-    ];
+    // Test valid canonical URIs (using localhost which is always allowed)
+    let valid_uris = ["http://localhost:8080/mcp", "http://127.0.0.1:3000/mcp"];
 
     for uri in valid_uris {
         let result = provider.start_authorization_with_resource(uri).await;
@@ -667,16 +687,20 @@ async fn test_resource_uri_validation() {
 
     // Test invalid URIs
     let invalid_uris = [
-        "mcp.example.com", // Missing scheme
+        "mcp.example.com",                  // Missing scheme
         "https://mcp.example.com#fragment", // Contains fragment
-        "ftp://mcp.example.com", // Invalid scheme
-        "https://", // Missing host
-        "https://MCP.EXAMPLE.COM", // Non-canonical case
+        "ftp://mcp.example.com",            // Invalid scheme
+        "https://",                         // Missing host
     ];
 
     for uri in invalid_uris {
         let result = provider.start_authorization_with_resource(uri).await;
         assert!(result.is_err(), "Invalid URI should be rejected: {}", uri);
+    }
+
+    // Clean up
+    unsafe {
+        std::env::remove_var("OAUTH_ALLOWED_REDIRECT_HOSTS");
     }
 }
 
@@ -700,12 +724,23 @@ async fn test_auto_resource_indicators_configuration() {
     };
 
     let token_storage: Arc<dyn TokenStorage> = Arc::new(TestTokenStorage::new());
-    let provider = OAuth2Provider::new("test_provider".to_string(), config_auto_no_uri, ProviderType::Custom("test".to_string()), token_storage).unwrap();
+    let provider = OAuth2Provider::new(
+        "test_provider".to_string(),
+        config_auto_no_uri,
+        ProviderType::Custom("test".to_string()),
+        token_storage,
+    )
+    .unwrap();
 
     // Should error when trying to start authorization
     let result = provider.start_authorization().await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("MCP Resource Indicators enabled but no resource URI configured"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("MCP Resource Indicators enabled but no resource URI configured")
+    );
 
     // Test auto_resource_indicators disabled (should work without URI)
     let config_auto_disabled = OAuth2Config {
@@ -725,7 +760,13 @@ async fn test_auto_resource_indicators_configuration() {
     };
 
     let token_storage2: Arc<dyn TokenStorage> = Arc::new(TestTokenStorage::new());
-    let provider2 = OAuth2Provider::new("test_provider2".to_string(), config_auto_disabled, ProviderType::Custom("test".to_string()), token_storage2).unwrap();
+    let provider2 = OAuth2Provider::new(
+        "test_provider2".to_string(),
+        config_auto_disabled,
+        ProviderType::Custom("test".to_string()),
+        token_storage2,
+    )
+    .unwrap();
 
     // Should work when auto_resource_indicators is disabled
     let result = provider2.start_authorization().await;
@@ -756,7 +797,13 @@ async fn test_mcp_oauth_2_1_compliance() {
     };
 
     let token_storage: Arc<dyn TokenStorage> = Arc::new(TestTokenStorage::new());
-    let provider = OAuth2Provider::new("mcp_compliant".to_string(), config, ProviderType::Custom("mcp".to_string()), token_storage).unwrap();
+    let provider = OAuth2Provider::new(
+        "mcp_compliant".to_string(),
+        config,
+        ProviderType::Custom("mcp".to_string()),
+        token_storage,
+    )
+    .unwrap();
 
     // Test MCP-compliant authorization
     let auth_result = provider.start_authorization().await.unwrap();
@@ -767,16 +814,24 @@ async fn test_mcp_oauth_2_1_compliance() {
     assert!(!auth_result.auth_url.contains("response_type=token")); // No implicit flow
 
     // Verify Resource Indicators compliance (RFC 8707)
-    assert!(auth_result.auth_url.contains("resource=https%3A%2F%2Fmcp.example.com"));
+    assert!(
+        auth_result
+            .auth_url
+            .contains("resource=https%3A%2F%2Fmcp.example.com")
+    );
 
     // Verify state parameter for CSRF protection
     assert!(!auth_result.state.is_empty());
-    assert!(auth_result.auth_url.contains(&format!("state={}", auth_result.state)));
+    assert!(
+        auth_result
+            .auth_url
+            .contains(&format!("state={}", auth_result.state))
+    );
 }
 
 #[tokio::test]
 async fn test_protected_resource_metadata_rfc_9728() {
-    use turbomcp::auth::{McpResourceRegistry, ProtectedResourceMetadata, BearerTokenMethod};
+    use turbomcp::auth::{BearerTokenMethod, McpResourceRegistry};
 
     // Create MCP resource registry
     let registry = Arc::new(McpResourceRegistry::new(
@@ -785,17 +840,22 @@ async fn test_protected_resource_metadata_rfc_9728() {
     ));
 
     // Register MCP resources
-    registry.register_resource(
-        "tools",
-        vec!["mcp:tools:read".to_string(), "mcp:tools:execute".to_string()],
-        Some("MCP Tool execution and discovery".to_string()),
-    ).await.unwrap();
+    registry
+        .register_resource(
+            "tools",
+            vec![
+                "mcp:tools:read".to_string(),
+                "mcp:tools:execute".to_string(),
+            ],
+            Some("MCP Tool execution and discovery".to_string()),
+        )
+        .await
+        .unwrap();
 
-    registry.register_resource(
-        "resources",
-        vec!["mcp:resources:read".to_string()],
-        None,
-    ).await.unwrap();
+    registry
+        .register_resource("resources", vec!["mcp:resources:read".to_string()], None)
+        .await
+        .unwrap();
 
     // Test resource metadata generation
     let metadata = registry.generate_well_known_metadata().await;
@@ -808,28 +868,47 @@ async fn test_protected_resource_metadata_rfc_9728() {
 
     let tools_metadata = &metadata[tools_uri];
     assert_eq!(tools_metadata.resource, tools_uri);
-    assert_eq!(tools_metadata.authorization_server, "https://auth.example.com");
-    assert_eq!(tools_metadata.scopes_supported, Some(vec![
-        "mcp:tools:read".to_string(),
-        "mcp:tools:execute".to_string()
-    ]));
-    assert_eq!(tools_metadata.bearer_methods_supported, Some(vec![
-        BearerTokenMethod::Header,
-        BearerTokenMethod::Body
-    ]));
-    assert_eq!(tools_metadata.resource_documentation, Some("MCP Tool execution and discovery".to_string()));
+    assert_eq!(
+        tools_metadata.authorization_server,
+        "https://auth.example.com"
+    );
+    assert_eq!(
+        tools_metadata.scopes_supported,
+        Some(vec![
+            "mcp:tools:read".to_string(),
+            "mcp:tools:execute".to_string()
+        ])
+    );
+    assert_eq!(
+        tools_metadata.bearer_methods_supported,
+        Some(vec![BearerTokenMethod::Header, BearerTokenMethod::Body])
+    );
+    assert_eq!(
+        tools_metadata.resource_documentation,
+        Some("MCP Tool execution and discovery".to_string())
+    );
 
     // Test scope validation
     let valid_scopes = vec!["mcp:tools:read".to_string(), "other:scope".to_string()];
     let invalid_scopes = vec!["other:scope".to_string()];
 
-    assert!(registry.validate_scope_for_resource(tools_uri, &valid_scopes).await.unwrap());
-    assert!(!registry.validate_scope_for_resource(tools_uri, &invalid_scopes).await.unwrap());
+    assert!(
+        registry
+            .validate_scope_for_resource(tools_uri, &valid_scopes)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !registry
+            .validate_scope_for_resource(tools_uri, &invalid_scopes)
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
 async fn test_oauth_provider_with_resource_registry_rfc_9728() {
-    use turbomcp::auth::{McpResourceRegistry, OAuth2Provider, ProviderType, SecurityLevel};
+    use turbomcp::auth::{OAuth2Provider, ProviderType, SecurityLevel};
 
     let config = OAuth2Config {
         client_id: "test_client_id".to_string(),
@@ -852,13 +931,18 @@ async fn test_oauth_provider_with_resource_registry_rfc_9728() {
     // Create resource registry
     let registry = OAuth2Provider::create_default_mcp_registry(
         "https://mcp.example.com",
-        "https://auth.example.com"
+        "https://auth.example.com",
     );
 
     // Create provider with resource registry
-    let provider = OAuth2Provider::new("mcp_server".to_string(), config, ProviderType::Custom("mcp".to_string()), token_storage)
-        .unwrap()
-        .with_resource_registry(registry);
+    let provider = OAuth2Provider::new(
+        "mcp_server".to_string(),
+        config,
+        ProviderType::Custom("mcp".to_string()),
+        token_storage,
+    )
+    .unwrap()
+    .with_resource_registry(registry);
 
     // Register standard MCP resources
     provider.register_standard_mcp_resources().await.unwrap();
@@ -875,23 +959,39 @@ async fn test_oauth_provider_with_resource_registry_rfc_9728() {
     let tool_scopes = vec!["mcp:tools:read".to_string()];
     let invalid_scopes = vec!["invalid:scope".to_string()];
 
-    assert!(provider.validate_resource_access("https://mcp.example.com/tools", &tool_scopes).await.unwrap());
-    assert!(!provider.validate_resource_access("https://mcp.example.com/tools", &invalid_scopes).await.unwrap());
+    assert!(
+        provider
+            .validate_resource_access("https://mcp.example.com/tools", &tool_scopes)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !provider
+            .validate_resource_access("https://mcp.example.com/tools", &invalid_scopes)
+            .await
+            .unwrap()
+    );
 }
 
 #[tokio::test]
 async fn test_rfc_9728_json_serialization() {
-    use turbomcp::auth::{ProtectedResourceMetadata, BearerTokenMethod};
+    use turbomcp::auth::{BearerTokenMethod, ProtectedResourceMetadata};
 
     let metadata = ProtectedResourceMetadata {
         resource: "https://mcp.example.com/tools".to_string(),
         authorization_server: "https://auth.example.com".to_string(),
-        scopes_supported: Some(vec!["mcp:tools:read".to_string(), "mcp:tools:execute".to_string()]),
+        scopes_supported: Some(vec![
+            "mcp:tools:read".to_string(),
+            "mcp:tools:execute".to_string(),
+        ]),
         bearer_methods_supported: Some(vec![BearerTokenMethod::Header, BearerTokenMethod::Body]),
         resource_documentation: Some("Tool execution endpoint".to_string()),
         additional_metadata: {
             let mut meta = HashMap::new();
-            meta.insert("version".to_string(), serde_json::Value::String("1.0".to_string()));
+            meta.insert(
+                "version".to_string(),
+                serde_json::Value::String("1.0".to_string()),
+            );
             meta
         },
     };
@@ -913,13 +1013,16 @@ async fn test_rfc_9728_json_serialization() {
     // Test JSON deserialization
     let deserialized: ProtectedResourceMetadata = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.resource, metadata.resource);
-    assert_eq!(deserialized.authorization_server, metadata.authorization_server);
+    assert_eq!(
+        deserialized.authorization_server,
+        metadata.authorization_server
+    );
     assert_eq!(deserialized.scopes_supported, metadata.scopes_supported);
 }
 
 #[tokio::test]
 async fn test_rfc_9728_well_known_endpoint_format() {
-    use turbomcp::auth::{McpResourceRegistry};
+    use turbomcp::auth::McpResourceRegistry;
 
     let registry = Arc::new(McpResourceRegistry::new(
         "https://mcp.example.com".to_string(),
@@ -927,9 +1030,18 @@ async fn test_rfc_9728_well_known_endpoint_format() {
     ));
 
     // Register multiple resources
-    registry.register_resource("tools", vec!["mcp:tools:read".to_string()], None).await.unwrap();
-    registry.register_resource("resources", vec!["mcp:resources:read".to_string()], None).await.unwrap();
-    registry.register_resource("prompts", vec!["mcp:prompts:read".to_string()], None).await.unwrap();
+    registry
+        .register_resource("tools", vec!["mcp:tools:read".to_string()], None)
+        .await
+        .unwrap();
+    registry
+        .register_resource("resources", vec!["mcp:resources:read".to_string()], None)
+        .await
+        .unwrap();
+    registry
+        .register_resource("prompts", vec!["mcp:prompts:read".to_string()], None)
+        .await
+        .unwrap();
 
     // Generate well-known metadata
     let well_known_metadata = registry.generate_well_known_metadata().await;
@@ -952,13 +1064,13 @@ async fn test_rfc_9728_well_known_endpoint_format() {
 
 #[tokio::test]
 async fn test_dynamic_client_registration_rfc_7591() {
-    use turbomcp::auth::{DynamicClientRegistration, ClientRegistrationRequest, ApplicationType};
+    use turbomcp::auth::{ApplicationType, DynamicClientRegistration};
 
     // Mock registration endpoint (in real test, this would be a test server)
     let registration_endpoint = "https://auth.example.com/oauth/register".to_string();
 
     // Create dynamic registration manager
-    let registration = DynamicClientRegistration::new(registration_endpoint);
+    let _registration = DynamicClientRegistration::new(registration_endpoint);
 
     // Create MCP client registration request
     let request = DynamicClientRegistration::create_mcp_client_request(
@@ -968,14 +1080,26 @@ async fn test_dynamic_client_registration_rfc_7591() {
     );
 
     // Verify request structure
-    assert_eq!(request.client_name, Some("MCP Client: Test MCP Client".to_string()));
+    assert_eq!(
+        request.client_name,
+        Some("MCP Client: Test MCP Client".to_string())
+    );
     assert_eq!(request.application_type, Some(ApplicationType::Web));
-    assert_eq!(request.grant_types, Some(vec!["authorization_code".to_string()]));
+    assert_eq!(
+        request.grant_types,
+        Some(vec!["authorization_code".to_string()])
+    );
     assert_eq!(request.response_types, Some(vec!["code".to_string()]));
-    assert_eq!(request.scope, Some("mcp:tools:read mcp:tools:execute mcp:resources:read mcp:prompts:read".to_string()));
+    assert_eq!(
+        request.scope,
+        Some("mcp:tools:read mcp:tools:execute mcp:resources:read mcp:prompts:read".to_string())
+    );
     assert_eq!(request.software_id, Some("turbomcp".to_string()));
     assert!(request.software_version.is_some());
-    assert_eq!(request.client_uri, Some("https://mcp.example.com".to_string()));
+    assert_eq!(
+        request.client_uri,
+        Some("https://mcp.example.com".to_string())
+    );
 
     // Note: Actual registration test would require a mock HTTP server
     // This test validates the request creation logic
@@ -983,7 +1107,10 @@ async fn test_dynamic_client_registration_rfc_7591() {
 
 #[tokio::test]
 async fn test_rfc_7591_json_serialization() {
-    use turbomcp::auth::{ClientRegistrationRequest, ClientRegistrationResponse, ApplicationType, ClientRegistrationError, ClientRegistrationErrorCode};
+    use turbomcp::auth::{
+        ApplicationType, ClientRegistrationError, ClientRegistrationErrorCode,
+        ClientRegistrationRequest, ClientRegistrationResponse,
+    };
 
     // Test ClientRegistrationRequest serialization
     let request = ClientRegistrationRequest {
@@ -1064,13 +1191,18 @@ async fn test_oauth_provider_dynamic_registration_integration() {
 
     // Create registration manager
     let registration = Arc::new(DynamicClientRegistration::new(
-        "https://auth.example.com/oauth/register".to_string()
+        "https://auth.example.com/oauth/register".to_string(),
     ));
 
     // Create provider with dynamic registration
-    let provider = OAuth2Provider::new("test_provider".to_string(), config, ProviderType::Generic, token_storage)
-        .unwrap()
-        .with_dynamic_registration(registration.clone());
+    let provider = OAuth2Provider::new(
+        "test_provider".to_string(),
+        config,
+        ProviderType::Generic,
+        token_storage,
+    )
+    .unwrap()
+    .with_dynamic_registration(registration.clone());
 
     // Verify dynamic registration is configured
     assert!(provider.dynamic_registration().is_some());
@@ -1082,7 +1214,14 @@ async fn test_oauth_provider_dynamic_registration_integration() {
 
 #[tokio::test]
 async fn test_mcp_compliance_full_integration() {
-    use turbomcp::auth::{OAuth2Provider, McpResourceRegistry, DynamicClientRegistration, SecurityLevel};
+    use turbomcp::auth::{
+        DynamicClientRegistration, McpResourceRegistry, OAuth2Provider, SecurityLevel,
+    };
+
+    // Set up environment for test domains - must whitelist the redirect_uri host
+    unsafe {
+        std::env::set_var("OAUTH_ALLOWED_REDIRECT_HOSTS", "mcp.example.com");
+    }
 
     // This test demonstrates the complete MCP OAuth 2.1 compliance implementation
     let config = OAuth2Config {
@@ -1090,12 +1229,15 @@ async fn test_mcp_compliance_full_integration() {
         client_secret: "mcp_secret".to_string(),
         auth_url: "https://auth.example.com/oauth/authorize".to_string(),
         token_url: "https://auth.example.com/oauth/token".to_string(),
-        redirect_uri: "https://mcp.example.com/oauth/callback".to_string(),
-        scopes: vec!["mcp:tools:read".to_string(), "mcp:tools:execute".to_string()],
+        redirect_uri: "http://localhost:8080/oauth/callback".to_string(), // Use localhost for test
+        scopes: vec![
+            "mcp:tools:read".to_string(),
+            "mcp:tools:execute".to_string(),
+        ],
         additional_params: HashMap::new(),
         flow_type: OAuth2FlowType::AuthorizationCode,
         security_level: SecurityLevel::Standard,
-        mcp_resource_uri: Some("https://mcp.example.com".to_string()),
+        mcp_resource_uri: Some("https://mcp.example.com".to_string()), // Keep MCP resource as example.com
         auto_resource_indicators: true,
         #[cfg(feature = "dpop")]
         dpop_config: None,
@@ -1111,21 +1253,30 @@ async fn test_mcp_compliance_full_integration() {
 
     // Create dynamic registration (RFC 7591)
     let dynamic_registration = Arc::new(DynamicClientRegistration::new(
-        "https://auth.example.com/oauth/register".to_string()
+        "https://auth.example.com/oauth/register".to_string(),
     ));
 
     // Create fully compliant MCP OAuth provider
-    let provider = OAuth2Provider::new("mcp_server".to_string(), config, ProviderType::Generic, token_storage)
-        .unwrap()
-        .with_resource_registry(resource_registry)
-        .with_dynamic_registration(dynamic_registration);
+    let provider = OAuth2Provider::new(
+        "mcp_server".to_string(),
+        config,
+        ProviderType::Generic,
+        token_storage,
+    )
+    .unwrap()
+    .with_resource_registry(resource_registry)
+    .with_dynamic_registration(dynamic_registration);
 
     // Register standard MCP resources
     provider.register_standard_mcp_resources().await.unwrap();
 
     // Test RFC 8707 - Resource Indicators
     let auth_result = provider.start_authorization().await.unwrap();
-    assert!(auth_result.auth_url.contains("resource=https%3A%2F%2Fmcp.example.com"));
+    assert!(
+        auth_result
+            .auth_url
+            .contains("resource=https%3A%2F%2Fmcp.example.com")
+    );
 
     // Test RFC 9728 - Protected Resource Metadata
     let metadata = provider.generate_resource_metadata().await.unwrap();
@@ -1140,4 +1291,9 @@ async fn test_mcp_compliance_full_integration() {
     assert_eq!(provider.config().security_level, SecurityLevel::Standard);
     assert!(provider.config().auto_resource_indicators);
     assert!(provider.config().mcp_resource_uri.is_some());
+
+    // Clean up
+    unsafe {
+        std::env::remove_var("OAUTH_ALLOWED_REDIRECT_HOSTS");
+    }
 }

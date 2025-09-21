@@ -1,7 +1,21 @@
 //! Authentication and Authorization system for `TurboMCP` servers
 //!
-//! This module provides comprehensive authentication and authorization capabilities including:
-//! - OAuth 2.0 flows (Authorization Code, Client Credentials, Device Code)
+//! This module provides comprehensive OAuth 2.1 MCP compliance and authentication capabilities including:
+//!
+//! ## OAuth 2.1 MCP Compliance
+//! - **RFC 8707 Resource Indicators** - MCP resource URI binding for token scoping
+//! - **RFC 9728 Protected Resource Metadata** - Discovery and validation endpoints
+//! - **RFC 7591 Dynamic Client Registration** - Runtime client configuration
+//! - **PKCE Support** - Enhanced security with Proof Key for Code Exchange
+//! - **Multi-Provider Support** - Google, GitHub, Microsoft OAuth 2.0 integration
+//!
+//! ## Security Features
+//! - **Redirect URI Validation** - Prevents open redirect attacks
+//! - **Domain Whitelisting** - Environment-based host validation
+//! - **Attack Vector Prevention** - Protection against injection and traversal attacks
+//! - **Security Levels** - Standard, Enhanced, Maximum security configurations
+//!
+//! ## Legacy Authentication (Planned)
 //! - JWT token validation and generation
 //! - API key authentication
 //! - Role-based access control (RBAC)
@@ -83,6 +97,16 @@ impl Default for SecurityLevel {
     fn default() -> Self {
         Self::Standard
     }
+}
+
+/// DPoP cryptographic algorithms
+#[cfg(feature = "dpop")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DpopAlgorithm {
+    /// ES256 - ECDSA using P-256 and SHA-256
+    ES256,
+    /// RS256 - RSASSA-PKCS1-v1_5 using SHA-256
+    RS256,
 }
 
 /// DPoP (Demonstration of Proof-of-Possession) configuration
@@ -353,7 +377,11 @@ impl McpResourceRegistry {
         scopes: Vec<String>,
         documentation: Option<String>,
     ) -> McpResult<()> {
-        let resource_uri = format!("{}/{}", self.base_resource_uri.trim_end_matches('/'), resource_id);
+        let resource_uri = format!(
+            "{}/{}",
+            self.base_resource_uri.trim_end_matches('/'),
+            resource_id
+        );
 
         let metadata = ProtectedResourceMetadata {
             resource: resource_uri.clone(),
@@ -372,7 +400,10 @@ impl McpResourceRegistry {
     }
 
     /// Get metadata for a specific resource
-    pub async fn get_resource_metadata(&self, resource_uri: &str) -> Option<ProtectedResourceMetadata> {
+    pub async fn get_resource_metadata(
+        &self,
+        resource_uri: &str,
+    ) -> Option<ProtectedResourceMetadata> {
         self.resources.read().await.get(resource_uri).cloned()
     }
 
@@ -404,7 +435,10 @@ impl McpResourceRegistry {
                 Ok(true)
             }
         } else {
-            Err(McpError::InvalidInput(format!("Unknown resource: {}", resource_uri)))
+            Err(McpError::InvalidInput(format!(
+                "Unknown resource: {}",
+                resource_uri
+            )))
         }
     }
 }
@@ -591,10 +625,10 @@ impl DynamicClientRegistration {
 
         // Handle response
         if response.status().is_success() {
-            let registration_response: ClientRegistrationResponse = response
-                .json()
-                .await
-                .map_err(|e| McpError::InvalidInput(format!("Invalid registration response: {}", e)))?;
+            let registration_response: ClientRegistrationResponse =
+                response.json().await.map_err(|e| {
+                    McpError::InvalidInput(format!("Invalid registration response: {}", e))
+                })?;
             Ok(registration_response)
         } else {
             // Parse error response
@@ -623,7 +657,9 @@ impl DynamicClientRegistration {
             application_type: Some(ApplicationType::Web),
             client_name: Some(format!("MCP Client: {}", client_name)),
             client_uri: Some(mcp_server_uri.to_string()),
-            scope: Some("mcp:tools:read mcp:tools:execute mcp:resources:read mcp:prompts:read".to_string()),
+            scope: Some(
+                "mcp:tools:read mcp:tools:execute mcp:resources:read mcp:prompts:read".to_string(),
+            ),
             software_id: Some("turbomcp".to_string()),
             software_version: Some(env!("CARGO_PKG_VERSION").to_string()),
             logo_uri: None,
@@ -1161,9 +1197,8 @@ impl OAuth2Provider {
     fn validate_canonical_resource_uri(&self, uri: &str) -> McpResult<()> {
         use url::Url;
 
-        let parsed = Url::parse(uri).map_err(|e| {
-            McpError::InvalidInput(format!("Invalid resource URI: {e}"))
-        })?;
+        let parsed = Url::parse(uri)
+            .map_err(|e| McpError::InvalidInput(format!("Invalid resource URI: {e}")))?;
 
         // RFC 8707 requirements
         if parsed.scheme() != "https" && parsed.scheme() != "http" {
@@ -1199,7 +1234,10 @@ impl OAuth2Provider {
     }
 
     /// Start MCP-compliant OAuth 2.1 authorization flow with Resource Indicators
-    pub async fn start_authorization_with_resource(&self, resource_uri: &str) -> McpResult<OAuth2AuthResult> {
+    pub async fn start_authorization_with_resource(
+        &self,
+        resource_uri: &str,
+    ) -> McpResult<OAuth2AuthResult> {
         // Validate resource URI format (RFC 8707 compliance)
         self.validate_canonical_resource_uri(resource_uri)?;
 
@@ -1234,7 +1272,7 @@ impl OAuth2Provider {
                 pkce_verifier,
                 created_at: SystemTime::now(),
                 expires_at: SystemTime::now() + Duration::from_secs(600), // 10 minutes
-                resource_uri: Some(resource_uri.to_string()), // Track resource binding
+                resource_uri: Some(resource_uri.to_string()),             // Track resource binding
             },
         );
 
@@ -1259,7 +1297,8 @@ impl OAuth2Provider {
         if self.config.auto_resource_indicators {
             return Err(McpError::InvalidInput(
                 "MCP Resource Indicators enabled but no resource URI configured. \
-                 Set mcp_resource_uri in OAuth2Config or call start_authorization_with_resource()".to_string(),
+                 Set mcp_resource_uri in OAuth2Config or call start_authorization_with_resource()"
+                    .to_string(),
             ));
         }
 
@@ -1623,7 +1662,9 @@ impl OAuth2Provider {
         documentation: Option<String>,
     ) -> McpResult<()> {
         if let Some(registry) = &self.resource_registry {
-            registry.register_resource(resource_id, scopes, documentation).await
+            registry
+                .register_resource(resource_id, scopes, documentation)
+                .await
         } else {
             Err(McpError::InvalidInput(
                 "Resource registry not configured. Use with_resource_registry()".to_string(),
@@ -1632,7 +1673,9 @@ impl OAuth2Provider {
     }
 
     /// Generate RFC 9728 Protected Resource Metadata for well-known endpoint
-    pub async fn generate_resource_metadata(&self) -> McpResult<HashMap<String, ProtectedResourceMetadata>> {
+    pub async fn generate_resource_metadata(
+        &self,
+    ) -> McpResult<HashMap<String, ProtectedResourceMetadata>> {
         if let Some(registry) = &self.resource_registry {
             Ok(registry.generate_well_known_metadata().await)
         } else {
@@ -1649,7 +1692,9 @@ impl OAuth2Provider {
         token_scopes: &[String],
     ) -> McpResult<bool> {
         if let Some(registry) = &self.resource_registry {
-            registry.validate_scope_for_resource(resource_uri, token_scopes).await
+            registry
+                .validate_scope_for_resource(resource_uri, token_scopes)
+                .await
         } else {
             // Without registry, allow access (backward compatibility)
             Ok(true)
@@ -1671,23 +1716,38 @@ impl OAuth2Provider {
     pub async fn register_standard_mcp_resources(&self) -> McpResult<()> {
         if let Some(registry) = &self.resource_registry {
             // Register core MCP resources
-            registry.register_resource(
-                "tools",
-                vec!["mcp:tools:read".to_string(), "mcp:tools:execute".to_string()],
-                Some("MCP Tool execution and discovery".to_string()),
-            ).await?;
+            registry
+                .register_resource(
+                    "tools",
+                    vec![
+                        "mcp:tools:read".to_string(),
+                        "mcp:tools:execute".to_string(),
+                    ],
+                    Some("MCP Tool execution and discovery".to_string()),
+                )
+                .await?;
 
-            registry.register_resource(
-                "resources",
-                vec!["mcp:resources:read".to_string(), "mcp:resources:write".to_string()],
-                Some("MCP Resource access and management".to_string()),
-            ).await?;
+            registry
+                .register_resource(
+                    "resources",
+                    vec![
+                        "mcp:resources:read".to_string(),
+                        "mcp:resources:write".to_string(),
+                    ],
+                    Some("MCP Resource access and management".to_string()),
+                )
+                .await?;
 
-            registry.register_resource(
-                "prompts",
-                vec!["mcp:prompts:read".to_string(), "mcp:prompts:use".to_string()],
-                Some("MCP Prompt template access".to_string()),
-            ).await?;
+            registry
+                .register_resource(
+                    "prompts",
+                    vec![
+                        "mcp:prompts:read".to_string(),
+                        "mcp:prompts:use".to_string(),
+                    ],
+                    Some("MCP Prompt template access".to_string()),
+                )
+                .await?;
 
             Ok(())
         } else {
@@ -1702,7 +1762,10 @@ impl OAuth2Provider {
     // ============================================================================
 
     /// Configure dynamic client registration for RFC 7591 compliance (builder pattern)
-    pub fn with_dynamic_registration(mut self, registration: Arc<DynamicClientRegistration>) -> Self {
+    pub fn with_dynamic_registration(
+        mut self,
+        registration: Arc<DynamicClientRegistration>,
+    ) -> Self {
         self.dynamic_registration = Some(registration);
         self
     }
@@ -1721,7 +1784,8 @@ impl OAuth2Provider {
             registration.register_client(request).await
         } else {
             Err(McpError::InvalidInput(
-                "Dynamic client registration not configured. Use with_dynamic_registration()".to_string(),
+                "Dynamic client registration not configured. Use with_dynamic_registration()"
+                    .to_string(),
             ))
         }
     }
@@ -1787,12 +1851,24 @@ impl OAuth2Provider {
         token_storage: Arc<dyn TokenStorage>,
     ) -> McpResult<Self> {
         // Discover authorization server metadata (simplified - in production would use OpenID Connect Discovery)
-        let discovery_url = format!("{}/.well-known/oauth-authorization-server", authorization_server_uri.trim_end_matches('/'));
+        let _discovery_url = format!(
+            "{}/.well-known/oauth-authorization-server",
+            authorization_server_uri.trim_end_matches('/')
+        );
 
         // For now, construct endpoints based on common patterns
-        let auth_url = format!("{}/oauth/authorize", authorization_server_uri.trim_end_matches('/'));
-        let token_url = format!("{}/oauth/token", authorization_server_uri.trim_end_matches('/'));
-        let registration_endpoint = format!("{}/oauth/register", authorization_server_uri.trim_end_matches('/'));
+        let auth_url = format!(
+            "{}/oauth/authorize",
+            authorization_server_uri.trim_end_matches('/')
+        );
+        let token_url = format!(
+            "{}/oauth/token",
+            authorization_server_uri.trim_end_matches('/')
+        );
+        let registration_endpoint = format!(
+            "{}/oauth/register",
+            authorization_server_uri.trim_end_matches('/')
+        );
 
         Self::from_dynamic_registration(
             client_name.to_string(),
@@ -1802,7 +1878,8 @@ impl OAuth2Provider {
             redirect_uri,
             mcp_server_uri,
             token_storage,
-        ).await
+        )
+        .await
     }
 
     /// Create default MCP-compliant OAuth provider with dynamic registration
@@ -1821,10 +1898,12 @@ impl OAuth2Provider {
             redirect_uri,
             mcp_server_uri.to_string(),
             token_storage,
-        ).await?;
+        )
+        .await?;
 
         // Configure resource registry for MCP compliance
-        let resource_registry = Self::create_default_mcp_registry(mcp_server_uri, authorization_server_uri);
+        let resource_registry =
+            Self::create_default_mcp_registry(mcp_server_uri, authorization_server_uri);
         provider = provider.with_resource_registry(resource_registry);
 
         // Register standard MCP resources
