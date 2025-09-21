@@ -5,7 +5,31 @@ All notable changes to TurboMCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.8] - 2025-09-20
+## [1.0.8] - 2025-09-21
+
+### 🔐 OAuth 2.1 MCP Compliance (MAJOR FEATURE)
+- **Complete OAuth 2.1 Implementation**:
+  - ✅ **RFC 8707 Resource Indicators**: MCP resource URI binding for token scoping
+  - ✅ **RFC 9728 Protected Resource Metadata**: Discovery and validation endpoints
+  - ✅ **RFC 7591 Dynamic Client Registration**: Runtime client configuration
+  - ✅ **PKCE Support**: Enhanced security with Proof Key for Code Exchange
+  - ✅ **Multi-Provider Support**: Google, GitHub, Microsoft OAuth 2.0 integration
+- **Security Hardening**:
+  - ✅ **Redirect URI Validation**: Prevents open redirect attacks
+  - ✅ **Domain Whitelisting**: Environment-based host validation
+  - ✅ **Attack Vector Prevention**: Protection against injection and traversal attacks
+  - ✅ **Production Security**: Comprehensive security level configuration
+- **MCP-Specific Features**:
+  - ✅ **Resource Registry**: MCP resource metadata with RFC 9728 compliance
+  - ✅ **Bearer Token Methods**: Multiple authentication methods support
+  - ✅ **Auto Resource Indicators**: Automatic MCP resource URI detection
+  - ✅ **Security Levels**: Standard, Enhanced, Maximum security configurations
+
+### 🚀 MCP STDIO Protocol Compliance
+- **Logging Compliance**: Fixed demo application to output ONLY JSON-RPC messages
+  - ✅ **Zero Stdout Pollution**: No logging, banners, or debug output on stdout
+  - ✅ **Pure Protocol Communication**: MCP STDIO transport compliant
+  - ✅ **Clean Demo Application**: Production-ready MCP server demonstration
 
 ### 🧹 Code Quality & Maintenance (MAJOR CLEANUP)
 - **Zero-Tolerance Quality Standards Achieved**:
