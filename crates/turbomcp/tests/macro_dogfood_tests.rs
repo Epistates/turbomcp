@@ -339,7 +339,7 @@ mod resource_prompt_tests {
         #[prompt("Generate content from template")]
         async fn generate_content(
             &self,
-            _ctx: turbomcp::RequestContext,
+            _ctx: turbomcp::Context,
             args: Option<serde_json::Value>,
         ) -> turbomcp::McpResult<String> {
             let template_name = args
@@ -370,7 +370,7 @@ mod resource_prompt_tests {
         #[prompt("Suggest document improvements")]
         async fn suggest_improvements(
             &self,
-            _ctx: turbomcp::RequestContext,
+            _ctx: turbomcp::Context,
             args: Option<serde_json::Value>,
         ) -> turbomcp::McpResult<String> {
             let doc_name = args
@@ -450,7 +450,13 @@ mod resource_prompt_tests {
         );
         args.insert("params".to_string(), serde_json::Value::Object(params));
 
-        let ctx = turbomcp::RequestContext::default();
+        let request_context = turbomcp::RequestContext::default();
+        let handler_metadata = turbomcp::HandlerMetadata {
+            name: "test".to_string(),
+            handler_type: "prompt".to_string(),
+            description: Some("test prompt".to_string()),
+        };
+        let ctx = turbomcp::Context::new(request_context, handler_metadata);
         let result = server
             .generate_content(ctx, Some(serde_json::Value::Object(args)))
             .await
@@ -464,7 +470,13 @@ mod resource_prompt_tests {
             serde_json::Value::String("test".to_string()),
         );
 
-        let ctx = turbomcp::RequestContext::default();
+        let request_context = turbomcp::RequestContext::default();
+        let handler_metadata = turbomcp::HandlerMetadata {
+            name: "test".to_string(),
+            handler_type: "prompt".to_string(),
+            description: Some("test prompt".to_string()),
+        };
+        let ctx = turbomcp::Context::new(request_context, handler_metadata);
         let suggestions = server
             .suggest_improvements(ctx, Some(serde_json::Value::Object(args)))
             .await

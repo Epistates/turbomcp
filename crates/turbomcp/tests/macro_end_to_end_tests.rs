@@ -308,7 +308,7 @@ impl ContentServer {
     #[prompt("Generate a blog post")]
     async fn blog_post_prompt(
         &self,
-        _ctx: turbomcp::RequestContext,
+        _ctx: turbomcp::Context,
         args: Option<serde_json::Value>,
     ) -> turbomcp::McpResult<String> {
         let (topic, style) = if let Some(args) = args {
@@ -334,7 +334,7 @@ impl ContentServer {
     #[prompt("Code review template")]
     async fn code_review_prompt(
         &self,
-        _ctx: turbomcp::RequestContext,
+        _ctx: turbomcp::Context,
         args: Option<serde_json::Value>,
     ) -> turbomcp::McpResult<String> {
         let (language, areas) = if let Some(args) = args {
@@ -422,7 +422,13 @@ async fn test_content_server() {
         "topic": "Rust programming",
         "style": "technical"
     });
-    let ctx = turbomcp::RequestContext::default();
+    let request_context = turbomcp::RequestContext::default();
+    let handler_metadata = turbomcp::HandlerMetadata {
+        name: "test".to_string(),
+        handler_type: "prompt".to_string(),
+        description: Some("test prompt".to_string()),
+    };
+    let ctx = turbomcp::Context::new(request_context, handler_metadata);
     let blog_prompt = server.blog_post_prompt(ctx, Some(blog_args)).await.unwrap();
     assert!(blog_prompt.contains("Rust programming"));
     assert!(blog_prompt.contains("technical"));
@@ -431,7 +437,13 @@ async fn test_content_server() {
         "language": "Python",
         "focus_areas": ["performance", "security"]
     });
-    let ctx = turbomcp::RequestContext::default();
+    let request_context = turbomcp::RequestContext::default();
+    let handler_metadata = turbomcp::HandlerMetadata {
+        name: "test".to_string(),
+        handler_type: "prompt".to_string(),
+        description: Some("test prompt".to_string()),
+    };
+    let ctx = turbomcp::Context::new(request_context, handler_metadata);
     let review_prompt = server
         .code_review_prompt(ctx, Some(review_args))
         .await
