@@ -42,7 +42,7 @@
 - **Resource cleanup** - Proper cleanup of connections, files, and threads
 - **Health status** - Shutdown status reporting for load balancers
 
-### 🔄 **SharedServer for Async Concurrency** (New in v1.0.9)
+### 🔄 **SharedServer for Async Concurrency** (New in v1.0.10)
 - **Thread-safe server sharing** - Share servers across multiple async tasks for monitoring
 - **Consumption pattern** - Safe server consumption for running while preserving access
 - **Clean monitoring APIs** - Access health, metrics, and configuration concurrently
@@ -550,9 +550,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `tracing` | Enable distributed tracing | ✅ |
 | `compression` | Enable response compression | ✅ |
 
-## SharedServer for Async Concurrency (v1.0.9)
+## SharedServer for Async Concurrency (v1.0.10)
 
-TurboMCP v1.0.9 introduces SharedServer - a thread-safe wrapper that enables concurrent monitoring while preserving the consumption pattern needed for server execution:
+TurboMCP v1.0.10 introduces SharedServer - a thread-safe wrapper that enables concurrent monitoring while preserving the consumption pattern needed for server execution:
 
 ### Basic SharedServer Usage
 

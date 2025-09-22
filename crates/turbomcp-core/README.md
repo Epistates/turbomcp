@@ -49,7 +49,7 @@
 - **PingContext** - Bidirectional health monitoring and keepalive
 - **ResourceTemplateContext** - Dynamic resource generation with RFC 6570 templates
 
-### 🔄 **Shareable Pattern for Async Concurrency** (New in v1.0.9)
+### 🔄 **Shareable Pattern for Async Concurrency** (New in v1.0.10)
 - **Generic Shareable trait** - Reusable abstraction for thread-safe wrappers
 - **Shared<T> wrapper** - Arc/Mutex encapsulation with closure-based access
 - **ConsumableShared<T>** - One-time consumption pattern for server-like objects
@@ -245,9 +245,9 @@ match result {
 }
 ```
 
-## Shareable Patterns for Async Concurrency (v1.0.9)
+## Shareable Patterns for Async Concurrency (v1.0.10)
 
-TurboMCP Core v1.0.9 introduces powerful abstractions for thread-safe sharing that form the foundation for SharedClient, SharedTransport, and SharedServer:
+TurboMCP Core v1.0.10 introduces powerful abstractions for thread-safe sharing that form the foundation for SharedClient, SharedTransport, and SharedServer:
 
 ### Generic Shareable Trait
 

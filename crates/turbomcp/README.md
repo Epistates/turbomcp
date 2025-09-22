@@ -59,7 +59,7 @@
 - **Connection health monitoring** - Automatic failure detection
 - **Graceful degradation** - Fallback mechanisms
 
-### 🔄 **Shared Wrappers for Async Concurrency** (New in v1.0.9)
+### 🔄 **Shared Wrappers for Async Concurrency** (New in v1.0.10)
 - **SharedClient** - Thread-safe client access with clean APIs
 - **SharedTransport** - Concurrent transport sharing across async tasks
 - **SharedServer** - Server lifecycle management with consumption pattern
@@ -100,7 +100,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.0.9"
+turbomcp = "1.0.10"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -514,9 +514,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Shared Wrappers for Async Concurrency (v1.0.9)
+## Shared Wrappers for Async Concurrency (v1.0.10)
 
-TurboMCP v1.0.9 introduces comprehensive shared wrapper system that eliminates Arc/Mutex complexity from public APIs:
+TurboMCP v1.0.10 introduces comprehensive shared wrapper system that eliminates Arc/Mutex complexity from public APIs:
 
 ### SharedClient - Thread-Safe Client Access
 
@@ -721,7 +721,7 @@ Enable SIMD acceleration for maximum performance:
 
 ```toml
 [dependencies]
-turbomcp = { version = "1.0.4", features = ["simd"] }
+turbomcp = { version = "1.0.10", features = ["simd"] }
 ```
 
 Configure performance settings:

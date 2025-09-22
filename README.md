@@ -31,7 +31,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.0.9"
+turbomcp = "1.0.10"
 tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -268,7 +268,7 @@ impl ProductionServer {
 
 ### World-Class Multi-Transport Support
 
-**TurboMCP 1.0.9** delivers **industry-leading transport layer implementation** with complete MCP 2025-06-18 specification compliance:
+**TurboMCP 1.0.10** delivers **industry-leading transport layer implementation** with complete MCP 2025-06-18 specification compliance:
 
 #### **🏆 Transport Layer Excellence**
 - **✅ 100% MCP Protocol Compliance** - All 5 transport types fully validated
@@ -377,9 +377,9 @@ Our architecture prioritizes compile-time computation over runtime flexibility. 
 | [`turbomcp-macros`](./crates/turbomcp-macros/) | Proc macros | `#[server]`, `#[tool]`, `#[resource]` |
 | [`turbomcp-cli`](./crates/turbomcp-cli/) | CLI tools | Testing, schema export, debugging |
 
-## Shared Wrappers for Async Concurrency (v1.0.9)
+## Shared Wrappers for Async Concurrency (v1.0.10)
 
-TurboMCP v1.0.9 introduces comprehensive shared wrapper system that eliminates Arc/Mutex complexity while enabling thread-safe concurrent access:
+TurboMCP v1.0.10 introduces comprehensive shared wrapper system that eliminates Arc/Mutex complexity while enabling thread-safe concurrent access:
 
 ### SharedClient - Thread-Safe Client Access
 
@@ -587,13 +587,13 @@ Optimize binary size by selecting only needed transports:
 
 ```toml
 # Minimal STDIO-only server
-turbomcp = { version = "1.0.3", default-features = false, features = ["minimal"] }
+turbomcp = { version = "1.0.10", default-features = false, features = ["minimal"] }
 
 # Network deployment with TCP + Unix
-turbomcp = { version = "1.0.3", default-features = false, features = ["network"] }
+turbomcp = { version = "1.0.10", default-features = false, features = ["network"] }
 
-# All transports for maximum flexibility  
-turbomcp = { version = "1.0.3", default-features = false, features = ["all-transports"] }
+# All transports for maximum flexibility
+turbomcp = { version = "1.0.10", default-features = false, features = ["all-transports"] }
 ```
 
 ## CLI Tools

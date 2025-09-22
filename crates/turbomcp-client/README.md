@@ -42,7 +42,7 @@
 - **Reconnection logic** - Intelligent reconnection with state preservation
 - **Session persistence** - Optional session state persistence across connections
 
-### 🔄 **SharedClient for Async Concurrency** (New in v1.0.9)
+### 🔄 **SharedClient for Async Concurrency** (New in v1.0.10)
 - **Thread-safe client sharing** - Share clients across multiple async tasks
 - **Clean API surface** - Hide Arc/Mutex complexity from public interfaces
 - **Zero overhead** - Same performance as direct client usage
@@ -486,9 +486,9 @@ let client = ClientBuilder::new()
 // Session is automatically restored on reconnection
 ```
 
-## SharedClient for Async Concurrency (v1.0.9)
+## SharedClient for Async Concurrency (v1.0.10)
 
-TurboMCP v1.0.9 introduces SharedClient - a thread-safe wrapper that eliminates Arc/Mutex complexity while preserving full API compatibility:
+TurboMCP v1.0.10 introduces SharedClient - a thread-safe wrapper that eliminates Arc/Mutex complexity while preserving full API compatibility:
 
 ### Basic SharedClient Usage
 

@@ -43,7 +43,7 @@
 - **Streaming Support** - Low-memory compression for large messages
 - **Compression Metrics** - Performance monitoring and optimization
 
-### 🔄 **SharedTransport for Async Concurrency** (New in v1.0.9)
+### 🔄 **SharedTransport for Async Concurrency** (New in v1.0.10)
 - **Thread-safe transport sharing** - Share transports across multiple async tasks
 - **Clean API surface** - Hide Arc/Mutex complexity from public interfaces
 - **Zero overhead** - Same performance as direct transport usage
@@ -370,9 +370,9 @@ impl Transport for CustomTransport {
 | `metrics` | Enable metrics collection | ✅ |
 | `circuit-breaker` | Enable circuit breaker pattern | ✅ |
 
-## SharedTransport for Async Concurrency (v1.0.9)
+## SharedTransport for Async Concurrency (v1.0.10)
 
-TurboMCP v1.0.9 introduces SharedTransport - a thread-safe wrapper that eliminates Arc/Mutex complexity while preserving full transport functionality:
+TurboMCP v1.0.10 introduces SharedTransport - a thread-safe wrapper that eliminates Arc/Mutex complexity while preserving full transport functionality:
 
 ### Basic SharedTransport Usage
 
