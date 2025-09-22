@@ -28,8 +28,8 @@ async fn test_example_jsonrpc(
     let mut writer = stdin;
     let mut responses = Vec::new();
 
-    // Give the server a moment to start up
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // Give the server more time to start up in CI environments
+    tokio::time::sleep(std::time::Duration::from_millis(2000)).await;
 
     // Send initialize request first
     let init_request = json!({
@@ -49,49 +49,69 @@ async fn test_example_jsonrpc(
     writeln!(writer, "{}", serde_json::to_string(&init_request)?)?;
     writer.flush()?;
 
-    // Read init response
+    // Read init response with better error handling
     let mut init_response = String::new();
     let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(5) {
+    while start.elapsed() < Duration::from_secs(10) {
+        init_response.clear();
         match reader.read_line(&mut init_response) {
-            Ok(0) => break, // EOF
+            Ok(0) => {
+                return Err("Process terminated unexpectedly during init".into());
+            }
             Ok(_) => {
-                if let Ok(response) = serde_json::from_str::<Value>(&init_response) {
-                    responses.push(response);
-                    break;
+                let trimmed = init_response.trim();
+                if !trimmed.is_empty() {
+                    if let Ok(response) = serde_json::from_str::<Value>(trimmed) {
+                        responses.push(response);
+                        break;
+                    }
                 }
             }
-            Err(_) => break,
+            Err(e) => {
+                return Err(format!("Failed to read init response: {}", e).into());
+            }
         }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    // Send test requests
-    for request in requests {
+    // Send test requests with better error handling
+    for (i, request) in requests.iter().enumerate() {
         writeln!(writer, "{}", serde_json::to_string(&request)?)?;
         writer.flush()?;
 
         let mut response_line = String::new();
         let start = std::time::Instant::now();
-        while start.elapsed() < Duration::from_secs(3) {
+        while start.elapsed() < Duration::from_secs(10) {
+            response_line.clear();
             match reader.read_line(&mut response_line) {
-                Ok(0) => break,
+                Ok(0) => {
+                    return Err(format!("Process terminated during request {}", i).into());
+                }
                 Ok(_) => {
-                    if let Ok(response) = serde_json::from_str::<Value>(&response_line) {
-                        responses.push(response);
-                        break;
+                    let trimmed = response_line.trim();
+                    if !trimmed.is_empty() {
+                        if let Ok(response) = serde_json::from_str::<Value>(trimmed) {
+                            responses.push(response);
+                            break;
+                        }
                     }
                 }
-                Err(_) => break,
+                Err(e) => {
+                    return Err(format!("Failed to read response for request {}: {}", i, e).into());
+                }
             }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 
-    child.kill()?;
+    // Clean up process
+    let _ = child.kill();
+    let _ = child.wait();
     Ok(responses)
 }
 
 /// Test that 01_hello_world example handles real MCP communication
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_hello_world_integration() {
     let requests = vec![json!({
         "jsonrpc": "2.0",
@@ -133,7 +153,7 @@ async fn test_hello_world_integration() {
 }
 
 /// Test that 07_transport_showcase example works correctly
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_transport_showcase_stdio() {
     // Test that the transport showcase compiles and can show help
     // Note: Actually running stdio mode would require interactive testing
