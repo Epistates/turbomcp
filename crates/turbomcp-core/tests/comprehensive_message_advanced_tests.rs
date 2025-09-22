@@ -321,7 +321,11 @@ fn test_serialize_cbor_without_parsed_json() {
 
 #[test]
 fn test_serialize_cbor_existing_cbor_binary() {
-    let cbor_data = serde_cbor::to_vec(&json!({"cbor": "data"})).unwrap();
+    let cbor_data = {
+        let mut buffer = Vec::new();
+        ciborium::into_writer(&json!({"cbor": "data"}), &mut buffer).unwrap();
+        buffer
+    };
     let payload = MessagePayload::Binary(BinaryPayload {
         data: Bytes::from(cbor_data.clone()),
         format: BinaryFormat::Cbor,
@@ -541,7 +545,11 @@ fn test_deserialize_with_format_messagepack() {
 #[test]
 fn test_deserialize_with_format_cbor_to_json() {
     let test_value = json!({"cbor": "test", "number": 123});
-    let cbor_data = serde_cbor::to_vec(&test_value).unwrap();
+    let cbor_data = {
+        let mut buffer = Vec::new();
+        ciborium::into_writer(&test_value, &mut buffer).unwrap();
+        buffer
+    };
     let bytes = Bytes::from(cbor_data);
 
     let message = Message::deserialize_with_format(bytes, SerializationFormat::Cbor).unwrap();

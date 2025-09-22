@@ -637,7 +637,11 @@ fn test_serialize_cbor_format() {
     assert!(serialized.is_ok());
 
     // Test binary CBOR payload
-    let cbor_data = serde_cbor::to_vec(&json!({"binary": "cbor"})).unwrap();
+    let cbor_data = {
+        let mut buffer = Vec::new();
+        ciborium::into_writer(&json!({"binary": "cbor"}), &mut buffer).unwrap();
+        buffer
+    };
     let binary_message = Message::binary(
         MessageId::Number(2),
         Bytes::from(cbor_data),
@@ -763,7 +767,11 @@ fn test_format_detection_via_deserialize() {
 
 #[test]
 fn test_format_detection_cbor() {
-    let cbor_data = serde_cbor::to_vec(&json!({"format": "cbor"})).unwrap();
+    let cbor_data = {
+        let mut buffer = Vec::new();
+        ciborium::into_writer(&json!({"format": "cbor"}), &mut buffer).unwrap();
+        buffer
+    };
     let cbor_bytes = Bytes::from(cbor_data);
 
     // Test that deserialize can handle CBOR format detection
@@ -840,7 +848,11 @@ fn test_deserialize_with_format() {
 #[test]
 fn test_deserialize_cbor() {
     let test_data = json!({"cbor": "deserialization"});
-    let cbor_bytes = serde_cbor::to_vec(&test_data).unwrap();
+    let cbor_bytes = {
+        let mut buffer = Vec::new();
+        ciborium::into_writer(&test_data, &mut buffer).unwrap();
+        buffer
+    };
 
     let deserialized =
         Message::deserialize_with_format(Bytes::from(cbor_bytes), SerializationFormat::Cbor);

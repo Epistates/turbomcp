@@ -369,11 +369,14 @@ impl Message {
             }
             MessagePayload::Json(json_payload) => {
                 if let Some(parsed) = &json_payload.parsed {
-                    serde_cbor::to_vec(parsed.as_ref())
-                        .map(Bytes::from)
-                        .map_err(|e| {
-                            Error::serialization(format!("CBOR serialization failed: {e}"))
-                        })
+                    {
+                        let mut buffer = Vec::new();
+                        ciborium::into_writer(parsed.as_ref(), &mut buffer)
+                            .map(|_| Bytes::from(buffer))
+                            .map_err(|e| {
+                                Error::serialization(format!("CBOR serialization failed: {e}"))
+                            })
+                    }
                 } else {
                     // Fallback: attempt to parse then encode
                     #[cfg(feature = "simd")]
@@ -385,9 +388,14 @@ impl Message {
                                     "SIMD JSON parsing failed before CBOR: {e}"
                                 ))
                             })?;
-                        serde_cbor::to_vec(&value).map(Bytes::from).map_err(|e| {
-                            Error::serialization(format!("CBOR serialization failed: {e}"))
-                        })
+                        {
+                            let mut buffer = Vec::new();
+                            ciborium::into_writer(&value, &mut buffer)
+                                .map(|_| Bytes::from(buffer))
+                                .map_err(|e| {
+                                    Error::serialization(format!("CBOR serialization failed: {e}"))
+                                })
+                        }
                     }
                     #[cfg(not(feature = "simd"))]
                     {
@@ -458,7 +466,7 @@ impl Message {
 
     fn deserialize_cbor(bytes: Bytes) -> Result<Self> {
         // Accept raw CBOR as binary or attempt to decode into JSON Value
-        if let Ok(value) = serde_cbor::from_slice::<serde_json::Value>(&bytes) {
+        if let Ok(value) = ciborium::from_reader::<serde_json::Value, _>(&bytes[..]) {
             let raw = serde_json::to_vec(&value)
                 .map(Bytes::from)
                 .map_err(|e| Error::serialization(format!("JSON re-encode failed: {e}")))?;
