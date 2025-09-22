@@ -50,11 +50,11 @@ walkdir = "2.4"
 # Serialization with performance focus
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["raw_value", "preserve_order"] }
-rmp-serde = "1.1"  # MessagePack for binary efficiency
+rmp-serde = "1.3"  # MessagePack for binary efficiency
 sonic-rs = "0.3"   # High-performance JSON
 simd-json = "0.13" # SIMD-accelerated JSON parsing
 bincode = "1.3"
-serde_cbor = "0.11"
+ciborium = "0.2"
 
 # Schema validation and generation
 schemars = { version = "0.8", features = ["chrono04", "uuid1"] }
@@ -119,7 +119,7 @@ arc-swap = "1.6"
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.4"
 tokio-test = "0.4"
-wiremock = "0.5"
+wiremock = "0.6"
 pretty_assertions = "1.4"
 insta = { version = "1.34", features = ["json", "redactions"] }
 rand = "0.8"
@@ -157,5 +157,9 @@ opt-level = 1
 debug = 2
 
 # Examples are in the individual crates
+
+# [patch.crates-io]
+# # Replace unmaintained paste crate with pastey (drop-in replacement)
+# paste = { git = "https://github.com/AS1100K/pastey" }
 
 

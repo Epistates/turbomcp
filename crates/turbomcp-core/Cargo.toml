@@ -25,7 +25,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
 rmp-serde = { workspace = true, optional = true }
-serde_cbor = { workspace = true }
+ciborium = "0.2"
 
 # Error handling
 thiserror = { workspace = true }
