@@ -69,6 +69,21 @@ pub fn generate_prompt_impl(args: TokenStream, input: TokenStream) -> TokenStrea
         quote! { vec![#(#tag_strings.to_string()),*] }
     };
 
+    // Generate handler function name
+    let handler_fn_name = syn::Ident::new(
+        &format!("__turbomcp_prompt_handler_{fn_name}"),
+        proc_macro2::Span::call_site(),
+    );
+
+    // Analyze function signature for prompt parameter extraction
+    let analysis = match analyze_prompt_signature(fn_sig) {
+        Ok(analysis) => analysis,
+        Err(err) => return err.to_compile_error().into(),
+    };
+
+    let param_extraction = generate_prompt_parameter_extraction(&analysis);
+    let call_args = &analysis.call_args;
+
     // Production-grade implementation with comprehensive metadata support
     let expanded = quote! {
         // Preserve original function with all its attributes
@@ -77,7 +92,7 @@ pub fn generate_prompt_impl(args: TokenStream, input: TokenStream) -> TokenStrea
         // Generate comprehensive metadata function for internal use
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        pub fn #metadata_fn_name() -> (&'static str, &'static str, Vec<String>) {
+        fn #metadata_fn_name() -> (&'static str, &'static str, Vec<String>) {
             (
                 #prompt_name,
                 #description,
@@ -91,11 +106,63 @@ pub fn generate_prompt_impl(args: TokenStream, input: TokenStream) -> TokenStrea
         /// Returns (name, description, tags) tuple providing complete prompt metadata
         /// for testing, documentation, and runtime introspection with maximum utility.
         pub fn #public_metadata_fn_name() -> (&'static str, &'static str, Vec<String>) {
-            (
-                #prompt_name,
-                #description,
-                #tags_tokens
-            )
+            Self::#metadata_fn_name()
+        }
+
+        // Generate handler function that bridges GetPromptRequest to the actual method
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        fn #handler_fn_name(&self, request: turbomcp_protocol::GetPromptRequest, context: turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, turbomcp::ServerError>> + Send + '_>> {
+            Box::pin(async move {
+                // Context injection using ContextFactory pattern
+                let turbomcp_ctx = {
+                    use turbomcp::{ContextFactory, ContextFactoryConfig, Container};
+
+                    let config = ContextFactoryConfig {
+                        enable_tracing: true,
+                        enable_metrics: true,
+                        max_pool_size: 50,
+                        default_strategy: turbomcp::ContextCreationStrategy::Inherit,
+                        ..Default::default()
+                    };
+                    let container = Container::new();
+                    let factory = ContextFactory::new(config, container);
+
+                    factory.create_for_prompt(context.clone(), #prompt_name)
+                        .await
+                        .unwrap_or_else(|_| {
+                            let handler_metadata = turbomcp::HandlerMetadata {
+                                name: #prompt_name.to_string(),
+                                handler_type: "prompt".to_string(),
+                                description: Some(#description.to_string()),
+                            };
+                            turbomcp::Context::new(context, handler_metadata)
+                        })
+                };
+
+                #param_extraction
+
+                // Call the actual method with extracted parameters
+                let result = self.#fn_name(#call_args).await
+                    .map_err(|e| match e {
+                        turbomcp::McpError::Server(server_err) => server_err,
+                        turbomcp::McpError::Prompt(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Tool(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Resource(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Protocol(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Context(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Unauthorized(msg) => turbomcp::ServerError::authorization(msg),
+                        turbomcp::McpError::Network(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::InvalidInput(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Schema(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Transport(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Serialization(e) => turbomcp::ServerError::from(e),
+                        turbomcp::McpError::Internal(msg) => turbomcp::ServerError::Internal(msg),
+                        turbomcp::McpError::InvalidRequest(msg) => turbomcp::ServerError::handler(msg),
+                    })?;
+
+                Ok(result)
+            })
         }
     };
 
@@ -231,4 +298,146 @@ fn parse_prompt_args(args: TokenStream) -> Result<PromptConfig, String> {
     }
 
     Ok(config)
+}
+
+/// Analysis of prompt function signature
+struct PromptFunctionAnalysis {
+    parameters: Vec<PromptParameterInfo>,
+    call_args: proc_macro2::TokenStream,
+}
+
+/// Information about a prompt parameter
+struct PromptParameterInfo {
+    name: String,
+    ty: syn::Type,
+}
+
+/// Analyze prompt function signature to extract parameters and generate appropriate code
+fn analyze_prompt_signature(sig: &syn::Signature) -> Result<PromptFunctionAnalysis, syn::Error> {
+    let mut parameters = Vec::new();
+    let mut call_args = proc_macro2::TokenStream::new();
+    let mut first_param = true;
+
+    for input in &sig.inputs {
+        match input {
+            syn::FnArg::Receiver(_) => {
+                // &self parameter - skip in call args
+                continue;
+            }
+            syn::FnArg::Typed(syn::PatType { pat, ty, .. }) => {
+                if let syn::Pat::Ident(pat_ident) = pat.as_ref() {
+                    let param_name = &pat_ident.ident;
+
+                    // Check if this is a Context/RequestContext parameter
+                    let is_context = if let syn::Type::Path(type_path) = ty.as_ref() {
+                        type_path.path.segments.last().is_some_and(|seg| {
+                            seg.ident == "Context" || seg.ident == "RequestContext"
+                        })
+                    } else {
+                        false
+                    };
+
+                    if is_context {
+                        if !first_param {
+                            call_args.extend(quote! { , });
+                        }
+                        call_args.extend(quote! { turbomcp_ctx });
+                    } else {
+                        parameters.push(PromptParameterInfo {
+                            name: param_name.to_string(),
+                            ty: (**ty).clone(),
+                        });
+
+                        if !first_param {
+                            call_args.extend(quote! { , });
+                        }
+                        call_args.extend(quote! { #param_name });
+                    }
+
+                    first_param = false;
+                }
+            }
+        }
+    }
+
+    Ok(PromptFunctionAnalysis {
+        parameters,
+        call_args,
+    })
+}
+
+/// Generate parameter extraction code for prompts
+fn generate_prompt_parameter_extraction(
+    analysis: &PromptFunctionAnalysis,
+) -> proc_macro2::TokenStream {
+    if analysis.parameters.is_empty() {
+        return quote! {};
+    }
+
+    let mut extraction_code = quote! {};
+
+    // Check if we have any parameters to extract
+    let has_params = !analysis.parameters.is_empty();
+    if has_params {
+        extraction_code.extend(quote! {
+            let arguments = request.arguments.as_ref();
+        });
+    }
+
+    for param in &analysis.parameters {
+        let param_name_str = &param.name;
+        let param_name_ident = syn::Ident::new(&param.name, proc_macro2::Span::call_site());
+        let param_ty = &param.ty;
+
+        // Check if this is an optional parameter
+        let is_optional = is_prompt_option_type(&param.ty);
+
+        if is_optional {
+            // For optional parameters, use None if not present
+            extraction_code.extend(quote! {
+                let #param_name_ident: #param_ty = if let Some(args) = arguments {
+                    args.get(#param_name_str)
+                        .map(|v| ::serde_json::from_value(v.clone())
+                            .map_err(|e| turbomcp::ServerError::handler(
+                                format!("Invalid parameter {}: {}", #param_name_str, e)
+                            )))
+                        .transpose()?
+                        .flatten()
+                } else {
+                    None
+                };
+            });
+        } else {
+            // For required parameters, fail if not present
+            extraction_code.extend(quote! {
+                let #param_name_ident = arguments
+                    .as_ref()
+                    .ok_or_else(|| turbomcp::ServerError::handler("Missing arguments"))?
+                    .get(#param_name_str)
+                    .ok_or_else(|| turbomcp::ServerError::handler(
+                        format!("Missing required parameter: {}", #param_name_str)
+                    ))?;
+                let #param_name_ident: #param_ty = ::serde_json::from_value(#param_name_ident.clone())
+                    .map_err(|e| turbomcp::ServerError::handler(
+                        format!("Invalid parameter {}: {}", #param_name_str, e)
+                    ))?;
+            });
+        }
+    }
+
+    extraction_code
+}
+
+/// Check if a type is Option<T> for prompts
+fn is_prompt_option_type(ty: &syn::Type) -> bool {
+    match ty {
+        syn::Type::Path(type_path) => {
+            if let Some(segment) = type_path.path.segments.last() {
+                segment.ident == "Option"
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
 }

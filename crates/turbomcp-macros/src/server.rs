@@ -32,17 +32,26 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
         }
     };
 
-    // Analyze impl block for #[tool] methods
+    // Analyze impl block for #[tool], #[prompt], and #[resource] methods
     let mut tool_methods = Vec::new();
     let mut tool_metadata_functions = Vec::new();
     let mut tool_handler_functions = Vec::new();
 
+    let mut prompt_methods = Vec::new();
+    let mut prompt_metadata_functions = Vec::new();
+    let mut prompt_handler_functions = Vec::new();
+
+    let mut resource_methods = Vec::new();
+    let mut resource_metadata_functions = Vec::new();
+    let mut resource_handler_functions = Vec::new();
+
     for item in &input_impl.items {
         if let syn::ImplItem::Fn(method) = item {
-            // Check if method has #[tool] attribute
+            let method_name = &method.sig.ident;
+
+            // Check for different MCP attributes
             for attr in &method.attrs {
                 if attr.path().is_ident("tool") {
-                    let method_name = &method.sig.ident;
                     let metadata_fn_name = Ident::new(
                         &format!("__turbomcp_tool_metadata_{method_name}"),
                         Span::call_site(),
@@ -54,6 +63,32 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                     tool_methods.push(method_name.clone());
                     tool_metadata_functions.push(metadata_fn_name);
                     tool_handler_functions.push(handler_fn_name);
+                    break;
+                } else if attr.path().is_ident("prompt") {
+                    let metadata_fn_name = Ident::new(
+                        &format!("__turbomcp_prompt_metadata_{method_name}"),
+                        Span::call_site(),
+                    );
+                    let handler_fn_name = Ident::new(
+                        &format!("__turbomcp_prompt_handler_{method_name}"),
+                        Span::call_site(),
+                    );
+                    prompt_methods.push(method_name.clone());
+                    prompt_metadata_functions.push(metadata_fn_name);
+                    prompt_handler_functions.push(handler_fn_name);
+                    break;
+                } else if attr.path().is_ident("resource") {
+                    let metadata_fn_name = Ident::new(
+                        &format!("__turbomcp_resource_metadata_{method_name}"),
+                        Span::call_site(),
+                    );
+                    let handler_fn_name = Ident::new(
+                        &format!("__turbomcp_resource_handler_{method_name}"),
+                        Span::call_site(),
+                    );
+                    resource_methods.push(method_name.clone());
+                    resource_metadata_functions.push(metadata_fn_name);
+                    resource_handler_functions.push(handler_fn_name);
                     break;
                 }
             }
@@ -87,10 +122,28 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
         .map(|((method, metadata), handler)| (method.clone(), metadata.clone(), handler.clone()))
         .collect();
 
+    // Prepare prompt method data for router generation
+    let prompt_method_data: Vec<_> = prompt_methods
+        .iter()
+        .zip(prompt_metadata_functions.iter())
+        .zip(prompt_handler_functions.iter())
+        .map(|((method, metadata), handler)| (method.clone(), metadata.clone(), handler.clone()))
+        .collect();
+
+    // Prepare resource method data for router generation
+    let resource_method_data: Vec<_> = resource_methods
+        .iter()
+        .zip(resource_metadata_functions.iter())
+        .zip(resource_handler_functions.iter())
+        .map(|((method, metadata), handler)| (method.clone(), metadata.clone(), handler.clone()))
+        .collect();
+
     // Generate compile-time router
     let router_impl = crate::compile_time_router::generate_router(
         struct_name,
         &tool_method_data,
+        &prompt_method_data,
+        &resource_method_data,
         &name_value,
         &version_value,
     );
@@ -144,6 +197,60 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
             /// This is essential for integration testing and validating schema generation.
             pub fn get_tools_metadata() -> Vec<(String, String, serde_json::Value)> {
                 Self::discover_tools()
+            }
+
+            /// Prompt discovery - collects all #[prompt] methods
+            fn discover_prompts() -> Vec<(String, String, Vec<String>)> {
+                let mut prompts = Vec::new();
+
+                // Auto-discovered prompts from #[prompt] methods
+                #(
+                    {
+                        let (name, description, tags) = Self::#prompt_metadata_functions();
+                        prompts.push((
+                            name.to_string(),
+                            description.to_string(),
+                            tags
+                        ));
+                    }
+                )*
+
+                prompts
+            }
+
+            /// Get all prompts metadata for testing and validation
+            ///
+            /// Returns a vector of (name, description, tags) tuples for all registered prompts.
+            /// This is essential for integration testing and validating prompt discovery.
+            pub fn get_prompts_metadata() -> Vec<(String, String, Vec<String>)> {
+                Self::discover_prompts()
+            }
+
+            /// Resource discovery - collects all #[resource] methods
+            fn discover_resources() -> Vec<(String, String, Vec<String>)> {
+                let mut resources = Vec::new();
+
+                // Auto-discovered resources from #[resource] methods
+                #(
+                    {
+                        let (name, description, tags) = Self::#resource_metadata_functions();
+                        resources.push((
+                            name.to_string(),
+                            description.to_string(),
+                            tags
+                        ));
+                    }
+                )*
+
+                resources
+            }
+
+            /// Get all resources metadata for testing and validation
+            ///
+            /// Returns a vector of (name, description, tags) tuples for all registered resources.
+            /// This is essential for integration testing and validating resource discovery.
+            pub fn get_resources_metadata() -> Vec<(String, String, Vec<String>)> {
+                Self::discover_resources()
             }
 
             /// Create server and get shutdown handle for graceful termination
@@ -227,6 +334,92 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                         )
                     )?;
                 }
+
+                // Prompt auto-discovery and registration
+                #(
+                    {
+                        let instance = server_instance.clone();
+                        let (prompt_name, prompt_description, _tags) = Self::#prompt_metadata_functions();
+
+                        // Create prompt handler using utils helper
+                        use turbomcp::handlers::utils;
+                        use turbomcp_protocol::{GetPromptRequest, GetPromptResult};
+                        use turbomcp_protocol::types::{PromptMessage, Role, Content, TextContent};
+
+                        let prompt_handler = utils::prompt(
+                            prompt_name,
+                            prompt_description,
+                            move |req: GetPromptRequest, ctx: RequestContext| {
+                                let instance = instance.clone();
+                                async move {
+                                    // Call the actual generated handler method (returns String)
+                                    let prompt_content = instance.#prompt_handler_functions(req, ctx).await?;
+
+                                    // Convert string result to proper MCP prompt format
+                                    Ok(GetPromptResult {
+                                        description: Some(prompt_description.to_string()),
+                                        messages: vec![PromptMessage {
+                                            role: Role::User,
+                                            content: Content::Text(TextContent {
+                                                text: prompt_content,
+                                                annotations: None,
+                                                meta: None,
+                                            }),
+                                        }],
+                                    })
+                                }
+                            }
+                        );
+                        builder = builder.prompt(prompt_name, prompt_handler)?;
+                    }
+                )*
+
+                // Resource auto-discovery and registration
+                #(
+                    {
+                        let instance = server_instance.clone();
+                        let (resource_name, resource_description, _tags) = Self::#resource_metadata_functions();
+
+                        // Create resource handler using the FunctionResourceHandler
+                        use turbomcp::handlers::FunctionResourceHandler;
+                        use turbomcp_protocol::{ReadResourceRequest, ReadResourceResult};
+                        use turbomcp_protocol::types::{ResourceContent, TextResourceContents};
+
+                        let resource_handler = FunctionResourceHandler::new(
+                            turbomcp_protocol::types::Resource {
+                                name: resource_name.to_string(),
+                                title: None,
+                                uri: resource_name.to_string(),
+                                description: Some(resource_description.to_string()),
+                                mime_type: Some("text/plain".to_string()),
+                                annotations: None,
+                                size: None,
+                                meta: None,
+                            },
+                            move |req: ReadResourceRequest, ctx: RequestContext| {
+                                let instance = instance.clone();
+                                async move {
+                                    // Extract URI before moving req
+                                    let uri = req.uri.clone();
+
+                                    // Call the actual generated handler method
+                                    let resource_content = instance.#resource_handler_functions(req, ctx).await?;
+
+                                    // Convert string result to proper MCP resource format
+                                    Ok(ReadResourceResult {
+                                        contents: vec![ResourceContent::Text(TextResourceContents {
+                                            uri,
+                                            mime_type: Some("text/plain".to_string()),
+                                            text: resource_content,
+                                            meta: None,
+                                        })],
+                                    })
+                                }
+                            }
+                        );
+                        builder = builder.resource(resource_name, resource_handler)?;
+                    }
+                )*
 
                 Ok(builder.build())
             }

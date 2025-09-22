@@ -11,6 +11,8 @@ use syn::Ident;
 pub fn generate_router(
     struct_name: &Ident,
     tool_methods: &[(Ident, Ident, Ident)], // (method_name, metadata_fn, handler_fn)
+    prompt_methods: &[(Ident, Ident, Ident)], // (method_name, metadata_fn, handler_fn)
+    resource_methods: &[(Ident, Ident, Ident)], // (method_name, metadata_fn, handler_fn)
     server_name: &str,
     server_version: &str,
 ) -> TokenStream {
@@ -25,6 +27,41 @@ pub fn generate_router(
                         "name": name,
                         "description": description,
                         "inputSchema": schema
+                    })
+                }
+            }
+        })
+        .collect();
+
+    // Generate prompt list for prompts/list method
+    let prompt_list_items: Vec<_> = prompt_methods
+        .iter()
+        .map(|(_method_name, metadata_fn, _)| {
+            quote! {
+                {
+                    let (name, description, tags) = Self::#metadata_fn();
+                    serde_json::json!({
+                        "name": name,
+                        "description": description,
+                        "arguments": []
+                    })
+                }
+            }
+        })
+        .collect();
+
+    // Generate resource list for resources/list method
+    let resource_list_items: Vec<_> = resource_methods
+        .iter()
+        .map(|(_method_name, metadata_fn, _)| {
+            quote! {
+                {
+                    let (name, description, tags) = Self::#metadata_fn();
+                    serde_json::json!({
+                        "uri": name,
+                        "name": name,
+                        "description": description,
+                        "mimeType": "text/plain"
                     })
                 }
             }
@@ -64,6 +101,120 @@ pub fn generate_router(
                                 result: Some(serde_json::json!({
                                     "content": result.content
                                 })),
+                                error: None,
+                                id: Some(req.id.clone()),
+                            }
+                        }
+                        Err(e) => {
+                            ::turbomcp_protocol::jsonrpc::JsonRpcResponse {
+                                jsonrpc: ::turbomcp_protocol::jsonrpc::JsonRpcVersion,
+                                result: None,
+                                error: Some(::turbomcp_protocol::jsonrpc::JsonRpcError {
+                                    code: -32603,
+                                    message: e.to_string(),
+                                    data: None,
+                                }),
+                                id: Some(req.id.clone()),
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
+    // Generate prompt dispatch cases for prompts/get
+    let prompt_dispatch_cases: Vec<_> = prompt_methods
+        .iter()
+        .map(|(method_name, _, handler_fn)| {
+            let method_str = method_name.to_string();
+            quote! {
+                #method_str => {
+                    // Parse arguments for prompts/get - convert to HashMap<String, Value>
+                    let prompt_args = params
+                        .and_then(|p| p.get("arguments"))
+                        .and_then(|args| args.as_object())
+                        .map(|obj| {
+                            let mut map = std::collections::HashMap::new();
+                            for (k, v) in obj {
+                                map.insert(k.clone(), v.clone());
+                            }
+                            map
+                        });
+
+                    let request = ::turbomcp_protocol::GetPromptRequest {
+                        name: #method_str.to_string(),
+                        arguments: prompt_args,
+                    };
+
+                    let ctx = ::turbomcp::RequestContext::new();
+
+                    match self.#handler_fn(request, ctx).await {
+                        Ok(result) => {
+                            // Wrap string result in proper MCP GetPromptResult format
+                            let get_prompt_result = ::turbomcp_protocol::GetPromptResult {
+                                description: None,
+                                messages: vec![::turbomcp_protocol::types::PromptMessage {
+                                    role: ::turbomcp_protocol::types::Role::User,
+                                    content: ::turbomcp_protocol::types::Content::Text(::turbomcp_protocol::types::TextContent {
+                                        text: result,
+                                        annotations: None,
+                                        meta: None,
+                                    }),
+                                }],
+                            };
+                            ::turbomcp_protocol::jsonrpc::JsonRpcResponse {
+                                jsonrpc: ::turbomcp_protocol::jsonrpc::JsonRpcVersion,
+                                result: Some(serde_json::to_value(get_prompt_result).unwrap()),
+                                error: None,
+                                id: Some(req.id.clone()),
+                            }
+                        }
+                        Err(e) => {
+                            ::turbomcp_protocol::jsonrpc::JsonRpcResponse {
+                                jsonrpc: ::turbomcp_protocol::jsonrpc::JsonRpcVersion,
+                                result: None,
+                                error: Some(::turbomcp_protocol::jsonrpc::JsonRpcError {
+                                    code: -32603,
+                                    message: e.to_string(),
+                                    data: None,
+                                }),
+                                id: Some(req.id.clone()),
+                            }
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
+    // Generate resource dispatch cases for resources/read
+    let resource_dispatch_cases: Vec<_> = resource_methods
+        .iter()
+        .map(|(method_name, _, handler_fn)| {
+            let method_str = method_name.to_string();
+            quote! {
+                #method_str => {
+                    let request = ::turbomcp_protocol::ReadResourceRequest {
+                        uri: resource_uri.to_string(),
+                    };
+
+                    let ctx = ::turbomcp::RequestContext::new();
+
+                    match self.#handler_fn(request, ctx).await {
+                        Ok(result) => {
+                            // Wrap string result in proper MCP ReadResourceResult format
+                            let read_resource_result = ::turbomcp_protocol::ReadResourceResult {
+                                contents: vec![::turbomcp_protocol::types::ResourceContent::Text(::turbomcp_protocol::types::TextResourceContents {
+                                    uri: resource_uri.to_string(),
+                                    mime_type: Some("text/plain".to_string()),
+                                    text: result,
+                                    meta: None,
+                                })],
+                            };
+                            ::turbomcp_protocol::jsonrpc::JsonRpcResponse {
+                                jsonrpc: ::turbomcp_protocol::jsonrpc::JsonRpcVersion,
+                                result: Some(serde_json::to_value(read_resource_result).unwrap()),
                                 error: None,
                                 id: Some(req.id.clone()),
                             }
@@ -135,7 +286,7 @@ pub fn generate_router(
                                 }
 
                                 "tools/list" => {
-                                    let tools = vec![#(#tool_list_items),*];
+                                    let tools: Vec<serde_json::Value> = vec![#(#tool_list_items),*];
                                     JsonRpcResponse {
                                         jsonrpc: JsonRpcVersion,
                                         result: Some(serde_json::json!({
@@ -177,6 +328,106 @@ pub fn generate_router(
                                                 error: Some(JsonRpcError {
                                                     code: -32602,
                                                     message: "Missing tool name".to_string(),
+                                                    data: None,
+                                                }),
+                                                id: Some(req.id.clone()),
+                                            }
+                                        }
+                                    }
+                                }
+
+                                "prompts/list" => {
+                                    let prompts: Vec<serde_json::Value> = vec![#(#prompt_list_items),*];
+                                    JsonRpcResponse {
+                                        jsonrpc: JsonRpcVersion,
+                                        result: Some(serde_json::json!({
+                                            "prompts": prompts
+                                        })),
+                                        error: None,
+                                        id: Some(req.id.clone()),
+                                    }
+                                }
+
+                                "prompts/get" => {
+                                    let params = req.params.as_ref().and_then(|p| p.as_object());
+                                    let prompt_name = params
+                                        .and_then(|p| p.get("name"))
+                                        .and_then(|n| n.as_str());
+                                    match prompt_name {
+                                        Some(prompt_name) => {
+                                            match prompt_name {
+                                                #(#prompt_dispatch_cases)*
+                                                _ => {
+                                                    JsonRpcResponse {
+                                                        jsonrpc: JsonRpcVersion,
+                                                        result: None,
+                                                        error: Some(JsonRpcError {
+                                                            code: -32601,
+                                                            message: format!("Unknown prompt: {}", prompt_name),
+                                                            data: None,
+                                                        }),
+                                                        id: Some(req.id.clone()),
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        None => {
+                                            JsonRpcResponse {
+                                                jsonrpc: JsonRpcVersion,
+                                                result: None,
+                                                error: Some(JsonRpcError {
+                                                    code: -32602,
+                                                    message: "Missing prompt name".to_string(),
+                                                    data: None,
+                                                }),
+                                                id: Some(req.id.clone()),
+                                            }
+                                        }
+                                    }
+                                }
+
+                                "resources/list" => {
+                                    let resources: Vec<serde_json::Value> = vec![#(#resource_list_items),*];
+                                    JsonRpcResponse {
+                                        jsonrpc: JsonRpcVersion,
+                                        result: Some(serde_json::json!({
+                                            "resources": resources
+                                        })),
+                                        error: None,
+                                        id: Some(req.id.clone()),
+                                    }
+                                }
+
+                                "resources/read" => {
+                                    let params = req.params.as_ref().and_then(|p| p.as_object());
+                                    let resource_uri = params
+                                        .and_then(|p| p.get("uri"))
+                                        .and_then(|u| u.as_str());
+                                    match resource_uri {
+                                        Some(resource_uri) => {
+                                            match resource_uri {
+                                                #(#resource_dispatch_cases)*
+                                                _ => {
+                                                    JsonRpcResponse {
+                                                        jsonrpc: JsonRpcVersion,
+                                                        result: None,
+                                                        error: Some(JsonRpcError {
+                                                            code: -32601,
+                                                            message: format!("Unknown resource: {}", resource_uri),
+                                                            data: None,
+                                                        }),
+                                                        id: Some(req.id.clone()),
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        None => {
+                                            JsonRpcResponse {
+                                                jsonrpc: JsonRpcVersion,
+                                                result: None,
+                                                error: Some(JsonRpcError {
+                                                    code: -32602,
+                                                    message: "Missing resource URI".to_string(),
                                                     data: None,
                                                 }),
                                                 id: Some(req.id.clone()),
@@ -456,7 +707,7 @@ pub fn generate_router(
                     }
 
                     "tools/list" => {
-                        let tools = vec![#(#tool_list_items),*];
+                        let tools: Vec<serde_json::Value> = vec![#(#tool_list_items),*];
                         JsonRpcResponse {
                             jsonrpc: JsonRpcVersion,
                             result: Some(serde_json::json!({
@@ -484,6 +735,78 @@ pub fn generate_router(
                                     error: Some(JsonRpcError {
                                         code: -32601,
                                         message: format!("Unknown tool: {}", tool_name),
+                                        data: None,
+                                    }),
+                                    id: Some(req.id.clone()),
+                                }
+                            }
+                        }
+                    }
+
+                    "prompts/list" => {
+                        let prompts: Vec<serde_json::Value> = vec![#(#prompt_list_items),*];
+                        JsonRpcResponse {
+                            jsonrpc: JsonRpcVersion,
+                            result: Some(serde_json::json!({
+                                "prompts": prompts
+                            })),
+                            error: None,
+                            id: Some(req.id.clone()),
+                        }
+                    }
+
+                    "prompts/get" => {
+                        let params = req.params.as_ref().and_then(|p| p.as_object());
+                        let prompt_name = params
+                            .and_then(|p| p.get("name"))
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("");
+                        // Compile-time dispatch to prompt handlers
+                        match prompt_name {
+                            #(#prompt_dispatch_cases)*
+                            _ => {
+                                JsonRpcResponse {
+                                    jsonrpc: JsonRpcVersion,
+                                    result: None,
+                                    error: Some(JsonRpcError {
+                                        code: -32601,
+                                        message: format!("Unknown prompt: {}", prompt_name),
+                                        data: None,
+                                    }),
+                                    id: Some(req.id.clone()),
+                                }
+                            }
+                        }
+                    }
+
+                    "resources/list" => {
+                        let resources: Vec<serde_json::Value> = vec![#(#resource_list_items),*];
+                        JsonRpcResponse {
+                            jsonrpc: JsonRpcVersion,
+                            result: Some(serde_json::json!({
+                                "resources": resources
+                            })),
+                            error: None,
+                            id: Some(req.id.clone()),
+                        }
+                    }
+
+                    "resources/read" => {
+                        let params = req.params.as_ref().and_then(|p| p.as_object());
+                        let resource_uri = params
+                            .and_then(|p| p.get("uri"))
+                            .and_then(|u| u.as_str())
+                            .unwrap_or("");
+                        // Compile-time dispatch to resource handlers - match by URI pattern
+                        match resource_uri {
+                            #(#resource_dispatch_cases)*
+                            _ => {
+                                JsonRpcResponse {
+                                    jsonrpc: JsonRpcVersion,
+                                    result: None,
+                                    error: Some(JsonRpcError {
+                                        code: -32601,
+                                        message: format!("Unknown resource: {}", resource_uri),
                                         data: None,
                                     }),
                                     id: Some(req.id.clone()),

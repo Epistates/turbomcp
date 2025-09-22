@@ -71,6 +71,21 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
         quote! { vec![#(#tag_strings.to_string()),*] }
     };
 
+    // Generate handler function name
+    let handler_fn_name = syn::Ident::new(
+        &format!("__turbomcp_resource_handler_{fn_name}"),
+        proc_macro2::Span::call_site(),
+    );
+
+    // Analyze function signature for resource parameter extraction
+    let analysis = match analyze_resource_signature(fn_sig) {
+        Ok(analysis) => analysis,
+        Err(err) => return err.to_compile_error().into(),
+    };
+
+    let param_extraction = generate_resource_parameter_extraction(&analysis);
+    let call_args = &analysis.call_args;
+
     // Production-grade implementation with comprehensive metadata support
     let expanded = quote! {
         // Preserve original function with all its attributes
@@ -79,7 +94,7 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
         // Generate comprehensive metadata function for internal use
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        pub fn #metadata_fn_name() -> (&'static str, &'static str, Vec<String>) {
+        fn #metadata_fn_name() -> (&'static str, &'static str, Vec<String>) {
             (
                 #resource_name,
                 #uri_template,
@@ -93,11 +108,63 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
         /// Returns (name, URI template, tags) tuple providing complete resource metadata
         /// for testing, documentation, and runtime introspection with maximum utility.
         pub fn #public_metadata_fn_name() -> (&'static str, &'static str, Vec<String>) {
-            (
-                #resource_name,
-                #uri_template,
-                #tags_tokens
-            )
+            Self::#metadata_fn_name()
+        }
+
+        // Generate handler function that bridges ReadResourceRequest to the actual method
+        #[doc(hidden)]
+        #[allow(non_snake_case)]
+        fn #handler_fn_name(&self, request: turbomcp_protocol::ReadResourceRequest, context: turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, turbomcp::ServerError>> + Send + '_>> {
+            Box::pin(async move {
+                // Context injection using ContextFactory pattern
+                let turbomcp_ctx = {
+                    use turbomcp::{ContextFactory, ContextFactoryConfig, Container};
+
+                    let config = ContextFactoryConfig {
+                        enable_tracing: true,
+                        enable_metrics: true,
+                        max_pool_size: 50,
+                        default_strategy: turbomcp::ContextCreationStrategy::Inherit,
+                        ..Default::default()
+                    };
+                    let container = Container::new();
+                    let factory = ContextFactory::new(config, container);
+
+                    factory.create_for_resource(context.clone(), #resource_name)
+                        .await
+                        .unwrap_or_else(|_| {
+                            let handler_metadata = turbomcp::HandlerMetadata {
+                                name: #resource_name.to_string(),
+                                handler_type: "resource".to_string(),
+                                description: Some(#uri_template.to_string()),
+                            };
+                            turbomcp::Context::new(context, handler_metadata)
+                        })
+                };
+
+                #param_extraction
+
+                // Call the actual method with extracted parameters
+                let result = self.#fn_name(#call_args).await
+                    .map_err(|e| match e {
+                        turbomcp::McpError::Server(server_err) => server_err,
+                        turbomcp::McpError::Resource(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Tool(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Prompt(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Protocol(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Context(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Unauthorized(msg) => turbomcp::ServerError::authorization(msg),
+                        turbomcp::McpError::Network(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::InvalidInput(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Schema(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Transport(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Serialization(e) => turbomcp::ServerError::from(e),
+                        turbomcp::McpError::Internal(msg) => turbomcp::ServerError::Internal(msg),
+                        turbomcp::McpError::InvalidRequest(msg) => turbomcp::ServerError::handler(msg),
+                    })?;
+
+                Ok(result)
+            })
         }
     };
 
@@ -236,4 +303,110 @@ fn parse_resource_args(
     }
 
     Ok(config)
+}
+
+/// Analysis of resource function signature
+struct ResourceFunctionAnalysis {
+    parameters: Vec<ResourceParameterInfo>,
+    call_args: proc_macro2::TokenStream,
+}
+
+/// Information about a resource parameter
+struct ResourceParameterInfo {
+    name: String,
+    ty: syn::Type,
+}
+
+/// Analyze resource function signature to extract parameters and generate appropriate code
+fn analyze_resource_signature(
+    sig: &syn::Signature,
+) -> Result<ResourceFunctionAnalysis, syn::Error> {
+    let mut parameters = Vec::new();
+    let mut call_args = proc_macro2::TokenStream::new();
+    let mut first_param = true;
+
+    for input in &sig.inputs {
+        match input {
+            syn::FnArg::Receiver(_) => {
+                // &self parameter - skip in call args
+                continue;
+            }
+            syn::FnArg::Typed(syn::PatType { pat, ty, .. }) => {
+                if let syn::Pat::Ident(pat_ident) = pat.as_ref() {
+                    let param_name = &pat_ident.ident;
+
+                    // Check if this is a Context/RequestContext parameter
+                    let is_context = if let syn::Type::Path(type_path) = ty.as_ref() {
+                        type_path.path.segments.last().is_some_and(|seg| {
+                            seg.ident == "Context" || seg.ident == "RequestContext"
+                        })
+                    } else {
+                        false
+                    };
+
+                    if is_context {
+                        if !first_param {
+                            call_args.extend(quote! { , });
+                        }
+                        call_args.extend(quote! { turbomcp_ctx });
+                    } else {
+                        parameters.push(ResourceParameterInfo {
+                            name: param_name.to_string(),
+                            ty: (**ty).clone(),
+                        });
+
+                        if !first_param {
+                            call_args.extend(quote! { , });
+                        }
+                        call_args.extend(quote! { #param_name });
+                    }
+
+                    first_param = false;
+                }
+            }
+        }
+    }
+
+    Ok(ResourceFunctionAnalysis {
+        parameters,
+        call_args,
+    })
+}
+
+/// Generate parameter extraction code for resources
+fn generate_resource_parameter_extraction(
+    analysis: &ResourceFunctionAnalysis,
+) -> proc_macro2::TokenStream {
+    if analysis.parameters.is_empty() {
+        return quote! {};
+    }
+
+    let mut extraction_code = quote! {};
+
+    // For resources, we typically extract the URI from the request
+    extraction_code.extend(quote! {
+        let uri = &request.uri;
+    });
+
+    for param in &analysis.parameters {
+        let param_name_str = &param.name;
+        let param_name_ident = syn::Ident::new(&param.name, proc_macro2::Span::call_site());
+        let param_ty = &param.ty;
+
+        // For resources, parameters often come from URI parsing or the URI itself
+        // This is a simplified extraction - in practice, you'd parse URI templates
+        if param_name_str == "uri" {
+            extraction_code.extend(quote! {
+                let #param_name_ident: #param_ty = uri.clone();
+            });
+        } else {
+            // For other parameters, they might come from URI template variables
+            // This is a placeholder - real implementation would parse URI templates
+            extraction_code.extend(quote! {
+                let #param_name_ident: #param_ty = Default::default();
+            });
+        }
+    }
+
+    extraction_code
 }
