@@ -55,22 +55,22 @@ pub struct InteractiveElicitationHandler;
 
 impl InteractiveElicitationHandler {
     fn prompt_user_input(&self, prompt: &str, schema: &Value) -> Result<Value, HandlerError> {
-        println!(
+        eprintln!(
             "\n🤔 {} Server Request for User Input {}",
             "=".repeat(20),
             "=".repeat(20)
         );
-        println!("📋 {}", prompt);
+        eprintln!("📋 {}", prompt);
 
         // Parse schema to understand expected input
         if let Some(schema_obj) = schema.as_object()
             && let Some(properties) = schema_obj.get("properties")
         {
-            println!("\n📝 Required Information:");
+            eprintln!("\n📝 Required Information:");
             self.display_schema_properties(properties);
         }
 
-        println!("\n💡 Please provide your response as JSON:");
+        eprintln!("\n💡 Please provide your response as JSON:");
         print!(">>> ");
         io::stdout().flush().map_err(|e| HandlerError::External {
             source: Box::new(e),
@@ -86,13 +86,13 @@ impl InteractiveElicitationHandler {
         // Parse and validate JSON input
         match serde_json::from_str::<Value>(input.trim()) {
             Ok(value) => {
-                println!("✅ Input received and parsed successfully");
+                eprintln!("✅ Input received and parsed successfully");
                 Ok(value)
             }
             Err(e) => {
-                println!("❌ Invalid JSON format: {}", e);
+                eprintln!("❌ Invalid JSON format: {}", e);
                 // For demo purposes, provide a fallback
-                println!("🔄 Using default response for demo...");
+                eprintln!("🔄 Using default response for demo...");
                 Ok(json!({
                     "processing_mode": "standard",
                     "output_format": "pdf",
@@ -114,7 +114,7 @@ impl InteractiveElicitationHandler {
                     .and_then(|d| d.as_str())
                     .unwrap_or("No description");
 
-                println!("  • {}: ({}) {}", key, prop_type, description);
+                eprintln!("  • {}: ({}) {}", key, prop_type, description);
             }
         }
     }
@@ -126,11 +126,11 @@ impl ElicitationHandler for InteractiveElicitationHandler {
         &self,
         request: ElicitationRequest,
     ) -> HandlerResult<ElicitationResponse> {
-        println!("\n🔔 Elicitation Request Received");
-        println!("   ID: {}", request.id);
+        eprintln!("\n🔔 Elicitation Request Received");
+        eprintln!("   ID: {}", request.id);
 
         if let Some(timeout) = request.timeout {
-            println!("   ⏱️  Timeout: {} seconds", timeout);
+            eprintln!("   ⏱️  Timeout: {} seconds", timeout);
 
             // For production, implement actual timeout handling
             tokio::time::timeout(
@@ -201,22 +201,22 @@ impl ProgressHandler for ProgressBarHandler {
         let progress_bar =
             self.display_progress_bar(notification.progress.progress, notification.progress.total);
 
-        println!(
+        eprintln!(
             "\n📊 {} Progress: {}",
             notification.operation_id, progress_bar
         );
 
         if let Some(message) = &notification.message {
-            println!("   💬 Status: {}", message);
+            eprintln!("   💬 Status: {}", message);
         }
 
         if notification.completed {
             if let Some(error) = &notification.error {
-                println!("   ❌ Operation failed: {}", error);
+                eprintln!("   ❌ Operation failed: {}", error);
             } else {
-                println!("   ✅ Operation completed successfully!");
+                eprintln!("   ✅ Operation completed successfully!");
             }
-            println!(); // Extra line for separation
+            eprintln!(); // Extra line for separation
         }
 
         Ok(())
@@ -297,7 +297,7 @@ impl LogHandler for FormattedLogHandler {
         }
 
         let formatted_log = self.format_log(&log);
-        println!("{}", formatted_log);
+        eprintln!("{}", formatted_log);
 
         Ok(())
     }
@@ -339,27 +339,27 @@ impl FileTrackingResourceHandler {
 
         match notification.change_type {
             ResourceChangeType::Created => {
-                println!("   📁 New resource created");
+                eprintln!("   📁 New resource created");
                 tracked.insert(notification.uri.clone(), notification.timestamp.clone());
             }
             ResourceChangeType::Modified => {
-                println!("   ✏️  Resource modified");
+                eprintln!("   ✏️  Resource modified");
                 if let Some(old_timestamp) = tracked.get(&notification.uri) {
-                    println!("      Previous: {}", old_timestamp);
+                    eprintln!("      Previous: {}", old_timestamp);
                 }
                 tracked.insert(notification.uri.clone(), notification.timestamp.clone());
             }
             ResourceChangeType::Deleted => {
-                println!("   🗑️  Resource deleted");
+                eprintln!("   🗑️  Resource deleted");
                 tracked.remove(&notification.uri);
             }
         }
 
         // Display metadata if available
         if !notification.metadata.is_empty() {
-            println!("   📊 Metadata:");
+            eprintln!("   📊 Metadata:");
             for (key, value) in &notification.metadata {
-                println!("      {}: {}", key, value);
+                eprintln!("      {}: {}", key, value);
             }
         }
 
@@ -373,16 +373,16 @@ impl ResourceUpdateHandler for FileTrackingResourceHandler {
         &self,
         notification: ResourceUpdateNotification,
     ) -> HandlerResult<()> {
-        println!(
+        eprintln!(
             "\n🔄 Resource Update: {} ({:?})",
             notification.uri, notification.change_type
         );
-        println!("   🕐 Timestamp: {}", notification.timestamp);
+        eprintln!("   🕐 Timestamp: {}", notification.timestamp);
 
         self.handle_resource_change(&notification)?;
 
         // Simulate cache invalidation or other reactive operations
-        println!("   🔄 Cache invalidated for related resources");
+        eprintln!("   🔄 Cache invalidated for related resources");
 
         Ok(())
     }
@@ -394,8 +394,8 @@ impl ResourceUpdateHandler for FileTrackingResourceHandler {
 
 /// Simulate server sending elicitation request
 async fn simulate_elicitation_request(client: &mut turbomcp_client::Client<StdioTransport>) {
-    println!("\n🎯 DEMO: Simulating Elicitation Request");
-    println!("{}", "=".repeat(50));
+    eprintln!("\n🎯 DEMO: Simulating Elicitation Request");
+    eprintln!("{}", "=".repeat(50));
 
     if client.has_elicitation_handler() {
         let _request = ElicitationRequest {
@@ -433,19 +433,19 @@ async fn simulate_elicitation_request(client: &mut turbomcp_client::Client<Stdio
 
         // In a real scenario, this would be called by the server
         // For demo, we simulate the handler call directly
-        println!("📨 Elicitation request would be sent by server...");
+        eprintln!("📨 Elicitation request would be sent by server...");
 
         // Simulate some processing time
         tokio::time::sleep(Duration::from_millis(500)).await;
     } else {
-        println!("❌ No elicitation handler registered");
+        eprintln!("❌ No elicitation handler registered");
     }
 }
 
 /// Simulate server sending progress notifications
 async fn simulate_progress_updates(client: &mut turbomcp_client::Client<StdioTransport>) {
-    println!("\n🎯 DEMO: Simulating Progress Updates");
-    println!("{}", "=".repeat(50));
+    eprintln!("\n🎯 DEMO: Simulating Progress Updates");
+    eprintln!("{}", "=".repeat(50));
 
     if client.has_progress_handler() {
         let operation_id = "file-processing-batch-001".to_string();
@@ -478,7 +478,7 @@ async fn simulate_progress_updates(client: &mut turbomcp_client::Client<StdioTra
             };
 
             // In a real scenario, this would be sent by the server
-            println!("📊 Progress notification would be sent by server...");
+            eprintln!("📊 Progress notification would be sent by server...");
 
             // Simulate processing time
             if !completed {
@@ -486,14 +486,14 @@ async fn simulate_progress_updates(client: &mut turbomcp_client::Client<StdioTra
             }
         }
     } else {
-        println!("❌ No progress handler registered");
+        eprintln!("❌ No progress handler registered");
     }
 }
 
 /// Simulate server sending log messages
 async fn simulate_log_messages(client: &mut turbomcp_client::Client<StdioTransport>) {
-    println!("\n🎯 DEMO: Simulating Log Messages");
-    println!("{}", "=".repeat(50));
+    eprintln!("\n🎯 DEMO: Simulating Log Messages");
+    eprintln!("{}", "=".repeat(50));
 
     if client.has_log_handler() {
         let log_scenarios = vec![
@@ -538,20 +538,20 @@ async fn simulate_log_messages(client: &mut turbomcp_client::Client<StdioTranspo
                 data,
             };
 
-            println!("📝 Log message would be sent by server...");
+            eprintln!("📝 Log message would be sent by server...");
 
             // Simulate time between log messages
             tokio::time::sleep(Duration::from_millis(300)).await;
         }
     } else {
-        println!("❌ No log handler registered");
+        eprintln!("❌ No log handler registered");
     }
 }
 
 /// Simulate server sending resource update notifications
 async fn simulate_resource_updates(client: &mut turbomcp_client::Client<StdioTransport>) {
-    println!("\n🎯 DEMO: Simulating Resource Updates");
-    println!("{}", "=".repeat(50));
+    eprintln!("\n🎯 DEMO: Simulating Resource Updates");
+    eprintln!("{}", "=".repeat(50));
 
     if client.has_resource_update_handler() {
         let resource_changes = vec![
@@ -590,13 +590,13 @@ async fn simulate_resource_updates(client: &mut turbomcp_client::Client<StdioTra
                 metadata,
             };
 
-            println!("📁 Resource update would be sent by server...");
+            eprintln!("📁 Resource update would be sent by server...");
 
             // Simulate time between resource updates
             tokio::time::sleep(Duration::from_millis(400)).await;
         }
     } else {
-        println!("❌ No resource update handler registered");
+        eprintln!("❌ No resource update handler registered");
     }
 }
 
@@ -613,14 +613,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_writer(std::io::stderr) // Fix: Send logs to stderr
         .init();
 
-    println!("🎯 TurboMCP Bidirectional Communication Demo");
-    println!("============================================");
-    println!("This demo showcases all 4 bidirectional handler types:");
-    println!("  • ElicitationHandler - User input requests");
-    println!("  • ProgressHandler - Operation progress updates");
-    println!("  • LogHandler - Structured server logging");
-    println!("  • ResourceUpdateHandler - File change tracking");
-    println!();
+    eprintln!("🎯 TurboMCP Bidirectional Communication Demo");
+    eprintln!("============================================");
+    eprintln!("This demo showcases all 4 bidirectional handler types:");
+    eprintln!("  • ElicitationHandler - User input requests");
+    eprintln!("  • ProgressHandler - Operation progress updates");
+    eprintln!("  • LogHandler - Structured server logging");
+    eprintln!("  • ResourceUpdateHandler - File change tracking");
+    eprintln!();
 
     // Create comprehensive handler implementations
     let elicitation_handler = Arc::new(InteractiveElicitationHandler);
@@ -639,21 +639,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_prompts(true)
         .build_sync(StdioTransport::new());
 
-    println!("✅ Client created with comprehensive handler registration:");
-    println!(
+    eprintln!("✅ Client created with comprehensive handler registration:");
+    eprintln!(
         "   📥 Elicitation handler: {}",
         client.has_elicitation_handler()
     );
-    println!("   📊 Progress handler: {}", client.has_progress_handler());
-    println!("   📝 Log handler: {}", client.has_log_handler());
-    println!(
+    eprintln!("   📊 Progress handler: {}", client.has_progress_handler());
+    eprintln!("   📝 Log handler: {}", client.has_log_handler());
+    eprintln!(
         "   📁 Resource update handler: {}",
         client.has_resource_update_handler()
     );
 
     // Simulate bidirectional communication workflow
-    println!("\n🚀 Starting Bidirectional Communication Simulation");
-    println!("{}", "=".repeat(60));
+    eprintln!("\n🚀 Starting Bidirectional Communication Simulation");
+    eprintln!("{}", "=".repeat(60));
 
     // Demo each handler type
     simulate_elicitation_request(&mut client).await;
@@ -667,21 +667,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     simulate_resource_updates(&mut client).await;
 
-    println!("\n🎉 Bidirectional Communication Demo Complete!");
-    println!("{}", "=".repeat(60));
-    println!("✅ All 4 handler types demonstrated successfully");
-    println!("💡 In a real application:");
-    println!("   • Server would send these notifications automatically");
-    println!("   • Handlers would integrate with your UI/logging/cache systems");
-    println!("   • Multiple clients could receive the same notifications");
-    println!("   • Handlers could trigger reactive updates and workflows");
+    eprintln!("\n🎉 Bidirectional Communication Demo Complete!");
+    eprintln!("{}", "=".repeat(60));
+    eprintln!("✅ All 4 handler types demonstrated successfully");
+    eprintln!("💡 In a real application:");
+    eprintln!("   • Server would send these notifications automatically");
+    eprintln!("   • Handlers would integrate with your UI/logging/cache systems");
+    eprintln!("   • Multiple clients could receive the same notifications");
+    eprintln!("   • Handlers could trigger reactive updates and workflows");
 
-    println!("\n🌟 Key Features Showcased:");
-    println!("   🤔 Interactive elicitation with schema validation");
-    println!("   📊 Visual progress tracking with completion status");
-    println!("   📝 Structured, colored logging with level filtering");
-    println!("   📁 File change tracking with cache management");
-    println!("   🔄 Production-grade error handling throughout");
+    eprintln!("\n🌟 Key Features Showcased:");
+    eprintln!("   🤔 Interactive elicitation with schema validation");
+    eprintln!("   📊 Visual progress tracking with completion status");
+    eprintln!("   📝 Structured, colored logging with level filtering");
+    eprintln!("   📁 File change tracking with cache management");
+    eprintln!("   🔄 Production-grade error handling throughout");
 
     Ok(())
 }
