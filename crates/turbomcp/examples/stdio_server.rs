@@ -31,10 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut server = StdioTransport::new();
     server.connect().await?;
 
-    // Send initial server info (optional diagnostic to stderr)
-    eprintln!("🚀 TurboMCP STDIO Server started");
-    eprintln!("📝 Protocol: MCP 2025-06-18 over STDIO");
-    eprintln!("⚡ Ready for JSON-RPC communication via stdin/stdout");
+    // STDIO transport must be completely silent for MCP protocol compliance
 
     // Server message handling loop
     let mut message_count = 0;
@@ -45,8 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 message_count += 1;
                 let payload = String::from_utf8_lossy(&message.payload);
 
-                // Debug to stderr only (no stdout!)
-                eprintln!("📨 Received message #{}: {}", message_count, payload);
+                // STDIO protocol compliance: no logging during operation
 
                 // Parse JSON-RPC request
                 if let Ok(request) = serde_json::from_str::<Value>(&payload) {
@@ -59,21 +55,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         response_str.into_bytes().into(),
                     );
 
-                    if let Err(e) = server.send(response_msg).await {
-                        eprintln!("❌ Failed to send response: {}", e);
+                    if let Err(_e) = server.send(response_msg).await {
+                        // Failed to send response
                     } else {
-                        eprintln!("📤 Sent response #{}", message_count);
+                        // Response sent successfully
                     }
                 } else {
-                    eprintln!("⚠️ Invalid JSON received: {}", payload);
+                    // Invalid JSON received
                 }
             }
             Ok(None) => {
                 // No message received, continue (this is normal for STDIO)
                 sleep(Duration::from_millis(10)).await;
             }
-            Err(e) => {
-                eprintln!("❌ Error receiving message: {}", e);
+            Err(_e) => {
+                // Error receiving message
                 sleep(Duration::from_millis(100)).await;
             }
         }
@@ -90,7 +86,7 @@ fn handle_mcp_request(request: &Value, _request_id: usize) -> Value {
 
     match method {
         "initialize" => {
-            eprintln!("🔧 Handling MCP initialize request");
+            // Handling MCP initialize request
             json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -111,7 +107,7 @@ fn handle_mcp_request(request: &Value, _request_id: usize) -> Value {
             })
         }
         "tools/list" => {
-            eprintln!("🛠️ Handling tools/list request");
+            // Handling tools/list request
             json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -179,7 +175,7 @@ fn handle_mcp_request(request: &Value, _request_id: usize) -> Value {
                                 .get("text")
                                 .and_then(|t| t.as_str())
                                 .unwrap_or("(empty)");
-                            eprintln!("🔊 Echo tool called with: {}", text);
+                            // Echo tool called
                             json!({
                                 "jsonrpc": "2.0",
                                 "id": id,
@@ -199,7 +195,7 @@ fn handle_mcp_request(request: &Value, _request_id: usize) -> Value {
                             let a = args.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
                             let b = args.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
-                            eprintln!("🧮 Calculate tool called: {} {} {}", a, operation, b);
+                            // Calculate tool called
 
                             let result = match operation {
                                 "add" => a + b,
@@ -242,7 +238,7 @@ fn handle_mcp_request(request: &Value, _request_id: usize) -> Value {
                             })
                         }
                         "system_info" => {
-                            eprintln!("💻 System info tool called");
+                            // System info tool called
                             let info = format!(
                                 "System Information:\n• OS: {}\n• Transport: STDIO\n• Protocol: MCP 2025-06-18\n• PID: {}",
                                 std::env::consts::OS,
@@ -260,7 +256,7 @@ fn handle_mcp_request(request: &Value, _request_id: usize) -> Value {
                             })
                         }
                         _ => {
-                            eprintln!("❌ Unknown tool: {}", tool_name);
+                            // Unknown tool
                             json!({
                                 "jsonrpc": "2.0",
                                 "id": id,
@@ -293,7 +289,7 @@ fn handle_mcp_request(request: &Value, _request_id: usize) -> Value {
             }
         }
         _ => {
-            eprintln!("❌ Unknown method: {}", method);
+            // Unknown method
             json!({
                 "jsonrpc": "2.0",
                 "id": id,
