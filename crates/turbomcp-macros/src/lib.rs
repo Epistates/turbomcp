@@ -118,6 +118,7 @@ mod schema;
 mod server;
 mod template;
 mod tool;
+mod uri_template;
 
 /// Marks an impl block as a TurboMCP server (idiomatic Rust)
 ///
