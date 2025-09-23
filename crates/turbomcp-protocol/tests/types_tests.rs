@@ -15,7 +15,7 @@ fn test_type_aliases() {
     let _mime_type: MimeType = "text/plain".to_string();
     let _base64: Base64String = "SGVsbG8gV29ybGQ=".to_string();
     let _cursor: Cursor = "next_page".to_string();
-    let _progress_token: ProgressToken = "progress_123".to_string();
+    let _progress_token: ProgressToken = ProgressToken::String("progress_123".to_string());
 }
 
 // ============================================================================
@@ -570,6 +570,7 @@ fn test_initialize_request() {
             title: None,
             version: "1.0.0".to_string(),
         },
+        _meta: None,
     };
 
     assert_eq!(request.protocol_version, "1.0.0");
@@ -587,6 +588,7 @@ fn test_initialize_result() {
             version: "1.0.0".to_string(),
         },
         instructions: Some("Welcome to the server".to_string()),
+        _meta: None,
     };
 
     assert_eq!(result.protocol_version, "1.0.0");
@@ -609,6 +611,7 @@ fn test_list_tools_result() {
     let result = ListToolsResult {
         tools: vec![],
         next_cursor: Some("next".to_string()),
+        _meta: None,
     };
 
     assert!(result.tools.is_empty());
@@ -623,6 +626,7 @@ fn test_call_tool_request() {
     let request = CallToolRequest {
         name: "test_tool".to_string(),
         arguments: Some(arguments),
+        _meta: None,
     };
 
     assert_eq!(request.name, "test_tool");
@@ -640,6 +644,8 @@ fn test_call_tool_result() {
     let result = CallToolResult {
         content,
         is_error: Some(false),
+        structured_content: None,
+        _meta: None,
     };
 
     assert_eq!(result.content.len(), 1);
@@ -858,6 +864,7 @@ fn test_client_request_variants() {
             title: None,
             version: "1.0.0".to_string(),
         },
+        _meta: None,
     });
 
     let list_tools = ClientRequest::ListTools(ListToolsRequest);
@@ -888,7 +895,7 @@ fn test_server_request_variants() {
 fn test_client_notification_variants() {
     let initialized = ClientNotification::Initialized(InitializedNotification);
     let progress = ClientNotification::Progress(ProgressNotification {
-        progress_token: "token".to_string(),
+        progress_token: ProgressToken::String("token".to_string()),
         progress: 50.0,
         total: Some(100.0),
         message: Some("Half done".to_string()),
@@ -1036,6 +1043,7 @@ fn test_sampling_api_comprehensive_workflow() {
         max_tokens: 1000,
         stop_sequences: Some(vec!["STOP".to_string(), "END".to_string()]),
         metadata: Some(metadata.clone()),
+        _meta: None,
     };
 
     // Test serialization/deserialization
@@ -1121,6 +1129,7 @@ fn test_create_message_result_complete() {
         }),
         model: Some("claude-3-5-sonnet-20241022".to_string()),
         stop_reason: Some("stop_sequence".to_string()),
+        _meta: None,
     };
 
     let json = serde_json::to_string_pretty(&result).unwrap();

@@ -14,7 +14,102 @@ pub type ProtocolVersion = String;
 pub type RequestId = MessageId;
 
 /// Progress token for tracking long-running operations
-pub type ProgressToken = String;
+///
+/// Per MCP 2025-06-18 specification, progress tokens can be either strings or integers
+/// to provide flexibility in how clients and servers track long-running operations.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ProgressToken {
+    /// String-based progress token
+    String(String),
+    /// Integer-based progress token
+    Integer(i64),
+}
+
+impl ProgressToken {
+    /// Create a new string-based progress token
+    pub fn from_string<S: Into<String>>(s: S) -> Self {
+        Self::String(s.into())
+    }
+
+    /// Create a new integer-based progress token
+    pub fn from_integer(i: i64) -> Self {
+        Self::Integer(i)
+    }
+
+    /// Check if this is a string token
+    pub fn is_string(&self) -> bool {
+        matches!(self, Self::String(_))
+    }
+
+    /// Check if this is an integer token
+    pub fn is_integer(&self) -> bool {
+        matches!(self, Self::Integer(_))
+    }
+
+    /// Get the string value if this is a string token
+    pub fn as_string(&self) -> Option<&str> {
+        match self {
+            Self::String(s) => Some(s),
+            Self::Integer(_) => None,
+        }
+    }
+
+    /// Get the integer value if this is an integer token
+    pub fn as_integer(&self) -> Option<i64> {
+        match self {
+            Self::String(_) => None,
+            Self::Integer(i) => Some(*i),
+        }
+    }
+
+    /// Convert to a string representation for display/logging
+    pub fn to_display_string(&self) -> String {
+        match self {
+            Self::String(s) => s.clone(),
+            Self::Integer(i) => i.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for ProgressToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::String(s) => write!(f, "{}", s),
+            Self::Integer(i) => write!(f, "{}", i),
+        }
+    }
+}
+
+impl From<String> for ProgressToken {
+    fn from(s: String) -> Self {
+        Self::String(s)
+    }
+}
+
+impl From<&str> for ProgressToken {
+    fn from(s: &str) -> Self {
+        Self::String(s.to_string())
+    }
+}
+
+impl From<i64> for ProgressToken {
+    fn from(i: i64) -> Self {
+        Self::Integer(i)
+    }
+}
+
+impl From<i32> for ProgressToken {
+    fn from(i: i32) -> Self {
+        Self::Integer(i64::from(i))
+    }
+}
+
+impl From<u32> for ProgressToken {
+    fn from(i: u32) -> Self {
+        Self::Integer(i64::from(i))
+    }
+}
 
 /// URI string
 pub type Uri = String;
@@ -313,6 +408,9 @@ pub struct InitializeRequest {
     /// Client implementation info
     #[serde(rename = "clientInfo")]
     pub client_info: Implementation,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Initialize result
@@ -329,6 +427,9 @@ pub struct InitializeResult {
     /// Additional instructions for the client
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instructions: Option<String>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Initialized notification (no parameters)
@@ -780,6 +881,9 @@ pub struct ListToolsResult {
     /// Optional continuation token
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Call tool request
@@ -790,16 +894,25 @@ pub struct CallToolRequest {
     /// Tool arguments
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<HashMap<String, serde_json::Value>>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Call tool result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallToolResult {
-    /// Result content
+    /// Result content (required)
     pub content: Vec<ContentBlock>,
     /// Whether the operation failed
     #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
+    /// Optional structured result of the tool call per MCP 2025-06-18 specification
+    #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<serde_json::Value>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 // ============================================================================
@@ -863,6 +976,9 @@ pub struct ListPromptsResult {
     /// Optional continuation token
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Get prompt request
@@ -873,6 +989,9 @@ pub struct GetPromptRequest {
     /// Prompt arguments
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<PromptInput>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Get prompt result
@@ -883,6 +1002,9 @@ pub struct GetPromptResult {
     pub description: Option<String>,
     /// Prompt messages
     pub messages: Vec<PromptMessage>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Prompt message
@@ -993,6 +1115,9 @@ pub struct ListResourcesRequest {
     /// Optional cursor for pagination
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// List resources result
@@ -1003,6 +1128,9 @@ pub struct ListResourcesResult {
     /// Optional continuation token
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Read resource request
@@ -1010,6 +1138,9 @@ pub struct ListResourcesResult {
 pub struct ReadResourceRequest {
     /// Resource URI
     pub uri: Uri,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Read resource result
@@ -1017,6 +1148,9 @@ pub struct ReadResourceRequest {
 pub struct ReadResourceResult {
     /// Resource contents (can be text or binary)
     pub contents: Vec<ResourceContent>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Subscribe to resource request
@@ -1154,6 +1288,9 @@ pub struct CreateMessageRequest {
     /// Metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, serde_json::Value>>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Model preferences
@@ -1217,6 +1354,9 @@ pub struct CreateMessageResult {
     /// Stop reason
     #[serde(rename = "stopReason", skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<String>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 // ============================================================================
@@ -1448,6 +1588,9 @@ pub struct ElicitRequestParams {
     pub message: String,
     /// JSON Schema defining the expected response structure
     pub requested_schema: ElicitationSchema,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Request to elicit user input (server-initiated)
@@ -1467,6 +1610,7 @@ impl ElicitRequest {
             params: ElicitRequestParams {
                 message: message.into(),
                 requested_schema: schema,
+                _meta: None,
             },
         }
     }
@@ -1644,6 +1788,9 @@ pub struct CompleteRequestParams {
     /// Additional context for completions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<CompletionContext>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Request for argument completion
@@ -1664,6 +1811,7 @@ impl CompleteRequest {
                 argument,
                 reference,
                 context: None,
+                _meta: None,
             },
         }
     }
@@ -2030,6 +2178,9 @@ pub struct ListRootsRequest;
 pub struct ListRootsResult {
     /// Available roots
     pub roots: Vec<Root>,
+    /// Optional metadata per MCP 2025-06-18 specification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub _meta: Option<serde_json::Value>,
 }
 
 /// Roots list changed notification (no parameters)
@@ -2256,6 +2407,7 @@ mod tests {
         let request_params = ElicitRequestParams {
             message: "Please provide your email".to_string(),
             requested_schema: schema,
+            _meta: None,
         };
 
         let server_request = ServerRequest::ElicitationCreate(request_params);
@@ -2415,6 +2567,7 @@ mod tests {
             argument,
             reference,
             context: None,
+            _meta: None,
         };
 
         let client_request = ClientRequest::Complete(complete_params);

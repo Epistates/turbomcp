@@ -861,6 +861,7 @@ mod tests {
                 title: Some("Test Client".to_string()),
                 version: "1.0.0".to_string(),
             },
+            _meta: None,
         };
 
         let result = validator.validate_initialize_request(&request);
@@ -875,6 +876,7 @@ mod tests {
                 title: Some("Test Client".to_string()),
                 version: "1.0.0".to_string(),
             },
+            _meta: None,
         };
 
         let result = validator.validate_initialize_request(&request_with_old_version);
