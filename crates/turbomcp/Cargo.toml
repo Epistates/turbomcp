@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp"
-version = "1.0.13"
+version = "1.1.0"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Rust SDK for Model Context Protocol (MCP) with OAuth 2.1 compliance, ergonomic macros and SIMD acceleration"
@@ -52,7 +52,7 @@ urlencoding = "2.1"
 url = "2.5"
 
 # DPoP support for enhanced OAuth security (optional)
-turbomcp-dpop = { version = "1.0.10", path = "../turbomcp-dpop", optional = true }
+turbomcp-dpop = { version = "1.1.0", path = "../turbomcp-dpop", optional = true }
 # JSON Schema generation
 schemars = { version = "1.0", features = ["chrono04", "uuid1"], optional = true }
 regex = { version = "1.0", optional = true }
@@ -68,11 +68,11 @@ sonic-rs = { workspace = true, optional = true }
 http = "1.0"
 
 # Internal dependencies (always required)
-turbomcp-core = { version = "1.0.13", path = "../turbomcp-core", features = ["simd"] }
-turbomcp-protocol = { version = "1.0.13", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "1.0.13", path = "../turbomcp-transport" }
-turbomcp-server = { version = "1.0.13", path = "../turbomcp-server" }
-turbomcp-macros = { version = "1.0.13", path = "../turbomcp-macros" }
+turbomcp-core = { version = "1.1.0", path = "../turbomcp-core", features = ["simd"] }
+turbomcp-protocol = { version = "1.1.0", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "1.1.0", path = "../turbomcp-transport" }
+turbomcp-server = { version = "1.1.0", path = "../turbomcp-server" }
+turbomcp-macros = { version = "1.1.0", path = "../turbomcp-macros" }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -84,7 +84,7 @@ rand = "0.8"
 jsonschema = { version = "0.17", default-features = false, features = ["resolve-file"] }
 rustc-hash = "1.1"
 walkdir = { workspace = true }
-turbomcp-client = { version = "1.0.13", path = "../turbomcp-client" }
+turbomcp-client = { version = "1.1.0", path = "../turbomcp-client" }
 tokio-tungstenite = "0.24"
 
 [features]
