@@ -646,6 +646,7 @@ async fn test_resource_indicators_rfc_8707_compliance() {
         ProviderType::Custom("test".to_string()),
         token_storage,
     )
+    .await
     .unwrap();
 
     // Test authorization with Resource Indicators
@@ -703,6 +704,7 @@ async fn test_resource_uri_validation() {
         ProviderType::Custom("test".to_string()),
         token_storage,
     )
+    .await
     .unwrap();
 
     // Test valid canonical URIs (using localhost which is always allowed)
@@ -758,6 +760,7 @@ async fn test_auto_resource_indicators_configuration() {
         ProviderType::Custom("test".to_string()),
         token_storage,
     )
+    .await
     .unwrap();
 
     // Should error when trying to start authorization
@@ -794,6 +797,7 @@ async fn test_auto_resource_indicators_configuration() {
         ProviderType::Custom("test".to_string()),
         token_storage2,
     )
+    .await
     .unwrap();
 
     // Should work when auto_resource_indicators is disabled
@@ -831,6 +835,7 @@ async fn test_mcp_oauth_2_1_compliance() {
         ProviderType::Custom("mcp".to_string()),
         token_storage,
     )
+    .await
     .unwrap();
 
     // Test MCP-compliant authorization
@@ -969,6 +974,7 @@ async fn test_oauth_provider_with_resource_registry_rfc_9728() {
         ProviderType::Custom("mcp".to_string()),
         token_storage,
     )
+    .await
     .unwrap()
     .with_resource_registry(registry);
 
@@ -1229,6 +1235,7 @@ async fn test_oauth_provider_dynamic_registration_integration() {
         ProviderType::Generic,
         token_storage,
     )
+    .await
     .unwrap()
     .with_dynamic_registration(registration.clone());
 
@@ -1291,6 +1298,7 @@ async fn test_mcp_compliance_full_integration() {
         ProviderType::Generic,
         token_storage,
     )
+    .await
     .unwrap()
     .with_resource_registry(resource_registry)
     .with_dynamic_registration(dynamic_registration);

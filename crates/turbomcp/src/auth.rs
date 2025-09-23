@@ -1870,7 +1870,8 @@ impl OAuth2Provider {
         };
 
         // Create OAuth provider
-        let provider = Self::new(name, config, ProviderType::Generic, token_storage).await?
+        let provider = Self::new(name, config, ProviderType::Generic, token_storage)
+            .await?
             .with_dynamic_registration(registration);
 
         Ok(provider)

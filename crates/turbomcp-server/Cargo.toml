@@ -29,6 +29,7 @@ anyhow = "1.0"
 bytes = { workspace = true }
 regex = "1.10"
 jsonschema = { version = "0.17", default-features = false, features = ["resolve-file"] }
+turbomcp-transport = { workspace = true, optional = true }
 
 [features]
 default = ["auth", "health-checks", "metrics"]
@@ -39,10 +40,10 @@ metrics = []
 middleware = []
 graceful-shutdown = []
 # Transport features (progressive enhancement)
-stdio = ["turbomcp-transport/stdio"]
-http = ["turbomcp-transport/http"]
-websocket = ["turbomcp-transport/websocket"] 
-tcp = ["turbomcp-transport/tcp"]
-unix = ["turbomcp-transport/unix"]
+stdio = ["dep:turbomcp-transport", "turbomcp-transport/stdio"]
+http = ["dep:turbomcp-transport", "turbomcp-transport/http"]
+websocket = ["dep:turbomcp-transport", "turbomcp-transport/websocket"]
+tcp = ["dep:turbomcp-transport", "turbomcp-transport/tcp"]
+unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
 # Convenience feature bundles
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]

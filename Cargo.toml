@@ -135,6 +135,16 @@ sha2 = "0.10"
 doc-comment = "0.3"
 
 # Workspace dependencies are defined below
+# Internal crate dependencies
+turbomcp = { path = "crates/turbomcp" }
+turbomcp-core = { path = "crates/turbomcp-core" }
+turbomcp-protocol = { path = "crates/turbomcp-protocol" }
+turbomcp-transport = { path = "crates/turbomcp-transport" }
+turbomcp-client = { path = "crates/turbomcp-client" }
+turbomcp-server = { path = "crates/turbomcp-server" }
+turbomcp-macros = { path = "crates/turbomcp-macros" }
+turbomcp-cli = { path = "crates/turbomcp-cli" }
+turbomcp-dpop = { path = "crates/turbomcp-dpop" }
 
 [profile.dev]
 opt-level = 1
