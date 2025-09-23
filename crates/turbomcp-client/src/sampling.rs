@@ -248,7 +248,7 @@ impl ProductionSamplingHandler {
         // Create HTTP client with proper configuration
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
-            .user_agent("turbomcp-client/1.0.4")
+            .user_agent("turbomcp-client/1.0.12")
             .build()
             .map_err(|e| LLMBackendError::Configuration {
                 message: format!("Failed to create HTTP client: {}", e),

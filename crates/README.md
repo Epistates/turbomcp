@@ -177,18 +177,18 @@ Command-line interface for interacting with MCP servers, testing, and debugging.
 ### Complete Framework (Recommended)
 ```toml
 [dependencies]
-turbomcp = "1.0.4"
+turbomcp = "1.0.12"
 ```
 
 ### Specific Layers Only
 ```toml
 [dependencies]
 # For building custom servers
-turbomcp-server = "1.0.4"
-turbomcp-transport = "1.0.4"
+turbomcp-server = "1.0.12"
+turbomcp-transport = "1.0.12"
 
 # For building custom clients  
-turbomcp-client = "1.0.4"
+turbomcp-client = "1.0.12"
 turbomcp-protocol = "1.0.4"
 
 # For low-level protocol work
