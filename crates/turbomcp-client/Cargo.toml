@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-client"
-version = "1.0.12"
+version = "1.0.13"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "MCP client implementation with connection management and error recovery"
@@ -13,9 +13,9 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
-turbomcp-core = { version = "1.0.12", path = "../turbomcp-core" }
-turbomcp-protocol = { version = "1.0.12", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "1.0.12", path = "../turbomcp-transport" }
+turbomcp-core = { version = "1.0.13", path = "../turbomcp-core" }
+turbomcp-protocol = { version = "1.0.13", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "1.0.13", path = "../turbomcp-transport" }
 async-trait = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

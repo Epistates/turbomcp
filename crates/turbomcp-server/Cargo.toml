@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-server"
-version = "1.0.12"
+version = "1.0.13"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Fast MCP server implementation with middleware, routing, and lifecycle management"
@@ -13,10 +13,10 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
-turbomcp-core = { version = "1.0.12", path = "../turbomcp-core" }
-turbomcp-protocol = { version = "1.0.12", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "1.0.12", path = "../turbomcp-transport" }
-turbomcp-macros = { version = "1.0.12", path = "../turbomcp-macros" }
+turbomcp-core = { version = "1.0.13", path = "../turbomcp-core" }
+turbomcp-protocol = { version = "1.0.13", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "1.0.13", path = "../turbomcp-transport" }
+turbomcp-macros = { version = "1.0.13", path = "../turbomcp-macros" }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -32,7 +32,7 @@ futures = "0.3"
 anyhow = "1.0"
 bytes = { workspace = true }
 regex = "1.10"
-jsonschema = "0.17"
+jsonschema = { version = "0.17", default-features = false, features = ["resolve-file"] }
 
 [features]
 default = ["auth", "health-checks", "metrics"]

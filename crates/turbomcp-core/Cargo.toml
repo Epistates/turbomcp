@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-core"
-version = "1.0.12"
+version = "1.0.13"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Core abstractions and optimized message processing for the TurboMCP SDK"
@@ -24,7 +24,7 @@ pin-project-lite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 bytes = { workspace = true }
-rmp-serde = { workspace = true, optional = true }
+msgpacker = { workspace = true, optional = true, features = ["derive", "alloc"] }
 ciborium = "0.2"
 
 # Error handling
@@ -73,7 +73,7 @@ default = ["std", "simd", "lock-free"]
 std = []
 simd = ["simd-json", "sonic-rs", "simdutf8"]
 zero-copy = ["bytes/serde"]
-messagepack = ["rmp-serde"]
+messagepack = ["msgpacker"]
 tracing = ["dep:tracing-opentelemetry"]
 metrics = ["dep:metrics"]
 wasm = []

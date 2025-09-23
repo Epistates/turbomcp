@@ -50,7 +50,7 @@ walkdir = "2.4"
 # Serialization with performance focus
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["raw_value", "preserve_order"] }
-rmp-serde = "1.3"  # MessagePack for binary efficiency
+msgpacker = { version = "0.4", features = ["derive", "alloc"] }  # MessagePack for binary efficiency
 sonic-rs = "0.3"   # High-performance JSON
 simd-json = "0.13" # SIMD-accelerated JSON parsing
 bincode = "1.3"
@@ -58,7 +58,7 @@ ciborium = "0.2"
 
 # Schema validation and generation
 schemars = { version = "0.8", features = ["chrono04", "uuid1"] }
-jsonschema = "0.17"
+jsonschema = { version = "0.17", default-features = false, features = ["resolve-file"] }
 
 # HTTP/WebSocket/Network
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2", "brotli", "gzip"] }
@@ -157,6 +157,8 @@ opt-level = 1
 debug = 2
 
 # Examples are in the individual crates
+# Note: Workspace-level benchmarks are in benches/ directory
+# Run with: ./scripts/run_benchmarks.sh
 
 # [patch.crates-io]
 # # Replace unmaintained paste crate with pastey (drop-in replacement)
