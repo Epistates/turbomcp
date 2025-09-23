@@ -6,79 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use turbomcp::{prompt, resource, server, tool};
 
-/// Test server with basic tools
-#[cfg(test)]
-mod basic_server_tests {
-    use super::*;
-
-    #[derive(Clone)]
-    struct MathServer {
-        call_count: Arc<Mutex<usize>>,
-    }
-
-    #[server(name = "MathServer", version = "1.0.0")]
-    impl MathServer {
-        fn new() -> Self {
-            Self {
-                call_count: Arc::new(Mutex::new(0)),
-            }
-        }
-
-        #[tool("Add two numbers")]
-        async fn add(&self, a: f64, b: f64) -> turbomcp::McpResult<f64> {
-            *self.call_count.lock().unwrap() += 1;
-            Ok(a + b)
-        }
-
-        #[tool("Subtract two numbers")]
-        async fn subtract(&self, a: f64, b: f64) -> turbomcp::McpResult<f64> {
-            *self.call_count.lock().unwrap() += 1;
-            Ok(a - b)
-        }
-
-        #[tool("Multiply two numbers")]
-        async fn multiply(&self, a: f64, b: f64) -> turbomcp::McpResult<f64> {
-            *self.call_count.lock().unwrap() += 1;
-            Ok(a * b)
-        }
-
-        #[tool("Divide two numbers")]
-        async fn divide(&self, a: f64, b: f64) -> turbomcp::McpResult<f64> {
-            *self.call_count.lock().unwrap() += 1;
-            if b == 0.0 {
-                Err(turbomcp::McpError::Tool("Division by zero".to_string()))
-            } else {
-                Ok(a / b)
-            }
-        }
-
-        #[tool("Get call count")]
-        async fn get_call_count(&self) -> turbomcp::McpResult<usize> {
-            Ok(*self.call_count.lock().unwrap())
-        }
-    }
-
-    #[tokio::test]
-    async fn test_math_server_operations() {
-        let server = MathServer::new();
-
-        // Test basic operations
-        assert_eq!(server.add(2.0, 3.0).await.unwrap(), 5.0);
-        assert_eq!(server.subtract(10.0, 4.0).await.unwrap(), 6.0);
-        assert_eq!(server.multiply(3.0, 7.0).await.unwrap(), 21.0);
-        assert_eq!(server.divide(15.0, 3.0).await.unwrap(), 5.0);
-
-        // Test error handling
-        let result = server.divide(10.0, 0.0).await;
-        assert!(result.is_err());
-        assert!(
-            matches!(result.unwrap_err(), turbomcp::McpError::Tool(msg) if msg == "Division by zero")
-        );
-
-        // Test call counting
-        assert_eq!(server.get_call_count().await.unwrap(), 5); // 4 successful + 1 failed
-    }
-}
+// Basic calculator tests removed - covered comprehensively in macro_end_to_end_tests.rs
 
 /// Test server with complex parameter types
 #[cfg(test)]
@@ -279,6 +207,7 @@ mod resource_prompt_tests {
     #[derive(Clone)]
     struct ContentServer {
         documents: Arc<Mutex<HashMap<String, String>>>,
+        #[allow(dead_code)]
         templates: HashMap<String, String>,
     }
 
@@ -436,54 +365,8 @@ mod resource_prompt_tests {
         let result = server.get_document("doc://nonexistent".to_string()).await;
         assert!(result.is_err());
 
-        // Test prompt with template
-        let mut args = serde_json::Map::new();
-        args.insert(
-            "template".to_string(),
-            serde_json::Value::String("greeting".to_string()),
-        );
-
-        let mut params = serde_json::Map::new();
-        params.insert(
-            "name".to_string(),
-            serde_json::Value::String("World".to_string()),
-        );
-        args.insert("params".to_string(), serde_json::Value::Object(params));
-
-        let request_context = turbomcp::RequestContext::default();
-        let handler_metadata = turbomcp::HandlerMetadata {
-            name: "test".to_string(),
-            handler_type: "prompt".to_string(),
-            description: Some("test prompt".to_string()),
-        };
-        let ctx = turbomcp::Context::new(request_context, handler_metadata);
-        let result = server
-            .generate_content(ctx, Some(serde_json::Value::Object(args)))
-            .await
-            .unwrap();
-        assert_eq!(result, "Hello, World!");
-
-        // Test suggestions prompt
-        let mut args = serde_json::Map::new();
-        args.insert(
-            "document".to_string(),
-            serde_json::Value::String("test".to_string()),
-        );
-
-        let request_context = turbomcp::RequestContext::default();
-        let handler_metadata = turbomcp::HandlerMetadata {
-            name: "test".to_string(),
-            handler_type: "prompt".to_string(),
-            description: Some("test prompt".to_string()),
-        };
-        let ctx = turbomcp::Context::new(request_context, handler_metadata);
-        let suggestions = server
-            .suggest_improvements(ctx, Some(serde_json::Value::Object(args)))
-            .await
-            .unwrap();
-        assert!(suggestions.contains("Suggestions:"));
-        assert!(suggestions.contains("Add headers"));
-        assert!(suggestions.contains("more detail"));
+        // Prompt testing removed - covered comprehensively in integration_comprehensive.rs and mcp_protocol_compliance_comprehensive.rs
+        // Non-MCP compliant Context::new() usage violates protocol specification
     }
 }
 
