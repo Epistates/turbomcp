@@ -82,6 +82,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 tracing-subscriber = "0.3"
 tempfile = "3.0"
 rand = "0.8"
+jsonschema = "0.17"
 rustc-hash = "1.1"
 walkdir = { workspace = true }
 turbomcp-client = { version = "1.0.11", path = "../turbomcp-client" }

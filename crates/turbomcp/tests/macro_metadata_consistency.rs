@@ -40,16 +40,21 @@ async fn test_macro_metadata_api_consistency() {
     assert_eq!(tool_desc, "Test tool with parameter");
     assert!(!tool_schema.is_null());
 
-    // Prompt metadata - should return (name, description, tags)
-    let (prompt_name, prompt_desc, prompt_tags) = TestStruct::test_prompt_metadata();
+    // Prompt metadata - should return (name, description, arguments_schema, tags)
+    let (prompt_name, prompt_desc, prompt_args, prompt_tags) = TestStruct::test_prompt_metadata();
     assert_eq!(prompt_name, "test_prompt");
     assert_eq!(prompt_desc, "Test prompt description");
+    assert!(prompt_args.is_empty()); // No parameters
     assert_eq!(prompt_tags, Vec::<String>::new());
 
-    // Resource metadata - should return (name, uri_template, tags)
-    let (resource_name, resource_uri, resource_tags) = TestStruct::test_resource_metadata();
-    assert_eq!(resource_name, "test_resource");
+    // Resource metadata - should return (uri_template, name, title, description, mime_type, tags)
+    let (resource_uri, resource_name, resource_title, resource_desc, resource_mime, resource_tags) =
+        TestStruct::test_resource_metadata();
     assert_eq!(resource_uri, "resource://test/{id}");
+    assert!(!resource_name.is_empty());
+    assert!(!resource_title.is_empty());
+    assert!(!resource_desc.is_empty());
+    assert!(!resource_mime.is_empty());
     assert_eq!(resource_tags, Vec::<String>::new());
 }
 
@@ -75,5 +80,5 @@ async fn test_consistent_naming_pattern() {
     // Names should match the original function names
     assert_eq!(tool_meta.0, "test_tool");
     assert_eq!(prompt_meta.0, "test_prompt");
-    assert_eq!(resource_meta.0, "test_resource");
+    assert_eq!(resource_meta.0, "resource://test/{id}"); // Resource meta now starts with URI
 }

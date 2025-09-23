@@ -697,8 +697,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_elicitation_handler() {
-        let handler = InteractiveElicitationHandler;
-        let request = ElicitationRequest {
+        let _handler = InteractiveElicitationHandler;
+        let _request = ElicitationRequest {
             id: "test-001".to_string(),
             prompt: "Test prompt".to_string(),
             schema: json!({"type": "object"}),

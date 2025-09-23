@@ -110,10 +110,10 @@ where
         let response = self.inner_router.route(request, context).await;
 
         // Convert response back to CallToolResult
-        if let Some(result) = response.result {
-            serde_json::from_value(result)
+        if let Some(result) = response.result() {
+            serde_json::from_value(result.clone())
                 .map_err(|e| McpError::Tool(format!("Response parsing failed: {e}")))
-        } else if let Some(error) = response.error {
+        } else if let Some(error) = response.error() {
             Err(McpError::Tool(format!(
                 "Tool execution failed: {}",
                 error.message

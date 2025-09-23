@@ -60,11 +60,11 @@ async fn test_example_jsonrpc(
             }
             Ok(_) => {
                 let trimmed = init_response.trim();
-                if !trimmed.is_empty() {
-                    if let Ok(response) = serde_json::from_str::<Value>(trimmed) {
-                        responses.push(response);
-                        break;
-                    }
+                if !trimmed.is_empty()
+                    && let Ok(response) = serde_json::from_str::<Value>(trimmed)
+                {
+                    responses.push(response);
+                    break;
                 }
             }
             Err(e) => {
@@ -89,11 +89,11 @@ async fn test_example_jsonrpc(
                 }
                 Ok(_) => {
                     let trimmed = response_line.trim();
-                    if !trimmed.is_empty() {
-                        if let Ok(response) = serde_json::from_str::<Value>(trimmed) {
-                            responses.push(response);
-                            break;
-                        }
+                    if !trimmed.is_empty()
+                        && let Ok(response) = serde_json::from_str::<Value>(trimmed)
+                    {
+                        responses.push(response);
+                        break;
                     }
                 }
                 Err(e) => {
@@ -105,8 +105,15 @@ async fn test_example_jsonrpc(
     }
 
     // Clean up process
-    let _ = child.kill();
-    let _ = child.wait();
+    if let Err(e) = child.kill() {
+        eprintln!("Warning: Failed to kill subprocess during cleanup: {}", e);
+    }
+    if let Err(e) = child.wait() {
+        eprintln!(
+            "Warning: Failed to wait for subprocess during cleanup: {}",
+            e
+        );
+    }
     Ok(responses)
 }
 
@@ -419,7 +426,7 @@ async fn test_mcp_protocol_compliance() {
                     );
 
                     // Check MCP-specific requirements
-                    if let Some(result) = &response.result {
+                    if let Some(result) = response.result() {
                         assert!(
                             result.get("protocolVersion").is_some(),
                             "Missing protocolVersion in {}",

@@ -1,36 +1,28 @@
-//! # 08: Elicitation Server - Real MCP Elicitation over HTTP
+//! # 08: Elicitation Server - MCP Server with User Input
 //!
 //! **Learning Goals (10 minutes):**
-//! - See real MCP elicitation server running over HTTP
-//! - Understand elicitation request/response flow
-//! - Learn production-ready HTTP MCP server patterns
+//! - Real MCP server that demonstrates elicitation patterns
+//! - Understand elicitation schema and user input handling
+//! - See complete client/server interaction
 //!
 //! **What this example demonstrates:**
-//! - Real MCP server with HTTP transport (one line change!)
+//! - MCP server with elicitation tools via STDIO transport
 //! - Elicitation schema according to MCP 2025-06-18 spec
-//! - Production-ready JSON-RPC over HTTP
+//! - User configuration management with validation
 //!
 //! **Usage (Terminal 1 - Start Server):**
 //! ```bash
 //! cargo run --example 08_elicitation_server
 //! ```
 //!
-//! **Then test with curl:**
+//! **Usage (Terminal 2 - Test Client):**
 //! ```bash
-//! # Initialize connection
-//! curl -X POST http://127.0.0.1:8080/mcp \
-//!   -H "Content-Type: application/json" \
-//!   -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {"elicitation": {}}, "clientInfo": {"name": "test-client", "version": "1.0.0"}}}'
+//! cargo run --example 08_elicitation_client
+//! ```
 //!
-//! # List tools
-//! curl -X POST http://127.0.0.1:8080/mcp \
-//!   -H "Content-Type: application/json" \
-//!   -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/list"}'
-//!
-//! # Trigger elicitation (demonstrates schema)
-//! curl -X POST http://127.0.0.1:8080/mcp \
-//!   -H "Content-Type: application/json" \
-//!   -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "setup_user_profile", "arguments": {}}}'
+//! **Or test manually with turbomcp-cli:**
+//! ```bash
+//! echo '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1.0.0"}}}' | cargo run --example 08_elicitation_server
 //! ```
 
 use serde_json::json;
@@ -171,24 +163,13 @@ impl ElicitationServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("🚀 TurboMCP Elicitation Server");
-    println!("===============================\n");
-
-    println!("📡 Starting HTTP server on http://127.0.0.1:8080");
-    println!("📋 MCP endpoint: http://127.0.0.1:8080/mcp\n");
-
-    println!("🎯 Available tools:");
-    println!("  • setup_user_profile - Demonstrate elicitation schema");
-    println!("  • show_config       - Display current configuration");
-    println!("  • reset_config      - Reset configuration");
-    println!("  • explain_elicitation - Learn MCP elicitation protocol\n");
-
-    println!("🧪 Test with curl (see file header for examples)\n");
+    // STDIO transport must be completely silent per MCP specification
+    // stdout is reserved exclusively for JSON-RPC messages
 
     let server = ElicitationServer::new();
 
-    // 🎯 ONE LINE CHANGE: run_stdio() → run_http()
-    server.run_http("127.0.0.1:8080").await?;
+    // MCP STDIO server - ready for Claude Code and other MCP clients
+    server.run_stdio().await?;
 
     Ok(())
 }

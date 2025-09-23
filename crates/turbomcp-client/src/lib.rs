@@ -278,15 +278,15 @@ impl<T: Transport> ProtocolClient<T> {
         let response: JsonRpcResponse = serde_json::from_slice(&response_msg.payload)
             .map_err(|e| Error::protocol(format!("Invalid JSON-RPC response: {e}")))?;
 
-        if let Some(error) = response.error {
+        if let Some(error) = response.error() {
             return Err(Error::rpc(error.code, &error.message));
         }
 
         let result = response
-            .result
+            .result()
             .ok_or_else(|| Error::protocol("Response missing result field".to_string()))?;
 
-        serde_json::from_value(result)
+        serde_json::from_value(result.clone())
             .map_err(|e| Error::protocol(format!("Invalid response format: {e}")))
     }
 
@@ -515,57 +515,41 @@ impl<T: Transport> Client<T> {
 
                     match handler.handle_create_message(params).await {
                         Ok(result) => {
-                            let response = JsonRpcResponse {
-                                jsonrpc: JsonRpcVersion,
-                                id: Some(request.id),
-                                result: Some(serde_json::to_value(result).map_err(|e| {
-                                    Error::protocol(format!("Failed to serialize response: {}", e))
-                                })?),
-                                error: None,
-                            };
+                            let result_value = serde_json::to_value(result).map_err(|e| {
+                                Error::protocol(format!("Failed to serialize response: {}", e))
+                            })?;
+                            let response = JsonRpcResponse::success(result_value, request.id);
                             self.send_response(response).await?;
                         }
                         Err(e) => {
-                            let response = JsonRpcResponse {
-                                jsonrpc: JsonRpcVersion,
-                                id: Some(request.id),
-                                result: None,
-                                error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
-                                    code: -32603,
-                                    message: format!("Sampling handler error: {}", e),
-                                    data: None,
-                                }),
+                            let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                                code: -32603,
+                                message: format!("Sampling handler error: {}", e),
+                                data: None,
                             };
+                            let response = JsonRpcResponse::error_response(error, request.id);
                             self.send_response(response).await?;
                         }
                     }
                 } else {
                     // No handler configured
-                    let response = JsonRpcResponse {
-                        jsonrpc: JsonRpcVersion,
-                        id: Some(request.id),
-                        result: None,
-                        error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
-                            code: -32601,
-                            message: "Sampling not supported".to_string(),
-                            data: None,
-                        }),
+                    let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                        code: -32601,
+                        message: "Sampling not supported".to_string(),
+                        data: None,
                     };
+                    let response = JsonRpcResponse::error_response(error, request.id);
                     self.send_response(response).await?;
                 }
             }
             _ => {
                 // Unknown method
-                let response = JsonRpcResponse {
-                    jsonrpc: JsonRpcVersion,
-                    id: Some(request.id),
-                    result: None,
-                    error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
-                        code: -32601,
-                        message: format!("Method not found: {}", request.method),
-                        data: None,
-                    }),
+                let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                    code: -32601,
+                    message: format!("Method not found: {}", request.method),
+                    data: None,
                 };
+                let response = JsonRpcResponse::error_response(error, request.id);
                 self.send_response(response).await?;
             }
         }

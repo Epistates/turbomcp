@@ -192,6 +192,7 @@ fn process_mcp_message(message: &Value, message_num: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_validate_request() {

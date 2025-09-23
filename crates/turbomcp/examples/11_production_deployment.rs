@@ -176,7 +176,7 @@ impl ProductionServer {
 
     /// Run with production configuration
     async fn run_production(self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("\n🚀 Starting production server with enterprise features...\n");
+        // STDIO transport must be completely silent per MCP specification
 
         // Set up graceful shutdown
         let shutdown = Arc::new(tokio::sync::Notify::new());
@@ -184,7 +184,7 @@ impl ProductionServer {
 
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.unwrap();
-            println!("\n⚠️  Graceful shutdown initiated...");
+            // Graceful shutdown initiated
             shutdown_clone.notify_waiters();
         });
 
@@ -193,11 +193,11 @@ impl ProductionServer {
 
         // Run with shutdown handler
         tokio::select! {
-            result = server.run_http_production() => {
+            result = server.run_stdio() => {
                 result?;
             }
             _ = shutdown.notified() => {
-                println!("✅ Server shutdown complete");
+                // Server shutdown complete
             }
         }
 
@@ -216,24 +216,22 @@ impl ProductionServer {
         self
     }
 
+    #[allow(dead_code)]
     async fn run_http_production(self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("📡 Production server configuration:");
-        println!("  • OAuth 2.0 authentication enabled");
-        println!("  • CORS configured for allowed origins");
-        println!("  • Rate limiting: 100 req/min per IP");
-        println!("  • Security headers: CSP, HSTS, X-Frame-Options");
-        println!("  • Monitoring: Prometheus metrics at /metrics");
-        println!("  • Health check: /health");
-        println!("  • Max request size: 10MB");
-        println!("  • Compression: gzip, brotli");
-        println!("  • Graceful shutdown enabled\n");
+        // STDIO transport must be completely silent per MCP specification
+        // stdout is reserved exclusively for JSON-RPC messages
+        //
+        // Production configuration includes:
+        // - OAuth 2.0 authentication
+        // - CORS configured for allowed origins
+        // - Rate limiting: 100 req/min per IP
+        // - Security headers: CSP, HSTS, X-Frame-Options
+        // - Monitoring: Prometheus metrics at /metrics
+        // - Health check: /health
+        // - Max request size: 10MB
+        // - Compression: gzip, brotli
+        // - Graceful shutdown enabled
 
-        println!("🌐 Server running at https://localhost:8443");
-        println!("📊 Metrics available at https://localhost:8443/metrics");
-        println!("🏥 Health check at https://localhost:8443/health\n");
-
-        // In production, would actually bind to HTTPS port
-        // For demo, we'll use stdio
         self.run_stdio().await?;
         Ok(())
     }
@@ -258,10 +256,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let server = ProductionServer::new();
 
-    // Check for Docker environment
+    // Check for Docker environment (logged to stderr)
     if std::env::var("DOCKER_CONTAINER").is_ok() {
-        println!("🐳 Running in Docker container");
-        println!("📝 Environment variables loaded from .env");
+        tracing::info!("Running in Docker container");
+        tracing::info!("Environment variables loaded from .env");
     }
 
     // Run production server
