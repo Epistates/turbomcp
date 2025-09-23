@@ -84,6 +84,9 @@ pub fn generate_prompt_impl(args: TokenStream, input: TokenStream) -> TokenStrea
     let param_extraction = generate_prompt_parameter_extraction(&analysis);
     let call_args = &analysis.call_args;
 
+    // Generate JSON schema for prompt arguments
+    let arguments_schema = generate_prompt_arguments_schema(&analysis);
+
     // Production-grade implementation with comprehensive metadata support
     let expanded = quote! {
         // Preserve original function with all its attributes
@@ -92,10 +95,11 @@ pub fn generate_prompt_impl(args: TokenStream, input: TokenStream) -> TokenStrea
         // Generate comprehensive metadata function for internal use
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #metadata_fn_name() -> (&'static str, &'static str, Vec<String>) {
+        fn #metadata_fn_name() -> (&'static str, &'static str, Vec<serde_json::Value>, Vec<String>) {
             (
                 #prompt_name,
                 #description,
+                #arguments_schema,
                 #tags_tokens
             )
         }
@@ -103,9 +107,9 @@ pub fn generate_prompt_impl(args: TokenStream, input: TokenStream) -> TokenStrea
         // Generate public metadata function for testing and integration
         /// Get comprehensive metadata for this prompt
         ///
-        /// Returns (name, description, tags) tuple providing complete prompt metadata
+        /// Returns (name, description, arguments_schema, tags) tuple providing complete prompt metadata
         /// for testing, documentation, and runtime introspection with maximum utility.
-        pub fn #public_metadata_fn_name() -> (&'static str, &'static str, Vec<String>) {
+        pub fn #public_metadata_fn_name() -> (&'static str, &'static str, Vec<serde_json::Value>, Vec<String>) {
             Self::#metadata_fn_name()
         }
 
@@ -426,6 +430,81 @@ fn generate_prompt_parameter_extraction(
     }
 
     extraction_code
+}
+
+/// Generate JSON schema for prompt arguments based on function signature analysis
+fn generate_prompt_arguments_schema(analysis: &PromptFunctionAnalysis) -> proc_macro2::TokenStream {
+    if analysis.parameters.is_empty() {
+        return quote! { vec![] };
+    }
+
+    let schema_items: Vec<_> = analysis
+        .parameters
+        .iter()
+        .map(|param| {
+            let param_name = &param.name;
+            let param_type = type_to_json_schema(&param.ty);
+
+            quote! {
+                serde_json::json!({
+                    "name": #param_name,
+                    "description": format!("Parameter: {}", #param_name),
+                    "required": true,
+                    "schema": #param_type
+                })
+            }
+        })
+        .collect();
+
+    quote! {
+        vec![#(#schema_items),*]
+    }
+}
+
+/// Convert Rust type to JSON schema representation
+fn type_to_json_schema(ty: &syn::Type) -> proc_macro2::TokenStream {
+    if let syn::Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+    {
+        match segment.ident.to_string().as_str() {
+            "String" | "str" => {
+                return quote! {
+                    serde_json::json!({
+                        "type": "string"
+                    })
+                };
+            }
+            "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => {
+                return quote! {
+                    serde_json::json!({
+                        "type": "integer"
+                    })
+                };
+            }
+            "f32" | "f64" => {
+                return quote! {
+                    serde_json::json!({
+                        "type": "number"
+                    })
+                };
+            }
+            "bool" => {
+                return quote! {
+                    serde_json::json!({
+                        "type": "boolean"
+                    })
+                };
+            }
+            _ => {}
+        }
+    }
+
+    // Default to string for unknown types
+    quote! {
+        serde_json::json!({
+            "type": "string"
+        })
+    }
 }
 
 /// Check if a type is Option<T> for prompts

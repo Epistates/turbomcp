@@ -1,5 +1,6 @@
 //! Production-grade resource macro implementation with comprehensive argument parsing
 
+use crate::uri_template::UriTemplate;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
@@ -10,8 +11,17 @@ use syn::{
 /// Comprehensive resource configuration for maximum utility and DX
 #[derive(Debug, Default)]
 struct ResourceConfig {
+    /// Human-readable display name (e.g., "Document Content")
     name: Option<String>,
+    /// Optional title for display purposes (human-readable)
+    title: Option<String>,
+    /// Optional description of what this resource provides
+    description: Option<String>,
+    /// URI template with parameters (e.g., "docs://content/{name}")
     uri_template: Option<String>,
+    /// Content MIME type
+    mime_type: Option<String>,
+    /// Resource tags for categorization
     tags: Vec<String>,
 }
 
@@ -46,10 +56,54 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
     let fn_vis = &input.vis;
     let fn_block = &input.block;
     let fn_sig = &input.sig;
-    let resource_name = config.name.unwrap_or_else(|| fn_name.to_string());
+
+    // Get URI template and validate it
     let uri_template = config
         .uri_template
         .unwrap_or_else(|| format!("resource://{}", fn_name));
+
+    // Parse URI template for intelligent name generation
+    let parsed_template = match UriTemplate::parse(&uri_template) {
+        Ok(template) => template,
+        Err(e) => {
+            return syn::Error::new_spanned(
+                &input.sig.ident,
+                format!("Invalid URI template '{}': {}", uri_template, e),
+            )
+            .to_compile_error()
+            .into();
+        }
+    };
+
+    // Generate intelligent display name if not provided
+    let display_name = config
+        .name
+        .unwrap_or_else(|| parsed_template.generate_name());
+
+    // Generate human-readable title for display purposes
+    let title = config.title.unwrap_or_else(|| {
+        if parsed_template.is_parameterized() {
+            format!("{} Resource", display_name)
+        } else {
+            display_name.clone()
+        }
+    });
+
+    // Use provided description or generate from URI template
+    let description = config.description.unwrap_or_else(|| {
+        if parsed_template.is_parameterized() {
+            format!(
+                "Access {} with parameters: {}",
+                display_name.to_lowercase(),
+                parsed_template.variables().join(", ")
+            )
+        } else {
+            format!("Access {}", display_name.to_lowercase())
+        }
+    });
+
+    // Get MIME type
+    let mime_type = config.mime_type.unwrap_or_else(|| "text/plain".to_string());
 
     // Generate comprehensive metadata function
     let metadata_fn_name = syn::Ident::new(
@@ -83,7 +137,7 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
         Err(err) => return err.to_compile_error().into(),
     };
 
-    let param_extraction = generate_resource_parameter_extraction(&analysis);
+    let param_extraction = generate_resource_parameter_extraction(&analysis, &metadata_fn_name);
     let call_args = &analysis.call_args;
 
     // Production-grade implementation with comprehensive metadata support
@@ -94,20 +148,23 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
         // Generate comprehensive metadata function for internal use
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #metadata_fn_name() -> (&'static str, &'static str, Vec<String>) {
+        fn #metadata_fn_name() -> (&'static str, &'static str, &'static str, &'static str, &'static str, Vec<String>) {
             (
-                #resource_name,
-                #uri_template,
-                #tags_tokens
+                #uri_template,      // URI template for matching
+                #display_name,      // Human-readable name
+                #title,             // Display title (MCP spec)
+                #description,       // Description
+                #mime_type,         // MIME type
+                #tags_tokens        // Tags
             )
         }
 
         // Generate public metadata function for testing and integration
         /// Get comprehensive metadata for this resource
         ///
-        /// Returns (name, URI template, tags) tuple providing complete resource metadata
-        /// for testing, documentation, and runtime introspection with maximum utility.
-        pub fn #public_metadata_fn_name() -> (&'static str, &'static str, Vec<String>) {
+        /// Returns (uri_template, name, title, description, mime_type, tags) tuple providing complete
+        /// resource metadata for testing, documentation, and runtime introspection.
+        pub fn #public_metadata_fn_name() -> (&'static str, &'static str, &'static str, &'static str, &'static str, Vec<String>) {
             Self::#metadata_fn_name()
         }
 
@@ -130,13 +187,13 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
                     let container = Container::new();
                     let factory = ContextFactory::new(config, container);
 
-                    factory.create_for_resource(context.clone(), #resource_name)
+                    factory.create_for_resource(context.clone(), #display_name)
                         .await
                         .unwrap_or_else(|_| {
                             let handler_metadata = turbomcp::HandlerMetadata {
-                                name: #resource_name.to_string(),
+                                name: #display_name.to_string(),
                                 handler_type: "resource".to_string(),
-                                description: Some(#uri_template.to_string()),
+                                description: Some(#description.to_string()),
                             };
                             turbomcp::Context::new(context, handler_metadata)
                         })
@@ -180,7 +237,10 @@ fn parse_resource_args(
         // #[resource] - simplest usage, function name becomes resource name
         return Ok(ResourceConfig {
             name: None,
+            title: None,
+            description: None,
             uri_template: None,
+            mime_type: None,
             tags: vec![],
         });
     }
@@ -191,7 +251,10 @@ fn parse_resource_args(
     if let Ok(lit_str) = syn::parse2::<syn::LitStr>(args.clone()) {
         return Ok(ResourceConfig {
             name: None,
+            title: None,
+            description: None,
             uri_template: Some(lit_str.value()),
+            mime_type: None,
             tags: vec![],
         });
     }
@@ -232,6 +295,43 @@ fn parse_resource_args(
                             return Err("Resource name must be a string literal".to_string());
                         }
                     }
+                    "title" => {
+                        if let syn::Expr::Lit(expr_lit) = &name_value.value {
+                            if let Lit::Str(lit_str) = &expr_lit.lit {
+                                config.title = Some(lit_str.value());
+                            } else {
+                                return Err("Resource title must be a string literal".to_string());
+                            }
+                        } else {
+                            return Err("Resource title must be a string literal".to_string());
+                        }
+                    }
+                    "description" => {
+                        if let syn::Expr::Lit(expr_lit) = &name_value.value {
+                            if let Lit::Str(lit_str) = &expr_lit.lit {
+                                config.description = Some(lit_str.value());
+                            } else {
+                                return Err(
+                                    "Resource description must be a string literal".to_string()
+                                );
+                            }
+                        } else {
+                            return Err("Resource description must be a string literal".to_string());
+                        }
+                    }
+                    "mime_type" | "mimeType" => {
+                        if let syn::Expr::Lit(expr_lit) = &name_value.value {
+                            if let Lit::Str(lit_str) = &expr_lit.lit {
+                                config.mime_type = Some(lit_str.value());
+                            } else {
+                                return Err(
+                                    "Resource MIME type must be a string literal".to_string()
+                                );
+                            }
+                        } else {
+                            return Err("Resource MIME type must be a string literal".to_string());
+                        }
+                    }
                     "uri" | "uri_template" => {
                         if let syn::Expr::Lit(expr_lit) = &name_value.value {
                             if let Lit::Str(lit_str) = &expr_lit.lit {
@@ -249,7 +349,7 @@ fn parse_resource_args(
                     }
                     _ => {
                         return Err(format!(
-                            "Unknown resource attribute: {}. Supported: name, uri, tags",
+                            "Unknown resource attribute: {}. Supported: name, title, description, mime_type, uri, tags",
                             attr_name
                         ));
                     }
@@ -373,9 +473,10 @@ fn analyze_resource_signature(
     })
 }
 
-/// Generate parameter extraction code for resources
+/// Generate parameter extraction code for resources with compile-time URI template parsing
 fn generate_resource_parameter_extraction(
     analysis: &ResourceFunctionAnalysis,
+    metadata_fn_name: &syn::Ident,
 ) -> proc_macro2::TokenStream {
     if analysis.parameters.is_empty() {
         return quote! {};
@@ -383,9 +484,15 @@ fn generate_resource_parameter_extraction(
 
     let mut extraction_code = quote! {};
 
-    // For resources, we typically extract the URI from the request
+    // Generate efficient compile-time URI parsing based on the specific template
     extraction_code.extend(quote! {
         let uri = &request.uri;
+
+        // Get the URI template at compile time for parameter extraction
+        let (uri_template, _, _, _, _, _) = Self::#metadata_fn_name();
+
+        // Simple but effective URI parameter extraction
+        let extracted_params = extract_uri_parameters(uri, uri_template);
     });
 
     for param in &analysis.parameters {
@@ -393,20 +500,50 @@ fn generate_resource_parameter_extraction(
         let param_name_ident = syn::Ident::new(&param.name, proc_macro2::Span::call_site());
         let param_ty = &param.ty;
 
-        // For resources, parameters often come from URI parsing or the URI itself
-        // This is a simplified extraction - in practice, you'd parse URI templates
         if param_name_str == "uri" {
+            // Special case: if parameter is named 'uri', pass the full URI
             extraction_code.extend(quote! {
                 let #param_name_ident: #param_ty = uri.clone();
             });
         } else {
-            // For other parameters, they might come from URI template variables
-            // This is a placeholder - real implementation would parse URI templates
+            // Extract parameter from URI template matching
             extraction_code.extend(quote! {
-                let #param_name_ident: #param_ty = Default::default();
+                let #param_name_ident: #param_ty = extracted_params
+                    .get(#param_name_str)
+                    .cloned()
+                    .unwrap_or_default();
             });
         }
     }
+
+    // Add helper function for parameter extraction
+    extraction_code.extend(quote! {
+        fn extract_uri_parameters(uri: &str, template: &str) -> std::collections::HashMap<String, String> {
+            let mut params = std::collections::HashMap::new();
+
+            if !template.contains('{') {
+                return params; // No variables in template
+            }
+
+            // Parse template and URI parts
+            let template_parts: Vec<&str> = template.split('/').filter(|s| !s.is_empty()).collect();
+            let uri_parts: Vec<&str> = uri.split('/').filter(|s| !s.is_empty()).collect();
+
+            if template_parts.len() != uri_parts.len() {
+                return params; // Length mismatch
+            }
+
+            for (template_part, uri_part) in template_parts.iter().zip(uri_parts.iter()) {
+                if template_part.starts_with('{') && template_part.ends_with('}') {
+                    // Extract variable name and value
+                    let var_name = &template_part[1..template_part.len()-1];
+                    params.insert(var_name.to_string(), uri_part.to_string());
+                }
+            }
+
+            params
+        }
+    });
 
     extraction_code
 }

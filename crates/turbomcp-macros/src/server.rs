@@ -206,7 +206,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                 // Auto-discovered prompts from #[prompt] methods
                 #(
                     {
-                        let (name, description, tags) = Self::#prompt_metadata_functions();
+                        let (name, description, _arguments_schema, tags) = Self::#prompt_metadata_functions();
                         prompts.push((
                             name.to_string(),
                             description.to_string(),
@@ -233,10 +233,10 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                 // Auto-discovered resources from #[resource] methods
                 #(
                     {
-                        let (name, description, tags) = Self::#resource_metadata_functions();
+                        let (uri_template, name, _title, _description, _mime_type, tags) = Self::#resource_metadata_functions();
                         resources.push((
+                            uri_template.to_string(),
                             name.to_string(),
-                            description.to_string(),
                             tags
                         ));
                     }
@@ -339,7 +339,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                 #(
                     {
                         let instance = server_instance.clone();
-                        let (prompt_name, prompt_description, _tags) = Self::#prompt_metadata_functions();
+                        let (prompt_name, prompt_description, _arguments_schema, _tags) = Self::#prompt_metadata_functions();
 
                         // Create prompt handler using utils helper
                         use turbomcp::handlers::utils;
@@ -378,7 +378,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                 #(
                     {
                         let instance = server_instance.clone();
-                        let (resource_name, resource_description, _tags) = Self::#resource_metadata_functions();
+                        let (resource_uri_template, resource_name, resource_title, resource_description, resource_mime_type, _tags) = Self::#resource_metadata_functions();
 
                         // Create resource handler using the FunctionResourceHandler
                         use turbomcp::handlers::FunctionResourceHandler;
@@ -388,10 +388,10 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                         let resource_handler = FunctionResourceHandler::new(
                             turbomcp_protocol::types::Resource {
                                 name: resource_name.to_string(),
-                                title: None,
-                                uri: resource_name.to_string(),
+                                title: Some(resource_title.to_string()),
+                                uri: resource_uri_template.to_string(),
                                 description: Some(resource_description.to_string()),
-                                mime_type: Some("text/plain".to_string()),
+                                mime_type: Some(resource_mime_type.to_string()),
                                 annotations: None,
                                 size: None,
                                 meta: None,
