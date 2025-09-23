@@ -86,21 +86,27 @@ fn test_jsonrpc_response_success() {
 
     assert!(response.is_success());
     assert!(!response.is_error());
-    assert!(response.result.is_some());
-    assert!(response.error.is_none());
-    assert_eq!(response.id, Some(RequestId::String("test-id".to_string())));
+    assert!(response.result().is_some());
+    assert!(response.error().is_none());
+    assert_eq!(
+        response.id,
+        ResponseId::from_request(RequestId::String("test-id".to_string()))
+    );
 }
 
 #[test]
 fn test_jsonrpc_response_error() {
     let error = JsonRpcError::from(JsonRpcErrorCode::MethodNotFound);
-    let response = JsonRpcResponse::error(error, Some(RequestId::String("test-id".to_string())));
+    let response = JsonRpcResponse::error_response(error, RequestId::String("test-id".to_string()));
 
     assert!(!response.is_success());
     assert!(response.is_error());
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
-    assert_eq!(response.id, Some(RequestId::String("test-id".to_string())));
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
+    assert_eq!(
+        response.id,
+        ResponseId::from_request(RequestId::String("test-id".to_string()))
+    );
 }
 
 #[test]
@@ -109,11 +115,11 @@ fn test_jsonrpc_response_parse_error() {
 
     assert!(!response.is_success());
     assert!(response.is_error());
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
-    assert_eq!(response.id, None);
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
+    assert_eq!(response.id, ResponseId::null());
 
-    let error = response.error.unwrap();
+    let error = response.error().unwrap();
     assert_eq!(error.code, -32700);
     assert_eq!(error.message, "Custom parse error");
 }
@@ -122,7 +128,7 @@ fn test_jsonrpc_response_parse_error() {
 fn test_jsonrpc_response_parse_error_default() {
     let response = JsonRpcResponse::parse_error(None);
 
-    let error = response.error.unwrap();
+    let error = response.error().unwrap();
     assert_eq!(error.code, -32700);
     assert_eq!(error.message, "Parse error");
 }
@@ -473,9 +479,9 @@ fn test_response_serialization_deserialization_roundtrip() {
     let json = serde_json::to_string(&response).unwrap();
     let parsed: JsonRpcResponse = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(parsed.result, response.result);
+    assert_eq!(parsed.result(), response.result());
     // Compare error presence instead of equality
-    assert_eq!(parsed.error.is_some(), response.error.is_some());
+    assert_eq!(parsed.error().is_some(), response.error().is_some());
     assert_eq!(parsed.id, response.id);
     assert!(parsed.is_success());
 }
@@ -526,12 +532,12 @@ fn test_error_response_with_data() {
         data: Some(json!({"details": "Additional error information"})),
     };
 
-    let response = JsonRpcResponse::error(error.clone(), Some(RequestId::Number(123)));
+    let response = JsonRpcResponse::error_response(error.clone(), RequestId::Number(123));
 
     assert!(response.is_error());
-    assert_eq!(response.error.as_ref().unwrap().code, error.code);
-    assert_eq!(response.error.as_ref().unwrap().message, error.message);
-    assert_eq!(response.error.as_ref().unwrap().data, error.data);
+    assert_eq!(response.error().unwrap().code, error.code);
+    assert_eq!(response.error().unwrap().message, error.message);
+    assert_eq!(response.error().unwrap().data, error.data);
 }
 
 #[test]

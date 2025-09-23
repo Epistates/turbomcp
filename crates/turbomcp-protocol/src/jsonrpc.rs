@@ -55,19 +55,59 @@ pub struct JsonRpcRequest {
     pub id: RequestId,
 }
 
+/// JSON-RPC response payload - ensures mutual exclusion of result and error
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum JsonRpcResponsePayload {
+    /// Successful response with result
+    Success {
+        /// Response result
+        result: Value,
+    },
+    /// Error response
+    Error {
+        /// Response error
+        error: JsonRpcError,
+    },
+}
+
 /// JSON-RPC response message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     /// JSON-RPC version
     pub jsonrpc: JsonRpcVersion,
-    /// Response result (success case)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Value>,
-    /// Response error (error case)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<JsonRpcError>,
-    /// Request identifier (null for parse errors)
-    pub id: Option<RequestId>,
+    /// Response payload (either result or error, never both)
+    #[serde(flatten)]
+    pub payload: JsonRpcResponsePayload,
+    /// Request identifier (required except for parse errors)
+    pub id: ResponseId,
+}
+
+/// Response ID - handles the special case where parse errors have null ID
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ResponseId(pub Option<RequestId>);
+
+impl ResponseId {
+    /// Create a response ID for a normal response
+    pub fn from_request(id: RequestId) -> Self {
+        Self(Some(id))
+    }
+
+    /// Create a null response ID for parse errors
+    pub fn null() -> Self {
+        Self(None)
+    }
+
+    /// Get the request ID if present
+    pub fn as_request_id(&self) -> Option<&RequestId> {
+        self.0.as_ref()
+    }
+
+    /// Check if this is a null ID (parse error)
+    pub fn is_null(&self) -> bool {
+        self.0.is_none()
+    }
 }
 
 /// JSON-RPC notification message (no response expected)
@@ -224,19 +264,17 @@ impl JsonRpcResponse {
     pub fn success(result: Value, id: RequestId) -> Self {
         Self {
             jsonrpc: JsonRpcVersion,
-            result: Some(result),
-            error: None,
-            id: Some(id),
+            payload: JsonRpcResponsePayload::Success { result },
+            id: ResponseId::from_request(id),
         }
     }
 
-    /// Create an error response
-    pub fn error(error: JsonRpcError, id: Option<RequestId>) -> Self {
+    /// Create an error response with request ID
+    pub fn error_response(error: JsonRpcError, id: RequestId) -> Self {
         Self {
             jsonrpc: JsonRpcVersion,
-            result: None,
-            error: Some(error),
-            id,
+            payload: JsonRpcResponsePayload::Error { error },
+            id: ResponseId::from_request(id),
         }
     }
 
@@ -247,17 +285,73 @@ impl JsonRpcResponse {
             message: message.unwrap_or_else(|| JsonRpcErrorCode::ParseError.message().to_string()),
             data: None,
         };
-        Self::error(error, None)
+        Self {
+            jsonrpc: JsonRpcVersion,
+            payload: JsonRpcResponsePayload::Error { error },
+            id: ResponseId::null(),
+        }
     }
 
     /// Check if this is a successful response
     pub fn is_success(&self) -> bool {
-        self.error.is_none()
+        matches!(self.payload, JsonRpcResponsePayload::Success { .. })
     }
 
     /// Check if this is an error response
     pub fn is_error(&self) -> bool {
-        self.error.is_some()
+        matches!(self.payload, JsonRpcResponsePayload::Error { .. })
+    }
+
+    /// Get the result if this is a success response
+    pub fn result(&self) -> Option<&Value> {
+        match &self.payload {
+            JsonRpcResponsePayload::Success { result } => Some(result),
+            JsonRpcResponsePayload::Error { .. } => None,
+        }
+    }
+
+    /// Get the error if this is an error response
+    pub fn error(&self) -> Option<&JsonRpcError> {
+        match &self.payload {
+            JsonRpcResponsePayload::Success { .. } => None,
+            JsonRpcResponsePayload::Error { error } => Some(error),
+        }
+    }
+
+    /// Get the request ID if this is not a parse error
+    pub fn request_id(&self) -> Option<&RequestId> {
+        self.id.as_request_id()
+    }
+
+    /// Check if this response is for a parse error (has null ID)
+    pub fn is_parse_error(&self) -> bool {
+        self.id.is_null()
+    }
+
+    /// Get mutable reference to result if this is a success response
+    pub fn result_mut(&mut self) -> Option<&mut Value> {
+        match &mut self.payload {
+            JsonRpcResponsePayload::Success { result } => Some(result),
+            JsonRpcResponsePayload::Error { .. } => None,
+        }
+    }
+
+    /// Get mutable reference to error if this is an error response
+    pub fn error_mut(&mut self) -> Option<&mut JsonRpcError> {
+        match &mut self.payload {
+            JsonRpcResponsePayload::Success { .. } => None,
+            JsonRpcResponsePayload::Error { error } => Some(error),
+        }
+    }
+
+    /// Set the result for this response (converts to success response)
+    pub fn set_result(&mut self, result: Value) {
+        self.payload = JsonRpcResponsePayload::Success { result };
+    }
+
+    /// Set the error for this response (converts to error response)
+    pub fn set_error(&mut self, error: JsonRpcError) {
+        self.payload = JsonRpcResponsePayload::Error { error };
     }
 }
 
@@ -397,20 +491,39 @@ mod tests {
 
         assert!(response.is_success());
         assert!(!response.is_error());
-        assert!(response.result.is_some());
-        assert!(response.error.is_none());
+        assert!(response.result().is_some());
+        assert!(response.error().is_none());
+        assert!(!response.is_parse_error());
     }
 
     #[test]
     fn test_error_response() {
         let error = JsonRpcError::from(JsonRpcErrorCode::MethodNotFound);
         let response =
-            JsonRpcResponse::error(error, Some(RequestId::String("test-id".to_string())));
+            JsonRpcResponse::error_response(error, RequestId::String("test-id".to_string()));
 
         assert!(!response.is_success());
         assert!(response.is_error());
-        assert!(response.result.is_none());
-        assert!(response.error.is_some());
+        assert!(response.result().is_none());
+        assert!(response.error().is_some());
+        assert!(!response.is_parse_error());
+    }
+
+    #[test]
+    fn test_parse_error_response() {
+        let response = JsonRpcResponse::parse_error(Some("Invalid JSON".to_string()));
+
+        assert!(!response.is_success());
+        assert!(response.is_error());
+        assert!(response.result().is_none());
+        assert!(response.error().is_some());
+        assert!(response.is_parse_error());
+        assert!(response.request_id().is_none());
+
+        // Verify the error details
+        let error = response.error().unwrap();
+        assert_eq!(error.code, JsonRpcErrorCode::ParseError.code());
+        assert_eq!(error.message, "Invalid JSON");
     }
 
     #[test]

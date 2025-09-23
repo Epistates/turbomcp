@@ -175,11 +175,8 @@ impl ProtocolValidator {
     pub fn validate_request(&self, request: &JsonRpcRequest) -> ValidationResult {
         let mut ctx = ValidationContext::new();
 
-        // Validate JSON-RPC structure
+        // Validate JSON-RPC structure (includes method name validation)
         self.validate_jsonrpc_request(request, &mut ctx);
-
-        // Validate method name
-        self.validate_method_name(&request.method, &mut ctx);
 
         // Validate parameters based on method
         if let Some(params) = &request.params {
@@ -197,7 +194,9 @@ impl ProtocolValidator {
         self.validate_jsonrpc_response(response, &mut ctx);
 
         // Ensure either result or error is present (but not both)
-        match (response.result.is_some(), response.error.is_some()) {
+        // Note: This validation is now enforced at the type level with JsonRpcResponsePayload enum
+        // But we still validate for completeness
+        match (response.result().is_some(), response.error().is_some()) {
             (true, true) => {
                 ctx.add_error(
                     "RESPONSE_BOTH_RESULT_AND_ERROR",
@@ -359,26 +358,103 @@ impl ProtocolValidator {
 
     // Private validation methods
 
-    fn validate_jsonrpc_request(&self, _request: &JsonRpcRequest, _ctx: &mut ValidationContext) {
-        // Method name validation is done separately
+    fn validate_jsonrpc_request(&self, request: &JsonRpcRequest, ctx: &mut ValidationContext) {
+        // Validate JSON-RPC version (implicitly "2.0" via JsonRpcVersion type)
+        // This is handled by type system during deserialization
 
-        // Validate ID is present (required for requests)
-        // Note: ID validation is handled by the type system
+        // Validate method name - check length first, then format
+        if request.method.is_empty() {
+            ctx.add_error(
+                "EMPTY_METHOD_NAME",
+                "Method name cannot be empty".to_string(),
+                Some("method".to_string()),
+            );
+        } else if request.method.len() > self.rules.max_string_length {
+            ctx.add_error(
+                "METHOD_NAME_TOO_LONG",
+                format!(
+                    "Method name exceeds maximum length of {}",
+                    self.rules.max_string_length
+                ),
+                Some("method".to_string()),
+            );
+        } else if !utils::is_valid_method_name(&request.method) {
+            ctx.add_error(
+                "INVALID_METHOD_NAME",
+                format!("Invalid method name format: '{}'", request.method),
+                Some("method".to_string()),
+            );
+        }
+
+        // Validate parameters if present
+        if let Some(ref params) = request.params {
+            self.validate_parameters(params, ctx);
+        }
+
+        // Request ID is always present for requests (enforced by type system)
+        // Validate ID format if needed
+        self.validate_request_id(&request.id, ctx);
     }
 
     fn validate_jsonrpc_response(&self, response: &JsonRpcResponse, ctx: &mut ValidationContext) {
-        // Basic structure validation is handled by the type system
-        if let Some(error) = &response.error {
+        // Validate JSON-RPC version (implicitly "2.0" via JsonRpcVersion type)
+        // This is handled by type system during deserialization
+
+        // Validate response has either result or error (enforced by type system)
+        // Our JsonRpcResponsePayload enum ensures mutual exclusion
+
+        // Validate response ID
+        self.validate_response_id(&response.id, ctx);
+
+        // Validate error if present
+        if let Some(error) = response.error() {
             self.validate_jsonrpc_error(error, ctx);
+        }
+
+        // Validate result structure if present
+        if let Some(result) = response.result() {
+            self.validate_result_value(result, ctx);
         }
     }
 
     fn validate_jsonrpc_notification(
         &self,
-        _notification: &JsonRpcNotification,
-        _ctx: &mut ValidationContext,
+        notification: &JsonRpcNotification,
+        ctx: &mut ValidationContext,
     ) {
-        // Basic structure validation is handled by the type system
+        // Validate JSON-RPC version (implicitly "2.0" via JsonRpcVersion type)
+        // This is handled by type system during deserialization
+
+        // Validate method name - check length first, then format
+        if notification.method.is_empty() {
+            ctx.add_error(
+                "EMPTY_METHOD_NAME",
+                "Method name cannot be empty".to_string(),
+                Some("method".to_string()),
+            );
+        } else if notification.method.len() > self.rules.max_string_length {
+            ctx.add_error(
+                "METHOD_NAME_TOO_LONG",
+                format!(
+                    "Method name exceeds maximum length of {}",
+                    self.rules.max_string_length
+                ),
+                Some("method".to_string()),
+            );
+        } else if !utils::is_valid_method_name(&notification.method) {
+            ctx.add_error(
+                "INVALID_METHOD_NAME",
+                format!("Invalid method name format: '{}'", notification.method),
+                Some("method".to_string()),
+            );
+        }
+
+        // Validate parameters if present
+        if let Some(ref params) = notification.params {
+            self.validate_parameters(params, ctx);
+        }
+
+        // Notifications do NOT have an ID field (enforced by type system)
     }
 
     fn validate_jsonrpc_error(
@@ -524,6 +600,54 @@ impl ProtocolValidator {
             }
             _ => {} // Other types are fine
         }
+    }
+
+    fn validate_parameters(&self, params: &Value, ctx: &mut ValidationContext) {
+        // Validate parameter structure depth and content
+        self.validate_value_structure(params, "params", ctx);
+
+        // Additional parameter-specific validation
+        match params {
+            Value::Array(arr) => {
+                // Validate array parameters length
+                if arr.len() > self.rules.max_array_length {
+                    ctx.add_error(
+                        "PARAMS_ARRAY_TOO_LONG",
+                        format!(
+                            "Parameter array exceeds maximum length of {}",
+                            self.rules.max_array_length
+                        ),
+                        Some("params".to_string()),
+                    );
+                }
+            }
+            _ => {
+                // Other parameter types are acceptable
+            }
+        }
+    }
+
+    fn validate_request_id(&self, _id: &crate::types::RequestId, _ctx: &mut ValidationContext) {
+        // Request ID validation
+        // ID is always present for requests (enforced by type system)
+        // Additional ID format validation could be added here if needed
+    }
+
+    fn validate_response_id(&self, id: &crate::jsonrpc::ResponseId, _ctx: &mut ValidationContext) {
+        // Validate response ID semantics
+        if id.is_null() {
+            // Null ID is only valid for parse errors
+            // This should be checked at a higher level when the error type is known
+        }
+        // Additional response ID validation could be added here
+    }
+
+    fn validate_result_value(&self, result: &Value, ctx: &mut ValidationContext) {
+        // Validate result structure depth and content
+        self.validate_value_structure(result, "result", ctx);
+
+        // Additional result validation based on method type could be added here
+        // For now, we just validate general structure
     }
 }
 
