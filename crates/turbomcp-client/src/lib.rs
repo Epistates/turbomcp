@@ -48,7 +48,7 @@
 //! // List and call tools
 //! let tools = client.list_tools().await?;
 //! for tool in tools {
-//!     println!("Tool: {}", tool);
+//!     println!("Tool: {} - {}", tool.name, tool.description.as_deref().unwrap_or("No description"));
 //! }
 //!
 //! // Access resources
@@ -180,6 +180,7 @@ use turbomcp_protocol::types::{
     SetLevelRequest,
     SetLevelResult,
     SubscribeRequest,
+    Tool,
     UnsubscribeRequest,
 };
 use turbomcp_transport::{Transport, TransportMessage};
@@ -626,6 +627,7 @@ impl<T: Transport> Client<T> {
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 title: Some("TurboMCP Client".to_string()),
             },
+            _meta: None,
         };
 
         let protocol_response: ProtocolInitializeResult = self
@@ -646,14 +648,15 @@ impl<T: Transport> Client<T> {
         })
     }
 
-    /// List available tools from the server
+    /// List all available tools from the MCP server
     ///
-    /// Retrieves the list of tools that the server provides. Tools are functions
-    /// that can be called to perform specific operations on the server.
+    /// Returns a list of complete tool definitions with schemas that can be used
+    /// for form generation, validation, and documentation. Tools represent
+    /// executable functions provided by the server.
     ///
     /// # Returns
     ///
-    /// Returns a vector of tool names available on the server.
+    /// Returns a vector of complete `Tool` objects with schemas and metadata.
     ///
     /// # Errors
     ///
@@ -673,20 +676,51 @@ impl<T: Transport> Client<T> {
     ///
     /// let tools = client.list_tools().await?;
     /// for tool in tools {
-    ///     println!("Available tool: {}", tool);
+    ///     println!("Tool: {} - {}", tool.name, tool.description.as_deref().unwrap_or("No description"));
+    ///     // Access full inputSchema for form generation
+    ///     let schema = &tool.input_schema;
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn list_tools(&mut self) -> Result<Vec<String>> {
+    pub async fn list_tools(&mut self) -> Result<Vec<Tool>> {
         if !self.initialized {
             return Err(Error::bad_request("Client not initialized"));
         }
 
         // Send tools/list request with plugin middleware
         let response: ListToolsResult = self.execute_with_plugins("tools/list", None).await?;
-        let tool_names = response.tools.into_iter().map(|tool| tool.name).collect();
-        Ok(tool_names)
+        Ok(response.tools) // Return full Tool objects with schemas
+    }
+
+    /// List available tool names from the MCP server
+    ///
+    /// Returns only the tool names for cases where full schemas are not needed.
+    /// For most use cases, prefer `list_tools()` which provides complete tool definitions.
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of tool names available on the server.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// let tool_names = client.list_tool_names().await?;
+    /// for name in tool_names {
+    ///     println!("Available tool: {}", name);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn list_tool_names(&mut self) -> Result<Vec<String>> {
+        let tools = self.list_tools().await?;
+        Ok(tools.into_iter().map(|tool| tool.name).collect())
     }
 
     /// Call a tool on the server
@@ -733,6 +767,7 @@ impl<T: Transport> Client<T> {
         let request_data = CallToolRequest {
             name: name.to_string(),
             arguments: Some(arguments.unwrap_or_default()),
+            _meta: None,
         };
 
         with_plugins!(self, "tools/call", request_data, {
@@ -925,6 +960,7 @@ impl<T: Transport> Client<T> {
                 title: None,
             }),
             context: None,
+            _meta: None,
         };
 
         let serialized_params = serde_json::to_value(&request_params)?;
@@ -1006,6 +1042,7 @@ impl<T: Transport> Client<T> {
                 title: None,
             }),
             context,
+            _meta: None,
         };
 
         let serialized_params = serde_json::to_value(&request_params)?;
@@ -1078,6 +1115,7 @@ impl<T: Transport> Client<T> {
                 uri: resource_uri.to_string(),
             }),
             context,
+            _meta: None,
         };
 
         let serialized_params = serde_json::to_value(&request_params)?;
@@ -1218,6 +1256,7 @@ impl<T: Transport> Client<T> {
         // Send read_resource request
         let request = ReadResourceRequest {
             uri: uri.to_string(),
+            _meta: None,
         };
 
         let response: ReadResourceResult = self
@@ -1351,6 +1390,7 @@ impl<T: Transport> Client<T> {
         let request = GetPromptRequest {
             name: name.to_string(),
             arguments, // Support for parameter substitution
+            _meta: None,
         };
 
         self.execute_with_plugins("prompts/get", Some(serde_json::to_value(request).unwrap()))
@@ -2016,10 +2056,19 @@ impl<T: Transport> SharedClient<T> {
 
     /// List all available tools from the MCP server
     ///
-    /// Returns a list of tool names that can be called using `call_tool()`.
-    /// Tools represent executable functions provided by the server.
-    pub async fn list_tools(&self) -> Result<Vec<String>> {
+    /// Returns a list of complete tool definitions with schemas that can be used
+    /// for form generation, validation, and documentation. Tools represent
+    /// executable functions provided by the server.
+    pub async fn list_tools(&self) -> Result<Vec<Tool>> {
         self.inner.lock().await.list_tools().await
+    }
+
+    /// List available tool names from the MCP server
+    ///
+    /// Returns only the tool names for cases where full schemas are not needed.
+    /// For most use cases, prefer `list_tools()` which provides complete tool definitions.
+    pub async fn list_tool_names(&self) -> Result<Vec<String>> {
+        self.inner.lock().await.list_tool_names().await
     }
 
     /// Execute a tool with the given name and arguments

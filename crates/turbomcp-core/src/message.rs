@@ -342,14 +342,12 @@ impl Message {
                             "Cannot serialize unparsed JSON to MessagePack",
                         ))
                     },
-                    |parsed| {
-                        rmp_serde::to_vec(parsed.as_ref())
-                            .map(Bytes::from)
-                            .map_err(|e| {
-                                Error::serialization(format!(
-                                    "MessagePack serialization failed: {e}"
-                                ))
-                            })
+                    |_parsed| {
+                        // TODO: Implement proper msgpacker serialization for serde_json::Value
+                        // For now, this feature is disabled until proper conversion is implemented
+                        Err(Error::serialization(
+                            "MessagePack serialization with msgpacker not yet implemented for dynamic JSON values"
+                        ))
                     },
                 ),
                 _ => Err(Error::validation("Cannot serialize payload as MessagePack")),

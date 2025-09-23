@@ -872,6 +872,7 @@ pub trait LLMProvider: Send + Sync + std::fmt::Debug {
             }),
             model: Some(llm_response.model),
             stop_reason: llm_response.stop_reason,
+            _meta: None,
         };
 
         Ok(result)

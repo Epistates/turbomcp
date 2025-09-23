@@ -177,23 +177,23 @@ Command-line interface for interacting with MCP servers, testing, and debugging.
 ### Complete Framework (Recommended)
 ```toml
 [dependencies]
-turbomcp = "1.0.12"
+turbomcp = "1.0.13"
 ```
 
 ### Specific Layers Only
 ```toml
 [dependencies]
 # For building custom servers
-turbomcp-server = "1.0.12"
-turbomcp-transport = "1.0.12"
+turbomcp-server = "1.0.13"
+turbomcp-transport = "1.0.13"
 
-# For building custom clients  
-turbomcp-client = "1.0.12"
-turbomcp-protocol = "1.0.4"
+# For building custom clients
+turbomcp-client = "1.0.13"
+turbomcp-protocol = "1.0.13"
 
 # For low-level protocol work
-turbomcp-protocol = "1.0.4"
-turbomcp-core = "1.0.4"
+turbomcp-protocol = "1.0.13"
+turbomcp-core = "1.0.13"
 ```
 
 ### Development Tools

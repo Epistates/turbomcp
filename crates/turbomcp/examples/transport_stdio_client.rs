@@ -44,8 +44,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // List available tools
     let tools = client.list_tools().await?;
     tracing::info!("🛠️  Available tools: {}", tools.len());
-    for tool_name in &tools {
-        tracing::info!("  - {}", tool_name);
+    for tool in &tools {
+        tracing::info!(
+            "  - {} - {}",
+            tool.name,
+            tool.description.as_deref().unwrap_or("No description")
+        );
     }
 
     // Call some tools

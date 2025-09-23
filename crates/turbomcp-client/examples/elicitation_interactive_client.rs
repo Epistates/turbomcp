@@ -52,7 +52,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     eprintln!();
     eprintln!("Available tools:");
     for tool in &tools {
-        eprintln!("  • {}", tool);
+        eprintln!(
+            "  • {} - {}",
+            tool.name,
+            tool.description.as_deref().unwrap_or("No description")
+        );
     }
 
     // Interactive loop

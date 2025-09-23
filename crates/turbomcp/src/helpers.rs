@@ -26,6 +26,8 @@ pub const fn tool_success(content: Vec<Content>) -> CallToolResult {
     CallToolResult {
         content,
         is_error: Some(false),
+        structured_content: None,
+        _meta: None,
     }
 }
 
@@ -34,6 +36,8 @@ pub fn tool_error<S: AsRef<str>>(message: S) -> CallToolResult {
     CallToolResult {
         content: vec![error_text(message)],
         is_error: Some(true),
+        structured_content: None,
+        _meta: None,
     }
 }
 
@@ -54,6 +58,7 @@ pub fn prompt_result<S: AsRef<str>>(
             }),
         }],
         description: Some(description.as_ref().to_string()),
+        _meta: None,
     })
 }
 
@@ -70,5 +75,6 @@ pub fn resource_result<S: AsRef<str>>(
             text: content.as_ref().to_string(),
             meta: None,
         })],
+        _meta: None,
     })
 }

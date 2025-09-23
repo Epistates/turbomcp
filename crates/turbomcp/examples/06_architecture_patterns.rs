@@ -72,6 +72,8 @@ impl BuilderCalculator {
                     meta: None,
                 })],
                 is_error: None,
+                structured_content: None,
+                _meta: None,
             })
         }
 
@@ -104,6 +106,8 @@ impl BuilderCalculator {
                     meta: None,
                 })],
                 is_error: None,
+                structured_content: None,
+                _meta: None,
             })
         }
 

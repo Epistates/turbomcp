@@ -329,6 +329,8 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                                         meta: None,
                                     })],
                                     is_error: None,
+                                    structured_content: None,
+                                    _meta: None,
                                 })
                             }
                         )
@@ -366,6 +368,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                                                 meta: None,
                                             }),
                                         }],
+                                        _meta: None,
                                     })
                                 }
                             }
@@ -413,6 +416,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                                             text: resource_content,
                                             meta: None,
                                         })],
+                                        _meta: None,
                                     })
                                 }
                             }
@@ -460,6 +464,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                 let request = CallToolRequest {
                     name: tool_name.to_string(),
                     arguments: args_map,
+                    _meta: None,
                 };
 
                 let ctx = RequestContext::new();

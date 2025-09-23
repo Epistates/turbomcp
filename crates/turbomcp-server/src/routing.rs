@@ -349,6 +349,7 @@ impl RequestRouter {
                     },
                     capabilities: self.get_server_capabilities(),
                     instructions: None,
+                    _meta: None,
                 };
 
                 self.success_response(&request, result)
@@ -366,6 +367,7 @@ impl RequestRouter {
         let result = ListToolsResult {
             tools,
             next_cursor: None,
+            _meta: None,
         };
         self.success_response(&request, result)
     }
@@ -492,6 +494,7 @@ impl RequestRouter {
         let result = ListPromptsResult {
             prompts,
             next_cursor: None,
+            _meta: None,
         };
         self.success_response(&request, result)
     }
@@ -528,6 +531,7 @@ impl RequestRouter {
         let result = ListResourcesResult {
             resources,
             next_cursor: None,
+            _meta: None,
         };
         self.success_response(&request, result)
     }
@@ -693,7 +697,7 @@ impl RequestRouter {
             roots
         };
 
-        let result = ListRootsResult { roots };
+        let result = ListRootsResult { roots, _meta: None };
         self.success_response(&request, result)
     }
 

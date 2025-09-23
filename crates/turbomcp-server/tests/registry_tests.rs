@@ -45,6 +45,8 @@ impl ToolHandler for MockToolHandler {
                 meta: None,
             })],
             is_error: Some(false),
+            structured_content: None,
+            _meta: None,
         })
     }
 
@@ -93,6 +95,7 @@ impl PromptHandler for MockPromptHandler {
                     meta: None,
                 }),
             }],
+            _meta: None,
         })
     }
 
@@ -135,6 +138,7 @@ impl ResourceHandler for MockResourceHandler {
                 text: "Mock resource content".to_string(),
                 meta: None,
             })],
+            _meta: None,
         })
     }
 
@@ -183,6 +187,7 @@ impl SamplingHandler for MockSamplingHandler {
             }),
             model: Some("mock-model".to_string()),
             stop_reason: Some("completed".to_string()),
+            _meta: None,
         })
     }
 }

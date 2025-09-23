@@ -248,7 +248,7 @@ impl ProductionSamplingHandler {
         // Create HTTP client with proper configuration
         let http_client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
-            .user_agent("turbomcp-client/1.0.12")
+            .user_agent("turbomcp-client/1.0.13")
             .build()
             .map_err(|e| LLMBackendError::Configuration {
                 message: format!("Failed to create HTTP client: {}", e),
@@ -469,6 +469,7 @@ impl ProductionSamplingHandler {
             }),
             model: Some(model_used.to_string()),
             stop_reason: Some(finish_reason.to_string()),
+            _meta: None,
         })
     }
 
@@ -587,6 +588,7 @@ impl ProductionSamplingHandler {
             }),
             model: Some(model_used.to_string()),
             stop_reason: Some(stop_reason.to_string()),
+            _meta: None,
         })
     }
 
@@ -744,6 +746,7 @@ impl SamplingHandler for DefaultSamplingHandler {
             }),
             model: Some("turbomcp-echo".to_string()),
             stop_reason: Some("complete".to_string()),
+            _meta: None,
         })
     }
 }
@@ -815,6 +818,7 @@ impl SamplingHandler for MockLLMHandler {
             }),
             model: Some(self.model_name.clone()),
             stop_reason: Some("complete".to_string()),
+            _meta: None,
         })
     }
 }

@@ -286,6 +286,8 @@ mod tests {
                     },
                 )],
                 is_error: None,
+                structured_content: None,
+                _meta: None,
             })
         });
 

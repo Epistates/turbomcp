@@ -99,6 +99,7 @@ impl SamplingHandler for DemoSamplingHandler {
             }),
             model: Some("demo-llm-v1".to_string()),
             stop_reason: Some("complete".to_string()),
+            _meta: None,
         })
     }
 }
@@ -143,7 +144,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     {
         eprintln!("[Client] Available tools:");
         for tool in &tools_list {
-            eprintln!("  - {}", tool);
+            eprintln!(
+                "  - {} - {}",
+                tool.name,
+                tool.description.as_deref().unwrap_or("No description")
+            );
         }
 
         // Demo: Call each tool to trigger sampling

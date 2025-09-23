@@ -18,6 +18,7 @@ use turbomcp_client::handlers::{
     HandlerResult, LogHandler, LogMessage, ProgressHandler, ProgressNotification,
     ResourceChangeType, ResourceUpdateHandler, ResourceUpdateNotification,
 };
+use turbomcp_protocol::ProgressToken;
 use turbomcp_protocol::types::LogLevel;
 use turbomcp_transport::stdio::StdioTransport;
 
@@ -527,7 +528,7 @@ async fn test_default_handler_behaviors() {
     let progress_notification = ProgressNotification {
         operation_id: "test-op".to_string(),
         progress: ProtocolProgressNotification {
-            progress_token: "token".to_string(),
+            progress_token: ProgressToken::String("token".to_string()),
             progress: 50.0,
             total: Some(100.0),
             message: Some("Halfway done".to_string()),

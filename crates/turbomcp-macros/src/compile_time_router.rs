@@ -92,6 +92,7 @@ pub fn generate_router(
                     let request = ::turbomcp::CallToolRequest {
                         name: tool_name.to_string(),
                         arguments: args,
+                        _meta: None,
                     };
 
                     let ctx = ::turbomcp::RequestContext::new();
@@ -143,6 +144,7 @@ pub fn generate_router(
                     let request = ::turbomcp_protocol::GetPromptRequest {
                         name: #method_str.to_string(),
                         arguments: prompt_args,
+                        _meta: None,
                     };
 
                     let ctx = ::turbomcp::RequestContext::new();
@@ -160,6 +162,7 @@ pub fn generate_router(
                                         meta: None,
                                     }),
                                 }],
+                                _meta: None,
                             };
                             ::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
                                 serde_json::to_value(get_prompt_result).unwrap(),
@@ -207,6 +210,7 @@ pub fn generate_router(
                 } => {
                     let request = ::turbomcp_protocol::ReadResourceRequest {
                         uri: resource_uri.to_string(),
+                        _meta: None,
                     };
 
                     let ctx = ::turbomcp::RequestContext::new();
@@ -221,6 +225,7 @@ pub fn generate_router(
                                     text: result,
                                     meta: None,
                                 })],
+                                _meta: None,
                             };
                             ::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
                                 serde_json::to_value(read_resource_result).unwrap(),

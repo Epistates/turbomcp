@@ -59,6 +59,7 @@ async fn test_openai_backend_basic_conversation() {
         max_tokens: 10,
         stop_sequences: None,
         metadata: None,
+        _meta: None,
     };
 
     let result = handler.handle_create_message(request).await;
@@ -137,6 +138,7 @@ async fn test_anthropic_backend_basic_conversation() {
         max_tokens: 20,
         stop_sequences: None,
         metadata: None,
+        _meta: None,
     };
 
     let result = handler.handle_create_message(request).await;
@@ -231,6 +233,7 @@ async fn test_conversation_context_management() {
         max_tokens: 30,
         stop_sequences: None,
         metadata: None,
+        _meta: None,
     };
 
     let result = handler.handle_create_message(request).await;
@@ -299,6 +302,7 @@ async fn test_model_preferences_handling() {
         max_tokens: 10,
         stop_sequences: Some(vec!["exactly".to_string()]),
         metadata: None,
+        _meta: None,
     };
 
     let result = handler.handle_create_message(request).await;
@@ -347,6 +351,7 @@ async fn test_invalid_api_key_error_handling() {
         max_tokens: 10,
         stop_sequences: None,
         metadata: None,
+        _meta: None,
     };
 
     let result = handler.handle_create_message(request).await;
@@ -395,6 +400,7 @@ async fn test_timeout_and_retry_logic() {
         max_tokens: 10,
         stop_sequences: None,
         metadata: None,
+        _meta: None,
     };
 
     let start = std::time::Instant::now();
@@ -501,6 +507,7 @@ async fn test_content_types_handling() {
         max_tokens: 5,
         stop_sequences: None,
         metadata: None,
+        _meta: None,
     };
 
     let result = handler.handle_create_message(request).await;
@@ -565,6 +572,7 @@ async fn test_mcp_protocol_compliance() {
         max_tokens: 50,
         stop_sequences: Some(vec!["\n".to_string()]),
         metadata: None,
+        _meta: None,
     };
 
     let result = handler.handle_create_message(request).await;

@@ -196,6 +196,8 @@ pub fn generate_tool_result(input: TokenStream) -> TokenStream {
         ::turbomcp_protocol::types::CallToolResult {
             content: vec![#(#content_items),*],
             is_error: Some(#is_error),
+            structured_content: None,
+            _meta: None,
         }
     };
 

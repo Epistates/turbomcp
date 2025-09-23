@@ -28,6 +28,8 @@ fn dummy_tool_handler(
                 meta: None,
             })],
             is_error: Some(false),
+            structured_content: None,
+            _meta: None,
         })
     })
 }
@@ -45,6 +47,7 @@ fn dummy_resource_handler(
                 text: "dummy resource".to_string(),
                 meta: None,
             })],
+            _meta: None,
         })
     })
 }
@@ -58,6 +61,7 @@ fn dummy_prompt_handler(
         Ok(GetPromptResult {
             description: Some("dummy prompt".to_string()),
             messages: vec![],
+            _meta: None,
         })
     })
 }

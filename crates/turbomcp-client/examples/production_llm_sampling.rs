@@ -90,6 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             max_tokens: 100,
             stop_sequences: None,
             metadata: None,
+            _meta: None,
         };
 
         match handler.handle_create_message(request).await {
@@ -148,6 +149,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             max_tokens: 50,
             stop_sequences: None,
             metadata: None,
+            _meta: None,
         };
 
         match handler.handle_create_message(multi_turn_request).await {
@@ -208,6 +210,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             max_tokens: 100,
             stop_sequences: Some(vec!["!".to_string()]),
             metadata: None,
+            _meta: None,
         };
 
         match handler.handle_create_message(request).await {
@@ -264,6 +267,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         max_tokens: 10,
         stop_sequences: None,
         metadata: None,
+        _meta: None,
     };
 
     match handler.handle_create_message(error_test_request).await {
