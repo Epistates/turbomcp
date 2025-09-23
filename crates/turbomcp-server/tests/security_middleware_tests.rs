@@ -22,17 +22,12 @@ async fn test_security_headers_default_config() -> ServerResult<()> {
     middleware.process_request(&mut request, &mut ctx).await?;
 
     // Response processing should add security headers
-    let mut response = JsonRpcResponse {
-        jsonrpc: JsonRpcVersion,
-        result: Some(json!({"status": "ok"})),
-        error: None,
-        id: Some(MessageId::from("test-1")),
-    };
+    let mut response = JsonRpcResponse::success(json!({"status": "ok"}), MessageId::from("test-1"));
 
     middleware.process_response(&mut response, &ctx).await?;
 
     // Check that security headers were added to response
-    let result = response.result.as_ref().unwrap();
+    let result = response.result().unwrap();
     let security_headers = result.get("_security_headers").unwrap();
 
     assert!(security_headers.get("Content-Security-Policy").is_some());
@@ -78,17 +73,12 @@ async fn test_security_headers_relaxed_config() -> ServerResult<()> {
 
     middleware.process_request(&mut request, &mut ctx).await?;
 
-    let mut response = JsonRpcResponse {
-        jsonrpc: JsonRpcVersion,
-        result: Some(json!({"status": "ok"})),
-        error: None,
-        id: Some(MessageId::from("test-2")),
-    };
+    let mut response = JsonRpcResponse::success(json!({"status": "ok"}), MessageId::from("test-2"));
 
     middleware.process_response(&mut response, &ctx).await?;
 
     // Check relaxed configuration
-    let result = response.result.as_ref().unwrap();
+    let result = response.result().unwrap();
     let security_headers = result.get("_security_headers").unwrap();
 
     let csp = security_headers
@@ -123,17 +113,12 @@ async fn test_security_headers_strict_config() -> ServerResult<()> {
 
     middleware.process_request(&mut request, &mut ctx).await?;
 
-    let mut response = JsonRpcResponse {
-        jsonrpc: JsonRpcVersion,
-        result: Some(json!({"status": "ok"})),
-        error: None,
-        id: Some(MessageId::from("test-3")),
-    };
+    let mut response = JsonRpcResponse::success(json!({"status": "ok"}), MessageId::from("test-3"));
 
     middleware.process_response(&mut response, &ctx).await?;
 
     // Check strict configuration
-    let result = response.result.as_ref().unwrap();
+    let result = response.result().unwrap();
     let security_headers = result.get("_security_headers").unwrap();
 
     let csp = security_headers
@@ -181,17 +166,12 @@ async fn test_security_headers_custom_config() -> ServerResult<()> {
 
     middleware.process_request(&mut request, &mut ctx).await?;
 
-    let mut response = JsonRpcResponse {
-        jsonrpc: JsonRpcVersion,
-        result: Some(json!({"status": "ok"})),
-        error: None,
-        id: Some(MessageId::from("test-4")),
-    };
+    let mut response = JsonRpcResponse::success(json!({"status": "ok"}), MessageId::from("test-4"));
 
     middleware.process_response(&mut response, &ctx).await?;
 
     // Check custom CSP
-    let result = response.result.as_ref().unwrap();
+    let result = response.result().unwrap();
     let security_headers = result.get("_security_headers").unwrap();
 
     let csp = security_headers
@@ -286,17 +266,12 @@ async fn test_security_headers_integration() -> ServerResult<()> {
 
     let (_request, ctx) = stack.process_request(request, ctx).await?;
 
-    let response = JsonRpcResponse {
-        jsonrpc: JsonRpcVersion,
-        result: Some(json!({"status": "ok"})),
-        error: None,
-        id: Some(MessageId::from("test-5")),
-    };
+    let response = JsonRpcResponse::success(json!({"status": "ok"}), MessageId::from("test-5"));
 
     let response = stack.process_response(response, &ctx).await?;
 
     // Verify security headers were applied
-    let result = response.result.as_ref().unwrap();
+    let result = response.result().unwrap();
     assert!(result.get("_security_headers").is_some());
 
     Ok(())

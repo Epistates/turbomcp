@@ -580,9 +580,10 @@ impl McpServer {
                         };
                         let response = turbomcp_protocol::jsonrpc::JsonRpcResponse {
                             jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-                            id: None,
-                            result: None,
-                            error: Some(error),
+                            id: turbomcp_protocol::jsonrpc::ResponseId::null(),
+                            payload: turbomcp_protocol::jsonrpc::JsonRpcResponsePayload::Error {
+                                error,
+                            },
                         };
                         let reply = TransportMessage::with_metadata(
                             message.id,
@@ -609,13 +610,14 @@ impl McpServer {
                         // Return error response for middleware rejection
                         let error_response = turbomcp_protocol::jsonrpc::JsonRpcResponse {
                             jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-                            id: None,
-                            result: None,
-                            error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
-                                code: -32603,
-                                message: format!("Middleware error: {e}"),
-                                data: None,
-                            }),
+                            id: turbomcp_protocol::jsonrpc::ResponseId::null(),
+                            payload: turbomcp_protocol::jsonrpc::JsonRpcResponsePayload::Error {
+                                error: turbomcp_protocol::jsonrpc::JsonRpcError {
+                                    code: -32603,
+                                    message: format!("Middleware error: {e}"),
+                                    data: None,
+                                },
+                            },
                         };
                         let mut reply = TransportMessage::new(
                             turbomcp_core::MessageId::from("error"),
@@ -644,13 +646,14 @@ impl McpServer {
                     Ok(r) => r,
                     Err(e) => turbomcp_protocol::jsonrpc::JsonRpcResponse {
                         jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-                        id: None,
-                        result: None,
-                        error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
-                            code: e.error_code(),
-                            message: e.to_string(),
-                            data: None,
-                        }),
+                        id: turbomcp_protocol::jsonrpc::ResponseId::null(),
+                        payload: turbomcp_protocol::jsonrpc::JsonRpcResponsePayload::Error {
+                            error: turbomcp_protocol::jsonrpc::JsonRpcError {
+                                code: e.error_code(),
+                                message: e.to_string(),
+                                data: None,
+                            },
+                        },
                     },
                 };
 
@@ -677,19 +680,9 @@ impl McpServer {
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to parse JSON-RPC message");
                 // Return proper JSON-RPC parse error response (RFC compliant)
-                let error_response = turbomcp_protocol::jsonrpc::JsonRpcResponse {
-                    jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-                    id: None, // Parse error means we couldn't extract ID
-                    result: None,
-                    error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
-                        code: -32700, // Parse error as per JSON-RPC 2.0 spec
-                        message: "Parse error".to_string(),
-                        data: Some(serde_json::Value::String(format!(
-                            "Invalid JSON-RPC: {}",
-                            e
-                        ))),
-                    }),
-                };
+                let error_response = turbomcp_protocol::jsonrpc::JsonRpcResponse::parse_error(
+                    Some(format!("Invalid JSON-RPC: {}", e)),
+                );
                 serde_json::to_string(&error_response).ok()
             }
         };
@@ -743,9 +736,10 @@ impl McpServer {
                         };
                         let response = turbomcp_protocol::jsonrpc::JsonRpcResponse {
                             jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-                            id: None,
-                            result: None,
-                            error: Some(error),
+                            id: turbomcp_protocol::jsonrpc::ResponseId::null(),
+                            payload: turbomcp_protocol::jsonrpc::JsonRpcResponsePayload::Error {
+                                error,
+                            },
                         };
                         let reply = TransportMessage::with_metadata(
                             message.id,
@@ -772,13 +766,14 @@ impl McpServer {
                         // Return error response for middleware rejection
                         let error_response = turbomcp_protocol::jsonrpc::JsonRpcResponse {
                             jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-                            id: None,
-                            result: None,
-                            error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
-                                code: -32603,
-                                message: format!("Middleware error: {e}"),
-                                data: None,
-                            }),
+                            id: turbomcp_protocol::jsonrpc::ResponseId::null(),
+                            payload: turbomcp_protocol::jsonrpc::JsonRpcResponsePayload::Error {
+                                error: turbomcp_protocol::jsonrpc::JsonRpcError {
+                                    code: -32603,
+                                    message: format!("Middleware error: {e}"),
+                                    data: None,
+                                },
+                            },
                         };
                         let mut reply = TransportMessage::new(
                             turbomcp_core::MessageId::from("error"),
@@ -807,13 +802,14 @@ impl McpServer {
                     Ok(r) => r,
                     Err(e) => turbomcp_protocol::jsonrpc::JsonRpcResponse {
                         jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-                        id: None,
-                        result: None,
-                        error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
-                            code: e.error_code(),
-                            message: e.to_string(),
-                            data: None,
-                        }),
+                        id: turbomcp_protocol::jsonrpc::ResponseId::null(),
+                        payload: turbomcp_protocol::jsonrpc::JsonRpcResponsePayload::Error {
+                            error: turbomcp_protocol::jsonrpc::JsonRpcError {
+                                code: e.error_code(),
+                                message: e.to_string(),
+                                data: None,
+                            },
+                        },
                     },
                 };
 
@@ -842,19 +838,9 @@ impl McpServer {
                     tracing::warn!(error = %e, "Failed to parse JSON-RPC message");
                 }
                 // Return proper JSON-RPC parse error response (RFC compliant)
-                let error_response = turbomcp_protocol::jsonrpc::JsonRpcResponse {
-                    jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-                    id: None, // Parse error means we couldn't extract ID
-                    result: None,
-                    error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
-                        code: -32700, // Parse error as per JSON-RPC 2.0 spec
-                        message: "Parse error".to_string(),
-                        data: Some(serde_json::Value::String(format!(
-                            "Invalid JSON-RPC: {}",
-                            e
-                        ))),
-                    }),
-                };
+                let error_response = turbomcp_protocol::jsonrpc::JsonRpcResponse::parse_error(
+                    Some(format!("Invalid JSON-RPC: {}", e)),
+                );
                 serde_json::to_string(&error_response).ok()
             }
         };
@@ -1001,16 +987,7 @@ mod tests {
         );
 
         // Verify the error response format that the server now creates
-        let error_response = turbomcp_protocol::jsonrpc::JsonRpcResponse {
-            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-            id: None, // Parse error means we couldn't extract ID
-            result: None,
-            error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
-                code: -32700, // Parse error as per JSON-RPC 2.0 spec
-                message: "Parse error".to_string(),
-                data: Some(Value::String("Invalid JSON-RPC".to_string())),
-            }),
-        };
+        let error_response = turbomcp_protocol::jsonrpc::JsonRpcResponse::parse_error(None);
 
         // Verify it serializes to valid JSON
         let serialized = serde_json::to_string(&error_response);
@@ -1026,6 +1003,6 @@ mod tests {
         assert_eq!(parsed_response["jsonrpc"], "2.0");
         assert_eq!(parsed_response["error"]["code"], -32700);
         assert_eq!(parsed_response["error"]["message"], "Parse error");
-        assert!(parsed_response["error"]["data"].is_string());
+        assert!(parsed_response["error"]["data"].is_null());
     }
 }

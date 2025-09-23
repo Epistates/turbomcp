@@ -20,12 +20,10 @@ impl RouteHandler for SimpleRouteHandler {
         request: JsonRpcRequest,
         _ctx: RequestContext,
     ) -> ServerResult<JsonRpcResponse> {
-        Ok(JsonRpcResponse {
-            jsonrpc: JsonRpcVersion,
-            id: Some(request.id),
-            result: Some(json!({"status": "success"})),
-            error: None,
-        })
+        Ok(JsonRpcResponse::success(
+            json!({"status": "success"}),
+            request.id,
+        ))
     }
 
     fn can_handle(&self, method: &str) -> bool {
@@ -193,9 +191,9 @@ async fn test_route_method_not_found() {
     let ctx = create_test_context();
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
-    assert!(response.error.is_some());
+    assert!(response.error().is_some());
 
-    if let Some(error) = response.error {
+    if let Some(error) = response.error() {
         assert_eq!(error.code, -32601); // Method not found
     }
 }
@@ -227,7 +225,7 @@ async fn test_route_initialize_request() {
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     // Initialize should return a response (either success or error)
-    assert!(response.result.is_some() || response.error.is_some());
+    assert!(response.result().is_some() || response.error().is_some());
 }
 
 #[tokio::test]
@@ -245,7 +243,7 @@ async fn test_route_tools_list_request() {
     let ctx = create_test_context();
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
-    assert!(response.result.is_some() || response.error.is_some());
+    assert!(response.result().is_some() || response.error().is_some());
 }
 
 // ============================================================================
@@ -303,7 +301,7 @@ async fn test_route_resource_methods() {
         let response = router.route(request, ctx).await;
         assert_eq!(response.jsonrpc, JsonRpcVersion);
         // Should handle all resource methods
-        assert!(response.result.is_some() || response.error.is_some());
+        assert!(response.result().is_some() || response.error().is_some());
     }
 }
 
@@ -329,7 +327,7 @@ async fn test_route_logging_and_sampling() {
         let ctx = create_test_context();
         let response = router.route(request, ctx).await;
         assert_eq!(response.jsonrpc, JsonRpcVersion);
-        assert!(response.result.is_some() || response.error.is_some());
+        assert!(response.result().is_some() || response.error().is_some());
     }
 }
 
@@ -352,7 +350,7 @@ async fn test_route_empty_method() {
     let ctx = create_test_context();
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
-    assert!(response.error.is_some()); // Should return method not found
+    assert!(response.error().is_some()); // Should return method not found
 }
 
 #[tokio::test]
@@ -371,7 +369,7 @@ async fn test_route_very_long_method() {
     let ctx = create_test_context();
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
-    assert!(response.error.is_some()); // Should return method not found
+    assert!(response.error().is_some()); // Should return method not found
 }
 
 // ============================================================================
@@ -408,11 +406,11 @@ async fn test_custom_route_integration() {
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     // Custom route should either succeed or fail gracefully
-    assert!(response.result.is_some() || response.error.is_some());
+    assert!(response.result().is_some() || response.error().is_some());
 
-    if let Some(result) = response.result {
+    if let Some(result) = response.result() {
         assert_eq!(result["status"], "success");
-    } else if let Some(error) = response.error {
+    } else if let Some(error) = response.error() {
         // It's OK if the custom route isn't found - the routing system is still working
         println!("Custom route returned error: {}", error.message);
     }
@@ -460,7 +458,7 @@ async fn test_router_different_configurations() {
         let response = router.route(request, ctx).await;
         assert_eq!(response.jsonrpc, JsonRpcVersion);
         // All configurations should handle basic requests
-        assert!(response.result.is_some() || response.error.is_some());
+        assert!(response.result().is_some() || response.error().is_some());
     }
 }
 
@@ -496,6 +494,6 @@ async fn test_simple_route_handler_handle() {
     let ctx = create_test_context();
     let response = handler.handle(request, ctx).await.unwrap();
     assert_eq!(response.jsonrpc, JsonRpcVersion);
-    assert!(response.result.is_some());
-    assert!(response.error.is_none());
+    assert!(response.result().is_some());
+    assert!(response.error().is_none());
 }

@@ -70,12 +70,10 @@ impl RouteHandler for MockCustomHandler {
         _ctx: RequestContext,
     ) -> ServerResult<JsonRpcResponse> {
         if self.should_succeed {
-            Ok(JsonRpcResponse {
-                jsonrpc: JsonRpcVersion,
-                id: Some(RequestId::String("test".to_string())),
-                result: Some(self.response_data.clone()),
-                error: None,
-            })
+            Ok(JsonRpcResponse::success(
+                self.response_data.clone(),
+                RequestId::String("test".to_string()),
+            ))
         } else {
             Err(ServerError::Internal("Mock handler error".to_string()))
         }
@@ -281,10 +279,10 @@ async fn test_custom_route_handler_execution() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_some());
-    assert!(response.error.is_none());
+    assert!(response.result().is_some());
+    assert!(response.error().is_none());
 
-    if let Some(result) = response.result {
+    if let Some(result) = response.result() {
         assert_eq!(result["message"], "custom handler worked");
     }
 }
@@ -302,8 +300,8 @@ async fn test_custom_route_handler_error() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
 }
 
 // ========== Protocol Method Tests ==========
@@ -330,14 +328,14 @@ async fn test_handle_initialize() {
     let response = router.route(request, ctx).await;
 
     // Debug the response if it fails
-    if response.error.is_some() {
-        println!("Initialize error: {:?}", response.error);
+    if response.error().is_some() {
+        println!("Initialize error: {:?}", response.error());
     }
 
-    assert!(response.result.is_some());
-    assert!(response.error.is_none());
+    assert!(response.result().is_some());
+    assert!(response.error().is_none());
 
-    if let Some(result) = response.result {
+    if let Some(result) = response.result() {
         assert!(result.get("protocolVersion").is_some());
         assert!(result.get("serverInfo").is_some());
         assert!(result.get("capabilities").is_some());
@@ -353,10 +351,10 @@ async fn test_handle_initialize_missing_params() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
 
-    if let Some(error) = response.error {
+    if let Some(error) = response.error() {
         assert!(error.message.contains("Missing required parameters"));
     }
 }
@@ -370,10 +368,10 @@ async fn test_handle_list_tools_empty() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_some());
-    assert!(response.error.is_none());
+    assert!(response.result().is_some());
+    assert!(response.error().is_none());
 
-    if let Some(result) = response.result {
+    if let Some(result) = response.result() {
         assert!(result.get("tools").is_some());
         if let Some(tools) = result.get("tools").and_then(|t| t.as_array()) {
             assert!(tools.is_empty());
@@ -395,10 +393,10 @@ async fn test_handle_call_tool_not_found() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
 
-    if let Some(error) = response.error {
+    if let Some(error) = response.error() {
         assert!(error.message.contains("Tool 'nonexistent_tool'"));
     }
 }
@@ -412,8 +410,8 @@ async fn test_handle_list_prompts_empty() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_some());
-    assert!(response.error.is_none());
+    assert!(response.result().is_some());
+    assert!(response.error().is_none());
 }
 
 #[tokio::test]
@@ -430,10 +428,10 @@ async fn test_handle_get_prompt_not_found() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
 
-    if let Some(error) = response.error {
+    if let Some(error) = response.error() {
         assert!(error.message.contains("Prompt 'nonexistent_prompt'"));
     }
 }
@@ -447,8 +445,8 @@ async fn test_handle_list_resources_empty() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_some());
-    assert!(response.error.is_none());
+    assert!(response.result().is_some());
+    assert!(response.error().is_none());
 }
 
 #[tokio::test]
@@ -464,8 +462,8 @@ async fn test_handle_read_resource_not_found() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
 }
 
 // ========== Resource Subscription Tests ==========
@@ -483,8 +481,8 @@ async fn test_resource_subscribe_success() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_some());
-    assert!(response.error.is_none());
+    assert!(response.result().is_some());
+    assert!(response.error().is_none());
 }
 
 #[tokio::test]
@@ -504,7 +502,7 @@ async fn test_resource_subscribe_multiple() {
         let ctx = create_test_context();
 
         let response = router.route(request, ctx).await;
-        assert!(response.result.is_some(), "Subscription {} failed", i + 1);
+        assert!(response.result().is_some(), "Subscription {} failed", i + 1);
     }
 }
 
@@ -522,7 +520,7 @@ async fn test_resource_unsubscribe_success() {
     let sub_request = create_basic_request("resources/subscribe", Some(sub_params));
     let ctx = create_test_context();
     let sub_response = router.route(sub_request, ctx.clone()).await;
-    assert!(sub_response.result.is_some());
+    assert!(sub_response.result().is_some());
 
     // Then unsubscribe
     let unsub_params = json!({
@@ -530,8 +528,8 @@ async fn test_resource_unsubscribe_success() {
     });
     let unsub_request = create_basic_request("resources/unsubscribe", Some(unsub_params));
     let unsub_response = router.route(unsub_request, ctx).await;
-    assert!(unsub_response.result.is_some());
-    assert!(unsub_response.error.is_none());
+    assert!(unsub_response.result().is_some());
+    assert!(unsub_response.error().is_none());
 }
 
 #[tokio::test]
@@ -547,8 +545,8 @@ async fn test_resource_unsubscribe_nonexistent() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_some()); // Should still succeed
-    assert!(response.error.is_none());
+    assert!(response.result().is_some()); // Should still succeed
+    assert!(response.error().is_none());
 }
 
 #[tokio::test]
@@ -571,13 +569,13 @@ async fn test_resource_subscription_counter_management() {
     let unsub_request = create_basic_request("resources/unsubscribe", Some(unsub_params));
     let ctx = create_test_context();
     let response = router.route(unsub_request, ctx.clone()).await;
-    assert!(response.result.is_some());
+    assert!(response.result().is_some());
 
     // Unsubscribe again (should be fully unsubscribed)
     let unsub_params2 = json!({"uri": uri});
     let unsub_request2 = create_basic_request("resources/unsubscribe", Some(unsub_params2));
     let response2 = router.route(unsub_request2, ctx).await;
-    assert!(response2.result.is_some());
+    assert!(response2.result().is_some());
 }
 
 // ========== Logging and Sampling Handler Tests ==========
@@ -595,10 +593,10 @@ async fn test_handle_set_log_level_no_handler() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
 
-    if let Some(error) = response.error {
+    if let Some(error) = response.error() {
         assert!(error.message.contains("No logging handler available"));
     }
 }
@@ -625,10 +623,10 @@ async fn test_handle_create_message_no_handler() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
 
-    if let Some(error) = response.error {
+    if let Some(error) = response.error() {
         assert!(error.message.contains("No sampling handler available"));
     }
 }
@@ -644,10 +642,10 @@ async fn test_handle_list_roots() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_some());
-    assert!(response.error.is_none());
+    assert!(response.result().is_some());
+    assert!(response.error().is_none());
 
-    if let Some(result) = response.result {
+    if let Some(result) = response.result() {
         assert!(result.get("roots").is_some());
         if let Some(roots) = result.get("roots").and_then(|r| r.as_array()) {
             // Should have at least one root on any OS
@@ -667,10 +665,10 @@ async fn test_method_not_found() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
 
-    if let Some(error) = response.error {
+    if let Some(error) = response.error() {
         assert_eq!(error.code, -32601); // Method not found
         assert!(
             error
@@ -701,7 +699,7 @@ async fn test_request_validation_disabled() {
 
     // Should get an error since the method is empty and validation is disabled
     // The error might be "Method not found" or similar since validation is disabled
-    assert!(response.error.is_some());
+    assert!(response.error().is_some());
 }
 
 #[tokio::test]
@@ -718,7 +716,7 @@ async fn test_response_validation_disabled() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_some());
+    assert!(response.result().is_some());
 }
 
 // ========== Batch Request Tests ==========
@@ -743,7 +741,7 @@ async fn test_route_batch_single_request() {
 
     let responses = router.route_batch(vec![request], ctx).await;
     assert_eq!(responses.len(), 1);
-    assert!(responses[0].result.is_some());
+    assert!(responses[0].result().is_some());
 }
 
 #[tokio::test]
@@ -762,7 +760,7 @@ async fn test_route_batch_multiple_requests() {
     assert_eq!(responses.len(), 3);
 
     for response in responses {
-        assert!(response.result.is_some());
+        assert!(response.result().is_some());
     }
 }
 
@@ -781,9 +779,9 @@ async fn test_route_batch_with_errors() {
     let responses = router.route_batch(requests, ctx).await;
     assert_eq!(responses.len(), 3);
 
-    assert!(responses[0].result.is_some()); // tools/list
-    assert!(responses[1].error.is_some()); // nonexistent/method
-    assert!(responses[2].result.is_some()); // prompts/list
+    assert!(responses[0].result().is_some()); // tools/list
+    assert!(responses[1].error().is_some()); // nonexistent/method
+    assert!(responses[2].result().is_some()); // prompts/list
 }
 
 #[tokio::test]
@@ -810,7 +808,7 @@ async fn test_route_batch_concurrent_limit() {
 
     // All should succeed despite the limit
     for response in responses {
-        assert!(response.result.is_some());
+        assert!(response.result().is_some());
     }
 }
 
@@ -830,10 +828,10 @@ async fn test_parse_params_invalid_json() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
 
-    if let Some(error) = response.error {
+    if let Some(error) = response.error() {
         assert!(error.message.contains("Invalid parameters"));
     }
 }
@@ -855,8 +853,8 @@ async fn test_resource_pattern_matching_via_read() {
 
     let response = router.route(request, ctx).await;
     // Should get "not found" since no handlers registered
-    assert!(response.error.is_some());
-    if let Some(error) = response.error {
+    assert!(response.error().is_some());
+    if let Some(error) = response.error() {
         assert!(error.message.contains("Resource"));
     }
 }
@@ -881,9 +879,9 @@ async fn test_server_capabilities_via_initialize() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_some());
+    assert!(response.result().is_some());
 
-    if let Some(result) = response.result {
+    if let Some(result) = response.result() {
         let capabilities = result.get("capabilities");
         assert!(capabilities.is_some());
 
@@ -906,10 +904,10 @@ async fn test_error_response_via_invalid_method() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_none());
-    assert!(response.error.is_some());
+    assert!(response.result().is_none());
+    assert!(response.error().is_some());
 
-    if let Some(error) = response.error {
+    if let Some(error) = response.error() {
         assert_eq!(error.code, -32601);
         assert!(error.message.contains("Method 'unknown/method' not found"));
     }
@@ -924,9 +922,12 @@ async fn test_success_response_via_valid_request() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.result.is_some());
-    assert!(response.error.is_none());
-    assert_eq!(response.id, Some(RequestId::String("test-1".to_string())));
+    assert!(response.result().is_some());
+    assert!(response.error().is_none());
+    assert_eq!(
+        response.id,
+        ResponseId::from_request(RequestId::String("test-1".to_string()))
+    );
 }
 
 // ========== Edge Cases and Error Paths ==========
@@ -944,7 +945,7 @@ async fn test_invalid_subscribe_params() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.error.is_some());
+    assert!(response.error().is_some());
 }
 
 #[tokio::test]
@@ -960,7 +961,7 @@ async fn test_invalid_unsubscribe_params() {
     let ctx = create_test_context();
 
     let response = router.route(request, ctx).await;
-    assert!(response.error.is_some());
+    assert!(response.error().is_some());
 }
 
 #[tokio::test]
@@ -982,9 +983,9 @@ async fn test_custom_handler_multiple_methods() {
         let ctx = create_test_context();
 
         let response = router.route(request, ctx).await;
-        assert!(response.result.is_some());
+        assert!(response.result().is_some());
 
-        if let Some(result) = response.result {
+        if let Some(result) = response.result() {
             assert_eq!(result["multi"], "method");
         }
     }

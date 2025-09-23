@@ -24,7 +24,7 @@ async fn test_server_creation_default() {
 
     // Verify server components are initialized
     assert_eq!(server.config().name, "turbomcp-server");
-    assert_eq!(server.config().version, "1.0.10");
+    assert_eq!(server.config().version, "1.0.11");
 }
 
 #[tokio::test]
@@ -146,7 +146,7 @@ async fn test_server_request_routing_tools_list() {
 
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     // Should either succeed with tool list or fail gracefully
-    assert!(response.result.is_some() || response.error.is_some());
+    assert!(response.result().is_some() || response.error().is_some());
 }
 
 #[tokio::test]
@@ -177,7 +177,7 @@ async fn test_server_initialize_request() {
 
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     // Initialize should return a response (either success or error)
-    assert!(response.result.is_some() || response.error.is_some());
+    assert!(response.result().is_some() || response.error().is_some());
 }
 
 #[tokio::test]
@@ -205,7 +205,7 @@ async fn test_server_batch_request_processing() {
     assert_eq!(responses.len(), 2);
     for response in responses {
         assert_eq!(response.jsonrpc, JsonRpcVersion);
-        assert!(response.result.is_some() || response.error.is_some());
+        assert!(response.result().is_some() || response.error().is_some());
     }
 }
 
@@ -228,9 +228,9 @@ async fn test_server_unknown_method() {
     let response = server.router().route(request, ctx).await;
 
     assert_eq!(response.jsonrpc, JsonRpcVersion);
-    assert!(response.error.is_some());
+    assert!(response.error().is_some());
 
-    if let Some(error) = response.error {
+    if let Some(error) = response.error() {
         assert_eq!(error.code, -32601); // Method not found
     }
 }
@@ -253,7 +253,7 @@ async fn test_server_invalid_params() {
 
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     // Should handle invalid parameters gracefully
-    assert!(response.result.is_some() || response.error.is_some());
+    assert!(response.result().is_some() || response.error().is_some());
 }
 
 // ============================================================================
@@ -345,7 +345,7 @@ async fn test_server_large_request_batch() {
     assert_eq!(responses.len(), 25);
     for response in responses {
         assert_eq!(response.jsonrpc, JsonRpcVersion);
-        assert!(response.result.is_some() || response.error.is_some());
+        assert!(response.result().is_some() || response.error().is_some());
     }
 }
 
@@ -500,10 +500,10 @@ async fn test_complete_server_workflow() {
         assert_eq!(response.jsonrpc, JsonRpcVersion);
 
         // All requests should get some response (success or graceful error)
-        assert!(response.result.is_some() || response.error.is_some());
+        assert!(response.result().is_some() || response.error().is_some());
 
         // Log the response for debugging
-        if let Some(error) = &response.error {
+        if let Some(error) = response.error() {
             println!("Method {method} returned error: {error:?}");
         }
     }

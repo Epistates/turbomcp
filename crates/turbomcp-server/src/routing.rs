@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use turbomcp_core::RequestContext;
 use turbomcp_protocol::{
-    jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion},
+    jsonrpc::{JsonRpcRequest, JsonRpcResponse},
     types::{
         CallToolRequest,
         CompleteRequestParams,
@@ -905,38 +905,29 @@ impl RequestRouter {
     where
         T: serde::Serialize,
     {
-        JsonRpcResponse {
-            jsonrpc: JsonRpcVersion,
-            id: Some(request.id.clone()),
-            result: Some(serde_json::to_value(result).unwrap()),
-            error: None,
-        }
+        JsonRpcResponse::success(serde_json::to_value(result).unwrap(), request.id.clone())
     }
 
     fn error_response(&self, request: &JsonRpcRequest, error: ServerError) -> JsonRpcResponse {
-        JsonRpcResponse {
-            jsonrpc: JsonRpcVersion,
-            id: Some(request.id.clone()),
-            result: None,
-            error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
+        JsonRpcResponse::error_response(
+            turbomcp_protocol::jsonrpc::JsonRpcError {
                 code: error.error_code(),
                 message: error.to_string(),
                 data: None,
-            }),
-        }
+            },
+            request.id.clone(),
+        )
     }
 
     fn method_not_found_response(&self, request: &JsonRpcRequest) -> JsonRpcResponse {
-        JsonRpcResponse {
-            jsonrpc: JsonRpcVersion,
-            id: Some(request.id.clone()),
-            result: None,
-            error: Some(turbomcp_protocol::jsonrpc::JsonRpcError {
+        JsonRpcResponse::error_response(
+            turbomcp_protocol::jsonrpc::JsonRpcError {
                 code: -32601,
                 message: format!("Method '{}' not found", request.method),
                 data: None,
-            }),
-        }
+            },
+            request.id.clone(),
+        )
     }
 
     fn validate_request(&self, _request: &JsonRpcRequest) -> ServerResult<()> {

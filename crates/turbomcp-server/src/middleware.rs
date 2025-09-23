@@ -768,7 +768,7 @@ impl Middleware for LoggingMiddleware {
             let duration = ctx.start_time.elapsed();
             tracing::info!(
                 id = ?response.id,
-                has_error = response.error.is_some(),
+                has_error = response.error().is_some(),
                 duration_ms = duration.as_millis(),
                 "Request completed"
             );
@@ -1051,7 +1051,7 @@ impl Middleware for SecurityHeadersMiddleware {
 
         // Store security headers in the response for the transport layer to read
         // We add this as a special field that the transport can detect
-        if let Some(result) = &mut response.result {
+        if let Some(result) = response.result_mut() {
             if let Some(obj) = result.as_object_mut() {
                 obj.insert(
                     "_security_headers".to_string(),
@@ -1060,7 +1060,7 @@ impl Middleware for SecurityHeadersMiddleware {
             }
         } else {
             // If there's no result, add it as metadata
-            response.result = Some(serde_json::json!({
+            response.set_result(serde_json::json!({
                 "_security_headers": security_headers
             }));
         }
