@@ -350,7 +350,7 @@ async fn ws_send_request(
         serde_json::to_string(&request).map_err(|e| format!("Failed to serialize request: {e}"))?;
 
     ws_sender
-        .send(Message::Text(request_text))
+        .send(Message::Text(request_text.into()))
         .await
         .map_err(|e| format!("Failed to send WebSocket message: {e}"))?;
 

@@ -426,12 +426,28 @@ impl<T: Transport> Client<T> {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// use turbomcp_client::{Client, sampling::DefaultSamplingHandler};
+    /// use turbomcp_client::{Client, sampling::SamplingHandler};
     /// use turbomcp_transport::stdio::StdioTransport;
+    /// use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult};
+    /// use async_trait::async_trait;
     /// use std::sync::Arc;
     ///
+    /// #[derive(Debug)]
+    /// struct ExampleHandler;
+    ///
+    /// #[async_trait]
+    /// impl SamplingHandler for ExampleHandler {
+    ///     async fn handle_create_message(
+    ///         &self,
+    ///         _request: CreateMessageRequest,
+    ///     ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>> {
+    ///         // Handle sampling request
+    ///         todo!("Implement sampling logic")
+    ///     }
+    /// }
+    ///
     /// let mut client = Client::new(StdioTransport::new());
-    /// client.set_sampling_handler(Arc::new(DefaultSamplingHandler));
+    /// client.set_sampling_handler(Arc::new(ExampleHandler));
     /// ```
     pub fn set_sampling_handler(&mut self, handler: Arc<dyn SamplingHandler>) {
         self.sampling_handler = Some(handler);
