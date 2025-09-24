@@ -31,6 +31,7 @@ Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and 
 - Schema generation from Rust types
 
 ### 🤝 **Capability Management**
+- **Type-State Capability Builders** - Compile-time validated capability configuration (New in v1.1.0)
 - Server capabilities for tools, resources, prompts declarations
 - Client capabilities including sampling, roots, progress reporting
 - Feature negotiation with capability matching
@@ -187,7 +188,38 @@ match result {
 }
 ```
 
-### Capability Negotiation
+### Type-State Capability Builders (New in v1.1.0)
+
+```rust
+use turbomcp_protocol::capabilities::builders::{
+    ServerCapabilitiesBuilder, ClientCapabilitiesBuilder
+};
+
+// Compile-time validated server capabilities
+let server_caps = ServerCapabilitiesBuilder::new()
+    .enable_tools()                    // Enable tools capability
+    .enable_resources()                // Enable resources capability
+    .enable_prompts()                  // Enable prompts capability
+    .enable_tool_list_changed()        // ✅ Only available when tools enabled
+    .enable_resources_subscribe()      // ✅ Only available when resources enabled
+    .enable_resources_list_changed()   // ✅ Only available when resources enabled
+    .build();
+
+// Compile-time validated client capabilities
+let client_caps = ClientCapabilitiesBuilder::new()
+    .enable_roots()                    // Enable filesystem roots
+    .enable_sampling()                 // Enable LLM sampling
+    .enable_elicitation()              // Enable interactive forms
+    .enable_roots_list_changed()       // ✅ Only available when roots enabled
+    .build();
+
+// Convenience builders for common patterns
+let full_server = ServerCapabilitiesBuilder::full_featured().build();
+let minimal_server = ServerCapabilitiesBuilder::minimal().build();
+let sampling_client = ClientCapabilitiesBuilder::sampling_focused().build();
+```
+
+### Traditional Capability Negotiation
 
 ```rust
 use turbomcp_protocol::{
@@ -195,22 +227,22 @@ use turbomcp_protocol::{
     ToolCapability, ResourceCapability, PromptCapability
 };
 
-// Define server capabilities
+// Traditional approach (still supported)
 let server_caps = ServerCapabilities {
     tools: Some(ToolCapability {}),
-    resources: Some(ResourceCapability { 
+    resources: Some(ResourceCapability {
         subscribe: true,
-        list_changed: true 
+        list_changed: true
     }),
     prompts: Some(PromptCapability {}),
     experimental: None,
 };
 
-// Define client capabilities  
+// Define client capabilities
 let client_caps = ClientCapabilities {
     sampling: None,
-    roots: Some(RootCapability { 
-        list_changed: true 
+    roots: Some(RootCapability {
+        list_changed: true
     }),
     experimental: None,
 };

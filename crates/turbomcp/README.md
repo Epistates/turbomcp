@@ -32,6 +32,7 @@ Rust SDK for the Model Context Protocol (MCP) with comprehensive specification s
 
 ### 🎯 **Developer Experience**
 - **Procedural macros** - `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]`
+- **Type-State Capability Builders** - Compile-time validated capability configuration
 - **Automatic schema generation** - JSON schemas from Rust types
 - **Type-safe parameters** - Compile-time validation and conversion
 - **Context injection** - Request context available in handler signatures
@@ -109,7 +110,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.0.13"
+turbomcp = "1.1.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -159,6 +160,56 @@ turbomcp-cli tools-list --url http://localhost:8080/mcp
 # For STDIO server  
 turbomcp-cli tools-list --command "./target/debug/my-server"
 ```
+
+## Type-State Capability Builders (New in v1.1.0)
+
+TurboMCP provides compile-time validated capability builders that ensure correct configuration at build time:
+
+```rust
+use turbomcp_protocol::capabilities::builders::{ServerCapabilitiesBuilder, ClientCapabilitiesBuilder};
+
+// Server capabilities with compile-time validation
+let server_caps = ServerCapabilitiesBuilder::new()
+    .enable_tools()                    // Enable tools capability
+    .enable_prompts()                  // Enable prompts capability
+    .enable_resources()                // Enable resources capability
+    .enable_tool_list_changed()        // ✅ Only available when tools enabled
+    .enable_resources_subscribe()      // ✅ Only available when resources enabled
+    .build();
+
+// Usage in server macro
+#[server(
+    name = "my-server",
+    version = "1.0.0",
+    capabilities = ServerCapabilities::builder()
+        .enable_tools()
+        .enable_tool_list_changed()
+        .build()
+)]
+impl MyServer {
+    // Implementation...
+}
+
+// Client capabilities with type safety
+let client_caps = ClientCapabilitiesBuilder::new()
+    .enable_roots()                    // Enable filesystem roots
+    .enable_sampling()                 // Enable LLM sampling
+    .enable_elicitation()              // Enable interactive forms
+    .enable_roots_list_changed()       // ✅ Only available when roots enabled
+    .build();
+
+// Convenience builders for common patterns
+let full_server = ServerCapabilitiesBuilder::full_featured().build();
+let minimal_server = ServerCapabilitiesBuilder::minimal().build();
+let sampling_client = ClientCapabilitiesBuilder::sampling_focused().build();
+```
+
+### Benefits
+- **Compile-time validation** - Invalid configurations caught at build time
+- **Zero-cost abstractions** - No runtime overhead for validation
+- **Method availability** - Sub-capabilities only available when parent capability is enabled
+- **Fluent API** - Readable and maintainable capability configuration
+- **Backwards compatibility** - Existing code continues to work unchanged
 
 ## Core Concepts
 

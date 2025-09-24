@@ -32,6 +32,7 @@
 
 ### 🎯 **DEVELOPER EXPERIENCE** - Zero-Boilerplate Ergonomics
 - **Procedural Macros** - `#[server]`, `#[tool]`, `#[resource]` with automatic schema generation
+- **Type-State Capability Builders** - Compile-time validated capability configuration with zero-cost abstractions
 - **Compile-Time Optimization** - Zero runtime overhead through advanced macro system
 - **Type Safety** - Full Rust type system integration with compile-time validation
 - **Industry-Exclusive Features** - AudioContent support, enhanced annotations, flexible ProgressTokens
@@ -42,7 +43,7 @@
 
 ```toml
 [dependencies]
-turbomcp = "1.0.13"
+turbomcp = "1.1.0"
 tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -61,7 +62,14 @@ struct ProductionServer {
 #[server(
     name = "enterprise-ai-server",
     version = "1.0.0",
-    description = "Production AI server with LLM integration"
+    description = "Production AI server with LLM integration",
+    capabilities = ServerCapabilities::builder()
+        .enable_tools()
+        .enable_prompts()
+        .enable_resources()
+        .enable_tool_list_changed()
+        .enable_resources_subscribe()
+        .build()
 )]
 impl ProductionServer {
     #[tool("Analyze data with AI assistance")]
@@ -135,6 +143,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 cargo install turbomcp-cli
 turbomcp-cli tools-call --command "./your-server" --name ai_analyze --args '{"data": "Q4 sales data..."}'
 ```
+
+---
+
+## 🏗️ Type-State Capability Builders (New in v1.1.0)
+
+TurboMCP includes compile-time validated capability builders that prevent configuration errors and provide zero-cost abstractions:
+
+```rust
+use turbomcp_protocol::capabilities::builders::{ServerCapabilitiesBuilder, ClientCapabilitiesBuilder};
+
+// Server capabilities with compile-time validation
+let server_caps = ServerCapabilitiesBuilder::new()
+    .enable_tools()                    // Enable tools capability
+    .enable_prompts()                  // Enable prompts capability
+    .enable_resources()                // Enable resources capability
+    .enable_tool_list_changed()        // ✅ Only available when tools enabled
+    .enable_resources_subscribe()      // ✅ Only available when resources enabled
+    .build();
+
+// Client capabilities with type safety
+let client_caps = ClientCapabilitiesBuilder::new()
+    .enable_roots()                    // Enable filesystem roots
+    .enable_sampling()                 // Enable LLM sampling
+    .enable_elicitation()              // Enable interactive forms
+    .enable_roots_list_changed()       // ✅ Only available when roots enabled
+    .build();
+
+// Convenience builders for common patterns
+let full_server = ServerCapabilitiesBuilder::full_featured().build();
+let minimal_server = ServerCapabilitiesBuilder::minimal().build();
+let sampling_client = ClientCapabilitiesBuilder::sampling_focused().build();
+```
+
+### Key Benefits
+- **Compile-time validation** - Invalid configurations caught at build time
+- **Zero-cost abstractions** - No runtime overhead for validation
+- **Method availability** - Sub-capabilities only available when parent capability is enabled
+- **Fluent API** - Readable and maintainable capability configuration
+- **Backwards compatibility** - Existing code continues to work unchanged
 
 ---
 
