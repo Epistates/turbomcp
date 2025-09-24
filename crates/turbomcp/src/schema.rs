@@ -127,8 +127,8 @@ impl SchemaGenerator {
     #[cfg(feature = "schema-generation")]
     #[must_use]
     pub fn generate_enhanced<T: JsonSchema>(&self) -> SchemaGenerationResult {
-        let root_schema = schema_for!(T);
-        let mut schema = serde_json::to_value(&root_schema.schema)
+        let schema_value = schema_for!(T);
+        let mut schema = serde_json::to_value(&schema_value)
             .unwrap_or_else(|_| serde_json::json!({"type": "object"}));
 
         // Apply optimizations
@@ -145,16 +145,14 @@ impl SchemaGenerator {
         SchemaGenerationResult {
             schema,
             metadata: SchemaMetadata {
-                title: root_schema
-                    .schema
-                    .metadata
-                    .as_ref()
-                    .and_then(|m| m.title.clone()),
-                description: root_schema
-                    .schema
-                    .metadata
-                    .as_ref()
-                    .and_then(|m| m.description.clone()),
+                title: schema_value
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                description: schema_value
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
                 version: Some("1.0.0".to_string()),
                 strict: self.options.strict_validation,
                 custom_rules: Vec::new(),

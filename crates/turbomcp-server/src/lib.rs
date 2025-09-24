@@ -84,6 +84,7 @@
 //!         # temperature: Some(0.7),
 //!         # stop_sequences: None,
 //!         # metadata: None,
+//!         # _meta: None,
 //!     };
 //!     
 //!     // Send the request to the client

@@ -116,6 +116,7 @@
 //!             ),
 //!             model: Some("gpt-4".to_string()),
 //!             stop_reason: Some("end_turn".to_string()),
+//!             _meta: None,
 //!         })
 //!     }
 //! }
