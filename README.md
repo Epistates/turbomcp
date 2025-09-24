@@ -13,13 +13,7 @@
 
 ---
 
-## 🚀 Why TurboMCP is the Enterprise Choice
-
-### 🔒 **SECURITY FIRST** - Zero Known Vulnerabilities
-- **✅ Complete Security Audit** - Eliminated all known vulnerabilities (RSA RUSTSEC-2023-0071, paste RUSTSEC-2024-0436)
-- **✅ Enterprise Security Policy** - Comprehensive cargo-deny configuration with MIT-compatible license enforcement
-- **✅ Production Hardening** - Strategic dependency optimization and attack surface reduction
-- **✅ Continuous Security Monitoring** - Automated vulnerability scanning in CI/CD pipeline
+## 🚀 Why TurboMCP
 
 ### ⚡ **HIGH PERFORMANCE** - Optimized for Production
 - **High-throughput message processing** - Optimized for concurrent workloads
@@ -29,7 +23,7 @@
 - **Comprehensive benchmarking** - Automated regression detection with 5% threshold
 
 ### 🏆 **PRODUCTION EXCELLENCE** - Enterprise-Grade Features
-- **100% MCP 2025-06-18 Compliance** - Only library with complete specification coverage
+- **100% MCP 2025-06-18 Compliance** - Complete specification coverage
 - **5 Production Transports** - STDIO, HTTP/SSE, WebSocket, TCP, Unix Socket with enterprise session management
 - **Advanced LLM Integration** - Production-grade Anthropic/OpenAI backends with streaming support
 - **Interactive Elicitation** - Server-initiated user input with real-time validation
