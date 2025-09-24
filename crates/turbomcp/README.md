@@ -5,65 +5,62 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](../../LICENSE)
 [![Tests](https://github.com/Epistates/turbomcp/actions/workflows/test.yml/badge.svg)](https://github.com/Epistates/turbomcp/actions/workflows/test.yml)
 
-**World-class Rust SDK for the Model Context Protocol (MCP)** - the industry standard for MCP implementation with complete 2025-06-18 specification compliance and industry-exclusive features.
+Rust SDK for the Model Context Protocol (MCP) with comprehensive specification support and performance optimizations.
 
 ## Overview
 
-`turbomcp` is the **premium MCP framework crate** delivering the most advanced and complete Model Context Protocol implementation available. With **100% MCP 2025-06-18 compliance** and **industry-exclusive features** like AudioContent support and advanced elicitation capabilities, TurboMCP sets the standard for production MCP deployment.
+`turbomcp` is a Rust framework for implementing the Model Context Protocol. It provides tools, servers, clients, and transport layers with MCP specification compliance, security features, and performance optimizations.
 
-**Performance**: **334,961 messages/second** with world-class transport layer implementation across all 5 supported protocols.
+### 🔒 **Security Features**
+- **Zero Known Vulnerabilities** - Security audit with `cargo-deny` policy
+- **Dependency Security** - Eliminated RSA and paste crate vulnerabilities
+- **MIT-Compatible Dependencies** - Permissive license enforcement
+- **Security Hardening** - Dependency optimization for security
 
-### 🔒 **Security First** (v1.0.13)
-- **Zero Known Vulnerabilities** - Comprehensive security audit with `cargo-deny` policy
-- **Enterprise Security Standards** - Eliminated RSA and paste vulnerabilities
-- **MIT-Compatible Dependencies** - Strict permissive license enforcement
-- **Production Hardening** - Strategic dependency optimization for security
-
-### ⚡ **World-Class Benchmarking** (v1.0.13)
-- **Enterprise Performance Monitoring** - Automated regression detection with 5% threshold
-- **Cross-Platform Validation** - Ubuntu, Windows, macOS performance verification
-- **CI/CD Integration** - GitHub Actions with daily baseline updates
-- **Performance Targets Achieved** - <1ms tool execution, >100k messages/sec
+### ⚡ **Performance Monitoring**
+- **Benchmarking Infrastructure** - Automated regression detection
+- **Cross-Platform Testing** - Ubuntu, Windows, macOS CI validation
+- **CI/CD Integration** - GitHub Actions with performance tracking
 
 ## Key Features
 
-### 🚀 **High Performance**
-- **SIMD-accelerated JSON processing** - 2-3x faster than standard libraries
-- **Zero-copy message handling** - Minimal memory allocations
-- **Efficient connection management** - Connection pooling and reuse
-- **Optimized request routing** - O(1) handler lookup with parameter injection
+### 🚀 **Performance Features**
+- **Optimized JSON processing** - Optional SIMD acceleration with fast libraries
+- **Efficient message handling** - Minimal memory allocations with zero-copy patterns
+- **Connection management** - Connection pooling and reuse strategies
+- **Request routing** - Efficient handler lookup with parameter injection
 
-### 🎯 **Zero Boilerplate Design**
-- **Procedural macros** - `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]`  
+### 🎯 **Developer Experience**
+- **Procedural macros** - `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]`
 - **Automatic schema generation** - JSON schemas from Rust types
 - **Type-safe parameters** - Compile-time validation and conversion
-- **Context injection** - Request context available anywhere in signature
-- **Intuitive APIs** - `elicit()` builder for user input, `ctx.create_message()` for sampling
-- **Perfect Context** - `ctx.user_id()`, `ctx.is_authenticated()`, full Context API
+- **Context injection** - Request context available in handler signatures
+- **Intuitive APIs** - Builder patterns for user input and message handling
+- **Context API** - Access to user information, authentication, and request metadata
 
-### 🛡️ **Enterprise Security**
-- **OAuth 2.0 integration** - Google, GitHub, Microsoft providers
-- **PKCE security** - Proof Key for Code Exchange by default
-- **CORS protection** - Comprehensive cross-origin policies
+### 🛡️ **Security Features**
+- **OAuth 2.0 integration** - Google, GitHub, Microsoft provider support
+- **PKCE security** - Proof Key for Code Exchange implementation
+- **CORS protection** - Cross-origin resource sharing policies
 - **Rate limiting** - Token bucket algorithm with burst capacity
-- **Security headers** - CSP, HSTS, X-Frame-Options
+- **Security headers** - CSP, HSTS, X-Frame-Options configuration
 
-### 🔗 **World-Class Multi-Transport** (v1.0.8)
-- **STDIO** - **334,961 msg/sec** Claude Desktop integration with protocol compliance
-- **HTTP/SSE** - Production streaming with session management and TLS 1.3
-- **WebSocket** - Real-time bidirectional with connection lifecycle management
-- **TCP** - **Ultra-high performance** direct socket with connection pooling
-- **Unix Sockets** - **Tokio best practices** for local IPC with file permissions
+### 🔗 **Multi-Transport Support**
+- **STDIO** - Command-line integration with protocol compliance
+- **HTTP/SSE** - HTTP streaming with session management and TLS support
+- **WebSocket** - Real-time bidirectional communication with connection lifecycle management
+- **TCP** - Direct socket connections with connection pooling
+- **Unix Sockets** - Local inter-process communication with file permissions
 
-**Transport Excellence**: 100% MCP protocol compliance across all 5 transport types with bidirectional communication, automatic reconnection, and enterprise-grade session management.
+All transport protocols provide MCP protocol compliance with bidirectional communication, automatic reconnection, and session management.
 
 > **⚠️ STDIO Protocol Compliance**: When using STDIO transport (the default), avoid any logging or output to stdout. The MCP protocol requires stdout to contain **only** JSON-RPC messages. Any other output will break client communication. Use stderr for debugging if needed.
 
-### 🌟 **MCP 2025-06-18 Features** (Industry Exclusive)
-- **🎵 AudioContent Support** - **Only library** with multimedia content handling
-- **📝 Enhanced Annotations** - Rich metadata with ISO 8601 timestamps
-- **🏷️ BaseMetadata Pattern** - Proper name/title separation compliance
-- **📋 Advanced Elicitation** - Interactive forms with sophisticated validation
+### 🌟 **MCP Enhanced Features**
+- **🎵 AudioContent Support** - Multimedia content handling for audio data
+- **📝 Enhanced Annotations** - Rich metadata with ISO 8601 timestamp support
+- **🏷️ BaseMetadata Pattern** - Proper name/title separation for MCP compliance
+- **📋 Advanced Elicitation** - Interactive forms with validation support
 
 ### ⚡ **Circuit Breaker & Reliability**
 - **Circuit breaker pattern** - Prevents cascade failures

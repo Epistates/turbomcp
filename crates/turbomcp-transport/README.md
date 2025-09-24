@@ -4,50 +4,45 @@
 [![Documentation](https://docs.rs/turbomcp-transport/badge.svg)](https://docs.rs/turbomcp-transport)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Industry-leading transport layer delivering world-class MCP protocol implementation** - 100% MCP 2025-06-18 compliant with 334,961 msg/sec performance and enterprise security.
+Transport layer implementation for the Model Context Protocol (MCP) with support for multiple transport protocols and connection patterns.
 
 ## Overview
 
-`turbomcp-transport` delivers the **most advanced and complete transport layer implementation** available for the Model Context Protocol. With **100% MCP 2025-06-18 specification compliance** across all 5 transport protocols and industry-leading performance metrics, this crate sets the standard for production MCP deployments.
-
-**TurboMCP v1.0.8** achieves **world-class status** with validated performance of **334,961 messages/second** and enterprise-grade reliability.
+`turbomcp-transport` provides transport layer implementations for the Model Context Protocol. It supports multiple transport protocols including STDIO, HTTP/SSE, WebSocket, TCP, and Unix sockets with features for security, reliability, and concurrent usage.
 
 ## Key Features
 
-### 🌐 **World-Class Multi-Protocol Support** (v1.0.8)
-- **STDIO** - **334,961 msg/sec** MCP protocol compliance for Claude Desktop
-- **HTTP/SSE** - Production streaming with session management and Last-Event-ID
-- **WebSocket** - Real-time bidirectional with full-duplex validation
-- **TCP** - **Ultra-high performance** with Tokio best practices and connection pooling
-- **Unix Sockets** - **Tokio-optimized** IPC with `stream.ready()` patterns
+### 🌐 **Multi-Protocol Support**
+- **STDIO** - Standard input/output for command-line MCP integration
+- **HTTP/SSE** - HTTP with Server-Sent Events for streaming communication
+- **WebSocket** - Real-time bidirectional communication
+- **TCP** - Direct TCP connections with connection pooling
+- **Unix Sockets** - Inter-process communication on Unix systems
 
-**Transport Excellence**: All 5 protocols achieve 100% MCP specification compliance with bidirectional communication, automatic reconnection, and production-grade error handling.
-
-### 🛡️ **Enterprise Security Features**
+### 🛡️ **Security Features**
 - **TLS 1.3 Support** - Modern encryption with `rustls`
-- **CORS Protection** - Comprehensive cross-origin resource sharing
-- **Security Headers** - CSP, HSTS, X-Frame-Options, and more  
-- **Rate Limiting** - Token bucket algorithm with flexible strategies
+- **CORS Protection** - Cross-origin resource sharing configuration
+- **Security Headers** - CSP, HSTS, X-Frame-Options, and more
+- **Rate Limiting** - Token bucket algorithm for request rate control
 - **Authentication** - JWT validation and API key support
 
-### ⚡ **Circuit Breaker & Reliability**
+### ⚡ **Reliability Features**
 - **Circuit Breaker Pattern** - Prevents cascade failures with automatic recovery
-- **Exponential Backoff** - Intelligent retry with jitter for optimal throughput
-- **Connection Health Monitoring** - Automatic detection of stale connections
+- **Exponential Backoff** - Retry logic with jitter
+- **Connection Health Monitoring** - Automatic detection of connection issues
 - **Graceful Degradation** - Fallback mechanisms and error recovery
-- **Resource Management** - Bounded memory usage with cleanup tasks
+- **Resource Management** - Memory usage controls with cleanup tasks
 
-### 🗜️ **Advanced Compression**
-- **Multiple Algorithms** - gzip, brotli, lz4 with intelligent selection
-- **Adaptive Compression** - Automatic algorithm selection based on content
+### 🗜️ **Compression Support**
+- **Multiple Algorithms** - gzip, brotli, lz4 compression options
+- **Adaptive Compression** - Algorithm selection based on content
 - **Streaming Support** - Low-memory compression for large messages
-- **Compression Metrics** - Performance monitoring and optimization
+- **Compression Metrics** - Performance monitoring capabilities
 
-### 🔄 **SharedTransport for Async Concurrency** (New in v1.0.10)
+### 🔄 **SharedTransport for Async Concurrency**
 - **Thread-safe transport sharing** - Share transports across multiple async tasks
 - **Clean API surface** - Hide Arc/Mutex complexity from public interfaces
-- **Zero overhead** - Same performance as direct transport usage
-- **Protocol compliant** - Preserves all transport semantics exactly
+- **Protocol compliant** - Preserves all transport semantics
 - **Clone support** - Easy sharing with simple `.clone()` operations
 
 ## Architecture

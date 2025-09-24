@@ -4,44 +4,44 @@
 [![Documentation](https://docs.rs/turbomcp-protocol/badge.svg)](https://docs.rs/turbomcp-protocol)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Complete Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and runtime schema validation.**
+Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and runtime schema validation.
 
 ## Overview
 
-`turbomcp-protocol` provides a complete, specification-compliant implementation of the Model Context Protocol (MCP) version 2025-06-18. This crate handles all protocol-level concerns including message formatting, capability negotiation, and runtime validation.
+`turbomcp-protocol` provides a specification-compliant implementation of the Model Context Protocol (MCP). This crate handles protocol-level concerns including message formatting, capability negotiation, and runtime validation.
 
 ## Key Features
 
-### 📋 **Complete MCP Specification Support**
-- **MCP 2025-06-18** - Full implementation of the latest protocol specification
-- **All message types** - Tools, resources, prompts, and capabilities
-- **Capability negotiation** - Automatic feature detection and handshake
-- **Version compatibility** - Forward and backward compatibility support
+### 📋 **MCP Specification Support**
+- MCP specification implementation with current message types
+- Tools, resources, prompts, and capabilities support
+- Capability negotiation with feature detection and handshake
+- Version compatibility support
 
 ### 🔧 **JSON-RPC 2.0 Implementation**
-- **Compliant message format** - Request, response, and notification handling
-- **ID correlation** - Automatic request/response correlation
-- **Error handling** - Standard JSON-RPC error codes and extensions
-- **Batch processing** - Support for batch request/response operations
+- Compliant message format with request, response, and notification handling
+- ID correlation for automatic request/response matching
+- Standard JSON-RPC error codes and extensions
+- Support for batch request/response operations
 
 ### ✅ **Runtime Schema Validation**
-- **JSON Schema validation** - Runtime validation using `jsonschema` crate
-- **Type safety** - Rust type definitions for all MCP message types
-- **Parameter validation** - Tool and resource parameter validation
-- **Schema generation** - Automatic schema generation from Rust types
+- JSON Schema validation using `jsonschema` crate
+- Rust type definitions for MCP message types
+- Tool and resource parameter validation
+- Schema generation from Rust types
 
 ### 🤝 **Capability Management**
-- **Server capabilities** - Tools, resources, prompts declarations
-- **Client capabilities** - Sampling, roots, progress reporting
-- **Feature negotiation** - Automatic capability matching
-- **Extension support** - Custom capability extensions
+- Server capabilities for tools, resources, prompts declarations
+- Client capabilities including sampling, roots, progress reporting
+- Feature negotiation with capability matching
+- Support for custom capability extensions
 
-### 🔄 **MCP 2025-06-18 Enhanced Features**
-- **Bidirectional communication** - Server-initiated requests to clients
-- **Elicitation support** - Server can request structured input from users
-- **Completion context** - Enhanced completion with references and metadata
-- **Resource templates** - Dynamic resource generation with parameters
-- **Ping/keepalive** - Connection health monitoring
+### 🔄 **MCP Enhanced Features**
+- Bidirectional communication for server-initiated requests to clients
+- Elicitation support for server-requested structured input from users
+- Completion context with references and metadata
+- Resource templates for dynamic resource generation with parameters
+- Ping/keepalive for connection health monitoring
 
 ## Architecture
 
@@ -85,7 +85,7 @@ use turbomcp_protocol::{
 };
 ```
 
-### MCP 2025-06-18 Enhanced Types (v1.0.3)
+### MCP Enhanced Types
 
 ```rust
 use turbomcp_protocol::{

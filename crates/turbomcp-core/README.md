@@ -4,57 +4,50 @@
 [![Documentation](https://docs.rs/turbomcp-core/badge.svg)](https://docs.rs/turbomcp-core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Ultra-high performance core abstractions** delivering the foundation for TurboMCP's **334,961 msg/sec** performance with SIMD acceleration and complete MCP 2025-06-18 compliance.
+Core abstractions and utilities for the TurboMCP framework, providing foundational types, session management, and optimized message processing for Model Context Protocol implementations.
 
 ## Overview
 
-`turbomcp-core` delivers the **performance-critical foundation** that enables TurboMCP's **world-class performance metrics**. With SIMD-accelerated message processing and zero-copy optimizations, this crate provides the essential building blocks for the industry's most advanced MCP implementation.
-
-**Validated Performance**: **334,961 messages/second** with **128 bytes per message** memory efficiency.
+`turbomcp-core` provides the essential building blocks for MCP implementations in Rust. It includes session management, request contexts, error handling, message types, and performance-optimized data structures.
 
 ## Key Features
 
-### 🚀 **SIMD-Accelerated Processing**
-- **2-3x faster JSON parsing** with `simd-json` and `sonic-rs`
-- **Vectorized operations** for better CPU cache utilization  
-- **SIMD-optimized message handling** throughout the request lifecycle
+### 🚀 **JSON Processing with SIMD Support**
+- Optional SIMD acceleration with `simd-json` and `sonic-rs`
+- Standard JSON processing with serde_json as fallback
+- Bytes-based message handling for efficient memory usage
 
-### 📦 **Zero-Copy Architecture**
-- **Memory-efficient processing** with `Bytes`-based message handling
-- **Minimal allocations** through careful lifetime management
-- **SmallVec and CompactStr** for optimized small data structures
-- **Lock-free data structures** for high-concurrency scenarios
-- **Buffer pooling** for reduced allocations
-- **Lazy JSON parsing** for on-demand deserialization
-- **Memory-mapped file support** for large data handling
+### 📦 **Optimized Data Structures**
+- Memory-efficient processing with careful allocation patterns
+- SmallVec and CompactStr for small data optimization
+- Thread-safe concurrent data structures
 
-### 🧵 **Thread-Safe Session Management**
-- **Concurrent session tracking** with thread-safe state management
-- **LRU eviction policies** with configurable memory limits
-- **Request correlation** and distributed tracing support
+### 🧵 **Session Management**
+- Concurrent session tracking with thread-safe state management
+- Configurable session limits and cleanup policies
+- Request correlation and tracing support
 
-### 🎯 **Rich Error Handling**
-- **Structured error types** with full context using `thiserror`
-- **Error propagation** with automatic conversion and context preservation
-- **Debugging support** with detailed error information
+### 🎯 **Error Handling**
+- Structured error types with context using `thiserror`
+- Error propagation with automatic conversion
+- Debugging support with detailed error information
 
 ### 📊 **Observability Integration**
-- **Built-in metrics hooks** for performance monitoring
-- **Tracing integration points** for distributed observability
-- **Request correlation IDs** for end-to-end tracking
+- Metrics hooks for performance monitoring
+- Tracing integration for distributed observability
+- Request correlation IDs for end-to-end tracking
 
-### 🎯 **Enhanced Context Types (v1.0.3)**
-- **ElicitationContext** - Server-initiated user input requests with JSON schema validation
-- **CompletionContext** - Intelligent autocompletion with reference tracking
-- **PingContext** - Bidirectional health monitoring and keepalive
-- **ResourceTemplateContext** - Dynamic resource generation with RFC 6570 templates
+### 🎯 **Context Types**
+- ElicitationContext for server-initiated user input requests
+- CompletionContext for autocompletion functionality
+- PingContext for health monitoring and keepalive
+- ResourceTemplateContext for dynamic resource generation
 
-### 🔄 **Shareable Pattern for Async Concurrency** (New in v1.0.10)
-- **Generic Shareable trait** - Reusable abstraction for thread-safe wrappers
-- **Shared<T> wrapper** - Arc/Mutex encapsulation with closure-based access
-- **ConsumableShared<T>** - One-time consumption pattern for server-like objects
-- **Zero overhead abstractions** - Same performance as direct usage
-- **Flexible access patterns** - Synchronous and asynchronous closure support
+### 🔄 **Shareable Patterns for Async Concurrency**
+- Generic Shareable trait for thread-safe wrappers
+- Shared<T> wrapper with Arc/Mutex encapsulation
+- ConsumableShared<T> for one-time consumption patterns
+- Flexible access patterns with closure-based APIs
 
 ## Architecture
 
@@ -62,10 +55,10 @@
 ┌─────────────────────────────────────────────┐
 │                TurboMCP Core                │
 ├─────────────────────────────────────────────┤
-│ SIMD Message Processing                     │
-│ ├── simd-json acceleration                 │
-│ ├── sonic-rs optimization                  │
-│ └── Zero-copy Bytes handling               │
+│ Message Processing                          │
+│ ├── JSON parsing with optional SIMD        │
+│ ├── Bytes-based message handling           │
+│ └── Structured data types                  │
 ├─────────────────────────────────────────────┤
 │ Session & Context Management               │
 │ ├── RequestContext lifecycle              │
@@ -79,23 +72,18 @@
 └─────────────────────────────────────────────┘
 ```
 
-## Performance Characteristics
+## Components
 
-### Benchmarks vs Standard Libraries
+### Core Types
+- Message parsing and serialization
+- Request/response handling
+- Context management for observability
 
-| Operation | Standard | TurboMCP Core | Improvement |
-|-----------|----------|---------------|-------------|
-| JSON Parsing | 100ms | 35ms | **2.8x faster** |
-| Message Processing | 50ms | 18ms | **2.7x faster** |
-| Memory Usage | 100MB | 60MB | **40% reduction** |
-| Concurrent Throughput | 1000 req/s | 2800 req/s | **2.8x higher** |
-
-### Optimization Features
-
-- 🚀 **SIMD Acceleration** - CPU-level vectorized JSON processing
-- 📦 **Zero-Copy** - Minimal memory allocations and copies
-- 🔄 **Efficient Collections** - SmallVec, CompactStr for small data
-- 🧵 **Lock-Free Operations** - Where possible for maximum concurrency
+### Optimizations
+- Optional SIMD acceleration for JSON processing
+- Efficient memory allocation patterns
+- Concurrent data structures for multi-threaded usage
+- Small data optimization with SmallVec and CompactStr
 
 ## Usage
 
@@ -107,14 +95,14 @@ use turbomcp_core::{RequestContext, Message, Context, McpResult};
 // Create a request context for correlation and observability
 let mut context = RequestContext::new();
 
-// SIMD-accelerated message parsing happens automatically
+// Message parsing with optional SIMD acceleration
 let json_data = br#"{"jsonrpc": "2.0", "method": "tools/list"}"#;
-let message = Message::parse_with_simd(json_data)?;
+let message = Message::parse(json_data)?;
 
 // Context provides rich observability and user information
 context.info("Processing request").await?;
 
-// Enhanced Context features (v1.0.3)
+// Context features for authentication and user information
 if context.is_authenticated() {
     let user = context.user().unwrap_or("unknown");
     let roles = context.roles();
@@ -158,14 +146,14 @@ fn process_request() -> McpResult<String> {
 
 ### SIMD Feature Flag
 
-Enable maximum performance with SIMD acceleration:
+Enable SIMD acceleration for JSON processing:
 
 ```toml
 [dependencies]
-turbomcp-core = { version = "1.0.3", features = ["simd"] }
+turbomcp-core = { version = "1.0.13", features = ["simd"] }
 ```
 
-**Note**: SIMD features require compatible CPU architectures (x86_64 with AVX2 or ARM with NEON).
+**Note**: SIMD features require compatible CPU architectures (x86_64 with SSE2+ or ARM with NEON).
 
 ## Feature Flags
 
@@ -213,8 +201,8 @@ struct CustomHandler {
 impl CustomHandler {
     async fn handle_request(&self, data: &[u8]) -> McpResult<String> {
         let context = RequestContext::new();
-        let message = Message::parse_with_simd(data)?;
-        
+        let message = Message::parse(data)?;
+
         // Use core functionality directly
         context.info("Custom processing").await?;
         Ok("processed".to_string())
@@ -245,9 +233,9 @@ match result {
 }
 ```
 
-## Shareable Patterns for Async Concurrency (v1.0.10)
+## Shareable Patterns for Async Concurrency
 
-TurboMCP Core v1.0.10 introduces powerful abstractions for thread-safe sharing that form the foundation for SharedClient, SharedTransport, and SharedServer:
+TurboMCP Core provides abstractions for thread-safe sharing that form the foundation for SharedClient, SharedTransport, and SharedServer:
 
 ### Generic Shareable Trait
 
