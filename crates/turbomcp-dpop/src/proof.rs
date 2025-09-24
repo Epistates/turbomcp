@@ -679,11 +679,10 @@ fn sign_with_rsa(data: &str, private_key_der: &[u8], algorithm: DpopAlgorithm) -
             Ok(signature.to_bytes().to_vec())
         }
         DpopAlgorithm::PS256 => {
-            use rand::thread_rng;
             use rsa::pss::BlindedSigningKey;
             use signature::RandomizedSigner;
 
-            let mut rng = thread_rng();
+            let mut rng = rand::thread_rng();
             let signing_key = BlindedSigningKey::<Sha256>::new(private_key);
             let signature = signing_key.sign_with_rng(&mut rng, data.as_bytes());
             Ok(signature.to_bytes().to_vec())
