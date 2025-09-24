@@ -1,13 +1,14 @@
-name: Performance Benchmarks & Regression Detection
+# DISABLED - Performance Benchmarks & Regression Detection
+name: Performance Benchmarks & Regression Detection (DISABLED)
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
-  schedule:
-    # Run performance benchmarks daily at 2 AM UTC
-    - cron: '0 2 * * *'
+  # push:
+  #   branches: [ main, develop ]
+  # pull_request:
+  #   branches: [ main ]
+  # schedule:
+  #   # Run performance benchmarks daily at 2 AM UTC
+  #   - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
       update_baselines:
