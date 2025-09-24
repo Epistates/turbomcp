@@ -18,7 +18,7 @@ use turbomcp_transport::core::{Transport, TransportMessage, TransportState};
 /// Test configuration for child process transport
 fn create_test_config() -> ChildProcessConfig {
     ChildProcessConfig {
-        command: "echo".to_string(), // Simple echo command for testing
+        command: "cat".to_string(), // Use cat which stays open and reads stdin
         args: vec![],
         working_directory: None,
         environment: None,
