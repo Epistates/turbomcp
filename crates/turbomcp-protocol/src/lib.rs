@@ -79,6 +79,47 @@
 //!     }))
 //!     .require(vec!["theme".to_string()]);
 //! ```
+//!
+//! ### Type-State Capability Builders (New in 1.1.0)
+//!
+//! TurboMCP provides const-generic type-state builders that ensure capabilities
+//! are configured correctly at compile time, providing compile-time safety with
+//! zero-cost abstractions.
+//!
+//! ```rust
+//! use turbomcp_protocol::capabilities::builders::{
+//!     ServerCapabilitiesBuilder, ClientCapabilitiesBuilder
+//! };
+//!
+//! // Server capabilities with compile-time validation
+//! let server_caps = ServerCapabilitiesBuilder::new()
+//!     .enable_experimental()
+//!     .enable_tools()
+//!     .enable_prompts()
+//!     .enable_tool_list_changed()  // Only available when tools are enabled!
+//!     .enable_prompts_list_changed() // Only available when prompts are enabled!
+//!     .with_simd_optimization("avx2") // Performance optimization
+//!     .with_enterprise_security(true) // Security enhancement
+//!     .build();
+//!
+//! // Client capabilities with type safety
+//! let client_caps = ClientCapabilitiesBuilder::full_featured()
+//!     .with_llm_provider("openai", "gpt-4") // LLM integration
+//!     .with_ui_capabilities(vec!["form", "dialog"]) // UI enhancement
+//!     .build();
+//!
+//! // Convenience builders for common configurations
+//! let minimal_server = ServerCapabilitiesBuilder::minimal().build();
+//! let sampling_client = ClientCapabilitiesBuilder::sampling_focused().build();
+//! ```
+//!
+//! **Key Benefits:**
+//! - **Compile-time capability validation** - Methods only available when capabilities enabled
+//! - **Performance optimizations** - SIMD optimization hints, enterprise security, LLM metadata
+//! - **Advanced error prevention** - Impossible to misconfigure capability relationships
+//! - **Zero-cost abstractions** - All validation happens at compile time
+//! - **Backwards compatible** - Existing `ServerCapabilities::default()` still works
+//!
 
 #![warn(
     missing_docs,
@@ -205,7 +246,13 @@ pub use jsonrpc::{
     JsonRpcResponse, JsonRpcVersion,
 };
 
-pub use capabilities::{CapabilityMatcher, CapabilityNegotiator, CapabilitySet};
+pub use capabilities::{
+    CapabilityMatcher, CapabilityNegotiator, CapabilitySet,
+    builders::{
+        ClientCapabilitiesBuilder, ClientCapabilitiesBuilderState, ServerCapabilitiesBuilder,
+        ServerCapabilitiesBuilderState,
+    },
+};
 
 pub use versioning::{VersionCompatibility, VersionManager, VersionRequirement};
 
