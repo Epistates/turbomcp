@@ -13,6 +13,7 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
+turbomcp-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

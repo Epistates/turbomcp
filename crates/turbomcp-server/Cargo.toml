@@ -13,6 +13,10 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
+turbomcp-core = { version = "1.1.0", path = "../turbomcp-core" }
+turbomcp-protocol = { version = "1.1.0", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "1.1.0", path = "../turbomcp-transport", optional = true }
+turbomcp-macros = { version = "1.1.0", path = "../turbomcp-macros" }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -22,17 +26,16 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
-dashmap = "5.5"
+dashmap = "6.1.0"
 parking_lot = "0.12"
 futures = "0.3"
 anyhow = "1.0"
 bytes = { workspace = true }
 regex = "1.10"
-jsonschema = { version = "0.17", default-features = false, features = ["resolve-file"] }
-turbomcp-transport = { workspace = true, optional = true }
+jsonschema = { version = "0.17.1", default-features = false, features = ["resolve-file"] }
 
 [features]
-default = ["auth", "health-checks", "metrics"]
+default = ["auth", "health-checks", "metrics", "stdio"]
 auth = []
 health-checks = []
 hot-reload = []

@@ -59,19 +59,19 @@ ciborium = "0.2"
 
 # Schema validation and generation
 schemars = { version = "1.0", features = ["chrono04", "uuid1"] }
-jsonschema = { version = "0.17", default-features = false, features = ["resolve-file"] }
+jsonschema = { version = "0.17.1", default-features = false, features = ["resolve-file"] }
 
 # HTTP/WebSocket/Network
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2", "brotli", "gzip"] }
-axum = { version = "0.8", features = ["ws", "headers", "tracing", "macros"] }
-tower = { version = "0.4", features = ["full"] }
-tower-http = { version = "0.5", features = ["full"] }
+axum = { version = "0.8.4", features = ["ws", "headers", "tracing", "macros"] }
+tower = { version = "0.5.2", features = ["full"] }
+tower-http = { version = "0.6.6", features = ["full"] }
 hyper = { version = "1.0", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
-tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.27.0", features = ["native-tls"] }
 
 # Error handling and diagnostics
-thiserror = "1.0"
+thiserror = "2.0.16"
 anyhow = "1.0"
 miette = { version = "7.0", features = ["fancy"] }
 color-eyre = "0.6"
@@ -87,7 +87,7 @@ metrics-exporter-prometheus = "0.13"
 
 # Concurrency and synchronization
 parking_lot = "0.12"
-dashmap = "5.5"
+dashmap = "6.1.0"
 crossbeam = "0.8"
 crossbeam-channel = "0.5"
 flume = "0.11"
@@ -117,13 +117,13 @@ once_cell = "1.19"
 arc-swap = "1.6"
 
 # Development and testing
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.7.0", features = ["html_reports"] }
 proptest = "1.4"
 tokio-test = "0.4"
 wiremock = "0.6"
 pretty_assertions = "1.4"
 insta = { version = "1.34", features = ["json", "redactions"] }
-rand = "0.8"
+rand = "0.8.5"
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
 mock_instant = "0.3"
