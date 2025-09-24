@@ -69,7 +69,7 @@ All transport protocols provide MCP protocol compliance with bidirectional commu
 - **Connection health monitoring** - Automatic failure detection
 - **Graceful degradation** - Fallback mechanisms
 
-### 🔄 **Shared Wrappers for Async Concurrency** (New in v1.0.10)
+### 🔄 **Shared Wrappers for Async Concurrency** (New in v1.1.0)
 - **SharedClient** - Thread-safe client access with clean APIs
 - **SharedTransport** - Concurrent transport sharing across async tasks
 - **SharedServer** - Server lifecycle management with consumption pattern
@@ -180,7 +180,7 @@ let server_caps = ServerCapabilitiesBuilder::new()
 // Usage in server macro
 #[server(
     name = "my-server",
-    version = "1.0.0",
+    version = "1.1.0",
     capabilities = ServerCapabilities::builder()
         .enable_tools()
         .enable_tool_list_changed()
@@ -297,14 +297,14 @@ async fn code_review_prompt(
 }
 ```
 
-### MCP 2025-06-18 Enhanced Features (New in v1.0.4)
+### MCP 2025-06-18 Enhanced Features (New in v1.1.0)
 
 #### Roots Support - Filesystem Boundaries
 
 ```rust
 #[server(
     name = "filesystem-server",
-    version = "1.0.0", 
+    version = "1.1.0", 
     root = "file:///workspace:Project Workspace",
     root = "file:///tmp:Temporary Files"
 )]
@@ -574,9 +574,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Shared Wrappers for Async Concurrency (v1.0.10)
+## Shared Wrappers for Async Concurrency (v1.1.0)
 
-TurboMCP v1.0.10 introduces comprehensive shared wrapper system that eliminates Arc/Mutex complexity from public APIs:
+TurboMCP v1.1.0 introduces comprehensive shared wrapper system that eliminates Arc/Mutex complexity from public APIs:
 
 ### SharedClient - Thread-Safe Client Access
 
@@ -781,7 +781,7 @@ Enable SIMD acceleration for maximum performance:
 
 ```toml
 [dependencies]
-turbomcp = { version = "1.0.10", features = ["simd"] }
+turbomcp = { version = "1.1.0", features = ["simd"] }
 ```
 
 Configure performance settings:

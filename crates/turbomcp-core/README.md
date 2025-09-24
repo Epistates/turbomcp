@@ -150,7 +150,7 @@ Enable SIMD acceleration for JSON processing:
 
 ```toml
 [dependencies]
-turbomcp-core = { version = "1.0.13", features = ["simd"] }
+turbomcp-core = { version = "1.1.0", features = ["simd"] }
 ```
 
 **Note**: SIMD features require compatible CPU architectures (x86_64 with SSE2+ or ARM with NEON).

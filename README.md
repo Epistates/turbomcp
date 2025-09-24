@@ -61,7 +61,7 @@ struct ProductionServer {
 
 #[server(
     name = "enterprise-ai-server",
-    version = "1.0.0",
+    version = "1.1.0",
     description = "Production AI server with LLM integration",
     capabilities = ServerCapabilities::builder()
         .enable_tools()
@@ -279,7 +279,7 @@ match deployment_env {
 ## 🛡️ Enterprise Security & Compliance
 
 ### 🔒 **Zero-Vulnerability Architecture**
-TurboMCP v1.0.13 achieves complete security compliance:
+TurboMCP v1.1.0 achieves complete security compliance:
 
 ```rust
 // Production security configuration
@@ -340,7 +340,7 @@ async fn get_metrics(&self, ctx: Context) -> McpResult<SystemMetrics> {
 ### 🚀 **Benchmark Results** (Automated Daily Validation)
 
 ```
-🏆 TurboMCP Performance Characteristics (v1.0.13)
+🏆 TurboMCP Performance Characteristics (v1.1.0)
 ==================================================
 Message Throughput:     High Concurrent     (TCP transport)
 Tool Execution:         Sub-millisecond     (99th percentile)
@@ -426,7 +426,7 @@ let client3 = Client::new(shared_transport.clone());
 ```rust
 #[server(
     name = "secure-file-server",
-    version = "1.0.0",
+    version = "1.1.0",
     root = "file:///workspace:Project Files",
     root = "file:///uploads:User Uploads",
     root = "file:///tmp:Temporary Files"
@@ -510,7 +510,7 @@ spec:
     spec:
       containers:
       - name: server
-        image: your-registry/turbomcp-server:v1.0.13
+        image: your-registry/turbomcp-server:v1.1.0
         ports:
         - containerPort: 8080
         env:

@@ -1,4 +1,4 @@
-# 🚀 TurboMCP Comprehensive Demo (v1.0.8)
+# 🚀 TurboMCP Comprehensive Demo (v1.1.0)
 
 A comprehensive demonstration of TurboMCP framework capabilities showcasing tools, resources, and realistic development workflows using production-grade implementations.
 
@@ -153,7 +153,7 @@ Uses current macro syntax and proper error handling:
 ```rust
 #[server(
     name = "TurboMCP-Demo",
-    version = "1.0.8",
+    version = "1.1.0",
     description = "Complete demonstration of all TurboMCP framework capabilities",
     root = "file:///project:Project Files",
     root = "config:///settings:Configuration"

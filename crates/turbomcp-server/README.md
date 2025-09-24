@@ -10,7 +10,7 @@
 
 `turbomcp-server` provides a comprehensive server framework for Model Context Protocol implementations. It handles all server-side concerns including request routing, authentication, middleware processing, session management, and production lifecycle operations.
 
-### 🔒 **Security Hardened** (v1.0.13)
+### 🔒 **Security Hardened** (v1.1.0)
 - **Zero Known Vulnerabilities** - Comprehensive security audit and hardening
 - **Dependency Security** - Eliminated all vulnerable dependency paths
 - **MIT-Compatible Licensing** - Strict open-source license compliance
@@ -47,7 +47,7 @@
 - **Resource cleanup** - Proper cleanup of connections, files, and threads
 - **Health status** - Shutdown status reporting for load balancers
 
-### 🔄 **SharedServer for Async Concurrency** (New in v1.0.10)
+### 🔄 **SharedServer for Async Concurrency** (New in v1.1.0)
 - **Thread-safe server sharing** - Share servers across multiple async tasks for monitoring
 - **Consumption pattern** - Safe server consumption for running while preserving access
 - **Clean monitoring APIs** - Access health, metrics, and configuration concurrently
@@ -96,7 +96,7 @@ use turbomcp_server::{ServerBuilder, McpServer};
 // Simple server creation
 let server = ServerBuilder::new()
     .name("MyMCPServer")
-    .version("1.0.3")
+    .version("1.1.0")
     .build();
 
 // Run with STDIO transport
@@ -555,9 +555,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `tracing` | Enable distributed tracing | ✅ |
 | `compression` | Enable response compression | ✅ |
 
-## SharedServer for Async Concurrency (v1.0.10)
+## SharedServer for Async Concurrency (v1.1.0)
 
-TurboMCP v1.0.10 introduces SharedServer - a thread-safe wrapper that enables concurrent monitoring while preserving the consumption pattern needed for server execution:
+TurboMCP v1.1.0 introduces SharedServer - a thread-safe wrapper that enables concurrent monitoring while preserving the consumption pattern needed for server execution:
 
 ### Basic SharedServer Usage
 

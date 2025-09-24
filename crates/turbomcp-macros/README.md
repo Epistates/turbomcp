@@ -71,7 +71,7 @@
 
 ## Core Macros
 
-### MCP 2025-06-18 Enhanced Macros (v1.0.3)
+### MCP 2025-06-18 Enhanced Macros (v1.1.0)
 
 New macros for the latest MCP protocol features:
 

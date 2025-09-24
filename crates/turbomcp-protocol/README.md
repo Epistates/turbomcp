@@ -136,7 +136,7 @@ let json_data = r#"{
     "params": {
         "protocolVersion": "2025-06-18",
         "capabilities": {},
-        "clientInfo": {"name": "test-client", "version": "1.0.0"}
+        "clientInfo": {"name": "test-client", "version": "1.1.0"}
     }
 }"#;
 

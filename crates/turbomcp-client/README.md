@@ -42,7 +42,7 @@
 - **Reconnection logic** - Intelligent reconnection with state preservation
 - **Session persistence** - Optional session state persistence across connections
 
-### 🔄 **SharedClient for Async Concurrency** (New in v1.0.10)
+### 🔄 **SharedClient for Async Concurrency** (New in v1.1.0)
 - **Thread-safe client sharing** - Share clients across multiple async tasks
 - **Clean API surface** - Hide Arc/Mutex complexity from public interfaces
 - **Zero overhead** - Same performance as direct client usage
@@ -486,9 +486,9 @@ let client = ClientBuilder::new()
 // Session is automatically restored on reconnection
 ```
 
-## SharedClient for Async Concurrency (v1.0.10)
+## SharedClient for Async Concurrency (v1.1.0)
 
-TurboMCP v1.0.10 introduces SharedClient - a thread-safe wrapper that eliminates Arc/Mutex complexity while preserving full API compatibility:
+TurboMCP v1.1.0 introduces SharedClient - a thread-safe wrapper that eliminates Arc/Mutex complexity while preserving full API compatibility:
 
 ### Basic SharedClient Usage
 
@@ -636,7 +636,7 @@ use turbomcp_client::{ClientBuilder, Transport};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ClientBuilder::new()
         .name("MyMCPClient")
-        .version("1.0.0")
+        .version("1.1.0")
         .transport(Transport::stdio_with_command(
             Command::new("python3")
                 .args(["-m", "my_server"])

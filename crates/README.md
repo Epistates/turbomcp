@@ -2,7 +2,7 @@
 
 This directory contains the individual crates that make up the TurboMCP framework. Each crate is designed with a specific responsibility and can be used independently or as part of the complete framework.
 
-## 🔒 v1.0.13 Security & Performance Highlights
+## 🔒 v1.1.0 Security & Performance Highlights
 
 **All crates now feature:**
 - **Zero Known Vulnerabilities** - Comprehensive security audit with eliminated RSA and paste vulnerabilities
@@ -103,7 +103,7 @@ Foundation crate providing core types, error handling, and utilities used by all
 **Key Features:**
 - SIMD-accelerated JSON processing
 - Zero-copy message handling with `Bytes`
-- Enhanced MessagePack with `msgpacker` integration (v1.0.13)
+- Enhanced MessagePack with `msgpacker` integration (v1.1.0)
 - Comprehensive error handling with rich context
 - Session management with LRU eviction
 - Request/response context tracking
@@ -116,7 +116,7 @@ Complete implementation of the Model Context Protocol specification with JSON-RP
 **Key Features:**
 - MCP 2025-06-18 specification compliance
 - JSON-RPC 2.0 with batching support
-- Flexible ProgressToken (string/integer support) (v1.0.13)
+- Flexible ProgressToken (string/integer support) (v1.1.0)
 - Type-safe capability negotiation
 - Protocol version management
 - Comprehensive validation
@@ -152,8 +152,8 @@ MCP server implementation with middleware support, routing, and lifecycle manage
 MCP client implementation with connection management and error recovery.
 
 **Key Features:**
-- Advanced LLM backend support (Anthropic, OpenAI) (v1.0.13)
-- Interactive elicitation with real-time user input (v1.0.13)
+- Advanced LLM backend support (Anthropic, OpenAI) (v1.1.0)
+- Interactive elicitation with real-time user input (v1.1.0)
 - Connection management with automatic reconnection
 - Error handling and recovery mechanisms
 - Support for all MCP capabilities
@@ -189,23 +189,23 @@ Command-line interface for interacting with MCP servers, testing, and debugging.
 ### Complete Framework (Recommended)
 ```toml
 [dependencies]
-turbomcp = "1.0.13"
+turbomcp = "1.1.0"
 ```
 
 ### Specific Layers Only
 ```toml
 [dependencies]
 # For building custom servers
-turbomcp-server = "1.0.13"
-turbomcp-transport = "1.0.13"
+turbomcp-server = "1.1.0"
+turbomcp-transport = "1.1.0"
 
 # For building custom clients
-turbomcp-client = "1.0.13"
-turbomcp-protocol = "1.0.13"
+turbomcp-client = "1.1.0"
+turbomcp-protocol = "1.1.0"
 
 # For low-level protocol work
-turbomcp-protocol = "1.0.13"
-turbomcp-core = "1.0.13"
+turbomcp-protocol = "1.1.0"
+turbomcp-core = "1.1.0"
 ```
 
 ### Development Tools
