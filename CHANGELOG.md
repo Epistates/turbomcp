@@ -5,6 +5,49 @@ All notable changes to TurboMCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-09-24
+
+### 🔐 **NEW MAJOR FEATURE: RFC 9449 DPoP Security Suite**
+- **ADDED**: Complete RFC 9449 Demonstration of Proof-of-Possession (DPoP) implementation
+- **NEW**: `turbomcp-dpop` crate with production-ready OAuth 2.0 security enhancements
+- **SECURITY**: Cryptographic binding of access tokens to client keys preventing token theft
+- **ENTERPRISE**: Multi-store support (Memory, Redis, HSM) for different security requirements
+- **ALGORITHMS**: ES256, RS256 support with automatic key rotation policies
+- **HSM**: YubiHSM2 and PKCS#11 integration for enterprise-grade security
+
+### 🏗️ **NEW MAJOR FEATURE: Type-State Capability Builders**
+- **REVOLUTIONARY**: Const-generic type-state builders with compile-time validation
+- **SAFETY**: Impossible capability configurations are unrepresentable in type system
+- **PERFORMANCE**: Zero-cost abstractions - all validation at compile time
+- **DEVELOPER EXPERIENCE**: Compile-time errors prevent runtime capability misconfigurations
+- **TURBOMCP EXCLUSIVE**: Advanced features like SIMD optimization hints and enterprise security
+- **CONVENIENCE**: Pre-configured builders for common patterns (full-featured, minimal, sampling-focused)
+
+### ⚡ **PERFORMANCE & QUALITY IMPROVEMENTS**
+- **MODERNIZED**: All benchmarks updated to use `std::hint::black_box` (eliminated deprecation warnings)
+- **ENHANCED**: Redis AsyncIter with `safe_iterators` feature for safer iteration
+- **IMPROVED**: WebSocket transport compatibility with tokio-tungstenite v0.27.0
+- **OPTIMIZED**: Message::Text API usage for improved performance
+- **FIXED**: All doctest compilation errors and import issues
+
+### 📊 **DEPENDENCY & SECURITY UPDATES**
+- **UPDATED**: All workspace dependencies to latest stable versions
+- **SECURITY**: Eliminated all deprecated API usage across the codebase
+- **COMPATIBILITY**: Enhanced WebSocket examples with real-time bidirectional communication
+- **QUALITY**: Comprehensive test suite improvements and validation
+
+### 🛡️ **BACKWARD COMPATIBILITY**
+- **GUARANTEED**: 100% backward compatibility with all v1.0.x applications
+- **ZERO BREAKING CHANGES**: All existing code continues to work unchanged
+- **MIGRATION**: Optional upgrade path to new type-safe builders
+- **PROTOCOL**: Maintains complete MCP 2025-06-18 specification compliance
+
+### 📚 **DOCUMENTATION & EXAMPLES**
+- **NEW**: Comprehensive DPoP integration guide with production examples
+- **NEW**: Interactive type-state builder demonstration (`examples/type_state_builders_demo.rs`)
+- **ENHANCED**: API documentation with advanced usage patterns
+- **IMPROVED**: WebSocket transport examples with real-world patterns
+
 ## [1.0.13] - 2024-12-23
 
 ### 🔒 **SECURITY HARDENING - ZERO VULNERABILITIES ACHIEVED**
