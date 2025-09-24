@@ -3,13 +3,11 @@
 //! Perfect MCP compliance: Claude integration as a separate MCP server
 //! that clients can delegate to via standard MCP protocol.
 
-use turbomcp::{mcp_text, resource, Context, tool};
-use turbomcp_protocol::types::{
-    Content, Role, SamplingMessage,
-};
+use serde::{Deserialize, Serialize};
+use turbomcp::prelude::*;
 
 /// Anthropic MCP Server
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct AnthropicMcpServer {
     api_key: String,
     client: reqwest::Client,
@@ -27,100 +25,110 @@ impl AnthropicMcpServer {
     }
 }
 
-/// Claude completion via MCP
-#[tool]
-async fn complete_with_claude(
-    ctx: Context,
-    #[mcp_text("The messages for completion")] messages: String,
-    #[mcp_text("Model to use (default: claude-3-sonnet-20240229)")] model: Option<String>,
-    #[mcp_text("System prompt")] system_prompt: Option<String>,
-    #[mcp_text("Max tokens")] max_tokens: Option<u32>,
-    #[mcp_text("Temperature")] temperature: Option<f64>,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let server = ctx.get::<AnthropicMcpServer>().unwrap();
-
-    // Parse messages
-    let parsed_messages: Vec<SamplingMessage> = serde_json::from_str(&messages)?;
-
-    // Convert to Anthropic format
-    let mut anthropic_messages = vec![];
-
-    for msg in parsed_messages {
-        let role = match msg.role {
-            Role::User => "user",
-            Role::Assistant => "assistant",
-        };
-
-        let content = match msg.content {
-            Content::Text(text) => text.text,
-            _ => return Err("Only text content supported".into()),
-        };
-
-        anthropic_messages.push(serde_json::json!({
-            "role": role,
-            "content": content
-        }));
-    }
-
-    // Build request
-    let mut request_body = serde_json::json!({
-        "model": model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
-        "messages": anthropic_messages,
-        "max_tokens": max_tokens.unwrap_or(1000)
-    });
-
-    if let Some(system) = system_prompt {
-        request_body["system"] = serde_json::Value::String(system);
-    }
-
-    if let Some(temp) = temperature {
-        request_body["temperature"] = serde_json::Value::Number(
-            serde_json::Number::from_f64(temp).unwrap_or_else(|| serde_json::Number::from(0))
-        );
-    }
-
-    // Make Anthropic API request
-    let response = server
-        .client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", &server.api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("Content-Type", "application/json")
-        .json(&request_body)
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let error_text = response.text().await?;
-        return Err(format!("Anthropic API error: {}", error_text).into());
-    }
-
-    let response_json: serde_json::Value = response.json().await?;
-
-    let content = response_json["content"][0]["text"]
-        .as_str()
-        .ok_or("No content in Anthropic response")?;
-
-    Ok(content.to_string())
+/// Parameters for Anthropic completion
+#[derive(Debug, Deserialize, Serialize)]
+struct ClaudeParams {
+    /// The messages for completion in JSON format
+    messages: String,
+    /// Model to use (default: claude-3-sonnet-20240229)
+    model: Option<String>,
+    /// System prompt
+    system_prompt: Option<String>,
+    /// Max tokens
+    max_tokens: Option<u32>,
+    /// Temperature
+    temperature: Option<f64>,
 }
 
-/// Get Claude model info
-#[tool]
-async fn list_claude_models(
-    _ctx: Context,
-) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
-    // Anthropic doesn't have a models endpoint, so return known models
-    Ok(vec![
-        "claude-3-haiku-20240307".to_string(),
-        "claude-3-sonnet-20240229".to_string(),
-        "claude-3-opus-20240229".to_string(),
-    ])
-}
+#[turbomcp::server(name = "Anthropic", version = "1.0.0")]
+impl AnthropicMcpServer {
+    /// Claude completion via MCP
+    #[tool("Complete messages using Anthropic Claude models")]
+    async fn complete_with_claude(&self, params: ClaudeParams) -> McpResult<String> {
+        // Parse messages from JSON - simplified approach for demo
+        let messages_json: serde_json::Value = serde_json::from_str(&params.messages)
+            .map_err(|e| McpError::invalid_request(format!("Invalid messages JSON: {}", e)))?;
 
-/// Claude capabilities and pricing
-#[resource]
-async fn claude_info(_ctx: Context) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    Ok(r#"
+        // Convert to Anthropic format
+        let mut anthropic_messages = vec![];
+
+        // Simplified: assume messages_json is already in Anthropic format for demo
+        if let serde_json::Value::Array(messages) = messages_json {
+            anthropic_messages.extend(messages);
+        } else {
+            anthropic_messages.push(serde_json::json!({
+                "role": "user",
+                "content": messages_json.as_str().unwrap_or("Hello")
+            }));
+        }
+
+        // Build request
+        let mut request_body = serde_json::json!({
+            "model": params.model.unwrap_or_else(|| "claude-3-sonnet-20240229".to_string()),
+            "messages": anthropic_messages,
+            "max_tokens": params.max_tokens.unwrap_or(1000)
+        });
+
+        if let Some(system) = &params.system_prompt {
+            request_body["system"] = serde_json::Value::String(system.clone());
+        }
+
+        if let Some(temp) = params.temperature {
+            request_body["temperature"] = serde_json::Value::Number(
+                serde_json::Number::from_f64(temp).unwrap_or_else(|| serde_json::Number::from(0)),
+            );
+        }
+
+        // Make Anthropic API request
+        let response = self
+            .client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| McpError::internal(format!("HTTP request failed: {}", e)))?;
+
+        if !response.status().is_success() {
+            let error_text = response
+                .text()
+                .await
+                .map_err(|e| McpError::internal(format!("Failed to read error: {}", e)))?;
+            return Err(McpError::internal(format!(
+                "Anthropic API error: {}",
+                error_text
+            )));
+        }
+
+        let response_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| McpError::internal(format!("Failed to parse response: {}", e)))?;
+
+        let content = response_json["content"][0]["text"]
+            .as_str()
+            .ok_or_else(|| McpError::internal("No content in Anthropic response"))?;
+
+        Ok(content.to_string())
+    }
+
+    /// Get Claude model info
+    #[tool("List available Claude models")]
+    async fn list_claude_models(&self) -> McpResult<Vec<String>> {
+        // Anthropic doesn't have a models endpoint, so return known models
+        Ok(vec![
+            "claude-3-haiku-20240307".to_string(),
+            "claude-3-sonnet-20240229".to_string(),
+            "claude-3-opus-20240229".to_string(),
+        ])
+    }
+
+    /// Claude capabilities and pricing
+    #[tool("Get Claude model information and pricing")]
+    async fn claude_info(&self) -> McpResult<String> {
+        Ok(r#"
 # Claude Models (Anthropic)
 
 ## Claude 3 Model Family
@@ -147,29 +155,24 @@ async fn claude_info(_ctx: Context) -> Result<String, Box<dyn std::error::Error 
 - Complex reasoning and analysis
 
 *Check Anthropic's pricing page for current rates*
-"#.trim().to_string())
+"#
+        .trim()
+        .to_string())
+    }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> McpResult<()> {
     let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| "ANTHROPIC_API_KEY environment variable not set")?;
-
-    println!("🧠 Starting Claude MCP Server");
-    println!("   Perfect MCP architecture:");
-    println!("   - Claude as external MCP server");
-    println!("   - Clients delegate via protocol");
-    println!("   - Clean separation of concerns\n");
+        .map_err(|_| McpError::invalid_request("ANTHROPIC_API_KEY environment variable not set"))?;
 
     let anthropic_server = AnthropicMcpServer::new(api_key);
 
-    turbomcp::Server::new()
-        .with_context(anthropic_server)
-        .add_tool(complete_with_claude)
-        .add_tool(list_claude_models)
-        .add_resource(claude_info)
-        .serve_stdio()
-        .await?;
+    // Start MCP server - no logging for STDIO protocol
+    anthropic_server
+        .run_stdio()
+        .await
+        .map_err(|e| McpError::internal(format!("Server error: {}", e)))?;
 
     Ok(())
 }

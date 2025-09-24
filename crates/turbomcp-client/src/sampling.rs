@@ -60,7 +60,8 @@ pub trait LLMServerClient: Send + Sync + std::fmt::Debug {
     ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Get server capabilities/model info
-    async fn get_server_info(&self) -> Result<ServerInfo, Box<dyn std::error::Error + Send + Sync>>;
+    async fn get_server_info(&self)
+    -> Result<ServerInfo, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Interface for user interaction (human-in-the-loop)
@@ -106,7 +107,10 @@ impl SamplingHandler for DelegatingSamplingHandler {
         let result = selected_client.create_message(request.clone()).await?;
 
         // 4. Present result for user review
-        let approved_result = self.user_handler.approve_response(&request, &result).await?;
+        let approved_result = self
+            .user_handler
+            .approve_response(&request, &result)
+            .await?;
 
         Ok(approved_result.unwrap_or(result))
     }
@@ -127,7 +131,7 @@ impl DelegatingSamplingHandler {
     /// Select best LLM client based on model preferences
     async fn select_llm_client(
         &self,
-        request: &CreateMessageRequest,
+        _request: &CreateMessageRequest,
     ) -> Result<Arc<dyn LLMServerClient>, Box<dyn std::error::Error + Send + Sync>> {
         // This is where the intelligence goes - matching model preferences
         // to available LLM servers, exactly as the MCP spec describes

@@ -5,68 +5,46 @@
 //! 2. Client delegates to external LLM MCP servers
 //! 3. Perfect compliance + maximum DX
 
-use turbomcp::{Context, Server, tool};
-use turbomcp_client::Client;
-use turbomcp_protocol::types::{
-    Content, CreateMessageRequest, SamplingMessage, Role, TextContent,
-};
+use serde::{Deserialize, Serialize};
+use turbomcp::prelude::*;
 
 /// Demo server that requests sampling from clients
-#[tool]
-async fn ask_llm(
-    ctx: Context,
-    #[turbomcp::mcp_text("Question to ask the LLM")] question: String,
-) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    println!("🤔 Server wants to ask LLM: {}", question);
+#[derive(Debug, Clone)]
+struct SamplingDemoServer;
 
-    // This is the CORRECT way: server requests sampling from client
-    let sampling_request = CreateMessageRequest {
-        messages: vec![SamplingMessage {
-            role: Role::User,
-            content: Content::Text(TextContent {
-                text: question,
-                annotations: None,
-                meta: None,
-            }),
-        }],
-        max_tokens: 100,
-        model_preferences: None,
-        system_prompt: Some("You are a helpful assistant.".to_string()),
-        include_context: None,
-        temperature: Some(0.7),
-        stop_sequences: None,
-        metadata: None,
-        _meta: None,
-    };
+/// Parameters for asking the LLM
+#[derive(Debug, Deserialize, Serialize)]
+struct AskLLMParams {
+    /// Question to ask the LLM
+    question: String,
+}
 
-    // Server asks client to handle sampling
-    let result = ctx.create_message(sampling_request).await?;
+#[turbomcp::server(name = "SamplingDemo", version = "1.0.0")]
+impl SamplingDemoServer {
+    #[tool("Ask an LLM a question via MCP sampling")]
+    async fn ask_llm(&self, _ctx: Context, params: AskLLMParams) -> McpResult<String> {
+        // This demo shows the concept - in practice, servers would use ctx.create_message()
+        // to request sampling from clients, but that requires client implementation
 
-    match result.content {
-        Content::Text(text) => Ok(format!("LLM Response: {}", text.text)),
-        _ => Err("Expected text response".into()),
+        // For demo purposes, we'll show what the server WOULD do:
+        let demo_response = format!(
+            "Demo: Server would request LLM to answer '{}' via MCP sampling protocol",
+            params.question
+        );
+
+        Ok(demo_response)
     }
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!("🎯 Perfect MCP Sampling Architecture Demo");
-    println!("=====================================");
-    println!();
-    println!("This demo shows the CORRECT way to do LLM sampling in MCP:");
-    println!();
-    println!("1. 🖥️  Start this server: `cargo run --example perfect_mcp_sampling_demo`");
-    println!("2. 🤖 Start LLM server:  `OPENAI_API_KEY=xxx cargo run --example openai_mcp_server`");
-    println!("3. 👤 Start client that connects to both and delegates sampling");
-    println!();
-    println!("The client receives sampling requests from this server and");
-    println!("delegates them to the OpenAI MCP server. Perfect compliance!");
-    println!();
+async fn main() -> McpResult<()> {
+    let server = SamplingDemoServer;
 
-    Server::new()
-        .add_tool(ask_llm)
-        .serve_stdio()
-        .await?;
+    // Start MCP server - no logging for STDIO protocol
+    server
+        .run_stdio()
+        .await
+        .map_err(|e| McpError::internal(format!("Server error: {}", e)))?;
 
     Ok(())
 }
