@@ -8,7 +8,7 @@
 //! ```
 
 use bytes::{Bytes, BytesMut};
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use serde_json::json;
 use turbomcp_core::message::Message as OldMessage;
 use turbomcp_core::zero_copy::{BufferPool, MessageBatch, MessageId, ZeroCopyMessage};
@@ -34,7 +34,7 @@ fn bench_message_creation(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("zero_copy", size), size, |b, _| {
             b.iter(|| {
                 let msg = ZeroCopyMessage::from_json(MessageId::from("test"), &payload).unwrap();
-                black_box(msg);
+                std::hint::black_box(msg);
             });
         });
 
@@ -43,7 +43,7 @@ fn bench_message_creation(c: &mut Criterion) {
             b.iter(|| {
                 let msg = OldMessage::json(turbomcp_core::MessageId::from("test"), payload.clone())
                     .unwrap();
-                black_box(msg);
+                std::hint::black_box(msg);
             });
         });
     }
@@ -65,7 +65,7 @@ fn bench_message_cloning(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("cheap_clone", size), size, |b, _| {
             b.iter(|| {
                 let cloned = zero_copy_msg.cheap_clone();
-                black_box(cloned);
+                std::hint::black_box(cloned);
             });
         });
 
@@ -73,7 +73,7 @@ fn bench_message_cloning(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("deep_clone", size), size, |b, _| {
             b.iter(|| {
                 let cloned = zero_copy_msg.clone();
-                black_box(cloned);
+                std::hint::black_box(cloned);
             });
         });
     }
@@ -100,7 +100,7 @@ fn bench_lazy_parsing(c: &mut Criterion) {
             b.iter(|| {
                 let mut msg = ZeroCopyMessage::from_bytes(MessageId::from("test"), payload.clone());
                 let raw = msg.parse_json_lazy().unwrap();
-                black_box(raw);
+                std::hint::black_box(raw);
             });
         });
 
@@ -109,7 +109,7 @@ fn bench_lazy_parsing(c: &mut Criterion) {
             b.iter(|| {
                 let msg = ZeroCopyMessage::from_bytes(MessageId::from("test"), payload.clone());
                 let value: serde_json::Value = msg.deserialize().unwrap();
-                black_box(value);
+                std::hint::black_box(value);
             });
         });
     }
@@ -127,7 +127,7 @@ fn bench_buffer_pool(c: &mut Criterion) {
     group.bench_function("pool_acquire", |b| {
         b.iter(|| {
             let buffer = pool.acquire();
-            black_box(buffer);
+            std::hint::black_box(buffer);
             // Buffer is dropped and could be returned to pool
         });
     });
@@ -136,7 +136,7 @@ fn bench_buffer_pool(c: &mut Criterion) {
     group.bench_function("direct_alloc", |b| {
         b.iter(|| {
             let buffer = BytesMut::with_capacity(4096);
-            black_box(buffer);
+            std::hint::black_box(buffer);
         });
     });
 
@@ -170,7 +170,7 @@ fn bench_message_batching(c: &mut Criterion) {
             for (id, payload) in &messages {
                 batch.add(id.clone(), payload.clone());
             }
-            black_box(batch);
+            std::hint::black_box(batch);
         });
     });
 
@@ -184,11 +184,11 @@ fn bench_message_batching(c: &mut Criterion) {
         b.iter(|| {
             let mut count = 0;
             for (id, payload) in batch.iter() {
-                black_box(id);
-                black_box(payload);
+                std::hint::black_box(id);
+                std::hint::black_box(payload);
                 count += 1;
             }
-            black_box(count);
+            std::hint::black_box(count);
         });
     });
 
@@ -198,7 +198,7 @@ fn bench_message_batching(c: &mut Criterion) {
         b.iter(|| {
             rng = (rng * 1103515245 + 12345) % 100; // Simple LCG
             let msg = batch.get(rng);
-            black_box(msg);
+            std::hint::black_box(msg);
         });
     });
 
@@ -225,7 +225,7 @@ fn bench_utf8_validation(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("valid", size), size, |b, _| {
             b.iter(|| {
                 let is_valid = fast::validate_utf8_fast(&valid_utf8);
-                black_box(is_valid);
+                std::hint::black_box(is_valid);
             });
         });
 
@@ -233,7 +233,7 @@ fn bench_utf8_validation(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::new("invalid", size), size, |b, _| {
             b.iter(|| {
                 let is_valid = fast::validate_utf8_fast(&invalid_utf8);
-                black_box(is_valid);
+                std::hint::black_box(is_valid);
             });
         });
     }
@@ -254,14 +254,14 @@ fn bench_json_boundaries(c: &mut Criterion) {
     group.bench_function("simple_objects", |b| {
         b.iter(|| {
             let boundaries = fast::find_json_boundaries(json_stream.as_bytes());
-            black_box(boundaries);
+            std::hint::black_box(boundaries);
         });
     });
 
     group.bench_function("nested_objects", |b| {
         b.iter(|| {
             let boundaries = fast::find_json_boundaries(nested_json.as_bytes());
-            black_box(boundaries);
+            std::hint::black_box(boundaries);
         });
     });
 

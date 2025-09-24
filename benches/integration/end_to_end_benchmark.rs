@@ -3,7 +3,7 @@
 //! Measures real-world performance across full request/response cycles
 //! including transport, parsing, validation, and handler execution.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main, BenchmarkId, Throughput};
+use criterion::{{Criterion, criterion_group, criterion_main, BenchmarkId, Throughput}};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -213,17 +213,17 @@ fn bench_request_latency(c: &mut Criterion) {
                         "fast_computation" => {
                             let iterations = arguments["iterations"].as_i64().unwrap() as i32;
                             let result = server.fast_computation(ctx, iterations).await;
-                            black_box(result)
+                            std::hint::black_box(result)
                         },
                         "memory_operation" => {
                             let size_kb = arguments["size_kb"].as_i64().unwrap() as i32;
                             let result = server.memory_operation(ctx, size_kb).await;
-                            black_box(result)
+                            std::hint::black_box(result)
                         },
                         "validation_heavy" => {
                             let complexity = arguments["schema_complexity"].as_i64().unwrap() as i32;
                             let result = server.validation_heavy(ctx, complexity).await;
-                            black_box(result)
+                            std::hint::black_box(result)
                         },
                         _ => unreachable!(),
                     }
@@ -273,7 +273,7 @@ fn bench_sustained_throughput(c: &mut Criterion) {
 
                     // Wait for all to complete
                     let results = futures::future::join_all(handles).await;
-                    black_box(results)
+                    std::hint::black_box(results)
                 });
             },
         );
@@ -307,7 +307,7 @@ fn bench_error_handling(c: &mut Criterion) {
                     );
 
                     let result = server.error_scenario(ctx, err_type.to_string()).await;
-                    black_box(result)
+                    std::hint::black_box(result)
                 });
             },
         );
@@ -342,7 +342,7 @@ fn bench_memory_efficiency(c: &mut Criterion) {
                     );
 
                     let result = server.memory_operation(ctx, size_kb).await;
-                    black_box(result)
+                    std::hint::black_box(result)
                 });
             },
         );

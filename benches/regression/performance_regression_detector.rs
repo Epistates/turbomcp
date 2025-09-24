@@ -4,7 +4,7 @@
 //! performance against historical baselines and failing CI if significant
 //! regressions are detected.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main, BatchSize};
+use criterion::{{Criterion, criterion_group, criterion_main, BatchSize}};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -153,7 +153,7 @@ fn bench_critical_path_operations(c: &mut Criterion) {
                     MessageId::from("bench"),
                     Bytes::from(data)
                 );
-                black_box(msg)
+                std::hint::black_box(msg)
             },
             BatchSize::SmallInput,
         );
@@ -165,7 +165,7 @@ fn bench_critical_path_operations(c: &mut Criterion) {
 
         b.iter(|| {
             let parsed: serde_json::Value = serde_json::from_str(json_data).unwrap();
-            black_box(parsed)
+            std::hint::black_box(parsed)
         });
     });
 
@@ -194,7 +194,7 @@ fn bench_critical_path_operations(c: &mut Criterion) {
 
         b.iter(|| {
             let result = compiled.validate(&instance);
-            black_box(result)
+            std::hint::black_box(result)
         });
     });
 
@@ -212,7 +212,7 @@ fn bench_critical_path_operations(c: &mut Criterion) {
             };
 
             let context = turbomcp::Context::new(request_ctx, handler_meta);
-            black_box(context)
+            std::hint::black_box(context)
         });
     });
 
@@ -262,7 +262,7 @@ fn bench_memory_allocation_regression(c: &mut Criterion) {
 
         b.iter(|| {
             let buffer = pool.acquire();
-            black_box(buffer);
+            std::hint::black_box(buffer);
             // Buffer is automatically returned to pool on drop
         });
     });
@@ -280,7 +280,7 @@ fn bench_memory_allocation_regression(c: &mut Criterion) {
                     Bytes::from(format!("payload_{}", i))
                 );
             }
-            black_box(batch);
+            std::hint::black_box(batch);
         });
     });
 
@@ -332,10 +332,10 @@ fn bench_throughput_regression(c: &mut Criterion) {
                     MessageId::from(format!("msg_{}", processed)),
                     msg_data.clone()
                 );
-                black_box(msg);
+                std::hint::black_box(msg);
                 processed += 1;
             }
-            black_box(processed);
+            std::hint::black_box(processed);
         });
     });
 

@@ -4,7 +4,7 @@
 //! and should be used for relative performance comparison rather than absolute metrics.
 //! Your results may vary depending on hardware configuration.
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI32, Ordering};
 use turbomcp::prelude::*;
@@ -73,30 +73,30 @@ fn bench_sync_operations(c: &mut Criterion) {
     let server = BenchmarkServer::new();
 
     c.bench_function("counter_increment", |b| {
-        b.iter(|| black_box(server.next_counter()))
+        b.iter(|| std::hint::black_box(server.next_counter()))
     });
 
     c.bench_function("server_creation", |b| {
-        b.iter(|| black_box(BenchmarkServer::new()))
+        b.iter(|| std::hint::black_box(BenchmarkServer::new()))
     });
 }
 
 /// Benchmark helper functions performance
 fn bench_helper_functions(c: &mut Criterion) {
     c.bench_function("text_helper", |b| {
-        b.iter(|| black_box(text("Test message")))
+        b.iter(|| std::hint::black_box(text("Test message")))
     });
 
     c.bench_function("error_text_helper", |b| {
-        b.iter(|| black_box(error_text("Error message")))
+        b.iter(|| std::hint::black_box(error_text("Error message")))
     });
 
     c.bench_function("tool_success_helper", |b| {
-        b.iter(|| black_box(tool_success(vec![text("Success")])))
+        b.iter(|| std::hint::black_box(tool_success(vec![text("Success")])))
     });
 
     c.bench_function("tool_error_helper", |b| {
-        b.iter(|| black_box(tool_error("Error occurred")))
+        b.iter(|| std::hint::black_box(tool_error("Error occurred")))
     });
 }
 
@@ -113,7 +113,7 @@ fn bench_context_operations(c: &mut Criterion) {
                 description: None,
             };
 
-            black_box(Context::new(request_ctx, handler_meta))
+            std::hint::black_box(Context::new(request_ctx, handler_meta))
         })
     });
 }
@@ -144,7 +144,7 @@ fn bench_schema_generation(c: &mut Criterion) {
     c.bench_function("macro_schema_generation", |b| {
         b.iter(|| {
             let (_, _, schema) = BenchServer::benchmark_tool_metadata();
-            black_box(schema)
+            std::hint::black_box(schema)
         })
     });
 }
@@ -158,11 +158,11 @@ fn bench_uri_templates(c: &mut Criterion) {
     let test_uri = "api://v1/auth/users/123";
 
     c.bench_function("uri_template_creation", |b| {
-        b.iter(|| black_box(UriTemplate::new("api://v{version}/{service}/users/{id}")))
+        b.iter(|| std::hint::black_box(UriTemplate::new("api://v{version}/{service}/users/{id}")))
     });
 
     c.bench_function("uri_template_matching", |b| {
-        b.iter(|| black_box(template.matches(test_uri)))
+        b.iter(|| std::hint::black_box(template.matches(test_uri)))
     });
 }
 
