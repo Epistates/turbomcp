@@ -331,7 +331,7 @@ impl WebSocketBidirectionalTransport {
                 }
 
                 if let Some(ref mut w) = *writer.lock().await {
-                    if let Err(e) = w.send(Message::Ping(vec![])).await {
+                    if let Err(e) = w.send(Message::Ping(vec![].into())).await {
                         warn!("Keep-alive ping failed: {}", e);
                     } else {
                         trace!("Keep-alive ping sent");
@@ -480,7 +480,7 @@ impl WebSocketBidirectionalTransport {
 
         if let Some(ref mut writer) = *self.writer.lock().await {
             writer
-                .send(Message::Text(message_text))
+                .send(Message::Text(message_text.into()))
                 .await
                 .map_err(|e| TransportError::SendFailed(format!("WebSocket send failed: {}", e)))?;
 
@@ -641,7 +641,7 @@ impl Transport for WebSocketBidirectionalTransport {
                 .map_err(|e| TransportError::SendFailed(format!("Failed to serialize: {}", e)))?;
 
             writer
-                .send(Message::Text(text))
+                .send(Message::Text(text.into()))
                 .await
                 .map_err(|e| TransportError::SendFailed(format!("WebSocket send failed: {}", e)))?;
 
@@ -659,7 +659,7 @@ impl Transport for WebSocketBidirectionalTransport {
             match reader.next().await {
                 Some(Ok(Message::Text(text))) => {
                     // Process for elicitation responses
-                    let _ = self.process_incoming_message(text.clone()).await;
+                    let _ = self.process_incoming_message(text.to_string()).await;
 
                     let message = TransportMessage {
                         id: MessageId::from(Uuid::new_v4()),

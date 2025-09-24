@@ -88,7 +88,7 @@ impl Transport for WebSocketTransport {
                 .map_err(|e| TransportError::SendFailed(e.to_string()))?;
 
             stream
-                .send(Message::Text(text))
+                .send(Message::Text(text.into()))
                 .await
                 .map_err(|e| TransportError::SendFailed(e.to_string()))?;
 

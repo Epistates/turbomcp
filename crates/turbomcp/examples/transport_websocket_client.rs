@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ws_sender
-        .send(Message::Text(init_message.to_string()))
+        .send(Message::Text(init_message.to_string().into()))
         .await?;
     tracing::info!("📋 Sent initialize request");
 
@@ -74,7 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ws_sender
-        .send(Message::Text(tools_message.to_string()))
+        .send(Message::Text(tools_message.to_string().into()))
         .await?;
     tracing::info!("🛠️  Requested tools list");
 
@@ -114,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ws_sender
-        .send(Message::Text(join_message.to_string()))
+        .send(Message::Text(join_message.to_string().into()))
         .await?;
     tracing::info!("👋 Sent join chat request");
 
@@ -148,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ws_sender
-        .send(Message::Text(send_message.to_string()))
+        .send(Message::Text(send_message.to_string().into()))
         .await?;
     tracing::info!("💬 Sent chat message");
 
@@ -182,7 +182,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ws_sender
-        .send(Message::Text(send_message2.to_string()))
+        .send(Message::Text(send_message2.to_string().into()))
         .await?;
     tracing::info!("💬 Sent second chat message");
 
@@ -215,7 +215,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ws_sender
-        .send(Message::Text(get_messages.to_string()))
+        .send(Message::Text(get_messages.to_string().into()))
         .await?;
     tracing::info!("📖 Requested recent messages");
 
@@ -245,7 +245,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    ws_sender.send(Message::Text(get_users.to_string())).await?;
+    ws_sender
+        .send(Message::Text(get_users.to_string().into()))
+        .await?;
     tracing::info!("👥 Requested online users");
 
     // Wait for users response
@@ -277,7 +279,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     ws_sender
-        .send(Message::Text(leave_message.to_string()))
+        .send(Message::Text(leave_message.to_string().into()))
         .await?;
     tracing::info!("👋 Sent leave chat request");
 

@@ -241,7 +241,7 @@ async fn handle_websocket_connection(
                         // Process the JSON-RPC request using the service
                         if let Some(response) = process_mcp_request(&service, json_rpc).await {
                             let response_text = serde_json::to_string(&response)?;
-                            if let Err(e) = response_tx.send(Message::Text(response_text)) {
+                            if let Err(e) = response_tx.send(Message::Text(response_text.into())) {
                                 tracing::error!("Failed to queue response: {}", e);
                                 break;
                             }
@@ -258,8 +258,9 @@ async fn handle_websocket_connection(
                                 "message": "Parse error"
                             }
                         });
-                        let _ = response_tx
-                            .send(Message::Text(serde_json::to_string(&error_response)?));
+                        let _ = response_tx.send(Message::Text(
+                            serde_json::to_string(&error_response)?.into(),
+                        ));
                     }
                 }
             }

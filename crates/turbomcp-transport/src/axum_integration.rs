@@ -1181,7 +1181,7 @@ async fn handle_websocket(
     });
 
     if let Err(e) = sender
-        .send(axum::extract::ws::Message::Text(welcome.to_string()))
+        .send(axum::extract::ws::Message::Text(welcome.to_string().into()))
         .await
     {
         error!("Failed to send WebSocket welcome message: {}", e);
@@ -1221,7 +1221,7 @@ async fn handle_websocket(
                                 let response_text =
                                     serde_json::to_string(&response).unwrap_or_default();
                                 if let Err(e) = sender
-                                    .send(axum::extract::ws::Message::Text(response_text))
+                                    .send(axum::extract::ws::Message::Text(response_text.into()))
                                     .await
                                 {
                                     error!("Failed to send WebSocket response: {}", e);
@@ -1247,7 +1247,7 @@ async fn handle_websocket(
                                 let error_text =
                                     serde_json::to_string(&error_response).unwrap_or_default();
                                 if let Err(e) = sender
-                                    .send(axum::extract::ws::Message::Text(error_text))
+                                    .send(axum::extract::ws::Message::Text(error_text.into()))
                                     .await
                                 {
                                     error!("Failed to send WebSocket error response: {}", e);
@@ -1274,7 +1274,7 @@ async fn handle_websocket(
 
                         let error_text = serde_json::to_string(&error_response).unwrap_or_default();
                         if let Err(e) = sender
-                            .send(axum::extract::ws::Message::Text(error_text))
+                            .send(axum::extract::ws::Message::Text(error_text.into()))
                             .await
                         {
                             error!("Failed to send WebSocket parse error: {}", e);

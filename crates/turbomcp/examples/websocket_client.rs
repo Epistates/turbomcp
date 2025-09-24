@@ -278,7 +278,7 @@ async fn send_websocket_request(
     println!("📤 Sending WebSocket: {}", request_str);
 
     // Send request
-    ws_sender.send(Message::Text(request_str)).await?;
+    ws_sender.send(Message::Text(request_str.into())).await?;
 
     // For this simple example, we'll just assume the next response is for our request
     // In a real implementation, you'd match request/response IDs

@@ -38,7 +38,7 @@ impl WebSocketServer {
     async fn broadcast(&self, message: &str) {
         let connections = self.connections.read().await;
         for sender in connections.values() {
-            let _ = sender.send(Message::Text(message.to_string()));
+            let _ = sender.send(Message::Text(message.to_string().into()));
         }
     }
 
@@ -47,7 +47,9 @@ impl WebSocketServer {
     async fn send_to_client(&self, client_id: &str, message: &str) -> bool {
         let connections = self.connections.read().await;
         if let Some(sender) = connections.get(client_id) {
-            sender.send(Message::Text(message.to_string())).is_ok()
+            sender
+                .send(Message::Text(message.to_string().into()))
+                .is_ok()
         } else {
             false
         }
@@ -151,7 +153,8 @@ async fn handle_websocket_connection(
 
                         // Send response back to client
                         let response_str = response.to_string();
-                        if let Err(e) = response_tx.send(Message::Text(response_str.clone())) {
+                        if let Err(e) = response_tx.send(Message::Text(response_str.clone().into()))
+                        {
                             eprintln!("❌ Failed to queue response: {}", e);
                             break;
                         } else {
@@ -169,7 +172,7 @@ async fn handle_websocket_connection(
                                 "message": "Parse error"
                             }
                         });
-                        let _ = response_tx.send(Message::Text(error_response.to_string()));
+                        let _ = response_tx.send(Message::Text(error_response.to_string().into()));
                     }
                 }
             }
