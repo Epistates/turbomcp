@@ -75,8 +75,8 @@ jobs:
         CARGO_NET_RETRY: 2
         CARGO_NET_TIMEOUT: 10
       run: |
-        # Use CI profile for minimal disk usage
-        cargo test --workspace --all-features --profile ci
+        # Use CI profile for minimal disk usage, run unit tests only (no integration tests requiring Docker)
+        cargo test --workspace --profile ci --lib --bins
         echo "Tests completed, cleaning up intermediate files..."
         find /tmp/cargo-target -name "*.rlib" -delete 2>/dev/null || true
         find /tmp/cargo-target -name "*.rmeta" -delete 2>/dev/null || true

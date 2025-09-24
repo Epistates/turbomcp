@@ -130,6 +130,7 @@ mock_instant = "0.3"
 serial_test = "3.0"
 tempfile = "3.8"
 sha2 = "0.10"
+testcontainers = "0.25.0"
 
 # Documentation
 doc-comment = "0.3"

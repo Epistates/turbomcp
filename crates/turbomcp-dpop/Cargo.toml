@@ -73,7 +73,7 @@ pretty_assertions = { workspace = true }
 serial_test = "3.0"
 # HSM testing infrastructure
 tempfile = { workspace = true }
-testcontainers = "0.25.0"
+testcontainers = { workspace = true }
 
 [features]
 default = ["jwt-validation"]
