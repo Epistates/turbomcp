@@ -12,8 +12,134 @@ use bytes::{Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(feature = "messagepack")]
+use msgpacker::Packable;
+
 use crate::error::{Error, Result};
 use crate::types::{ContentType, ProtocolVersion, Timestamp};
+
+/// A msgpacker-compatible representation of JSON values
+#[cfg(feature = "messagepack")]
+#[derive(Debug, Clone)]
+pub enum JsonValue {
+    /// Represents a null JSON value
+    Null,
+    /// Represents a boolean JSON value
+    Bool(bool),
+    /// Represents a numeric JSON value (stored as f64)
+    Number(f64),
+    /// Represents a string JSON value
+    String(String),
+    /// Represents an array JSON value
+    Array(Vec<JsonValue>),
+    /// Represents an object JSON value
+    Object(std::collections::HashMap<String, JsonValue>),
+}
+
+#[cfg(feature = "messagepack")]
+impl JsonValue {
+    /// Converts a serde_json::Value into a JsonValue for msgpacker serialization
+    pub fn from_serde_json(value: &serde_json::Value) -> Self {
+        match value {
+            serde_json::Value::Null => JsonValue::Null,
+            serde_json::Value::Bool(b) => JsonValue::Bool(*b),
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    JsonValue::Number(i as f64)
+                } else if let Some(u) = n.as_u64() {
+                    JsonValue::Number(u as f64)
+                } else if let Some(f) = n.as_f64() {
+                    JsonValue::Number(f)
+                } else {
+                    JsonValue::Null
+                }
+            }
+            serde_json::Value::String(s) => JsonValue::String(s.clone()),
+            serde_json::Value::Array(arr) => {
+                JsonValue::Array(arr.iter().map(Self::from_serde_json).collect())
+            }
+            serde_json::Value::Object(obj) => {
+                let mut map = std::collections::HashMap::new();
+                for (k, v) in obj {
+                    map.insert(k.clone(), Self::from_serde_json(v));
+                }
+                JsonValue::Object(map)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "messagepack")]
+impl msgpacker::Packable for JsonValue {
+    fn pack<T>(&self, buf: &mut T) -> usize
+    where
+        T: Extend<u8>,
+    {
+        match self {
+            JsonValue::Null => {
+                // Pack nil
+                buf.extend([0xc0]);
+                1
+            }
+            JsonValue::Bool(b) => b.pack(buf),
+            JsonValue::Number(n) => n.pack(buf),
+            JsonValue::String(s) => s.pack(buf),
+            JsonValue::Array(arr) => {
+                // Pack array manually since Vec<JsonValue> doesn't implement Packable
+                let len = arr.len();
+                let mut bytes_written = 0;
+
+                // Pack array length
+                if len <= 15 {
+                    buf.extend([0x90 + len as u8]);
+                    bytes_written += 1;
+                } else if len <= u16::MAX as usize {
+                    buf.extend([0xdc]);
+                    buf.extend((len as u16).to_be_bytes());
+                    bytes_written += 3;
+                } else {
+                    buf.extend([0xdd]);
+                    buf.extend((len as u32).to_be_bytes());
+                    bytes_written += 5;
+                }
+
+                // Pack array elements
+                for item in arr {
+                    bytes_written += item.pack(buf);
+                }
+
+                bytes_written
+            }
+            JsonValue::Object(obj) => {
+                // Pack map manually since HashMap<String, JsonValue> doesn't implement Packable
+                let len = obj.len();
+                let mut bytes_written = 0;
+
+                // Pack map length
+                if len <= 15 {
+                    buf.extend([0x80 + len as u8]);
+                    bytes_written += 1;
+                } else if len <= u16::MAX as usize {
+                    buf.extend([0xde]);
+                    buf.extend((len as u16).to_be_bytes());
+                    bytes_written += 3;
+                } else {
+                    buf.extend([0xdf]);
+                    buf.extend((len as u32).to_be_bytes());
+                    bytes_written += 5;
+                }
+
+                // Pack key-value pairs
+                for (k, v) in obj {
+                    bytes_written += k.pack(buf);
+                    bytes_written += v.pack(buf);
+                }
+
+                bytes_written
+            }
+        }
+    }
+}
 
 /// Unique identifier for messages
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -342,12 +468,12 @@ impl Message {
                             "Cannot serialize unparsed JSON to MessagePack",
                         ))
                     },
-                    |_parsed| {
-                        // TODO: Implement proper msgpacker serialization for serde_json::Value
-                        // For now, this feature is disabled until proper conversion is implemented
-                        Err(Error::serialization(
-                            "MessagePack serialization with msgpacker not yet implemented for dynamic JSON values"
-                        ))
+                    |parsed| {
+                        // Convert serde_json::Value to msgpacker-compatible format
+                        let packable_value = JsonValue::from_serde_json(parsed.as_ref());
+                        let mut buffer = Vec::new();
+                        packable_value.pack(&mut buffer);
+                        Ok(Bytes::from(buffer))
                     },
                 ),
                 _ => Err(Error::validation("Cannot serialize payload as MessagePack")),
