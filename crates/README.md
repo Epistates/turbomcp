@@ -2,6 +2,14 @@
 
 This directory contains the individual crates that make up the TurboMCP framework. Each crate is designed with a specific responsibility and can be used independently or as part of the complete framework.
 
+## 🔒 v1.0.13 Security & Performance Highlights
+
+**All crates now feature:**
+- **Zero Known Vulnerabilities** - Comprehensive security audit with eliminated RSA and paste vulnerabilities
+- **World-Class Benchmarking** - Enterprise performance monitoring with automated regression detection
+- **Enhanced Client Libraries** - Advanced LLM backend support with production-grade implementations
+- **MIT-Compatible Dependencies** - Strict licensing compliance with cargo-deny policy
+
 ## Architecture Overview
 
 ```mermaid
@@ -95,6 +103,7 @@ Foundation crate providing core types, error handling, and utilities used by all
 **Key Features:**
 - SIMD-accelerated JSON processing
 - Zero-copy message handling with `Bytes`
+- Enhanced MessagePack with `msgpacker` integration (v1.0.13)
 - Comprehensive error handling with rich context
 - Session management with LRU eviction
 - Request/response context tracking
@@ -107,6 +116,7 @@ Complete implementation of the Model Context Protocol specification with JSON-RP
 **Key Features:**
 - MCP 2025-06-18 specification compliance
 - JSON-RPC 2.0 with batching support
+- Flexible ProgressToken (string/integer support) (v1.0.13)
 - Type-safe capability negotiation
 - Protocol version management
 - Comprehensive validation
@@ -142,6 +152,8 @@ MCP server implementation with middleware support, routing, and lifecycle manage
 MCP client implementation with connection management and error recovery.
 
 **Key Features:**
+- Advanced LLM backend support (Anthropic, OpenAI) (v1.0.13)
+- Interactive elicitation with real-time user input (v1.0.13)
 - Connection management with automatic reconnection
 - Error handling and recovery mechanisms
 - Support for all MCP capabilities

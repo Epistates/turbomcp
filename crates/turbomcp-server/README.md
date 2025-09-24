@@ -10,6 +10,11 @@
 
 `turbomcp-server` provides a comprehensive server framework for Model Context Protocol implementations. It handles all server-side concerns including request routing, authentication, middleware processing, session management, and production lifecycle operations.
 
+### 🔒 **Security Hardened** (v1.0.13)
+- **Zero Known Vulnerabilities** - Comprehensive security audit and hardening
+- **Dependency Security** - Eliminated all vulnerable dependency paths
+- **MIT-Compatible Licensing** - Strict open-source license compliance
+
 ## Key Features
 
 ### 🗂️ **Handler Registry & Routing**
