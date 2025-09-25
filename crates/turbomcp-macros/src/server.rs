@@ -165,7 +165,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
 
             /// Initialize context factory for this server
             fn create_context_factory() -> turbomcp::ContextFactory {
-                use turbomcp::{ContextFactory, ContextFactoryConfig, Container};
+                use ::turbomcp::{ContextFactory, ContextFactoryConfig, Container};
 
                 let config = ContextFactoryConfig::default();
                 let container = Container::new();
@@ -279,9 +279,9 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
 
             /// Create and configure the underlying server instance
             fn create_server(self) -> Result<turbomcp::Server, turbomcp::ServerError> {
-                use turbomcp::{RequestContext, ServerBuilder};
-                use turbomcp::handlers::utils;
-                use turbomcp::{CallToolRequest, CallToolResult, Content, TextContent};
+                use ::turbomcp::{RequestContext, ServerBuilder};
+                use ::turbomcp::handlers::utils;
+                use ::turbomcp::{CallToolRequest, CallToolResult, Content, TextContent};
 
                 // Create server builder with metadata from macro
                 let mut builder = ServerBuilder::new()
@@ -344,9 +344,9 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                         let (prompt_name, prompt_description, _arguments_schema, _tags) = Self::#prompt_metadata_functions();
 
                         // Create prompt handler using utils helper
-                        use turbomcp::handlers::utils;
-                        use turbomcp_protocol::{GetPromptRequest, GetPromptResult};
-                        use turbomcp_protocol::types::{PromptMessage, Role, Content, TextContent};
+                        use ::turbomcp::handlers::utils;
+                        use ::turbomcp::turbomcp_protocol::{GetPromptRequest, GetPromptResult};
+                        use ::turbomcp::turbomcp_protocol::types::{PromptMessage, Role, Content, TextContent};
 
                         let prompt_handler = utils::prompt(
                             prompt_name,
@@ -384,12 +384,12 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                         let (resource_uri_template, resource_name, resource_title, resource_description, resource_mime_type, _tags) = Self::#resource_metadata_functions();
 
                         // Create resource handler using the FunctionResourceHandler
-                        use turbomcp::handlers::FunctionResourceHandler;
-                        use turbomcp_protocol::{ReadResourceRequest, ReadResourceResult};
-                        use turbomcp_protocol::types::{ResourceContent, TextResourceContents};
+                        use ::turbomcp::handlers::FunctionResourceHandler;
+                        use ::turbomcp::turbomcp_protocol::{ReadResourceRequest, ReadResourceResult};
+                        use ::turbomcp::turbomcp_protocol::types::{ResourceContent, TextResourceContents};
 
                         let resource_handler = FunctionResourceHandler::new(
-                            turbomcp_protocol::types::Resource {
+                            ::turbomcp::turbomcp_protocol::types::Resource {
                                 name: resource_name.to_string(),
                                 title: Some(resource_title.to_string()),
                                 uri: resource_uri_template.to_string(),
@@ -444,7 +444,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                 tool_name: &str,
                 arguments: serde_json::Value
             ) -> Result<turbomcp::CallToolResult, turbomcp::ServerError> {
-                use turbomcp::{CallToolRequest, RequestContext};
+                use ::turbomcp::{CallToolRequest, RequestContext};
                 use std::collections::HashMap;
 
                 // Convert JSON arguments to HashMap<String, Value>

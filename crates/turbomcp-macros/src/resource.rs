@@ -171,17 +171,17 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
         // Generate handler function that bridges ReadResourceRequest to the actual method
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #handler_fn_name(&self, request: turbomcp_protocol::ReadResourceRequest, context: turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, turbomcp::ServerError>> + Send + '_>> {
+        fn #handler_fn_name(&self, request: ::turbomcp::turbomcp_protocol::ReadResourceRequest, context: ::turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, ::turbomcp::ServerError>> + Send + '_>> {
             Box::pin(async move {
                 // Context injection using ContextFactory pattern
                 let turbomcp_ctx = {
-                    use turbomcp::{ContextFactory, ContextFactoryConfig, Container};
+                    use ::turbomcp::{ContextFactory, ContextFactoryConfig, Container};
 
                     let config = ContextFactoryConfig {
                         enable_tracing: true,
                         enable_metrics: true,
                         max_pool_size: 50,
-                        default_strategy: turbomcp::ContextCreationStrategy::Inherit,
+                        default_strategy: ::turbomcp::ContextCreationStrategy::Inherit,
                         ..Default::default()
                     };
                     let container = Container::new();
@@ -190,12 +190,12 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
                     factory.create_for_resource(context.clone(), #display_name)
                         .await
                         .unwrap_or_else(|_| {
-                            let handler_metadata = turbomcp::HandlerMetadata {
+                            let handler_metadata = ::turbomcp::HandlerMetadata {
                                 name: #display_name.to_string(),
                                 handler_type: "resource".to_string(),
                                 description: Some(#description.to_string()),
                             };
-                            turbomcp::Context::new(context, handler_metadata)
+                            ::turbomcp::Context::new(context, handler_metadata)
                         })
                 };
 
@@ -204,20 +204,20 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
                 // Call the actual method with extracted parameters
                 let result = self.#fn_name(#call_args).await
                     .map_err(|e| match e {
-                        turbomcp::McpError::Server(server_err) => server_err,
-                        turbomcp::McpError::Resource(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Tool(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Prompt(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Protocol(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Context(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Unauthorized(msg) => turbomcp::ServerError::authorization(msg),
-                        turbomcp::McpError::Network(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::InvalidInput(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Schema(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Transport(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Serialization(e) => turbomcp::ServerError::from(e),
-                        turbomcp::McpError::Internal(msg) => turbomcp::ServerError::Internal(msg),
-                        turbomcp::McpError::InvalidRequest(msg) => turbomcp::ServerError::handler(msg),
+                        ::turbomcp::McpError::Server(server_err) => server_err,
+                        ::turbomcp::McpError::Resource(msg) => ::turbomcp::ServerError::handler(msg),
+                        ::turbomcp::McpError::Tool(msg) => ::turbomcp::ServerError::handler(msg),
+                        ::turbomcp::McpError::Prompt(msg) => ::turbomcp::ServerError::handler(msg),
+                        ::turbomcp::McpError::Protocol(msg) => ::turbomcp::ServerError::handler(msg),
+                        ::turbomcp::McpError::Context(msg) => ::turbomcp::ServerError::handler(msg),
+                        ::turbomcp::McpError::Unauthorized(msg) => ::turbomcp::ServerError::authorization(msg),
+                        ::turbomcp::McpError::Network(msg) => ::turbomcp::ServerError::handler(msg),
+                        ::turbomcp::McpError::InvalidInput(msg) => ::turbomcp::ServerError::handler(msg),
+                        ::turbomcp::McpError::Schema(msg) => ::turbomcp::ServerError::handler(msg),
+                        ::turbomcp::McpError::Transport(msg) => ::turbomcp::ServerError::handler(msg),
+                        ::turbomcp::McpError::Serialization(e) => ::turbomcp::ServerError::from(e),
+                        ::turbomcp::McpError::Internal(msg) => ::turbomcp::ServerError::Internal(msg),
+                        ::turbomcp::McpError::InvalidRequest(msg) => ::turbomcp::ServerError::handler(msg),
                     })?;
 
                 Ok(result)

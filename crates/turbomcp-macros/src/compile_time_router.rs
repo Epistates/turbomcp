@@ -99,7 +99,7 @@ pub fn generate_router(
 
                     match self.#handler_fn(request, ctx).await {
                         Ok(result) => {
-                            ::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
+                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
                                 serde_json::json!({
                                     "content": result.content
                                 }),
@@ -107,8 +107,8 @@ pub fn generate_router(
                             )
                         }
                         Err(e) => {
-                            ::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                ::turbomcp_protocol::jsonrpc::JsonRpcError {
+                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
                                     code: -32603,
                                     message: e.to_string(),
                                     data: None,
@@ -141,7 +141,7 @@ pub fn generate_router(
                             map
                         });
 
-                    let request = ::turbomcp_protocol::GetPromptRequest {
+                    let request = ::turbomcp::turbomcp_protocol::GetPromptRequest {
                         name: #method_str.to_string(),
                         arguments: prompt_args,
                         _meta: None,
@@ -152,11 +152,11 @@ pub fn generate_router(
                     match self.#handler_fn(request, ctx).await {
                         Ok(result) => {
                             // Wrap string result in proper MCP GetPromptResult format
-                            let get_prompt_result = ::turbomcp_protocol::GetPromptResult {
+                            let get_prompt_result = ::turbomcp::turbomcp_protocol::GetPromptResult {
                                 description: None,
-                                messages: vec![::turbomcp_protocol::types::PromptMessage {
-                                    role: ::turbomcp_protocol::types::Role::User,
-                                    content: ::turbomcp_protocol::types::Content::Text(::turbomcp_protocol::types::TextContent {
+                                messages: vec![::turbomcp::turbomcp_protocol::types::PromptMessage {
+                                    role: ::turbomcp::turbomcp_protocol::types::Role::User,
+                                    content: ::turbomcp::turbomcp_protocol::types::Content::Text(::turbomcp::turbomcp_protocol::types::TextContent {
                                         text: result,
                                         annotations: None,
                                         meta: None,
@@ -164,14 +164,14 @@ pub fn generate_router(
                                 }],
                                 _meta: None,
                             };
-                            ::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
+                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
                                 serde_json::to_value(get_prompt_result).unwrap(),
                                 req.id.clone()
                             )
                         }
                         Err(e) => {
-                            ::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                ::turbomcp_protocol::jsonrpc::JsonRpcError {
+                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
                                     code: -32603,
                                     message: e.to_string(),
                                     data: None,
@@ -208,7 +208,7 @@ pub fn generate_router(
                     let template = #template_string;
                     #uri_match_fn_name(resource_uri, template)
                 } => {
-                    let request = ::turbomcp_protocol::ReadResourceRequest {
+                    let request = ::turbomcp::turbomcp_protocol::ReadResourceRequest {
                         uri: resource_uri.to_string(),
                         _meta: None,
                     };
@@ -218,8 +218,8 @@ pub fn generate_router(
                     match self.#handler_fn(request, ctx).await {
                         Ok(result) => {
                             // Wrap string result in proper MCP ReadResourceResult format
-                            let read_resource_result = ::turbomcp_protocol::ReadResourceResult {
-                                contents: vec![::turbomcp_protocol::types::ResourceContent::Text(::turbomcp_protocol::types::TextResourceContents {
+                            let read_resource_result = ::turbomcp::turbomcp_protocol::ReadResourceResult {
+                                contents: vec![::turbomcp::turbomcp_protocol::types::ResourceContent::Text(::turbomcp::turbomcp_protocol::types::TextResourceContents {
                                     uri: resource_uri.to_string(),
                                     mime_type: Some("text/plain".to_string()),
                                     text: result,
@@ -227,14 +227,14 @@ pub fn generate_router(
                                 })],
                                 _meta: None,
                             };
-                            ::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
+                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
                                 serde_json::to_value(read_resource_result).unwrap(),
                                 req.id.clone()
                             )
                         }
                         Err(e) => {
-                            ::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                ::turbomcp_protocol::jsonrpc::JsonRpcError {
+                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
                                     code: -32603,
                                     message: e.to_string(),
                                     data: None,
@@ -249,587 +249,582 @@ pub fn generate_router(
         .collect();
 
     quote! {
-        // Helper function for URI template matching - generated at compile time for maximum performance
-        fn #uri_match_fn_name(uri: &str, template: &str) -> bool {
-            // Simple implementation for literal templates
-            if !template.contains('{') {
-                return uri == template;
-            }
+            // Helper function for URI template matching - generated at compile time for maximum performance
+            fn #uri_match_fn_name(uri: &str, template: &str) -> bool {
+                // Simple implementation for literal templates
+                if !template.contains('{') {
+                    return uri == template;
+                }
 
-            // Parse template for variable extraction with high performance
-            let template_parts: Vec<&str> = template.split('/').filter(|s| !s.is_empty()).collect();
-            let uri_parts: Vec<&str> = uri.split('/').filter(|s| !s.is_empty()).collect();
+                // Parse template for variable extraction with high performance
+                let template_parts: Vec<&str> = template.split('/').filter(|s| !s.is_empty()).collect();
+                let uri_parts: Vec<&str> = uri.split('/').filter(|s| !s.is_empty()).collect();
 
-            if template_parts.len() != uri_parts.len() {
-                return false;
-            }
-
-            for (template_part, uri_part) in template_parts.iter().zip(uri_parts.iter()) {
-                if template_part.starts_with('{') && template_part.ends_with('}') {
-                    // Variable part - matches any non-empty string
-                    if uri_part.is_empty() {
-                        return false;
-                    }
-                } else if template_part != uri_part {
-                    // Literal part that doesn't match
+                if template_parts.len() != uri_parts.len() {
                     return false;
                 }
+
+                for (template_part, uri_part) in template_parts.iter().zip(uri_parts.iter()) {
+                    if template_part.starts_with('{') && template_part.ends_with('}') {
+                        // Variable part - matches any non-empty string
+                        if uri_part.is_empty() {
+                            return false;
+                        }
+                    } else if template_part != uri_part {
+                        // Literal part that doesn't match
+                        return false;
+                    }
+                }
+
+                true
             }
 
-            true
-        }
+            impl #struct_name
+            where
+                Self: Clone + Send + Sync + 'static,
+            {
+                /// Convert server into an Axum router with default "/mcp" path (compile-time routing)
+                ///
+                /// This method generates a static dispatch router with zero runtime overhead.
+                /// All handler dispatch is done at compile time via match statements.
+                pub fn into_router(self: ::std::sync::Arc<Self>) -> ::turbomcp::axum::Router {
+                    self.into_router_with_path("/mcp")
+                }
 
-        impl #struct_name
-        where
-            Self: Clone + Send + Sync + 'static,
-        {
-            /// Convert server into an Axum router with default "/mcp" path (compile-time routing)
-            ///
-            /// This method generates a static dispatch router with zero runtime overhead.
-            /// All handler dispatch is done at compile time via match statements.
-            #[cfg(feature = "http")]
-            pub fn into_router(self: ::std::sync::Arc<Self>) -> axum::Router {
-                self.into_router_with_path("/mcp")
-            }
+                /// Convert server into an Axum router with custom path (compile-time routing)
+                ///
+                /// This method generates a static dispatch router with zero runtime overhead.
+                /// All handler dispatch is done at compile time via match statements.
+                pub fn into_router_with_path(self: ::std::sync::Arc<Self>, path: &str) -> ::turbomcp::axum::Router {
+                    use ::turbomcp::axum::{Json, routing::post, Router};
+                    use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion, JsonRpcError};
+                    use ::turbomcp::turbomcp_protocol::types::RequestId;
 
-            /// Convert server into an Axum router with custom path (compile-time routing)
-            ///
-            /// This method generates a static dispatch router with zero runtime overhead.
-            /// All handler dispatch is done at compile time via match statements.
-            #[cfg(feature = "http")]
-            pub fn into_router_with_path(self: ::std::sync::Arc<Self>, path: &str) -> axum::Router {
-                use axum::{Json, routing::post, Router};
-                use ::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion, JsonRpcError};
-                use ::turbomcp_protocol::types::RequestId;
+                    Router::new()
+                        .route(path, post(move |Json(req): Json<JsonRpcRequest>| {
+                            let server = self.clone();
+                            async move {
+                                let response = match req.method.as_str() {
+                                    "initialize" => {
+                                        JsonRpcResponse::success(
+                                            serde_json::json!({
+                                                "protocolVersion": "2025-06-18",
+                                                "serverInfo": {
+                                                    "name": #server_name,
+                                                    "version": #server_version
+                                                },
+                                                "capabilities": {
+                                                    "tools": {},
+                                                    "elicitation": {}
+                                                }
+                                            }),
+                                            req.id.clone()
+                                        )
+                                    }
 
-                Router::new()
-                    .route(path, post(move |Json(req): Json<JsonRpcRequest>| {
-                        let server = self.clone();
-                        async move {
-                            let response = match req.method.as_str() {
-                                "initialize" => {
-                                    JsonRpcResponse::success(
-                                        serde_json::json!({
-                                            "protocolVersion": "2025-06-18",
-                                            "serverInfo": {
-                                                "name": #server_name,
-                                                "version": #server_version
+                                    "tools/list" => {
+                                        let tools: Vec<serde_json::Value> = vec![#(#tool_list_items),*];
+                                        JsonRpcResponse::success(
+                                            serde_json::json!({
+                                                "tools": tools
+                                            }),
+                                            req.id.clone()
+                                        )
+                                    }
+
+                                    "tools/call" => {
+                                        let params = req.params.as_ref().and_then(|p| p.as_object());
+                                        let tool_name = params
+                                            .and_then(|p| p.get("name"))
+                                            .and_then(|n| n.as_str());
+
+                                        match tool_name {
+                                            Some(tool_name) => {
+                                                match tool_name {
+                                                    #(#tool_dispatch_cases)*
+                                                    _ => {
+                                                        JsonRpcResponse::error_response(
+                                                            JsonRpcError {
+                                                                code: -32602,
+                                                                message: format!("Unknown tool: {}", tool_name),
+                                                                data: None,
+                                                            },
+                                                            req.id.clone()
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            None => {
+                                                JsonRpcResponse::error_response(
+                                                    JsonRpcError {
+                                                        code: -32602,
+                                                        message: "Missing tool name".to_string(),
+                                                        data: None,
+                                                    },
+                                                    req.id.clone()
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    "prompts/list" => {
+                                        let prompts: Vec<serde_json::Value> = vec![#(#prompt_list_items),*];
+                                        JsonRpcResponse::success(
+                                            serde_json::json!({
+                                                "prompts": prompts
+                                            }),
+                                            req.id.clone()
+                                        )
+                                    }
+
+                                    "prompts/get" => {
+                                        let params = req.params.as_ref().and_then(|p| p.as_object());
+                                        let prompt_name = params
+                                            .and_then(|p| p.get("name"))
+                                            .and_then(|n| n.as_str());
+                                        match prompt_name {
+                                            Some(prompt_name) => {
+                                                match prompt_name {
+                                                    #(#prompt_dispatch_cases)*
+                                                    _ => {
+                                                        JsonRpcResponse::error_response(
+                                                            JsonRpcError {
+                                                                code: -32601,
+                                                                message: format!("Unknown prompt: {}", prompt_name),
+                                                                data: None,
+                                                            },
+                                                            req.id.clone()
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            None => {
+                                                JsonRpcResponse::error_response(
+                                                    JsonRpcError {
+                                                        code: -32602,
+                                                        message: "Missing prompt name".to_string(),
+                                                        data: None,
+                                                    },
+                                                    req.id.clone()
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    "resources/list" => {
+                                        let resources: Vec<serde_json::Value> = vec![#(#resource_list_items),*];
+                                        JsonRpcResponse::success(
+                                            serde_json::json!({
+                                                "resources": resources
+                                            }),
+                                            req.id.clone()
+                                        )
+                                    }
+
+                                    "resources/read" => {
+                                        let params = req.params.as_ref().and_then(|p| p.as_object());
+                                        let resource_uri = params
+                                            .and_then(|p| p.get("uri"))
+                                            .and_then(|u| u.as_str());
+                                        match resource_uri {
+                                            Some(resource_uri) => {
+                                                match resource_uri {
+                                                    #(#resource_dispatch_cases)*
+                                                    _ => {
+                                                        JsonRpcResponse::error_response(
+                                                            JsonRpcError {
+                                                                code: -32601,
+                                                                message: format!("Unknown resource: {}", resource_uri),
+                                                                data: None,
+                                                            },
+                                                            req.id.clone()
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            None => {
+                                                JsonRpcResponse::error_response(
+                                                    JsonRpcError {
+                                                        code: -32602,
+                                                        message: "Missing resource URI".to_string(),
+                                                        data: None,
+                                                    },
+                                                    req.id.clone()
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    "elicitation/create" => {
+                                        // Handle elicitation responses from client
+                                        // This is where we'd receive ElicitationCreateResult from the client
+                                        // and deliver it to the waiting tool
+
+                                        // For now, return success to acknowledge receipt
+                                        // The actual implementation would use an ElicitationManager to
+                                        // correlate responses with pending requests
+                                        JsonRpcResponse::success(
+                                            serde_json::json!({}),
+                                            req.id.clone()
+                                        )
+                                    }
+
+                                    _ => {
+                                        JsonRpcResponse::error_response(
+                                            JsonRpcError {
+                                                code: -32601,
+                                                message: format!("Method not found: {}", req.method),
+                                                data: None,
                                             },
-                                            "capabilities": {
-                                                "tools": {},
-                                                "elicitation": {}
-                                            }
-                                        }),
-                                        req.id.clone()
-                                    )
-                                }
-
-                                "tools/list" => {
-                                    let tools: Vec<serde_json::Value> = vec![#(#tool_list_items),*];
-                                    JsonRpcResponse::success(
-                                        serde_json::json!({
-                                            "tools": tools
-                                        }),
-                                        req.id.clone()
-                                    )
-                                }
-
-                                "tools/call" => {
-                                    let params = req.params.as_ref().and_then(|p| p.as_object());
-                                    let tool_name = params
-                                        .and_then(|p| p.get("name"))
-                                        .and_then(|n| n.as_str());
-
-                                    match tool_name {
-                                        Some(tool_name) => {
-                                            match tool_name {
-                                                #(#tool_dispatch_cases)*
-                                                _ => {
-                                                    JsonRpcResponse::error_response(
-                                                        JsonRpcError {
-                                                            code: -32602,
-                                                            message: format!("Unknown tool: {}", tool_name),
-                                                            data: None,
-                                                        },
-                                                        req.id.clone()
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        None => {
-                                            JsonRpcResponse::error_response(
-                                                JsonRpcError {
-                                                    code: -32602,
-                                                    message: "Missing tool name".to_string(),
-                                                    data: None,
-                                                },
-                                                req.id.clone()
-                                            )
-                                        }
+                                            req.id.clone()
+                                        )
                                     }
+                                };
+
+                                Json(response)
+                            }
+                        }))
+                }
+
+                /// Run server with stdio transport (MCP spec compliant)
+                /// Server reads JSON-RPC from stdin, writes to stdout
+                pub async fn run_stdio(self) -> Result<(), Box<dyn ::std::error::Error>> {
+                    use ::turbomcp::tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+                    use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
+
+                    let server = ::std::sync::Arc::new(self);
+                    let stdin = tokio::io::stdin();
+                    let mut stdout = tokio::io::stdout();
+                    let mut reader = BufReader::new(stdin);
+                    let mut line = String::new();
+
+                    // STDIO transport must be completely silent per MCP specification
+                    // stdout is reserved exclusively for JSON-RPC messages
+
+                    loop {
+                        line.clear();
+                        match reader.read_line(&mut line).await {
+                            Ok(0) => break, // EOF
+                            Ok(_) => {
+                                if line.trim().is_empty() {
+                                    continue;
                                 }
 
-                                "prompts/list" => {
-                                    let prompts: Vec<serde_json::Value> = vec![#(#prompt_list_items),*];
-                                    JsonRpcResponse::success(
-                                        serde_json::json!({
-                                            "prompts": prompts
-                                        }),
-                                        req.id.clone()
-                                    )
-                                }
-
-                                "prompts/get" => {
-                                    let params = req.params.as_ref().and_then(|p| p.as_object());
-                                    let prompt_name = params
-                                        .and_then(|p| p.get("name"))
-                                        .and_then(|n| n.as_str());
-                                    match prompt_name {
-                                        Some(prompt_name) => {
-                                            match prompt_name {
-                                                #(#prompt_dispatch_cases)*
-                                                _ => {
-                                                    JsonRpcResponse::error_response(
-                                                        JsonRpcError {
-                                                            code: -32601,
-                                                            message: format!("Unknown prompt: {}", prompt_name),
-                                                            data: None,
-                                                        },
-                                                        req.id.clone()
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        None => {
-                                            JsonRpcResponse::error_response(
-                                                JsonRpcError {
-                                                    code: -32602,
-                                                    message: "Missing prompt name".to_string(),
-                                                    data: None,
-                                                },
-                                                req.id.clone()
-                                            )
-                                        }
+                                // Parse JSON-RPC request
+                                let request: JsonRpcRequest = match serde_json::from_str(&line) {
+                                    Ok(req) => req,
+                                    Err(_e) => {
+                                        // Silent error handling for STDIO MCP compliance
+                                        continue;
                                     }
-                                }
+                                };
 
-                                "resources/list" => {
-                                    let resources: Vec<serde_json::Value> = vec![#(#resource_list_items),*];
-                                    JsonRpcResponse::success(
-                                        serde_json::json!({
-                                            "resources": resources
-                                        }),
-                                        req.id.clone()
-                                    )
-                                }
+                                // Process request using compile-time dispatch
+                                let response = server.clone().handle_request(request).await;
 
-                                "resources/read" => {
-                                    let params = req.params.as_ref().and_then(|p| p.as_object());
-                                    let resource_uri = params
-                                        .and_then(|p| p.get("uri"))
-                                        .and_then(|u| u.as_str());
-                                    match resource_uri {
-                                        Some(resource_uri) => {
-                                            match resource_uri {
-                                                #(#resource_dispatch_cases)*
-                                                _ => {
-                                                    JsonRpcResponse::error_response(
-                                                        JsonRpcError {
-                                                            code: -32601,
-                                                            message: format!("Unknown resource: {}", resource_uri),
-                                                            data: None,
-                                                        },
-                                                        req.id.clone()
-                                                    )
-                                                }
-                                            }
+                                // Write response
+                                let response_str = serde_json::to_string(&response)?;
+                                stdout.write_all(response_str.as_bytes()).await?;
+                                stdout.write_all(b"\n").await?;
+                                stdout.flush().await?;
+                            }
+                            Err(_e) => {
+                                // Silent error handling for STDIO MCP compliance
+                                break;
+                            }
+                        }
+                    }
+
+                    Ok(())
+                }
+
+                /// Run server with TCP transport
+                pub async fn run_tcp<A: ::std::net::ToSocketAddrs>(
+                    self,
+                    addr: A
+                ) -> Result<(), Box<dyn ::std::error::Error>> {
+                    use ::turbomcp::turbomcp_transport::tcp::TcpTransport;
+                    use ::turbomcp::tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+                    use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
+
+                    // Resolve address
+                    let socket_addr = addr
+                        .to_socket_addrs()?
+                        .next()
+                        .ok_or("No address resolved")?;
+
+                    // Create TCP listener
+                    let listener = ::tokio::net::TcpListener::bind(socket_addr).await?;
+    ::turbomcp::tracing::info!("TCP server listening on {}", socket_addr);
+
+                    loop {
+                        let (stream, _) = listener.accept().await?;
+                        let server = ::std::sync::Arc::new(self.clone());
+
+                        tokio::spawn(async move {
+                            let (reader, mut writer) = stream.into_split();
+                            let mut reader = BufReader::new(reader);
+                            let mut line = String::new();
+
+                            loop {
+                                line.clear();
+                                match reader.read_line(&mut line).await {
+                                    Ok(0) => break,
+                                    Ok(_) => {
+                                        if line.trim().is_empty() {
+                                            continue;
                                         }
-                                        None => {
-                                            JsonRpcResponse::error_response(
-                                                JsonRpcError {
-                                                    code: -32602,
-                                                    message: "Missing resource URI".to_string(),
-                                                    data: None,
-                                                },
-                                                req.id.clone()
-                                            )
-                                        }
+
+                                        let request: JsonRpcRequest = match serde_json::from_str(&line) {
+                                            Ok(req) => req,
+                                            Err(_) => continue,
+                                        };
+
+                                        let response = server.clone().handle_request(request).await;
+                                        let response_str = serde_json::to_string(&response).unwrap();
+                                        let _ = writer.write_all(response_str.as_bytes()).await;
+                                        let _ = writer.write_all(b"\n").await;
+                                        let _ = writer.flush().await;
                                     }
+                                    Err(_) => break,
                                 }
+                            }
+                        });
+                    }
+                }
 
-                                "elicitation/create" => {
-                                    // Handle elicitation responses from client
-                                    // This is where we'd receive ElicitationCreateResult from the client
-                                    // and deliver it to the waiting tool
+                /// Run server with Unix domain socket
+                pub async fn run_unix<P: AsRef<::std::path::Path>>(
+                    self,
+                    path: P
+                ) -> Result<(), Box<dyn ::std::error::Error>> {
+                    use ::turbomcp::tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+                    use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
 
-                                    // For now, return success to acknowledge receipt
-                                    // The actual implementation would use an ElicitationManager to
-                                    // correlate responses with pending requests
-                                    JsonRpcResponse::success(
-                                        serde_json::json!({}),
-                                        req.id.clone()
-                                    )
+                    let path = path.as_ref();
+
+                    // Ensure parent directory exists
+                    if let Some(parent) = path.parent() {
+                        if !parent.exists() {
+                            return Err(format!("Parent directory does not exist: {:?}", parent).into());
+                        }
+                    }
+
+                    // Remove existing socket file if it exists
+                    if path.exists() {
+                        ::std::fs::remove_file(path)?;
+                    }
+
+                    // Create Unix listener
+                    let listener = ::tokio::net::UnixListener::bind(path)?;
+    ::turbomcp::tracing::info!("Unix socket server listening on {:?}", path);
+
+                    loop {
+                        let (stream, _) = listener.accept().await?;
+                        let server = ::std::sync::Arc::new(self.clone());
+
+                        tokio::spawn(async move {
+                            let (reader, mut writer) = stream.into_split();
+                            let mut reader = BufReader::new(reader);
+                            let mut line = String::new();
+
+                            loop {
+                                line.clear();
+                                match reader.read_line(&mut line).await {
+                                    Ok(0) => break,
+                                    Ok(_) => {
+                                        if line.trim().is_empty() {
+                                            continue;
+                                        }
+
+                                        let request: JsonRpcRequest = match serde_json::from_str(&line) {
+                                            Ok(req) => req,
+                                            Err(_) => continue,
+                                        };
+
+                                        let response = server.clone().handle_request(request).await;
+                                        let response_str = serde_json::to_string(&response).unwrap();
+                                        let _ = writer.write_all(response_str.as_bytes()).await;
+                                        let _ = writer.write_all(b"\n").await;
+                                        let _ = writer.flush().await;
+                                    }
+                                    Err(_) => break,
                                 }
+                            }
+                        });
+                    }
+                }
 
+                /// Run server with HTTP transport (compile-time routing, zero lifetime issues!)
+                /// Run HTTP server with default "/mcp" endpoint
+                pub async fn run_http<A: ::std::net::ToSocketAddrs>(
+                    self,
+                    addr: A
+                ) -> Result<(), Box<dyn ::std::error::Error>> {
+                    self.run_http_with_path(addr, "/mcp").await
+                }
+
+                /// Run HTTP server with configurable endpoint path
+                pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs>(
+                    self,
+                    addr: A,
+                    path: &str
+                ) -> Result<(), Box<dyn ::std::error::Error>> {
+                    use ::turbomcp::tokio::net::TcpListener;
+
+                    let router = ::std::sync::Arc::new(self).into_router_with_path(path);
+
+                    // Resolve address
+                    let socket_addr = addr
+                        .to_socket_addrs()?
+                        .next()
+                        .ok_or("No address resolved")?;
+
+                    let listener = TcpListener::bind(socket_addr).await?;
+
+    ::turbomcp::tracing::info!("🚀 TurboMCP server on http://{}", socket_addr);
+    ::turbomcp::tracing::info!("  📡 MCP endpoint: http://{}{}", socket_addr, path);
+
+                    ::turbomcp::axum::serve(listener, router).await?;
+                    Ok(())
+                }
+
+                /// Handle a single JSON-RPC request with compile-time dispatch
+                async fn handle_request(
+                    self: ::std::sync::Arc<Self>,
+                    req: ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcRequest
+                ) -> ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse {
+                    use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcResponse, JsonRpcVersion, JsonRpcError};
+
+                    match req.method.as_str() {
+                        "initialize" => {
+                            JsonRpcResponse::success(
+                                serde_json::json!({
+                                    "protocolVersion": ::turbomcp::turbomcp_core::PROTOCOL_VERSION,
+                                    "serverInfo": {
+                                        "name": #server_name,
+                                        "version": #server_version
+                                    },
+                                    "capabilities": {
+                                        "tools": {},
+                                        "prompts": {},
+                                        "resources": {},
+                                        "sampling": {}
+                                    }
+                                }),
+                                req.id.clone()
+                            )
+                        }
+
+                        "tools/list" => {
+                            let tools: Vec<serde_json::Value> = vec![#(#tool_list_items),*];
+                            JsonRpcResponse::success(
+                                serde_json::json!({
+                                    "tools": tools
+                                }),
+                                req.id.clone()
+                            )
+                        }
+
+                        "tools/call" => {
+                            let params = req.params.as_ref().and_then(|p| p.as_object());
+                            let tool_name = params
+                                .and_then(|p| p.get("name"))
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("");
+
+                            // Compile-time dispatch to tool handlers
+                            match tool_name {
+                                #(#tool_dispatch_cases)*
                                 _ => {
                                     JsonRpcResponse::error_response(
                                         JsonRpcError {
                                             code: -32601,
-                                            message: format!("Method not found: {}", req.method),
+                                            message: format!("Unknown tool: {}", tool_name),
                                             data: None,
                                         },
                                         req.id.clone()
                                     )
                                 }
-                            };
-
-                            Json(response)
-                        }
-                    }))
-            }
-
-            /// Run server with stdio transport (MCP spec compliant)
-            /// Server reads JSON-RPC from stdin, writes to stdout
-            pub async fn run_stdio(self) -> Result<(), Box<dyn ::std::error::Error>> {
-                use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-                use ::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
-
-                let server = ::std::sync::Arc::new(self);
-                let stdin = tokio::io::stdin();
-                let mut stdout = tokio::io::stdout();
-                let mut reader = BufReader::new(stdin);
-                let mut line = String::new();
-
-                // STDIO transport must be completely silent per MCP specification
-                // stdout is reserved exclusively for JSON-RPC messages
-
-                loop {
-                    line.clear();
-                    match reader.read_line(&mut line).await {
-                        Ok(0) => break, // EOF
-                        Ok(_) => {
-                            if line.trim().is_empty() {
-                                continue;
-                            }
-
-                            // Parse JSON-RPC request
-                            let request: JsonRpcRequest = match serde_json::from_str(&line) {
-                                Ok(req) => req,
-                                Err(_e) => {
-                                    // Silent error handling for STDIO MCP compliance
-                                    continue;
-                                }
-                            };
-
-                            // Process request using compile-time dispatch
-                            let response = server.clone().handle_request(request).await;
-
-                            // Write response
-                            let response_str = serde_json::to_string(&response)?;
-                            stdout.write_all(response_str.as_bytes()).await?;
-                            stdout.write_all(b"\n").await?;
-                            stdout.flush().await?;
-                        }
-                        Err(_e) => {
-                            // Silent error handling for STDIO MCP compliance
-                            break;
-                        }
-                    }
-                }
-
-                Ok(())
-            }
-
-            /// Run server with TCP transport
-            #[cfg(feature = "tcp")]
-            pub async fn run_tcp<A: ::std::net::ToSocketAddrs>(
-                self,
-                addr: A
-            ) -> Result<(), Box<dyn ::std::error::Error>> {
-                use ::turbomcp_transport::tcp::TcpTransport;
-                use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-                use ::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
-
-                // Resolve address
-                let socket_addr = addr
-                    .to_socket_addrs()?
-                    .next()
-                    .ok_or("No address resolved")?;
-
-                // Create TCP listener
-                let listener = ::tokio::net::TcpListener::bind(socket_addr).await?;
-                tracing::info!("TCP server listening on {}", socket_addr);
-
-                loop {
-                    let (stream, _) = listener.accept().await?;
-                    let server = ::std::sync::Arc::new(self.clone());
-
-                    tokio::spawn(async move {
-                        let (reader, mut writer) = stream.into_split();
-                        let mut reader = BufReader::new(reader);
-                        let mut line = String::new();
-
-                        loop {
-                            line.clear();
-                            match reader.read_line(&mut line).await {
-                                Ok(0) => break,
-                                Ok(_) => {
-                                    if line.trim().is_empty() {
-                                        continue;
-                                    }
-
-                                    let request: JsonRpcRequest = match serde_json::from_str(&line) {
-                                        Ok(req) => req,
-                                        Err(_) => continue,
-                                    };
-
-                                    let response = server.clone().handle_request(request).await;
-                                    let response_str = serde_json::to_string(&response).unwrap();
-                                    let _ = writer.write_all(response_str.as_bytes()).await;
-                                    let _ = writer.write_all(b"\n").await;
-                                    let _ = writer.flush().await;
-                                }
-                                Err(_) => break,
                             }
                         }
-                    });
-                }
-            }
 
-            /// Run server with Unix domain socket
-            #[cfg(all(unix, feature = "unix"))]
-            pub async fn run_unix<P: AsRef<::std::path::Path>>(
-                self,
-                path: P
-            ) -> Result<(), Box<dyn ::std::error::Error>> {
-                use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-                use ::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
+                        "prompts/list" => {
+                            let prompts: Vec<serde_json::Value> = vec![#(#prompt_list_items),*];
+                            JsonRpcResponse::success(
+                                serde_json::json!({
+                                    "prompts": prompts
+                                }),
+                                req.id.clone()
+                            )
+                        }
 
-                let path = path.as_ref();
-
-                // Ensure parent directory exists
-                if let Some(parent) = path.parent() {
-                    if !parent.exists() {
-                        return Err(format!("Parent directory does not exist: {:?}", parent).into());
-                    }
-                }
-
-                // Remove existing socket file if it exists
-                if path.exists() {
-                    ::std::fs::remove_file(path)?;
-                }
-
-                // Create Unix listener
-                let listener = ::tokio::net::UnixListener::bind(path)?;
-                tracing::info!("Unix socket server listening on {:?}", path);
-
-                loop {
-                    let (stream, _) = listener.accept().await?;
-                    let server = ::std::sync::Arc::new(self.clone());
-
-                    tokio::spawn(async move {
-                        let (reader, mut writer) = stream.into_split();
-                        let mut reader = BufReader::new(reader);
-                        let mut line = String::new();
-
-                        loop {
-                            line.clear();
-                            match reader.read_line(&mut line).await {
-                                Ok(0) => break,
-                                Ok(_) => {
-                                    if line.trim().is_empty() {
-                                        continue;
-                                    }
-
-                                    let request: JsonRpcRequest = match serde_json::from_str(&line) {
-                                        Ok(req) => req,
-                                        Err(_) => continue,
-                                    };
-
-                                    let response = server.clone().handle_request(request).await;
-                                    let response_str = serde_json::to_string(&response).unwrap();
-                                    let _ = writer.write_all(response_str.as_bytes()).await;
-                                    let _ = writer.write_all(b"\n").await;
-                                    let _ = writer.flush().await;
+                        "prompts/get" => {
+                            let params = req.params.as_ref().and_then(|p| p.as_object());
+                            let prompt_name = params
+                                .and_then(|p| p.get("name"))
+                                .and_then(|n| n.as_str())
+                                .unwrap_or("");
+                            // Compile-time dispatch to prompt handlers
+                            match prompt_name {
+                                #(#prompt_dispatch_cases)*
+                                _ => {
+                                    JsonRpcResponse::error_response(
+                                        JsonRpcError {
+                                            code: -32601,
+                                            message: format!("Unknown prompt: {}", prompt_name),
+                                            data: None,
+                                        },
+                                        req.id.clone()
+                                    )
                                 }
-                                Err(_) => break,
                             }
                         }
-                    });
-                }
-            }
 
-            /// Run server with HTTP transport (compile-time routing, zero lifetime issues!)
-            #[cfg(feature = "http")]
-            /// Run HTTP server with default "/mcp" endpoint
-            pub async fn run_http<A: ::std::net::ToSocketAddrs>(
-                self,
-                addr: A
-            ) -> Result<(), Box<dyn ::std::error::Error>> {
-                self.run_http_with_path(addr, "/mcp").await
-            }
+                        "resources/list" => {
+                            let resources: Vec<serde_json::Value> = vec![#(#resource_list_items),*];
+                            JsonRpcResponse::success(
+                                serde_json::json!({
+                                    "resources": resources
+                                }),
+                                req.id.clone()
+                            )
+                        }
 
-            /// Run HTTP server with configurable endpoint path
-            pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs>(
-                self,
-                addr: A,
-                path: &str
-            ) -> Result<(), Box<dyn ::std::error::Error>> {
-                use tokio::net::TcpListener;
+                        "resources/read" => {
+                            let params = req.params.as_ref().and_then(|p| p.as_object());
+                            let resource_uri = params
+                                .and_then(|p| p.get("uri"))
+                                .and_then(|u| u.as_str())
+                                .unwrap_or("");
+                            // Compile-time dispatch to resource handlers - match by URI pattern
+                            match resource_uri {
+                                #(#resource_dispatch_cases)*
+                                _ => {
+                                    JsonRpcResponse::error_response(
+                                        JsonRpcError {
+                                            code: -32601,
+                                            message: format!("Unknown resource: {}", resource_uri),
+                                            data: None,
+                                        },
+                                        req.id.clone()
+                                    )
+                                }
+                            }
+                        }
 
-                let router = ::std::sync::Arc::new(self).into_router_with_path(path);
-
-                // Resolve address
-                let socket_addr = addr
-                    .to_socket_addrs()?
-                    .next()
-                    .ok_or("No address resolved")?;
-
-                let listener = TcpListener::bind(socket_addr).await?;
-
-                tracing::info!("🚀 TurboMCP server on http://{}", socket_addr);
-                tracing::info!("  📡 MCP endpoint: http://{}{}", socket_addr, path);
-
-                axum::serve(listener, router).await?;
-                Ok(())
-            }
-
-            /// Handle a single JSON-RPC request with compile-time dispatch
-            async fn handle_request(
-                self: ::std::sync::Arc<Self>,
-                req: turbomcp_protocol::jsonrpc::JsonRpcRequest
-            ) -> turbomcp_protocol::jsonrpc::JsonRpcResponse {
-                use ::turbomcp_protocol::jsonrpc::{JsonRpcResponse, JsonRpcVersion, JsonRpcError};
-
-                match req.method.as_str() {
-                    "initialize" => {
-                        JsonRpcResponse::success(
-                            serde_json::json!({
-                                "protocolVersion": ::turbomcp_core::PROTOCOL_VERSION,
-                                "serverInfo": {
-                                    "name": #server_name,
-                                    "version": #server_version
+                        _ => {
+                            JsonRpcResponse::error_response(
+                                JsonRpcError {
+                                    code: -32601,
+                                    message: format!("Method not found: {}", req.method),
+                                    data: None,
                                 },
-                                "capabilities": {
-                                    "tools": {},
-                                    "prompts": {},
-                                    "resources": {},
-                                    "sampling": {}
-                                }
-                            }),
-                            req.id.clone()
-                        )
-                    }
-
-                    "tools/list" => {
-                        let tools: Vec<serde_json::Value> = vec![#(#tool_list_items),*];
-                        JsonRpcResponse::success(
-                            serde_json::json!({
-                                "tools": tools
-                            }),
-                            req.id.clone()
-                        )
-                    }
-
-                    "tools/call" => {
-                        let params = req.params.as_ref().and_then(|p| p.as_object());
-                        let tool_name = params
-                            .and_then(|p| p.get("name"))
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("");
-
-                        // Compile-time dispatch to tool handlers
-                        match tool_name {
-                            #(#tool_dispatch_cases)*
-                            _ => {
-                                JsonRpcResponse::error_response(
-                                    JsonRpcError {
-                                        code: -32601,
-                                        message: format!("Unknown tool: {}", tool_name),
-                                        data: None,
-                                    },
-                                    req.id.clone()
-                                )
-                            }
+                                req.id.clone()
+                            )
                         }
-                    }
-
-                    "prompts/list" => {
-                        let prompts: Vec<serde_json::Value> = vec![#(#prompt_list_items),*];
-                        JsonRpcResponse::success(
-                            serde_json::json!({
-                                "prompts": prompts
-                            }),
-                            req.id.clone()
-                        )
-                    }
-
-                    "prompts/get" => {
-                        let params = req.params.as_ref().and_then(|p| p.as_object());
-                        let prompt_name = params
-                            .and_then(|p| p.get("name"))
-                            .and_then(|n| n.as_str())
-                            .unwrap_or("");
-                        // Compile-time dispatch to prompt handlers
-                        match prompt_name {
-                            #(#prompt_dispatch_cases)*
-                            _ => {
-                                JsonRpcResponse::error_response(
-                                    JsonRpcError {
-                                        code: -32601,
-                                        message: format!("Unknown prompt: {}", prompt_name),
-                                        data: None,
-                                    },
-                                    req.id.clone()
-                                )
-                            }
-                        }
-                    }
-
-                    "resources/list" => {
-                        let resources: Vec<serde_json::Value> = vec![#(#resource_list_items),*];
-                        JsonRpcResponse::success(
-                            serde_json::json!({
-                                "resources": resources
-                            }),
-                            req.id.clone()
-                        )
-                    }
-
-                    "resources/read" => {
-                        let params = req.params.as_ref().and_then(|p| p.as_object());
-                        let resource_uri = params
-                            .and_then(|p| p.get("uri"))
-                            .and_then(|u| u.as_str())
-                            .unwrap_or("");
-                        // Compile-time dispatch to resource handlers - match by URI pattern
-                        match resource_uri {
-                            #(#resource_dispatch_cases)*
-                            _ => {
-                                JsonRpcResponse::error_response(
-                                    JsonRpcError {
-                                        code: -32601,
-                                        message: format!("Unknown resource: {}", resource_uri),
-                                        data: None,
-                                    },
-                                    req.id.clone()
-                                )
-                            }
-                        }
-                    }
-
-                    _ => {
-                        JsonRpcResponse::error_response(
-                            JsonRpcError {
-                                code: -32601,
-                                message: format!("Method not found: {}", req.method),
-                                data: None,
-                            },
-                            req.id.clone()
-                        )
                     }
                 }
             }
         }
-    }
 }

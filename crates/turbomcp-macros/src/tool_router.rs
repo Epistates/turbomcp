@@ -97,7 +97,7 @@ pub fn generate_tool_router_impl(args: TokenStream, input: TokenStream) -> Token
                 let router = turbomcp::router::ToolRouter::new(server);
                 
                 // Register tools (this would be async in production, but simplified for macro)
-                tokio::spawn(async move {
+                ::turbomcp::tokio::spawn(async move {
                     let mut tools = std::collections::HashMap::new();
                     #(#tool_registrations)*
                     

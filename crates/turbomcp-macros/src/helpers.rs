@@ -41,7 +41,7 @@ pub fn generate_text_content(input: TokenStream) -> TokenStream {
     let args = &format_args.args;
 
     let expanded = quote! {
-        ::turbomcp_protocol::types::ContentBlock::Text(::turbomcp_protocol::types::TextContent {
+        ::turbomcp::turbomcp_protocol::types::ContentBlock::Text(::turbomcp::turbomcp_protocol::types::TextContent {
             text: format!(#format_string, #(#args),*),
             annotations: None,
             meta: None,
@@ -193,7 +193,7 @@ pub fn generate_tool_result(input: TokenStream) -> TokenStream {
     let is_error = input_parsed.is_error.unwrap_or(false);
 
     let expanded = quote! {
-        ::turbomcp_protocol::types::CallToolResult {
+        ::turbomcp::turbomcp_protocol::types::CallToolResult {
             content: vec![#(#content_items),*],
             is_error: Some(#is_error),
             structured_content: None,
@@ -253,7 +253,7 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
             // Generate code for simple elicitation without schema
             quote! {
                 {
-                    use ::turbomcp_protocol::elicitation::{ElicitationCreateRequest, ElicitationSchema};
+                    use ::turbomcp::turbomcp_protocol::elicitation::{ElicitationCreateRequest, ElicitationSchema};
 
                     // Create empty schema for simple prompt
                     let schema = ElicitationSchema::new();
@@ -273,7 +273,7 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
                         .await
                         .map_err(|e| ::turbomcp_core::Error::handler(format!("Elicitation failed: {}", e)))
                         .and_then(|response| {
-                            serde_json::from_value::<::turbomcp_protocol::elicitation::ElicitationCreateResult>(response)
+                            serde_json::from_value::<::turbomcp::turbomcp_protocol::elicitation::ElicitationCreateResult>(response)
                                 .map_err(|e| ::turbomcp_core::Error::handler(format!("Failed to parse response: {}", e)))
                                 .map(|r| r.into())
                         })
@@ -288,7 +288,7 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
             // Generate code for elicitation with provided schema
             quote! {
                 {
-                    use ::turbomcp_protocol::elicitation::{ElicitationCreateRequest};
+                    use ::turbomcp::turbomcp_protocol::elicitation::{ElicitationCreateRequest};
 
                     let request = ElicitationCreateRequest {
                         message: #message.to_string(),
@@ -306,7 +306,7 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
                         .await
                         .map_err(|e| ::turbomcp_core::Error::handler(format!("Elicitation failed: {}", e)))
                         .and_then(|response| {
-                            serde_json::from_value::<::turbomcp_protocol::elicitation::ElicitationCreateResult>(response)
+                            serde_json::from_value::<::turbomcp::turbomcp_protocol::elicitation::ElicitationCreateResult>(response)
                                 .map_err(|e| ::turbomcp_core::Error::handler(format!("Failed to parse response: {}", e)))
                                 .map(|r| r.into())
                         })

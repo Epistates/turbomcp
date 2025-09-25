@@ -564,6 +564,20 @@ pub use turbomcp_server::{
 // Re-export async_trait for macros
 pub use async_trait::async_trait;
 
+// CRITICAL FIX: Re-export dependencies needed by macro-generated code
+// This allows generated code to use ::turbomcp::axum::Router instead of axum::Router
+#[cfg(feature = "http")]
+pub use axum;
+#[cfg(any(feature = "tcp", feature = "unix"))]
+pub use tokio;
+// Re-export core and protocol types for macro use
+pub use turbomcp_core;
+pub use turbomcp_protocol;
+#[cfg(any(feature = "tcp", feature = "unix", feature = "http"))]
+pub use turbomcp_transport;
+// Re-export tracing for logging in macro-generated code
+pub use tracing;
+
 // Core TurboMCP modules
 pub mod auth;
 pub mod context;
