@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-macros"
-version = "1.1.0"
+version = "1.1.1"
 edition = "2024"
 description = "Procedural macros for ergonomic MCP tool and resource registration"
 license = "MIT"
@@ -27,12 +27,23 @@ serde_json = "1.0"
 # JSON Schema generation
 schemars = { version = "0.8", optional = true }
 
+# CRITICAL FIX: Add dependencies for macro-generated code
+# These are required because the #[server] macro generates code that uses these crates
+axum = { version = "0.8.4", optional = true, features = ["ws", "tracing", "macros"] }
+tokio = { version = "1.47", optional = true, features = ["net", "io-std", "io-util", "sync", "time"] }
+turbomcp-protocol = { version = "1.1.1", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "1.1.1", path = "../turbomcp-transport", optional = true }
+
 [dev-dependencies]
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
-turbomcp-protocol = { version = "1.1.0", path = "../turbomcp-protocol" }
-turbomcp-core = { version = "1.1.0", path = "../turbomcp-core" }
+turbomcp-protocol = { version = "1.1.1", path = "../turbomcp-protocol" }
+turbomcp-core = { version = "1.1.1", path = "../turbomcp-core" }
 async-trait = "0.1"
 
 [features]
 default = ["schema"]
 schema = ["schemars"]
+# CRITICAL FIX: Feature flags for macro-generated code
+http = ["axum"]
+tcp = ["tokio", "turbomcp-transport"]
+unix = ["tokio", "turbomcp-transport"]
