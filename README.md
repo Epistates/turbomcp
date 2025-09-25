@@ -48,80 +48,25 @@ tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
 
-Create a production-ready server with enterprise features:
+Create your first MCP server in seconds:
 
 ```rust
 use turbomcp::prelude::*;
 
 #[derive(Clone)]
-struct ProductionServer {
-    database: Arc<Database>,
-    llm_client: Arc<AnthropicClient>,
-}
+struct HelloServer;
 
-#[server(
-    name = "enterprise-ai-server",
-    version = "1.1.0",
-    description = "Production AI server with LLM integration",
-    capabilities = ServerCapabilities::builder()
-        .enable_tools()
-        .enable_prompts()
-        .enable_resources()
-        .enable_tool_list_changed()
-        .enable_resources_subscribe()
-        .build()
-)]
-impl ProductionServer {
-    #[tool("Analyze data with AI assistance")]
-    async fn ai_analyze(&self, ctx: Context, data: String) -> McpResult<String> {
-        // Enterprise logging with correlation IDs
-        ctx.info(&format!("Processing {} bytes", data.len())).await?;
-
-        // Production database query with connection pooling
-        let metadata = self.database.get_metadata(&data).await?;
-
-        // LLM integration with streaming support
-        let analysis = self.llm_client
-            .complete(&format!("Analyze: {}", data))
-            .with_context(&metadata)
-            .await?;
-
-        Ok(analysis)
-    }
-
-    #[tool("Interactive data collection")]
-    async fn collect_requirements(&self, ctx: Context) -> McpResult<String> {
-        // Server-initiated interactive form with validation
-        let response = ctx.elicit("Project Requirements")
-            .field("project_name", text("Project Name").min_length(3))
-            .field("budget", integer("Budget ($)").range(1000.0, 1000000.0))
-            .field("deadline", text("Deadline").format("date"))
-            .field("priority", select("Priority", vec!["low", "medium", "high", "critical"]))
-            .require(vec!["project_name", "budget"])
-            .await?;
-
-        // Process with type-safe extraction
-        let name = response.get::<String>("project_name")?;
-        let budget = response.get::<i64>("budget")?;
-
-        Ok(format!("Project '{}' with budget ${} configured", name, budget))
+#[server(name = "hello-server", version = "1.1.0")]
+impl HelloServer {
+    #[tool("Say hello to someone")]
+    async fn hello(&self, name: String) -> McpResult<String> {
+        Ok(format!("Hello, {name}! Welcome to TurboMCP! 🦀⚡"))
     }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let server = ProductionServer {
-        database: Arc::new(Database::connect().await?),
-        llm_client: Arc::new(AnthropicClient::new("api-key")?),
-    };
-
-    // Production deployment with automatic transport selection
-    match std::env::var("TRANSPORT").as_deref() {
-        Ok("http") => server.run_http_with_security("0.0.0.0:8080").await?,
-        Ok("tcp") => server.run_tcp_clustered("0.0.0.0:8080").await?,
-        _ => server.run_stdio().await?, // Claude Desktop integration
-    }
-
+    HelloServer.run_stdio().await?;
     Ok(())
 }
 ```
@@ -629,6 +574,88 @@ turbomcp-cli benchmark --command "./target/debug/your-server" \
 cargo run --example 01_hello_world
 cargo run --example 08_elicitation_complete
 cargo run --example 11_production_deployment
+```
+
+---
+
+## 🚀 Production-Ready Server with Enterprise Features
+
+Create a production-ready server with enterprise features:
+
+```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct ProductionServer {
+    database: Arc<Database>,
+    llm_client: Arc<AnthropicClient>,
+}
+
+#[server(
+    name = "enterprise-ai-server",
+    version = "1.1.0",
+    description = "Production AI server with LLM integration",
+    capabilities = ServerCapabilities::builder()
+        .enable_tools()
+        .enable_prompts()
+        .enable_resources()
+        .enable_tool_list_changed()
+        .enable_resources_subscribe()
+        .build()
+)]
+impl ProductionServer {
+    #[tool("Analyze data with AI assistance")]
+    async fn ai_analyze(&self, ctx: Context, data: String) -> McpResult<String> {
+        // Enterprise logging with correlation IDs
+        ctx.info(&format!("Processing {} bytes", data.len())).await?;
+
+        // Production database query with connection pooling
+        let metadata = self.database.get_metadata(&data).await?;
+
+        // LLM integration with streaming support
+        let analysis = self.llm_client
+            .complete(&format!("Analyze: {}", data))
+            .with_context(&metadata)
+            .await?;
+
+        Ok(analysis)
+    }
+
+    #[tool("Interactive data collection")]
+    async fn collect_requirements(&self, ctx: Context) -> McpResult<String> {
+        // Server-initiated interactive form with validation
+        let response = ctx.elicit("Project Requirements")
+            .field("project_name", text("Project Name").min_length(3))
+            .field("budget", integer("Budget ($)").range(1000.0, 1000000.0))
+            .field("deadline", text("Deadline").format("date"))
+            .field("priority", select("Priority", vec!["low", "medium", "high", "critical"]))
+            .require(vec!["project_name", "budget"])
+            .await?;
+
+        // Process with type-safe extraction
+        let name = response.get::<String>("project_name")?;
+        let budget = response.get::<i64>("budget")?;
+
+        Ok(format!("Project '{}' with budget ${} configured", name, budget))
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server = ProductionServer {
+        database: Arc::new(Database::connect().await?),
+        llm_client: Arc::new(AnthropicClient::new("api-key")?),
+    };
+
+    // Production deployment with automatic transport selection
+    match std::env::var("TRANSPORT").as_deref() {
+        Ok("http") => server.run_http_with_security("0.0.0.0:8080").await?,
+        Ok("tcp") => server.run_tcp_clustered("0.0.0.0:8080").await?,
+        _ => server.run_stdio().await?, // Claude Desktop integration
+    }
+
+    Ok(())
+}
 ```
 
 ---
