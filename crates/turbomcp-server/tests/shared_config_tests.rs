@@ -32,7 +32,7 @@ pub fn assert_router_config_defaults(config: &RouterConfig) {
 /// Test utility for ServerConfig default values
 pub fn assert_server_config_defaults(config: &ServerConfig) {
     assert_eq!(config.name, "turbomcp-server");
-    assert_eq!(config.version, "1.1.0");
+    assert_eq!(config.version, "1.1.2");
     // Additional server config assertions can be added here
 }
 
