@@ -1,14 +1,14 @@
 //! Real tests for helper macros - validates actual behavior, not compilation
 
 use turbomcp_macros::*;
-use turbomcp_protocol::types::Content;
+use turbomcp_protocol::types::ContentBlock;
 
 #[test]
 fn test_mcp_text_produces_correct_content() {
     let content = mcp_text!("Hello World");
 
-    assert!(matches!(content, Content::Text(_)));
-    if let Content::Text(text_content) = content {
+    assert!(matches!(content, ContentBlock::Text(_)));
+    if let ContentBlock::Text(text_content) = content {
         assert_eq!(text_content.text, "Hello World");
     }
 }
@@ -19,7 +19,7 @@ fn test_mcp_text_formatting_works() {
     let age = 30;
     let content = mcp_text!("Name: {}, Age: {}", name, age);
 
-    if let Content::Text(text_content) = content {
+    if let ContentBlock::Text(text_content) = content {
         assert_eq!(text_content.text, "Name: Alice, Age: 30");
     } else {
         panic!("Expected TextContent");
@@ -61,7 +61,7 @@ fn test_tool_result_with_content() {
     assert_eq!(result.content.len(), 1);
     assert!(!result.is_error.unwrap_or(true));
 
-    if let Content::Text(text) = &result.content[0] {
+    if let ContentBlock::Text(text) = &result.content[0] {
         assert_eq!(text.text, "Success");
     } else {
         panic!("Expected TextContent");
@@ -79,7 +79,7 @@ async fn test_helper_macros_async_compatibility() {
     let tool_result = tool_result!(content = [content]);
 
     assert_eq!(tool_result.content.len(), 1);
-    if let Content::Text(text) = &tool_result.content[0] {
+    if let ContentBlock::Text(text) = &tool_result.content[0] {
         assert_eq!(text.text, "Result: async result");
     }
 }
