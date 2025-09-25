@@ -136,16 +136,16 @@ testcontainers = "0.25.0"
 doc-comment = "0.3"
 
 # Workspace dependencies are defined below
-# Internal crate dependencies - 1.1.1 EMERGENCY PATCH
-turbomcp = { version = "1.1.1", path = "crates/turbomcp" }
-turbomcp-core = { version = "1.1.1", path = "crates/turbomcp-core" }
-turbomcp-protocol = { version = "1.1.1", path = "crates/turbomcp-protocol" }
-turbomcp-transport = { version = "1.1.1", path = "crates/turbomcp-transport" }
-turbomcp-client = { version = "1.1.1", path = "crates/turbomcp-client" }
-turbomcp-server = { version = "1.1.1", path = "crates/turbomcp-server" }
-turbomcp-macros = { version = "1.1.1", path = "crates/turbomcp-macros" }
-turbomcp-cli = { version = "1.1.1", path = "crates/turbomcp-cli" }
-turbomcp-dpop = { version = "1.1.1", path = "crates/turbomcp-dpop" }
+# Internal crate dependencies - 1.1.2 EMERGENCY PATCH
+turbomcp = { version = "1.1.2", path = "crates/turbomcp" }
+turbomcp-core = { version = "1.1.2", path = "crates/turbomcp-core" }
+turbomcp-protocol = { version = "1.1.2", path = "crates/turbomcp-protocol" }
+turbomcp-transport = { version = "1.1.2", path = "crates/turbomcp-transport" }
+turbomcp-client = { version = "1.1.2", path = "crates/turbomcp-client" }
+turbomcp-server = { version = "1.1.2", path = "crates/turbomcp-server" }
+turbomcp-macros = { version = "1.1.2", path = "crates/turbomcp-macros" }
+turbomcp-cli = { version = "1.1.2", path = "crates/turbomcp-cli" }
+turbomcp-dpop = { version = "1.1.2", path = "crates/turbomcp-dpop" }
 
 [profile.dev]
 opt-level = 1
