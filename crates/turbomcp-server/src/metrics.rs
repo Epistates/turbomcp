@@ -32,6 +32,18 @@ pub struct ServerMetrics {
     /// Number of timeout errors
     pub errors_timeout: AtomicU64,
 
+    /// Security and timeout-specific metrics for audit and DoS detection
+    /// Number of tool executions that exceeded timeout
+    pub tool_timeouts_total: AtomicU64,
+    /// Number of tool executions cancelled cooperatively
+    pub tool_cancellations_total: AtomicU64,
+    /// Number of tool executions that completed within timeout
+    pub tool_executions_successful: AtomicU64,
+    /// Total time spent in timed-out operations (microseconds)
+    pub timeout_wasted_time_us: AtomicU64,
+    /// Number of active tool executions currently running
+    pub tool_executions_active: AtomicU64,
+
     /// Sum of all response times in microseconds
     pub total_response_time_us: AtomicU64,
     /// Minimum response time observed (microseconds)
@@ -174,6 +186,13 @@ impl ServerMetrics {
             errors_auth: AtomicU64::new(0),
             errors_network: AtomicU64::new(0),
             errors_timeout: AtomicU64::new(0),
+
+            // Initialize timeout-specific metrics
+            tool_timeouts_total: AtomicU64::new(0),
+            tool_cancellations_total: AtomicU64::new(0),
+            tool_executions_successful: AtomicU64::new(0),
+            timeout_wasted_time_us: AtomicU64::new(0),
+            tool_executions_active: AtomicU64::new(0),
 
             total_response_time_us: AtomicU64::new(0),
             min_response_time_us: AtomicU64::new(u64::MAX),
@@ -438,6 +457,33 @@ impl MetricsCollector for ComprehensiveMetricsCollector {
             "errors_timeout".to_string(),
             self.metrics.errors_timeout.load(Ordering::Relaxed) as f64,
         );
+
+        // Security-focused timeout metrics for audit and DoS detection
+        metrics.insert(
+            "tool_timeouts_total".to_string(),
+            self.metrics.tool_timeouts_total.load(Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "tool_cancellations_total".to_string(),
+            self.metrics
+                .tool_cancellations_total
+                .load(Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "tool_executions_successful".to_string(),
+            self.metrics
+                .tool_executions_successful
+                .load(Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "timeout_wasted_time_us".to_string(),
+            self.metrics.timeout_wasted_time_us.load(Ordering::Relaxed) as f64,
+        );
+        metrics.insert(
+            "tool_executions_active".to_string(),
+            self.metrics.tool_executions_active.load(Ordering::Relaxed) as f64,
+        );
+
         metrics.insert(
             "error_rate_percent".to_string(),
             self.metrics.error_rate_percent(),

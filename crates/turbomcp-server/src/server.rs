@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::{info, info_span};
 
 use crate::{
     config::ServerConfig,
@@ -93,7 +94,11 @@ impl McpServer {
     #[must_use]
     pub fn new(config: ServerConfig) -> Self {
         let registry = Arc::new(HandlerRegistry::new());
-        let router = Arc::new(RequestRouter::new(Arc::clone(&registry)));
+        let metrics = Arc::new(ServerMetrics::new());
+        let router = Arc::new(RequestRouter::new(
+            Arc::clone(&registry),
+            Arc::clone(&metrics),
+        ));
         let mut stack = MiddlewareStack::new();
         // Auto-install rate limiting if enabled in config
         if config.rate_limiting.enabled {
@@ -115,7 +120,6 @@ impl McpServer {
         }
         let middleware = Arc::new(RwLock::new(stack));
         let lifecycle = Arc::new(ServerLifecycle::new());
-        let metrics = Arc::new(ServerMetrics::new());
 
         Self {
             config,
@@ -235,12 +239,22 @@ impl McpServer {
     }
 
     /// Run the server with STDIO transport
+    #[tracing::instrument(skip(self), fields(
+        transport = "stdio",
+        service_name = %self.config.name,
+        service_version = %self.config.version
+    ))]
     pub async fn run_stdio(self) -> ServerResult<()> {
         // For STDIO transport, disable logging unless explicitly overridden
         // STDIO stdout must be reserved exclusively for JSON-RPC messages per MCP protocol
         if should_log_for_stdio() {
-            tracing::info!("Starting MCP server with STDIO transport");
+            info!("Starting MCP server with STDIO transport");
         }
+
+        // Start performance monitoring for STDIO server
+        let _perf_span = info_span!("server.run", transport = "stdio").entered();
+        info!("Initializing STDIO transport for MCP server");
+
         self.lifecycle.start().await;
 
         // Initialize STDIO transport
@@ -275,6 +289,12 @@ impl McpServer {
     /// Note: WebSocket and SSE support temporarily disabled due to DashMap lifetime
     /// variance issues that require architectural changes to the handler registry.
     #[cfg(feature = "http")]
+    #[tracing::instrument(skip(self), fields(
+        transport = "http",
+        service_name = %self.config.name,
+        service_version = %self.config.version,
+        addr = ?_addr
+    ))]
     pub async fn run_http<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
         self,
         _addr: A,
@@ -292,6 +312,12 @@ impl McpServer {
     /// Note: WebSocket transport in this library is primarily client-oriented
     /// For production WebSocket servers, consider using the ServerBuilder with WebSocket middleware
     #[cfg(feature = "websocket")]
+    #[tracing::instrument(skip(self), fields(
+        transport = "websocket",
+        service_name = %self.config.name,
+        service_version = %self.config.version,
+        addr = ?addr
+    ))]
     pub async fn run_websocket<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
         self,
         addr: A,
@@ -310,13 +336,22 @@ impl McpServer {
 
     /// Run server with TCP transport (progressive enhancement - runtime configuration)
     #[cfg(feature = "tcp")]
+    #[tracing::instrument(skip(self), fields(
+        transport = "tcp",
+        service_name = %self.config.name,
+        service_version = %self.config.version,
+        addr = ?addr
+    ))]
     pub async fn run_tcp<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
         self,
         addr: A,
     ) -> ServerResult<()> {
         use turbomcp_transport::TcpTransport;
 
-        tracing::info!(?addr, "Starting MCP server with TCP transport");
+        // Start performance monitoring for TCP server
+        let _perf_span = info_span!("server.run", transport = "tcp").entered();
+        info!(?addr, "Starting MCP server with TCP transport");
+
         self.lifecycle.start().await;
 
         // Convert ToSocketAddrs to SocketAddr
@@ -350,11 +385,20 @@ impl McpServer {
 
     /// Run server with Unix socket transport (progressive enhancement - runtime configuration)
     #[cfg(all(feature = "unix", unix))]
+    #[tracing::instrument(skip(self), fields(
+        transport = "unix",
+        service_name = %self.config.name,
+        service_version = %self.config.version,
+        path = ?path.as_ref()
+    ))]
     pub async fn run_unix<P: AsRef<std::path::Path>>(self, path: P) -> ServerResult<()> {
         use std::path::PathBuf;
         use turbomcp_transport::UnixTransport;
 
-        tracing::info!(path = ?path.as_ref(), "Starting MCP server with Unix socket transport");
+        // Start performance monitoring for Unix server
+        let _perf_span = info_span!("server.run", transport = "unix").entered();
+        info!(path = ?path.as_ref(), "Starting MCP server with Unix socket transport");
+
         self.lifecycle.start().await;
 
         let socket_path = PathBuf::from(path.as_ref());
@@ -369,6 +413,10 @@ impl McpServer {
     }
 
     /// Generic transport runner (DRY principle)
+    #[tracing::instrument(skip(self, transport), fields(
+        service_name = %self.config.name,
+        service_version = %self.config.version
+    ))]
     async fn run_with_transport<T: Transport>(&self, mut transport: T) -> ServerResult<()> {
         // Install signal handlers for graceful shutdown (Ctrl+C / SIGTERM)
         let lifecycle_for_sigint = self.lifecycle.clone();
@@ -446,6 +494,11 @@ impl McpServer {
     }
 
     /// STDIO-aware transport runner that respects MCP protocol logging requirements
+    #[tracing::instrument(skip(self, transport), fields(
+        service_name = %self.config.name,
+        service_version = %self.config.version,
+        transport = "stdio"
+    ))]
     async fn run_with_transport_stdio_aware<T: Transport>(
         &self,
         mut transport: T,
@@ -548,6 +601,10 @@ impl McpServer {
 }
 
 impl McpServer {
+    #[tracing::instrument(skip(self, transport, message), fields(
+        message_id = ?message.id,
+        message_type = "request"
+    ))]
     async fn handle_transport_message(
         &self,
         transport: &mut dyn Transport,
@@ -633,8 +690,14 @@ impl McpServer {
                     }
                 };
 
-                let mut resp: JsonRpcResponse =
-                    self.router.route(processed_req, updated_ctx.clone()).await;
+                // Route the request with tracing
+                let route_span = info_span!("routing.dispatch",
+                    method = %processed_req.method,
+                    request_id = ?processed_req.id
+                );
+                let mut resp: JsonRpcResponse = route_span
+                    .in_scope(|| Box::pin(self.router.route(processed_req, updated_ctx.clone())))
+                    .await;
                 // Process response through middleware
                 resp = match self
                     .middleware
@@ -702,6 +765,11 @@ impl McpServer {
     }
 
     /// STDIO-aware message handler that respects MCP protocol logging requirements
+    #[tracing::instrument(skip(self, transport, message), fields(
+        message_id = ?message.id,
+        message_type = "request",
+        transport = "stdio"
+    ))]
     async fn handle_transport_message_stdio_aware(
         &self,
         transport: &mut dyn Transport,
@@ -789,8 +857,14 @@ impl McpServer {
                     }
                 };
 
-                let mut resp: JsonRpcResponse =
-                    self.router.route(processed_req, updated_ctx.clone()).await;
+                // Route the request with tracing
+                let route_span = info_span!("routing.dispatch",
+                    method = %processed_req.method,
+                    request_id = ?processed_req.id
+                );
+                let mut resp: JsonRpcResponse = route_span
+                    .in_scope(|| Box::pin(self.router.route(processed_req, updated_ctx.clone())))
+                    .await;
                 // Process response through middleware
                 resp = match self
                     .middleware
@@ -954,7 +1028,10 @@ impl ServerBuilder {
     pub fn build(self) -> McpServer {
         let mut server = McpServer::new(self.config);
         server.registry = Arc::new(self.registry);
-        server.router = Arc::new(RequestRouter::new(Arc::clone(&server.registry)));
+        server.router = Arc::new(RequestRouter::new(
+            Arc::clone(&server.registry),
+            Arc::clone(&server.metrics),
+        ));
         server
     }
 }

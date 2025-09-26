@@ -8,6 +8,7 @@ use turbomcp_core::RequestContext;
 use turbomcp_protocol::{jsonrpc::*, types::RequestId};
 use turbomcp_server::{
     ServerError, ServerResult,
+    metrics::ServerMetrics,
     registry::HandlerRegistry,
     routing::{RequestRouter, RouteHandler, RouteMetadata, RouterConfig},
 };
@@ -182,7 +183,8 @@ fn test_route_metadata_clone_debug() {
 #[test]
 fn test_router_creation() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry.clone());
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry.clone(), metrics);
 
     let debug_str = format!("{router:?}");
     assert!(debug_str.contains("RequestRouter"));
@@ -199,8 +201,9 @@ fn test_router_with_config() {
         max_concurrent_requests: 750,
         enable_bidirectional: false,
     };
+    let metrics = Arc::new(ServerMetrics::new());
 
-    let router = RequestRouter::with_config(registry, config);
+    let router = RequestRouter::with_config(registry, config, metrics);
     let debug_str = format!("{router:?}");
     assert!(debug_str.contains("RequestRouter"));
 }
@@ -208,7 +211,8 @@ fn test_router_with_config() {
 #[test]
 fn test_router_clone() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
     let cloned = router.clone();
 
     // Verify both routers work independently
@@ -223,7 +227,8 @@ fn test_router_clone() {
 #[tokio::test]
 async fn test_add_custom_route_success() {
     let registry = Arc::new(HandlerRegistry::new());
-    let mut router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let mut router = RequestRouter::new(registry, metrics);
 
     let handler = MockCustomHandler::new(
         vec!["custom/test".to_string()],
@@ -238,7 +243,8 @@ async fn test_add_custom_route_success() {
 #[tokio::test]
 async fn test_add_custom_route_duplicate_method() {
     let registry = Arc::new(HandlerRegistry::new());
-    let mut router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let mut router = RequestRouter::new(registry, metrics);
 
     let handler1 = MockCustomHandler::new(
         vec!["custom/duplicate".to_string()],
@@ -265,7 +271,8 @@ async fn test_add_custom_route_duplicate_method() {
 #[tokio::test]
 async fn test_custom_route_handler_execution() {
     let registry = Arc::new(HandlerRegistry::new());
-    let mut router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let mut router = RequestRouter::new(registry, metrics);
 
     let handler = MockCustomHandler::new(
         vec!["custom/success".to_string()],
@@ -290,7 +297,8 @@ async fn test_custom_route_handler_execution() {
 #[tokio::test]
 async fn test_custom_route_handler_error() {
     let registry = Arc::new(HandlerRegistry::new());
-    let mut router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let mut router = RequestRouter::new(registry, metrics);
 
     let handler = MockCustomHandler::new(vec!["custom/error".to_string()], false, json!({}));
 
@@ -309,7 +317,8 @@ async fn test_custom_route_handler_error() {
 #[tokio::test]
 async fn test_handle_initialize() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let init_params = json!({
         "protocolVersion": "2024-11-05",
@@ -345,7 +354,8 @@ async fn test_handle_initialize() {
 #[tokio::test]
 async fn test_handle_initialize_missing_params() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = create_basic_request("initialize", None);
     let ctx = create_test_context();
@@ -362,7 +372,8 @@ async fn test_handle_initialize_missing_params() {
 #[tokio::test]
 async fn test_handle_list_tools_empty() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = create_basic_request("tools/list", Some(json!({})));
     let ctx = create_test_context();
@@ -382,7 +393,8 @@ async fn test_handle_list_tools_empty() {
 #[tokio::test]
 async fn test_handle_call_tool_not_found() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let call_params = json!({
         "name": "nonexistent_tool",
@@ -404,7 +416,8 @@ async fn test_handle_call_tool_not_found() {
 #[tokio::test]
 async fn test_handle_list_prompts_empty() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = create_basic_request("prompts/list", Some(json!({})));
     let ctx = create_test_context();
@@ -417,7 +430,8 @@ async fn test_handle_list_prompts_empty() {
 #[tokio::test]
 async fn test_handle_get_prompt_not_found() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let prompt_params = json!({
         "name": "nonexistent_prompt",
@@ -439,7 +453,8 @@ async fn test_handle_get_prompt_not_found() {
 #[tokio::test]
 async fn test_handle_list_resources_empty() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = create_basic_request("resources/list", Some(json!({})));
     let ctx = create_test_context();
@@ -452,7 +467,8 @@ async fn test_handle_list_resources_empty() {
 #[tokio::test]
 async fn test_handle_read_resource_not_found() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let resource_params = json!({
         "uri": "file:///nonexistent/resource.txt"
@@ -471,7 +487,8 @@ async fn test_handle_read_resource_not_found() {
 #[tokio::test]
 async fn test_resource_subscribe_success() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let sub_params = json!({
         "uri": "file:///test/resource.txt"
@@ -488,7 +505,8 @@ async fn test_resource_subscribe_success() {
 #[tokio::test]
 async fn test_resource_subscribe_multiple() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let uri = "file:///test/multi_resource.txt";
 
@@ -509,7 +527,8 @@ async fn test_resource_subscribe_multiple() {
 #[tokio::test]
 async fn test_resource_unsubscribe_success() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let uri = "file:///test/unsub_resource.txt";
 
@@ -535,7 +554,8 @@ async fn test_resource_unsubscribe_success() {
 #[tokio::test]
 async fn test_resource_unsubscribe_nonexistent() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let unsub_params = json!({
         "uri": "file:///test/never_subscribed.txt"
@@ -552,7 +572,8 @@ async fn test_resource_unsubscribe_nonexistent() {
 #[tokio::test]
 async fn test_resource_subscription_counter_management() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let uri = "file:///test/counter_resource.txt";
 
@@ -583,7 +604,8 @@ async fn test_resource_subscription_counter_management() {
 #[tokio::test]
 async fn test_handle_set_log_level_no_handler() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let level_params = json!({
         "level": "info"
@@ -604,7 +626,8 @@ async fn test_handle_set_log_level_no_handler() {
 #[tokio::test]
 async fn test_handle_create_message_no_handler() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let message_params = json!({
         "maxTokens": 100,
@@ -636,7 +659,8 @@ async fn test_handle_create_message_no_handler() {
 #[tokio::test]
 async fn test_handle_list_roots() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = create_basic_request("roots/list", Some(json!({})));
     let ctx = create_test_context();
@@ -659,7 +683,8 @@ async fn test_handle_list_roots() {
 #[tokio::test]
 async fn test_method_not_found() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = create_basic_request("nonexistent/method", Some(json!({})));
     let ctx = create_test_context();
@@ -688,7 +713,8 @@ async fn test_request_validation_disabled() {
         validate_responses: true,
         ..RouterConfig::default()
     };
-    let router = RequestRouter::with_config(registry, config);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::with_config(registry, config, metrics);
 
     // Send malformed request
     let mut malformed_request = create_basic_request("initialize", None);
@@ -710,7 +736,8 @@ async fn test_response_validation_disabled() {
         validate_responses: false,
         ..RouterConfig::default()
     };
-    let router = RequestRouter::with_config(registry, config);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::with_config(registry, config, metrics);
 
     let request = create_basic_request("tools/list", Some(json!({})));
     let ctx = create_test_context();
@@ -724,7 +751,8 @@ async fn test_response_validation_disabled() {
 #[tokio::test]
 async fn test_route_batch_empty() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let ctx = create_test_context();
     let responses = router.route_batch(vec![], ctx).await;
@@ -734,7 +762,8 @@ async fn test_route_batch_empty() {
 #[tokio::test]
 async fn test_route_batch_single_request() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = create_basic_request("tools/list", Some(json!({})));
     let ctx = create_test_context();
@@ -747,7 +776,8 @@ async fn test_route_batch_single_request() {
 #[tokio::test]
 async fn test_route_batch_multiple_requests() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let requests = vec![
         create_basic_request("tools/list", Some(json!({}))),
@@ -767,7 +797,8 @@ async fn test_route_batch_multiple_requests() {
 #[tokio::test]
 async fn test_route_batch_with_errors() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let requests = vec![
         create_basic_request("tools/list", Some(json!({}))), // Should succeed
@@ -791,7 +822,8 @@ async fn test_route_batch_concurrent_limit() {
         max_concurrent_requests: 2, // Low limit for testing
         ..RouterConfig::default()
     };
-    let router = RequestRouter::with_config(registry, config);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::with_config(registry, config, metrics);
 
     // Create more requests than the concurrent limit
     let requests = vec![
@@ -817,7 +849,8 @@ async fn test_route_batch_concurrent_limit() {
 #[tokio::test]
 async fn test_parse_params_invalid_json() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let init_params = json!({
         "protocolVersion": 123, // Should be string
@@ -841,7 +874,8 @@ async fn test_parse_params_invalid_json() {
 #[tokio::test]
 async fn test_resource_pattern_matching_via_read() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     // Test that exact URI patterns work through resource reading
     let resource_params = json!({
@@ -864,7 +898,8 @@ async fn test_resource_pattern_matching_via_read() {
 #[tokio::test]
 async fn test_server_capabilities_via_initialize() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let init_params = json!({
         "protocolVersion": "2024-11-05",
@@ -898,7 +933,8 @@ async fn test_server_capabilities_via_initialize() {
 #[tokio::test]
 async fn test_error_response_via_invalid_method() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = create_basic_request("unknown/method", Some(json!({})));
     let ctx = create_test_context();
@@ -916,7 +952,8 @@ async fn test_error_response_via_invalid_method() {
 #[tokio::test]
 async fn test_success_response_via_valid_request() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = create_basic_request("tools/list", Some(json!({})));
     let ctx = create_test_context();
@@ -935,7 +972,8 @@ async fn test_success_response_via_valid_request() {
 #[tokio::test]
 async fn test_invalid_subscribe_params() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let invalid_params = json!({
         "not_uri": "file:///test.txt"
@@ -951,7 +989,8 @@ async fn test_invalid_subscribe_params() {
 #[tokio::test]
 async fn test_invalid_unsubscribe_params() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let invalid_params = json!({
         "not_uri": "file:///test.txt"
@@ -967,7 +1006,8 @@ async fn test_invalid_unsubscribe_params() {
 #[tokio::test]
 async fn test_custom_handler_multiple_methods() {
     let registry = Arc::new(HandlerRegistry::new());
-    let mut router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let mut router = RequestRouter::new(registry, metrics);
 
     let handler = MockCustomHandler::new(
         vec!["custom/method1".to_string(), "custom/method2".to_string()],

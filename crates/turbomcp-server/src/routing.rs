@@ -3,6 +3,8 @@
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
+use tracing::{info, info_span};
 use turbomcp_core::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
@@ -40,7 +42,10 @@ use turbomcp_protocol::{
     },
 };
 
+use crate::config::TimeoutConfig;
+use crate::metrics::ServerMetrics;
 use crate::registry::HandlerRegistry;
+use crate::timeout::ToolTimeoutManager;
 use crate::{ServerError, ServerResult};
 use futures::stream::{self, StreamExt};
 use jsonschema::{Draft, JSONSchema};
@@ -57,6 +62,8 @@ pub struct RequestRouter {
     resource_subscriptions: DashMap<String, usize>,
     /// Server-initiated request dispatcher (for bidirectional communication)
     server_request_dispatcher: Option<Arc<dyn ServerRequestDispatcher>>,
+    /// Tool timeout manager for execution control and cancellation
+    timeout_manager: Arc<ToolTimeoutManager>,
 }
 
 impl std::fmt::Debug for RequestRouter {
@@ -185,25 +192,57 @@ impl Default for RouteMetadata {
 impl RequestRouter {
     /// Create a new request router
     #[must_use]
-    pub fn new(registry: Arc<HandlerRegistry>) -> Self {
+    pub fn new(registry: Arc<HandlerRegistry>, metrics: Arc<ServerMetrics>) -> Self {
+        let timeout_config = TimeoutConfig::default();
+        let timeout_manager = Arc::new(ToolTimeoutManager::new(timeout_config, metrics));
+
         Self {
             registry,
             config: RouterConfig::default(),
             custom_routes: HashMap::new(),
             resource_subscriptions: DashMap::new(),
             server_request_dispatcher: None,
+            timeout_manager,
         }
     }
 
     /// Create a router with configuration
     #[must_use]
-    pub fn with_config(registry: Arc<HandlerRegistry>, config: RouterConfig) -> Self {
+    pub fn with_config(
+        registry: Arc<HandlerRegistry>,
+        config: RouterConfig,
+        metrics: Arc<ServerMetrics>,
+    ) -> Self {
+        let timeout_config = TimeoutConfig::default();
+        let timeout_manager = Arc::new(ToolTimeoutManager::new(timeout_config, metrics));
+
         Self {
             registry,
             config,
             custom_routes: HashMap::new(),
             resource_subscriptions: DashMap::new(),
             server_request_dispatcher: None,
+            timeout_manager,
+        }
+    }
+
+    /// Create a router with full configuration including timeouts
+    #[must_use]
+    pub fn with_timeout_config(
+        registry: Arc<HandlerRegistry>,
+        config: RouterConfig,
+        timeout_config: TimeoutConfig,
+        metrics: Arc<ServerMetrics>,
+    ) -> Self {
+        let timeout_manager = Arc::new(ToolTimeoutManager::new(timeout_config, metrics));
+
+        Self {
+            registry,
+            config,
+            custom_routes: HashMap::new(),
+            resource_subscriptions: DashMap::new(),
+            server_request_dispatcher: None,
+            timeout_manager,
         }
     }
 
@@ -372,6 +411,10 @@ impl RequestRouter {
         self.success_response(&request, result)
     }
 
+    #[tracing::instrument(skip(self, ctx), fields(
+        method = "tools/call",
+        request_id = ?request.id
+    ))]
     async fn handle_call_tool(
         &self,
         request: JsonRpcRequest,
@@ -384,9 +427,9 @@ impl RequestRouter {
 
         match self.parse_params::<CallToolRequest>(&request) {
             Ok(call_request) => {
-                let tool_name = &call_request.name;
+                let tool_name = call_request.name.clone();
 
-                if let Some(handler) = self.registry.get_tool(tool_name) {
+                if let Some(handler) = self.registry.get_tool(&tool_name) {
                     // RBAC: if handler metadata enforces allowed roles, check RequestContext
                     if self.config.validate_requests
                         && let Some(required_roles) = handler.allowed_roles()
@@ -406,11 +449,26 @@ impl RequestRouter {
                                 required_roles.iter().any(|r| user_set.contains(r))
                             });
                         if !has_role {
+                            // Log authorization denial for security audit
+                            info!(
+                                tool_name = %tool_name,
+                                request_id = ?request.id,
+                                event = "authorization_denied",
+                                "Access denied for tool execution"
+                            );
                             return self.error_response(
                                 &request,
                                 ServerError::authentication(format!(
                                     "Access denied for tool '{tool_name}'"
                                 )),
+                            );
+                        } else {
+                            // Log successful authorization for security audit
+                            info!(
+                                tool_name = %tool_name,
+                                request_id = ?request.id,
+                                event = "authorization_granted",
+                                "Access granted for tool execution"
                             );
                         }
                     }
@@ -472,9 +530,54 @@ impl RequestRouter {
                             }
                         }
                     }
-                    match handler.handle(call_request, ctx).await {
-                        Ok(result) => self.success_response(&request, result),
-                        Err(e) => self.error_response(&request, e),
+                    // Execute tool with cooperative cancellation support
+                    // Create cancellation token first to propagate to RequestContext
+                    let cancellation_token = CancellationToken::new();
+                    let token_arc = Arc::new(cancellation_token.clone());
+
+                    // Create performance span for tool execution
+                    let tool_span = info_span!("tool.execute",
+                        tool_name = %tool_name,
+                        request_id = ?request.id
+                    );
+
+                    info!(tool_name = %tool_name, "Starting tool execution");
+
+                    let result = tool_span
+                        .in_scope(|| {
+                            Box::pin(self.timeout_manager.execute_with_external_token(
+                                &tool_name,
+                                async move {
+                                    // Create RequestContext with cancellation token for cooperative cancellation
+                                    let ctx_with_cancellation =
+                                        ctx.with_cancellation_token(token_arc);
+                                    handler.handle(call_request, ctx_with_cancellation).await
+                                },
+                                cancellation_token,
+                            ))
+                        })
+                        .await;
+
+                    match result {
+                        Ok(tool_result) => {
+                            // Log successful tool execution for security audit
+                            info!(
+                                tool_name = %tool_name,
+                                request_id = ?request.id,
+                                "Tool execution completed successfully"
+                            );
+                            self.success_response(&request, tool_result)
+                        }
+                        Err(timeout_error) => {
+                            // Log failed tool execution for security audit
+                            info!(
+                                tool_name = %tool_name,
+                                request_id = ?request.id,
+                                error = %timeout_error,
+                                "Tool execution failed"
+                            );
+                            self.error_response(&request, timeout_error.into())
+                        }
                     }
                 } else {
                     let error = ServerError::not_found(format!("Tool '{tool_name}'"));
@@ -1027,6 +1130,7 @@ impl Clone for RequestRouter {
             custom_routes: self.custom_routes.clone(),
             resource_subscriptions: DashMap::new(),
             server_request_dispatcher: self.server_request_dispatcher.clone(),
+            timeout_manager: Arc::clone(&self.timeout_manager),
         }
     }
 }

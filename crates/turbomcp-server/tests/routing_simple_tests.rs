@@ -6,6 +6,7 @@ use std::sync::Arc;
 use turbomcp_core::RequestContext;
 use turbomcp_protocol::{jsonrpc::*, types::*};
 use turbomcp_server::ServerResult;
+use turbomcp_server::metrics::ServerMetrics;
 use turbomcp_server::registry::HandlerRegistry;
 use turbomcp_server::routing::*;
 
@@ -142,7 +143,8 @@ fn test_route_metadata_clone() {
 #[test]
 fn test_request_router_new() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let debug_str = format!("{router:?}");
     assert!(debug_str.contains("RequestRouter"));
@@ -155,7 +157,8 @@ fn test_request_router_with_config() {
         validate_requests: false,
         ..RouterConfig::default()
     };
-    let router = RequestRouter::with_config(registry, config);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::with_config(registry, config, metrics);
 
     let debug_str = format!("{router:?}");
     assert!(debug_str.contains("RequestRouter"));
@@ -164,7 +167,8 @@ fn test_request_router_with_config() {
 #[test]
 fn test_request_router_debug() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let debug_str = format!("{router:?}");
     assert!(debug_str.contains("RequestRouter"));
@@ -179,7 +183,8 @@ fn test_request_router_debug() {
 #[tokio::test]
 async fn test_route_method_not_found() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,
@@ -201,7 +206,8 @@ async fn test_route_method_not_found() {
 #[tokio::test]
 async fn test_route_initialize_request() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,
@@ -231,7 +237,8 @@ async fn test_route_initialize_request() {
 #[tokio::test]
 async fn test_route_tools_list_request() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,
@@ -258,7 +265,8 @@ async fn test_route_with_validation_disabled() {
         validate_responses: false,
         ..RouterConfig::default()
     };
-    let router = RequestRouter::with_config(registry, config);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::with_config(registry, config, metrics);
 
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,
@@ -280,7 +288,8 @@ async fn test_route_with_validation_disabled() {
 #[tokio::test]
 async fn test_route_resource_methods() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let methods = vec![
         "resources/list",
@@ -312,7 +321,8 @@ async fn test_route_resource_methods() {
 #[tokio::test]
 async fn test_route_logging_and_sampling() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let methods = vec!["logging/setLevel", "sampling/createMessage"];
 
@@ -338,7 +348,8 @@ async fn test_route_logging_and_sampling() {
 #[tokio::test]
 async fn test_route_empty_method() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,
@@ -356,7 +367,8 @@ async fn test_route_empty_method() {
 #[tokio::test]
 async fn test_route_very_long_method() {
     let registry = Arc::new(HandlerRegistry::new());
-    let router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
 
     let very_long_method = "a".repeat(1000);
     let request = JsonRpcRequest {
@@ -379,7 +391,8 @@ async fn test_route_very_long_method() {
 #[test]
 fn test_router_add_route() {
     let registry = Arc::new(HandlerRegistry::new());
-    let mut router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let mut router = RequestRouter::new(registry, metrics);
 
     let handler = SimpleRouteHandler;
     let result = router.add_route(handler);
@@ -390,7 +403,8 @@ fn test_router_add_route() {
 #[tokio::test]
 async fn test_custom_route_integration() {
     let registry = Arc::new(HandlerRegistry::new());
-    let mut router = RequestRouter::new(registry);
+    let metrics = Arc::new(ServerMetrics::new());
+    let mut router = RequestRouter::new(registry, metrics);
 
     let custom_handler = SimpleRouteHandler;
     router.add_route(custom_handler).unwrap();
@@ -444,7 +458,8 @@ async fn test_router_different_configurations() {
 
     for (i, config) in configs.into_iter().enumerate() {
         let registry = Arc::new(HandlerRegistry::new());
-        let router = RequestRouter::with_config(registry, config);
+        let metrics = Arc::new(ServerMetrics::new());
+        let router = RequestRouter::with_config(registry, config, metrics);
 
         let request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
