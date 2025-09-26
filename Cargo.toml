@@ -11,6 +11,7 @@ members = [
     "crates/turbomcp",
     "crates/turbomcp-macros",
     "crates/turbomcp-dpop",
+    "crates/turbomcp-security",
     "demo",
 ]
 resolver = "2"
@@ -80,9 +81,10 @@ color-eyre = "0.6"
 # Observability and monitoring
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json", "tracing-log"] }
-tracing-opentelemetry = "0.22"
-opentelemetry = { version = "0.21", features = ["rt-tokio"] }
-opentelemetry-otlp = "0.14"
+tracing-opentelemetry = "0.28"
+opentelemetry = "0.28"
+opentelemetry-otlp = { version = "0.28", features = ["tonic", "metrics", "logs"] }
+opentelemetry_sdk = { version = "0.28", features = ["rt-tokio"] }
 metrics = "0.22"
 metrics-exporter-prometheus = "0.13"
 

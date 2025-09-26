@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🔐 **NEW MAJOR FEATURE: RFC 9449 DPoP Security Suite**
 - **ADDED**: Complete RFC 9449 Demonstration of Proof-of-Possession (DPoP) implementation
-- **NEW**: `turbomcp-dpop` crate with production-ready OAuth 2.0 security enhancements
+- **NEW**: `turbomcp-dpop` crate with OAuth 2.0 security enhancements
 - **SECURITY**: Cryptographic binding of access tokens to client keys preventing token theft
 - **ENTERPRISE**: Multi-store support (Memory, Redis, HSM) for different security requirements
 - **ALGORITHMS**: ES256, RS256 support with automatic key rotation policies
-- **HSM**: YubiHSM2 and PKCS#11 integration for enterprise-grade security
+- **HSM**: YubiHSM2 and PKCS#11 integration for enhanced security
 
 ### 🏗️ **NEW MAJOR FEATURE: Type-State Capability Builders**
 - **REVOLUTIONARY**: Const-generic type-state builders with compile-time validation
@@ -219,7 +219,7 @@ This release addresses compliance gaps identified during comprehensive MCP 2025-
 
 ### 📚 Documentation Standards
 - **Example Categories**: Clear organization by transport type, complexity, and use case
-- **Quality Guarantees**: All examples follow production-ready standards
+- **Quality Guarantees**: All examples follow high standards
 - **Learning Progression**: 11 numbered tutorial examples from basic to advanced
 - **Transport Comparison**: Legacy vs. current transport example organization
 - **35 Total Examples**: Complete inventory with proper categorization
@@ -235,7 +235,7 @@ This release addresses compliance gaps identified during comprehensive MCP 2025-
 - **Formatting**: 100% consistent code formatting across 35 examples
 - **Tests**: All integration and unit tests passing
 - **Documentation**: Complete and accurate example documentation
-- **Examples**: 35 production-ready, fully-functional examples
+- **Examples**: 35 fully-functional examples
 
 ## [1.0.6] - 2025-09-10
 
