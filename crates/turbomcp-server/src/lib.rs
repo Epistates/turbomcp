@@ -138,11 +138,13 @@ pub mod handlers;
 pub mod lifecycle;
 pub mod metrics;
 pub mod middleware;
+pub mod observability;
 pub mod registry;
 pub mod routing;
 pub mod sampling;
 pub mod server;
 pub mod shared;
+pub mod timeout;
 // #[cfg(feature = "http")]
 // pub mod simple_http;
 
@@ -158,6 +160,10 @@ pub use metrics::{MetricsCollector, ServerMetrics};
 pub use middleware::{
     AuthenticationMiddleware, LoggingMiddleware, Middleware, MiddlewareLayer, MiddlewareStack,
     RateLimitMiddleware, SecurityHeadersConfig, SecurityHeadersMiddleware,
+};
+pub use observability::{
+    ObservabilityConfig, ObservabilityGuard, OtlpProtocol, PerformanceMonitor, SamplingConfig,
+    SecurityAuditLogger, global_observability,
 };
 pub use registry::{HandlerRegistry, Registry, RegistryBuilder};
 pub use routing::{RequestRouter, Route, Router};

@@ -275,6 +275,8 @@ fn test_server_config_json_roundtrip() {
             request_timeout: Duration::from_secs(60),
             connection_timeout: Duration::from_secs(15),
             keep_alive_timeout: Duration::from_secs(90),
+            tool_execution_timeout: Duration::from_secs(300),
+            tool_timeouts: std::collections::HashMap::new(),
         },
         rate_limiting: RateLimitingConfig {
             enabled: false,

@@ -50,6 +50,10 @@ pub struct TimeoutConfig {
     pub connection_timeout: Duration,
     /// Keep-alive timeout
     pub keep_alive_timeout: Duration,
+    /// Tool execution timeout (default for all tools)
+    pub tool_execution_timeout: Duration,
+    /// Per-tool timeout overrides (tool_name -> duration_seconds)
+    pub tool_timeouts: HashMap<String, u64>,
 }
 
 /// Rate limiting configuration
@@ -98,6 +102,8 @@ impl Default for TimeoutConfig {
             request_timeout: Duration::from_secs(30),
             connection_timeout: Duration::from_secs(10),
             keep_alive_timeout: Duration::from_secs(60),
+            tool_execution_timeout: Duration::from_secs(120), // 2 minutes default for tools
+            tool_timeouts: HashMap::new(),                    // No per-tool overrides by default
         }
     }
 }

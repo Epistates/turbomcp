@@ -21,6 +21,7 @@ async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
@@ -34,6 +35,12 @@ bytes = { workspace = true }
 regex = "1.10"
 jsonschema = { version = "0.17.1", default-features = false, features = ["resolve-file"] }
 
+# Observability dependencies
+once_cell = "1.19"
+
+[dev-dependencies]
+futures = "0.3"
+
 [features]
 default = ["auth", "health-checks", "metrics", "stdio"]
 auth = []
@@ -42,6 +49,7 @@ hot-reload = []
 metrics = []
 middleware = []
 graceful-shutdown = []
+observability = []
 # Transport features (progressive enhancement)
 stdio = ["dep:turbomcp-transport", "turbomcp-transport/stdio"]
 http = ["dep:turbomcp-transport", "turbomcp-transport/http"]
