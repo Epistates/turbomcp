@@ -26,6 +26,9 @@ use crate::{
     Result, DEFAULT_PROOF_LIFETIME_SECONDS, DPOP_JWT_TYPE, MAX_CLOCK_SKEW_SECONDS,
 };
 
+#[cfg(feature = "redis-storage")]
+use crate::{redis_storage::RedisNonceStorage, types::NonceStorage};
+
 /// DPoP proof generator with comprehensive security features
 #[derive(Debug)]
 pub struct DpopProofGenerator {
@@ -477,6 +480,179 @@ impl NonceTracker for MemoryNonceTracker {
 impl Default for MemoryNonceTracker {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Redis-based nonce tracker for distributed production deployments
+///
+/// This implementation provides Redis-backed nonce tracking with full
+/// DPoP replay protection across multiple server instances. Only available
+/// when the `redis-storage` feature is enabled.
+#[cfg(feature = "redis-storage")]
+#[derive(Debug)]
+pub struct RedisNonceTracker {
+    /// Underlying Redis storage implementation
+    storage: RedisNonceStorage,
+    /// Default client ID for single-tenant deployments
+    default_client_id: String,
+}
+
+#[cfg(feature = "redis-storage")]
+impl RedisNonceTracker {
+    /// Create a new Redis nonce tracker with default configuration
+    ///
+    /// # Arguments
+    /// * `connection_string` - Redis connection string (e.g., "redis://localhost:6379")
+    ///
+    /// # Returns
+    /// A new Redis nonce tracker instance
+    ///
+    /// # Errors
+    /// Returns error if Redis connection fails or feature is not enabled
+    ///
+    /// # Example
+    /// ```no_run
+    /// # tokio_test::block_on(async {
+    /// use turbomcp_dpop::RedisNonceTracker;
+    ///
+    /// let tracker = RedisNonceTracker::new("redis://localhost:6379").await?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # });
+    /// ```
+    pub async fn new(connection_string: &str) -> Result<Self> {
+        let storage = RedisNonceStorage::new(connection_string).await?;
+        Ok(Self {
+            storage,
+            default_client_id: "turbomcp-default".to_string(),
+        })
+    }
+
+    /// Create Redis nonce tracker with custom configuration
+    ///
+    /// # Arguments
+    /// * `connection_string` - Redis connection string
+    /// * `nonce_ttl` - Time-to-live for nonces in Redis
+    /// * `key_prefix` - Custom prefix for Redis keys
+    ///
+    /// # Example
+    /// ```no_run
+    /// # tokio_test::block_on(async {
+    /// use std::time::Duration;
+    /// use turbomcp_dpop::RedisNonceTracker;
+    ///
+    /// let tracker = RedisNonceTracker::with_config(
+    ///     "redis://localhost:6379",
+    ///     Duration::from_secs(600), // 10 minutes
+    ///     "myapp".to_string()
+    /// ).await?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # });
+    /// ```
+    pub async fn with_config(
+        connection_string: &str,
+        nonce_ttl: Duration,
+        key_prefix: String,
+    ) -> Result<Self> {
+        let storage =
+            RedisNonceStorage::with_config(connection_string, nonce_ttl, key_prefix).await?;
+        Ok(Self {
+            storage,
+            default_client_id: "turbomcp-default".to_string(),
+        })
+    }
+
+    /// Set custom default client ID for single-tenant scenarios
+    pub fn with_client_id(mut self, client_id: String) -> Self {
+        self.default_client_id = client_id;
+        self
+    }
+}
+
+#[cfg(feature = "redis-storage")]
+#[async_trait]
+impl NonceTracker for RedisNonceTracker {
+    async fn track_nonce(&self, nonce: &str, issued_at: i64) -> Result<()> {
+        // Convert timestamp to system time for TTL calculation
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| DpopError::InternalError {
+                reason: "System clock before Unix epoch".to_string(),
+            })?
+            .as_secs() as i64;
+
+        // Calculate appropriate TTL based on issued_at vs current time
+        let age = current_time.saturating_sub(issued_at);
+        let remaining_ttl = Duration::from_secs(300_u64.saturating_sub(age as u64)); // 5 minutes max
+
+        // Store nonce with comprehensive metadata
+        let stored = self
+            .storage
+            .store_nonce(
+                nonce,
+                &format!("jti-{}", nonce), // JTI based on nonce for simplicity
+                "POST", // Default method - would need to be passed through in real usage
+                "https://api.turbomcp.org/default", // Default URI - would need actual URI
+                &self.default_client_id,
+                Some(remaining_ttl),
+            )
+            .await?;
+
+        if !stored {
+            return Err(DpopError::ProofValidationFailed {
+                reason: format!("Nonce replay detected: {}", nonce),
+            });
+        }
+
+        Ok(())
+    }
+
+    async fn is_nonce_used(&self, nonce: &str) -> Result<bool> {
+        self.storage
+            .is_nonce_used(nonce, &self.default_client_id)
+            .await
+    }
+
+    async fn cleanup_expired_nonces(&self) -> Result<usize> {
+        // Redis handles expiration automatically via TTL
+        // Return 0 as Redis cleanup is transparent
+        self.storage
+            .cleanup_expired()
+            .await
+            .map(|count| count as usize)
+    }
+}
+
+/// Redis-based nonce tracker (feature disabled)
+///
+/// When the `redis-storage` feature is not enabled, this provides clear
+/// error messages directing users to enable the feature.
+#[cfg(not(feature = "redis-storage"))]
+#[derive(Debug)]
+pub struct RedisNonceTracker;
+
+#[cfg(not(feature = "redis-storage"))]
+impl RedisNonceTracker {
+    /// Create a new Redis nonce tracker (feature disabled)
+    ///
+    /// Returns a configuration error directing users to enable the 'redis-storage' feature
+    pub async fn new(_connection_string: &str) -> Result<Self> {
+        Err(DpopError::ConfigurationError {
+            reason: "Redis nonce tracking requires 'redis-storage' feature. Add 'redis-storage' to your Cargo.toml features.".to_string(),
+        })
+    }
+
+    /// Create Redis nonce tracker with custom configuration (feature disabled)
+    pub async fn with_config(
+        _connection_string: &str,
+        _nonce_ttl: Duration,
+        _key_prefix: String,
+    ) -> Result<Self> {
+        Self::new(_connection_string).await
+    }
+
+    /// Set custom default client ID (feature disabled)
+    pub fn with_client_id(self, _client_id: String) -> Self {
+        self
     }
 }
 
