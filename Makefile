@@ -508,7 +508,7 @@ validate-env: ## Validate development environment
 
 # Production deployment preparation
 production: ## Prepare production build with optimizations
-	@echo "${BOLD}${RED}🚀 Building production-ready $(PROJECT_NAME)...${RESET}"
+	@echo "${BOLD}${RED}🚀 Building $(PROJECT_NAME)...${RESET}"
 	@$(MAKE) clean
 	@$(MAKE) audit
 	@$(MAKE) test

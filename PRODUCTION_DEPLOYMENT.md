@@ -2,7 +2,7 @@
 
 ## 🚀 Overview
 
-This guide covers basic production deployment of TurboMCP servers with enterprise-grade security, monitoring, and scalability best practices.
+This guide covers basic production deployment of TurboMCP servers with security, monitoring, and scalability best practices.
 
 ## 🔧 Environment Variables
 

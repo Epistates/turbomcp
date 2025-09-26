@@ -1,4 +1,4 @@
-# This configuration enforces enterprise-grade security standards for production use
+# This configuration enforces security standards for production use
 #
 # Security Policy Goals:
 # 1. Zero tolerance for known vulnerabilities in production
