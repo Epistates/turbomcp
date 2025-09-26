@@ -1,7 +1,7 @@
 //! Hardware Security Module (HSM) integration for DPoP key management
 //!
-//! This module provides enterprise-grade HSM-backed key storage and cryptographic operations
-//! for production-grade security. It supports multiple HSM backends including:
+//! This module provides HSM-backed key storage and cryptographic operations
+//! for enhanced security. It supports multiple HSM backends including:
 //!
 //! - **PKCS#11 HSMs**: SafeNet Luna, Thales nShield, AWS CloudHSM, and other PKCS#11 devices
 //! - **YubiHSM 2**: Direct integration with Yubico's hardware security modules

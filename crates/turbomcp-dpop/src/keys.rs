@@ -10,7 +10,10 @@ use std::time::{Duration, SystemTime};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::rngs::OsRng;
-use tokio::sync::RwLock;
+use tokio::sync::{Notify, RwLock};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info};
 use uuid::Uuid;
 
 use crate::{
@@ -508,6 +511,320 @@ fn constant_time_compare(a: &str, b: &str) -> bool {
     }
 
     result == 0
+}
+
+/// Automated key rotation service for production deployments
+///
+/// This service runs as a background task, monitoring key expiration and automatically
+/// rotating keys based on the configured rotation policy. Provides enterprise-grade
+/// key lifecycle management with monitoring and error recovery.
+#[derive(Debug)]
+pub struct AutoRotationService {
+    /// Key manager for rotation operations
+    key_manager: Arc<DpopKeyManager>,
+    /// Cancellation token for graceful shutdown
+    cancellation_token: CancellationToken,
+    /// Notification for manual rotation triggers
+    notify: Arc<Notify>,
+    /// Background task handle
+    task_handle: Option<JoinHandle<()>>,
+    /// Rotation metrics and monitoring
+    metrics: Arc<RotationMetrics>,
+}
+
+/// Rotation metrics for monitoring and alerting
+#[derive(Debug)]
+pub struct RotationMetrics {
+    /// Total number of successful rotations
+    pub successful_rotations: std::sync::atomic::AtomicU64,
+    /// Total number of failed rotations
+    pub failed_rotations: std::sync::atomic::AtomicU64,
+    /// Last rotation timestamp
+    pub last_rotation_time: RwLock<Option<SystemTime>>,
+    /// Last error timestamp and message
+    pub last_error: RwLock<Option<(SystemTime, String)>>,
+    /// Keys currently tracked for rotation
+    pub tracked_keys: std::sync::atomic::AtomicU64,
+}
+
+impl RotationMetrics {
+    /// Create new rotation metrics instance
+    pub fn new() -> Self {
+        Self {
+            successful_rotations: std::sync::atomic::AtomicU64::new(0),
+            failed_rotations: std::sync::atomic::AtomicU64::new(0),
+            last_rotation_time: RwLock::new(None),
+            last_error: RwLock::new(None),
+            tracked_keys: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// Record successful rotation
+    pub async fn record_success(&self) {
+        self.successful_rotations
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        *self.last_rotation_time.write().await = Some(SystemTime::now());
+    }
+
+    /// Record failed rotation
+    pub async fn record_failure(&self, error: &str) {
+        self.failed_rotations
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        *self.last_error.write().await = Some((SystemTime::now(), error.to_string()));
+    }
+
+    /// Get current metrics snapshot
+    pub async fn get_snapshot(&self) -> RotationMetricsSnapshot {
+        RotationMetricsSnapshot {
+            successful_rotations: self
+                .successful_rotations
+                .load(std::sync::atomic::Ordering::SeqCst),
+            failed_rotations: self
+                .failed_rotations
+                .load(std::sync::atomic::Ordering::SeqCst),
+            last_rotation_time: *self.last_rotation_time.read().await,
+            last_error: self.last_error.read().await.clone(),
+            tracked_keys: self.tracked_keys.load(std::sync::atomic::Ordering::SeqCst),
+        }
+    }
+}
+
+impl Default for RotationMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Snapshot of rotation metrics at a point in time
+#[derive(Debug, Clone)]
+pub struct RotationMetricsSnapshot {
+    /// Total number of successful key rotations
+    pub successful_rotations: u64,
+    /// Total number of failed key rotations
+    pub failed_rotations: u64,
+    /// Timestamp of the last successful rotation
+    pub last_rotation_time: Option<SystemTime>,
+    /// Timestamp and message of the last error
+    pub last_error: Option<(SystemTime, String)>,
+    /// Number of keys currently being tracked for rotation
+    pub tracked_keys: u64,
+}
+
+impl AutoRotationService {
+    /// Create a new auto-rotation service
+    ///
+    /// # Arguments
+    /// * `key_manager` - The key manager to use for rotation operations
+    ///
+    /// # Returns
+    /// A new auto-rotation service instance (not yet started)
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use std::sync::Arc;
+    /// # use turbomcp_dpop::{DpopKeyManager, AutoRotationService};
+    /// # tokio_test::block_on(async {
+    /// let key_manager = Arc::new(DpopKeyManager::new_memory().await?);
+    /// let mut service = AutoRotationService::new(key_manager);
+    /// service.start().await?;
+    /// // Service runs in background...
+    /// service.stop().await?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # });
+    /// ```
+    pub fn new(key_manager: Arc<DpopKeyManager>) -> Self {
+        Self {
+            key_manager,
+            cancellation_token: CancellationToken::new(),
+            notify: Arc::new(Notify::new()),
+            task_handle: None,
+            metrics: Arc::new(RotationMetrics::new()),
+        }
+    }
+
+    /// Start the auto-rotation service
+    ///
+    /// This spawns a background tokio task that monitors key expiration
+    /// and performs automatic rotation according to the rotation policy.
+    pub async fn start(&mut self) -> Result<()> {
+        if self.task_handle.is_some() {
+            return Err(DpopError::KeyManagementError {
+                reason: "Auto-rotation service is already running".to_string(),
+            });
+        }
+
+        info!("Starting DPoP auto-rotation service");
+
+        let key_manager = self.key_manager.clone();
+        let cancellation_token = self.cancellation_token.clone();
+        let notify = self.notify.clone();
+        let metrics = self.metrics.clone();
+
+        let task_handle = tokio::spawn(async move {
+            Self::rotation_loop(key_manager, cancellation_token, notify, metrics).await;
+        });
+
+        self.task_handle = Some(task_handle);
+
+        info!("DPoP auto-rotation service started successfully");
+        Ok(())
+    }
+
+    /// Stop the auto-rotation service
+    ///
+    /// This gracefully shuts down the background task and waits for it to complete.
+    pub async fn stop(&mut self) -> Result<()> {
+        info!("Stopping DPoP auto-rotation service");
+
+        // Signal cancellation
+        self.cancellation_token.cancel();
+
+        // Wait for task to complete
+        if let Some(handle) = self.task_handle.take() {
+            match handle.await {
+                Ok(_) => info!("DPoP auto-rotation service stopped successfully"),
+                Err(e) => error!("Error stopping auto-rotation service: {}", e),
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Trigger manual rotation check
+    ///
+    /// This immediately wakes up the rotation service to check for keys
+    /// that need rotation, bypassing the normal interval.
+    pub fn trigger_rotation_check(&self) {
+        debug!("Manual rotation check triggered");
+        self.notify.notify_one();
+    }
+
+    /// Get current rotation metrics
+    pub async fn get_metrics(&self) -> RotationMetricsSnapshot {
+        self.metrics.get_snapshot().await
+    }
+
+    /// Main rotation loop (runs in background task)
+    async fn rotation_loop(
+        key_manager: Arc<DpopKeyManager>,
+        cancellation_token: CancellationToken,
+        notify: Arc<Notify>,
+        metrics: Arc<RotationMetrics>,
+    ) {
+        let policy = &key_manager.rotation_policy;
+        let check_interval = policy.rotation_check_interval;
+
+        info!(
+            auto_rotate = policy.auto_rotate,
+            check_interval_secs = check_interval.as_secs(),
+            "Auto-rotation loop started"
+        );
+
+        loop {
+            tokio::select! {
+                _ = cancellation_token.cancelled() => {
+                    info!("Auto-rotation service cancelled, shutting down");
+                    break;
+                }
+                _ = tokio::time::sleep(check_interval) => {
+                    debug!("Rotation check interval elapsed");
+                }
+                _ = notify.notified() => {
+                    debug!("Manual rotation check requested");
+                }
+            }
+
+            if !policy.auto_rotate {
+                debug!("Auto-rotation is disabled, skipping rotation check");
+                continue;
+            }
+
+            if let Err(e) = Self::perform_rotation_check(&key_manager, &metrics).await {
+                error!("Error during rotation check: {}", e);
+                metrics.record_failure(&e.to_string()).await;
+            }
+        }
+
+        info!("Auto-rotation loop terminated");
+    }
+
+    /// Perform rotation check for all keys
+    async fn perform_rotation_check(
+        key_manager: &DpopKeyManager,
+        metrics: &RotationMetrics,
+    ) -> Result<()> {
+        debug!("Starting rotation check");
+
+        // Get all keys that might need rotation
+        let all_keys = key_manager.storage.list_key_pairs().await?;
+        let now = SystemTime::now();
+
+        metrics
+            .tracked_keys
+            .store(all_keys.len() as u64, std::sync::atomic::Ordering::SeqCst);
+
+        let mut rotation_count = 0;
+
+        for key_pair in all_keys {
+            if let Some(expires_at) = key_pair.expires_at {
+                if now >= expires_at {
+                    info!(
+                        key_id = %key_pair.id,
+                        algorithm = %key_pair.algorithm,
+                        rotation_generation = key_pair.metadata.rotation_generation,
+                        "Rotating expired key"
+                    );
+
+                    match key_manager.rotate_key_pair(&key_pair.id).await {
+                        Ok(new_key) => {
+                            info!(
+                                old_key_id = %key_pair.id,
+                                new_key_id = %new_key.id,
+                                algorithm = %new_key.algorithm,
+                                new_generation = new_key.metadata.rotation_generation,
+                                "Key rotation completed successfully"
+                            );
+
+                            metrics.record_success().await;
+                            rotation_count += 1;
+                        }
+                        Err(e) => {
+                            error!(
+                                key_id = %key_pair.id,
+                                error = %e,
+                                "Failed to rotate key"
+                            );
+                            metrics
+                                .record_failure(&format!("Key {}: {}", key_pair.id, e))
+                                .await;
+                        }
+                    }
+                } else {
+                    // Calculate time until expiration for debugging
+                    if let Ok(time_until_expiry) = expires_at.duration_since(now) {
+                        debug!(
+                            key_id = %key_pair.id,
+                            expires_in_hours = time_until_expiry.as_secs() / 3600,
+                            "Key rotation not needed yet"
+                        );
+                    }
+                }
+            } else {
+                debug!(
+                    key_id = %key_pair.id,
+                    "Key has no expiration (auto-rotation disabled for this key)"
+                );
+            }
+        }
+
+        if rotation_count > 0 {
+            info!(rotated_keys = rotation_count, "Rotation check completed");
+        } else {
+            debug!("Rotation check completed - no keys needed rotation");
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

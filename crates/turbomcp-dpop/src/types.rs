@@ -51,7 +51,7 @@ impl DpopAlgorithm {
 
     /// Check if algorithm is suitable for production use
     pub fn is_production_ready(self) -> bool {
-        // All RFC 9449 required algorithms are production-ready
+        // All RFC 9449 required algorithms are implemented
         true
     }
 }
