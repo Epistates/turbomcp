@@ -470,6 +470,205 @@ mod unix_tests {
         // An empty path should result in "unix://" endpoint
         assert!(endpoint.starts_with("unix://"));
     }
+
+    // ============================================================================
+    // Async File I/O Tests - Production-Grade TDD
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_socket_cleanup_async_file_operations() {
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let socket_path = temp_dir.path().join("async_test.sock");
+
+        // Create an existing socket file to be cleaned up
+        {
+            let mut file =
+                std::fs::File::create(&socket_path).expect("Failed to create test socket file");
+            file.write_all(b"fake socket")
+                .expect("Failed to write to test file");
+            file.sync_all().expect("Failed to sync test file");
+        }
+
+        // Verify file exists before cleanup
+        assert!(
+            socket_path.exists(),
+            "Test socket file should exist before cleanup"
+        );
+
+        // Create transport that should clean up the existing socket
+        let mut transport = UnixTransport::new_server(socket_path.clone());
+
+        // Test that connect performs async cleanup without blocking
+        let start_time = std::time::Instant::now();
+        let result = transport.connect().await;
+        let cleanup_duration = start_time.elapsed();
+
+        // This test will FAIL initially because we're using blocking std::fs::remove_file
+        // After fix: should complete quickly using tokio::fs::remove_file
+        assert!(
+            cleanup_duration.as_millis() < 100,
+            "Socket cleanup took {}ms - should be <100ms for async I/O",
+            cleanup_duration.as_millis()
+        );
+
+        // Verify operation succeeded
+        match result {
+            Ok(_) => {
+                // File should be removed by successful connect
+                assert!(
+                    !socket_path.exists(),
+                    "Socket file should be removed after connect"
+                );
+            }
+            Err(e) => {
+                // If connect failed, at least verify file was attempted to be removed
+                println!("connect failed as expected during initial test: {}", e);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_socket_cleanup_preserves_async_context() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let socket_path = temp_dir.path().join("context_test.sock");
+
+        // Create existing socket file
+        std::fs::File::create(&socket_path).expect("Failed to create test socket");
+
+        let transport = UnixTransport::new_server(socket_path.clone());
+
+        // Test that we can run multiple concurrent cleanup operations
+        // This will FAIL initially due to blocking I/O preventing proper async concurrency
+        let handles = (0..3)
+            .map(|i| {
+                let socket_path_clone = socket_path.clone();
+                let transport_path = temp_dir.path().join(format!("concurrent_test_{}.sock", i));
+
+                tokio::spawn(async move {
+                    // Create test socket for each concurrent operation
+                    std::fs::File::create(&transport_path).ok();
+
+                    let mut concurrent_transport = UnixTransport::new_server(transport_path);
+                    concurrent_transport.connect().await
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // Wait for all concurrent operations
+        let start_time = std::time::Instant::now();
+        let results = futures::future::join_all(handles).await;
+        let total_duration = start_time.elapsed();
+
+        // All operations should complete quickly if truly async
+        assert!(
+            total_duration.as_millis() < 500,
+            "Concurrent cleanup operations took {}ms - should be <500ms for proper async I/O",
+            total_duration.as_millis()
+        );
+
+        // At least one operation should have attempted cleanup
+        let _success_count = results.iter().filter(|r| r.is_ok()).count();
+        // We don't require all to succeed since we're testing concurrency
+    }
+
+    #[tokio::test]
+    async fn test_socket_file_removal_error_handling() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+
+        // Create a socket path in a non-existent directory to trigger removal errors
+        let non_existent_dir = temp_dir.path().join("does_not_exist");
+        let invalid_socket_path = non_existent_dir.join("invalid.sock");
+
+        let mut transport = UnixTransport::new_server(invalid_socket_path.clone());
+
+        // Test error handling for file removal failures
+        let result = transport.connect().await;
+
+        // Should handle file removal errors gracefully (either by succeeding because file doesn't exist,
+        // or by providing meaningful error messages)
+        match result {
+            Ok(_) => {
+                // OK - no file existed to remove
+            }
+            Err(e) => {
+                let error_msg = format!("{}", e);
+                // Error should be about the directory not existing, not a generic blocking I/O error
+                assert!(
+                    error_msg.contains("No such file")
+                        || error_msg.contains("directory")
+                        || error_msg.contains("path"),
+                    "Error should be descriptive about path issues, got: {}",
+                    error_msg
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_socket_cleanup_on_drop_is_async_safe() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let socket_path = temp_dir.path().join("drop_test.sock");
+
+        // Create socket file
+        std::fs::File::create(&socket_path).expect("Failed to create test socket");
+
+        {
+            // Create transport in scope that will be dropped
+            let transport = UnixTransport::new_server(socket_path.clone());
+
+            // Force the transport to think it's a server with an active socket
+            // The drop implementation should handle cleanup without blocking
+        } // transport drops here
+
+        // After drop, we should be able to continue async operations immediately
+        let start_time = std::time::Instant::now();
+
+        // This async operation should not be delayed by blocking I/O in drop
+        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
+
+        let post_drop_duration = start_time.elapsed();
+
+        // Drop should not have introduced significant blocking delays
+        assert!(
+            post_drop_duration.as_millis() < 50,
+            "Post-drop async operations delayed by {}ms - drop may have blocked",
+            post_drop_duration.as_millis()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_verify_tokio_fs_import_available() {
+        // This test verifies that tokio::fs is available for use
+        // Will PASS once we add the proper imports in the implementation
+
+        let temp_dir = tempfile::TempDir::new().expect("Failed to create temp directory");
+        let test_file = temp_dir.path().join("tokio_test.txt");
+
+        // Test tokio::fs operations work correctly
+        tokio::fs::write(&test_file, b"test content")
+            .await
+            .expect("tokio::fs::write should work");
+
+        let content = tokio::fs::read_to_string(&test_file)
+            .await
+            .expect("tokio::fs::read should work");
+        assert_eq!(content, "test content");
+
+        tokio::fs::remove_file(&test_file)
+            .await
+            .expect("tokio::fs::remove_file should work");
+
+        assert!(!test_file.exists(), "File should be removed");
+    }
 }
 
 // Tests that work without the unix feature

@@ -13,13 +13,16 @@ use tokio_util::codec::{Framed, LinesCodec};
 use tracing::{debug, error, info, warn};
 use uuid;
 
+#[cfg(feature = "security")]
+use turbomcp_security::{FileSecurityValidator, SecurityError, SecurityResult};
+
 use crate::core::{
     Transport, TransportCapabilities, TransportError, TransportMessage, TransportMetrics,
     TransportResult, TransportState, TransportType,
 };
 use turbomcp_core::MessageId;
 
-/// Unix domain socket transport implementation
+/// Unix domain socket transport implementation with integrated security
 #[derive(Debug)]
 pub struct UnixTransport {
     /// Socket path
@@ -38,6 +41,9 @@ pub struct UnixTransport {
     state: TransportState,
     /// Transport metrics
     metrics: TransportMetrics,
+    /// Security validator for socket paths
+    #[cfg(feature = "security")]
+    security_validator: Option<Arc<FileSecurityValidator>>,
 }
 
 impl UnixTransport {
@@ -58,6 +64,30 @@ impl UnixTransport {
             },
             state: TransportState::Disconnected,
             metrics: TransportMetrics::default(),
+            #[cfg(feature = "security")]
+            security_validator: None,
+        }
+    }
+
+    /// Create a new Unix socket transport for server mode with security validation
+    #[cfg(feature = "security")]
+    #[must_use]
+    pub fn new_server_secure(socket_path: PathBuf, validator: Arc<FileSecurityValidator>) -> Self {
+        Self {
+            socket_path,
+            is_server: true,
+            sender: None,
+            receiver: None,
+            connections: Arc::new(Mutex::new(HashMap::new())),
+            capabilities: TransportCapabilities {
+                supports_bidirectional: true,
+                supports_streaming: true,
+                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
+                ..Default::default()
+            },
+            state: TransportState::Disconnected,
+            metrics: TransportMetrics::default(),
+            security_validator: Some(validator),
         }
     }
 
@@ -78,18 +108,60 @@ impl UnixTransport {
             },
             state: TransportState::Disconnected,
             metrics: TransportMetrics::default(),
+            #[cfg(feature = "security")]
+            security_validator: None,
+        }
+    }
+
+    /// Create a new Unix socket transport for client mode with security validation
+    #[cfg(feature = "security")]
+    #[must_use]
+    pub fn new_client_secure(socket_path: PathBuf, validator: Arc<FileSecurityValidator>) -> Self {
+        Self {
+            socket_path,
+            is_server: false,
+            sender: None,
+            receiver: None,
+            connections: Arc::new(Mutex::new(HashMap::new())),
+            capabilities: TransportCapabilities {
+                supports_bidirectional: true,
+                supports_streaming: true,
+                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
+                ..Default::default()
+            },
+            state: TransportState::Disconnected,
+            metrics: TransportMetrics::default(),
+            security_validator: Some(validator),
         }
     }
 
     /// Start Unix socket server
     async fn start_server(&mut self) -> TransportResult<()> {
-        // Remove existing socket file if it exists
+        // Validate socket path through security layer if available
+        #[cfg(feature = "security")]
+        if let Some(ref validator) = self.security_validator {
+            let validated_path = validator
+                .validate_socket_path(&self.socket_path)
+                .await
+                .map_err(|e| {
+                    TransportError::ConfigurationError(format!(
+                        "Socket path security validation failed: {e}"
+                    ))
+                })?;
+
+            // Update socket path with validated path
+            self.socket_path = validated_path;
+        }
+
+        // Remove existing socket file if it exists (ASYNC - Non-blocking!)
         if self.socket_path.exists() {
-            std::fs::remove_file(&self.socket_path).map_err(|e| {
-                TransportError::ConfigurationError(format!(
-                    "Failed to remove existing socket file: {e}"
-                ))
-            })?;
+            tokio::fs::remove_file(&self.socket_path)
+                .await
+                .map_err(|e| {
+                    TransportError::ConfigurationError(format!(
+                        "Failed to remove existing socket file: {e}"
+                    ))
+                })?;
         }
 
         info!("Starting Unix socket server at {:?}", self.socket_path);
@@ -140,9 +212,25 @@ impl UnixTransport {
         Ok(())
     }
 
-    /// Connect to Unix socket server using world-class best practices
+    /// Connect to Unix socket server using standard practices
     /// Following the proven TCP transport pattern for consistent architecture
     async fn connect_client(&mut self) -> TransportResult<()> {
+        // Validate socket path through security layer if available
+        #[cfg(feature = "security")]
+        if let Some(ref validator) = self.security_validator {
+            let validated_path = validator
+                .validate_socket_path(&self.socket_path)
+                .await
+                .map_err(|e| {
+                    TransportError::ConfigurationError(format!(
+                        "Socket path security validation failed: {e}"
+                    ))
+                })?;
+
+            // Update socket path with validated path
+            self.socket_path = validated_path;
+        }
+
         info!("Connecting to Unix socket at {:?}", self.socket_path);
         self.state = TransportState::Connecting;
 
@@ -176,7 +264,7 @@ impl UnixTransport {
     }
 }
 
-/// Handle a Unix socket connection using world-class tokio-util::codec::Framed with LinesCodec
+/// Handle a Unix socket connection using tokio-util::codec::Framed with LinesCodec
 /// This provides production-grade newline-delimited JSON framing with proper bidirectional communication
 async fn handle_unix_connection_framed(
     stream: UnixStream,
@@ -323,10 +411,10 @@ impl Transport for UnixTransport {
         self.sender = None;
         self.receiver = None;
 
-        // Clean up socket file if we're the server
+        // Clean up socket file if we're the server (ASYNC - Non-blocking!)
         if self.is_server
             && self.socket_path.exists()
-            && let Err(e) = std::fs::remove_file(&self.socket_path)
+            && let Err(e) = tokio::fs::remove_file(&self.socket_path).await
         {
             debug!("Failed to remove socket file: {}", e);
         }
