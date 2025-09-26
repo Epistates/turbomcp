@@ -455,7 +455,7 @@ async fn serve_file(&self, path: String) -> McpResult<Content> {
 
 ### Container Deployment
 ```dockerfile
-FROM rust:1.75 as builder
+FROM rust:1.89 as builder
 WORKDIR /app
 COPY . .
 RUN cargo build --release --features production
@@ -789,4 +789,4 @@ Ready for production deployment.
 
 ---
 
-*Built with ❤️ by the TurboMCP team • [Model Context Protocol](https://modelcontextprotocol.io) • [Claude Desktop](https://claude.ai)*
+*Built with ❤️ by the TurboMCP team
