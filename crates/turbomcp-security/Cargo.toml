@@ -1,0 +1,57 @@
+[package]
+name = "turbomcp-security"
+version = "1.1.0"
+edition = "2021"
+license = "MIT"
+description = "Production-grade file security and path validation for TurboMCP"
+homepage = "https://github.com/turbomcp/turbomcp"
+repository = "https://github.com/turbomcp/turbomcp"
+keywords = ["mcp", "security", "file-safety", "path-validation", "async"]
+categories = ["filesystem", "asynchronous", "security"]
+authors = ["TurboMCP Team"]
+
+[dependencies]
+# Core dependencies
+thiserror = "2.0"
+tracing = "0.1"
+tokio = { version = "1.35", features = ["fs", "sync", "time", "macros", "rt", "rt-multi-thread", "io-util", "process"] }
+uuid = { version = "1.0", features = ["v4"] }
+
+# Serialization and time handling
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async utilities
+futures = "0.3"
+
+# Optional dependencies for enhanced security
+parking_lot = { version = "0.12", optional = true }
+dashmap = { version = "6.1", optional = true }
+
+# Enterprise policy engine (optional)
+cedar-policy = { version = "4.3", optional = true }
+
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.8"
+
+[features]
+default = ["enhanced-monitoring"]
+enhanced-monitoring = ["parking_lot", "dashmap"]
+cedar-policies = ["dep:cedar-policy"]
+
+[lib]
+name = "turbomcp_security"
+path = "src/lib.rs"
+
+# No binaries for now - benchmarks can be added later as needed
+# [[bin]]
+# name = "security-benchmark"
+# path = "src/bin/benchmark.rs"
+# required-features = ["enhanced-monitoring"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
