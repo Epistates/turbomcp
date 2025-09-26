@@ -103,7 +103,7 @@
 //!         request: CreateMessageRequest
 //!     ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>> {
 //!         // Forward to your LLM provider (OpenAI, Anthropic, etc.)
-//!         // This enables the server to request LLM sampling through the client
+//!         // Allows the server to request LLM sampling through the client
 //!         
 //!         Ok(CreateMessageResult {
 //!             role: turbomcp_protocol::types::Role::Assistant,
@@ -1225,8 +1225,8 @@ impl<T: Transport> Client<T> {
 
     /// Read the content of a specific resource by URI
     ///
-    /// Retrieves the content of a resource identified by its URI. This allows
-    /// clients to access specific files, documents, or other resources
+    /// Retrieves the content of a resource identified by its URI. Clients can
+    /// access specific files, documents, or other resources
     /// provided by the server.
     ///
     /// # Arguments
@@ -1460,7 +1460,7 @@ impl<T: Transport> Client<T> {
 
     /// Set the logging level for the server
     ///
-    /// Controls the verbosity of server logging. This allows clients to
+    /// Controls the verbosity of server logging. Clients can
     /// adjust the amount of log information they receive from the server.
     ///
     /// # Arguments
@@ -1723,7 +1723,7 @@ impl<T: Transport> Client<T> {
     /// Register a progress handler for processing operation progress updates
     ///
     /// Progress handlers receive notifications about long-running server operations.
-    /// This allows clients to display progress bars, status updates, or other
+    /// Display progress bars, status updates, or other
     /// feedback to users.
     ///
     /// # Arguments
@@ -1797,7 +1797,7 @@ impl<T: Transport> Client<T> {
     /// Register a resource update handler for processing resource change notifications
     ///
     /// Resource update handlers receive notifications when subscribed resources
-    /// change on the server. This enables reactive updates to cached data or
+    /// change on the server. Supports reactive updates to cached data or
     /// UI refreshes when server-side resources change.
     ///
     /// # Arguments
@@ -2190,7 +2190,7 @@ impl<T: Transport> SharedClient<T> {
     /// Request argument completion from the MCP server
     ///
     /// Provides autocompletion suggestions for prompt arguments and resource URIs.
-    /// This enables rich, IDE-like experiences with contextual suggestions.
+    /// Supports rich, IDE-like experiences with contextual suggestions.
     ///
     /// # Arguments
     ///
@@ -2355,7 +2355,7 @@ impl<T: Transport> SharedClient<T> {
     /// Register an elicitation handler for processing server requests for user information
     ///
     /// Elicitation handlers respond to server requests for additional information
-    /// from users during interactions. This enables interactive workflows where
+    /// from users during interactions. Supports interactive workflows where
     /// servers can gather necessary information dynamically.
     ///
     /// # Arguments
@@ -2398,7 +2398,7 @@ impl<T: Transport> SharedClient<T> {
     /// Register a progress handler for processing server progress notifications
     ///
     /// Progress handlers receive updates about long-running operations on the server.
-    /// This enables progress bars, status updates, and better user experience during
+    /// Provides progress bars, status updates, and better user experience during
     /// extended operations.
     ///
     /// # Arguments
@@ -2424,7 +2424,7 @@ impl<T: Transport> SharedClient<T> {
     /// Register a resource update handler for processing resource change notifications
     ///
     /// Resource update handlers receive notifications when subscribed resources
-    /// change on the server. This enables reactive updates to cached data or
+    /// change on the server. Supports reactive updates to cached data or
     /// UI refreshes when server-side resources change.
     ///
     /// # Arguments

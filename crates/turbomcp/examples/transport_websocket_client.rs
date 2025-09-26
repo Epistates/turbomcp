@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("💬 Starting WebSocket Transport Client");
     tracing::info!("🔗 Connecting to WebSocket server at ws://localhost:8080");
 
-    // Connect to WebSocket server using world-class tokio-tungstenite
+    // Connect to WebSocket server using tokio-tungstenite
     let (ws_stream, _response) = connect_async("ws://localhost:8080").await?;
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 

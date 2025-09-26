@@ -867,7 +867,7 @@ async fn test_example_demo_servers_work_end_to_end() {
     println!("   ✅ Production server: Health, metrics, and batch processing");
     println!("   ✅ All servers use proper MCP macros and patterns");
     println!("   ✅ All servers return proper McpResult types");
-    println!("   ✅ All servers are production-ready and type-safe");
+    println!("   ✅ All servers are functional and type-safe");
 
     println!("🎉 Example Demo Servers End-to-End Validation PASSED!");
 }

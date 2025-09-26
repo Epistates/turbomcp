@@ -1,9 +1,9 @@
 #!/usr/bin/env cargo run --example unix_socket_client
-//! Standalone Unix socket client example demonstrating world-class MCP implementation
+//! Standalone Unix socket client example demonstrating MCP protocol implementation
 //!
-//! This client showcases the production-ready Unix transport layer with:
+//! This client showcases the Unix transport layer with:
 //! - Complete MCP 2025-06-18 protocol compliance
-//! - Enterprise-grade error handling
+//! - Comprehensive error handling
 //! - Real-world tool calling patterns
 //!
 //! Usage:
@@ -201,7 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n🎉 Unix Socket Transport Test Sequence COMPLETED!");
     println!("✅ All MCP protocol operations successful");
-    println!("🚀 TurboMCP Unix transport is production-ready!");
+    println!("✅ TurboMCP Unix transport working correctly!");
 
     Ok(())
 }

@@ -1,10 +1,10 @@
 #!/usr/bin/env cargo run --example http_server
-//! Standalone HTTP/SSE server example demonstrating world-class MCP implementation
+//! Standalone HTTP/SSE server example demonstrating MCP protocol implementation
 //!
-//! This server showcases the production-ready HTTP/SSE transport layer with:
+//! This server showcases the HTTP/SSE transport layer with:
 //! - Server-Sent Events for real-time bidirectional communication
 //! - Complete MCP 2025-06-18 protocol compliance
-//! - Enterprise-grade web-compatible transport
+//! - Comprehensive web-compatible transport
 //! - Multi-session support
 //!
 //! Usage:

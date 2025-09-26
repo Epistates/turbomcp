@@ -117,7 +117,7 @@ fn main() {
     println!("   ✅ Performance and security optimizations");
     println!("   ✅ Full backwards compatibility");
     println!("   ✅ Zero-cost abstractions");
-    println!("\n🏆 TurboMCP delivers enterprise-grade MCP capability management!");
+    println!("\n🏆 TurboMCP provides comprehensive MCP capability management!");
 }
 
 /// Count enabled server capabilities

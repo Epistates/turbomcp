@@ -1,10 +1,10 @@
 #!/usr/bin/env cargo run --example stdio_server
-//! Standalone STDIO server example demonstrating world-class MCP implementation
+//! Standalone STDIO server example demonstrating MCP protocol implementation
 //!
-//! This server showcases the production-ready STDIO transport layer with:
+//! This server showcases the STDIO transport layer with:
 //! - Standard MCP protocol over stdin/stdout
 //! - Complete MCP 2025-06-18 protocol compliance
-//! - Enterprise-grade JSON-RPC communication
+//! - Comprehensive JSON-RPC communication
 //! - Compatible with Claude Desktop and other MCP clients
 //!
 //! Usage:

@@ -1,7 +1,7 @@
-//! World-class attribute parsing for TurboMCP macros
+//! Attribute parsing for TurboMCP macros
 //!
 //! This module provides robust, syn-based parsing for macro attributes,
-//! following patterns from Serde, Clap, and other world-class Rust libraries.
+//! following patterns from Serde, Clap, and other established Rust libraries.
 
 use quote::quote;
 use syn::{
@@ -68,7 +68,7 @@ impl Root {
     }
 }
 
-/// Server macro attributes with world-class parsing
+/// Server macro attributes with syn-based parsing
 #[derive(Debug, Default)]
 pub struct ServerAttrs {
     pub name: Option<String>,

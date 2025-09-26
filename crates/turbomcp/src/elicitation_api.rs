@@ -388,7 +388,7 @@ pub use turbomcp_protocol::elicitation::StringFormat;
 
 /// Builder functions that wrap the protocol builders
 /// These avoid import conflicts while providing the same ergonomic API
-/// Create a string field with title - beautiful ergonomics!
+/// Create a string field with title
 pub fn string(title: impl Into<String>) -> turbomcp_protocol::elicitation::StringSchemaBuilder {
     turbomcp_protocol::elicitation::string(title)
 }
@@ -398,7 +398,7 @@ pub fn string_builder() -> turbomcp_protocol::elicitation::StringSchemaBuilder {
     turbomcp_protocol::elicitation::string_builder()
 }
 
-/// Create an integer field with title - beautiful ergonomics!
+/// Create an integer field with title
 pub fn integer(title: impl Into<String>) -> turbomcp_protocol::elicitation::NumberSchemaBuilder {
     turbomcp_protocol::elicitation::integer(title)
 }
@@ -408,7 +408,7 @@ pub fn integer_builder() -> turbomcp_protocol::elicitation::NumberSchemaBuilder 
     turbomcp_protocol::elicitation::integer_builder()
 }
 
-/// Create a number field with title - beautiful ergonomics!
+/// Create a number field with title
 pub fn number(title: impl Into<String>) -> turbomcp_protocol::elicitation::NumberSchemaBuilder {
     turbomcp_protocol::elicitation::number(title)
 }
@@ -418,7 +418,7 @@ pub fn number_builder() -> turbomcp_protocol::elicitation::NumberSchemaBuilder {
     turbomcp_protocol::elicitation::number_builder()
 }
 
-/// Create a boolean field with title - beautiful ergonomics!
+/// Create a boolean field with title
 pub fn boolean(title: impl Into<String>) -> turbomcp_protocol::elicitation::BooleanSchemaBuilder {
     turbomcp_protocol::elicitation::boolean(title)
 }
@@ -433,7 +433,7 @@ pub fn enum_of(values: Vec<String>) -> turbomcp_protocol::elicitation::EnumSchem
     turbomcp_protocol::elicitation::enum_of(values)
 }
 
-/// World-class DX: Create enum schema from array slice (no Vec required!)
+/// Create enum schema from array slice (no Vec required!)
 ///
 /// Creates an enum schema with the specified options. Perfect for dropdowns and choice lists.
 /// Uses zero-allocation array slices instead of requiring Vec allocation.
@@ -468,7 +468,7 @@ pub fn choices<T: AsRef<str>>(values: &[T]) -> turbomcp_protocol::elicitation::E
     turbomcp_protocol::elicitation::choices(values)
 }
 
-/// World-class DX: Create text field with title - beautiful ergonomics!
+/// Create text field with title
 ///
 /// Creates a string schema with the specified title. Perfect for user input fields.
 ///
@@ -489,7 +489,7 @@ pub fn text(title: impl Into<String>) -> turbomcp_protocol::elicitation::StringS
     turbomcp_protocol::elicitation::text(title)
 }
 
-/// World-class DX: Create integer field with title
+/// Create integer field with title
 ///
 /// Creates an integer number schema with the specified title. Perfect for counts, ages, etc.
 ///
@@ -509,7 +509,7 @@ pub fn integer_field(
     turbomcp_protocol::elicitation::integer_field(title)
 }
 
-/// World-class DX: Create number field with title
+/// Create number field with title
 ///
 /// Creates a floating-point number schema with the specified title. Perfect for prices, measurements, etc.
 ///
@@ -529,7 +529,7 @@ pub fn number_field(
     turbomcp_protocol::elicitation::number_field(title)
 }
 
-/// World-class DX: Create boolean field with title (checkbox semantic)
+/// Create boolean field with title (checkbox semantic)
 ///
 /// Creates a boolean schema with the specified title. Perfect for yes/no questions and toggles.
 ///

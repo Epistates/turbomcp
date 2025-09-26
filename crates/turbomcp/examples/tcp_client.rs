@@ -1,9 +1,9 @@
 #!/usr/bin/env cargo run --example tcp_client
-//! Standalone TCP client example demonstrating world-class MCP implementation
+//! Standalone TCP client example demonstrating MCP protocol implementation
 //!
-//! This client showcases the production-ready TCP transport layer with:
+//! This client showcases the TCP transport layer with:
 //! - Complete MCP 2025-06-18 protocol compliance
-//! - Enterprise-grade error handling with timeouts
+//! - Comprehensive error handling with timeouts
 //! - Real-world tool calling patterns
 //! - Builder pattern configuration
 //!
@@ -245,7 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n🎉 TCP Transport Test Sequence COMPLETED!");
     println!("✅ All MCP protocol operations successful");
-    println!("🚀 TurboMCP TCP transport is production-ready!");
+    println!("✅ TurboMCP TCP transport working correctly!");
 
     Ok(())
 }

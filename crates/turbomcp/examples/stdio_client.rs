@@ -1,9 +1,9 @@
 #!/usr/bin/env cargo run --example stdio_client
-//! Standalone STDIO client example demonstrating world-class MCP implementation
+//! Standalone STDIO client example demonstrating MCP protocol implementation
 //!
-//! This client showcases the production-ready STDIO transport layer with:
+//! This client showcases the STDIO transport layer with:
 //! - Complete MCP 2025-06-18 protocol compliance
-//! - Enterprise-grade error handling with timeouts
+//! - Comprehensive error handling with timeouts
 //! - Real-world tool calling patterns via STDIO pipes
 //! - Compatible with standard MCP server processes
 //!

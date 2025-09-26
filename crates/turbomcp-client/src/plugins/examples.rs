@@ -1,6 +1,6 @@
 //! Example plugin implementations
 //!
-//! Provides production-ready plugin implementations for common use cases:
+//! Provides plugin implementations for common use cases:
 //! - MetricsPlugin: Request/response metrics collection
 //! - RetryPlugin: Automatic retry with exponential backoff
 //! - CachePlugin: Response caching with TTL

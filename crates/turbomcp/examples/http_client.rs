@@ -1,9 +1,9 @@
 #!/usr/bin/env cargo run --example http_client
-//! Standalone HTTP/SSE client example demonstrating world-class MCP implementation
+//! Standalone HTTP/SSE client example demonstrating MCP protocol implementation
 //!
-//! This client showcases the production-ready HTTP/SSE transport layer with:
+//! This client showcases the HTTP/SSE transport layer with:
 //! - Complete MCP 2025-06-18 protocol compliance
-//! - Enterprise-grade error handling with timeouts
+//! - Comprehensive error handling with timeouts
 //! - Real-world tool calling patterns
 //! - Web-compatible transport
 //!
@@ -234,7 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n🎉 HTTP/SSE Transport Test Sequence COMPLETED!");
     println!("✅ All MCP protocol operations successful");
-    println!("🚀 TurboMCP HTTP/SSE transport is production-ready!");
+    println!("✅ TurboMCP HTTP/SSE transport working correctly!");
     println!("🌐 Web-compatible transport verified!");
 
     Ok(())

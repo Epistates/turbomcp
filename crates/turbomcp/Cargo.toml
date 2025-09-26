@@ -123,6 +123,7 @@ uri-templates = ["regex"]             # URI template matching for resources
 
 # Security enhancement features
 dpop = ["turbomcp-dpop"]              # DPoP (Demonstration of Proof-of-Possession) support
+redis-storage = ["turbomcp-dpop/redis-storage"]  # Redis-based DPoP nonce tracking (distributed)
 
 # Transport protocols (progressive enhancement)
 stdio = ["turbomcp-transport/stdio", "turbomcp-server/stdio"]           # Standard MCP transport

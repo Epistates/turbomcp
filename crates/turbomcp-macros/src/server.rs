@@ -14,7 +14,7 @@ use syn::{Ident, ItemImpl};
 
 /// Generate the TurboMCP server implementation (idiomatic impl block pattern)
 pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStream {
-    // Parse server attributes using world-class syn parsing
+    // Parse server attributes using syn parsing
     let attrs = match crate::attrs::ServerAttrs::from_args(args) {
         Ok(attrs) => attrs,
         Err(e) => return e.to_compile_error().into(),
