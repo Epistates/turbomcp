@@ -173,4 +173,4 @@ The server will show startup logs like:
 📡 Starting MCP server on STDIO...
 ```
 
-Enjoy testing our world-class TurboMCP implementation! 🎉
+Enjoy testing the TurboMCP implementation! 🎉

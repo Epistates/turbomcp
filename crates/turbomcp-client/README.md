@@ -4,50 +4,50 @@
 [![Documentation](https://docs.rs/turbomcp-client/badge.svg)](https://docs.rs/turbomcp-client)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**World-class MCP client implementation** with complete MCP 2025-06-18 support, intelligent connection management, and industry-leading transport layer integration.
+MCP client implementation with complete MCP 2025-06-18 support, intelligent connection management, and transport layer integration.
 
 ## Overview
 
-`turbomcp-client` delivers the **most advanced MCP client available**, featuring complete **MCP 2025-06-18 specification compliance** and seamless integration with TurboMCP's world-class transport layer. Handles all client-side concerns with production-grade reliability and **334,961 msg/sec** performance capability across all 5 transport protocols.
+`turbomcp-client` provides a comprehensive MCP client with complete MCP 2025-06-18 specification compliance and integration with TurboMCP's transport layer. Handles all client-side concerns with reliability and high performance across all 5 transport protocols.
 
 ## Key Features
 
-### 🔌 **Multi-Transport Connection Management**
-- **All transport protocols** - STDIO, HTTP/SSE, WebSocket, TCP, Unix sockets
-- **Connection pooling** - Efficient connection reuse and management
-- **Health monitoring** - Automatic connection health checks and recovery
-- **Load balancing** - Multiple server connection with failover support
+### Multi-Transport Connection Management
+- All transport protocols - STDIO, HTTP/SSE, WebSocket, TCP, Unix sockets
+- Connection pooling - Efficient connection reuse and management
+- Health monitoring - Automatic connection health checks and recovery
+- Load balancing - Multiple server connection with failover support
 
-### 🔄 **Intelligent Error Recovery**
-- **Auto-retry with backoff** - Configurable retry logic with exponential backoff
-- **Circuit breaker integration** - Prevents cascade failures with automatic recovery
-- **Graceful degradation** - Fallback mechanisms when servers are unavailable
-- **Error classification** - Smart handling of temporary vs permanent failures
+### Intelligent Error Recovery
+- Auto-retry with backoff - Configurable retry logic with exponential backoff
+- Circuit breaker integration - Prevents cascade failures with automatic recovery
+- Graceful degradation - Fallback mechanisms when servers are unavailable
+- Error classification - Smart handling of temporary vs permanent failures
 
-### 📞 **Request Correlation & Management**
-- **Automatic ID generation** - UUID-based request correlation
-- **Request/response matching** - Efficient correlation with timeout handling
-- **Concurrent requests** - Multiple outstanding requests with proper ordering
-- **Request cancellation** - Proper cleanup of cancelled or timed-out requests
+### Request Correlation & Management
+- Automatic ID generation - UUID-based request correlation
+- Request/response matching - Efficient correlation with timeout handling
+- Concurrent requests - Multiple outstanding requests with proper ordering
+- Request cancellation - Proper cleanup of cancelled or timed-out requests
 
-### 🤝 **Capability Negotiation**
-- **Server discovery** - Automatic server capability detection
-- **Feature matching** - Client/server capability compatibility checking
-- **Version negotiation** - Protocol version compatibility handling
-- **Extension support** - Custom capability extensions and fallbacks
+### Capability Negotiation
+- Server discovery - Automatic server capability detection
+- Feature matching - Client/server capability compatibility checking
+- Version negotiation - Protocol version compatibility handling
+- Extension support - Custom capability extensions and fallbacks
 
-### 📊 **Session Lifecycle Management**
-- **Connection state tracking** - Proper session initialization and cleanup
-- **Heartbeat monitoring** - Keep-alive and connection validation
-- **Reconnection logic** - Intelligent reconnection with state preservation
-- **Session persistence** - Optional session state persistence across connections
+### Session Lifecycle Management
+- Connection state tracking - Proper session initialization and cleanup
+- Heartbeat monitoring - Keep-alive and connection validation
+- Reconnection logic - Intelligent reconnection with state preservation
+- Session persistence - Optional session state persistence across connections
 
-### 🔄 **SharedClient for Async Concurrency** (New in v1.1.0)
-- **Thread-safe client sharing** - Share clients across multiple async tasks
-- **Clean API surface** - Hide Arc/Mutex complexity from public interfaces
-- **Zero overhead** - Same performance as direct client usage
-- **MCP compliant** - Preserves all protocol semantics exactly
-- **Clone support** - Easy sharing with simple `.clone()` operations
+### SharedClient for Async Concurrency (New in v1.1.0)
+- Thread-safe client sharing - Share clients across multiple async tasks
+- Clean API surface - Hide Arc/Mutex complexity from public interfaces
+- Zero overhead - Same performance as direct client usage
+- MCP compliant - Preserves all protocol semantics exactly
+- Clone support - Easy sharing with simple `.clone()` operations
 
 ## Architecture
 
@@ -591,13 +591,13 @@ framework.spawn_background_tasks();
 
 ### Benefits
 
-- **Clean APIs**: No exposed Arc/Mutex types in public interfaces
-- **Easy Sharing**: Simple `.clone()` for concurrent access
-- **Thread Safety**: Built-in synchronization for async tasks
-- **Zero Overhead**: Same performance as direct Client usage
-- **MCP Compliant**: Preserves all protocol semantics exactly
-- **Drop-in Replacement**: Identical method signatures to Client
-- **Complete Protocol Support**: Full MCP 2025-06-18 compliance including completion, roots, and elicitation
+- Clean APIs: No exposed Arc/Mutex types in public interfaces
+- Easy Sharing: Simple `.clone()` for concurrent access
+- Thread Safety: Built-in synchronization for async tasks
+- Zero Overhead: Same performance as direct Client usage
+- MCP Compliant: Preserves all protocol semantics exactly
+- Drop-in Replacement: Identical method signatures to Client
+- Complete Protocol Support: Full MCP 2025-06-18 compliance including completion, roots, and elicitation
 
 ## Integration Examples
 
@@ -705,10 +705,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Optimization Features
 
-- 🚀 **Connection Pooling** - Reuse connections for better performance
-- 📦 **Request Pipelining** - Multiple concurrent requests per connection
-- 🗜️ **Compression** - Automatic request/response compression
-- ⚡ **Caching** - Smart caching of capabilities and resource metadata
+- Connection Pooling - Reuse connections for better performance
+- Request Pipelining - Multiple concurrent requests per connection
+- Compression - Automatic request/response compression
+- Caching - Smart caching of capabilities and resource metadata
 
 ## Development
 

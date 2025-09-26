@@ -8,7 +8,7 @@
 
 ## Overview
 
-`turbomcp-dpop` provides a production-ready implementation of RFC 9449 Demonstration of Proof-of-Possession (DPoP) for enhanced OAuth 2.0 security. DPoP is a mechanism that enables the binding of access tokens to a specific client, preventing token theft and replay attacks.
+`turbomcp-dpop` provides an implementation of RFC 9449 Demonstration of Proof-of-Possession (DPoP) for enhanced OAuth 2.0 security. DPoP is a mechanism that enables the binding of access tokens to a specific client, preventing token theft and replay attacks.
 
 ## Key Features
 

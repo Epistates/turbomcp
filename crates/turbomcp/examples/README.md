@@ -1,6 +1,6 @@
 # TurboMCP Examples
 
-This directory contains comprehensive examples demonstrating TurboMCP's capabilities, from basic "Hello World" servers to advanced transport implementations and production-ready deployments.
+This directory contains comprehensive examples demonstrating TurboMCP's capabilities, from basic "Hello World" servers to advanced transport implementations and deployment examples.
 
 ## 📚 Learning Path
 

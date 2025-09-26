@@ -12,38 +12,38 @@ Transport layer implementation for the Model Context Protocol (MCP) with support
 
 ## Key Features
 
-### 🌐 **Multi-Protocol Support**
-- **STDIO** - Standard input/output for command-line MCP integration
-- **HTTP/SSE** - HTTP with Server-Sent Events for streaming communication
-- **WebSocket** - Real-time bidirectional communication
-- **TCP** - Direct TCP connections with connection pooling
-- **Unix Sockets** - Inter-process communication on Unix systems
+### Multi-Protocol Support
+- STDIO - Standard input/output for command-line MCP integration
+- HTTP/SSE - HTTP with Server-Sent Events for streaming communication
+- WebSocket - Real-time bidirectional communication
+- TCP - Direct TCP connections with connection pooling
+- Unix Sockets - Inter-process communication on Unix systems
 
-### 🛡️ **Security Features**
-- **TLS 1.3 Support** - Modern encryption with `rustls`
-- **CORS Protection** - Cross-origin resource sharing configuration
-- **Security Headers** - CSP, HSTS, X-Frame-Options, and more
-- **Rate Limiting** - Token bucket algorithm for request rate control
-- **Authentication** - JWT validation and API key support
+### Security Features
+- TLS 1.3 Support - Modern encryption with `rustls`
+- CORS Protection - Cross-origin resource sharing configuration
+- Security Headers - CSP, HSTS, X-Frame-Options, and more
+- Rate Limiting - Token bucket algorithm for request rate control
+- Authentication - JWT validation and API key support
 
-### ⚡ **Reliability Features**
-- **Circuit Breaker Pattern** - Prevents cascade failures with automatic recovery
-- **Exponential Backoff** - Retry logic with jitter
-- **Connection Health Monitoring** - Automatic detection of connection issues
-- **Graceful Degradation** - Fallback mechanisms and error recovery
-- **Resource Management** - Memory usage controls with cleanup tasks
+### Reliability Features
+- Circuit Breaker Pattern - Prevents cascade failures with automatic recovery
+- Exponential Backoff - Retry logic with jitter
+- Connection Health Monitoring - Automatic detection of connection issues
+- Graceful Degradation - Fallback mechanisms and error recovery
+- Resource Management - Memory usage controls with cleanup tasks
 
-### 🗜️ **Compression Support**
-- **Multiple Algorithms** - gzip, brotli, lz4 compression options
-- **Adaptive Compression** - Algorithm selection based on content
-- **Streaming Support** - Low-memory compression for large messages
-- **Compression Metrics** - Performance monitoring capabilities
+### Compression Support
+- Multiple Algorithms - gzip, brotli, lz4 compression options
+- Adaptive Compression - Algorithm selection based on content
+- Streaming Support - Low-memory compression for large messages
+- Compression Metrics - Performance monitoring capabilities
 
-### 🔄 **SharedTransport for Async Concurrency**
-- **Thread-safe transport sharing** - Share transports across multiple async tasks
-- **Clean API surface** - Hide Arc/Mutex complexity from public interfaces
-- **Protocol compliant** - Preserves all transport semantics
-- **Clone support** - Easy sharing with simple `.clone()` operations
+### SharedTransport for Async Concurrency
+- Thread-safe transport sharing - Share transports across multiple async tasks
+- Clean API surface - Hide Arc/Mutex complexity from public interfaces
+- Protocol compliant - Preserves all transport semantics
+- Clone support - Easy sharing with simple `.clone()` operations
 
 ## Architecture
 
@@ -467,12 +467,12 @@ tokio::spawn(async move {
 
 ### Benefits
 
-- **Clean APIs**: No exposed Arc/Mutex types in transport interfaces
-- **Easy Sharing**: Simple `.clone()` for concurrent access
-- **Thread Safety**: Built-in synchronization for async operations
-- **Zero Overhead**: Same performance as direct transport usage
-- **Protocol Compliant**: Preserves all transport semantics exactly
-- **Universal Compatibility**: Works with all transport types (STDIO, HTTP, WebSocket, TCP, Unix)
+- Clean APIs: No exposed Arc/Mutex types in transport interfaces
+- Easy Sharing: Simple `.clone()` for concurrent access
+- Thread Safety: Built-in synchronization for async operations
+- Zero Overhead: Same performance as direct transport usage
+- Protocol Compliant: Preserves all transport semantics exactly
+- Universal Compatibility: Works with all transport types (STDIO, HTTP, WebSocket, TCP, Unix)
 
 ## Performance Characteristics
 
@@ -488,10 +488,10 @@ tokio::spawn(async move {
 
 ### Optimization Features
 
-- 🚀 **Connection Pooling** - Reuse connections for better performance
-- 📦 **Message Batching** - Combine small messages for efficiency
-- 🗜️ **Smart Compression** - Adaptive compression based on content
-- ⚡ **Zero-Copy** - Minimize memory allocations where possible
+- Connection Pooling - Reuse connections for better performance
+- Message Batching - Combine small messages for efficiency
+- Smart Compression - Adaptive compression based on content
+- Zero-Copy - Minimize memory allocations where possible
 
 ## Development
 

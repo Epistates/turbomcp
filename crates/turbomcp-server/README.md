@@ -4,55 +4,55 @@
 [![Documentation](https://docs.rs/turbomcp-server/badge.svg)](https://docs.rs/turbomcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Production-ready MCP server framework with OAuth 2.1 MCP compliance, middleware pipeline, and enterprise lifecycle management.**
+MCP server framework with OAuth 2.1 MCP compliance, middleware pipeline, and lifecycle management.
 
 ## Overview
 
 `turbomcp-server` provides a comprehensive server framework for Model Context Protocol implementations. It handles all server-side concerns including request routing, authentication, middleware processing, session management, and production lifecycle operations.
 
-### 🔒 **Security Hardened** (v1.1.0)
-- **Zero Known Vulnerabilities** - Comprehensive security audit and hardening
-- **Dependency Security** - Eliminated all vulnerable dependency paths
-- **MIT-Compatible Licensing** - Strict open-source license compliance
+### Security Hardened (v1.1.0)
+- Zero Known Vulnerabilities - Comprehensive security audit and hardening
+- Dependency Security - Eliminated all vulnerable dependency paths
+- MIT-Compatible Licensing - Strict open-source license compliance
 
 ## Key Features
 
-### 🗂️ **Handler Registry & Routing**
-- **Type-safe registration** - Compile-time handler validation and automatic discovery
-- **Efficient routing** - O(1) method dispatch with parameter injection
-- **Schema generation** - Automatic JSON schema creation from handler signatures
-- **Hot reloading** - Dynamic handler registration and updates (development mode)
+### Handler Registry & Routing
+- Type-safe registration - Compile-time handler validation and automatic discovery
+- Efficient routing - O(1) method dispatch with parameter injection
+- Schema generation - Automatic JSON schema creation from handler signatures
+- Hot reloading - Dynamic handler registration and updates (development mode)
 
-### 🔐 **OAuth 2.1 MCP Compliance** 
-- **Multiple providers** - Google, GitHub, Microsoft, and custom OAuth 2.1 providers
-- **PKCE security** - Proof Key for Code Exchange enabled by default
-- **All OAuth flows** - Authorization Code, Client Credentials, Device Code
-- **Session management** - Secure user session tracking with automatic cleanup
+### OAuth 2.1 MCP Compliance 
+- Multiple providers - Google, GitHub, Microsoft, and custom OAuth 2.1 providers
+- PKCE security - Proof Key for Code Exchange enabled by default
+- All OAuth flows - Authorization Code, Client Credentials, Device Code
+- Session management - Secure user session tracking with automatic cleanup
 
-### 🔀 **Middleware Pipeline**
-- **Request processing** - Configurable middleware chain with error handling
-- **Security middleware** - CORS, CSP, rate limiting, security headers
-- **Authentication** - JWT validation, API key, OAuth token verification
-- **Observability** - Request logging, metrics collection, distributed tracing
+### Middleware Pipeline
+- Request processing - Configurable middleware chain with error handling
+- Security middleware - CORS, CSP, rate limiting, security headers
+- Authentication - JWT validation, API key, OAuth token verification
+- Observability - Request logging, metrics collection, distributed tracing
 
-### 📊 **Health & Metrics**
-- **Health endpoints** - Readiness, liveness, and custom health checks
-- **Performance metrics** - Request timing, error rates, resource utilization
-- **Prometheus integration** - Standard metrics format with custom labels
-- **Circuit breaker status** - Transport and dependency health monitoring
+### Health & Metrics
+- Health endpoints - Readiness, liveness, and custom health checks
+- Performance metrics - Request timing, error rates, resource utilization
+- Prometheus integration - Standard metrics format with custom labels
+- Circuit breaker status - Transport and dependency health monitoring
 
-### 🛑 **Graceful Shutdown**
-- **Signal handling** - SIGTERM/SIGINT graceful shutdown with timeout
-- **Connection draining** - Active request completion before shutdown
-- **Resource cleanup** - Proper cleanup of connections, files, and threads
-- **Health status** - Shutdown status reporting for load balancers
+### Graceful Shutdown
+- Signal handling - SIGTERM/SIGINT graceful shutdown with timeout
+- Connection draining - Active request completion before shutdown
+- Resource cleanup - Proper cleanup of connections, files, and threads
+- Health status - Shutdown status reporting for load balancers
 
-### 🔄 **SharedServer for Async Concurrency** (New in v1.1.0)
-- **Thread-safe server sharing** - Share servers across multiple async tasks for monitoring
-- **Consumption pattern** - Safe server consumption for running while preserving access
-- **Clean monitoring APIs** - Access health, metrics, and configuration concurrently
-- **Zero overhead** - Same performance as direct server usage
-- **Lifecycle management** - Proper server extraction for running operations
+### SharedServer for Async Concurrency (New in v1.1.0)
+- Thread-safe server sharing - Share servers across multiple async tasks for monitoring
+- Consumption pattern - Safe server consumption for running while preserving access
+- Clean monitoring APIs - Access health, metrics, and configuration concurrently
+- Zero overhead - Same performance as direct server usage
+- Lifecycle management - Proper server extraction for running operations
 
 ## Architecture
 
@@ -731,12 +731,12 @@ shared.run_stdio().await?;
 
 ### Benefits
 
-- **Concurrent Monitoring**: Access health, metrics, and config while server runs
-- **Consumption Safety**: Server can be safely consumed for running
-- **Clean APIs**: No exposed Arc/Mutex types in monitoring interfaces
-- **Zero Overhead**: Same performance as direct server usage
-- **Lifecycle Aware**: Proper handling of server consumption state
-- **Management Ready**: Perfect for building monitoring dashboards
+- Concurrent Monitoring: Access health, metrics, and config while server runs
+- Consumption Safety: Server can be safely consumed for running
+- Clean APIs: No exposed Arc/Mutex types in monitoring interfaces
+- Zero Overhead: Same performance as direct server usage
+- Lifecycle Aware: Proper handling of server consumption state
+- Management Ready: Perfect for building monitoring dashboards
 
 ## Development
 

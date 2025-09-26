@@ -12,32 +12,32 @@ Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and 
 
 ## Key Features
 
-### 📋 **MCP Specification Support**
+### MCP Specification Support
 - MCP specification implementation with current message types
 - Tools, resources, prompts, and capabilities support
 - Capability negotiation with feature detection and handshake
 - Version compatibility support
 
-### 🔧 **JSON-RPC 2.0 Implementation**
+### JSON-RPC 2.0 Implementation
 - Compliant message format with request, response, and notification handling
 - ID correlation for automatic request/response matching
 - Standard JSON-RPC error codes and extensions
 - Support for batch request/response operations
 
-### ✅ **Runtime Schema Validation**
+### Runtime Schema Validation
 - JSON Schema validation using `jsonschema` crate
 - Rust type definitions for MCP message types
 - Tool and resource parameter validation
 - Schema generation from Rust types
 
-### 🤝 **Capability Management**
-- **Type-State Capability Builders** - Compile-time validated capability configuration (New in v1.1.0)
+### Capability Management
+- Type-State Capability Builders - Compile-time validated capability configuration (New in v1.1.0)
 - Server capabilities for tools, resources, prompts declarations
 - Client capabilities including sampling, roots, progress reporting
 - Feature negotiation with capability matching
 - Support for custom capability extensions
 
-### 🔄 **MCP Enhanced Features**
+### MCP Enhanced Features
 - Bidirectional communication for server-initiated requests to clients
 - Elicitation support for server-requested structured input from users
 - Completion context with references and metadata

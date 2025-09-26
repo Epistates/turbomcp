@@ -11,43 +11,43 @@ Rust SDK for the Model Context Protocol (MCP) with comprehensive specification s
 
 `turbomcp` is a Rust framework for implementing the Model Context Protocol. It provides tools, servers, clients, and transport layers with MCP specification compliance, security features, and performance optimizations.
 
-### 🔒 **Security Features**
-- **Zero Known Vulnerabilities** - Security audit with `cargo-deny` policy
-- **Dependency Security** - Eliminated RSA and paste crate vulnerabilities
-- **MIT-Compatible Dependencies** - Permissive license enforcement
-- **Security Hardening** - Dependency optimization for security
+### Security Features
+- Zero known vulnerabilities - Security audit with `cargo-deny` policy
+- Dependency security - Eliminated RSA and paste crate vulnerabilities
+- MIT-compatible dependencies - Permissive license enforcement
+- Security hardening - Dependency optimization for security
 
-### ⚡ **Performance Monitoring**
-- **Benchmarking Infrastructure** - Automated regression detection
-- **Cross-Platform Testing** - Ubuntu, Windows, macOS CI validation
-- **CI/CD Integration** - GitHub Actions with performance tracking
+### Performance Monitoring
+- Benchmarking infrastructure - Automated regression detection
+- Cross-platform testing - Ubuntu, Windows, macOS CI validation
+- CI/CD integration - GitHub Actions with performance tracking
 
 ## Key Features
 
-### 🚀 **Performance Features**
-- **Optimized JSON processing** - Optional SIMD acceleration with fast libraries
-- **Efficient message handling** - Minimal memory allocations with zero-copy patterns
-- **Connection management** - Connection pooling and reuse strategies
-- **Request routing** - Efficient handler lookup with parameter injection
+### Performance Features
+- Optimized JSON processing - Optional SIMD acceleration with fast libraries
+- Efficient message handling - Minimal memory allocations with zero-copy patterns
+- Connection management - Connection pooling and reuse strategies
+- Request routing - Efficient handler lookup with parameter injection
 
-### 🎯 **Developer Experience**
-- **Procedural macros** - `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]`
-- **Type-State Capability Builders** - Compile-time validated capability configuration
-- **Automatic schema generation** - JSON schemas from Rust types
-- **Type-safe parameters** - Compile-time validation and conversion
-- **Context injection** - Request context available in handler signatures
-- **Intuitive APIs** - Builder patterns for user input and message handling
-- **Context API** - Access to user information, authentication, and request metadata
+### Developer Experience
+- Procedural macros - `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]`
+- Type-state capability builders - Compile-time validated capability configuration
+- Automatic schema generation - JSON schemas from Rust types
+- Type-safe parameters - Compile-time validation and conversion
+- Context injection - Request context available in handler signatures
+- Builder patterns for user input and message handling
+- Context API - Access to user information, authentication, and request metadata
 
-### 🛡️ **Security Features**
-- **OAuth 2.0 integration** - Google, GitHub, Microsoft provider support
-- **PKCE security** - Proof Key for Code Exchange implementation
-- **CORS protection** - Cross-origin resource sharing policies
-- **Rate limiting** - Token bucket algorithm with burst capacity
-- **Security headers** - CSP, HSTS, X-Frame-Options configuration
+### Security Features
+- OAuth 2.0 integration - Google, GitHub, Microsoft provider support
+- PKCE security - Proof Key for Code Exchange implementation
+- CORS protection - Cross-origin resource sharing policies
+- Rate limiting - Token bucket algorithm with burst capacity
+- Security headers - CSP, HSTS, X-Frame-Options configuration
 
-### 🔗 **Multi-Transport Support**
-- **STDIO** - Command-line integration with protocol compliance
+### Multi-Transport Support
+- STDIO - Command-line integration with protocol compliance
 - **HTTP/SSE** - HTTP streaming with session management and TLS support
 - **WebSocket** - Real-time bidirectional communication with connection lifecycle management
 - **TCP** - Direct socket connections with connection pooling
@@ -992,7 +992,7 @@ While runtime-based frameworks offer flexibility, TurboMCP's compile-time approa
 - **Production Reliability**: Errors caught at build time, not in production
 - **Developer Experience**: Rich IDE support with full type checking and autocompletion
 
-**The TurboMCP Philosophy**: *"Handle complexity at compile time so runtime can be blazingly fast."*
+**The TurboMCP Philosophy**: *"Handle complexity at compile time so runtime can be fast."*
 
 ### Benchmarks
 

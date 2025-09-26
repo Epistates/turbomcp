@@ -2,7 +2,7 @@
 
 ## Overview
 
-TurboMCP Transport provides **enterprise-grade security** features out of the box, with environment-aware configurations that make it easy to deploy securely in development, staging, and production environments.
+TurboMCP Transport provides comprehensive security features out of the box, with environment-aware configurations that make it easy to deploy securely in development, staging, and production environments.
 
 ## 🛡️ Security Architecture
 

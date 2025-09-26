@@ -1,4 +1,4 @@
-# TurboMCP ⚡
+# TurboMCP
 
 [![Crates.io](https://img.shields.io/crates/v/turbomcp.svg)](https://crates.io/crates/turbomcp)
 [![Documentation](https://docs.rs/turbomcp/badge.svg)](https://docs.rs/turbomcp)
@@ -7,39 +7,62 @@
 [![Security](https://img.shields.io/badge/Security-Zero%20Vulnerabilities-green.svg)](./deny.toml)
 [![Performance](https://img.shields.io/badge/Performance-Benchmarked-brightgreen.svg)](./benches/)
 
-**The world's most advanced Rust SDK for the Model Context Protocol (MCP)**
-
-🏆 **Full MCP Compliance** • 🔒 **Zero Vulnerabilities** • ⚡ **High Performance** • 🛡️ **Production Ready**
+High-performance Rust SDK for the Model Context Protocol (MCP) with compile-time optimization and zero-boilerplate server development.
 
 ---
 
-## 🚀 Why TurboMCP
+## Features
 
-### ⚡ **HIGH PERFORMANCE** - Optimized for Production
-- **High-throughput message processing** - Optimized for concurrent workloads
-- **Sub-millisecond response times** - Fast tool execution with minimal latency
-- **SIMD-accelerated JSON processing** - Hardware-optimized parsing with zero-copy optimization
-- **Efficient memory usage** - Minimal overhead per request
-- **Comprehensive benchmarking** - Automated regression detection with 5% threshold
+**Procedural Macro System**
+- `#[server]` - Zero-boilerplate server definition with capability configuration
+- `#[tool]` - Tool handlers with automatic parameter validation and schema generation
+- `#[resource]` - Resource handlers with URI template support
+- `#[prompt]` - Dynamic prompt templates with parameter substitution
+- `#[completion]` - Autocompletion handlers for intelligent suggestions
+- `#[ping]` - Health check endpoints with custom logic
+- `#[elicitation]` - Interactive form builders with validation
+- `mcp_error!` - Ergonomic error creation with context
+- `elicit!` - Simple elicitation for quick user input
 
-### 🏆 **PRODUCTION EXCELLENCE** - Enterprise-Grade Features
-- **100% MCP 2025-06-18 Compliance** - Complete specification coverage
-- **5 Production Transports** - STDIO, HTTP/SSE, WebSocket, TCP, Unix Socket with enterprise session management
-- **Advanced LLM Integration** - Production-grade Anthropic/OpenAI backends with streaming support
-- **Interactive Elicitation** - Server-initiated user input with real-time validation
-- **OAuth 2.1 Compliance** - Google, GitHub, Microsoft providers with PKCE security
-- **Circuit Breakers & Monitoring** - Production reliability with graceful degradation
+**Type-State Architecture**
+- ServerCapabilitiesBuilder with compile-time validation
+- ClientCapabilitiesBuilder for capability negotiation
+- Type-safe capability dependencies (e.g., tool_list_changed only when tools enabled)
+- Shared wrappers: SharedClient, SharedTransport, SharedServer
+- Consumable patterns for one-time server consumption
 
-### 🎯 **DEVELOPER EXPERIENCE** - Zero-Boilerplate Ergonomics
-- **Procedural Macros** - `#[server]`, `#[tool]`, `#[resource]` with automatic schema generation
-- **Type-State Capability Builders** - Compile-time validated capability configuration with zero-cost abstractions
-- **Compile-Time Optimization** - Zero runtime overhead through advanced macro system
-- **Type Safety** - Full Rust type system integration with compile-time validation
-- **Industry-Exclusive Features** - AudioContent support, enhanced annotations, flexible ProgressTokens
+**Protocol Features**
+- Full MCP 2025-06-18 specification compliance
+- Server-initiated sampling for bidirectional AI communication
+- Interactive form elicitation with real-time validation
+- AudioContent support for multimedia applications
+- Progress tracking with correlation IDs
+- Resource templates with RFC 6570 URI patterns
+
+**Transport & Performance**
+- 5 transport protocols: STDIO, HTTP/SSE, WebSocket, TCP, Unix Socket
+- SIMD-accelerated JSON processing (simd-json, sonic-rs)
+- Zero-copy message handling with Bytes
+- Circuit breakers, connection pooling, and graceful degradation
+- Built-in benchmarking suite with 5% regression detection
+
+**Security & Authentication**
+- OAuth 2.0/2.1 with PKCE and multi-provider support (Google, GitHub, Microsoft)
+- Rate limiting with token bucket algorithm
+- CORS protection and comprehensive security headers
+- Session management with cleanup and timeout enforcement
+- TLS support with certificate validation
+
+**Developer Tools**
+- Context injection with dependency resolution
+- Automatic JSON schema generation from Rust types
+- CLI tools for testing, debugging, and schema export
+- Graceful shutdown with lifecycle management
+- Comprehensive error types with structured context
 
 ---
 
-## 🚀 Quick Start - Production Server in 30 Seconds
+## Quick Start
 
 ```toml
 [dependencies]
@@ -48,7 +71,7 @@ tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
 
-Create your first MCP server in seconds:
+Create an MCP server with zero boilerplate:
 
 ```rust
 use turbomcp::prelude::*;
@@ -71,11 +94,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**Deploy to Claude Desktop:**
+Configure in Claude Desktop:
 ```json
 {
   "mcpServers": {
-    "enterprise-ai": {
+    "hello-server": {
       "command": "/path/to/your/server",
       "args": []
     }
@@ -83,17 +106,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-**Test with CLI:**
+Test with CLI:
 ```bash
 cargo install turbomcp-cli
-turbomcp-cli tools-call --command "./your-server" --name ai_analyze --args '{"data": "Q4 sales data..."}'
+turbomcp-cli tools-call --command "./your-server" --name hello --args '{"name": "World"}'
 ```
 
 ---
 
-## 🏗️ Type-State Capability Builders (New in v1.1.0)
+## Type-State Capability Builders
 
-TurboMCP includes compile-time validated capability builders that prevent configuration errors and provide zero-cost abstractions:
+Compile-time validated capability configuration:
 
 ```rust
 use turbomcp_protocol::capabilities::builders::{ServerCapabilitiesBuilder, ClientCapabilitiesBuilder};
@@ -121,19 +144,18 @@ let minimal_server = ServerCapabilitiesBuilder::minimal().build();
 let sampling_client = ClientCapabilitiesBuilder::sampling_focused().build();
 ```
 
-### Key Benefits
-- **Compile-time validation** - Invalid configurations caught at build time
-- **Zero-cost abstractions** - No runtime overhead for validation
-- **Method availability** - Sub-capabilities only available when parent capability is enabled
-- **Fluent API** - Readable and maintainable capability configuration
-- **Backwards compatibility** - Existing code continues to work unchanged
+### Benefits
+- Compile-time validation catches invalid configurations at build time
+- Type safety ensures sub-capabilities are only available when parent capability is enabled
+- Fluent API for readable capability configuration
+- Backward compatibility with existing code
 
 ---
 
-## 🔥 What Makes TurboMCP Unique
+## Additional Features
 
-### 🎵 **Industry-Exclusive AudioContent Support**
-The only MCP library with multimedia content handling:
+### AudioContent Support
+Multimedia content handling with the AudioContent type:
 
 ```rust
 #[tool("Process audio data")]
@@ -150,29 +172,39 @@ async fn process_audio(&self, audio_data: String) -> McpResult<Content> {
 }
 ```
 
-### 🤖 **Production LLM Integration**
-Advanced AI backend support with streaming:
+### LLM Integration
+Server-initiated sampling for AI communication:
 
 ```rust
-// Anthropic Claude integration
-let client = AnthropicClient::new("api-key")?
-    .with_model("claude-3-5-sonnet-20241022")
-    .with_streaming(true)
-    .with_timeout(Duration::from_secs(30));
+// Server can request LLM assistance through the client
+#[tool("Get AI assistance for data analysis")]
+async fn ai_analyze(&self, ctx: Context, data: String) -> McpResult<String> {
+    // Create sampling request for client's LLM
+    let request = serde_json::json!({
+        "messages": [{
+            "role": "user",
+            "content": {
+                "type": "text",
+                "text": format!("Analyze this data: {}", data)
+            }
+        }],
+        "maxTokens": 500,
+        "systemPrompt": "You are a data analyst."
+    });
 
-let response = client.complete("Analyze this data:")
-    .with_context(&analysis_context)
-    .with_temperature(0.7)
-    .await?;
-
-// OpenAI GPT integration
-let openai = OpenAIClient::new("api-key")?
-    .with_model("gpt-4")
-    .with_max_tokens(4096);
+    // Request LLM assistance through client
+    match ctx.create_message(request).await {
+        Ok(response) => Ok(format!("AI Analysis: {:?}", response)),
+        Err(_) => {
+            // Fallback if sampling unavailable
+            Ok(format!("Static analysis: {} characters", data.len()))
+        }
+    }
+}
 ```
 
-### 🎭 **Interactive Elicitation Forms**
-Server-initiated user input with enterprise validation:
+### Interactive Forms
+Server-initiated user input with validation:
 
 ```rust
 let config = ctx.elicit("Deployment Configuration")
@@ -198,18 +230,18 @@ let config = ctx.elicit("Deployment Configuration")
     .await?;
 ```
 
-### 🔗 **5 Enterprise Transport Protocols**
+### Transport Protocols
 
 | Transport | Performance | Use Case | Security |
 |-----------|-------------|----------|----------|
-| **STDIO** | Ultra-Fast | Claude Desktop, CLI tools | Process isolation |
-| **HTTP/SSE** | High | Web apps, REST APIs | TLS 1.3, session mgmt |
+| **STDIO** | Fast | Claude Desktop, CLI tools | Process isolation |
+| **HTTP/SSE** | Good | Web apps, REST APIs | TLS 1.3, session mgmt |
 | **WebSocket** | Real-time | Interactive apps | Secure WebSocket |
-| **TCP** | **High throughput** | High-performance clusters | Optional TLS |
-| **Unix Socket** | Fastest | Container communication | File permissions |
+| **TCP** | High throughput | Clusters | Optional TLS |
+| **Unix Socket** | Fast | Container communication | File permissions |
 
 ```rust
-// Automatic transport selection with production features
+// Transport selection
 match deployment_env {
     "cluster" => server.run_tcp_clustered("0.0.0.0:8080").await?,
     "container" => server.run_unix_secured("/var/run/mcp.sock").await?,
@@ -221,13 +253,13 @@ match deployment_env {
 
 ---
 
-## 🛡️ Enterprise Security & Compliance
+## Security Features
 
-### 🔒 **Zero-Vulnerability Architecture**
-TurboMCP v1.1.0 achieves complete security compliance:
+### Security Architecture
+TurboMCP v1.1.0 includes security features:
 
 ```rust
-// Production security configuration
+// Security configuration
 let security_config = SecurityConfig::enterprise()
     .with_oauth_providers(vec![
         OAuth2Provider::google("client-id", "client-secret"),
@@ -254,7 +286,7 @@ let server = McpServer::new(config)
     .with_monitoring(PrometheusMetrics::enabled());
 ```
 
-### 📊 **Production Monitoring & Observability**
+### Monitoring & Observability
 ```rust
 #[tool("Get system metrics")]
 async fn get_metrics(&self, ctx: Context) -> McpResult<SystemMetrics> {
@@ -280,26 +312,26 @@ async fn get_metrics(&self, ctx: Context) -> McpResult<SystemMetrics> {
 
 ---
 
-## ⚡ Performance Engineering Excellence
+## Performance
 
-### 🚀 **Benchmark Results** (Automated Daily Validation)
+### Benchmark Results
 
 ```
-🏆 TurboMCP Performance Characteristics (v1.1.0)
+TurboMCP Performance Characteristics (v1.1.0)
 ==================================================
-Message Throughput:     High Concurrent     (TCP transport)
-Tool Execution:         Sub-millisecond     (99th percentile)
-JSON Processing:        SIMD-Accelerated    (Zero-copy optimization)
-Memory Efficiency:      Minimal Overhead    (Optimized allocation)
-Cold Start Time:        Fast Startup        (Pre-compiled schemas)
-Connection Setup:       Rapid Connect       (Connection pooling)
+Message Throughput:     Concurrent processing  (TCP transport)
+Tool Execution:         Fast response times    (99th percentile)
+JSON Processing:        SIMD-accelerated      (simd-json, sonic-rs)
+Memory Efficiency:      Zero-copy patterns    (Bytes-based processing)
+Cold Start Time:        Fast startup          (Pre-compiled schemas)
+Connection Setup:       Fast connection       (Connection pooling)
 
-🔬 Automated Regression Detection: ACTIVE
-📊 Cross-Platform Validation: Ubuntu | Windows | macOS
-⚡ CI/CD Performance Gates: 5% threshold
+Regression Detection: Enabled
+Cross-Platform Validation: Ubuntu | Windows | macOS
+CI/CD Performance Gates: 5% threshold
 ```
 
-### 🏗️ **Zero-Overhead Architecture**
+### Low-Overhead Architecture
 ```rust
 // Compile-time schema generation (zero runtime cost)
 #[tool("Process order")]
@@ -335,10 +367,10 @@ async fn process_order(
 
 ---
 
-## 🎯 Advanced Production Features
+## Additional Features
 
-### 🔄 **Shared Concurrency Wrappers**
-Thread-safe async operations with zero overhead:
+### Shared Concurrency Wrappers
+Thread-safe async operations:
 
 ```rust
 // Concurrent client access across multiple tasks
@@ -367,7 +399,7 @@ let client2 = Client::new(shared_transport.clone());
 let client3 = Client::new(shared_transport.clone());
 ```
 
-### 📁 **Filesystem Boundaries & Security**
+### Filesystem Security
 ```rust
 #[server(
     name = "secure-file-server",
@@ -391,7 +423,7 @@ impl SecureFileServer {
 }
 ```
 
-### 🎨 **Resource Templates & Dynamic Content**
+### Resource Templates & Dynamic Content
 ```rust
 #[resource("user://{user_id}/profile")]
 async fn get_user_profile(&self, user_id: String) -> McpResult<Content> {
@@ -419,9 +451,9 @@ async fn serve_file(&self, path: String) -> McpResult<Content> {
 
 ---
 
-## 🔧 Enterprise Deployment & Operations
+## Deployment & Operations
 
-### 🐳 **Container Deployment**
+### Container Deployment
 ```dockerfile
 FROM rust:1.75 as builder
 WORKDIR /app
@@ -437,7 +469,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 CMD ["your-server"]
 ```
 
-### ☸️ **Kubernetes Deployment**
+### Kubernetes Deployment
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -484,7 +516,7 @@ spec:
           periodSeconds: 10
 ```
 
-### 📊 **Production Monitoring**
+### Monitoring
 ```rust
 // Prometheus metrics integration
 #[tool("Process critical operation")]
@@ -514,9 +546,9 @@ async fn critical_operation(&self, ctx: Context, data: String) -> McpResult<Stri
 
 ---
 
-## 🛠️ Development & Testing
+## Development & Testing
 
-### 🧪 **Comprehensive Testing**
+### Testing
 ```bash
 # Full test suite with performance validation
 make test                           # 81 tests, zero failures
@@ -533,7 +565,7 @@ cargo deny check                    # License compliance
 ./scripts/run_benchmarks.sh baseline  # Update baselines
 ```
 
-### 🔍 **CLI Development Tools**
+### CLI Development Tools
 ```bash
 # Install CLI tools
 cargo install turbomcp-cli
@@ -552,7 +584,7 @@ turbomcp-cli benchmark --command "./target/debug/your-server" \
   --duration 60s --concurrency 10
 ```
 
-### 📚 **Learning Path - 12 Progressive Examples**
+### Examples
 
 | Example | Topic | Difficulty |
 |---------|-------|------------|
@@ -578,9 +610,9 @@ cargo run --example 11_production_deployment
 
 ---
 
-## 🚀 Production-Ready Server with Enterprise Features
+## Example: Production Server
 
-Create a production-ready server with enterprise features:
+Create a server with multiple features:
 
 ```rust
 use turbomcp::prelude::*;
@@ -588,13 +620,13 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct ProductionServer {
     database: Arc<Database>,
-    llm_client: Arc<AnthropicClient>,
+    cache: Arc<Cache>,
 }
 
 #[server(
-    name = "enterprise-ai-server",
+    name = "enterprise-server",
     version = "1.1.0",
-    description = "Production AI server with LLM integration",
+    description = "Production server with advanced features",
     capabilities = ServerCapabilities::builder()
         .enable_tools()
         .enable_prompts()
@@ -612,13 +644,27 @@ impl ProductionServer {
         // Production database query with connection pooling
         let metadata = self.database.get_metadata(&data).await?;
 
-        // LLM integration with streaming support
-        let analysis = self.llm_client
-            .complete(&format!("Analyze: {}", data))
-            .with_context(&metadata)
-            .await?;
+        // Request AI assistance through client sampling
+        let request = serde_json::json!({
+            "messages": [{
+                "role": "user",
+                "content": {
+                    "type": "text",
+                    "text": format!("Analyze: {}", data)
+                }
+            }],
+            "maxTokens": 500,
+            "systemPrompt": "You are a data analyst."
+        });
 
-        Ok(analysis)
+        match ctx.create_message(request).await {
+            Ok(response) => Ok(format!("AI Analysis: {:?}", response)),
+            Err(_) => {
+                // Fallback analysis
+                let word_count = data.split_whitespace().count();
+                Ok(format!("Analysis: {} words, {} bytes", word_count, data.len()))
+            }
+        }
     }
 
     #[tool("Interactive data collection")]
@@ -644,7 +690,7 @@ impl ProductionServer {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server = ProductionServer {
         database: Arc::new(Database::connect().await?),
-        llm_client: Arc::new(AnthropicClient::new("api-key")?),
+        cache: Arc::new(Cache::new()),
     };
 
     // Production deployment with automatic transport selection
@@ -660,13 +706,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ---
 
-## 🏗️ Architecture & Design Philosophy
+## Architecture & Design Philosophy
 
-### 🎯 **"Compile-Time Complexity, Runtime Simplicity"**
+### Compile-Time Optimization Approach
 
-TurboMCP's architecture prioritizes **compile-time optimization** over runtime flexibility. This creates a more sophisticated build process but delivers **unmatched runtime performance** and **predictability**.
+TurboMCP prioritizes compile-time optimization over runtime flexibility. This creates a more complex build process but delivers better runtime performance and predictability.
 
-### 📦 **Modular Excellence**
+### Modular Design
 
 | Crate | Purpose | Key Innovation |
 |-------|---------|----------------|
@@ -679,18 +725,18 @@ TurboMCP's architecture prioritizes **compile-time optimization** over runtime f
 | [`turbomcp-macros`](./crates/turbomcp-macros/) | Proc macros | Compile-time optimization engine |
 | [`turbomcp-cli`](./crates/turbomcp-cli/) | CLI tools | Production testing & debugging |
 
-### 🚀 **Performance Advantages**
+### Performance Characteristics
 
-- **Zero-overhead abstractions** - All optimizations happen at compile time
-- **O(1) handler dispatch** - Direct function calls, no HashMap lookups
-- **Pre-computed schemas** - No runtime schema generation overhead
-- **SIMD acceleration** - 2-3x faster JSON processing than standard libraries
-- **Zero-copy message handling** - Minimal memory allocations with `Bytes`
-- **Smart feature gating** - Lean production binaries through compile-time selection
+- Low-overhead abstractions - Optimizations happen at compile time
+- O(1) handler dispatch - Direct function calls, no HashMap lookups
+- Pre-computed schemas - No runtime schema generation overhead
+- Optimized JSON processing - SIMD-accelerated parsing with simd-json and sonic-rs
+- Zero-copy message handling - Minimal memory allocations with `Bytes`
+- Feature gating - Lean production binaries through compile-time selection
 
 ---
 
-## 📖 Documentation & Resources
+## Documentation & Resources
 
 - **[API Documentation](https://docs.rs/turbomcp)** - Complete API reference with examples
 - **[Benchmarking Guide](./benches/README.md)** - Performance testing and optimization
@@ -701,9 +747,9 @@ TurboMCP's architecture prioritizes **compile-time optimization** over runtime f
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-We welcome contributions from the community! TurboMCP follows high engineering standards:
+We welcome contributions! TurboMCP follows high engineering standards:
 
 1. **Fork the repository** and create a feature branch
 2. **Write comprehensive tests** - We maintain 100% test success rate
@@ -728,18 +774,18 @@ Licensed under the [MIT License](./LICENSE) - Enterprise-friendly open source.
 
 ---
 
-## 🌟 Enterprise Support
+## Status
 
-TurboMCP delivers **world-class engineering standards** with **enterprise-grade reliability**:
+TurboMCP provides:
 
-- ✅ **Zero security vulnerabilities** with continuous monitoring
-- ✅ **High performance** with automated regression detection
-- ✅ **100% MCP 2025-06-18 compliance** with industry-exclusive features
-- ✅ **Production deployment patterns** with container & Kubernetes support
-- ✅ **Comprehensive documentation** with progressive learning examples
-- ✅ **Active development** with regular security updates and performance improvements
+- Zero known security vulnerabilities with continuous monitoring
+- Performance focus with automated regression detection
+- Full MCP 2025-06-18 compliance
+- Production deployment patterns with container & Kubernetes support
+- Documentation with progressive learning examples
+- Active development with regular security updates and performance improvements
 
-**Ready for mission-critical production deployment.** 🚀
+Ready for production deployment.
 
 ---
 
