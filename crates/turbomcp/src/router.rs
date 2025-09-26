@@ -56,7 +56,8 @@ where
     /// Create a new tool router
     pub fn new(server: T) -> Self {
         let registry = Arc::new(HandlerRegistry::new());
-        let router = Arc::new(RequestRouter::new(registry.clone()));
+        let metrics = Arc::new(turbomcp_server::metrics::ServerMetrics::new());
+        let router = Arc::new(RequestRouter::new(registry.clone(), metrics));
 
         Self {
             server: Arc::new(server),
@@ -203,7 +204,8 @@ where
 
         // Create combined registry by merging all router registries
         let combined_registry = Arc::new(HandlerRegistry::new());
-        let combined_router = Arc::new(RequestRouter::new(combined_registry.clone()));
+        let metrics = Arc::new(turbomcp_server::metrics::ServerMetrics::new());
+        let combined_router = Arc::new(RequestRouter::new(combined_registry.clone(), metrics));
 
         // Get the first router's server instance to use as the combined server
         let first_server = routers[0].server.clone();

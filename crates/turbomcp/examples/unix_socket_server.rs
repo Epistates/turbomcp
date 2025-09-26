@@ -1,10 +1,10 @@
 #!/usr/bin/env cargo run --example unix_socket_server
-//! Standalone Unix socket server example demonstrating world-class MCP implementation
+//! Standalone Unix socket server example demonstrating MCP protocol implementation
 //!
-//! This server showcases the production-ready Unix transport layer with:
+//! This server showcases the Unix transport layer with:
 //! - Tokio best practices with Framed + LinesCodec
 //! - Complete MCP 2025-06-18 protocol compliance
-//! - Enterprise-grade connection management
+//! - Comprehensive connection management
 //!
 //! Usage:
 //!   Terminal 1: cargo run --example unix_socket_server
@@ -26,8 +26,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let socket_path = PathBuf::from("/tmp/turbomcp-unix-server-example");
 
-    // Clean up any existing socket
-    let _ = std::fs::remove_file(&socket_path);
+    // Clean up any existing socket (ASYNC - Non-blocking!)
+    let _ = tokio::fs::remove_file(&socket_path).await;
 
     println!("🚀 Starting TurboMCP Unix Socket Server");
     println!("📍 Socket path: {:?}", socket_path);

@@ -1,10 +1,10 @@
 #!/usr/bin/env cargo run --example tcp_server
-//! Standalone TCP server example demonstrating world-class MCP implementation
+//! Standalone TCP server example demonstrating MCP protocol implementation
 //!
-//! This server showcases the production-ready TCP transport layer with:
+//! This server showcases the TCP transport layer with:
 //! - Tokio best practices with Framed + LinesCodec
 //! - Complete MCP 2025-06-18 protocol compliance
-//! - Enterprise-grade connection management with backpressure
+//! - Comprehensive connection management with backpressure
 //! - Builder pattern configuration
 //!
 //! Usage:

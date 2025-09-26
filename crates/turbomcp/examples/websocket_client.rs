@@ -1,9 +1,9 @@
 #!/usr/bin/env cargo run --example websocket_client
-//! Standalone WebSocket client example demonstrating world-class MCP implementation
+//! Standalone WebSocket client example demonstrating MCP protocol implementation
 //!
-//! This client showcases the production-ready WebSocket transport layer with:
+//! This client showcases the WebSocket transport layer with:
 //! - Complete MCP 2025-06-18 protocol compliance
-//! - Enterprise-grade error handling with timeouts
+//! - Comprehensive error handling with timeouts
 //! - Real-world tool calling patterns
 //! - Real-time bidirectional communication
 //!
@@ -250,7 +250,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n🎉 WebSocket Transport Test Sequence COMPLETED!");
     println!("✅ All MCP protocol operations successful");
-    println!("🚀 TurboMCP WebSocket transport is production-ready!");
+    println!("✅ TurboMCP WebSocket transport working correctly!");
     println!("⚡ Real-time bidirectional communication verified!");
 
     // Keep connection alive for a moment to receive any notifications

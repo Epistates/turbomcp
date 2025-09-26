@@ -175,7 +175,7 @@
 //!
 //! ## Elicitation Support - Zero Ceremony Builders (Enhanced in 1.0.4)
 //!
-//! TurboMCP provides world-class ergonomic elicitation with **zero ceremony builders** for beautiful, intuitive APIs:
+//! TurboMCP provides ergonomic elicitation with zero ceremony builders for intuitive APIs:
 //!
 //! ```rust,no_run
 //! use turbomcp::prelude::*;

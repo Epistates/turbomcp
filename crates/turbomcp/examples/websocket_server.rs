@@ -1,10 +1,10 @@
 #!/usr/bin/env cargo run --example websocket_server
-//! Standalone WebSocket server example demonstrating world-class MCP implementation
+//! Standalone WebSocket server example demonstrating MCP protocol implementation
 //!
-//! This server showcases the production-ready WebSocket transport layer with:
+//! This server showcases the WebSocket transport layer with:
 //! - Real-time bidirectional communication
 //! - Complete MCP 2025-06-18 protocol compliance
-//! - Enterprise-grade WebSocket handling with tokio-tungstenite
+//! - Comprehensive WebSocket handling with tokio-tungstenite
 //! - Multi-client support
 //!
 //! Usage:

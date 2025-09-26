@@ -1,4 +1,4 @@
-//! TCP Transport Full Demo - World-Class Implementation
+//! TCP Transport Full Demo
 //!
 //! This example demonstrates a complete TCP client-server setup where:
 //! 1. Server uses macro approach (#[server], #[tool], #[resource])
@@ -112,7 +112,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_writer(std::io::stderr)
         .init();
 
-    tracing::info!("🚀 TCP Client-Server Demo - World-Class Implementation");
+    tracing::info!("🚀 TCP Client-Server Demo - Complete Implementation");
     tracing::info!("═══════════════════════════════════════════════════════");
     tracing::info!("📡 Server: Macro approach (#[server], #[tool], #[resource])");
     tracing::info!("📱 Client: Builder pattern with TCP transport");
@@ -234,7 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     tracing::info!("🎆 TCP Client-Server Demo Completed Successfully!");
-    tracing::info!("🏆 PROVEN: TurboMCP TCP transport is world-class");
+    tracing::info!("✅ TurboMCP TCP transport working correctly");
     tracing::info!("  • Macro approach: ✅ Working");
     tracing::info!("  • Builder approach: ✅ Working");
     tracing::info!("  • End-to-end MCP: ✅ Working");

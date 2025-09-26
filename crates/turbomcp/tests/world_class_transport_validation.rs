@@ -1,8 +1,7 @@
-//! World-Class Transport Validation Tests
+//! Transport Validation Tests
 //!
 //! This comprehensive test suite validates that ALL TurboMCP transports are
-//! world-class, spec-compliant, and production-ready implementations of the
-//! Model Context Protocol (MCP) specification.
+//! spec-compliant implementations of the Model Context Protocol (MCP) specification.
 //!
 //! TESTS COVER:
 //! - MCP 2025-06-18 specification compliance

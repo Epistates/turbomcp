@@ -170,13 +170,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let service = ChatService::new();
 
-    // Start real WebSocket server using world-class tokio-tungstenite
+    // Start real WebSocket server using tokio-tungstenite
     run_websocket_server(service, "127.0.0.1:8081").await?;
 
     Ok(())
 }
 
-/// Real WebSocket server implementation using world-class tokio-tungstenite
+/// Real WebSocket server implementation using tokio-tungstenite
 async fn run_websocket_server(
     service: ChatService,
     addr: &str,
@@ -204,7 +204,7 @@ async fn handle_websocket_connection(
 ) -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("🔗 New WebSocket connection from {}", peer_addr);
 
-    // Upgrade TCP stream to WebSocket using world-class tokio-tungstenite
+    // Upgrade TCP stream to WebSocket using tokio-tungstenite
     let ws_stream = accept_async(stream).await?;
     let (mut ws_sender, mut ws_receiver) = ws_stream.split();
 

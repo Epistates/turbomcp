@@ -388,7 +388,7 @@ impl ElicitationValue {
 // Builder Helpers for Ergonomic API
 // ============================================================================
 
-/// Create a string field with title - beautiful ergonomics!
+/// Create a string field with title
 ///
 /// This is the primary string constructor for forms and UI elements.
 /// Use `string_builder()` if you need a title-less string schema.
@@ -406,7 +406,7 @@ pub fn text(title: impl Into<String>) -> StringSchemaBuilder {
     string(title)
 }
 
-/// Create an integer field with title - beautiful ergonomics!
+/// Create an integer field with title
 ///
 /// This is the primary integer constructor for forms and UI elements.
 /// Use `integer_builder()` if you need a title-less integer schema.
@@ -424,7 +424,7 @@ pub fn integer_field(title: impl Into<String>) -> NumberSchemaBuilder {
     integer(title)
 }
 
-/// Create a number field with title - beautiful ergonomics!
+/// Create a number field with title
 ///
 /// This is the primary number constructor for forms and UI elements.
 /// Use `number_builder()` if you need a title-less number schema.
@@ -442,7 +442,7 @@ pub fn number_field(title: impl Into<String>) -> NumberSchemaBuilder {
     number(title)
 }
 
-/// Create a boolean field with title - beautiful ergonomics!
+/// Create a boolean field with title
 ///
 /// This is the primary boolean constructor for forms and UI elements.
 /// Use `boolean_builder()` if you need a title-less boolean schema.
@@ -465,7 +465,7 @@ pub fn enum_of(values: Vec<String>) -> EnumSchemaBuilder {
     EnumSchemaBuilder::new(values)
 }
 
-/// World-class DX: Create enum schema from array slice (no Vec required!)
+/// Create enum schema from array slice (no Vec required)
 pub fn options<T: AsRef<str>>(values: &[T]) -> EnumSchemaBuilder {
     let values: Vec<String> = values.iter().map(|v| v.as_ref().to_string()).collect();
     EnumSchemaBuilder::new(values)
@@ -571,7 +571,7 @@ impl StringSchemaBuilder {
         builder
     }
 
-    /// World-class DX: Convert to enum schema with array slice (no Vec required!)
+    /// Convert to enum schema with array slice (no Vec required)
     pub fn options<T: AsRef<str>>(self, values: &[T]) -> EnumSchemaBuilder {
         let values: Vec<String> = values.iter().map(|v| v.as_ref().to_string()).collect();
         self.enum_values(values)
@@ -588,14 +588,14 @@ impl StringSchemaBuilder {
     }
 }
 
-/// World-class DX: Eliminate .build() ceremony via Into trait
+/// Eliminate .build() ceremony via Into trait
 impl From<StringSchemaBuilder> for PrimitiveSchemaDefinition {
     fn from(val: StringSchemaBuilder) -> Self {
         PrimitiveSchemaDefinition::String(val.0)
     }
 }
 
-/// World-class DX: Direct conversion to ElicitationSchema for single field usage
+/// Direct conversion to ElicitationSchema for single field usage
 impl From<StringSchemaBuilder> for ElicitationSchema {
     fn from(val: StringSchemaBuilder) -> Self {
         let mut schema = ElicitationSchema::new();
@@ -656,7 +656,7 @@ impl NumberSchemaBuilder {
     }
 }
 
-/// World-class DX: Eliminate .build() ceremony via Into trait
+/// Eliminate .build() ceremony via Into trait
 impl From<NumberSchemaBuilder> for PrimitiveSchemaDefinition {
     fn from(val: NumberSchemaBuilder) -> Self {
         PrimitiveSchemaDefinition::Number(val.0)
@@ -697,7 +697,7 @@ impl BooleanSchemaBuilder {
     }
 }
 
-/// World-class DX: Eliminate .build() ceremony via Into trait
+/// Eliminate .build() ceremony via Into trait
 impl From<BooleanSchemaBuilder> for PrimitiveSchemaDefinition {
     fn from(val: BooleanSchemaBuilder) -> Self {
         PrimitiveSchemaDefinition::Boolean(val.0)
@@ -738,7 +738,7 @@ impl EnumSchemaBuilder {
     }
 }
 
-/// World-class DX: Eliminate .build() ceremony via Into trait
+/// Eliminate .build() ceremony via Into trait
 impl From<EnumSchemaBuilder> for PrimitiveSchemaDefinition {
     fn from(val: EnumSchemaBuilder) -> Self {
         PrimitiveSchemaDefinition::Enum(val.0)
