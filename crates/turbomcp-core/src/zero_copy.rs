@@ -327,6 +327,10 @@ pub mod mmap {
     use std::io;
     use std::ops::Deref;
 
+    // Import security module if available
+    #[cfg(feature = "security")]
+    use turbomcp_security::{FileSecurityValidator, SecurityError, SecurityResult};
+
     /// A memory-mapped message for zero-copy file access
     #[derive(Debug)]
     pub struct MmapMessage {
@@ -343,13 +347,40 @@ pub mod mmap {
     }
 
     impl MmapMessage {
-        /// Create a message from a memory-mapped file
+        /// Create a message from a memory-mapped file with comprehensive security validation
+        #[cfg(feature = "security")]
+        pub async fn from_file_secure(
+            id: MessageId,
+            path: &Path,
+            offset: usize,
+            length: Option<usize>,
+            validator: &FileSecurityValidator,
+        ) -> SecurityResult<Self> {
+            // Validate file access through security layer
+            let (safe_path, validated_offset, validated_length) = validator
+                .validate_mmap_access(path, offset, length)
+                .await
+                .map_err(|e| {
+                    SecurityError::IoError(format!("Security validation failed: {}", e))
+                })?;
+
+            // Perform actual file operations with validated parameters
+            Self::from_file_internal(id, &safe_path, validated_offset, Some(validated_length))
+                .await
+                .map_err(|e| SecurityError::IoError(e.to_string()))
+        }
+
+        /// Create a message from a memory-mapped file (legacy method without security)
+        ///
+        /// **SECURITY WARNING**: This method bypasses security validation.
+        /// Use `from_file_secure` for production systems.
         pub fn from_file(
             id: MessageId,
             path: &Path,
             offset: usize,
             length: Option<usize>,
         ) -> io::Result<Self> {
+            // For backwards compatibility, perform basic validation
             let file = File::open(path)?;
             let metadata = file.metadata()?;
             let file_size = metadata.len() as usize;
@@ -383,6 +414,76 @@ pub mod mmap {
                     correlation_id: None,
                 },
             })
+        }
+
+        /// Internal method for creating memory-mapped files after security validation
+        async fn from_file_internal(
+            id: MessageId,
+            path: &Path,
+            offset: usize,
+            length: Option<usize>,
+        ) -> io::Result<Self> {
+            let file = File::open(path)?;
+            let metadata = file.metadata()?;
+            let file_size = metadata.len() as usize;
+
+            // Validate offset (already validated by security layer, but double-check)
+            if offset >= file_size {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Offset exceeds file size",
+                ));
+            }
+
+            // Calculate actual length
+            let actual_length = length.unwrap_or(file_size - offset);
+            let actual_length = actual_length.min(file_size - offset);
+
+            // Create memory map
+            // SAFETY: file handle is valid and opened for reading. memmap2 provides
+            // safe abstractions over POSIX mmap. The resulting mapping is read-only.
+            let mmap = unsafe { MmapOptions::new().map(&file)? };
+
+            Ok(Self {
+                id: Arc::new(id),
+                mmap: Arc::new(mmap),
+                offset,
+                length: actual_length,
+                metadata: MessageMetadata {
+                    created_at: Timestamp::now(),
+                    content_type: ContentType::Json,
+                    size: actual_length,
+                    correlation_id: None,
+                },
+            })
+        }
+
+        /// Create a message from a memory-mapped file (ASYNC - Non-blocking!)
+        ///
+        /// This is the async version of `from_file` that uses `tokio::task::spawn_blocking`
+        /// to avoid blocking the async runtime during file I/O operations.
+        ///
+        /// # Production-Grade Async I/O
+        /// - Uses spawn_blocking for CPU-intensive mmap operations
+        /// - Maintains same functionality as sync version
+        /// - Safe to call from async contexts without blocking
+        /// - Proper error propagation and resource cleanup
+        pub async fn from_file_async(
+            id: MessageId,
+            path: &std::path::Path,
+            offset: usize,
+            length: Option<usize>,
+        ) -> std::io::Result<Self> {
+            let path = path.to_path_buf(); // Clone for move into spawn_blocking
+
+            tokio::task::spawn_blocking(move || Self::from_file(id, &path, offset, length))
+                .await
+                .map_err(|join_err| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Async mmap operation failed: {}", join_err),
+                    )
+                })?
         }
 
         /// Get the message data as a byte slice
@@ -532,6 +633,29 @@ pub mod mmap {
         pub fn is_empty(&self) -> bool {
             self.messages.is_empty()
         }
+
+        /// Create a batch from a memory-mapped JSONL file (ASYNC - Non-blocking!)
+        ///
+        /// This is the async version of `from_jsonl_file` that uses `tokio::task::spawn_blocking`
+        /// to avoid blocking the async runtime during file I/O and parsing operations.
+        ///
+        /// # Production-Grade Async I/O
+        /// - Uses spawn_blocking for CPU-intensive mmap and parsing operations
+        /// - Maintains same functionality as sync version
+        /// - Safe to call from async contexts without blocking
+        /// - Proper error propagation and resource cleanup
+        pub async fn from_jsonl_file_async(path: &std::path::Path) -> std::io::Result<Self> {
+            let path = path.to_path_buf(); // Clone for move into spawn_blocking
+
+            tokio::task::spawn_blocking(move || Self::from_jsonl_file(&path))
+                .await
+                .map_err(|join_err| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Async JSONL batch operation failed: {}", join_err),
+                    )
+                })?
+        }
     }
 }
 
@@ -613,6 +737,25 @@ pub mod mmap {
         pub fn as_str(&self) -> Result<&str> {
             std::str::from_utf8(&self.data)
                 .map_err(|e| Error::serialization(format!("Invalid UTF-8: {}", e)))
+        }
+
+        /// Create a message from a file (ASYNC - Non-blocking fallback!)
+        ///
+        /// This is the async version of `from_file` for the non-mmap fallback
+        /// that uses `tokio::task::spawn_blocking` to avoid blocking the async runtime.
+        pub async fn from_file_async(
+            id: MessageId,
+            path: &std::path::Path,
+            offset: usize,
+            length: Option<usize>,
+        ) -> std::io::Result<Self> {
+            let path = path.to_path_buf(); // Clone for move into spawn_blocking
+
+            tokio::task::spawn_blocking(move || Self::from_file(id, &path, offset, length))
+                .await
+                .map_err(|join_err| {
+                    std::io::Error::other(format!("Async file operation failed: {}", join_err))
+                })?
         }
     }
 
@@ -714,6 +857,23 @@ pub mod mmap {
         /// Check if the batch is empty
         pub fn is_empty(&self) -> bool {
             self.messages.is_empty()
+        }
+
+        /// Create a batch from a JSONL file (ASYNC - Non-blocking fallback!)
+        ///
+        /// This is the async version of `from_jsonl_file` for the non-mmap fallback
+        /// that uses `tokio::task::spawn_blocking` to avoid blocking the async runtime.
+        pub async fn from_jsonl_file_async(path: &std::path::Path) -> std::io::Result<Self> {
+            let path = path.to_path_buf(); // Clone for move into spawn_blocking
+
+            tokio::task::spawn_blocking(move || Self::from_jsonl_file(&path))
+                .await
+                .map_err(|join_err| {
+                    std::io::Error::other(format!(
+                        "Async JSONL batch operation failed: {}",
+                        join_err
+                    ))
+                })?
         }
     }
 }
@@ -938,5 +1098,190 @@ mod tests {
         // Clean up
         std::fs::remove_file(test_file1).unwrap();
         std::fs::remove_file(test_file2).unwrap();
+    }
+
+    // ============================================================================
+    // Async Memory Mapping Tests - Production-Grade TDD
+    // ============================================================================
+
+    #[cfg(feature = "mmap")]
+    mod async_mmap_tests {
+        use super::MessageId;
+        use super::mmap::*;
+        use std::io::Write;
+        use std::path::Path;
+
+        #[tokio::test]
+        async fn test_mmap_message_from_file_async_performance() {
+            // Test that from_file_async doesn't block the async runtime
+
+            let temp_dir = std::env::temp_dir();
+            let test_file = temp_dir.join("async_mmap_test.json");
+
+            // Create test file
+            {
+                let mut file = std::fs::File::create(&test_file).unwrap();
+                let test_data = r#"{"test": "async_data", "large_field": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."}"#;
+                file.write_all(test_data.as_bytes()).unwrap();
+                file.sync_all().unwrap();
+            }
+
+            // Test concurrent async calls don't block each other
+            let handles = (0..3)
+                .map(|i| {
+                    let test_file = test_file.clone();
+                    tokio::spawn(async move {
+                        let start_time = std::time::Instant::now();
+
+                        // This will FAIL initially because we need to implement from_file_async
+                        let result = MmapMessage::from_file_async(
+                            MessageId::from(format!("async-test-{}", i)),
+                            &test_file,
+                            0,
+                            None,
+                        )
+                        .await;
+
+                        let duration = start_time.elapsed();
+
+                        // Should complete quickly without blocking other async tasks
+                        assert!(
+                            duration.as_millis() < 100,
+                            "Async mmap took {}ms - should be <100ms",
+                            duration.as_millis()
+                        );
+
+                        (i, result)
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let start_time = std::time::Instant::now();
+            let results = futures::future::join_all(handles).await;
+            let total_duration = start_time.elapsed();
+
+            // All concurrent operations should complete quickly
+            assert!(
+                total_duration.as_millis() < 200,
+                "Concurrent async mmap operations took {}ms - should be <200ms",
+                total_duration.as_millis()
+            );
+
+            // All should succeed and return valid messages
+            for result in results {
+                let (i, mmap_result) = result.unwrap();
+                let mmap_msg = mmap_result.unwrap();
+                assert_eq!(*mmap_msg.id, MessageId::from(format!("async-test-{}", i)));
+                assert!(!mmap_msg.data().is_empty());
+            }
+
+            // Clean up
+            std::fs::remove_file(test_file).unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_mmap_batch_from_jsonl_file_async_concurrency() {
+            let temp_dir = std::env::temp_dir();
+            let test_file = temp_dir.join("async_batch_test.jsonl");
+
+            // Create JSONL test file
+            {
+                let mut file = std::fs::File::create(&test_file).unwrap();
+                writeln!(file, r#"{{"id": "msg1", "data": "test1"}}"#).unwrap();
+                writeln!(file, r#"{{"id": "msg2", "data": "test2"}}"#).unwrap();
+                writeln!(file, r#"{{"id": "msg3", "data": "test3"}}"#).unwrap();
+                file.sync_all().unwrap();
+            }
+
+            // Test that async version doesn't block concurrent operations
+            let handles = (0..5)
+                .map(|_| {
+                    let test_file = test_file.clone();
+                    tokio::spawn(async move {
+                        let start_time = std::time::Instant::now();
+
+                        // This will FAIL initially - need to implement from_jsonl_file_async
+                        let result = MmapBatch::from_jsonl_file_async(&test_file).await;
+
+                        let duration = start_time.elapsed();
+                        assert!(
+                            duration.as_millis() < 150,
+                            "Async batch processing took {}ms - should be <150ms",
+                            duration.as_millis()
+                        );
+
+                        result
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            let results = futures::future::join_all(handles).await;
+
+            // All should succeed
+            for result in results {
+                let batch = result.unwrap().unwrap();
+                assert_eq!(batch.len(), 3);
+            }
+
+            std::fs::remove_file(test_file).unwrap();
+        }
+
+        #[tokio::test]
+        async fn test_async_mmap_error_handling() {
+            // Test async error handling for non-existent files
+            let non_existent = Path::new("/tmp/does_not_exist_async.json");
+
+            let result = MmapMessage::from_file_async(
+                MessageId::String("error-test".to_string().into()),
+                non_existent,
+                0,
+                None,
+            )
+            .await;
+
+            assert!(result.is_err());
+
+            // Error should be descriptive, not generic blocking I/O error
+            let error_msg = format!("{}", result.unwrap_err());
+            assert!(
+                error_msg.contains("No such file") || error_msg.contains("not found"),
+                "Error should be descriptive: {}",
+                error_msg
+            );
+        }
+
+        #[tokio::test]
+        async fn test_async_mmap_maintains_functionality() {
+            // Verify async versions provide same functionality as sync versions
+            let temp_dir = std::env::temp_dir();
+            let test_file = temp_dir.join("functionality_test.json");
+
+            let test_data = r#"{"test": "functionality", "value": 42}"#;
+            std::fs::write(&test_file, test_data).unwrap();
+
+            // Test both sync and async versions
+            let sync_result = MmapMessage::from_file(
+                MessageId::String("sync".to_string().into()),
+                &test_file,
+                0,
+                None,
+            )
+            .unwrap();
+
+            let async_result = MmapMessage::from_file_async(
+                MessageId::String("async".to_string().into()),
+                &test_file,
+                0,
+                None,
+            )
+            .await
+            .unwrap();
+
+            // Same data should be accessible
+            assert_eq!(sync_result.data(), async_result.data());
+            assert_eq!(sync_result.data(), test_data.as_bytes());
+
+            std::fs::remove_file(test_file).unwrap();
+        }
     }
 }
