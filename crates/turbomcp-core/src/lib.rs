@@ -91,6 +91,7 @@ pub mod handlers;
 pub mod lock_free;
 pub mod message;
 pub mod registry;
+pub mod security;
 pub mod session;
 pub mod shared;
 pub mod state;
@@ -118,6 +119,7 @@ pub use handlers::{
     ResourceTemplateHandler, ServerInitiatedCapabilities, TemplateParam,
 };
 pub use message::{Message, MessageId, MessageMetadata};
+pub use security::{validate_file_extension, validate_path, validate_path_within};
 pub use session::{SessionAnalytics, SessionConfig, SessionManager};
 pub use shared::{ConsumableShared, Shareable, Shared, SharedError};
 pub use state::StateManager;

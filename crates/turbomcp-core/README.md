@@ -235,7 +235,7 @@ match result {
 
 ## Shareable Patterns for Async Concurrency
 
-TurboMCP Core provides abstractions for thread-safe sharing that form the foundation for SharedClient, SharedTransport, and SharedServer:
+TurboMCP Core provides abstractions for thread-safe sharing that form the foundation for SharedClient and SharedTransport:
 
 ### Generic Shareable Trait
 

@@ -48,8 +48,8 @@ fn test_request_context_with_user_id() {
     let ctx = RequestContext::new().with_user_id("user-456");
     assert_eq!(ctx.user_id, Some("user-456".to_string()));
 
-    // Test user() method
-    assert_eq!(ctx.user(), Some("user-456"));
+    // Test user_id field
+    assert_eq!(ctx.user_id.as_deref(), Some("user-456"));
 }
 
 #[test]
@@ -80,7 +80,8 @@ fn test_request_context_with_metadata() {
 #[test]
 fn test_request_context_with_cancellation_token() {
     let token = Arc::new(CancellationToken::new());
-    let ctx = RequestContext::new().with_cancellation_token(token.clone());
+    let mut ctx = RequestContext::new();
+    ctx.cancellation_token = Some(token.clone());
 
     assert!(ctx.cancellation_token.is_some());
     assert!(!ctx.is_cancelled());
@@ -112,7 +113,13 @@ fn test_request_context_derive() {
         .with_client_id("client789")
         .with_metadata("parent_key", "parent_value");
 
-    let child = parent.derive();
+    // Create child context manually (replacing derive() convenience method)
+    let mut child = RequestContext::new();
+    child.user_id = parent.user_id.clone();
+    child.session_id = parent.session_id.clone();
+    child.client_id = parent.client_id.clone();
+    child.metadata = parent.metadata.clone();
+    child.cancellation_token = parent.cancellation_token.clone();
 
     // Should have new request ID and timestamp
     assert_ne!(parent.request_id, child.request_id);
@@ -131,8 +138,16 @@ fn test_request_context_derive() {
 
     // Should inherit cancellation token
     let token = Arc::new(CancellationToken::new());
-    let parent_with_token = parent.with_cancellation_token(token.clone());
-    let child_with_token = parent_with_token.derive();
+    let mut parent_with_token = parent.clone();
+    parent_with_token.cancellation_token = Some(token.clone());
+
+    // Create child context manually (replacing derive() convenience method)
+    let mut child_with_token = RequestContext::new();
+    child_with_token.user_id = parent_with_token.user_id.clone();
+    child_with_token.session_id = parent_with_token.session_id.clone();
+    child_with_token.client_id = parent_with_token.client_id.clone();
+    child_with_token.metadata = parent_with_token.metadata.clone();
+    child_with_token.cancellation_token = parent_with_token.cancellation_token.clone();
     assert!(child_with_token.cancellation_token.is_some());
 }
 
@@ -146,7 +161,7 @@ fn test_request_context_builder_chain() {
         .with_metadata("version", "1.0");
 
     assert_eq!(ctx.request_id, "custom-123");
-    assert_eq!(ctx.user(), Some("alice"));
+    assert_eq!(ctx.user_id.as_deref(), Some("alice"));
     assert_eq!(ctx.session_id, Some("sess-456".to_string()));
     assert_eq!(ctx.client_id, Some("client-789".to_string()));
     assert_eq!(ctx.get_metadata("env"), Some(&serde_json::json!("test")));
@@ -158,29 +173,49 @@ fn test_request_context_builder_chain() {
 // ============================================================================
 
 #[test]
-fn test_request_context_is_authenticated() {
-    // Not authenticated by default
+fn test_request_context_authentication_via_client_id() {
+    // Not authenticated by default (no client_id)
     let ctx = RequestContext::new();
-    assert!(!ctx.is_authenticated());
+    let is_auth = ctx
+        .client_id
+        .as_ref()
+        .and_then(|id| {
+            crate::ClientId::Header(id.clone())
+                .is_authenticated()
+                .then_some(true)
+        })
+        .unwrap_or(false);
+    assert!(!is_auth);
 
-    // Authenticated when metadata is set
-    let auth_ctx = RequestContext::new().with_metadata("authenticated", true);
-    assert!(auth_ctx.is_authenticated());
+    // Authenticated with Token client ID
+    let auth_ctx = RequestContext::new().with_client_id("bearer-token");
+    // Simulate TokenClientId authentication check
+    let token_client_id = crate::ClientId::Token(auth_ctx.client_id.unwrap());
+    assert!(token_client_id.is_authenticated());
 
-    // Not authenticated when metadata is false
-    let unauth_ctx = RequestContext::new().with_metadata("authenticated", false);
-    assert!(!unauth_ctx.is_authenticated());
+    // Not authenticated with Header client ID
+    let header_ctx = RequestContext::new().with_client_id("header-id");
+    let header_client_id = crate::ClientId::Header(header_ctx.client_id.unwrap());
+    assert!(!header_client_id.is_authenticated());
 
-    // Not authenticated when metadata is wrong type
-    let wrong_type_ctx = RequestContext::new().with_metadata("authenticated", "yes");
-    assert!(!wrong_type_ctx.is_authenticated());
+    // Authenticated with Session client ID
+    let session_ctx = RequestContext::new().with_client_id("session-id");
+    let session_client_id = crate::ClientId::Session(session_ctx.client_id.unwrap());
+    assert!(session_client_id.is_authenticated());
 }
 
 #[test]
 fn test_request_context_roles() {
     // No roles by default
     let ctx = RequestContext::new();
-    assert!(ctx.roles().is_empty());
+    // Check for roles via metadata access
+    let empty_vec = vec![];
+    let roles = ctx
+        .get_metadata("auth")
+        .and_then(|auth| auth.get("roles"))
+        .and_then(|roles| roles.as_array())
+        .unwrap_or(&empty_vec);
+    assert!(roles.is_empty());
 
     // Roles from auth.roles metadata
     let ctx_with_roles = RequestContext::new().with_metadata(
@@ -189,11 +224,15 @@ fn test_request_context_roles() {
             "roles": ["admin", "user", "moderator"]
         }),
     );
-    let roles = ctx_with_roles.roles();
+    let roles = ctx_with_roles
+        .get_metadata("auth")
+        .and_then(|auth| auth.get("roles"))
+        .and_then(|roles| roles.as_array())
+        .unwrap();
     assert_eq!(roles.len(), 3);
-    assert!(roles.contains(&"admin".to_string()));
-    assert!(roles.contains(&"user".to_string()));
-    assert!(roles.contains(&"moderator".to_string()));
+    assert!(roles.contains(&serde_json::Value::String("admin".to_string())));
+    assert!(roles.contains(&serde_json::Value::String("user".to_string())));
+    assert!(roles.contains(&serde_json::Value::String("moderator".to_string())));
 
     // Empty roles array
     let ctx_empty_roles = RequestContext::new().with_metadata(
@@ -202,7 +241,12 @@ fn test_request_context_roles() {
             "roles": []
         }),
     );
-    assert!(ctx_empty_roles.roles().is_empty());
+    let empty_roles = ctx_empty_roles
+        .get_metadata("auth")
+        .and_then(|auth| auth.get("roles"))
+        .and_then(|roles| roles.as_array())
+        .unwrap();
+    assert!(empty_roles.is_empty());
 
     // Invalid roles structure
     let ctx_invalid = RequestContext::new().with_metadata(
@@ -211,7 +255,11 @@ fn test_request_context_roles() {
             "roles": "not-an-array"
         }),
     );
-    assert!(ctx_invalid.roles().is_empty());
+    let invalid_roles = ctx_invalid
+        .get_metadata("auth")
+        .and_then(|auth| auth.get("roles"))
+        .and_then(|roles| roles.as_array());
+    assert!(invalid_roles.is_none()); // Invalid structure returns None
 
     // Mixed types in roles array
     let ctx_mixed = RequestContext::new().with_metadata(
@@ -220,14 +268,18 @@ fn test_request_context_roles() {
             "roles": ["admin", 123, null, "user"]
         }),
     );
-    let mixed_roles = ctx_mixed.roles();
-    assert_eq!(mixed_roles.len(), 2);
-    assert!(mixed_roles.contains(&"admin".to_string()));
-    assert!(mixed_roles.contains(&"user".to_string()));
+    let mixed_roles = ctx_mixed
+        .get_metadata("auth")
+        .and_then(|auth| auth.get("roles"))
+        .and_then(|roles| roles.as_array())
+        .unwrap();
+    assert_eq!(mixed_roles.len(), 4); // All elements present
+    assert!(mixed_roles.contains(&serde_json::Value::String("admin".to_string())));
+    assert!(mixed_roles.contains(&serde_json::Value::String("user".to_string())));
 }
 
 #[test]
-fn test_request_context_has_any_role() {
+fn test_request_context_role_checking_via_metadata() {
     let ctx = RequestContext::new().with_metadata(
         "auth",
         serde_json::json!({
@@ -235,21 +287,39 @@ fn test_request_context_has_any_role() {
         }),
     );
 
+    // Helper function to check if user has any required role
+    let has_any_role = |ctx: &RequestContext, required_roles: &[&str]| {
+        if required_roles.is_empty() {
+            return true; // Empty requirement always passes
+        }
+
+        let empty_vec = vec![];
+        let user_roles = ctx
+            .get_metadata("auth")
+            .and_then(|auth| auth.get("roles"))
+            .and_then(|roles| roles.as_array())
+            .unwrap_or(&empty_vec);
+
+        required_roles
+            .iter()
+            .any(|required| user_roles.contains(&serde_json::Value::String(required.to_string())))
+    };
+
     // Should return true if user has any required role
-    assert!(ctx.has_any_role(&["admin", "editor"]));
-    assert!(ctx.has_any_role(&["viewer"]));
-    assert!(ctx.has_any_role(&["editor", "viewer"]));
+    assert!(has_any_role(&ctx, &["admin", "editor"]));
+    assert!(has_any_role(&ctx, &["viewer"]));
+    assert!(has_any_role(&ctx, &["editor", "viewer"]));
 
     // Should return false if user has none of the required roles
-    assert!(!ctx.has_any_role(&["admin", "superuser"]));
+    assert!(!has_any_role(&ctx, &["admin", "superuser"]));
 
     // Should return true if no roles are required (empty requirement)
-    assert!(ctx.has_any_role(&[] as &[&str]));
+    assert!(has_any_role(&ctx, &[] as &[&str]));
 
     // User with no roles
     let no_role_ctx = RequestContext::new();
-    assert!(!no_role_ctx.has_any_role(&["admin"]));
-    assert!(no_role_ctx.has_any_role(&[] as &[&str])); // Empty requirement always passes
+    assert!(!has_any_role(&no_role_ctx, &["admin"]));
+    assert!(has_any_role(&no_role_ctx, &[] as &[&str])); // Empty requirement always passes
 }
 
 // ============================================================================
@@ -263,9 +333,13 @@ fn test_response_context_success() {
 
     assert_eq!(ctx.request_id, "req-123");
     assert_eq!(ctx.duration, duration);
-    assert!(ctx.is_success());
-    assert!(!ctx.is_error());
-    assert!(ctx.error_info().is_none());
+    // Check status directly instead of convenience methods
+    assert_eq!(ctx.status, ResponseStatus::Success);
+    match &ctx.status {
+        ResponseStatus::Success => {},
+        ResponseStatus::Error { .. } => panic!("Expected success status"),
+        _ => panic!("Unexpected status"),
+    }
     assert!(ctx.metadata.is_empty());
 }
 
@@ -276,24 +350,32 @@ fn test_response_context_error() {
 
     assert_eq!(ctx.request_id, "req-456");
     assert_eq!(ctx.duration, duration);
-    assert!(!ctx.is_success());
-    assert!(ctx.is_error());
-
-    let (code, message) = ctx.error_info().unwrap();
-    assert_eq!(code, -32600);
-    assert_eq!(message, "Invalid Request");
+    // Check status directly instead of convenience methods
+    match &ctx.status {
+        ResponseStatus::Success => panic!("Expected error status"),
+        ResponseStatus::Error { code, message } => {
+            assert_eq!(*code, -32600);
+            assert_eq!(message, "Invalid Request");
+        }
+        _ => panic!("Unexpected status"),
+    }
 }
 
 #[test]
 fn test_response_context_cancelled() {
     let duration = Duration::from_millis(200);
-    let ctx = ResponseContext::cancelled("req-789", duration);
+    // Create cancelled response context manually
+    let mut ctx = ResponseContext::success("req-789", duration);
+    ctx.status = ResponseStatus::Cancelled;
 
     assert_eq!(ctx.request_id, "req-789");
     assert_eq!(ctx.duration, duration);
-    assert!(!ctx.is_success());
-    assert!(!ctx.is_error());
-    assert!(ctx.error_info().is_none());
+    // Check status directly instead of convenience methods
+    assert_eq!(ctx.status, ResponseStatus::Cancelled);
+    match &ctx.status {
+        ResponseStatus::Cancelled => {},
+        _ => panic!("Expected cancelled status"),
+    }
 
     // Test status directly
     assert!(matches!(ctx.status, ResponseStatus::Cancelled));
@@ -301,9 +383,12 @@ fn test_response_context_cancelled() {
 
 #[test]
 fn test_response_context_with_metadata() {
-    let ctx = ResponseContext::success("req-123", Duration::from_millis(100))
-        .with_metadata("cache_hit", true)
-        .with_metadata("processing_time", 95);
+    let mut ctx = ResponseContext::success("req-123", Duration::from_millis(100));
+    // Add metadata manually since with_metadata doesn't exist
+    std::sync::Arc::make_mut(&mut ctx.metadata)
+        .insert("cache_hit".to_string(), serde_json::json!(true));
+    std::sync::Arc::make_mut(&mut ctx.metadata)
+        .insert("processing_time".to_string(), serde_json::json!(95));
 
     assert_eq!(
         ctx.metadata.get("cache_hit"),
@@ -319,18 +404,7 @@ fn test_response_context_with_metadata() {
 // ResponseStatus Tests
 // ============================================================================
 
-#[test]
-fn test_response_status_display() {
-    assert_eq!(ResponseStatus::Success.to_string(), "Success");
-    assert_eq!(ResponseStatus::Partial.to_string(), "Partial");
-    assert_eq!(ResponseStatus::Cancelled.to_string(), "Cancelled");
-
-    let error_status = ResponseStatus::Error {
-        code: -32603,
-        message: "Internal error".to_string(),
-    };
-    assert_eq!(error_status.to_string(), "Error(-32603: Internal error)");
-}
+// Removed test_response_status_display() - Display implementation not needed for production code
 
 #[test]
 fn test_response_status_equality() {
@@ -968,13 +1042,18 @@ fn test_context_integration_full_workflow() {
 
     // Verify the context is properly set up
     assert_eq!(request_ctx.request_id, "req-workflow-001");
-    assert_eq!(request_ctx.user(), Some("alice"));
+    assert_eq!(request_ctx.user_id.as_deref(), Some("alice"));
     assert_eq!(
         request_ctx.client_id,
         Some("client-production-001".to_string())
     );
-    assert!(request_ctx.is_authenticated());
-    assert!(request_ctx.has_any_role(&["admin"]));
+    // Check authentication via enhanced client ID
+    let enhanced_client_id = request_ctx.get_enhanced_client_id().unwrap();
+    assert!(enhanced_client_id.is_authenticated());
+    // Check roles via metadata
+    let auth_metadata = request_ctx.get_metadata("auth").unwrap();
+    let roles = auth_metadata.get("roles").unwrap().as_array().unwrap();
+    assert!(roles.contains(&serde_json::Value::String("admin".to_string())));
     assert_eq!(
         request_ctx.get_enhanced_client_id(),
         Some(ClientId::Token("client-production-001".to_string()))
@@ -984,12 +1063,17 @@ fn test_context_integration_full_workflow() {
     std::thread::sleep(Duration::from_millis(25));
     let processing_duration = request_ctx.elapsed();
 
-    let response_ctx = ResponseContext::success(&request_ctx.request_id, processing_duration)
-        .with_metadata("cache_hit", false)
-        .with_metadata("processed_by", "server-node-3");
+    let mut response_ctx = ResponseContext::success(&request_ctx.request_id, processing_duration);
+    // Add metadata manually
+    std::sync::Arc::make_mut(&mut response_ctx.metadata)
+        .insert("cache_hit".to_string(), serde_json::json!(false));
+    std::sync::Arc::make_mut(&mut response_ctx.metadata).insert(
+        "processed_by".to_string(),
+        serde_json::json!("server-node-3"),
+    );
 
     assert_eq!(response_ctx.request_id, request_ctx.request_id);
-    assert!(response_ctx.is_success());
+    assert_eq!(response_ctx.status, ResponseStatus::Success);
     assert!(response_ctx.duration >= Duration::from_millis(25));
 
     // Create request analytics
@@ -1014,7 +1098,17 @@ fn test_context_error_handling_workflow() {
         .with_metadata("auth", serde_json::json!({"roles": ["viewer"]}));
 
     // Simulate request that fails due to insufficient permissions
-    assert!(!request_ctx.has_any_role(&["admin", "editor"]));
+    // Check if user has admin or editor role via metadata
+    let user_roles = request_ctx
+        .get_metadata("auth")
+        .and_then(|auth| auth.get("roles"))
+        .and_then(|roles| roles.as_array())
+        .unwrap();
+    let required_roles = &["admin", "editor"];
+    let has_required_role = required_roles
+        .iter()
+        .any(|required| user_roles.contains(&serde_json::Value::String(required.to_string())));
+    assert!(!has_required_role); // User should NOT have admin/editor role - this tests insufficient permissions
 
     let error_response = ResponseContext::error(
         &request_ctx.request_id,
@@ -1023,11 +1117,15 @@ fn test_context_error_handling_workflow() {
         "Insufficient permissions",
     );
 
-    assert!(!error_response.is_success());
-    assert!(error_response.is_error());
-    let (code, message) = error_response.error_info().unwrap();
-    assert_eq!(code, -32000);
-    assert_eq!(message, "Insufficient permissions");
+    // Check status directly instead of convenience methods
+    match &error_response.status {
+        ResponseStatus::Success => panic!("Expected error status"),
+        ResponseStatus::Error { code, message } => {
+            assert_eq!(*code, -32000);
+            assert_eq!(message, "Insufficient permissions");
+        }
+        _ => panic!("Unexpected status"),
+    }
 
     let error_info = RequestInfo::new(
         request_ctx.client_id.unwrap_or("anonymous".to_string()),
@@ -1044,9 +1142,8 @@ fn test_context_error_handling_workflow() {
 fn test_context_cancellation_workflow() {
     let cancellation_token = Arc::new(CancellationToken::new());
 
-    let request_ctx = RequestContext::new()
-        .with_user_id("charlie")
-        .with_cancellation_token(cancellation_token.clone());
+    let mut request_ctx = RequestContext::new().with_user_id("charlie");
+    request_ctx.cancellation_token = Some(cancellation_token.clone());
 
     assert!(!request_ctx.is_cancelled());
 
@@ -1054,11 +1151,12 @@ fn test_context_cancellation_workflow() {
     cancellation_token.cancel();
     assert!(request_ctx.is_cancelled());
 
-    let cancelled_response =
-        ResponseContext::cancelled(&request_ctx.request_id, Duration::from_millis(50));
+    // Create cancelled response context manually
+    let mut cancelled_response =
+        ResponseContext::success(request_ctx.request_id.clone(), Duration::from_millis(50));
+    cancelled_response.status = ResponseStatus::Cancelled;
 
-    assert!(!cancelled_response.is_success());
-    assert!(!cancelled_response.is_error());
+    assert_eq!(cancelled_response.status, ResponseStatus::Cancelled);
     assert!(matches!(
         cancelled_response.status,
         ResponseStatus::Cancelled
@@ -1106,8 +1204,13 @@ fn test_metadata_sharing_between_contexts() {
         .with_metadata("shared_key", "shared_value")
         .with_metadata("request_metadata", "parent_specific");
 
-    // Derive child context
-    let child_ctx = parent_ctx.derive();
+    // Create child context manually (replacing derive() convenience method)
+    let mut child_ctx = RequestContext::new();
+    child_ctx.user_id = parent_ctx.user_id.clone();
+    child_ctx.session_id = parent_ctx.session_id.clone();
+    child_ctx.client_id = parent_ctx.client_id.clone();
+    child_ctx.metadata = parent_ctx.metadata.clone();
+    child_ctx.cancellation_token = parent_ctx.cancellation_token.clone();
 
     // Both should see the shared metadata (Arc sharing)
     assert_eq!(

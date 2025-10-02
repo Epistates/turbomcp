@@ -99,10 +99,9 @@ fn test_completion_capabilities() {
 
 #[test]
 fn test_server_initiated_context() {
-    let ctx =
-        ServerInitiatedContext::new(ServerInitiatedType::CreateMessage, "server-001".to_string());
+    let ctx = ServerInitiatedContext::new(ServerInitiatedType::Sampling, "server-001".to_string());
 
-    assert_eq!(ctx.request_type, ServerInitiatedType::CreateMessage);
+    assert_eq!(ctx.request_type, ServerInitiatedType::Sampling);
     assert_eq!(ctx.server_id, "server-001");
     assert!(!ctx.correlation_id.is_empty());
     assert!(ctx.client_capabilities.is_none());
@@ -118,7 +117,7 @@ fn test_server_initiated_with_capabilities() {
         experimental: HashMap::new(),
     };
 
-    let ctx = ServerInitiatedContext::new(ServerInitiatedType::ListRoots, "server-002".to_string())
+    let ctx = ServerInitiatedContext::new(ServerInitiatedType::Roots, "server-002".to_string())
         .with_capabilities(caps.clone());
 
     assert!(ctx.client_capabilities.is_some());
@@ -143,7 +142,7 @@ fn test_bidirectional_context_validation() {
     // Test invalid direction for server-initiated request
     let ctx_invalid = BidirectionalContext::new(
         CommunicationDirection::ClientToServer,
-        CommunicationInitiator::Client,
+        CommunicationInitiator::Server, // Server initiating ClientToServer is invalid
     )
     .with_request_type("sampling/createMessage".to_string());
 
@@ -248,8 +247,8 @@ fn test_server_initiated_metadata() {
 #[test]
 fn test_all_server_initiated_types() {
     let types = vec![
-        ServerInitiatedType::CreateMessage,
-        ServerInitiatedType::ListRoots,
+        ServerInitiatedType::Sampling,
+        ServerInitiatedType::Roots,
         ServerInitiatedType::Elicitation,
         ServerInitiatedType::Ping,
     ];
