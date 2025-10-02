@@ -132,6 +132,9 @@ pub enum ErrorKind {
 
     /// Handler execution error
     Handler,
+
+    /// Security violation or constraint failure
+    Security,
 }
 
 /// Rich contextual information for errors
@@ -275,6 +278,11 @@ impl Error {
         Self::new(ErrorKind::Handler, message)
     }
 
+    /// Create a security error
+    pub fn security(message: impl Into<String>) -> Box<Self> {
+        Self::new(ErrorKind::Security, message)
+    }
+
     /// Add context to this error
     #[must_use]
     pub fn with_context(
@@ -367,6 +375,7 @@ impl Error {
             | ErrorKind::Handler => 500,
             ErrorKind::Transport | ErrorKind::ExternalService | ErrorKind::Unavailable => 503,
             ErrorKind::Cancelled => 499, // Client closed request
+            ErrorKind::Security => 403,  // Forbidden - security constraint violation
         }
     }
 
@@ -388,6 +397,7 @@ impl Error {
             ErrorKind::ExternalService => -32009, // Custom: External service error
             ErrorKind::Cancelled => -32010,      // Custom: Operation cancelled
             ErrorKind::Handler => -32011,        // Custom: Handler error
+            ErrorKind::Security => -32012,       // Custom: Security constraint violation
         }
     }
 }
@@ -442,6 +452,7 @@ impl ErrorKind {
             Self::ExternalService => "External service error",
             Self::Cancelled => "Operation cancelled",
             Self::Handler => "Handler execution error",
+            Self::Security => "Security constraint violation",
         }
     }
 }

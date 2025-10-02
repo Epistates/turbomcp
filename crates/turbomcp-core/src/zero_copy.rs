@@ -328,8 +328,6 @@ pub mod mmap {
     use std::ops::Deref;
 
     // Import security module if available
-    #[cfg(feature = "security")]
-    use turbomcp_security::{FileSecurityValidator, SecurityError, SecurityResult};
 
     /// A memory-mapped message for zero-copy file access
     #[derive(Debug)]
@@ -348,27 +346,7 @@ pub mod mmap {
 
     impl MmapMessage {
         /// Create a message from a memory-mapped file with comprehensive security validation
-        #[cfg(feature = "security")]
-        pub async fn from_file_secure(
-            id: MessageId,
-            path: &Path,
-            offset: usize,
-            length: Option<usize>,
-            validator: &FileSecurityValidator,
-        ) -> SecurityResult<Self> {
-            // Validate file access through security layer
-            let (safe_path, validated_offset, validated_length) = validator
-                .validate_mmap_access(path, offset, length)
-                .await
-                .map_err(|e| {
-                    SecurityError::IoError(format!("Security validation failed: {}", e))
-                })?;
-
-            // Perform actual file operations with validated parameters
-            Self::from_file_internal(id, &safe_path, validated_offset, Some(validated_length))
-                .await
-                .map_err(|e| SecurityError::IoError(e.to_string()))
-        }
+        
 
         /// Create a message from a memory-mapped file (legacy method without security)
         ///
@@ -479,10 +457,7 @@ pub mod mmap {
             tokio::task::spawn_blocking(move || Self::from_file(id, &path, offset, length))
                 .await
                 .map_err(|join_err| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Async mmap operation failed: {}", join_err),
-                    )
+                    std::io::Error::other(format!("Async mmap operation failed: {}", join_err))
                 })?
         }
 
@@ -650,10 +625,7 @@ pub mod mmap {
             tokio::task::spawn_blocking(move || Self::from_jsonl_file(&path))
                 .await
                 .map_err(|join_err| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Async JSONL batch operation failed: {}", join_err),
-                    )
+                    std::io::Error::other(format!("Async JSONL batch operation failed: {}", join_err))
                 })?
         }
     }
