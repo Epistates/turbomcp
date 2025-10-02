@@ -192,7 +192,7 @@ fn test_tools_call_with_invalid_json() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("invalid --arguments JSON") || stderr.contains("JSON"),
+        stderr.contains("Invalid JSON arguments") || stderr.contains("JSON"),
         "Should show JSON parsing error"
     );
 }

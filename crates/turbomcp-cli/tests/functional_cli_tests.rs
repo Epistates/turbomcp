@@ -71,7 +71,7 @@ async fn test_http_call_tool_invalid_json() {
         turbomcp_cli::cmd_tools_call(conn, "test_tool".to_string(), "invalid json".to_string())
             .await;
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("invalid --arguments JSON"));
+    assert!(result.unwrap_err().contains("Invalid JSON arguments"));
 }
 
 #[tokio::test]
@@ -280,7 +280,7 @@ async fn test_malformed_json_arguments() {
         )
         .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("invalid --arguments JSON"));
+        assert!(result.unwrap_err().contains("Invalid JSON arguments"));
     }
 }
 
@@ -313,6 +313,6 @@ async fn test_valid_json_arguments() {
         // Should fail with network error, not JSON parsing error
         assert!(result.is_err());
         let error = result.unwrap_err();
-        assert!(!error.contains("invalid --arguments JSON"));
+        assert!(!error.contains("Invalid JSON arguments"));
     }
 }
