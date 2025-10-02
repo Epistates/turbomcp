@@ -28,8 +28,8 @@ High-performance Rust SDK for the Model Context Protocol (MCP) with compile-time
 - ServerCapabilitiesBuilder with compile-time validation
 - ClientCapabilitiesBuilder for capability negotiation
 - Type-safe capability dependencies (e.g., tool_list_changed only when tools enabled)
-- Shared wrappers: SharedClient, SharedTransport, SharedServer
-- Consumable patterns for one-time server consumption
+- Shared wrappers: SharedClient, SharedTransport
+- Clone pattern for McpServer (Axum/Tower standard - cheap Arc increments)
 
 **Protocol Features**
 - Full MCP 2025-06-18 specification compliance
