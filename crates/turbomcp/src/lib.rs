@@ -551,10 +551,10 @@ pub use turbomcp_protocol::jsonrpc::{
     JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
 };
 pub use turbomcp_protocol::types::{
-    CallToolRequest, CallToolResult, ClientCapabilities, CompleteRequest, CompleteResult,
-    CompletionResponse, Content, ElicitRequest, ElicitResult, ElicitationAction, ImageContent,
-    Implementation, InitializeRequest, InitializeResult, PingRequest, PingResult, PromptMessage,
-    Resource, ServerCapabilities, TextContent, Tool, ToolInputSchema,
+    CallToolRequest, CallToolResult, ClientCapabilities, CompleteResult, CompletionResponse,
+    Content, ElicitRequest, ElicitResult, ElicitationAction, ImageContent, Implementation,
+    InitializeRequest, InitializeResult, PingRequest, PingResult, PromptMessage, Resource,
+    ServerCapabilities, TextContent, Tool, ToolInputSchema,
 };
 pub use turbomcp_server::{
     McpServer, McpServer as Server, ServerBuilder, ServerError, ServerResult, ShutdownHandle,
@@ -579,7 +579,9 @@ pub use turbomcp_transport;
 pub use tracing;
 
 // Core TurboMCP modules
+// Temporary module during auth decomposition - will be removed after migration
 pub mod auth;
+mod auth_impl;
 pub mod context;
 pub mod context_factory;
 pub mod elicitation;

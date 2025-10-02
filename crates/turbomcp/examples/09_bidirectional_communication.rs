@@ -173,24 +173,34 @@ impl InteractiveElicitationHandler {
 pub struct ProgressBarHandler;
 
 impl ProgressBarHandler {
-    fn display_progress_bar(&self, progress: f64, total: Option<f64>) -> String {
+    fn display_progress_bar(&self, progress: Option<f64>, total: Option<u64>) -> String {
         const BAR_WIDTH: usize = 40;
 
-        if let Some(total_val) = total {
-            let percentage = (progress / total_val * 100.0).min(100.0);
-            let filled = ((percentage / 100.0) * BAR_WIDTH as f64) as usize;
-            let empty = BAR_WIDTH - filled;
+        match (progress, total) {
+            (Some(progress_val), Some(total_val)) => {
+                // MCP protocol: progress is 0.0-1.0, total is absolute count
+                let percentage = (progress_val * 100.0).min(100.0);
+                let filled = ((percentage / 100.0) * BAR_WIDTH as f64) as usize;
+                let empty = BAR_WIDTH - filled;
 
-            format!(
-                "[{}{}] {:.1}% ({:.0}/{:.0})",
-                "█".repeat(filled),
-                "░".repeat(empty),
-                percentage,
-                progress,
-                total_val
-            )
-        } else {
-            format!("🔄 Processing... ({:.0} units)", progress)
+                format!(
+                    "[{}{}] {:.1}% ({})",
+                    "█".repeat(filled),
+                    "░".repeat(empty),
+                    percentage,
+                    total_val
+                )
+            }
+            (Some(progress_val), None) => {
+                let percentage = (progress_val * 100.0).min(100.0);
+                format!("🔄 Processing... {:.1}%", percentage)
+            }
+            (None, Some(total_val)) => {
+                format!("🔄 Processing... ({} total)", total_val)
+            }
+            (None, None) => {
+                "🔄 Processing...".to_string()
+            }
         }
     }
 }
@@ -449,29 +459,24 @@ async fn simulate_progress_updates(client: &mut turbomcp_client::Client<StdioTra
 
     if client.has_progress_handler() {
         let operation_id = "file-processing-batch-001".to_string();
-        let total_files = 5.0;
+        let total_files: u64 = 5;
 
         for i in 0..=5 {
-            let progress = i as f64;
-            let percentage = (progress / total_files) * 100.0;
+            let progress_ratio = (i as f64) / (total_files as f64);
             let completed = i == 5;
 
             let _notification = ProgressNotification {
                 operation_id: operation_id.clone(),
                 progress: ProtocolProgressNotification {
                     progress_token: ProgressToken::from(format!("token-{}", i)),
-                    progress,
+                    // MCP protocol: progress is 0.0-1.0, total is absolute count
+                    progress: Some(progress_ratio),
                     total: Some(total_files),
-                    message: Some(if completed {
-                        "Processing complete!".to_string()
-                    } else {
-                        format!("Processing file {} of 5", i + 1)
-                    }),
                 },
                 message: Some(if completed {
                     "All files processed successfully".to_string()
                 } else {
-                    format!("Processing document_{}.pdf ({:.0}%)", i + 1, percentage)
+                    format!("Processing document_{}.pdf ({:.0}%)", i + 1, progress_ratio * 100.0)
                 }),
                 completed,
                 error: None,
@@ -718,9 +723,9 @@ mod tests {
             operation_id: "test-op".to_string(),
             progress: ProtocolProgressNotification {
                 progress_token: ProgressToken::from("test-token"),
-                progress: 50.0,
-                total: Some(100.0),
-                message: Some("Test progress".to_string()),
+                // MCP protocol: progress is 0.0-1.0 (50% = 0.5)
+                progress: Some(0.5),
+                total: Some(100),
             },
             message: Some("Test message".to_string()),
             completed: false,

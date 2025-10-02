@@ -2,7 +2,7 @@
 //!
 //! This example shows how to use all the shared wrapper types together:
 //! - SharedTransport for transport layer sharing
-//! - SharedServer for server instance sharing
+//! - McpServer uses Clone (Axum/Tower pattern) for server instance sharing
 //! - SharedElicitationCoordinator for elicitation sharing
 //! - Generic Shared and ConsumableShared wrappers
 
@@ -10,7 +10,7 @@ use std::time::Duration;
 use turbomcp_client::{Client, SharedClient};
 use turbomcp_core::{ConsumableShared, Shareable, Shared};
 use turbomcp_server::{
-    ElicitationCoordinator, ServerBuilder, SharedElicitationCoordinator, SharedServer,
+    ElicitationCoordinator, ServerBuilder, SharedElicitationCoordinator,
 };
 use turbomcp_transport::{SharedTransport, StdioTransport};
 
@@ -75,36 +75,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (_type, _caps) = tokio::try_join!(handle1, handle2)?;
     println!("✓ SharedTransport: Both tasks completed successfully");
 
-    // 2. SharedServer Example
-    println!("\n2. SharedServer Demo");
-    println!("--------------------");
+    // 2. McpServer Clone Example (Axum/Tower Pattern)
+    println!("\n2. McpServer Clone Demo (Axum/Tower Pattern)");
+    println!("---------------------------------------------");
 
     let server = ServerBuilder::new()
         .name("Demo Server")
         .version("1.0.0")
         .build();
-    let shared_server = SharedServer::new(server);
 
-    // Clone for sharing across tasks
-    let server1 = shared_server.clone();
-    let server2 = shared_server.clone();
+    // Clone for sharing across tasks (cheap - just Arc increments)
+    let server1 = server.clone();
+    let server2 = server.clone();
 
     // Both tasks can access server state concurrently
     let handle1 = tokio::spawn(async move {
-        if let Some(config) = server1.config().await {
-            println!("Task 1: Server name = {}", config.name);
-        }
+        let config = server1.config();
+        println!("Task 1: Server name = {}", config.name);
     });
 
     let handle2 = tokio::spawn(async move {
-        if let Some(lifecycle) = server2.lifecycle().await {
-            let health = lifecycle.health().await;
-            println!("Task 2: Server health = {:?}", health);
-        }
+        let lifecycle = server2.lifecycle();
+        let health = lifecycle.health().await;
+        println!("Task 2: Server health = {:?}", health);
     });
 
     tokio::try_join!(handle1, handle2)?;
-    println!("✓ SharedServer: Both tasks completed successfully");
+    println!("✓ McpServer Clone: Both tasks completed successfully (following Axum/Tower pattern)");
 
     // 3. SharedElicitationCoordinator Example
     println!("\n3. SharedElicitationCoordinator Demo");
@@ -240,6 +237,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nKey Benefits Demonstrated:");
     println!("• Thread-safe concurrent access without exposed Arc/Mutex");
     println!("• Clone-able for easy sharing across async tasks");
+    println!("• McpServer follows Axum/Tower Clone pattern (not Arc-wrapped)");
     println!("• Consistent API patterns across all wrapper types");
     println!("• Zero-cost abstractions over existing TurboMCP types");
     println!("• Maintains strict protocol compliance and semantics");

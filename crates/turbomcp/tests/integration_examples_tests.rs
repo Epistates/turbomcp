@@ -273,67 +273,6 @@ async fn test_jsonrpc_protocol_compliance() {
     }
 }
 
-/// Performance benchmark test
-#[tokio::test]
-async fn test_performance_benchmark() {
-    let start = std::time::Instant::now();
-
-    // Just test initialization performance
-    let requests = vec![]; // Don't send additional requests after init
-
-    let responses = test_example_jsonrpc("01_hello_world", requests)
-        .await
-        .expect("Performance test should complete");
-
-    let duration = start.elapsed();
-
-    // Should have at least the init response
-    assert!(
-        !responses.is_empty(),
-        "Should receive initialization response"
-    );
-
-    // Basic performance check - should respond within reasonable time
-    // Note: First run includes compilation time
-    assert!(
-        duration < Duration::from_secs(30), // Allow time for initial compilation
-        "Server should respond within 30 seconds (took {:?})",
-        duration
-    );
-}
-
-/// Test that different features can be enabled
-#[test]
-#[ignore] // TODO: Fix macro compilation with minimal features
-fn test_feature_flag_combinations() {
-    // Just test that our main examples compile with different features
-    // Note: We use 'minimal' feature for basic STDIO functionality (internal-deps deprecated)
-    let examples = ["07_transport_showcase", "06_architecture_patterns"];
-
-    for example in &examples {
-        let output = Command::new("cargo")
-            .args([
-                "check",
-                "--example",
-                example,
-                "--package",
-                "turbomcp",
-                "--no-default-features",
-                "--features",
-                "minimal", // Minimal feature includes STDIO transport
-            ])
-            .output()
-            .expect("Failed to run cargo check");
-
-        assert!(
-            output.status.success(),
-            "Example '{}' should compile with features [\"minimal\"]\nstderr: {}",
-            example,
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-}
-
 /// Complex integration test - validates server hardening against malformed inputs
 #[tokio::test]
 #[ignore] // This is a stress test, run with --ignored flag

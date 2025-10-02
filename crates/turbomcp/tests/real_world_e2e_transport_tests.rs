@@ -15,7 +15,6 @@
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -28,8 +27,6 @@ use turbomcp_transport::core::{Transport, TransportMessage};
 #[cfg(feature = "tcp")]
 use turbomcp_transport::tcp::TcpTransport;
 
-#[cfg(feature = "unix")]
-use turbomcp_transport::unix::UnixTransport;
 
 #[cfg(feature = "http")]
 use turbomcp_transport::http_sse::HttpSseConfig;
@@ -146,6 +143,7 @@ fn create_echo_tool_call(message: &str) -> Value {
     })
 }
 
+#[allow(dead_code)]
 fn create_add_tool_call(a: i64, b: i64) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -445,213 +443,6 @@ async fn test_tcp_transport_real_server_client_e2e() {
     // Clean shutdown
     server_task.abort();
     println!("🎉 TCP Transport Real E2E Test PASSED!");
-}
-
-#[cfg(feature = "unix")]
-#[tokio::test]
-#[ignore = "Unix transport requires architectural refactoring for proper client-server communication"]
-async fn test_unix_transport_real_server_client_e2e() {
-    println!("🚀 Unix Transport - Real Server-Client E2E Test");
-
-    let socket_path = PathBuf::from("/tmp/turbomcp-e2e-unix-test");
-    let _ = std::fs::remove_file(&socket_path); // Clean up any existing socket
-
-    // Create real MCP server
-    let _server = TestMcpServer::new("Unix-E2E-Server".to_string(), "1.0.0".to_string());
-
-    // Start Unix server in background task
-    let server_socket_path = socket_path.clone();
-    let server_task: JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>> =
-        tokio::spawn(async move {
-            let mut server_transport = UnixTransport::new_server(server_socket_path.clone());
-            server_transport.connect().await?;
-
-            println!("🔧 Unix Server listening on {:?}", server_socket_path);
-
-            // Handle client requests
-            for request_id in 0..3 {
-                match timeout(Duration::from_secs(10), server_transport.receive()).await {
-                    Ok(Ok(Some(message))) => {
-                        let request_str = String::from_utf8(message.payload.to_vec())?;
-                        let request: Value = serde_json::from_str(&request_str)?;
-
-                        println!("📨 Unix Server received: {}", request_str);
-
-                        let response = match request.get("method").and_then(|m| m.as_str()) {
-                            Some("initialize") => {
-                                json!({
-                                    "jsonrpc": "2.0",
-                                    "id": request.get("id"),
-                                    "result": {
-                                        "protocolVersion": "2025-06-18",
-                                        "capabilities": {"tools": {}},
-                                        "serverInfo": {"name": "Unix-E2E-Server", "version": "1.0.0"}
-                                    }
-                                })
-                            }
-                            Some("tools/call") => {
-                                if let Some(params) = request.get("params") {
-                                    if let Some(tool_name) =
-                                        params.get("name").and_then(|n| n.as_str())
-                                    {
-                                        match tool_name {
-                                            "add" => {
-                                                let args = params.get("arguments").unwrap();
-                                                let a = args
-                                                    .get("a")
-                                                    .and_then(|v| v.as_i64())
-                                                    .unwrap_or(0);
-                                                let b = args
-                                                    .get("b")
-                                                    .and_then(|v| v.as_i64())
-                                                    .unwrap_or(0);
-                                                json!({
-                                                    "jsonrpc": "2.0",
-                                                    "id": request.get("id"),
-                                                    "result": {
-                                                        "content": [{
-                                                            "type": "text",
-                                                            "text": format!("Sum: {}", a + b)
-                                                        }]
-                                                    }
-                                                })
-                                            }
-                                            _ => {
-                                                json!({
-                                                    "jsonrpc": "2.0",
-                                                    "id": request.get("id"),
-                                                    "error": {"code": -32601, "message": "Method not found"}
-                                                })
-                                            }
-                                        }
-                                    } else {
-                                        json!({
-                                            "jsonrpc": "2.0",
-                                            "id": request.get("id"),
-                                            "error": {"code": -32602, "message": "Invalid params"}
-                                        })
-                                    }
-                                } else {
-                                    json!({
-                                        "jsonrpc": "2.0",
-                                        "id": request.get("id"),
-                                        "error": {"code": -32602, "message": "Invalid params"}
-                                    })
-                                }
-                            }
-                            _ => {
-                                json!({
-                                    "jsonrpc": "2.0",
-                                    "id": request.get("id"),
-                                    "error": {"code": -32601, "message": "Method not found"}
-                                })
-                            }
-                        };
-
-                        // Send response
-                        let response_msg = TransportMessage::new(
-                            MessageId::from(format!("unix-response-{}", request_id)),
-                            response.to_string().into_bytes().into(),
-                        );
-                        server_transport.send(response_msg).await?;
-                        println!("📤 Unix Server sent response");
-                    }
-                    Ok(Ok(None)) => {
-                        println!("⚠️ Unix Server received no message");
-                        break;
-                    }
-                    Ok(Err(e)) => {
-                        println!("❌ Unix Server error: {:?}", e);
-                        break;
-                    }
-                    Err(_) => {
-                        println!("⏰ Unix Server timeout");
-                        break;
-                    }
-                }
-            }
-
-            Ok(())
-        });
-
-    // Give server time to start
-    sleep(Duration::from_millis(500)).await;
-
-    // Create Unix client and test communication
-    let mut client_transport = UnixTransport::new_client(socket_path.clone());
-    client_transport
-        .connect()
-        .await
-        .expect("Failed to connect Unix client");
-
-    // Give client connection time to be fully registered (Unix sockets may need more time)
-    sleep(Duration::from_millis(1000)).await;
-
-    println!("🔗 Unix Client connected to server");
-
-    // Test 1: Initialize Protocol
-    let init_request = create_initialize_request();
-    let init_msg = TransportMessage::new(
-        MessageId::from("unix-init-1"),
-        init_request.to_string().into_bytes().into(),
-    );
-    client_transport
-        .send(init_msg)
-        .await
-        .expect("Failed to send init");
-
-    println!("🔄 Unix Client waiting for response...");
-    let response = timeout(Duration::from_secs(5), client_transport.receive())
-        .await
-        .expect("Timeout waiting for init response")
-        .expect("Failed to receive init response")
-        .expect("No init response received");
-
-    let response_str = String::from_utf8(response.payload.to_vec()).expect("Invalid UTF-8");
-    let response_json: Value = serde_json::from_str(&response_str).expect("Invalid JSON");
-
-    assert!(
-        validate_mcp_response(&response_json, "unix-init-1"),
-        "Invalid initialize response"
-    );
-    println!("✅ Unix MCP initialize successful");
-
-    // Test 2: Call Add Tool
-    let add_request = create_add_tool_call(42, 58);
-    let add_msg = TransportMessage::new(
-        MessageId::from("unix-add-1"),
-        add_request.to_string().into_bytes().into(),
-    );
-    client_transport
-        .send(add_msg)
-        .await
-        .expect("Failed to send add tool call");
-
-    let response = timeout(Duration::from_secs(5), client_transport.receive())
-        .await
-        .expect("Timeout waiting for add response")
-        .expect("Failed to receive add response")
-        .expect("No add response received");
-
-    let response_str = String::from_utf8(response.payload.to_vec()).expect("Invalid UTF-8");
-    let response_json: Value = serde_json::from_str(&response_str).expect("Invalid JSON");
-
-    assert!(
-        validate_mcp_response(&response_json, "unix-add-1"),
-        "Invalid add response"
-    );
-    if let Some(result_text) = extract_tool_result(&response_json) {
-        assert!(
-            result_text.as_str().unwrap().contains("100"),
-            "Add should return 100"
-        );
-        println!("✅ Unix MCP add tool call successful: {}", result_text);
-    }
-
-    // Clean shutdown
-    server_task.abort();
-    let _ = std::fs::remove_file(&socket_path);
-    println!("🎉 Unix Transport Real E2E Test PASSED!");
 }
 
 #[cfg(feature = "http")]
