@@ -555,6 +555,10 @@ mod tests {
     fn test_performance_monitor() {
         let monitor = PerformanceMonitor::new(true);
         let span = monitor.start_span("test_operation");
+
+        // Add a tiny delay to ensure measurable duration
+        std::thread::sleep(std::time::Duration::from_nanos(100));
+
         let duration = span.finish();
 
         assert!(duration.as_nanos() > 0);

@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MCP Tools Request Schemas",
+  "definitions": {
+    "call_tool_request": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Tool name to call",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_-]*$"
+        },
+        "arguments": {
+          "type": "object",
+          "description": "Tool arguments",
+          "additionalProperties": true
+        },
+        "_meta": {
+          "type": "object",
+          "description": "Optional metadata per MCP 2025-06-18 specification"
+        }
+      },
+      "additionalProperties": false
+    },
+    "list_tools_request": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "string",
+          "description": "Pagination cursor"
+        },
+        "_meta": {
+          "type": "object",
+          "description": "Optional metadata per MCP 2025-06-18 specification"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -47,12 +47,13 @@ MCP server framework with OAuth 2.1 MCP compliance, middleware pipeline, and lif
 - Resource cleanup - Proper cleanup of connections, files, and threads
 - Health status - Shutdown status reporting for load balancers
 
-### SharedServer for Async Concurrency (New in v1.1.0)
-- Thread-safe server sharing - Share servers across multiple async tasks for monitoring
-- Consumption pattern - Safe server consumption for running while preserving access
-- Clean monitoring APIs - Access health, metrics, and configuration concurrently
+### Clone Pattern for Server Sharing (Axum/Tower Standard)
+- Cheap cloning - All heavy state is Arc-wrapped (just atomic increments)
+- Tower compatible - Same pattern as Axum's Router and Tower services
+- No wrapper types - Server is directly Clone (no Arc<McpServer> needed)
+- Concurrent access - Share across multiple async tasks for monitoring
 - Zero overhead - Same performance as direct server usage
-- Lifecycle management - Proper server extraction for running operations
+- Type safe - Same type whether cloned or not
 
 ## Architecture
 
@@ -555,23 +556,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `tracing` | Enable distributed tracing | ✅ |
 | `compression` | Enable response compression | ✅ |
 
-## SharedServer for Async Concurrency (v1.1.0)
+## Server Sharing with Clone (Axum/Tower Pattern)
 
-TurboMCP v1.1.0 introduces SharedServer - a thread-safe wrapper that enables concurrent monitoring while preserving the consumption pattern needed for server execution:
+TurboMCP follows the **Axum/Tower Clone pattern** for sharing server instances across tasks and threads. All heavy state is Arc-wrapped internally, making cloning cheap (just atomic reference count increments).
 
-### Basic SharedServer Usage
+### Basic Server Cloning
 
 ```rust
-use turbomcp_server::{McpServer, SharedServer, ServerConfig};
+use turbomcp_server::{ServerBuilder, ServerConfig};
 
-// Create and wrap server for monitoring
-let config = ServerConfig::default();
-let server = McpServer::new(config);
-let shared = SharedServer::new(server);
+// Create server (Clone-able)
+let server = ServerBuilder::new()
+    .name("MyServer")
+    .version("1.0.0")
+    .build();
 
-// Clone for monitoring tasks
-let monitor1 = shared.clone();
-let monitor2 = shared.clone();
+// Clone for monitoring tasks (cheap - just Arc increments)
+let monitor1 = server.clone();
+let monitor2 = server.clone();
 
 // Concurrent monitoring operations
 let health_task = tokio::spawn(async move {
@@ -584,48 +586,41 @@ let health_task = tokio::spawn(async move {
 
 let metrics_task = tokio::spawn(async move {
     loop {
-        if let Some(metrics) = monitor2.metrics().await {
-            println!("Server metrics: request_count={}", metrics.request_count());
-        }
+        let metrics = monitor2.metrics();
+        println!("Server metrics: request_count={}", metrics.request_count());
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
 });
 
-// Run the server (consumes the shared wrapper)
-shared.run_stdio().await?;
+// Run the server
+server.run_stdio().await?;
 ```
 
 ### Advanced Server Monitoring
 
 ```rust
-use turbomcp_server::{SharedServer, HealthStatus};
+use turbomcp_server::{ServerBuilder, HealthStatus};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
-// Comprehensive server monitoring setup
-let shared_server = SharedServer::new(server);
+let server = ServerBuilder::new().build();
 let shutdown_notify = Arc::new(Notify::new());
 
 // Health monitoring task
-let monitor = shared_server.clone();
+let monitor = server.clone();
 let notify = shutdown_notify.clone();
 let health_task = tokio::spawn(async move {
     loop {
         match monitor.health().await {
-            Some(HealthStatus::Healthy) => {
+            HealthStatus::Healthy => {
                 println!("✅ Server healthy");
             }
-            Some(HealthStatus::Degraded(reason)) => {
+            HealthStatus::Degraded(reason) => {
                 println!("⚠️ Server degraded: {}", reason);
             }
-            Some(HealthStatus::Unhealthy(reason)) => {
+            HealthStatus::Unhealthy(reason) => {
                 println!("❌ Server unhealthy: {}", reason);
-                // Trigger shutdown on health failure
                 notify.notify_one();
-                break;
-            }
-            None => {
-                println!("Server has been consumed");
                 break;
             }
         }
@@ -634,22 +629,18 @@ let health_task = tokio::spawn(async move {
 });
 
 // Metrics collection task
-let metrics_monitor = shared_server.clone();
+let metrics_monitor = server.clone();
 let metrics_task = tokio::spawn(async move {
     loop {
-        if let Some(metrics) = metrics_monitor.metrics().await {
-            // Send metrics to monitoring system
-            send_to_prometheus(metrics).await;
-        } else {
-            break; // Server consumed
-        }
+        let metrics = metrics_monitor.metrics();
+        send_to_prometheus(metrics).await;
         tokio::time::sleep(Duration::from_secs(60)).await;
     }
 });
 
 // Run server with monitoring
 let server_task = tokio::spawn(async move {
-    shared_server.run_stdio().await
+    server.run_stdio().await
 });
 
 // Wait for shutdown signal or server completion
@@ -663,80 +654,14 @@ tokio::select! {
 }
 ```
 
-### Management Dashboard Integration
+### Benefits of the Clone Pattern
 
-```rust
-use turbomcp_server::SharedServer;
-use axum::{Router, Json, response::Json as JsonResponse};
-
-// Web dashboard for server management
-async fn create_management_api(shared_server: SharedServer) -> Router {
-    let server_status = shared_server.clone();
-    let server_config = shared_server.clone();
-    let server_metrics = shared_server.clone();
-
-    Router::new()
-        .route("/status", get({
-            let server = server_status;
-            move || async move {
-                match server.health().await {
-                    Some(health) => JsonResponse(serde_json::json!({
-                        "status": "available",
-                        "health": health
-                    })),
-                    None => JsonResponse(serde_json::json!({
-                        "status": "running",
-                        "health": "consumed"
-                    }))
-                }
-            }
-        }))
-        .route("/config", get({
-            let server = server_config;
-            move || async move {
-                match server.config().await {
-                    Some(config) => JsonResponse(serde_json::json!(config)),
-                    None => JsonResponse(serde_json::json!({
-                        "error": "Server configuration unavailable"
-                    }))
-                }
-            }
-        }))
-        .route("/metrics", get({
-            let server = server_metrics;
-            move || async move {
-                match server.metrics().await {
-                    Some(metrics) => JsonResponse(serde_json::json!(metrics)),
-                    None => JsonResponse(serde_json::json!({
-                        "error": "Server metrics unavailable"
-                    }))
-                }
-            }
-        }))
-}
-
-// Usage
-let shared = SharedServer::new(server);
-let api = create_management_api(shared.clone()).await;
-
-// Start management API
-tokio::spawn(async move {
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await.unwrap();
-    axum::serve(listener, api).await.unwrap();
-});
-
-// Run main server
-shared.run_stdio().await?;
-```
-
-### Benefits
-
-- Concurrent Monitoring: Access health, metrics, and config while server runs
-- Consumption Safety: Server can be safely consumed for running
-- Clean APIs: No exposed Arc/Mutex types in monitoring interfaces
-- Zero Overhead: Same performance as direct server usage
-- Lifecycle Aware: Proper handling of server consumption state
-- Management Ready: Perfect for building monitoring dashboards
+- **Cheap Cloning**: Just atomic reference count increments (Arc-wrapped state)
+- **Tower Compatible**: Follows the same pattern as Axum's Router
+- **No Arc Wrappers**: No need for `Arc<McpServer>` - server is directly Clone
+- **Type Safe**: Same type whether cloned or not (no wrapper types)
+- **Zero Overhead**: Same performance as direct server usage
+- **Ecosystem Standard**: Matches Axum, Tower, Hyper conventions
 
 ## Development
 

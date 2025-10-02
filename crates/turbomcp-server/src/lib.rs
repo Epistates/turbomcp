@@ -143,7 +143,7 @@ pub mod registry;
 pub mod routing;
 pub mod sampling;
 pub mod server;
-pub mod shared;
+pub mod service;
 pub mod timeout;
 // #[cfg(feature = "http")]
 // pub mod simple_http;
@@ -158,8 +158,9 @@ pub use handlers::{
 pub use lifecycle::{HealthStatus, ServerLifecycle, ShutdownSignal};
 pub use metrics::{MetricsCollector, ServerMetrics};
 pub use middleware::{
-    AuthenticationMiddleware, LoggingMiddleware, Middleware, MiddlewareLayer, MiddlewareStack,
-    RateLimitMiddleware, SecurityHeadersConfig, SecurityHeadersMiddleware,
+    AuditConfig, AuditLayer, AuthConfig, AuthLayer, AuthzConfig, AuthzLayer, Claims,
+    MiddlewareStack, RateLimitConfig, RateLimitLayer, SecurityConfig, SecurityLayer, TimeoutConfig,
+    TimeoutLayer, ValidationConfig, ValidationLayer,
 };
 pub use observability::{
     ObservabilityConfig, ObservabilityGuard, OtlpProtocol, PerformanceMonitor, SamplingConfig,
@@ -168,7 +169,6 @@ pub use observability::{
 pub use registry::{HandlerRegistry, Registry, RegistryBuilder};
 pub use routing::{RequestRouter, Route, Router};
 pub use server::{McpServer, ServerBuilder, ShutdownHandle};
-pub use shared::SharedServer;
 
 // Re-export protocol types
 pub use turbomcp_protocol::jsonrpc::{
@@ -198,11 +198,40 @@ pub fn server() -> ServerBuilder {
 /// Prelude for common server functionality
 pub mod prelude {
     pub use crate::{
-        AuthenticationMiddleware, HealthStatus, LoggingMiddleware, McpServer, Middleware,
-        MiddlewareStack, PromptHandler, RateLimitMiddleware, Registry, RegistryBuilder,
-        RequestRouter, ResourceHandler, Router, SamplingHandler, SecurityHeadersConfig,
-        SecurityHeadersMiddleware, ServerBuilder, ServerConfig, ServerError, ServerLifecycle,
-        ServerResult, ToolHandler, default_config, server,
+        AuditConfig,
+        AuditLayer,
+        // World-class middleware
+        AuthConfig,
+        AuthLayer,
+        AuthzConfig,
+        AuthzLayer,
+        Claims,
+        HealthStatus,
+        McpServer,
+        MiddlewareStack,
+        PromptHandler,
+        RateLimitConfig,
+        RateLimitLayer,
+        Registry,
+        RegistryBuilder,
+        RequestRouter,
+        ResourceHandler,
+        Router,
+        SamplingHandler,
+        SecurityConfig,
+        SecurityLayer,
+        ServerBuilder,
+        ServerConfig,
+        ServerError,
+        ServerLifecycle,
+        ServerResult,
+        TimeoutConfig,
+        TimeoutLayer,
+        ToolHandler,
+        ValidationConfig,
+        ValidationLayer,
+        default_config,
+        server,
     };
 
     // Re-export macros

@@ -1,0 +1,49 @@
+# Casbin RBAC Policy for MCP Server
+# Format: p, role, resource, action
+# Format: g, user, role
+
+# Policy Definitions (p)
+# Admin role - full access to all MCP resources
+p, admin, mcp, *
+p, admin, tools, *
+p, admin, prompts, *
+p, admin, resources, *
+p, admin, completion, *
+p, admin, logging, *
+p, admin, sampling, *
+
+# Developer role - read/write access to development resources
+p, developer, mcp, request
+p, developer, tools, list
+p, developer, tools, call
+p, developer, prompts, list
+p, developer, prompts, get
+p, developer, resources, list
+p, developer, resources, read
+p, developer, completion, complete
+
+# User role - standard access to tools and prompts
+p, user, mcp, request
+p, user, tools, list
+p, user, tools, call
+p, user, prompts, list
+p, user, prompts, get
+p, user, resources, list
+p, user, resources, read
+
+# Read-only role - view-only access
+p, readonly, mcp, request
+p, readonly, tools, list
+p, readonly, prompts, list
+p, readonly, resources, list
+
+# Guest role - minimal access (public resources only)
+p, guest, mcp, list
+p, guest, tools, list
+
+# Role Assignments (g)
+# Example: g, alice, admin
+# g, alice, admin
+# g, bob, developer
+# g, charlie, user
+# g, dave, readonly
