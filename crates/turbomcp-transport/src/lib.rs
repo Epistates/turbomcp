@@ -146,7 +146,7 @@ pub mod stdio;
 pub mod tower;
 
 #[cfg(feature = "http")]
-pub mod axum_integration;
+pub mod axum;
 
 #[cfg(feature = "websocket")]
 pub mod websocket;
@@ -203,7 +203,7 @@ pub use tower::{SessionInfo, SessionManager, TowerTransportAdapter};
 
 // Re-export Axum integration
 #[cfg(feature = "http")]
-pub use axum_integration::{AxumMcpExt, McpAppState, McpServerConfig, McpService};
+pub use axum::{AxumMcpExt, McpAppState, McpServerConfig, McpService};
 
 #[cfg(feature = "websocket")]
 pub use websocket::WebSocketTransport;

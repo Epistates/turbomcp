@@ -69,9 +69,6 @@ once_cell = "1.19"
 # Development utilities
 wiremock = { version = "0.6", optional = true }
 
-# Security features
-turbomcp-security = { version = "1.1.0", path = "../turbomcp-security", optional = true }
-
 [dev-dependencies]
 criterion = { workspace = true }
 tokio-test = { workspace = true }
@@ -106,7 +103,4 @@ metrics = ["dep:metrics"]
 
 # Development features
 test-utils = ["dep:wiremock"]
-
-# Security features
-security = ["dep:turbomcp-security"]  # Enable security enhancements for transport layer
 

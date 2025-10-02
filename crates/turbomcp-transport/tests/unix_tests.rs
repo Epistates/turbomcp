@@ -540,13 +540,13 @@ mod unix_tests {
         // Create existing socket file
         std::fs::File::create(&socket_path).expect("Failed to create test socket");
 
-        let transport = UnixTransport::new_server(socket_path.clone());
+        let _transport = UnixTransport::new_server(socket_path.clone());
 
         // Test that we can run multiple concurrent cleanup operations
         // This will FAIL initially due to blocking I/O preventing proper async concurrency
         let handles = (0..3)
             .map(|i| {
-                let socket_path_clone = socket_path.clone();
+                let _socket_path_clone = socket_path.clone();
                 let transport_path = temp_dir.path().join(format!("concurrent_test_{}.sock", i));
 
                 tokio::spawn(async move {
@@ -623,7 +623,7 @@ mod unix_tests {
 
         {
             // Create transport in scope that will be dropped
-            let transport = UnixTransport::new_server(socket_path.clone());
+            let _transport = UnixTransport::new_server(socket_path.clone());
 
             // Force the transport to think it's a server with an active socket
             // The drop implementation should handle cleanup without blocking
