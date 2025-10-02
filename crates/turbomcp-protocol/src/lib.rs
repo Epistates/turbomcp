@@ -142,7 +142,9 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 // Re-export core functionality
-pub use turbomcp_core::{Error, Result};
+// Note: Error handling types (Error, Result) are intentionally NOT re-exported
+// from the protocol crate. This crate focuses on pure MCP protocol types.
+// Higher-level crates (server, client) should import error handling separately.
 
 // Core protocol modules
 pub mod capabilities;
@@ -164,6 +166,7 @@ pub use types::{
     ClientRequest,
     // Completion types
     CompleteRequestParams,
+    CompleteResult,
     CompletionReference,
     CompletionResponse,
     // Content types
@@ -178,6 +181,7 @@ pub use types::{
     ElicitationAction,
     ElicitationSchema,
     EmbeddedResource,
+    EmptyResult,
     GetPromptRequest,
     GetPromptResult,
     ImageContent,
@@ -221,6 +225,7 @@ pub use types::{
     // Resource Template types
     ResourceTemplate,
     ResourceUpdatedNotification,
+    Result,
     // Roots
     Root,
     RootsListChangedNotification,

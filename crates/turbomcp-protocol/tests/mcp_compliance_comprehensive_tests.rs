@@ -99,7 +99,7 @@ mod mcp_compliance_tests {
                 annotations: None,
                 meta: None,
             }),
-            model: None,
+            model: "test-model".to_string(),
             stop_reason: None,
             _meta: Some(json!({"message_meta": "test"})),
         };
@@ -216,9 +216,8 @@ mod mcp_compliance_tests {
             system_prompt: None,
             include_context: None,
             temperature: None,
-            max_tokens: 100,
+            max_tokens: Some(100),
             stop_sequences: None,
-            metadata: None,
             _meta: Some(json!({"message_meta": "test"})),
         };
         let serialized = serde_json::to_string(&message_request).unwrap();
@@ -294,19 +293,22 @@ mod mcp_compliance_tests {
         assert!(parsed.get("structuredContent").is_none());
     }
 
-    /// Test that parameter structures support _meta fields for request metadata
+    /// Test that parameter structures support proper serialization
     #[test]
     fn test_parameter_structures_support_meta() {
         // Test ElicitRequestParams
         let elicit_params = ElicitRequestParams {
             message: "Please provide input".to_string(),
-            requested_schema: ElicitationSchema::new(),
-            _meta: Some(json!({"elicit_meta": "test"})),
+            schema: ElicitationSchema::new(),
+            timeout_ms: None,
+            cancellable: None,
         };
         let serialized = serde_json::to_string(&elicit_params).unwrap();
         let parsed: Value = serde_json::from_str(&serialized).unwrap();
-        // Note: due to camelCase rename_all, _meta becomes "meta" in JSON
-        assert!(parsed.get("meta").is_some());
+        // Verify message field is present
+        assert!(parsed.get("message").is_some());
+        // Verify requestedSchema is present with camelCase
+        assert!(parsed.get("requestedSchema").is_some());
 
         // Test CompleteRequestParams
         let complete_params = CompleteRequestParams {
@@ -318,11 +320,11 @@ mod mcp_compliance_tests {
                 uri: "file://test".to_string(),
             }),
             context: None,
-            _meta: Some(json!({"complete_meta": "test"})),
         };
         let serialized = serde_json::to_string(&complete_params).unwrap();
-        let parsed: Value = serde_json::from_str(&serialized).unwrap();
-        assert!(parsed.get("_meta").is_some());
+        let _parsed: Value = serde_json::from_str(&serialized).unwrap();
+        // Note: CompleteRequestParams does not have _meta field per MCP spec
+        // Only CompleteResult has _meta field
     }
 
     /// Test comprehensive JSON-RPC roundtrip with _meta fields

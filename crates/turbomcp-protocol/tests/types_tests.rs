@@ -601,7 +601,7 @@ fn test_initialize_result() {
 
 #[test]
 fn test_list_tools_request() {
-    let request = ListToolsRequest;
+    let request = ListToolsRequest::default();
     let json = serde_json::to_string(&request).unwrap();
     let _deserialized: ListToolsRequest = serde_json::from_str(&json).unwrap();
 }
@@ -835,9 +835,9 @@ fn test_resource_content_variants() {
 
 #[test]
 fn test_empty_request_types() {
-    let _list_tools = ListToolsRequest;
-    let _list_prompts = ListPromptsRequest;
-    let _list_roots = ListRootsRequest;
+    let _list_tools = ListToolsRequest::default();
+    let _list_prompts = ListPromptsRequest::default();
+    let _list_roots = ListRootsRequest::default();
     let _initialized = InitializedNotification;
     let _set_level_result = SetLevelResult;
     let _roots_changed = RootsListChangedNotification;
@@ -867,7 +867,7 @@ fn test_client_request_variants() {
         _meta: None,
     });
 
-    let list_tools = ClientRequest::ListTools(ListToolsRequest);
+    let list_tools = ClientRequest::ListTools(ListToolsRequest::default());
 
     match init_request {
         ClientRequest::Initialize(req) => assert_eq!(req.protocol_version, "1.0.0"),
@@ -896,9 +896,8 @@ fn test_client_notification_variants() {
     let initialized = ClientNotification::Initialized(InitializedNotification);
     let progress = ClientNotification::Progress(ProgressNotification {
         progress_token: ProgressToken::String("token".to_string()),
-        progress: 50.0,
-        total: Some(100.0),
-        message: Some("Half done".to_string()),
+        progress: Some(50.0),
+        total: Some(100),
     });
 
     match initialized {
@@ -907,7 +906,7 @@ fn test_client_notification_variants() {
     }
 
     match progress {
-        ClientNotification::Progress(notif) => assert_eq!(notif.progress, 50.0),
+        ClientNotification::Progress(notif) => assert_eq!(notif.progress, Some(50.0)),
         _ => panic!("Expected progress notification"),
     }
 }
@@ -929,18 +928,16 @@ fn test_include_context_variants() {
 #[test]
 fn test_model_preferences() {
     let prefs = ModelPreferences {
-        hints: Some(vec![ModelHint {
-            name: "fast".to_string(),
-        }]),
-        cost_priority: Some(0.8),
-        speed_priority: Some(0.9),
-        intelligence_priority: Some(0.7),
+        hints: Some(vec!["fast".to_string()]),
+        cost_tier: Some(CostTier::Low),
+        speed_tier: Some(SpeedTier::High),
+        intelligence_tier: Some(IntelligenceTier::Medium),
     };
 
     assert!(prefs.hints.is_some());
-    assert_eq!(prefs.cost_priority, Some(0.8));
-    assert_eq!(prefs.speed_priority, Some(0.9));
-    assert_eq!(prefs.intelligence_priority, Some(0.7));
+    assert_eq!(prefs.cost_tier, Some(CostTier::Low));
+    assert_eq!(prefs.speed_tier, Some(SpeedTier::High));
+    assert_eq!(prefs.intelligence_tier, Some(IntelligenceTier::Medium));
 }
 
 #[test]
@@ -1014,20 +1011,14 @@ fn test_sampling_api_comprehensive_workflow() {
             annotations: None,
             meta: None,
         }),
+        metadata: None,
     };
 
     let model_preferences = ModelPreferences {
-        hints: Some(vec![
-            ModelHint {
-                name: "claude-3-5-sonnet".to_string(),
-            },
-            ModelHint {
-                name: "fast".to_string(),
-            },
-        ]),
-        cost_priority: Some(0.3),
-        speed_priority: Some(0.8),
-        intelligence_priority: Some(0.9),
+        hints: Some(vec!["claude-3-5-sonnet".to_string(), "fast".to_string()]),
+        cost_tier: Some(CostTier::Low),
+        speed_tier: Some(SpeedTier::High),
+        intelligence_tier: Some(IntelligenceTier::High),
     };
 
     let mut metadata = HashMap::new();
@@ -1040,9 +1031,8 @@ fn test_sampling_api_comprehensive_workflow() {
         system_prompt: Some("You are a helpful assistant for testing.".to_string()),
         include_context: Some(IncludeContext::ThisServer),
         temperature: Some(0.7),
-        max_tokens: 1000,
+        max_tokens: Some(1000),
         stop_sequences: Some(vec!["STOP".to_string(), "END".to_string()]),
-        metadata: Some(metadata.clone()),
         _meta: None,
     };
 
@@ -1055,12 +1045,12 @@ fn test_sampling_api_comprehensive_workflow() {
     assert_eq!(deserialized.messages[0].role, Role::User);
 
     let model_prefs = deserialized.model_preferences.as_ref().unwrap();
-    assert_eq!(model_prefs.cost_priority, Some(0.3));
-    assert_eq!(model_prefs.speed_priority, Some(0.8));
-    assert_eq!(model_prefs.intelligence_priority, Some(0.9));
+    assert_eq!(model_prefs.cost_tier, Some(CostTier::Low));
+    assert_eq!(model_prefs.speed_tier, Some(SpeedTier::High));
+    assert_eq!(model_prefs.intelligence_tier, Some(IntelligenceTier::High));
     assert_eq!(model_prefs.hints.as_ref().unwrap().len(), 2);
     assert_eq!(
-        model_prefs.hints.as_ref().unwrap()[0].name,
+        model_prefs.hints.as_ref().unwrap()[0],
         "claude-3-5-sonnet".to_string()
     );
 
@@ -1073,12 +1063,8 @@ fn test_sampling_api_comprehensive_workflow() {
         Some(IncludeContext::ThisServer)
     );
     assert_eq!(deserialized.temperature, Some(0.7));
-    assert_eq!(deserialized.max_tokens, 1000);
+    assert_eq!(deserialized.max_tokens, Some(1000));
     assert_eq!(deserialized.stop_sequences.as_ref().unwrap().len(), 2);
-    assert_eq!(
-        deserialized.metadata.as_ref().unwrap()["provider"],
-        json!("anthropic")
-    );
 }
 
 #[test]
@@ -1086,8 +1072,8 @@ fn test_sampling_api_context_inclusion_serialization() {
     // Test all IncludeContext variants serialize correctly per MCP spec
     let test_cases = vec![
         (IncludeContext::None, "\"none\""),
-        (IncludeContext::ThisServer, "\"thisserver\""),
-        (IncludeContext::AllServers, "\"allservers\""),
+        (IncludeContext::ThisServer, "\"thisServer\""),
+        (IncludeContext::AllServers, "\"allServers\""),
     ];
 
     for (context, expected_json) in test_cases {
@@ -1104,17 +1090,20 @@ fn test_sampling_api_model_preferences_validation() {
     // Test priority value ranges per MCP spec (0.0 to 1.0)
     let valid_prefs = ModelPreferences {
         hints: None,
-        cost_priority: Some(0.0),
-        speed_priority: Some(1.0),
-        intelligence_priority: Some(0.5),
+        cost_tier: Some(CostTier::Low),
+        speed_tier: Some(SpeedTier::High),
+        intelligence_tier: Some(IntelligenceTier::Medium),
     };
 
     let json = serde_json::to_string(&valid_prefs).unwrap();
     let deserialized: ModelPreferences = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(deserialized.cost_priority, Some(0.0));
-    assert_eq!(deserialized.speed_priority, Some(1.0));
-    assert_eq!(deserialized.intelligence_priority, Some(0.5));
+    assert_eq!(deserialized.cost_tier, Some(CostTier::Low));
+    assert_eq!(deserialized.speed_tier, Some(SpeedTier::High));
+    assert_eq!(
+        deserialized.intelligence_tier,
+        Some(IntelligenceTier::Medium)
+    );
 }
 
 #[test]
@@ -1127,7 +1116,7 @@ fn test_create_message_result_complete() {
             annotations: None,
             meta: None,
         }),
-        model: Some("claude-3-5-sonnet-20241022".to_string()),
+        model: "claude-3-5-sonnet-20241022".to_string(),
         stop_reason: Some("stop_sequence".to_string()),
         _meta: None,
     };
@@ -1136,10 +1125,7 @@ fn test_create_message_result_complete() {
     let deserialized: CreateMessageResult = serde_json::from_str(&json).unwrap();
 
     assert_eq!(deserialized.role, Role::Assistant);
-    assert_eq!(
-        deserialized.model,
-        Some("claude-3-5-sonnet-20241022".to_string())
-    );
+    assert_eq!(deserialized.model, "claude-3-5-sonnet-20241022".to_string());
     assert_eq!(deserialized.stop_reason, Some("stop_sequence".to_string()));
 
     if let Content::Text(text_content) = &deserialized.content {
