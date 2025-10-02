@@ -435,6 +435,62 @@ pub trait ResourceUpdateHandler: Send + Sync + std::fmt::Debug {
 }
 
 // ============================================================================
+// ROOTS HANDLER TRAIT
+// ============================================================================
+
+/// Roots handler for responding to server requests for filesystem roots
+///
+/// Per MCP 2025-06-18 specification, `roots/list` is a SERVER->CLIENT request.
+/// Servers ask clients what filesystem roots (directories/files) they have access to.
+/// This is commonly used when servers need to understand their operating boundaries,
+/// such as which repositories or project directories they can access.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use turbomcp_client::handlers::{RootsHandler, HandlerResult};
+/// use turbomcp_protocol::types::Root;
+/// use async_trait::async_trait;
+///
+/// #[derive(Debug)]
+/// struct MyRootsHandler {
+///     project_dirs: Vec<String>,
+/// }
+///
+/// #[async_trait]
+/// impl RootsHandler for MyRootsHandler {
+///     async fn handle_roots_request(&self) -> HandlerResult<Vec<Root>> {
+///         Ok(self.project_dirs
+///             .iter()
+///             .map(|dir| Root {
+///                 uri: format!("file://{}", dir).into(),
+///                 name: Some(dir.split('/').last().unwrap_or("").to_string()),
+///             })
+///             .collect())
+///     }
+/// }
+/// ```
+#[async_trait]
+pub trait RootsHandler: Send + Sync + std::fmt::Debug {
+    /// Handle a roots/list request from the server
+    ///
+    /// This method is called when the server wants to know which filesystem roots
+    /// the client has available. The implementation should return a list of Root
+    /// objects representing directories or files the server can operate on.
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of Root objects, each with a URI (must start with file://)
+    /// and optional human-readable name.
+    ///
+    /// # Note
+    ///
+    /// Per MCP specification, URIs must start with `file://` for now. This restriction
+    /// may be relaxed in future protocol versions.
+    async fn handle_roots_request(&self) -> HandlerResult<Vec<turbomcp_protocol::types::Root>>;
+}
+
+// ============================================================================
 // HANDLER REGISTRY FOR CLIENT
 // ============================================================================
 
@@ -445,6 +501,9 @@ pub trait ResourceUpdateHandler: Send + Sync + std::fmt::Debug {
 /// to dispatch server-initiated requests to the appropriate handlers.
 #[derive(Debug, Default)]
 pub struct HandlerRegistry {
+    /// Roots handler for filesystem root requests
+    pub roots: Option<Arc<dyn RootsHandler>>,
+
     /// Elicitation handler for user input requests
     pub elicitation: Option<Arc<dyn ElicitationHandler>>,
 
@@ -462,6 +521,12 @@ impl HandlerRegistry {
     /// Create a new empty handler registry
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Register a roots handler
+    pub fn set_roots_handler(&mut self, handler: Arc<dyn RootsHandler>) {
+        debug!("Registering roots handler");
+        self.roots = Some(handler);
     }
 
     /// Register an elicitation handler
@@ -488,6 +553,11 @@ impl HandlerRegistry {
         self.resource_update = Some(handler);
     }
 
+    /// Check if a roots handler is registered
+    pub fn has_roots_handler(&self) -> bool {
+        self.roots.is_some()
+    }
+
     /// Check if an elicitation handler is registered
     pub fn has_elicitation_handler(&self) -> bool {
         self.elicitation.is_some()
@@ -506,6 +576,21 @@ impl HandlerRegistry {
     /// Check if a resource update handler is registered
     pub fn has_resource_update_handler(&self) -> bool {
         self.resource_update.is_some()
+    }
+
+    /// Handle a roots/list request from the server
+    pub async fn handle_roots_request(&self) -> HandlerResult<Vec<turbomcp_protocol::types::Root>> {
+        match &self.roots {
+            Some(handler) => {
+                info!("Processing roots/list request from server");
+                handler.handle_roots_request().await
+            }
+            None => {
+                warn!("No roots handler registered, returning empty roots list");
+                // Return empty list per MCP spec - client has no roots available
+                Ok(Vec::new())
+            }
+        }
     }
 
     /// Handle an elicitation request
