@@ -69,10 +69,10 @@ All transport protocols provide MCP protocol compliance with bidirectional commu
 - **Connection health monitoring** - Automatic failure detection
 - **Graceful degradation** - Fallback mechanisms
 
-### 🔄 **Shared Wrappers for Async Concurrency** (New in v1.1.0)
+### 🔄 **Sharing Patterns for Async Concurrency**
 - **SharedClient** - Thread-safe client access with clean APIs
 - **SharedTransport** - Concurrent transport sharing across async tasks
-- **SharedServer** - Server lifecycle management with consumption pattern
+- **McpServer Clone Pattern** - Axum/Tower standard (cheap Arc increments, no wrappers)
 - **Generic Shareable Pattern** - Shared<T> and ConsumableShared<T> abstractions
 - **Arc/Mutex Encapsulation** - Hide synchronization complexity from public APIs
 
