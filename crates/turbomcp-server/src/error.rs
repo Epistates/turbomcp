@@ -432,6 +432,10 @@ impl From<Box<turbomcp_core::Error>> for ServerError {
                 Self::Internal(format!("Operation cancelled: {}", core_error.message))
             }
             ErrorKind::Internal => Self::Internal(core_error.message),
+            ErrorKind::Security => Self::Authorization {
+                message: format!("Security error: {}", core_error.message),
+                resource: None,
+            },
         }
     }
 }
