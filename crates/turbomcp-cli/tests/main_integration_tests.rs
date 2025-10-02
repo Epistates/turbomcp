@@ -293,7 +293,7 @@ async fn test_cmd_tools_call_invalid_arguments() {
     assert!(result.is_err());
 
     if let Err(e) = result {
-        assert!(e.contains("invalid --arguments JSON") || e.contains("JSON"));
+        assert!(e.contains("Invalid JSON arguments") || e.contains("JSON"));
     }
 }
 
