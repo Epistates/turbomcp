@@ -97,7 +97,7 @@ impl SamplingHandler for DemoSamplingHandler {
                 annotations: None,
                 meta: None,
             }),
-            model: Some("demo-llm-v1".to_string()),
+            model: "demo-llm-v1".to_string(),
             stop_reason: Some("complete".to_string()),
             _meta: None,
         })

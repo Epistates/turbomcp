@@ -834,7 +834,7 @@ pub trait LLMProvider: Send + Sync + std::fmt::Debug {
 
         // Build generation parameters
         let params = GenerationParams {
-            max_tokens: Some(request.max_tokens as i32),
+            max_tokens: request.max_tokens.map(|t| t as i32),
             temperature: request.temperature.map(|t| t as f32),
             stop_sequences: request.stop_sequences.clone(),
             ..Default::default()
@@ -845,7 +845,7 @@ pub trait LLMProvider: Send + Sync + std::fmt::Debug {
             && let Some(hints) = &prefs.hints
             && let Some(model_hint) = hints.first()
         {
-            model_hint.name.clone()
+            model_hint.clone()
         } else {
             // Use first available model
             let models = self.list_models().await.unwrap_or_default();
@@ -870,7 +870,7 @@ pub trait LLMProvider: Send + Sync + std::fmt::Debug {
                 annotations: None,
                 meta: None,
             }),
-            model: Some(llm_response.model),
+            model: llm_response.model,
             stop_reason: llm_response.stop_reason,
             _meta: None,
         };

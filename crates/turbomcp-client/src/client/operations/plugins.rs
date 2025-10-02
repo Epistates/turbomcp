@@ -1,0 +1,72 @@
+//! Plugin management operations for MCP client
+//!
+//! This module provides methods for registering and managing client plugins
+//! that extend functionality through middleware.
+
+use turbomcp_core::{Error, Result};
+
+impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
+    /// Register a plugin with the client
+    ///
+    /// # Arguments
+    ///
+    /// * `plugin` - The plugin to register
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::plugins::{MetricsPlugin, PluginConfig};
+    /// use std::sync::Arc;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let mut client = turbomcp_client::Client::new(turbomcp_transport::stdio::StdioTransport::new());
+    /// let metrics_plugin = Arc::new(MetricsPlugin::new(PluginConfig::Metrics));
+    /// client.register_plugin(metrics_plugin).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn register_plugin(
+        &mut self,
+        plugin: std::sync::Arc<dyn crate::plugins::ClientPlugin>,
+    ) -> Result<()> {
+        self.plugin_registry
+            .register_plugin(plugin)
+            .await
+            .map_err(|e| Error::bad_request(format!("Failed to register plugin: {}", e)))
+    }
+
+    /// Check if a plugin is registered
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the plugin to check
+    pub fn has_plugin(&self, name: &str) -> bool {
+        self.plugin_registry.has_plugin(name)
+    }
+
+    /// Get plugin data for a specific plugin type
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the plugin
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::plugins::MetricsPlugin;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client = turbomcp_client::Client::new(turbomcp_transport::stdio::StdioTransport::new());
+    /// if let Some(plugin) = client.get_plugin("metrics") {
+    ///     // Use plugin data
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_plugin(
+        &self,
+        name: &str,
+    ) -> Option<std::sync::Arc<dyn crate::plugins::ClientPlugin>> {
+        self.plugin_registry.get_plugin(name)
+    }
+}
