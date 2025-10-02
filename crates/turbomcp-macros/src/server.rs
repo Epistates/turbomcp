@@ -21,7 +21,17 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
     };
     // Extract the struct name from the impl block
     let struct_name = match &*input_impl.self_ty {
-        syn::Type::Path(type_path) => &type_path.path.segments.last().unwrap().ident,
+        syn::Type::Path(type_path) => match type_path.path.segments.last() {
+            Some(segment) => &segment.ident,
+            None => {
+                return syn::Error::new_spanned(
+                    &type_path.path,
+                    "Expected a valid type path with at least one segment",
+                )
+                .to_compile_error()
+                .into();
+            }
+        },
         _ => {
             return syn::Error::new(
                 proc_macro2::Span::call_site(),
@@ -183,7 +193,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                         tools.push((
                             name.to_string(),
                             description.to_string(),
-                            schema
+                            serde_json::to_value(&schema).unwrap()
                         ));
                     }
                 )*

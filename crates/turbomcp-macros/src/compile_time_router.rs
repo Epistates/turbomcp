@@ -27,7 +27,7 @@ pub fn generate_router(
                     serde_json::json!({
                         "name": name,
                         "description": description,
-                        "inputSchema": schema
+                        "inputSchema": serde_json::to_value(&schema).unwrap()
                     })
                 }
             }
@@ -164,10 +164,20 @@ pub fn generate_router(
                                 }],
                                 _meta: None,
                             };
-                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
-                                serde_json::to_value(get_prompt_result).unwrap(),
-                                req.id.clone()
-                            )
+                            match serde_json::to_value(&get_prompt_result) {
+                                Ok(value) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
+                                    value,
+                                    req.id.clone()
+                                ),
+                                Err(e) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                    ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                                        code: -32603,
+                                        message: format!("Failed to serialize prompt result: {}", e),
+                                        data: None,
+                                    },
+                                    req.id.clone()
+                                )
+                            }
                         }
                         Err(e) => {
                             ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
@@ -227,10 +237,20 @@ pub fn generate_router(
                                 })],
                                 _meta: None,
                             };
-                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
-                                serde_json::to_value(read_resource_result).unwrap(),
-                                req.id.clone()
-                            )
+                            match serde_json::to_value(&read_resource_result) {
+                                Ok(value) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
+                                    value,
+                                    req.id.clone()
+                                ),
+                                Err(e) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                    ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                                        code: -32603,
+                                        message: format!("Failed to serialize resource result: {}", e),
+                                        data: None,
+                                    },
+                                    req.id.clone()
+                                )
+                            }
                         }
                         Err(e) => {
                             ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
@@ -581,7 +601,10 @@ pub fn generate_router(
                                         };
 
                                         let response = server.clone().handle_request(request).await;
-                                        let response_str = serde_json::to_string(&response).unwrap();
+                                        let response_str = match serde_json::to_string(&response) {
+                                            Ok(s) => s,
+                                            Err(_) => continue, // Skip this response if serialization fails
+                                        };
                                         let _ = writer.write_all(response_str.as_bytes()).await;
                                         let _ = writer.write_all(b"\n").await;
                                         let _ = writer.flush().await;
@@ -643,7 +666,10 @@ pub fn generate_router(
                                         };
 
                                         let response = server.clone().handle_request(request).await;
-                                        let response_str = serde_json::to_string(&response).unwrap();
+                                        let response_str = match serde_json::to_string(&response) {
+                                            Ok(s) => s,
+                                            Err(_) => continue, // Skip this response if serialization fails
+                                        };
                                         let _ = writer.write_all(response_str.as_bytes()).await;
                                         let _ = writer.write_all(b"\n").await;
                                         let _ = writer.flush().await;
