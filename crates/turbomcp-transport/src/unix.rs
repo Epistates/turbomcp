@@ -13,9 +13,6 @@ use tokio_util::codec::{Framed, LinesCodec};
 use tracing::{debug, error, info, warn};
 use uuid;
 
-#[cfg(feature = "security")]
-use turbomcp_security::{FileSecurityValidator, SecurityError, SecurityResult};
-
 use crate::core::{
     Transport, TransportCapabilities, TransportError, TransportMessage, TransportMetrics,
     TransportResult, TransportState, TransportType,
@@ -41,9 +38,6 @@ pub struct UnixTransport {
     state: TransportState,
     /// Transport metrics
     metrics: TransportMetrics,
-    /// Security validator for socket paths
-    #[cfg(feature = "security")]
-    security_validator: Option<Arc<FileSecurityValidator>>,
 }
 
 impl UnixTransport {
@@ -64,32 +58,12 @@ impl UnixTransport {
             },
             state: TransportState::Disconnected,
             metrics: TransportMetrics::default(),
-            #[cfg(feature = "security")]
-            security_validator: None,
         }
     }
 
     /// Create a new Unix socket transport for server mode with security validation
-    #[cfg(feature = "security")]
     #[must_use]
-    pub fn new_server_secure(socket_path: PathBuf, validator: Arc<FileSecurityValidator>) -> Self {
-        Self {
-            socket_path,
-            is_server: true,
-            sender: None,
-            receiver: None,
-            connections: Arc::new(Mutex::new(HashMap::new())),
-            capabilities: TransportCapabilities {
-                supports_bidirectional: true,
-                supports_streaming: true,
-                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
-                ..Default::default()
-            },
-            state: TransportState::Disconnected,
-            metrics: TransportMetrics::default(),
-            security_validator: Some(validator),
-        }
-    }
+    
 
     /// Create a new Unix socket transport for client mode
     #[must_use]
@@ -108,50 +82,15 @@ impl UnixTransport {
             },
             state: TransportState::Disconnected,
             metrics: TransportMetrics::default(),
-            #[cfg(feature = "security")]
-            security_validator: None,
         }
     }
 
     /// Create a new Unix socket transport for client mode with security validation
-    #[cfg(feature = "security")]
     #[must_use]
-    pub fn new_client_secure(socket_path: PathBuf, validator: Arc<FileSecurityValidator>) -> Self {
-        Self {
-            socket_path,
-            is_server: false,
-            sender: None,
-            receiver: None,
-            connections: Arc::new(Mutex::new(HashMap::new())),
-            capabilities: TransportCapabilities {
-                supports_bidirectional: true,
-                supports_streaming: true,
-                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
-                ..Default::default()
-            },
-            state: TransportState::Disconnected,
-            metrics: TransportMetrics::default(),
-            security_validator: Some(validator),
-        }
-    }
+    
 
     /// Start Unix socket server
     async fn start_server(&mut self) -> TransportResult<()> {
-        // Validate socket path through security layer if available
-        #[cfg(feature = "security")]
-        if let Some(ref validator) = self.security_validator {
-            let validated_path = validator
-                .validate_socket_path(&self.socket_path)
-                .await
-                .map_err(|e| {
-                    TransportError::ConfigurationError(format!(
-                        "Socket path security validation failed: {e}"
-                    ))
-                })?;
-
-            // Update socket path with validated path
-            self.socket_path = validated_path;
-        }
 
         // Remove existing socket file if it exists (ASYNC - Non-blocking!)
         if self.socket_path.exists() {
@@ -215,22 +154,6 @@ impl UnixTransport {
     /// Connect to Unix socket server using standard practices
     /// Following the proven TCP transport pattern for consistent architecture
     async fn connect_client(&mut self) -> TransportResult<()> {
-        // Validate socket path through security layer if available
-        #[cfg(feature = "security")]
-        if let Some(ref validator) = self.security_validator {
-            let validated_path = validator
-                .validate_socket_path(&self.socket_path)
-                .await
-                .map_err(|e| {
-                    TransportError::ConfigurationError(format!(
-                        "Socket path security validation failed: {e}"
-                    ))
-                })?;
-
-            // Update socket path with validated path
-            self.socket_path = validated_path;
-        }
-
         info!("Connecting to Unix socket at {:?}", self.socket_path);
         self.state = TransportState::Connecting;
 

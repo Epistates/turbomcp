@@ -264,8 +264,8 @@ impl<T: Transport> BidirectionalTransportWrapper<T> {
         handler: mpsc::Sender<TransportMessage>,
     ) {
         let key = match request_type {
-            ServerInitiatedType::CreateMessage => "sampling/createMessage",
-            ServerInitiatedType::ListRoots => "roots/list",
+            ServerInitiatedType::Sampling => "sampling/createMessage",
+            ServerInitiatedType::Roots => "roots/list",
             ServerInitiatedType::Elicitation => "elicitation/create",
             ServerInitiatedType::Ping => "ping",
         };
@@ -413,8 +413,8 @@ fn detect_server_initiated_type(message: &TransportMessage) -> Option<ServerInit
     let message_type = extract_message_type(message);
 
     match message_type.as_str() {
-        "sampling/createMessage" => Some(ServerInitiatedType::CreateMessage),
-        "roots/list" => Some(ServerInitiatedType::ListRoots),
+        "sampling/createMessage" => Some(ServerInitiatedType::Sampling),
+        "roots/list" => Some(ServerInitiatedType::Roots),
         "elicitation/create" => Some(ServerInitiatedType::Elicitation),
         "ping" => Some(ServerInitiatedType::Ping),
         _ => None,
