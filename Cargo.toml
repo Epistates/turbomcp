@@ -10,8 +10,8 @@ members = [
     "crates/turbomcp-cli",
     "crates/turbomcp",
     "crates/turbomcp-macros",
-    "crates/turbomcp-dpop",
-    "crates/turbomcp-security",
+    # "crates/turbomcp-dpop", # INTEGRATED: DPoP functionality moved to turbomcp/src/auth/dpop/
+    # "crates/turbomcp-security", # DISSOLVED: Security functionality moved to individual crates per ephemeral strategy
     "demo",
 ]
 resolver = "2"
@@ -147,7 +147,7 @@ turbomcp-client = { version = "1.1.2", path = "crates/turbomcp-client" }
 turbomcp-server = { version = "1.1.2", path = "crates/turbomcp-server" }
 turbomcp-macros = { version = "1.1.2", path = "crates/turbomcp-macros" }
 turbomcp-cli = { version = "1.1.2", path = "crates/turbomcp-cli" }
-turbomcp-dpop = { version = "1.1.2", path = "crates/turbomcp-dpop" }
+# turbomcp-dpop = { version = "1.1.2", path = "crates/turbomcp-dpop" }  # INTEGRATED into turbomcp/src/auth/dpop/
 
 [profile.dev]
 opt-level = 1
