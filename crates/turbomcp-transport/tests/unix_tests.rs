@@ -498,6 +498,10 @@ mod unix_tests {
             "Test socket file should exist before cleanup"
         );
 
+        // Get the old file metadata to verify it's replaced
+        let old_metadata =
+            std::fs::metadata(&socket_path).expect("Failed to get old file metadata");
+
         // Create transport that should clean up the existing socket
         let mut transport = UnixTransport::new_server(socket_path.clone());
 
@@ -506,8 +510,7 @@ mod unix_tests {
         let result = transport.connect().await;
         let cleanup_duration = start_time.elapsed();
 
-        // This test will FAIL initially because we're using blocking std::fs::remove_file
-        // After fix: should complete quickly using tokio::fs::remove_file
+        // Should complete quickly using tokio::fs::remove_file (async I/O)
         assert!(
             cleanup_duration.as_millis() < 100,
             "Socket cleanup took {}ms - should be <100ms for async I/O",
@@ -517,15 +520,26 @@ mod unix_tests {
         // Verify operation succeeded
         match result {
             Ok(_) => {
-                // File should be removed by successful connect
+                // New socket file should exist (created by bind)
                 assert!(
-                    !socket_path.exists(),
-                    "Socket file should be removed after connect"
+                    socket_path.exists(),
+                    "New socket file should exist after connect"
+                );
+
+                // Verify it's a socket, not our fake file
+                let new_metadata =
+                    std::fs::metadata(&socket_path).expect("Failed to get new file metadata");
+                assert_ne!(
+                    old_metadata.len(),
+                    new_metadata.len(),
+                    "Socket file should be replaced (old: {} bytes, new: {} bytes)",
+                    old_metadata.len(),
+                    new_metadata.len()
                 );
             }
             Err(e) => {
-                // If connect failed, at least verify file was attempted to be removed
-                println!("connect failed as expected during initial test: {}", e);
+                // If connect failed, at least verify cleanup was attempted
+                println!("connect failed during test: {}", e);
             }
         }
     }

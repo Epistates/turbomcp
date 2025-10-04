@@ -30,7 +30,7 @@ pub mod common {
     use turbomcp_core::Result as McpResult;
 
     /// Test MCP service implementation for use in tests
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub struct TestMcpService;
 
     #[async_trait::async_trait]

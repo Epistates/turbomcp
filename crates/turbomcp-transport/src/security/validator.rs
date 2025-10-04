@@ -67,8 +67,11 @@ impl SecurityValidator {
     /// Per MCP 2025-06-18 specification:
     /// "Servers MUST validate the Origin header on all incoming connections
     /// to prevent DNS rebinding attacks"
-    pub fn validate_origin(&self, headers: &SecurityHeaders) -> Result<(), SecurityError> {
-        validate_origin(&self.origin_config, headers)
+    ///
+    /// Smart localhost handling: localhost→localhost connections without Origin are allowed
+    /// (DNS rebinding attacks require remote origins, so localhost clients are inherently safe)
+    pub fn validate_origin(&self, headers: &SecurityHeaders, client_ip: IpAddr) -> Result<(), SecurityError> {
+        validate_origin(&self.origin_config, headers, client_ip)
     }
 
     /// Validate authentication credentials
@@ -90,8 +93,8 @@ impl SecurityValidator {
         headers: &SecurityHeaders,
         client_ip: IpAddr,
     ) -> Result<(), SecurityError> {
-        // 1. Validate Origin header (DNS rebinding protection)
-        self.validate_origin(headers)?;
+        // 1. Validate Origin header (DNS rebinding protection with smart localhost handling)
+        self.validate_origin(headers, client_ip)?;
 
         // 2. Validate authentication
         self.validate_authentication(headers)?;
@@ -302,7 +305,7 @@ mod tests {
         let client_ip = "127.0.0.1".parse().unwrap();
 
         // Test individual validation methods
-        assert!(validator.validate_origin(&headers).is_ok());
+        assert!(validator.validate_origin(&headers, client_ip).is_ok());
         assert!(validator.validate_authentication(&headers).is_ok());
         assert!(validator.check_rate_limit(client_ip).is_ok());
     }

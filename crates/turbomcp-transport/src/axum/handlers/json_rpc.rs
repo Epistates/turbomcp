@@ -1,9 +1,9 @@
 //! JSON-RPC HTTP handler for MCP requests
 
 use axum::{
+    Json,
     extract::{Extension, State},
     http::StatusCode,
-    Json,
 };
 use tracing::{error, trace};
 

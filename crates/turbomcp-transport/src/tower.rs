@@ -2,7 +2,7 @@
 //!
 //! This module provides a bridge between Tower services and the TurboMCP Transport trait,
 //! enabling seamless integration with the broader Tower ecosystem including Axum, Hyper,
-//! and Tonic while maintaining our production-grade observability and error handling.
+//! and Tonic while maintaining our proven observability and error handling.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -218,7 +218,7 @@ impl Default for SessionManager {
 /// Tower service adapter that implements the Transport trait
 ///
 /// This adapter bridges Tower services with TurboMCP's Transport interface,
-/// providing comprehensive error handling, metrics collection, and session management.
+/// providing error handling, metrics collection, and session management.
 #[derive(Debug)]
 pub struct TowerTransportAdapter {
     /// Transport capabilities

@@ -1,14 +1,14 @@
 //! WebSocket handler for bidirectional MCP communication
 
 use axum::{
-    extract::{Query, State, Extension, WebSocketUpgrade, ws::WebSocket},
+    extract::{Extension, Query, State, WebSocketUpgrade, ws::WebSocket},
     response::Response,
 };
 use futures::{SinkExt, StreamExt};
 use tracing::{error, info, trace};
 
 use crate::axum::service::McpAppState;
-use crate::axum::types::{WebSocketQuery, JsonRpcRequest, JsonRpcResponse, JsonRpcError};
+use crate::axum::types::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, WebSocketQuery};
 use crate::tower::SessionInfo;
 
 /// WebSocket handler for upgrade requests
@@ -24,11 +24,7 @@ pub async fn websocket_handler(
 }
 
 /// Handle WebSocket connection after upgrade
-async fn handle_websocket(
-    socket: WebSocket,
-    app_state: McpAppState,
-    session: SessionInfo,
-) {
+async fn handle_websocket(socket: WebSocket, app_state: McpAppState, session: SessionInfo) {
     let (mut sender, mut receiver) = socket.split();
 
     info!("WebSocket connected for session: {}", session.id);

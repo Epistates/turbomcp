@@ -124,6 +124,7 @@ mod tests {
     #[test]
     fn test_merge_with_stateless_router() {
         #[derive(Clone, Debug)]
+        #[allow(dead_code)]
         struct OriginalState {
             data: String,
         }

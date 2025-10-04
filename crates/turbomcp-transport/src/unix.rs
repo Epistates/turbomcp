@@ -61,10 +61,6 @@ impl UnixTransport {
         }
     }
 
-    /// Create a new Unix socket transport for server mode with security validation
-    #[must_use]
-    
-
     /// Create a new Unix socket transport for client mode
     #[must_use]
     pub fn new_client(socket_path: PathBuf) -> Self {
@@ -87,11 +83,9 @@ impl UnixTransport {
 
     /// Create a new Unix socket transport for client mode with security validation
     #[must_use]
-    
 
     /// Start Unix socket server
     async fn start_server(&mut self) -> TransportResult<()> {
-
         // Remove existing socket file if it exists (ASYNC - Non-blocking!)
         if self.socket_path.exists() {
             tokio::fs::remove_file(&self.socket_path)
@@ -188,7 +182,7 @@ impl UnixTransport {
 }
 
 /// Handle a Unix socket connection using tokio-util::codec::Framed with LinesCodec
-/// This provides production-grade newline-delimited JSON framing with proper bidirectional communication
+/// This provides proven newline-delimited JSON framing with proper bidirectional communication
 async fn handle_unix_connection_framed(
     stream: UnixStream,
     incoming_sender: mpsc::Sender<TransportMessage>,

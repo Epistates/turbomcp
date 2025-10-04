@@ -23,15 +23,18 @@ pub mod tests;
 
 // Re-export main public types (avoiding glob conflicts)
 #[cfg(feature = "http")]
-pub use config::{McpServerConfig, AuthConfig, CorsConfig, SecurityConfig, RateLimitConfig, TlsConfig, Environment};
+pub use config::{
+    AuthConfig, CorsConfig, Environment, McpServerConfig, RateLimitConfig, SecurityConfig,
+    TlsConfig,
+};
 #[cfg(feature = "http")]
 pub use handlers::{
-    json_rpc_handler, capabilities_handler, sse_handler,
-    websocket_handler, health_handler, metrics_handler, SessionInfo
+    SessionInfo, capabilities_handler, health_handler, json_rpc_handler, metrics_handler,
+    sse_handler, websocket_handler,
 };
 #[cfg(feature = "http")]
 pub use router::AxumMcpExt;
 #[cfg(feature = "http")]
-pub use service::{McpService, McpAppState};
+pub use service::{McpAppState, McpService};
 #[cfg(feature = "http")]
-pub use types::{JsonRpcRequest, JsonRpcResponse, JsonRpcError, SseQuery, WebSocketQuery};
+pub use types::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, SseQuery, WebSocketQuery};

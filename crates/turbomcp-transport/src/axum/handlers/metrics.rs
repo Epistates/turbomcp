@@ -1,6 +1,6 @@
 //! Metrics handler for monitoring and observability
 
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 
 use crate::axum::service::McpAppState;
 

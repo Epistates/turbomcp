@@ -88,44 +88,68 @@ impl OriginConfig {
 /// Per MCP 2025-06-18 specification:
 /// "Servers MUST validate the Origin header on all incoming connections
 /// to prevent DNS rebinding attacks"
+///
+/// **Security Model**:
+/// - DNS rebinding attacks require remote→localhost connections
+/// - localhost→localhost connections are inherently safe (no DNS involved)
+/// - If Origin header missing BUT client is localhost → allow (Claude Code case)
+/// - If Origin header missing AND client is remote → reject (security)
 pub fn validate_origin(
     config: &OriginConfig,
     headers: &SecurityHeaders,
+    client_ip: std::net::IpAddr,
 ) -> Result<(), SecurityError> {
     if config.allow_any {
         return Ok(());
     }
 
-    let origin = headers
-        .get("Origin")
-        .ok_or_else(|| SecurityError::InvalidOrigin("Missing Origin header".to_string()))?;
+    // Check if Origin header exists
+    match headers.get("Origin") {
+        Some(origin) => {
+            // Origin present → validate it
 
-    // Allow explicitly configured origins
-    if config.allowed_origins.contains(origin) {
-        return Ok(());
-    }
+            // Allow explicitly configured origins
+            if config.allowed_origins.contains(origin) {
+                return Ok(());
+            }
 
-    // Allow localhost origins for development
-    if config.allow_localhost {
-        let localhost_patterns = [
-            "http://localhost",
-            "https://localhost",
-            "http://127.0.0.1",
-            "https://127.0.0.1",
-        ];
+            // Allow localhost origins for development
+            if config.allow_localhost {
+                let localhost_patterns = [
+                    "http://localhost",
+                    "https://localhost",
+                    "http://127.0.0.1",
+                    "https://127.0.0.1",
+                ];
 
-        if localhost_patterns
-            .iter()
-            .any(|&pattern| origin.starts_with(pattern))
-        {
-            return Ok(());
+                if localhost_patterns
+                    .iter()
+                    .any(|&pattern| origin.starts_with(pattern))
+                {
+                    return Ok(());
+                }
+            }
+
+            Err(SecurityError::InvalidOrigin(format!(
+                "Origin '{}' not allowed",
+                origin
+            )))
+        }
+        None => {
+            // Origin missing → check if client is localhost
+            // DNS rebinding attacks require remote clients, so localhost clients are safe
+            if client_ip.is_loopback() {
+                // localhost→localhost: No DNS rebinding risk, allow it
+                // This enables Claude Code and other local clients
+                return Ok(());
+            }
+
+            // Remote client without Origin → potential security risk
+            Err(SecurityError::InvalidOrigin(
+                "Missing Origin header from remote client".to_string(),
+            ))
         }
     }
-
-    Err(SecurityError::InvalidOrigin(format!(
-        "Origin '{}' not allowed",
-        origin
-    )))
 }
 
 #[cfg(test)]
@@ -162,8 +186,9 @@ mod tests {
         let config = OriginConfig::for_development();
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "http://localhost:3000".to_string());
+        let client_ip = "127.0.0.1".parse().unwrap();
 
-        assert!(validate_origin(&config, &headers).is_ok());
+        assert!(validate_origin(&config, &headers, client_ip).is_ok());
     }
 
     #[test]
@@ -171,8 +196,9 @@ mod tests {
         let config = OriginConfig::for_development();
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "http://evil.com".to_string());
+        let client_ip = "192.168.1.100".parse().unwrap();
 
-        assert!(validate_origin(&config, &headers).is_err());
+        assert!(validate_origin(&config, &headers, client_ip).is_err());
     }
 
     #[test]
@@ -180,16 +206,29 @@ mod tests {
         let config = OriginConfig::for_production(vec!["https://trusted.com".to_string()]);
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "https://trusted.com".to_string());
+        let client_ip = "192.168.1.100".parse().unwrap();
 
-        assert!(validate_origin(&config, &headers).is_ok());
+        assert!(validate_origin(&config, &headers, client_ip).is_ok());
     }
 
     #[test]
-    fn test_validate_origin_missing_header() {
+    fn test_validate_origin_missing_header_localhost_client() {
         let config = OriginConfig::for_development();
         let headers = HashMap::new();
+        let client_ip = "127.0.0.1".parse().unwrap();
 
-        assert!(validate_origin(&config, &headers).is_err());
+        // localhost→localhost without Origin → allowed (Claude Code case)
+        assert!(validate_origin(&config, &headers, client_ip).is_ok());
+    }
+
+    #[test]
+    fn test_validate_origin_missing_header_remote_client() {
+        let config = OriginConfig::for_development();
+        let headers = HashMap::new();
+        let client_ip = "192.168.1.100".parse().unwrap();
+
+        // remote→localhost without Origin → blocked (security)
+        assert!(validate_origin(&config, &headers, client_ip).is_err());
     }
 
     #[test]
@@ -197,7 +236,8 @@ mod tests {
         let config = OriginConfig::for_testing();
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "http://anything.com".to_string());
+        let client_ip = "192.168.1.100".parse().unwrap();
 
-        assert!(validate_origin(&config, &headers).is_ok());
+        assert!(validate_origin(&config, &headers, client_ip).is_ok());
     }
 }

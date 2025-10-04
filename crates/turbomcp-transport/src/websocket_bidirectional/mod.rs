@@ -1,6 +1,6 @@
 //! WebSocket bidirectional transport with elicitation support
 //!
-//! This module provides a production-grade WebSocket transport implementation
+//! This module provides a proven WebSocket transport implementation
 //! with full bidirectional communication support for the MCP 2025-06-18 protocol,
 //! including server-initiated elicitation requests.
 //!
@@ -38,9 +38,21 @@
 //! transport.connect().await?;
 //!
 //! // Send an elicitation request
+//! use turbomcp_protocol::elicitation::{ElicitationSchema, PrimitiveSchemaDefinition, StringSchema};
+//! let string_schema = StringSchema {
+//!     schema_type: "string".to_string(),
+//!     title: Some("Name".to_string()),
+//!     description: None,
+//!     min_length: None,
+//!     max_length: None,
+//!     pattern: None,
+//!     format: None,
+//! };
+//! let schema = ElicitationSchema::new()
+//!     .add_property("name".to_string(), PrimitiveSchemaDefinition::String(string_schema));
 //! let request = ElicitationCreateRequest {
-//!     action: ElicitationAction::Create,
-//!     ..Default::default()
+//!     message: "Please provide your name".to_string(),
+//!     requested_schema: schema,
 //! };
 //!
 //! let result = transport.send_elicitation(request, None).await?;
@@ -90,9 +102,9 @@ pub mod types;
 // Re-export main types for convenience
 pub use bidirectional::CorrelationInfo;
 pub use config::{ReconnectConfig, TlsConfig, WebSocketBidirectionalConfig};
- // Internal use only
+// Internal use only
 pub use elicitation::ElicitationInfo;
- // Internal use only
+// Internal use only
 pub use transport::TransportStatus;
 pub use types::{
     MessageProcessingResult, PendingElicitation, WebSocketBidirectionalTransport,

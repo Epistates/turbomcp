@@ -1,6 +1,6 @@
 //! Capabilities endpoint handler for MCP server capabilities
 
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 
 use crate::axum::service::McpAppState;
 

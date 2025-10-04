@@ -1,15 +1,15 @@
 //! # TurboMCP Transport
 //!
 //! Transport layer implementations for the Model Context Protocol with runtime
-//! selection, comprehensive fault tolerance, and multiple protocol support.
+//! selection, fault tolerance, and multiple protocol support.
 //!
 //! ## Supported Transports
 //!
 //! - **STDIO**: Standard input/output for command-line MCP servers (always available)
 //! - **TCP**: Direct TCP socket communication for network deployments
 //! - **Unix Sockets**: Fast local inter-process communication
-//! - **HTTP/SSE**: HTTP with Server-Sent Events for server push (New in 1.0.3)
-//! - **WebSocket Bidirectional**: Full-duplex communication for elicitation (New in 1.0.3)
+//! - **HTTP/SSE**: HTTP with Server-Sent Events for server push
+//! - **WebSocket Bidirectional**: Full-duplex communication for elicitation
 //!
 //! ## Reliability Features
 //!
@@ -37,7 +37,7 @@
 //!
 //! ## Usage Examples
 //!
-//! ### WebSocket Bidirectional Transport (New in 1.0.3)
+//! ### WebSocket Bidirectional Transport
 //!
 //! ```rust,no_run
 //! # #[cfg(feature = "websocket")]
@@ -65,7 +65,7 @@
 //! # }
 //! ```
 //!
-//! ### HTTP Server-Sent Events (New in 1.0.3)
+//! ### HTTP Server-Sent Events
 //!
 //! ```rust,no_run
 //! # #[cfg(feature = "http")]
@@ -139,6 +139,26 @@ pub mod core;
 #[cfg(feature = "http")]
 pub mod http_sse;
 
+#[cfg(feature = "http")]
+pub mod http_sse_client;
+
+// MCP 2025-06-18 Compliant Streamable HTTP Transport (Recommended)
+#[cfg(feature = "http")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http")))]
+pub mod streamable_http_v2;
+
+#[cfg(feature = "http")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http")))]
+pub mod streamable_http_client;
+
+// Legacy HTTP transport (deprecated in favor of streamable_http_v2)
+#[cfg(feature = "http")]
+#[deprecated(
+    since = "2.0.0",
+    note = "Use streamable_http_v2 instead for MCP 2025-06-18 compliance"
+)]
+pub mod streamable_http;
+
 #[cfg(feature = "stdio")]
 pub mod stdio;
 
@@ -170,7 +190,7 @@ pub mod compression;
 
 pub mod config;
 pub mod metrics;
-pub mod robustness;
+pub mod resilience;
 pub mod security;
 pub mod shared;
 
@@ -205,6 +225,10 @@ pub use tower::{SessionInfo, SessionManager, TowerTransportAdapter};
 #[cfg(feature = "http")]
 pub use axum::{AxumMcpExt, McpAppState, McpServerConfig, McpService};
 
+// Re-export HTTP/SSE client transport
+#[cfg(feature = "http")]
+pub use http_sse_client::{HttpSseClientConfig, HttpSseClientTransport};
+
 #[cfg(feature = "websocket")]
 pub use websocket::WebSocketTransport;
 
@@ -224,9 +248,9 @@ pub use child_process::{ChildProcessConfig, ChildProcessTransport};
 
 // Re-export utilities
 pub use config::TransportConfigBuilder;
-pub use robustness::{
+pub use resilience::{
     CircuitBreakerConfig, CircuitBreakerStats, CircuitState, HealthCheckConfig, HealthInfo,
-    HealthStatus, RetryConfig, RobustTransport,
+    HealthStatus, RetryConfig, TurboTransport,
 };
 pub use security::{
     AuthConfig, AuthMethod, EnhancedSecurityConfigBuilder, OriginConfig, RateLimitConfig,

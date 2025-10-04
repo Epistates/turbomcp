@@ -386,7 +386,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         handle.abort();
-        let _ = handle.await;  // Wait for task to actually finish after abort
+        let _ = handle.await; // Wait for task to actually finish after abort
     }
 
     #[tokio::test]
@@ -400,7 +400,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         handle.abort();
-        let _ = handle.await;  // Wait for task to actually finish after abort
+        let _ = handle.await; // Wait for task to actually finish after abort
     }
 
     #[tokio::test]
@@ -414,7 +414,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         handle.abort();
-        let _ = handle.await;  // Wait for task to actually finish after abort
+        let _ = handle.await; // Wait for task to actually finish after abort
     }
 
     #[tokio::test]
@@ -446,6 +446,6 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         handle.abort();
-        let _ = handle.await;  // Wait for task to actually finish after abort
+        let _ = handle.await; // Wait for task to actually finish after abort
     }
 }
