@@ -1,6 +1,6 @@
 //! Health check handler for service monitoring
 
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 
 use crate::axum::service::McpAppState;
 

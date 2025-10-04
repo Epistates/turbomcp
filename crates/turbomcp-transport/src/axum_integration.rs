@@ -2,7 +2,7 @@
 //!
 //! This module provides seamless integration with Axum routers, enabling the
 //! "bring your own server" philosophy while providing opinionated defaults for
-//! rapid development. It leverages our Tower service foundation for production-grade
+//! rapid development. It leverages our Tower service foundation for proven
 //! observability and error handling.
 //!
 //! ## Production-Grade State Preservation
@@ -867,7 +867,7 @@ where
         // Merge with existing router
         let router = self.merge(mcp_router);
 
-        // Apply production-grade middleware stack
+        // Apply proven middleware stack
         apply_middleware(router, &config)
     }
 }
@@ -1883,7 +1883,7 @@ mod tests {
         let _custom_router =
             Router::<()>::turbo_mcp_routes_for_merge(service.clone(), custom_config);
 
-        // If this test compiles, our production-grade configuration system works
+        // If this test compiles, our proven configuration system works
     }
 
     #[test]

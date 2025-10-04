@@ -115,7 +115,9 @@ impl RateLimiter {
     }
 
     /// Create rate limiter with default configuration
-    pub fn with_defaults() -> Self { Self::new(RateLimitConfig::default()) }
+    pub fn with_defaults() -> Self {
+        Self::new(RateLimitConfig::default())
+    }
 
     /// Check if request is within rate limits
     pub fn check_rate_limit(&self, client_ip: IpAddr) -> Result<(), SecurityError> {

@@ -1,6 +1,6 @@
 //! Root endpoint handler for TurboMCP server information
 
-use axum::{response::IntoResponse, Json};
+use axum::{Json, response::IntoResponse};
 
 /// Root handler - provides basic server information
 pub async fn root_handler() -> impl IntoResponse {

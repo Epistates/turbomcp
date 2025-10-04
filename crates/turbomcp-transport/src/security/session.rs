@@ -253,7 +253,9 @@ impl SessionSecurityManager {
     }
 
     /// Create session security manager with default configuration
-    pub fn with_defaults() -> Self { Self::new(SessionSecurityConfig::default()) }
+    pub fn with_defaults() -> Self {
+        Self::new(SessionSecurityConfig::default())
+    }
 
     /// Create a new secure session
     pub fn create_session(

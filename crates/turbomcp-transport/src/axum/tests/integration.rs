@@ -39,7 +39,7 @@ mod tests {
         let _custom_router =
             Router::<()>::turbo_mcp_routes_for_merge(service.clone(), custom_config);
 
-        // If this test compiles, our production-grade configuration system works
+        // If this test compiles, our proven configuration system works
     }
 
     #[tokio::test]
@@ -69,6 +69,7 @@ mod tests {
         let service = TestMcpService;
 
         // Simulate different deployment environments
+        #[allow(dead_code)]
         struct DeploymentConfig {
             name: &'static str,
             config: McpServerConfig,
@@ -122,12 +123,14 @@ mod tests {
     async fn test_state_isolation_in_complex_applications() {
         // Test complex application state isolation
         #[derive(Clone, Debug)]
+        #[allow(dead_code)]
         struct UserServiceState {
             database_pool: String,
             cache_config: String,
         }
 
         #[derive(Clone, Debug)]
+        #[allow(dead_code)]
         struct AdminServiceState {
             admin_permissions: Vec<String>,
             audit_log_path: String,

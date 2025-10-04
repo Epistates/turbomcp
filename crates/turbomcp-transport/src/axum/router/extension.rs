@@ -72,6 +72,10 @@ pub trait AxumMcpExt {
     ///
     /// # Example
     ///
+    /// **Note**: This example is marked `ignore` because it requires a complete MCP service
+    /// implementation. See integration tests in `crates/turbomcp-transport/tests/` for
+    /// working examples.
+    ///
     /// ```rust,ignore
     /// use axum::{Router, routing::get};
     /// use turbomcp_transport::{AxumMcpExt, McpService, McpServerConfig};

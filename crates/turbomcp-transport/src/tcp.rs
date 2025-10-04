@@ -166,7 +166,7 @@ impl TcpTransport {
 }
 
 /// Handle a TCP connection using tokio-util::codec::Framed with LinesCodec
-/// This provides production-grade newline-delimited JSON framing with proper bidirectional communication
+/// This provides proven newline-delimited JSON framing with proper bidirectional communication
 async fn handle_tcp_connection_framed(
     stream: TcpStream,
     addr: SocketAddr,

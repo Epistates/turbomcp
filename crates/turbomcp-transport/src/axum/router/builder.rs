@@ -10,8 +10,7 @@ use std::time::Duration;
 
 #[cfg(feature = "http")]
 use axum::{
-    middleware,
-    Router,
+    Router, middleware,
     routing::{get, post},
 };
 #[cfg(feature = "http")]
@@ -19,21 +18,13 @@ use tokio::sync::broadcast;
 #[cfg(feature = "http")]
 use tower::ServiceBuilder;
 #[cfg(feature = "http")]
-use tower_http::{
-    compression::CompressionLayer,
-    trace::TraceLayer,
-    timeout::TimeoutLayer,
-};
+use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer, trace::TraceLayer};
 
 #[cfg(feature = "http")]
 use crate::axum::config::McpServerConfig;
 #[cfg(feature = "http")]
 use crate::axum::handlers::{
-    capabilities_handler,
-    health_handler,
-    json_rpc_handler,
-    metrics_handler,
-    sse_handler,
+    capabilities_handler, health_handler, json_rpc_handler, metrics_handler, sse_handler,
     websocket_handler,
 };
 #[cfg(feature = "http")]
@@ -56,7 +47,7 @@ async fn session_middleware(
 }
 
 #[cfg(feature = "http")]
-/// Apply production-grade middleware stack to router
+/// Apply proven middleware stack to router
 fn apply_middleware<S>(router: Router<S>, config: &McpServerConfig) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -114,7 +105,7 @@ where
         // Merge with existing router
         let router = self.merge(mcp_router);
 
-        // Apply production-grade middleware stack
+        // Apply proven middleware stack
         apply_middleware(router, &config)
     }
 }

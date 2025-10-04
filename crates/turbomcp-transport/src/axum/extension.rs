@@ -144,7 +144,7 @@ where
         // Merge with existing router
         let router = self.merge(mcp_router);
 
-        // Apply production-grade middleware stack
+        // Apply proven middleware stack
         apply_middleware(router, &config)
     }
 }

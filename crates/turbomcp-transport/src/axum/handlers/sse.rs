@@ -3,7 +3,7 @@
 use std::convert::Infallible;
 
 use axum::{
-    extract::{Query, State, Extension},
+    extract::{Extension, Query, State},
     response::sse::{Event, KeepAlive, Sse},
 };
 use futures::Stream;

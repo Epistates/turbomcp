@@ -42,27 +42,31 @@ pub fn extract_client_ip(headers: &SecurityHeaders) -> Option<std::net::IpAddr> 
     // Check X-Forwarded-For header first (most common)
     if let Some(forwarded) = headers.get("X-Forwarded-For")
         && let Some(first_ip) = forwarded.split(',').next()
-            && let Ok(ip) = first_ip.trim().parse() {
-                return Some(ip);
-            }
+        && let Ok(ip) = first_ip.trim().parse()
+    {
+        return Some(ip);
+    }
 
     // Check X-Real-IP header
     if let Some(real_ip) = headers.get("X-Real-IP")
-        && let Ok(ip) = real_ip.parse() {
-            return Some(ip);
-        }
+        && let Ok(ip) = real_ip.parse()
+    {
+        return Some(ip);
+    }
 
     // Check CF-Connecting-IP (Cloudflare)
     if let Some(cf_ip) = headers.get("CF-Connecting-IP")
-        && let Ok(ip) = cf_ip.parse() {
-            return Some(ip);
-        }
+        && let Ok(ip) = cf_ip.parse()
+    {
+        return Some(ip);
+    }
 
     // Check X-Client-IP
     if let Some(client_ip) = headers.get("X-Client-IP")
-        && let Ok(ip) = client_ip.parse() {
-            return Some(ip);
-        }
+        && let Ok(ip) = client_ip.parse()
+    {
+        return Some(ip);
+    }
 
     None
 }
