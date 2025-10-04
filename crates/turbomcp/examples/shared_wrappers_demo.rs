@@ -9,9 +9,7 @@
 use std::time::Duration;
 use turbomcp_client::{Client, SharedClient};
 use turbomcp_core::{ConsumableShared, Shareable, Shared};
-use turbomcp_server::{
-    ElicitationCoordinator, ServerBuilder, SharedElicitationCoordinator,
-};
+use turbomcp_server::{ElicitationCoordinator, ServerBuilder, SharedElicitationCoordinator};
 use turbomcp_transport::{SharedTransport, StdioTransport};
 
 /// Custom service for demonstrating generic shared wrappers

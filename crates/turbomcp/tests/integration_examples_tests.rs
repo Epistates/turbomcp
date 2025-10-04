@@ -104,16 +104,35 @@ async fn test_example_jsonrpc(
         }
     }
 
-    // Clean up process
+    // Clean up process with timeout
+    drop(writer); // Close stdin to signal process to exit
+
+    // Try graceful termination first
     if let Err(e) = child.kill() {
         eprintln!("Warning: Failed to kill subprocess during cleanup: {}", e);
     }
-    if let Err(e) = child.wait() {
-        eprintln!(
-            "Warning: Failed to wait for subprocess during cleanup: {}",
-            e
-        );
+
+    // Wait for process to exit with timeout
+    let wait_result = tokio::time::timeout(
+        Duration::from_secs(2),
+        tokio::task::spawn_blocking(move || child.wait())
+    ).await;
+
+    match wait_result {
+        Ok(Ok(Ok(_))) => {
+            // Process exited successfully
+        }
+        Ok(Ok(Err(e))) => {
+            eprintln!("Warning: Failed to wait for subprocess: {}", e);
+        }
+        Ok(Err(e)) => {
+            eprintln!("Warning: Task panicked while waiting for subprocess: {}", e);
+        }
+        Err(_) => {
+            eprintln!("Warning: Subprocess wait timed out after 2s - process may still be running");
+        }
     }
+
     Ok(responses)
 }
 
@@ -463,26 +482,54 @@ async fn test_clean_json_output() {
     let mut stdout_reader = BufReader::new(stdout);
     let mut stderr_reader = BufReader::new(stderr);
 
-    let mut stdout_line = String::new();
-    let mut stderr_line = String::new();
-
     // Give it time to respond
     tokio::time::sleep(Duration::from_millis(1000)).await;
 
-    let stdout_bytes = stdout_reader.read_line(&mut stdout_line).unwrap();
-    let stderr_bytes = stderr_reader.read_line(&mut stderr_line).unwrap();
+    // Read with timeout to avoid blocking forever
+    let read_stdout = tokio::task::spawn_blocking(move || {
+        let mut line = String::new();
+        let bytes = stdout_reader.read_line(&mut line).unwrap_or(0);
+        (bytes, line)
+    });
 
+    let read_stderr = tokio::task::spawn_blocking(move || {
+        let mut line = String::new();
+        let bytes = stderr_reader.read_line(&mut line).unwrap_or(0);
+        (bytes, line)
+    });
+
+    let (stdout_bytes, stdout_line) = match tokio::time::timeout(Duration::from_secs(5), read_stdout).await {
+        Ok(Ok(result)) => result,
+        _ => (0, String::new()),
+    };
+
+    let (stderr_bytes, stderr_line) = match tokio::time::timeout(Duration::from_secs(5), read_stderr).await {
+        Ok(Ok(result)) => result,
+        _ => (0, String::new()),
+    };
+
+    // Clean up process with timeout
+    drop(writer); // Close stdin
     child.kill().unwrap_or_else(|e| {
         eprintln!("Failed to kill child process: {}", e);
     });
-    match child.wait() {
-        Ok(status) => {
+
+    let wait_result = tokio::time::timeout(
+        Duration::from_secs(2),
+        tokio::task::spawn_blocking(move || child.wait())
+    ).await;
+
+    match wait_result {
+        Ok(Ok(Ok(status))) => {
             if !status.success() {
                 eprintln!("Child process exited with status: {}", status);
             }
         }
-        Err(e) => {
+        Ok(Ok(Err(e))) => {
             eprintln!("Failed to wait for child process: {}", e);
+        }
+        _ => {
+            eprintln!("Warning: Child process wait timed out");
         }
     }
 

@@ -20,7 +20,7 @@ fn create_full_client_capabilities() -> ClientCapabilities {
         roots: Some(RootsCapabilities {
             list_changed: Some(true),
         }),
-        elicitation: Some(ElicitationCapabilities),
+        elicitation: Some(ElicitationCapabilities::default()),
         experimental: Some({
             let mut experimental = HashMap::new();
             experimental.insert(

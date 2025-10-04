@@ -499,7 +499,7 @@ fn test_client_capabilities_with_values() {
             list_changed: Some(true),
         }),
         sampling: Some(SamplingCapabilities),
-        elicitation: Some(ElicitationCapabilities),
+        elicitation: Some(ElicitationCapabilities::default()),
     };
 
     assert!(capabilities.experimental.is_some());
@@ -896,8 +896,9 @@ fn test_client_notification_variants() {
     let initialized = ClientNotification::Initialized(InitializedNotification);
     let progress = ClientNotification::Progress(ProgressNotification {
         progress_token: ProgressToken::String("token".to_string()),
-        progress: Some(50.0),
-        total: Some(100),
+        progress: 50.0,
+        total: Some(100.0),
+        message: None,
     });
 
     match initialized {
@@ -906,7 +907,7 @@ fn test_client_notification_variants() {
     }
 
     match progress {
-        ClientNotification::Progress(notif) => assert_eq!(notif.progress, Some(50.0)),
+        ClientNotification::Progress(notif) => assert_eq!(notif.progress, 50.0),
         _ => panic!("Expected progress notification"),
     }
 }
@@ -928,16 +929,16 @@ fn test_include_context_variants() {
 #[test]
 fn test_model_preferences() {
     let prefs = ModelPreferences {
-        hints: Some(vec!["fast".to_string()]),
-        cost_tier: Some(CostTier::Low),
-        speed_tier: Some(SpeedTier::High),
-        intelligence_tier: Some(IntelligenceTier::Medium),
+        hints: Some(vec![ModelHint::new("fast")]),
+        cost_priority: Some(1.0),         // High priority for low cost
+        speed_priority: Some(1.0),        // High priority for speed
+        intelligence_priority: Some(0.5), // Medium priority for intelligence
     };
 
     assert!(prefs.hints.is_some());
-    assert_eq!(prefs.cost_tier, Some(CostTier::Low));
-    assert_eq!(prefs.speed_tier, Some(SpeedTier::High));
-    assert_eq!(prefs.intelligence_tier, Some(IntelligenceTier::Medium));
+    assert_eq!(prefs.cost_priority, Some(1.0));
+    assert_eq!(prefs.speed_priority, Some(1.0));
+    assert_eq!(prefs.intelligence_priority, Some(0.5));
 }
 
 #[test]
@@ -1015,10 +1016,13 @@ fn test_sampling_api_comprehensive_workflow() {
     };
 
     let model_preferences = ModelPreferences {
-        hints: Some(vec!["claude-3-5-sonnet".to_string(), "fast".to_string()]),
-        cost_tier: Some(CostTier::Low),
-        speed_tier: Some(SpeedTier::High),
-        intelligence_tier: Some(IntelligenceTier::High),
+        hints: Some(vec![
+            ModelHint::new("claude-3-5-sonnet"),
+            ModelHint::new("fast"),
+        ]),
+        cost_priority: Some(1.0),         // High priority for low cost
+        speed_priority: Some(1.0),        // High priority for speed
+        intelligence_priority: Some(1.0), // High priority for intelligence
     };
 
     let mut metadata = HashMap::new();
@@ -1045,13 +1049,16 @@ fn test_sampling_api_comprehensive_workflow() {
     assert_eq!(deserialized.messages[0].role, Role::User);
 
     let model_prefs = deserialized.model_preferences.as_ref().unwrap();
-    assert_eq!(model_prefs.cost_tier, Some(CostTier::Low));
-    assert_eq!(model_prefs.speed_tier, Some(SpeedTier::High));
-    assert_eq!(model_prefs.intelligence_tier, Some(IntelligenceTier::High));
+    assert_eq!(model_prefs.cost_priority, Some(1.0));
+    assert_eq!(model_prefs.speed_priority, Some(1.0));
+    assert_eq!(model_prefs.intelligence_priority, Some(1.0));
     assert_eq!(model_prefs.hints.as_ref().unwrap().len(), 2);
     assert_eq!(
-        model_prefs.hints.as_ref().unwrap()[0],
-        "claude-3-5-sonnet".to_string()
+        model_prefs.hints.as_ref().unwrap()[0]
+            .name
+            .as_ref()
+            .unwrap(),
+        "claude-3-5-sonnet"
     );
 
     assert_eq!(
@@ -1090,20 +1097,17 @@ fn test_sampling_api_model_preferences_validation() {
     // Test priority value ranges per MCP spec (0.0 to 1.0)
     let valid_prefs = ModelPreferences {
         hints: None,
-        cost_tier: Some(CostTier::Low),
-        speed_tier: Some(SpeedTier::High),
-        intelligence_tier: Some(IntelligenceTier::Medium),
+        cost_priority: Some(1.0),         // High priority for low cost
+        speed_priority: Some(1.0),        // High priority for speed
+        intelligence_priority: Some(0.5), // Medium priority for intelligence
     };
 
     let json = serde_json::to_string(&valid_prefs).unwrap();
     let deserialized: ModelPreferences = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(deserialized.cost_tier, Some(CostTier::Low));
-    assert_eq!(deserialized.speed_tier, Some(SpeedTier::High));
-    assert_eq!(
-        deserialized.intelligence_tier,
-        Some(IntelligenceTier::Medium)
-    );
+    assert_eq!(deserialized.cost_priority, Some(1.0));
+    assert_eq!(deserialized.speed_priority, Some(1.0));
+    assert_eq!(deserialized.intelligence_priority, Some(0.5));
 }
 
 #[test]

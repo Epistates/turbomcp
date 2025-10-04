@@ -27,7 +27,6 @@ use turbomcp_transport::core::{Transport, TransportMessage};
 #[cfg(feature = "tcp")]
 use turbomcp_transport::tcp::TcpTransport;
 
-
 #[cfg(feature = "http")]
 use turbomcp_transport::http_sse::HttpSseConfig;
 

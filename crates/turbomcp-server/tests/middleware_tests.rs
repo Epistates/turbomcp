@@ -11,9 +11,9 @@
 //! - Middleware execution order
 //! - Error handling through middleware
 
-use std::time::Duration;
 use bytes::Bytes;
 use http::{Request, StatusCode};
+use std::time::Duration;
 use tower::ServiceExt;
 use turbomcp_server::{
     ServerBuilder,

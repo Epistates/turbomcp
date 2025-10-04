@@ -35,7 +35,7 @@ impl KnowledgeServer {
         let mut docs = HashMap::new();
         docs.insert(
             "readme".to_string(),
-            "# TurboMCP\nHigh-performance MCP framework for building robust servers".to_string(),
+            "# TurboMCP\nHigh-performance MCP framework for building resilient servers".to_string(),
         );
         docs.insert(
             "guide".to_string(),

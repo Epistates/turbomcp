@@ -106,7 +106,7 @@ impl CancellationDemoServer {
         let mut processed_count = 0u32;
         let delay = Duration::from_millis(params.delay_ms);
 
-        for i in 0..params.item_count {
+        for _i in 0..params.item_count {
             // Periodic cancellation check - critical for long-running operations
             if let Some(token) = &ctx.request.cancellation_token
                 && token.is_cancelled()
@@ -280,9 +280,9 @@ impl CancellationDemoServer {
         sleep(Duration::from_millis(200)).await;
 
         let mut completed_requests = 0u32;
-        let mut connection_active = true;
+        let connection_active = true;
 
-        for request_id in 1..=request_count {
+        for _request_id in 1..=request_count {
             // Check cancellation before each request
             if let Some(token) = &ctx.request.cancellation_token
                 && token.is_cancelled()
@@ -293,7 +293,7 @@ impl CancellationDemoServer {
                 if connection_active {
                     // Gracefully closing connection
                     sleep(Duration::from_millis(100)).await; // Simulate cleanup time
-                    connection_active = false;
+                    // Connection closed
                 }
 
                 return Ok(format!(
@@ -316,7 +316,7 @@ impl CancellationDemoServer {
         // Simulate connection cleanup on success
         // Closing connection after successful completion
         sleep(Duration::from_millis(50)).await;
-        connection_active = false;
+        // Connection closed successfully
 
         // Network operation completed successfully
         Ok(format!(

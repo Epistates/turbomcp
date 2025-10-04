@@ -89,13 +89,13 @@ fn test_validation_rules_default() {
     assert_eq!(rules.max_object_depth, 32);
 
     // Test regex patterns work
-    assert!(rules.uri_regex.is_match("file://test.txt"));
-    assert!(rules.uri_regex.is_match("https://example.com"));
-    assert!(!rules.uri_regex.is_match("not-a-uri"));
+    assert!(rules.uri_regex().is_match("file://test.txt"));
+    assert!(rules.uri_regex().is_match("https://example.com"));
+    assert!(!rules.uri_regex().is_match("not-a-uri"));
 
-    assert!(rules.method_name_regex.is_match("tools/list"));
-    assert!(rules.method_name_regex.is_match("initialize"));
-    assert!(!rules.method_name_regex.is_match("invalid-method!"));
+    assert!(rules.method_name_regex().is_match("tools/list"));
+    assert!(rules.method_name_regex().is_match("initialize"));
+    assert!(!rules.method_name_regex().is_match("invalid-method!"));
 
     // Test required fields
     assert!(rules.required_fields.contains_key("request"));
@@ -976,12 +976,12 @@ fn test_regex_patterns_compilation() {
     let rules = ValidationRules::default();
 
     // Test that regex patterns are properly compiled and don't panic
-    assert!(rules.uri_regex.is_match("https://example.com"));
-    assert!(rules.method_name_regex.is_match("valid_method"));
+    assert!(rules.uri_regex().is_match("https://example.com"));
+    assert!(rules.method_name_regex().is_match("valid_method"));
 
     // Test edge cases
-    assert!(!rules.uri_regex.is_match(""));
-    assert!(!rules.method_name_regex.is_match(""));
+    assert!(!rules.uri_regex().is_match(""));
+    assert!(!rules.method_name_regex().is_match(""));
 }
 
 #[test]
@@ -997,8 +997,8 @@ fn test_validation_rules_clone() {
     // Regex patterns should work the same
     let test_uri = "https://example.com";
     assert_eq!(
-        rules1.uri_regex.is_match(test_uri),
-        rules2.uri_regex.is_match(test_uri)
+        rules1.uri_regex().is_match(test_uri),
+        rules2.uri_regex().is_match(test_uri)
     );
 }
 

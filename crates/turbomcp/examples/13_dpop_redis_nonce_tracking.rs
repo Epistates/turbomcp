@@ -23,6 +23,9 @@
 //! - **Production Ready**: Connection pooling, retry logic, error handling
 //! - **Opt-in Architecture**: Falls back gracefully when feature disabled
 
+#[cfg(any(feature = "redis-storage", feature = "dpop"))]
+use std::sync::Arc;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing for observability
@@ -66,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// Demonstrate Redis-based nonce tracking (when feature enabled)
 #[cfg(feature = "redis-storage")]
 async fn demonstrate_redis_nonce_tracking() -> Result<(), Box<dyn std::error::Error>> {
-    use turbomcp_dpop::{DpopKeyManager, DpopProofGenerator, RedisNonceTracker};
+    use turbomcp::auth::dpop::{DpopKeyManager, DpopProofGenerator, RedisNonceTracker};
 
     println!("🚀 Setting up Redis-based DPoP nonce tracking...");
 
@@ -155,7 +158,7 @@ async fn demonstrate_redis_nonce_tracking() -> Result<(), Box<dyn std::error::Er
 /// Demonstrate memory-based fallback (when Redis feature disabled)
 #[cfg(feature = "dpop")]
 async fn demonstrate_memory_fallback() -> Result<(), Box<dyn std::error::Error>> {
-    use turbomcp_dpop::{DpopKeyManager, DpopProofGenerator, MemoryNonceTracker};
+    use turbomcp::auth::dpop::{DpopKeyManager, DpopProofGenerator, MemoryNonceTracker};
 
     println!("🧠 Falling back to memory-based nonce tracking...");
 
@@ -197,7 +200,7 @@ async fn demonstrate_memory_fallback() -> Result<(), Box<dyn std::error::Error>>
 #[cfg(feature = "redis-storage")]
 mod redis_integration_tests {
     use super::*;
-    use turbomcp_dpop::{DpopKeyManager, DpopProofGenerator, RedisNonceTracker};
+    use turbomcp::auth::dpop::{DpopKeyManager, DpopProofGenerator, RedisNonceTracker};
 
     /// Test Redis nonce tracker with custom configuration
     #[tokio::test]

@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Build server with observability
-    let server = ServerBuilder::new()
+    let _server = ServerBuilder::new()
         .name("ObservabilityServer")
         .version("1.0.0")
         .build();
