@@ -1,4 +1,4 @@
-//! Simple, robust path validation for security
+//! Path validation for security
 //!
 //! This module provides focused path validation utilities to prevent common
 //! security vulnerabilities like path traversal attacks. It follows the principle

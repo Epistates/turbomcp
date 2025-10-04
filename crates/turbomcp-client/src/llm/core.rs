@@ -840,12 +840,13 @@ pub trait LLMProvider: Send + Sync + std::fmt::Debug {
             ..Default::default()
         };
 
-        // Determine model to use
+        // Determine model to use (MCP 2025-06-18: ModelHint.name field)
         let model = if let Some(prefs) = &request.model_preferences
             && let Some(hints) = &prefs.hints
             && let Some(model_hint) = hints.first()
+            && let Some(name) = &model_hint.name
         {
-            model_hint.clone()
+            name.clone()
         } else {
             // Use first available model
             let models = self.list_models().await.unwrap_or_default();

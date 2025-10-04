@@ -124,6 +124,10 @@ impl RequestRouter {
     }
 
     /// Add a custom route handler
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Routing`] if a route for the same method already exists.
     pub fn add_route<H>(&mut self, handler: H) -> ServerResult<()>
     where
         H: RouteHandler + 'static,
@@ -148,10 +152,10 @@ impl RequestRouter {
     /// Route a JSON-RPC request to the appropriate handler
     pub async fn route(&self, request: JsonRpcRequest, ctx: RequestContext) -> JsonRpcResponse {
         // Validate request if enabled
-        if self.config.validate_requests {
-            if let Err(e) = validate_request(&request) {
-                return error_response(&request, e);
-            }
+        if self.config.validate_requests
+            && let Err(e) = validate_request(&request)
+        {
+            return error_response(&request, e);
         }
 
         // Handle the request
@@ -186,15 +190,15 @@ impl RequestRouter {
             // Roots methods
             "roots/list" => self.handlers.handle_list_roots(request, ctx).await,
 
-            // Enhanced MCP features (new protocol methods)
-            "elicit/request" => self.handlers.handle_elicitation(request, ctx).await,
-            "complete/request" => self.handlers.handle_completion(request, ctx).await,
+            // Enhanced MCP features (MCP 2025-06-18 protocol methods)
+            "elicitation/create" => self.handlers.handle_elicitation(request, ctx).await,
+            "completion/complete" => self.handlers.handle_completion(request, ctx).await,
             "resources/templates/list" => {
                 self.handlers
                     .handle_list_resource_templates(request, ctx)
                     .await
             }
-            "ping/request" => self.handlers.handle_ping(request, ctx).await,
+            "ping" => self.handlers.handle_ping(request, ctx).await,
 
             // Custom routes
             method => {
@@ -211,10 +215,10 @@ impl RequestRouter {
         };
 
         // Validate response if enabled
-        if self.config.validate_responses {
-            if let Err(e) = validate_response(&result) {
-                warn!("Response validation failed: {}", e);
-            }
+        if self.config.validate_responses
+            && let Err(e) = validate_response(&result)
+        {
+            warn!("Response validation failed: {}", e);
         }
 
         result
@@ -238,6 +242,13 @@ impl RequestRouter {
     }
 
     /// Send an elicitation request to the client (server-initiated)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Transport`] if:
+    /// - The bidirectional dispatcher is not configured
+    /// - The client request fails
+    /// - The client does not respond
     pub async fn send_elicitation_to_client(
         &self,
         request: ElicitRequest,
@@ -249,6 +260,13 @@ impl RequestRouter {
     }
 
     /// Send a ping request to the client (server-initiated)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Transport`] if:
+    /// - The bidirectional dispatcher is not configured
+    /// - The client request fails
+    /// - The client does not respond
     pub async fn send_ping_to_client(
         &self,
         request: PingRequest,
@@ -258,6 +276,13 @@ impl RequestRouter {
     }
 
     /// Send a create message request to the client (server-initiated)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Transport`] if:
+    /// - The bidirectional dispatcher is not configured
+    /// - The client request fails
+    /// - The client does not support sampling
     pub async fn send_create_message_to_client(
         &self,
         request: CreateMessageRequest,
@@ -269,6 +294,13 @@ impl RequestRouter {
     }
 
     /// Send a list roots request to the client (server-initiated)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Transport`] if:
+    /// - The bidirectional dispatcher is not configured
+    /// - The client request fails
+    /// - The client does not support roots
     pub async fn send_list_roots_to_client(
         &self,
         request: turbomcp_protocol::types::ListRootsRequest,

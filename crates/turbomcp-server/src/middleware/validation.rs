@@ -294,23 +294,23 @@ pub fn validate_jsonrpc_structure(request: &Value) -> Result<(), ValidationError
     }
 
     // Validate jsonrpc version
-    if let Some(version) = obj.get("jsonrpc") {
-        if version != "2.0" {
-            return Err(ValidationError::ValidationFailed {
-                method: "jsonrpc".to_string(),
-                errors: "Invalid JSON-RPC version, must be '2.0'".to_string(),
-            });
-        }
+    if let Some(version) = obj.get("jsonrpc")
+        && version != "2.0"
+    {
+        return Err(ValidationError::ValidationFailed {
+            method: "jsonrpc".to_string(),
+            errors: "Invalid JSON-RPC version, must be '2.0'".to_string(),
+        });
     }
 
     // Validate method is string
-    if let Some(method) = obj.get("method") {
-        if !method.is_string() {
-            return Err(ValidationError::ValidationFailed {
-                method: "jsonrpc".to_string(),
-                errors: "Method must be a string".to_string(),
-            });
-        }
+    if let Some(method) = obj.get("method")
+        && !method.is_string()
+    {
+        return Err(ValidationError::ValidationFailed {
+            method: "jsonrpc".to_string(),
+            errors: "Method must be a string".to_string(),
+        });
     }
 
     Ok(())

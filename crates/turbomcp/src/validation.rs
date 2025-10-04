@@ -778,4 +778,73 @@ mod tests {
         });
         assert!(validator.validate(&valid_data).is_ok());
     }
+
+    // Property-based tests for  coverage
+    mod proptest_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Test that range validation correctly accepts values within bounds
+            #[test]
+            fn test_range_validation_within_bounds(
+                value in 0.0..150.0
+            ) {
+                let validator = FieldValidator::new("age")
+                    .numeric_range(Some(0.0), Some(150.0));
+
+                let result = validator.validate(&json!(value));
+                prop_assert!(result.is_ok());
+            }
+
+            /// Test that range validation correctly rejects values outside bounds
+            #[test]
+            fn test_range_validation_out_of_bounds_high(
+                value in 151.0..1000.0
+            ) {
+                let validator = FieldValidator::new("age")
+                    .numeric_range(Some(0.0), Some(150.0));
+
+                let result = validator.validate(&json!(value));
+                prop_assert!(result.is_err());
+            }
+
+            /// Test that string length validation accepts valid lengths
+            #[test]
+            fn test_string_length_validation(
+                s in "[a-zA-Z]{5,20}"
+            ) {
+                let validator = FieldValidator::new("username")
+                    .string_length(Some(5), Some(20));
+
+                let result = validator.validate(&json!(s));
+                prop_assert!(result.is_ok());
+            }
+
+            /// Test that email validation correctly identifies valid patterns
+            #[test]
+            fn test_email_pattern_validation(
+                local in "[a-z]{3,10}",
+                domain in "[a-z]{3,10}"
+            ) {
+                let email = format!("{}@{}.com", local, domain);
+                let validator = FieldValidator::new("email").email();
+
+                let result = validator.validate(&json!(email));
+                prop_assert!(result.is_ok());
+            }
+
+            /// Test that pattern validation works for various strings
+            #[test]
+            fn test_pattern_validation_alphanumeric(
+                s in "[a-zA-Z0-9]{5,15}"
+            ) {
+                let validator = FieldValidator::new("code")
+                    .pattern(r"^[a-zA-Z0-9]+$");
+
+                let result = validator.validate(&json!(s));
+                prop_assert!(result.is_ok());
+            }
+        }
+    }
 }

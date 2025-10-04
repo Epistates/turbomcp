@@ -228,7 +228,7 @@ impl DpopProofGenerator {
         })
     }
 
-    /// Get or generate a default key pair with production-grade key management
+    /// Get or generate a default key pair with proven key management
     async fn get_or_generate_default_key(&self) -> Result<DpopKeyPair> {
         // Production implementation: Generate key with proper algorithm selection
         // Key rotation would be handled by the key manager's internal policies

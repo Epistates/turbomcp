@@ -22,7 +22,7 @@ use super::core::{McpServer, should_log_for_stdio};
 impl McpServer {
     /// Handle transport message through Tower service stack
     ///
-    /// This is the world-class Tower integration - all requests flow through
+    /// This is the comprehensive Tower integration - all requests flow through
     /// the complete middleware pipeline (timeout, validation, authz, etc.)
     /// before reaching the router.
     /// Used by feature-gated transport methods (http, tcp, websocket, unix)
@@ -131,10 +131,10 @@ impl McpServer {
             TransportMessageMetadata::with_content_type("application/json"),
         );
 
-        if let Err(e) = transport.send(reply).await {
-            if should_log_for_stdio() {
-                tracing::warn!(error = %e, "Failed to send response over transport");
-            }
+        if let Err(e) = transport.send(reply).await
+            && should_log_for_stdio()
+        {
+            tracing::warn!(error = %e, "Failed to send response over transport");
         }
 
         Ok(())

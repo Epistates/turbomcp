@@ -13,13 +13,40 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
-clap = { workspace = true, features = ["derive"] }
+# Core TurboMCP
+turbomcp-client = { path = "../turbomcp-client", version = "1.1.2" }
+turbomcp-transport = { path = "../turbomcp-transport", version = "1.1.2", features = ["tcp", "unix"] }
+turbomcp-core = { path = "../turbomcp-core", version = "1.1.2" }
+turbomcp-protocol = { path = "../turbomcp-protocol", version = "1.1.2" }
+
+# CLI framework
+clap = { workspace = true, features = ["derive", "env", "string"] }
+
+# Serialization
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+serde_yaml = "0.9"
+
+# Async runtime
 tokio = { workspace = true }
+
+# Legacy transports (for backward compatibility - will be removed in v2.0)
 reqwest = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures = { workspace = true }
+
+# Output formatting
+comfy-table = "7.1"
+owo-colors = "4.1"
+indicatif = "0.17"
+
+# Error handling
+anyhow = "1.0"
+thiserror = { workspace = true }
+
+# Config
+config = "0.14"
+dirs = "5.0"
 
 [dev-dependencies]
 tokio-test = "0.4"

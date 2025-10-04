@@ -37,7 +37,7 @@ use turbomcp_protocol::{
 
 /// Ergonomic tool router that wraps mcp-server functionality
 ///
-/// This provides a comprehensive API while using the battle-tested
+/// This provides a comprehensive API while using the well-established
 /// `mcp-server::RequestRouter` under the hood.
 pub struct ToolRouter<T> {
     /// Server instance (reserved for future use)

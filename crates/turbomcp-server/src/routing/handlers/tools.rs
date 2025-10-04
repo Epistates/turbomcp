@@ -41,7 +41,7 @@ pub async fn handle_call(
             if let Some(handler) = context.registry.get_tool(&tool_name) {
                 match handler.handle(call_request, ctx).await {
                     Ok(tool_result) => success_response(&request, tool_result),
-                    Err(e) => error_response(&request, e.into()),
+                    Err(e) => error_response(&request, e),
                 }
             } else {
                 let error = ServerError::not_found(format!("Tool '{tool_name}'"));

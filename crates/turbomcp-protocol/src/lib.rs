@@ -13,7 +13,7 @@
 //! - Protocol versioning with backward compatibility
 //! - Fast serialization with SIMD acceleration
 //!
-//! ### Advanced Protocol Features (New in 1.0.3)
+//! ### Advanced Protocol Features
 //! - **Elicitation Protocol** - Server-initiated user input requests with rich schema validation
 //! - **Sampling Support** - Bidirectional LLM sampling message types
 //! - **Roots Protocol** - Filesystem boundaries with `roots/list` support
@@ -80,7 +80,7 @@
 //!     .require(vec!["theme".to_string()]);
 //! ```
 //!
-//! ### Type-State Capability Builders (New in 1.1.0)
+//! ### Type-State Capability Builders
 //!
 //! TurboMCP provides const-generic type-state builders that ensure capabilities
 //! are configured correctly at compile time, providing compile-time safety with

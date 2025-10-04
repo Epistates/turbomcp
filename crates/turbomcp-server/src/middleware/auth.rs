@@ -1,4 +1,4 @@
-//! JWT Authentication middleware using best-in-class jsonwebtoken library
+//! JWT Authentication middleware using well-established jsonwebtoken library
 //!
 //! This middleware handles JWT token verification and user identity extraction.
 //! It follows security best practices for token validation and claim extraction.

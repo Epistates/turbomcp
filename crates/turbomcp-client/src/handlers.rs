@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerError};
+//! use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, ElicitationAction, HandlerError};
 //! use async_trait::async_trait;
 //!
 //! // Implement elicitation handler
@@ -28,9 +28,48 @@
 //!         &self,
 //!         request: ElicitationRequest,
 //!     ) -> Result<ElicitationResponse, HandlerError> {
-//!         // Present schema to user and collect input
-//!         // Return user's response
-//!         todo!("Implement user interaction")
+//!         // Display the prompt to the user
+//!         eprintln!("\n{}", request.prompt);
+//!         eprintln!("---");
+//!
+//!         // For each field in the schema, collect user input
+//!         let mut content = std::collections::HashMap::new();
+//!
+//!         if let Some(properties) = request.schema.get("properties") {
+//!             if let Some(props) = properties.as_object() {
+//!                 for (field_name, field_schema) in props {
+//!                     let field_type = field_schema.get("type")
+//!                         .and_then(|v| v.as_str())
+//!                         .unwrap_or("string");
+//!
+//!                     eprint!("{} ({}): ", field_name, field_type);
+//!
+//!                     let mut input = String::new();
+//!                     std::io::stdin().read_line(&mut input)
+//!                         .map_err(|e| HandlerError::Generic {
+//!                             message: e.to_string()
+//!                         })?;
+//!
+//!                     let input = input.trim();
+//!
+//!                     // Parse input based on field type
+//!                     let value: serde_json::Value = match field_type {
+//!                         "boolean" => serde_json::json!(input == "true" || input == "yes" || input == "1"),
+//!                         "number" | "integer" => input.parse::<f64>()
+//!                             .map(|n| serde_json::json!(n))
+//!                             .unwrap_or_else(|_| serde_json::json!(input)),
+//!                         _ => serde_json::json!(input),
+//!                     };
+//!
+//!                     content.insert(field_name.clone(), value);
+//!                 }
+//!             }
+//!         }
+//!
+//!         Ok(ElicitationResponse {
+//!             action: ElicitationAction::Accept,
+//!             content: Some(serde_json::to_value(content).unwrap()),
+//!         })
 //!     }
 //! }
 //! ```
@@ -233,14 +272,15 @@ pub struct ProgressNotification {
 /// #[async_trait]
 /// impl ProgressHandler for ProgressBarHandler {
 ///     async fn handle_progress(&self, notification: ProgressNotification) -> HandlerResult<()> {
-///         let progress_val = notification.progress.progress;
-///         if let Some(total) = notification.progress.total {
-///             let percentage = (progress_val / total) * 100.0;
-///             println!("Progress: {:.1}% - {}", percentage,
-///                 notification.message.unwrap_or_default());
-///         } else {
-///             println!("Progress: {} - {}", progress_val,
-///                 notification.message.unwrap_or_default());
+///         if let Some(progress_val) = notification.progress.progress {
+///             if let Some(total) = notification.progress.total {
+///                 let percentage = (progress_val / total as f64) * 100.0;
+///                 println!("Progress: {:.1}% - {}", percentage,
+///                     notification.message.unwrap_or_default());
+///             } else {
+///                 println!("Progress: {} - {}", progress_val,
+///                     notification.message.unwrap_or_default());
+///             }
 ///         }
 ///         
 ///         if notification.completed {

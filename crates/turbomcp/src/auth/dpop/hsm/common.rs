@@ -1,7 +1,7 @@
 //! Common HSM utilities and shared functionality
 //!
 //! This module provides shared implementations used across HSM backends to
-//! eliminate code duplication while maintaining production-grade quality.
+//! eliminate code duplication while maintaining proven quality.
 
 use super::super::{DpopAlgorithm, DpopError, DpopPublicKey, Result};
 use sha2::{Digest, Sha256};
@@ -82,7 +82,7 @@ pub fn compute_jwk_thumbprint(
 
 /// Execute an operation with exponential backoff retry logic
 ///
-/// This provides production-grade retry functionality with exponential backoff
+/// This provides proven retry functionality with exponential backoff
 /// for HSM operations that may fail due to temporary network issues or
 /// HSM availability problems.
 ///

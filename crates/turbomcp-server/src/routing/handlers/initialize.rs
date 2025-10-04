@@ -57,7 +57,7 @@ fn get_server_capabilities(context: &HandlerContext) -> ServerCapabilities {
             Some(ResourcesCapabilities::default())
         },
         logging: if !context.registry.logging.is_empty() {
-            Some(LoggingCapabilities::default())
+            Some(LoggingCapabilities)
         } else {
             None
         },

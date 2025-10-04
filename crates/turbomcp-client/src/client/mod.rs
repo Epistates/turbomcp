@@ -14,6 +14,7 @@
 // Core modules
 pub mod config;
 pub mod core;
+pub mod manager;
 pub mod operations;
 pub mod protocol;
 
@@ -24,3 +25,4 @@ pub mod protocol;
 
 // Re-export main types for backwards compatibility
 pub use config::{ConnectionConfig, InitializeResult};
+pub use manager::{ConnectionInfo, ConnectionState, ManagerConfig, ServerGroup, SessionManager};

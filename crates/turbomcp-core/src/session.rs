@@ -2,6 +2,67 @@
 //!
 //! Provides comprehensive session tracking, client management, and request analytics
 //! for MCP servers that need to manage multiple clients and track usage patterns.
+//!
+//! ## Features
+//!
+//! - **LRU Eviction**: Automatically evicts least-recently-used sessions when capacity is reached
+//! - **Request Analytics**: Track request patterns, success rates, and client behavior
+//! - **Sensitive Data Protection**: Automatic sanitization of passwords, tokens, and secrets
+//! - **Elicitation Management**: Track pending elicitations and their states
+//! - **Completion Tracking**: Monitor active completions across sessions
+//!
+//! ## Example
+//!
+//! ```rust
+//! use turbomcp_core::{SessionManager, SessionConfig};
+//! use chrono::Duration;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Configure session management with custom settings
+//! let config = SessionConfig {
+//!     max_sessions: 1000,                    // Maximum concurrent sessions
+//!     session_timeout: Duration::hours(24), // Session lifetime
+//!     max_request_history: 10000,           // Request analytics depth
+//!     max_requests_per_session: Some(10000), // Rate limiting per session
+//!     cleanup_interval: std::time::Duration::from_secs(300),
+//!     enable_analytics: true,
+//! };
+//!
+//! let manager = SessionManager::new(config);
+//! manager.start(); // Begin background cleanup task
+//!
+//! // Create and authenticate sessions
+//! let session = manager.get_or_create_session(
+//!     "client-123".to_string(),
+//!     "websocket".to_string()
+//! );
+//!
+//! manager.authenticate_client(
+//!     "client-123",
+//!     Some("MyApp/1.0".to_string()),
+//!     Some("auth-token".to_string())
+//! );
+//!
+//! // Track request analytics
+//! use turbomcp_core::RequestInfo;
+//! let request_info = RequestInfo::new(
+//!     "client-123".to_string(),
+//!     "tools/list".to_string(),
+//!     serde_json::json!({}),
+//! ).complete_success(150); // 150ms execution time
+//!
+//! manager.record_request(request_info);
+//!
+//! // Get analytics
+//! let analytics = manager.get_analytics();
+//! println!("Active sessions: {}", analytics.active_sessions);
+//! println!("Success rate: {:.1}%",
+//!     (analytics.successful_requests as f64 /
+//!      analytics.total_requests as f64) * 100.0
+//! );
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

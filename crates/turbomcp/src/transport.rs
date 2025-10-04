@@ -2,7 +2,7 @@
 //!
 //! This module provides ergonomic wrappers and extensions over the comprehensive
 //! mcp-transport infrastructure. It focuses on developer experience while leveraging
-//! the battle-tested foundation.
+//! the well-established foundation.
 
 //use async_trait::async_trait;
 //use std::collections::HashMap;

@@ -318,8 +318,8 @@ fn extract_resource_from_path(path: &str) -> String {
     // "/mcp" -> "mcp" (general MCP access)
     // Any path -> first path segment or "default"
 
-    if path.starts_with('/') {
-        let parts: Vec<&str> = path[1..].split('/').collect();
+    if let Some(stripped) = path.strip_prefix('/') {
+        let parts: Vec<&str> = stripped.split('/').collect();
         let first_part = parts.first().unwrap_or(&"default");
         if first_part.is_empty() {
             "default".to_string()
@@ -337,9 +337,9 @@ fn extract_action_from_method_and_path(method: &http::Method, path: &str) -> Str
     // Since this is middleware, we don't have access to the JSON-RPC content yet
     // So we'll use a simplified mapping based on HTTP method and path
 
-    match method {
-        &http::Method::GET => "list".to_string(),
-        &http::Method::POST => {
+    match *method {
+        http::Method::GET => "list".to_string(),
+        http::Method::POST => {
             // For POST requests, we might need to examine the body
             // For now, assume it's a "call" action
             if path.contains("tool") {
@@ -348,8 +348,8 @@ fn extract_action_from_method_and_path(method: &http::Method, path: &str) -> Str
                 "request".to_string()
             }
         }
-        &http::Method::PUT => "update".to_string(),
-        &http::Method::DELETE => "delete".to_string(),
+        http::Method::PUT => "update".to_string(),
+        http::Method::DELETE => "delete".to_string(),
         _ => "access".to_string(),
     }
 }

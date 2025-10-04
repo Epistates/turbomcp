@@ -1,8 +1,44 @@
 //! Optimized message types and serialization.
 //!
-//! This module provides zero-copy message handling with optimized serialization
-//! for maximum performance. It supports multiple serialization formats and
+//! This module provides the standard message handling abstraction for TurboMCP.
+//! It supports multiple serialization formats (JSON, MessagePack, CBOR) and
 //! includes SIMD acceleration when available.
+//!
+//! ## Message Types
+//!
+//! This is the **recommended message type** for most use cases. It provides:
+//!
+//! - Multiple serialization formats (JSON, MessagePack, CBOR)
+//! - Automatic format detection
+//! - SIMD-accelerated JSON parsing (when `simd` feature enabled)
+//! - Cached parsed values for efficient reuse
+//! - Ergonomic API for common operations
+//!
+//! For extreme performance scenarios, see [`ZeroCopyMessage`](crate::zero_copy::ZeroCopyMessage).
+//!
+//! ## Example
+//!
+//! ```rust
+//! use turbomcp_core::{Message, MessageId};
+//! use serde_json::json;
+//!
+//! // Create a JSON message
+//! let msg = Message::json(
+//!     MessageId::from("req-1"),
+//!     json!({"method": "test", "params": {}})
+//! )?;
+//!
+//! // Parse to specific type
+//! #[derive(serde::Deserialize)]
+//! struct Request {
+//!     method: String,
+//!     params: serde_json::Value,
+//! }
+//!
+//! let request: Request = msg.parse_json()?;
+//! assert_eq!(request.method, "test");
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 use std::collections::HashMap;
 use std::fmt;
@@ -739,10 +775,11 @@ impl MessageSerializer {
         }
     }
 
-    const fn compress(&self, data: Bytes) -> Bytes {
-        // Compression implementation would go here
-        // For now, just return the original data
-        let _ = self; // Will use self when compression is implemented
+    fn compress(&self, data: Bytes) -> Bytes {
+        // Compression support is planned for a future release (v1.2.0)
+        // This method is currently a no-op but exists to maintain API stability
+        // When implemented, it will use self.compression_threshold and self.enable_compression
+        let _ = self;
         data
     }
 }

@@ -106,7 +106,7 @@ impl MockKeyManager {
         }
     }
 
-    /// Generate a production-grade test key pair using ring cryptography
+    /// Generate a proven test key pair using ring cryptography
     pub async fn generate_test_key(&self, algorithm: DpopAlgorithm) -> Result<DpopKeyPair> {
         let start_time = SystemTime::now();
 

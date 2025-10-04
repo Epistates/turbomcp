@@ -9,6 +9,24 @@ use std::collections::{HashMap, HashSet};
 use crate::types::{ClientCapabilities, ServerCapabilities};
 
 /// Capability matcher for negotiating features between client and server
+///
+/// # Examples
+///
+/// ```
+/// use turbomcp_protocol::capabilities::{CapabilityMatcher, CompatibilityRule};
+/// use turbomcp_protocol::types::{ClientCapabilities, ServerCapabilities};
+///
+/// let mut matcher = CapabilityMatcher::new();
+///
+/// // Add custom compatibility rules
+/// matcher.add_rule("custom_feature", CompatibilityRule::RequireBoth);
+/// matcher.set_default("progress", true);
+///
+/// // Negotiate capabilities
+/// let client = ClientCapabilities::default();
+/// let server = ServerCapabilities::default();
+/// let result = matcher.negotiate(&client, &server);
+/// ```
 #[derive(Debug, Clone)]
 pub struct CapabilityMatcher {
     /// Feature compatibility rules
@@ -33,6 +51,22 @@ pub enum CompatibilityRule {
 }
 
 /// Negotiated capability set
+///
+/// # Examples
+///
+/// ```
+/// use turbomcp_protocol::capabilities::CapabilitySet;
+///
+/// let mut caps = CapabilitySet::empty();
+/// caps.enable_feature("tools".to_string());
+/// caps.enable_feature("prompts".to_string());
+///
+/// assert!(caps.has_feature("tools"));
+/// assert_eq!(caps.feature_count(), 2);
+///
+/// let summary = caps.summary();
+/// println!("{:?}", summary);
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapabilitySet {
     /// Enabled features
@@ -196,6 +230,11 @@ impl CapabilityMatcher {
     }
 
     /// Negotiate capabilities between client and server
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CapabilityError::IncompatibleFeatures`] if any features have
+    /// incompatible requirements between client and server.
     pub fn negotiate(
         &self,
         client: &ClientCapabilities,
@@ -249,6 +288,12 @@ impl CapabilityNegotiator {
     }
 
     /// Negotiate capabilities between client and server
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CapabilityError`] if capability negotiation fails.
+    /// In strict mode, incompatible features cause an error.
+    /// In non-strict mode, incompatible features are logged and disabled.
     pub fn negotiate(
         &self,
         client: &ClientCapabilities,
@@ -1334,7 +1379,22 @@ pub mod builders {
                 experimental: self.experimental,
                 roots: self.roots,
                 sampling: self.sampling,
-                elicitation: Some(ElicitationCapabilities),
+                elicitation: Some(ElicitationCapabilities::default()),
+                negotiator: self.negotiator,
+                strict_validation: self.strict_validation,
+                _state: PhantomData,
+            }
+        }
+
+        /// Enable elicitation with schema validation
+        pub fn enable_elicitation_with_schema_validation(
+            self,
+        ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, S, true>> {
+            ClientCapabilitiesBuilder {
+                experimental: self.experimental,
+                roots: self.roots,
+                sampling: self.sampling,
+                elicitation: Some(ElicitationCapabilities::default().with_schema_validation()),
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,

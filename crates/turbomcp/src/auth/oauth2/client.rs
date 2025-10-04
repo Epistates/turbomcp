@@ -1,6 +1,6 @@
 //! OAuth 2.0 Client Implementation
 //!
-//! This module provides a production-grade OAuth 2.0 client wrapper that supports:
+//! This module provides a proven OAuth 2.0 client wrapper that supports:
 //! - Authorization Code flow (with PKCE)
 //! - Client Credentials flow (server-to-server)
 //! - Device Authorization flow (CLI/IoT)
@@ -30,7 +30,7 @@ pub struct OAuth2Client {
 }
 
 impl OAuth2Client {
-    /// Create a production-grade OAuth2 client supporting all flows
+    /// Create a proven OAuth2 client supporting all flows
     pub fn new(config: &OAuth2Config, provider_type: ProviderType) -> McpResult<Self> {
         // Validate URLs
         let auth_url = AuthUrl::new(config.auth_url.clone())
@@ -216,7 +216,7 @@ impl OAuth2Client {
         }
 
         // Industry Standard: Use oauth2 crate's RedirectUrl for validation
-        // This provides battle-tested URL validation per OAuth 2.0 specifications
+        // This provides well-established URL validation per OAuth 2.0 specifications
         // For production security, implement exact whitelist matching of allowed URIs
         // (not pattern matching, which is error-prone per OAuth Security Best Practice RFC)
         RedirectUrl::new(uri.to_string())

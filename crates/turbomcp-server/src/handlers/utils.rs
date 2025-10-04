@@ -7,7 +7,8 @@
 use std::collections::HashMap;
 use turbomcp_core::RequestContext;
 use turbomcp_protocol::types::{
-    CallToolRequest, CallToolResult, GetPromptRequest, GetPromptResult, Prompt, ReadResourceRequest, ReadResourceResult, Resource, Tool, ToolInputSchema,
+    CallToolRequest, CallToolResult, GetPromptRequest, GetPromptResult, Prompt,
+    ReadResourceRequest, ReadResourceResult, Resource, Tool, ToolInputSchema,
 };
 
 use crate::ServerResult;

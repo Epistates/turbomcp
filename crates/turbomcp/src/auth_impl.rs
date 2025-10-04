@@ -32,7 +32,7 @@ use tokio::sync::RwLock;
 
 use crate::{McpError, McpResult};
 
-// Using battle-tested oauth2 crate for secure OAuth2 implementation
+// Using well-established oauth2 crate for secure OAuth2 implementation
 use oauth2::{
     AuthorizationCode, CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RefreshToken, Scope,
     TokenResponse, reqwest::async_http_client,
@@ -85,7 +85,7 @@ struct PendingAuth {
 }
 
 impl OAuth2Provider {
-    /// Create a production-grade OAuth 2.0 provider with comprehensive flow support
+    /// Create a proven OAuth 2.0 provider with comprehensive flow support
     pub async fn new(
         name: String,
         config: OAuth2Config,
@@ -320,7 +320,7 @@ impl OAuth2Provider {
             metadata,
         };
 
-        // Store access token for future use (production-grade token management)
+        // Store access token for future use (proven token management)
         self.token_storage
             .store_access_token(pending.state.secret(), &access_token)
             .await

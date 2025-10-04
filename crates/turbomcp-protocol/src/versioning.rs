@@ -56,22 +56,33 @@ pub enum VersionRequirement {
 
 impl Version {
     /// Create a new version
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VersionError::InvalidMonth`] if month is not in range 1-12.
+    /// Returns [`VersionError::InvalidDay`] if day is invalid for the given month.
     pub fn new(year: u16, month: u8, day: u8) -> Result<Self, VersionError> {
         if !(1..=12).contains(&month) {
-            return Err(VersionError::InvalidMonth(month));
+            return Err(VersionError::InvalidMonth(month.to_string()));
         }
 
         if !(1..=31).contains(&day) {
-            return Err(VersionError::InvalidDay(day));
+            return Err(VersionError::InvalidDay(day.to_string()));
         }
 
         // Basic month/day validation
         if month == 2 && day > 29 {
-            return Err(VersionError::InvalidDay(day));
+            return Err(VersionError::InvalidDay(format!(
+                "{} (invalid for February)",
+                day
+            )));
         }
 
         if matches!(month, 4 | 6 | 9 | 11) && day > 30 {
-            return Err(VersionError::InvalidDay(day));
+            return Err(VersionError::InvalidDay(format!(
+                "{} (month {} only has 30 days)",
+                day, month
+            )));
         }
 
         Ok(Self { year, month, day })
@@ -109,6 +120,11 @@ impl Version {
     }
 
     /// Parse version from date string
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VersionError`] if the string is not in `YYYY-MM-DD` format
+    /// or contains invalid date components.
     pub fn from_date_string(s: &str) -> Result<Self, VersionError> {
         s.parse()
     }
@@ -142,12 +158,14 @@ impl FromStr for Version {
         let year = parts[0]
             .parse::<u16>()
             .map_err(|_| VersionError::InvalidYear(parts[0].to_string()))?;
+
         let month = parts[1]
             .parse::<u8>()
-            .map_err(|_| VersionError::InvalidMonth(parts[1].parse().unwrap_or(0)))?;
+            .map_err(|_| VersionError::InvalidMonth(parts[1].to_string()))?;
+
         let day = parts[2]
             .parse::<u8>()
-            .map_err(|_| VersionError::InvalidDay(parts[2].parse().unwrap_or(0)))?;
+            .map_err(|_| VersionError::InvalidDay(parts[2].to_string()))?;
 
         Self::new(year, month, day)
     }
@@ -167,6 +185,10 @@ impl Ord for Version {
 
 impl VersionManager {
     /// Create a new version manager
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VersionError::NoSupportedVersions`] if the provided vector is empty.
     pub fn new(supported_versions: Vec<Version>) -> Result<Self, VersionError> {
         if supported_versions.is_empty() {
             return Err(VersionError::NoSupportedVersions);
@@ -287,6 +309,10 @@ impl VersionRequirement {
     }
 
     /// Create a version range requirement
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VersionError::InvalidRange`] if `min` is greater than `max`.
     pub fn range(min: Version, max: Version) -> Result<Self, VersionError> {
         if min > max {
             return Err(VersionError::InvalidRange(min, max));
@@ -295,6 +321,10 @@ impl VersionRequirement {
     }
 
     /// Create an "any of" requirement
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VersionError::EmptyVersionList`] if the provided vector is empty.
     pub fn any(versions: Vec<Version>) -> Result<Self, VersionError> {
         if versions.is_empty() {
             return Err(VersionError::EmptyVersionList);
@@ -325,10 +355,10 @@ pub enum VersionError {
     InvalidYear(String),
     /// Invalid month
     #[error("Invalid month: {0} (must be 1-12)")]
-    InvalidMonth(u8),
+    InvalidMonth(String),
     /// Invalid day
     #[error("Invalid day: {0} (must be 1-31)")]
-    InvalidDay(u8),
+    InvalidDay(String),
     /// No supported versions
     #[error("No supported versions provided")]
     NoSupportedVersions,
@@ -345,6 +375,10 @@ pub mod utils {
     use super::*;
 
     /// Parse multiple versions from strings
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VersionError`] if any version string cannot be parsed.
     pub fn parse_versions(version_strings: &[&str]) -> Result<Vec<Version>, VersionError> {
         version_strings.iter().map(|s| s.parse()).collect()
     }
@@ -386,6 +420,7 @@ pub mod utils {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_version_creation() {
@@ -511,5 +546,75 @@ mod tests {
 
         let oldest = utils::oldest_version(&versions);
         assert_eq!(oldest, Some(&Version::new(2024, 11, 5).unwrap()));
+    }
+
+    // Property-based tests for comprehensive coverage
+    proptest! {
+        #[test]
+        fn test_version_parse_roundtrip(
+            year in 2020u16..2030u16,
+            month in 1u8..=12u8,
+            day in 1u8..=28u8, // Use 28 to avoid month-specific day validation
+        ) {
+            let version = Version::new(year, month, day)?;
+            let string = version.to_date_string();
+            let parsed = Version::from_date_string(&string)?;
+            prop_assert_eq!(version, parsed);
+        }
+
+        #[test]
+        fn test_version_comparison_transitive(
+            y1 in 2020u16..2030u16,
+            m1 in 1u8..=12u8,
+            d1 in 1u8..=28u8,
+            y2 in 2020u16..2030u16,
+            m2 in 1u8..=12u8,
+            d2 in 1u8..=28u8,
+            y3 in 2020u16..2030u16,
+            m3 in 1u8..=12u8,
+            d3 in 1u8..=28u8,
+        ) {
+            let v1 = Version::new(y1, m1, d1)?;
+            let v2 = Version::new(y2, m2, d2)?;
+            let v3 = Version::new(y3, m3, d3)?;
+
+            // Transitivity: if v1 < v2 and v2 < v3, then v1 < v3
+            if v1 < v2 && v2 < v3 {
+                prop_assert!(v1 < v3);
+            }
+        }
+
+        #[test]
+        fn test_version_compatibility_symmetric(
+            year in 2020u16..2030u16,
+            m1 in 1u8..=12u8,
+            d1 in 1u8..=28u8,
+            m2 in 1u8..=12u8,
+            d2 in 1u8..=28u8,
+        ) {
+            let v1 = Version::new(year, m1, d1)?;
+            let v2 = Version::new(year, m2, d2)?;
+
+            // Same-year versions should be compatible in both directions
+            prop_assert_eq!(v1.is_compatible_with(&v2), v2.is_compatible_with(&v1));
+        }
+
+        #[test]
+        fn test_invalid_month_rejected(
+            year in 2020u16..2030u16,
+            month in 13u8..=255u8,
+            day in 1u8..=28u8,
+        ) {
+            prop_assert!(Version::new(year, month, day).is_err());
+        }
+
+        #[test]
+        fn test_invalid_day_rejected(
+            year in 2020u16..2030u16,
+            month in 1u8..=12u8,
+            day in 32u8..=255u8,
+        ) {
+            prop_assert!(Version::new(year, month, day).is_err());
+        }
     }
 }

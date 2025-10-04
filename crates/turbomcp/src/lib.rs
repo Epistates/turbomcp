@@ -1,7 +1,7 @@
 //! # TurboMCP - Model Context Protocol SDK
 //!
 //! Rust SDK for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
-//! with SIMD acceleration, robust transport layer, graceful shutdown, and ergonomic APIs.
+//! with SIMD acceleration, resilient transport layer, graceful shutdown, and ergonomic APIs.
 //!
 //! ## Features
 //!
@@ -727,6 +727,45 @@ pub mod prelude {
     // Re-export commonly needed external types
     pub use async_trait::async_trait;
     pub use serde::{Deserialize, Serialize};
+
+    // ============================================================================
+    // Streamable HTTP v2 (MCP 2025-06-18 Compliant) - RECOMMENDED
+    // ============================================================================
+
+    /// Streamable HTTP v2 server configuration and runtime
+    #[cfg(feature = "http")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
+    pub use turbomcp_transport::streamable_http_v2::{
+        StreamableHttpConfig, create_router as create_http_router, run_server as run_http_server,
+    };
+
+    /// Streamable HTTP v2 client transport and configuration
+    #[cfg(feature = "http")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
+    pub use turbomcp_transport::streamable_http_client::{
+        RetryPolicy, StreamableHttpClientConfig, StreamableHttpClientTransport,
+    };
+
+    // ============================================================================
+    // Other Transport Implementations
+    // ============================================================================
+
+    /// WebSocket bidirectional transport
+    #[cfg(feature = "websocket")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
+    pub use turbomcp_transport::websocket_bidirectional::{
+        WebSocketBidirectionalConfig, WebSocketBidirectionalTransport,
+    };
+
+    /// TCP transport
+    #[cfg(feature = "tcp")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tcp")))]
+    pub use turbomcp_transport::tcp::TcpTransport;
+
+    /// Unix domain socket transport
+    #[cfg(all(unix, feature = "unix"))]
+    #[cfg_attr(docsrs, doc(cfg(all(unix, feature = "unix"))))]
+    pub use turbomcp_transport::unix::UnixTransport;
 }
 
 /// `TurboMCP` result type
@@ -1058,11 +1097,25 @@ impl Context {
     }
 
     /// Resolve a service from the dependency injection container
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Context`] if:
+    /// - The service is not registered in the container
+    /// - Type mismatch occurs during downcast
+    /// - Circular dependency is detected
     pub async fn resolve<T: 'static + Clone>(&self, name: &str) -> McpResult<T> {
         self.container.resolve_with_dependencies(name).await
     }
 
     /// Resolve a service by type name (convenience method)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Context`] if:
+    /// - The service is not registered in the container
+    /// - Type mismatch occurs during downcast
+    /// - Circular dependency is detected
     pub async fn resolve_by_type<T: 'static + Clone>(&self) -> McpResult<T> {
         let type_name = std::any::type_name::<T>();
         self.resolve(type_name).await
@@ -1083,6 +1136,11 @@ impl Context {
     }
 
     /// Log an info message to the client
+    ///
+    /// # Errors
+    ///
+    /// Currently infallible - returns `Ok(())` in all cases.
+    /// Logging failures are handled internally by the tracing infrastructure.
     pub async fn info<S: AsRef<str>>(&self, message: S) -> McpResult<()> {
         tracing::info!("{}", message.as_ref());
         // Logging notification sent via tracing infrastructure
@@ -1090,6 +1148,11 @@ impl Context {
     }
 
     /// Log a warning message to the client
+    ///
+    /// # Errors
+    ///
+    /// Currently infallible - returns `Ok(())` in all cases.
+    /// Logging failures are handled internally by the tracing infrastructure.
     pub async fn warn<S: AsRef<str>>(&self, message: S) -> McpResult<()> {
         tracing::warn!("{}", message.as_ref());
         // Logging notification sent via tracing infrastructure
@@ -1097,6 +1160,11 @@ impl Context {
     }
 
     /// Log an error message to the client
+    ///
+    /// # Errors
+    ///
+    /// Currently infallible - returns `Ok(())` in all cases.
+    /// Logging failures are handled internally by the tracing infrastructure.
     pub async fn error<S: AsRef<str>>(&self, message: S) -> McpResult<()> {
         tracing::error!("{}", message.as_ref());
         // Logging notification sent via tracing infrastructure
@@ -1104,6 +1172,11 @@ impl Context {
     }
 
     /// Report progress for long-running operations
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Context`] if progress reporting fails due to
+    /// invalid progress values or notification system errors.
     pub async fn report_progress(&self, progress: f64, total: Option<f64>) -> McpResult<()> {
         tracing::debug!("Progress: {} / {:?}", progress, total);
 
@@ -1120,6 +1193,10 @@ impl Context {
     }
 
     /// Store data in context
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Serialization`] if the value cannot be serialized to JSON.
     pub async fn set<T: Serialize>(&self, key: &str, value: T) -> McpResult<()> {
         let json_value = serde_json::to_value(value)?;
         self.data.write().await.insert(key.to_string(), json_value);
@@ -1127,6 +1204,10 @@ impl Context {
     }
 
     /// Retrieve data from context
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Serialization`] if the stored value cannot be deserialized to type `T`.
     pub async fn get<T: for<'de> Deserialize<'de>>(&self, key: &str) -> McpResult<Option<T>> {
         if let Some(value) = self.data.read().await.get(key) {
             Ok(Some(serde_json::from_value(value.clone())?))
@@ -1206,6 +1287,13 @@ impl Context {
     /// # Returns
     ///
     /// A Result containing the client's response or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Context`] if:
+    /// - Server capabilities are not available in the context
+    /// - The sampling request fails
+    /// - The client does not support sampling
     ///
     /// # Example
     ///

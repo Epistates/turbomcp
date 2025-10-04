@@ -223,3 +223,73 @@ impl Default for ConfigurationBuilder {
 
 /// Configuration alias for convenience
 pub type Configuration = ServerConfig;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = ServerConfig::default();
+        assert_eq!(config.name, crate::SERVER_NAME);
+        assert_eq!(config.version, crate::SERVER_VERSION);
+        assert_eq!(config.bind_address, "127.0.0.1");
+        assert_eq!(config.port, 8080);
+        assert!(!config.enable_tls);
+    }
+
+    #[test]
+    fn test_config_builder() {
+        let config = ConfigurationBuilder::new()
+            .name("test-server")
+            .port(9000)
+            .build();
+
+        assert_eq!(config.name, "test-server");
+        assert_eq!(config.port, 9000);
+    }
+
+    // Property-based tests
+    mod proptest_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Test that config serialization roundtrips correctly for any valid port
+            #[test]
+            fn test_config_port_roundtrip(port in 1024u16..65535u16) {
+                let config = ConfigurationBuilder::new()
+                    .port(port)
+                    .build();
+
+                prop_assert_eq!(config.port, port);
+            }
+
+            /// Test that server name is preserved through builder
+            #[test]
+            fn test_config_name_preservation(name in "[a-zA-Z0-9_-]{1,50}") {
+                let config = ConfigurationBuilder::new()
+                    .name(&name)
+                    .build();
+
+                prop_assert_eq!(config.name, name);
+            }
+
+            /// Test rate limiting configuration validity
+            #[test]
+            fn test_rate_limiting_config(
+                rps in 1u32..10000u32,
+                burst in 1u32..1000u32
+            ) {
+                let config = RateLimitingConfig {
+                    enabled: true,
+                    requests_per_second: rps,
+                    burst_capacity: burst,
+                };
+
+                // Verify values are within bounds
+                prop_assert!(config.requests_per_second >= 1);
+                prop_assert!(config.burst_capacity >= 1);
+            }
+        }
+    }
+}

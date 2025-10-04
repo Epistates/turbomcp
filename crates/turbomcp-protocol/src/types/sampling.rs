@@ -60,56 +60,97 @@ pub struct CreateMessageRequest {
     pub _meta: Option<serde_json::Value>,
 }
 
-/// Model preferences for sampling
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelPreferences {
-    /// Preferred model hints (not binding)
+/// Model hint for selection (MCP 2025-06-18 compliant)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelHint {
+    /// Model name hint (substring matching)
+    /// Examples: "claude-3-5-sonnet", "sonnet", "claude"
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hints: Option<Vec<String>>,
-    /// Cost tier preference
-    #[serde(rename = "costTier", skip_serializing_if = "Option::is_none")]
-    pub cost_tier: Option<CostTier>,
-    /// Speed tier preference
-    #[serde(rename = "speedTier", skip_serializing_if = "Option::is_none")]
-    pub speed_tier: Option<SpeedTier>,
-    /// Intelligence tier preference
-    #[serde(rename = "intelligenceTier", skip_serializing_if = "Option::is_none")]
-    pub intelligence_tier: Option<IntelligenceTier>,
+    pub name: Option<String>,
 }
 
-/// Cost tier preferences
+impl ModelHint {
+    /// Create a new model hint with a name
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+        }
+    }
+}
+
+/// Model preferences for sampling (MCP 2025-06-18 compliant)
+///
+/// The spec changed from tier-based to priority-based system.
+/// Priorities are 0.0-1.0 where 0 = not important, 1 = most important.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPreferences {
+    /// Optional hints for model selection (evaluated in order)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hints: Option<Vec<ModelHint>>,
+
+    /// Cost priority (0.0 = not important, 1.0 = most important)
+    #[serde(rename = "costPriority", skip_serializing_if = "Option::is_none")]
+    pub cost_priority: Option<f64>,
+
+    /// Speed priority (0.0 = not important, 1.0 = most important)
+    #[serde(rename = "speedPriority", skip_serializing_if = "Option::is_none")]
+    pub speed_priority: Option<f64>,
+
+    /// Intelligence priority (0.0 = not important, 1.0 = most important)
+    #[serde(
+        rename = "intelligencePriority",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub intelligence_priority: Option<f64>,
+}
+
+// DEPRECATED: Legacy tier-based enums kept for backward compatibility
+// These are NOT part of MCP 2025-06-18 spec
+/// **DEPRECATED** - Cost tier (legacy). Use [`ModelPreferences`] with `cost_priority` instead.
+#[deprecated(
+    since = "2.0.0",
+    note = "Use ModelPreferences with priority values instead"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum CostTier {
-    /// Low cost preference
+    /// Low cost priority
     Low,
-    /// Medium cost preference
+    /// Medium cost priority
     Medium,
-    /// High cost preference (premium models)
+    /// High cost priority
     High,
 }
 
-/// Speed tier preferences
+/// **DEPRECATED** - Speed tier (legacy). Use [`ModelPreferences`] with `speed_priority` instead.
+#[deprecated(
+    since = "2.0.0",
+    note = "Use ModelPreferences with priority values instead"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum SpeedTier {
-    /// Low speed (high latency acceptable)
+    /// Low speed priority
     Low,
-    /// Medium speed
+    /// Medium speed priority
     Medium,
-    /// High speed (low latency required)
+    /// High speed priority
     High,
 }
 
-/// Intelligence tier preferences
+/// **DEPRECATED** - Intelligence tier (legacy). Use [`ModelPreferences`] with `intelligence_priority` instead.
+#[deprecated(
+    since = "2.0.0",
+    note = "Use ModelPreferences with priority values instead"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum IntelligenceTier {
-    /// Basic intelligence
+    /// Low intelligence priority
     Low,
-    /// Moderate intelligence
+    /// Medium intelligence priority
     Medium,
-    /// High intelligence (most capable models)
+    /// High intelligence priority
     High,
 }
 
