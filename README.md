@@ -66,7 +66,7 @@ High-performance Rust SDK for the Model Context Protocol (MCP) with compile-time
 
 ```toml
 [dependencies]
-turbomcp = "1.1.0"
+turbomcp = "2.0.0"
 tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -79,7 +79,7 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct HelloServer;
 
-#[server(name = "hello-server", version = "1.1.0")]
+#[server(name = "hello-server", version = "2.0.0")]
 impl HelloServer {
     #[tool("Say hello to someone")]
     async fn hello(&self, name: String) -> McpResult<String> {
@@ -256,7 +256,7 @@ match deployment_env {
 ## Security Features
 
 ### Security Architecture
-TurboMCP v1.1.0 includes security features:
+TurboMCP includes security features:
 
 ```rust
 // Security configuration
@@ -317,7 +317,7 @@ async fn get_metrics(&self, ctx: Context) -> McpResult<SystemMetrics> {
 ### Benchmark Results
 
 ```
-TurboMCP Performance Characteristics (v1.1.0)
+TurboMCP Performance Characteristics
 ==================================================
 Message Throughput:     Concurrent processing  (TCP transport)
 Tool Execution:         Fast response times    (99th percentile)
@@ -403,7 +403,7 @@ let client3 = Client::new(shared_transport.clone());
 ```rust
 #[server(
     name = "secure-file-server",
-    version = "1.1.0",
+    version = "2.0.0",
     root = "file:///workspace:Project Files",
     root = "file:///uploads:User Uploads",
     root = "file:///tmp:Temporary Files"
@@ -487,7 +487,7 @@ spec:
     spec:
       containers:
       - name: server
-        image: your-registry/turbomcp-server:v1.1.0
+        image: your-registry/turbomcp-server:v2.0.0
         ports:
         - containerPort: 8080
         env:
@@ -625,7 +625,7 @@ struct ProductionServer {
 
 #[server(
     name = "enterprise-server",
-    version = "1.1.0",
+    version = "2.0.0",
     description = "Production server with advanced features",
     capabilities = ServerCapabilities::builder()
         .enable_tools()

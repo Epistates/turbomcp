@@ -6,7 +6,7 @@ This directory contains the individual crates that make up the TurboMCP framewor
 
 **All crates now feature:**
 - **Zero Known Vulnerabilities** - Comprehensive security audit with eliminated RSA and paste vulnerabilities
-- **World-Class Benchmarking** - Enterprise performance monitoring with automated regression detection
+- **Comprehensive Benchmarking** - Enterprise performance monitoring with automated regression detection
 - **Enhanced Client Libraries** - Advanced LLM backend support with production-grade implementations
 - **MIT-Compatible Dependencies** - Strict licensing compliance with cargo-deny policy
 
@@ -189,23 +189,23 @@ Command-line interface for interacting with MCP servers, testing, and debugging.
 ### Complete Framework (Recommended)
 ```toml
 [dependencies]
-turbomcp = "1.1.0"
+turbomcp = "2.0.0"
 ```
 
 ### Specific Layers Only
 ```toml
 [dependencies]
 # For building custom servers
-turbomcp-server = "1.1.0"
-turbomcp-transport = "1.1.0"
+turbomcp-server = "2.0.0"
+turbomcp-transport = "2.0.0"
 
 # For building custom clients
-turbomcp-client = "1.1.0"
-turbomcp-protocol = "1.1.0"
+turbomcp-client = "2.0.0"
+turbomcp-protocol = "2.0.0"
 
 # For low-level protocol work
-turbomcp-protocol = "1.1.0"
-turbomcp-core = "1.1.0"
+turbomcp-protocol = "2.0.0"
+turbomcp-core = "2.0.0"
 ```
 
 ### Development Tools

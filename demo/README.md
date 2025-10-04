@@ -153,7 +153,7 @@ Uses current macro syntax and proper error handling:
 ```rust
 #[server(
     name = "TurboMCP-Demo",
-    version = "1.1.0",
+    version = "2.0.0",
     description = "Complete demonstration of all TurboMCP framework capabilities",
     root = "file:///project:Project Files",
     root = "config:///settings:Configuration"

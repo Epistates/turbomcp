@@ -365,9 +365,9 @@ impl Transport for CustomTransport {
 | `metrics` | Enable metrics collection | ✅ |
 | `circuit-breaker` | Enable circuit breaker pattern | ✅ |
 
-## SharedTransport for Async Concurrency (v1.1.0)
+## SharedTransport for Async Concurrency
 
-TurboMCP v1.1.0 introduces SharedTransport - a thread-safe wrapper that eliminates Arc/Mutex complexity while preserving full transport functionality:
+TurboMCP introduces SharedTransport - a thread-safe wrapper that eliminates Arc/Mutex complexity while preserving full transport functionality:
 
 ### Basic SharedTransport Usage
 

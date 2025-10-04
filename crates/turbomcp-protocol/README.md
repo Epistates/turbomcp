@@ -31,7 +31,7 @@ Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and 
 - Schema generation from Rust types
 
 ### Capability Management
-- Type-State Capability Builders - Compile-time validated capability configuration (New in v1.1.0)
+- Type-State Capability Builders - Compile-time validated capability configuration
 - Server capabilities for tools, resources, prompts declarations
 - Client capabilities including sampling, roots, progress reporting
 - Feature negotiation with capability matching
@@ -136,7 +136,7 @@ let json_data = r#"{
     "params": {
         "protocolVersion": "2025-06-18",
         "capabilities": {},
-        "clientInfo": {"name": "test-client", "version": "1.1.0"}
+        "clientInfo": {"name": "test-client", "version": "2.0.0"}
     }
 }"#;
 
@@ -188,7 +188,7 @@ match result {
 }
 ```
 
-### Type-State Capability Builders (New in v1.1.0)
+### Type-State Capability Builders
 
 ```rust
 use turbomcp_protocol::capabilities::builders::{

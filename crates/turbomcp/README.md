@@ -110,7 +110,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "1.1.0"
+turbomcp = "2.0.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -161,7 +161,7 @@ turbomcp-cli tools-list --url http://localhost:8080/mcp
 turbomcp-cli tools-list --command "./target/debug/my-server"
 ```
 
-## Type-State Capability Builders (New in v1.1.0)
+## Type-State Capability Builders
 
 TurboMCP provides compile-time validated capability builders that ensure correct configuration at build time:
 
@@ -180,7 +180,7 @@ let server_caps = ServerCapabilitiesBuilder::new()
 // Usage in server macro
 #[server(
     name = "my-server",
-    version = "1.1.0",
+    version = "2.0.0",
     capabilities = ServerCapabilities::builder()
         .enable_tools()
         .enable_tool_list_changed()
@@ -297,14 +297,14 @@ async fn code_review_prompt(
 }
 ```
 
-### MCP 2025-06-18 Enhanced Features (New in v1.1.0)
+### MCP 2025-06-18 Enhanced Features
 
 #### Roots Support - Filesystem Boundaries
 
 ```rust
 #[server(
     name = "filesystem-server",
-    version = "1.1.0", 
+    version = "2.0.0",
     root = "file:///workspace:Project Workspace",
     root = "file:///tmp:Temporary Files"
 )]
@@ -574,9 +574,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Shared Wrappers for Async Concurrency (v1.1.0)
+## Shared Wrappers for Async Concurrency
 
-TurboMCP v1.1.0 introduces comprehensive shared wrapper system that eliminates Arc/Mutex complexity from public APIs:
+TurboMCP introduces comprehensive shared wrapper system that eliminates Arc/Mutex complexity from public APIs:
 
 ### SharedClient - Thread-Safe Client Access
 
@@ -781,7 +781,7 @@ Enable SIMD acceleration for maximum performance:
 
 ```toml
 [dependencies]
-turbomcp = { version = "1.1.0", features = ["simd"] }
+turbomcp = { version = "2.0.0", features = ["simd"] }
 ```
 
 Configure performance settings:
