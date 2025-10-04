@@ -173,33 +173,31 @@ impl InteractiveElicitationHandler {
 pub struct ProgressBarHandler;
 
 impl ProgressBarHandler {
-    fn display_progress_bar(&self, progress: Option<f64>, total: Option<u64>) -> String {
+    fn display_progress_bar(&self, progress: f64, total: Option<f64>) -> String {
         const BAR_WIDTH: usize = 40;
 
-        match (progress, total) {
-            (Some(progress_val), Some(total_val)) => {
-                // MCP protocol: progress is 0.0-1.0, total is absolute count
-                let percentage = (progress_val * 100.0).min(100.0);
+        match total {
+            Some(total_val) => {
+                // Calculate percentage based on progress/total
+                let percentage = if total_val > 0.0 {
+                    (progress / total_val * 100.0).min(100.0)
+                } else {
+                    0.0
+                };
                 let filled = ((percentage / 100.0) * BAR_WIDTH as f64) as usize;
                 let empty = BAR_WIDTH - filled;
 
                 format!(
-                    "[{}{}] {:.1}% ({})",
+                    "[{}{}] {:.1}% ({:.0}/{:.0})",
                     "█".repeat(filled),
                     "░".repeat(empty),
                     percentage,
+                    progress,
                     total_val
                 )
             }
-            (Some(progress_val), None) => {
-                let percentage = (progress_val * 100.0).min(100.0);
-                format!("🔄 Processing... {:.1}%", percentage)
-            }
-            (None, Some(total_val)) => {
-                format!("🔄 Processing... ({} total)", total_val)
-            }
-            (None, None) => {
-                "🔄 Processing...".to_string()
+            None => {
+                format!("🔄 Processing... {:.0}", progress)
             }
         }
     }
@@ -469,14 +467,19 @@ async fn simulate_progress_updates(client: &mut turbomcp_client::Client<StdioTra
                 operation_id: operation_id.clone(),
                 progress: ProtocolProgressNotification {
                     progress_token: ProgressToken::from(format!("token-{}", i)),
-                    // MCP protocol: progress is 0.0-1.0, total is absolute count
-                    progress: Some(progress_ratio),
-                    total: Some(total_files),
+                    // MCP protocol: progress is current value, total is absolute count
+                    progress: progress_ratio,
+                    total: Some(total_files as f64),
+                    message: None,
                 },
                 message: Some(if completed {
                     "All files processed successfully".to_string()
                 } else {
-                    format!("Processing document_{}.pdf ({:.0}%)", i + 1, progress_ratio * 100.0)
+                    format!(
+                        "Processing document_{}.pdf ({:.0}%)",
+                        i + 1,
+                        progress_ratio * 100.0
+                    )
                 }),
                 completed,
                 error: None,

@@ -10,7 +10,7 @@ use proptest::option;
 use proptest::string::string_regex;
 
 use turbomcp::*;
-use turbomcp_transport::robustness::*;
+use turbomcp_transport::resilience::*;
 use turbomcp_protocol::validation::*;
 use turbomcp_core::*;
 

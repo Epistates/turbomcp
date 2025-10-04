@@ -763,8 +763,9 @@ mod full_protocol_integration {
         let serialized = serde_json::to_value(&initialized).unwrap();
         assert!(!serialized.as_object().unwrap().contains_key("id"));
 
-        // Full handshake should be valid
-        assert!(true); // If we get here, all validations passed
+        // Validate full handshake sequence: method and params are correct
+        assert_eq!(initialized.method, "notifications/initialized");
+        assert!(serialized["params"].is_object());
     }
 }
 

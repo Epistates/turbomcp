@@ -487,23 +487,23 @@ fn test_version_manager_satisfies_requirement() {
 fn test_version_error_types() {
     // Test InvalidMonth error
     match Version::new(2025, 0, 15) {
-        Err(VersionError::InvalidMonth(month)) => assert_eq!(month, 0),
+        Err(VersionError::InvalidMonth(month)) => assert_eq!(month, "0"),
         _ => panic!("Expected InvalidMonth error"),
     }
 
     match Version::new(2025, 13, 15) {
-        Err(VersionError::InvalidMonth(month)) => assert_eq!(month, 13),
+        Err(VersionError::InvalidMonth(month)) => assert_eq!(month, "13"),
         _ => panic!("Expected InvalidMonth error"),
     }
 
     // Test InvalidDay error
     match Version::new(2025, 6, 0) {
-        Err(VersionError::InvalidDay(day)) => assert_eq!(day, 0),
+        Err(VersionError::InvalidDay(day)) => assert_eq!(day, "0"),
         _ => panic!("Expected InvalidDay error"),
     }
 
     match Version::new(2025, 6, 32) {
-        Err(VersionError::InvalidDay(day)) => assert_eq!(day, 32),
+        Err(VersionError::InvalidDay(day)) => assert_eq!(day, "32"),
         _ => panic!("Expected InvalidDay error"),
     }
 

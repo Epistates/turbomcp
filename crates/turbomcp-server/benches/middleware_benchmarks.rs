@@ -1,9 +1,7 @@
 //! Performance benchmarks for middleware layers
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use std::time::Duration;
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use secrecy::Secret;
-use jsonwebtoken::Algorithm;
 use turbomcp_server::middleware::*;
 
 fn benchmark_rate_limit_config(c: &mut Criterion) {
@@ -63,5 +61,10 @@ fn benchmark_middleware_stack(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, benchmark_rate_limit_config, benchmark_auth_config, benchmark_middleware_stack);
+criterion_group!(
+    benches,
+    benchmark_rate_limit_config,
+    benchmark_auth_config,
+    benchmark_middleware_stack
+);
 criterion_main!(benches);

@@ -5,10 +5,10 @@
 
 use std::time::Duration;
 
-use turbomcp_server::middleware::*;
-use turbomcp_server::middleware::security::CorsOrigins;
-use secrecy::Secret;
 use jsonwebtoken::Algorithm;
+use secrecy::Secret;
+use turbomcp_server::middleware::security::CorsOrigins;
+use turbomcp_server::middleware::*;
 
 #[test]
 fn test_middleware_stack_builder() {
@@ -16,7 +16,7 @@ fn test_middleware_stack_builder() {
     let stack = MiddlewareStack::new()
         .with_auth(
             AuthConfig::new(Secret::new("test_secret".to_string()))
-                .with_algorithm(Algorithm::HS256)
+                .with_algorithm(Algorithm::HS256),
         )
         .with_rate_limit(RateLimitConfig::new(100))
         .with_timeout(TimeoutConfig::new(Duration::from_secs(30)));
@@ -173,7 +173,11 @@ fn test_validation_config_mcp_schemas() {
     let result = ValidationConfig::with_mcp_schemas();
 
     // Should succeed (schemas are embedded at compile time)
-    assert!(result.is_ok(), "Failed to load MCP schemas: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Failed to load MCP schemas: {:?}",
+        result.err()
+    );
 
     let config = result.unwrap();
     assert!(config.validate_requests);

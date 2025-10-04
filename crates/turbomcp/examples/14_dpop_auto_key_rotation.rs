@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[cfg(feature = "dpop")]
-use turbomcp_dpop::{
+use turbomcp::auth::dpop::{
     AutoRotationService, DpopAlgorithm, DpopKeyManager, KeyRotationPolicy, RotationMetricsSnapshot,
 };
 
@@ -153,7 +153,7 @@ async fn demonstrate_auto_rotation_service() -> Result<(), Box<dyn std::error::E
 
     let key_manager = Arc::new(
         DpopKeyManager::new(
-            Arc::new(turbomcp_dpop::MemoryKeyStorage::new()),
+            Arc::new(turbomcp::auth::dpop::MemoryKeyStorage::new()),
             demo_policy.clone(),
         )
         .await?,
@@ -346,7 +346,7 @@ async fn demonstrate_service_patterns() -> Result<(), Box<dyn std::error::Error>
 mod integration_tests {
     use super::*;
     use std::time::Duration;
-    use turbomcp_dpop::{AutoRotationService, DpopKeyManager, KeyRotationPolicy};
+    use turbomcp::auth::dpop::{AutoRotationService, DpopKeyManager, KeyRotationPolicy};
 
     #[tokio::test]
     async fn test_auto_rotation_lifecycle() {
@@ -387,7 +387,7 @@ mod integration_tests {
     async fn test_rotation_metrics() {
         let key_manager = Arc::new(
             DpopKeyManager::new(
-                Arc::new(turbomcp_dpop::MemoryKeyStorage::new()),
+                Arc::new(turbomcp::auth::dpop::MemoryKeyStorage::new()),
                 KeyRotationPolicy::development(),
             )
             .await

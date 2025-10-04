@@ -336,7 +336,7 @@ fn test_response_context_success() {
     // Check status directly instead of convenience methods
     assert_eq!(ctx.status, ResponseStatus::Success);
     match &ctx.status {
-        ResponseStatus::Success => {},
+        ResponseStatus::Success => {}
         ResponseStatus::Error { .. } => panic!("Expected success status"),
         _ => panic!("Unexpected status"),
     }
@@ -373,7 +373,7 @@ fn test_response_context_cancelled() {
     // Check status directly instead of convenience methods
     assert_eq!(ctx.status, ResponseStatus::Cancelled);
     match &ctx.status {
-        ResponseStatus::Cancelled => {},
+        ResponseStatus::Cancelled => {}
         _ => panic!("Expected cancelled status"),
     }
 
