@@ -13,7 +13,7 @@ TurboMCP automatically loads configuration from environment variables, making it
 ```bash
 # Server Configuration
 export MCP_SERVER_NAME="YourProductionServer"
-export MCP_SERVER_VERSION="1.0.0"
+export MCP_SERVER_VERSION="2.0.0"
 export MCP_SERVER_DESCRIPTION="Production MCP Server"
 export MCP_BIND_ADDRESS="0.0.0.0"
 export MCP_PORT="8080"
@@ -512,7 +512,6 @@ export CARGO_FEATURES="full,simd"
 ## 📚 Additional Resources
 
 - [Security Features Documentation](./crates/turbomcp-transport/SECURITY_FEATURES.md)
-- [TurboMCP vs Official SDK Comparison](./TurboMCP_vs_Official_SDK_Comparison.md)
 - [API Documentation](https://docs.rs/turbomcp)
 - [Model Context Protocol Specification](https://modelcontextprotocol.io/)
 
