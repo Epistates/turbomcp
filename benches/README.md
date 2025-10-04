@@ -1,8 +1,8 @@
 # TurboMCP Performance Benchmarking Infrastructure
 
-## 🚀 World-Class Benchmarking Suite
+## 🚀 Comprehensive Benchmarking Suite
 
-This directory contains comprehensive performance benchmarks for TurboMCP, designed to ensure world-class performance across all components.
+This directory contains comprehensive performance benchmarks for TurboMCP, designed to ensure comprehensive performance across all components.
 
 ## 📊 Benchmark Categories
 
@@ -82,7 +82,7 @@ cargo bench --features historical-tracking
 - **Alerts**: Slack/email notifications for significant changes
 
 ### Comparative Analysis
-- **Industry baselines**: Comparison with similar frameworks
+- **Performance baselines**: Track improvements over time
 - **Hardware normalization**: Results adjusted for different hardware
 - **Confidence intervals**: Statistical significance testing
 
@@ -150,7 +150,7 @@ assert!(result.mean() < baseline * 1.05, "Performance regression detected");
 
 ### Performance Classes
 - **🚀 Excellent**: Top 10% of comparable frameworks
-- **✅ Good**: Within 20% of best-in-class
+- **✅ Good**: Within 20% of well-established
 - **⚠️ Acceptable**: Meets functional requirements
 - **❌ Poor**: Requires optimization attention
 
@@ -197,4 +197,4 @@ cargo bench --baseline before
 
 ---
 
-**World-class performance is not just about speed—it's about consistency, predictability, and continuous improvement.**
+**Comprehensive performance is not just about speed—it's about consistency, predictability, and continuous improvement.**

@@ -66,7 +66,7 @@ Core abstractions and utilities for the TurboMCP framework, providing foundation
 │ └── Correlation ID management             │
 ├─────────────────────────────────────────────┤
 │ Error Handling & Observability            │
-│ ├── Structured McpError types             │
+│ ├── Structured Error types                │
 │ ├── Context preservation                  │
 │ └── Metrics & tracing hooks               │
 └─────────────────────────────────────────────┘
@@ -90,52 +90,59 @@ Core abstractions and utilities for the TurboMCP framework, providing foundation
 ### Basic Usage
 
 ```rust
-use turbomcp_core::{RequestContext, Message, Context, McpResult};
+use turbomcp_core::{RequestContext, Message, MessageId};
+use bytes::Bytes;
 
 // Create a request context for correlation and observability
-let mut context = RequestContext::new();
+let context = RequestContext::new();
 
-// Message parsing with optional SIMD acceleration
-let json_data = br#"{"jsonrpc": "2.0", "method": "tools/list"}"#;
-let message = Message::parse(json_data)?;
+// Message handling with optional SIMD acceleration
+let json_data = Bytes::from(r#"{"jsonrpc": "2.0", "method": "tools/list"}"#);
+let message = Message::deserialize(json_data)?;
 
-// Context provides rich observability and user information
-context.info("Processing request").await?;
+// Parse message payload
+let payload: serde_json::Value = message.parse_json()?;
+println!("Method: {}", payload["method"]);
 
-// Context features for authentication and user information
-if context.is_authenticated() {
-    let user = context.user().unwrap_or("unknown");
-    let roles = context.roles();
-    context.info(&format!("Authenticated user: {}, roles: {:?}", user, roles)).await?;
-}
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ### Advanced Session Management
 
 ```rust
 use turbomcp_core::{SessionManager, SessionConfig};
+use chrono::Duration;
 
 // Configure session management with LRU eviction
-let config = SessionConfig::new()
-    .with_max_sessions(1000)
-    .with_ttl_seconds(3600);
+let config = SessionConfig {
+    max_sessions: 1000,
+    session_timeout: Duration::hours(1),
+    max_request_history: 1000,
+    max_requests_per_session: None,
+    cleanup_interval: std::time::Duration::from_secs(300),
+    enable_analytics: true,
+};
 
-let session_manager = SessionManager::with_config(config);
+let session_manager = SessionManager::new(config);
 
 // Sessions are automatically managed with efficient cleanup
-let session = session_manager.create_session().await?;
+let session = session_manager.get_or_create_session(
+    "client-123".to_string(),
+    "websocket".to_string()
+);
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ### Error Handling
 
 ```rust
-use turbomcp_core::{McpError, McpResult};
+use turbomcp_core::{Error, Result};
 
-fn process_request() -> McpResult<String> {
+fn process_request() -> Result<String> {
     // Rich error types with automatic context
     if invalid_input {
-        return Err(McpError::InvalidInput(
-            "Request missing required field".to_string()
+        return Err(Error::validation(
+            "Request missing required field"
         ));
     }
     
@@ -150,7 +157,7 @@ Enable SIMD acceleration for JSON processing:
 
 ```toml
 [dependencies]
-turbomcp-core = { version = "1.1.0", features = ["simd"] }
+turbomcp-core = { version = "2.0.0", features = ["simd"] }
 ```
 
 **Note**: SIMD features require compatible CPU architectures (x86_64 with SSE2+ or ARM with NEON).
@@ -177,7 +184,7 @@ use turbomcp::prelude::*;
 #[server]
 impl MyServer {
     #[tool("Example with context")]
-    async fn my_tool(&self, ctx: Context) -> McpResult<String> {
+    async fn my_tool(&self, ctx: Context) -> Result<String> {
         // Context is powered by turbomcp-core
         ctx.info("Processing request").await?;
         Ok("result".to_string())
@@ -191,7 +198,7 @@ For custom implementations or integrations:
 
 ```rust
 use turbomcp_core::{
-    RequestContext, SessionManager, Message, McpError, McpResult
+    RequestContext, SessionManager, Message, Error, Result
 };
 
 struct CustomHandler {
@@ -199,12 +206,13 @@ struct CustomHandler {
 }
 
 impl CustomHandler {
-    async fn handle_request(&self, data: &[u8]) -> McpResult<String> {
+    async fn handle_request(&self, data: &[u8]) -> Result<String> {
         let context = RequestContext::new();
-        let message = Message::parse(data)?;
+        let bytes = bytes::Bytes::from(data.to_vec());
+        let message = Message::deserialize(bytes)?;
 
-        // Use core functionality directly
-        context.info("Custom processing").await?;
+        // Parse and process message
+        let payload: serde_json::Value = message.parse_json()?;
         Ok("processed".to_string())
     }
 }
@@ -215,17 +223,17 @@ impl CustomHandler {
 Core error types for comprehensive error handling:
 
 ```rust
-use turbomcp_core::McpError;
+use turbomcp_core::{Error, ErrorKind};
 
 match result {
-    Err(McpError::InvalidInput(msg)) => {
+    Err(e) if e.kind == ErrorKind::Validation => {
         // Handle validation errors
     },
-    Err(McpError::SessionExpired(id)) => {
-        // Handle session lifecycle
+    Err(e) if e.kind == ErrorKind::Timeout => {
+        // Handle timeout errors
     },
-    Err(McpError::Performance(details)) => {
-        // Handle performance issues
+    Err(e) if e.kind == ErrorKind::Internal => {
+        // Handle internal errors
     },
     Ok(value) => {
         // Process success case
@@ -233,213 +241,9 @@ match result {
 }
 ```
 
-## Shareable Patterns for Async Concurrency
+## Internal Utilities
 
-TurboMCP Core provides abstractions for thread-safe sharing that form the foundation for SharedClient and SharedTransport:
-
-### Generic Shareable Trait
-
-The `Shareable<T>` trait provides a consistent interface for creating thread-safe wrappers:
-
-```rust
-use turbomcp_core::shared::{Shareable, Shared};
-
-// Any type can implement Shareable
-pub trait Shareable<T>: Clone + Send + Sync + 'static {
-    fn new(inner: T) -> Self;
-}
-
-// Use with any type
-struct MyService {
-    counter: u64,
-}
-
-let service = MyService { counter: 0 };
-let shared = Shared::new(service); // Implements Shareable<MyService>
-```
-
-### Shared<T> - General Purpose Wrapper
-
-The `Shared<T>` wrapper provides closure-based access patterns for any type:
-
-```rust
-use turbomcp_core::shared::Shared;
-
-struct Database {
-    connections: Vec<Connection>,
-}
-
-impl Database {
-    fn query(&self, sql: &str) -> Result<Vec<Row>, DbError> {
-        // Query implementation
-    }
-
-    fn execute(&mut self, sql: &str) -> Result<u64, DbError> {
-        // Execute implementation
-    }
-}
-
-// Create shared wrapper
-let db = Database::new();
-let shared_db = Shared::new(db);
-
-// Read access with closures
-let results = shared_db.with(|db| {
-    db.query("SELECT * FROM users")
-}).await?;
-
-// Mutable access with closures
-let affected_rows = shared_db.with_mut(|db| {
-    db.execute("UPDATE users SET active = true")
-}).await?;
-
-// Async closures also supported
-let async_result = shared_db.with_async(|db| async {
-    let rows = db.query("SELECT COUNT(*) FROM users")?;
-    process_async(rows).await
-}).await?;
-```
-
-### ConsumableShared<T> - One-Time Consumption Pattern
-
-For types that need to be consumed (like servers), `ConsumableShared<T>` provides safe extraction:
-
-```rust
-use turbomcp_core::shared::{ConsumableShared, SharedError};
-
-struct Server {
-    config: ServerConfig,
-}
-
-impl Server {
-    fn run(self) -> Result<(), ServerError> {
-        // Consume self to run server
-        println!("Running server with config: {:?}", self.config);
-        Ok(())
-    }
-
-    fn status(&self) -> ServerStatus {
-        // Non-consuming method
-        ServerStatus::Ready
-    }
-}
-
-// Create consumable shared wrapper
-let server = Server::new(config);
-let shared = ConsumableShared::new(server);
-
-// Access before consumption
-let status = shared.with(|s| s.status()).await?;
-println!("Server status: {:?}", status);
-
-// Clone for monitoring while consuming
-let monitor = shared.clone();
-tokio::spawn(async move {
-    loop {
-        match monitor.with(|s| s.status()).await {
-            Ok(status) => println!("Status: {:?}", status),
-            Err(SharedError::Consumed) => {
-                println!("Server has been consumed");
-                break;
-            }
-        }
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-});
-
-// Consume the server (only possible once)
-let server = shared.consume().await?;
-server.run()?; // Server is now running
-```
-
-### Advanced Patterns
-
-#### Custom Shared Implementations
-
-Create domain-specific shared wrappers:
-
-```rust
-use turbomcp_core::shared::Shareable;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
-pub struct SharedHttpClient {
-    inner: Arc<Mutex<HttpClient>>,
-}
-
-impl Shareable<HttpClient> for SharedHttpClient {
-    fn new(client: HttpClient) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(client)),
-        }
-    }
-}
-
-impl Clone for SharedHttpClient {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
-    }
-}
-
-impl SharedHttpClient {
-    pub async fn get(&self, url: &str) -> Result<Response, HttpError> {
-        self.inner.lock().await.get(url).await
-    }
-
-    pub async fn post(&self, url: &str, body: Vec<u8>) -> Result<Response, HttpError> {
-        self.inner.lock().await.post(url, body).await
-    }
-}
-```
-
-#### Error Handling Patterns
-
-```rust
-use turbomcp_core::shared::{Shared, SharedError};
-
-let shared_service = Shared::new(my_service);
-
-// Handle potential errors in closures
-let result = shared_service.with_mut(|service| {
-    service.risky_operation()
-        .map_err(|e| format!("Service error: {}", e))
-}).await;
-
-match result {
-    Ok(success) => println!("Operation successful: {}", success),
-    Err(e) => eprintln!("Operation failed: {}", e),
-}
-
-// Try operations without blocking
-if let Some(result) = shared_service.try_with(|service| {
-    service.quick_operation()
-}) {
-    println!("Quick operation result: {}", result);
-} else {
-    println!("Service is busy, will try later");
-}
-```
-
-### Benefits
-
-- **Type Safety**: Generic abstractions work with any type
-- **Flexible Access**: Closure-based patterns for fine-grained control
-- **Zero Overhead**: Same performance as manual Arc/Mutex usage
-- **Async Native**: Built for async/await patterns
-- **Error Handling**: Proper error propagation and handling
-- **Consumption Safety**: Safe one-time consumption patterns
-
-### Design Principles
-
-The Shareable patterns follow key design principles:
-
-1. **Hide Complexity**: Arc/Mutex details are encapsulated
-2. **Preserve Semantics**: Original type behavior is maintained
-3. **Enable Sharing**: Easy cloning for concurrent access
-4. **Async First**: Designed for async/await workflows
-5. **Type Generic**: Works with any Send + 'static type
+This crate provides internal shared wrappers (`Shared<T>`, `ConsumableShared<T>`) used by `SharedClient` and `SharedTransport` in higher-level crates. Most users should use the higher-level wrappers rather than these primitives directly
 
 ## Development
 

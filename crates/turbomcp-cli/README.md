@@ -4,18 +4,23 @@
 [![Documentation](https://docs.rs/turbomcp-cli/badge.svg)](https://docs.rs/turbomcp-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Command-line interface for interacting with MCP servers - list tools, call tools, and export schemas.**
+**Comprehensive CLI for MCP servers - complete protocol support with enterprise-grade UX**
 
 ## Overview
 
-`turbomcp-cli` provides essential tools for working with MCP (Model Context Protocol) servers. Connect to any MCP server via HTTP or WebSocket to explore available tools, execute them, and export their schemas.
+`turbomcp-cli` is a comprehensive command-line interface for the Model Context Protocol, built on the production-ready `turbomcp-client` library. It provides complete MCP protocol coverage with rich, multi-format output and smart transport auto-detection.
 
 ## Features
 
-- **🔧 Tool Management** - List and call tools on running MCP servers
-- **📋 Schema Export** - Export tool schemas for documentation and validation  
-- **🌐 Multi-Transport** - Support for HTTP and WebSocket connections
-- **📊 JSON Output** - Machine-readable output for automation
+- **🎯 Complete MCP Protocol** - All operations: tools, resources, prompts, completions, sampling, logging
+- **🔧 Tool Management** - List, call, and export tool schemas
+- **📦 Resource Access** - List, read, and subscribe to MCP resources
+- **💬 Prompt Operations** - List and execute prompts with arguments
+- **🌐 Multi-Transport** - STDIO (child process), TCP, Unix sockets (HTTP/WS coming soon)
+- **🚀 Smart Auto-Detection** - Automatically detects transport from URL format
+- **🎨 Rich Output** - Human, JSON, YAML, and table formats with colored output
+- **🛡️ Production Ready** - Built on `turbomcp-client` and `turbomcp-transport`
+- **⚡ Enterprise Grade** - Comprehensive error handling with actionable suggestions
 
 ## Installation
 
@@ -26,7 +31,7 @@
 cargo install turbomcp-cli
 
 # Install specific version
-cargo install turbomcp-cli --version 1.1.0
+cargo install turbomcp-cli --version 2.0.0
 ```
 
 ### From Source
@@ -37,20 +42,48 @@ cd turbomcp
 cargo install --path crates/turbomcp-cli
 ```
 
+## Quick Start
+
+```bash
+# List tools from a server
+turbomcp-cli tools list --command "./my-mcp-server"
+
+# Call a tool with arguments
+turbomcp-cli tools call calculate --arguments '{"a": 5, "b": 3}'
+
+# Get server information (table format)
+turbomcp-cli server info --format table
+
+# List resources
+turbomcp-cli resources list --url tcp://localhost:8080
+
+# Work with prompts
+turbomcp-cli prompts list --url unix:///tmp/mcp.sock
+```
+
 ## Usage
 
 ```bash
 turbomcp-cli <COMMAND>
 
 Commands:
-  tools-list     List tools from a running server
-  tools-call     Call a tool on a running server  
-  schema-export  Export tool schemas from a running server
-  help           Print this message or the help of the given subcommand(s)
+  tools       Tool operations (list, call, schema, export)
+  resources   Resource operations (list, read, templates, subscribe)
+  prompts     Prompt operations (list, get, schema)
+  complete    Completion operations
+  server      Server management (info, ping, log-level, roots)
+  sample      Sampling operations (advanced)
+  connect     Interactive connection wizard
+  status      Connection status
+  help        Print help information
 
-Options:
-  -h, --help     Print help
-  -V, --version  Print version
+Global Options:
+  -f, --format <FORMAT>     Output format [default: human] [possible: human, json, yaml, table, compact]
+  -v, --verbose             Enable verbose output
+  -c, --connection <NAME>   Use saved connection from config
+  --no-color                Disable colored output
+  -h, --help                Print help
+  -V, --version             Print version
 ```
 
 ### Connection Options
