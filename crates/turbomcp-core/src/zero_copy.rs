@@ -1,7 +1,50 @@
-//! Zero-copy message processing for ultra-high performance
+//! Zero-copy message processing with minimal allocations
 //!
 //! This module provides zero-allocation message handling using `bytes::Bytes`
 //! for maximum throughput and minimal memory overhead.
+//!
+//! ## When to Use ZeroCopyMessage
+//!
+//! **Most users should use [`Message`](crate::Message) instead.**
+//!
+//! `ZeroCopyMessage` is designed for extreme performance scenarios where:
+//! - You process **millions of messages per second**
+//! - **Every allocation matters** for your performance profile
+//! - You can **defer deserialization** until absolutely necessary
+//! - You're willing to **trade ergonomics for performance**
+//!
+//! ### Message vs ZeroCopyMessage
+//!
+//! | Feature | [`Message`](crate::Message) | `ZeroCopyMessage` |
+//! |---------|---------|------------------|
+//! | Ergonomics | ✅ Excellent | ⚠️ Manual |
+//! | Memory | ✅ Good | ✅ Optimal |
+//! | Deserialization | Eager | Lazy |
+//! | Multiple formats | ✅ JSON/CBOR/MessagePack | JSON only |
+//! | ID storage | Stack/String | Arc (shared) |
+//! | Use case | General purpose | Ultra-high throughput |
+//!
+//! ### Example Usage
+//!
+//! ```rust
+//! use turbomcp_core::zero_copy::{ZeroCopyMessage, MessageId};
+//! use bytes::Bytes;
+//!
+//! // Create from raw bytes (no allocation)
+//! let payload = Bytes::from(r#"{"method": "test", "id": 1}"#);
+//! let mut msg = ZeroCopyMessage::from_bytes(MessageId::from("req-1"), payload);
+//!
+//! // Lazy parsing - returns RawValue without full deserialization
+//! let raw = msg.parse_json_lazy()?;
+//! assert!(raw.get().contains("method"));
+//!
+//! // Full deserialization when needed
+//! let data: serde_json::Value = msg.deserialize()?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! **Performance Tip**: Use `ZeroCopyMessage` in hot paths where you need to
+//! route messages based on metadata but don't need to parse the payload.
 
 use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
@@ -318,7 +361,7 @@ pub mod fast {
     }
 }
 
-/// Memory-mapped file support for ultra-fast large file processing
+/// Memory-mapped file support for efficient large file processing
 #[cfg(feature = "mmap")]
 pub mod mmap {
     use super::*;
@@ -346,7 +389,6 @@ pub mod mmap {
 
     impl MmapMessage {
         /// Create a message from a memory-mapped file with comprehensive security validation
-        
 
         /// Create a message from a memory-mapped file (legacy method without security)
         ///
@@ -395,6 +437,7 @@ pub mod mmap {
         }
 
         /// Internal method for creating memory-mapped files after security validation
+        #[allow(dead_code)] // Used with mmap feature
         async fn from_file_internal(
             id: MessageId,
             path: &Path,
@@ -625,7 +668,10 @@ pub mod mmap {
             tokio::task::spawn_blocking(move || Self::from_jsonl_file(&path))
                 .await
                 .map_err(|join_err| {
-                    std::io::Error::other(format!("Async JSONL batch operation failed: {}", join_err))
+                    std::io::Error::other(format!(
+                        "Async JSONL batch operation failed: {}",
+                        join_err
+                    ))
                 })?
         }
     }

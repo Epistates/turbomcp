@@ -47,6 +47,14 @@ impl ElicitationBuilder {
     }
 
     /// Send the elicitation request through the context
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Protocol`] if:
+    /// - Server capabilities are not available in the context
+    /// - Request serialization fails
+    /// - Response deserialization fails
+    /// - The elicitation request is rejected by the client
     pub async fn send(self, ctx: &RequestContext) -> McpResult<ElicitationResult> {
         // Get server capabilities from context
         let capabilities = ctx
@@ -113,6 +121,10 @@ impl ElicitationData {
     }
 
     /// Get a string field
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Protocol`] if the field is not found or is not a string.
     pub fn get_string(&self, key: &str) -> McpResult<String> {
         self.content
             .get(key)
@@ -122,6 +134,10 @@ impl ElicitationData {
     }
 
     /// Get an integer field
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Protocol`] if the field is not found or is not an integer.
     pub fn get_integer(&self, key: &str) -> McpResult<i64> {
         self.content
             .get(key)
@@ -132,6 +148,10 @@ impl ElicitationData {
     }
 
     /// Get a boolean field
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Protocol`] if the field is not found or is not a boolean.
     pub fn get_boolean(&self, key: &str) -> McpResult<bool> {
         self.content
             .get(key)
@@ -142,6 +162,10 @@ impl ElicitationData {
     }
 
     /// Get a field with type inference
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Protocol`] if the field is not found or cannot be extracted to type `T`.
     pub fn get<T: ElicitationExtract>(&self, key: &str) -> McpResult<T> {
         T::extract(self, key)
     }
@@ -302,6 +326,11 @@ impl ElicitationManager {
     }
 
     /// Complete a pending elicitation request
+    ///
+    /// # Errors
+    ///
+    /// Returns [`McpError::Tool`] if sending the result fails.
+    /// Returns [`McpError::Protocol`] if the elicitation ID is not found in pending requests.
     pub async fn complete(&self, id: String, result: ElicitationCreateResult) -> McpResult<()> {
         if let Some(handle) = self.pending.write().await.remove(&id) {
             handle

@@ -11,7 +11,7 @@
 //! - **`#[prompt]`** - Mark methods as MCP prompt handlers with template support
 //! - **`#[resource]`** - Mark methods as MCP resource handlers with URI templates
 //!
-//! ### Advanced Features (Enhanced in 1.0.3)
+//! ### Advanced Features
 //! - **Roots Configuration** - Declarative filesystem roots in `#[server]` macro: `root = "file:///path:Name"`
 //! - **Compile-Time Routing** - Zero-cost compile-time router generation (experimental)
 //! - **Enhanced Context System** - Improved async handling and error propagation
@@ -70,7 +70,7 @@
 //! }
 //! ```
 //!
-//! ### Elicitation Support (New in 1.0.3)
+//! ### Elicitation Support
 //!
 //! ```ignore
 //! use turbomcp::prelude::*;

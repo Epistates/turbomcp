@@ -376,11 +376,26 @@ where
 }
 
 /// Errors that can occur when working with shared wrappers
+///
+/// These errors are domain-specific for shared wrapper operations and are converted
+/// to the main [`Error`](crate::Error) type when crossing API boundaries.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum SharedError {
     /// The wrapped value has been consumed and is no longer available
     #[error("The shared value has been consumed")]
     Consumed,
+}
+
+// Conversion to main Error type for API boundary crossing
+impl From<SharedError> for Box<crate::error::Error> {
+    fn from(err: SharedError) -> Self {
+        use crate::error::Error;
+        match err {
+            SharedError::Consumed => Error::validation("Shared value has already been consumed")
+                .with_component("shared_wrapper")
+                .with_context("note", "The value can only be consumed once"),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -108,6 +108,7 @@ rustc-hash = "2.1.1"
 walkdir = { workspace = true }
 turbomcp-client = { version = "1.1.2", path = "../turbomcp-client" }
 tokio-tungstenite = "0.27.0"
+proptest = "1.5"
 
 [features]
 default = ["full", "simd"]  # Full includes all transports for convenience

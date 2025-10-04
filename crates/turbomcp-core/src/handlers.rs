@@ -2,6 +2,118 @@
 //!
 //! This module provides trait definitions for handling various MCP protocol
 //! features including elicitation, completion, resource templates, and ping.
+//!
+//! ## Handler Types
+//!
+//! ### [`ElicitationHandler`]
+//! Handle server-initiated user input requests. Useful for asking users for
+//! additional information during tool execution.
+//!
+//! ### [`CompletionProvider`]
+//! Provide argument completion suggestions for tools and commands. Implements
+//! autocomplete functionality in MCP clients.
+//!
+//! ### [`ResourceTemplateHandler`]
+//! Manage dynamic resource templates with parameter substitution. Enables
+//! pattern-based resource access (e.g., `file:///{path}`).
+//!
+//! ### [`PingHandler`]
+//! Handle bidirectional ping/pong for connection health monitoring.
+//!
+//! ## Example: Implementing an Elicitation Handler
+//!
+//! ```rust
+//! use turbomcp_core::{ElicitationHandler, ElicitationContext, ElicitationResponse};
+//! use turbomcp_core::Result;
+//! use async_trait::async_trait;
+//! use std::collections::HashMap;
+//!
+//! struct MyElicitationHandler;
+//!
+//! #[async_trait]
+//! impl ElicitationHandler for MyElicitationHandler {
+//!     async fn handle_elicitation(
+//!         &self,
+//!         context: &ElicitationContext
+//!     ) -> Result<ElicitationResponse> {
+//!         // Check if we can handle this elicitation type
+//!         if !self.can_handle(context) {
+//!             return Ok(ElicitationResponse {
+//!                 accepted: false,
+//!                 content: None,
+//!                 decline_reason: Some("Unsupported elicitation type".to_string()),
+//!             });
+//!         }
+//!
+//!         // Process the elicitation (e.g., prompt user)
+//!         let mut response_data = HashMap::new();
+//!         response_data.insert(
+//!             "user_input".to_string(),
+//!             serde_json::json!("User provided value")
+//!         );
+//!
+//!         Ok(ElicitationResponse {
+//!             accepted: true,
+//!             content: Some(response_data),
+//!             decline_reason: None,
+//!         })
+//!     }
+//!
+//!     fn can_handle(&self, context: &ElicitationContext) -> bool {
+//!         // Check if elicitation has required input
+//!         context.required && !context.message.is_empty()
+//!     }
+//!
+//!     fn priority(&self) -> i32 {
+//!         100 // Higher priority than default (0)
+//!     }
+//! }
+//! ```
+//!
+//! ## Example: Implementing a Completion Provider
+//!
+//! ```rust
+//! use turbomcp_core::{CompletionProvider, CompletionContext, CompletionItem};
+//! use turbomcp_core::Result;
+//! use async_trait::async_trait;
+//!
+//! struct FilePathCompletionProvider;
+//!
+//! #[async_trait]
+//! impl CompletionProvider for FilePathCompletionProvider {
+//!     async fn provide_completions(
+//!         &self,
+//!         context: &CompletionContext
+//!     ) -> Result<Vec<CompletionItem>> {
+//!         // Provide file path completions
+//!         let mut completions = vec![
+//!             CompletionItem {
+//!                 value: "/home/user/documents".to_string(),
+//!                 label: Some("Documents".to_string()),
+//!                 documentation: Some("User documents folder".to_string()),
+//!                 sort_priority: Some(1),
+//!                 insert_text: None,
+//!                 metadata: Default::default(),
+//!             },
+//!             CompletionItem {
+//!                 value: "/home/user/downloads".to_string(),
+//!                 label: Some("Downloads".to_string()),
+//!                 documentation: Some("Downloads folder".to_string()),
+//!                 sort_priority: Some(2),
+//!                 insert_text: None,
+//!                 metadata: Default::default(),
+//!             },
+//!         ];
+//!
+//!         Ok(completions)
+//!     }
+//!
+//!     fn can_provide(&self, context: &CompletionContext) -> bool {
+//!         // Only provide completions for "path" arguments
+//!         context.argument_name.as_deref() == Some("path")
+//!     }
+//! }
+//! ```
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -218,4 +330,135 @@ impl HandlerCapabilities {
         self.server_initiated = capabilities;
         self
     }
+}
+
+/// Handler for JSON-RPC requests - Core abstraction for MCP protocol implementation
+///
+/// This trait provides a transport-agnostic interface for handling MCP JSON-RPC requests.
+/// Implementations of this trait can work seamlessly across all transport layers
+/// (HTTP, STDIO, WebSocket, etc.) without transport-specific code.
+///
+/// # Architecture
+///
+/// The `JsonRpcHandler` trait serves as the bridge between:
+/// - **Protocol Logic**: Tools, resources, prompts dispatch (typically macro-generated)
+/// - **Transport Layer**: HTTP, STDIO, WebSocket protocol details
+///
+/// This separation enables:
+/// - Clean, testable handler implementations
+/// - Transport-agnostic server code
+/// - Full MCP 2025-06-18 compliance in transport layer
+/// - Compile-time dispatch optimizations in handlers
+///
+/// # Example: Macro-Generated Implementation
+///
+/// ```rust,ignore
+/// use turbomcp_core::JsonRpcHandler;
+/// use async_trait::async_trait;
+/// use serde_json::Value;
+///
+/// #[derive(Clone)]
+/// struct WeatherServer;
+///
+/// #[async_trait]
+/// impl JsonRpcHandler for WeatherServer {
+///     async fn handle_request(&self, req: Value) -> Value {
+///         // Parse method and dispatch
+///         let method = req["method"].as_str().unwrap_or("");
+///         match method {
+///             "initialize" => { /* ... */ },
+///             "tools/call" => { /* dispatch to tools */ },
+///             "resources/read" => { /* dispatch to resources */ },
+///             _ => serde_json::json!({"error": "method not found"}),
+///         }
+///     }
+///
+///     fn server_info(&self) -> ServerInfo {
+///         ServerInfo {
+///             name: "Weather Server".to_string(),
+///             version: "1.0.0".to_string(),
+///         }
+///     }
+/// }
+/// ```
+///
+/// # Usage with Transports
+///
+/// ```rust,ignore
+/// // HTTP Transport
+/// use turbomcp_transport::streamable_http_v2::StreamableHttpTransport;
+///
+/// let handler = Arc::new(WeatherServer);
+/// let transport = StreamableHttpTransport::new(config, handler);
+/// transport.run().await?;
+///
+/// // STDIO Transport
+/// use turbomcp_transport::stdio::StdioTransport;
+///
+/// let handler = Arc::new(WeatherServer);
+/// let transport = StdioTransport::new(handler);
+/// transport.run().await?;
+/// ```
+#[async_trait]
+pub trait JsonRpcHandler: Send + Sync + 'static {
+    /// Handle a JSON-RPC request and return a response
+    ///
+    /// This method receives a JSON-RPC request as a `serde_json::Value` and must return
+    /// a valid JSON-RPC response. The implementation should:
+    /// - Route the request based on the `method` field
+    /// - Validate parameters
+    /// - Execute the appropriate handler logic
+    /// - Return a success response with results or an error response
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The JSON-RPC request as a JSON value
+    ///
+    /// # Returns
+    ///
+    /// A JSON-RPC response as a JSON value containing either:
+    /// - `result`: For successful operations
+    /// - `error`: For failed operations with error details
+    ///
+    /// # Note
+    ///
+    /// The request and response are `serde_json::Value` to avoid tight coupling with
+    /// protocol types. Transport layers handle conversion to/from typed structs.
+    async fn handle_request(&self, request: serde_json::Value) -> serde_json::Value;
+
+    /// Get server metadata
+    ///
+    /// Returns information about the server including name and version.
+    /// This is used during the MCP initialization handshake.
+    ///
+    /// # Returns
+    ///
+    /// Server information including name and version
+    fn server_info(&self) -> ServerInfo {
+        ServerInfo {
+            name: "TurboMCP Server".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
+
+    /// Get server capabilities
+    ///
+    /// Returns the capabilities supported by this server.
+    /// Override this to advertise custom capabilities to clients.
+    ///
+    /// # Returns
+    ///
+    /// JSON value describing server capabilities
+    fn capabilities(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
+}
+
+/// Server metadata information
+#[derive(Debug, Clone)]
+pub struct ServerInfo {
+    /// Server name
+    pub name: String,
+    /// Server version
+    pub version: String,
 }

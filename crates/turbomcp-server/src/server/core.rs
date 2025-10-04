@@ -47,19 +47,16 @@ pub(crate) fn should_log_for_stdio() -> bool {
 /// # async fn example() {
 /// let server = ServerBuilder::new().build();
 ///
-/// // Clone for sharing across tasks (cheap - just Arc increments)
+/// // Clone for passing to functions (cheap - just Arc increments)
 /// let server1 = server.clone();
 /// let server2 = server.clone();
 ///
-/// tokio::spawn(async move {
-///     let config = server1.config();
-///     println!("Server: {}", config.name);
-/// });
+/// // Access config and health
+/// let config = server1.config();
+/// println!("Server: {}", config.name);
 ///
-/// tokio::spawn(async move {
-///     let health = server2.health().await;
-///     println!("Health: {:?}", health);
-/// });
+/// let health = server2.health().await;
+/// println!("Health: {:?}", health);
 /// # }
 /// ```
 ///
@@ -90,7 +87,8 @@ pub struct McpServer {
     /// - And more middleware layers as configured
     ///
     /// See `server/transport.rs` for integration with transport layer.
-    pub(crate) service: tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::ServerError>,
+    pub(crate) service:
+        tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::ServerError>,
     /// Server lifecycle (Arc-wrapped for cheap cloning)
     pub(crate) lifecycle: Arc<ServerLifecycle>,
     /// Server metrics (Arc-wrapped for cheap cloning)
@@ -106,7 +104,7 @@ impl std::fmt::Debug for McpServer {
 }
 
 impl McpServer {
-    /// Build world-class Tower middleware stack (transport-agnostic)
+    /// Build comprehensive Tower middleware stack (transport-agnostic)
     ///
     /// ## Architecture
     ///
@@ -136,107 +134,67 @@ impl McpServer {
         core_service: McpService,
         stack: MiddlewareStack,
     ) -> tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::ServerError> {
-        // PHASE 2: PROPER TOWER COMPOSITION
-        // Build middleware stack conditionally - start with basics that work
+        // WORLD-CLASS TOWER COMPOSITION - Conditional Layer Stacking
+        //
+        // This approach builds the middleware stack incrementally, boxing at each step.
+        // While this has a small performance cost from multiple boxing operations,
+        // it provides several critical advantages:
+        //
+        // 1. **Maintainability**: No combinatorial explosion (8 match arms → simple chain)
+        // 2. **Extensibility**: Adding new middleware requires only one new block
+        // 3. **Clarity**: Each layer's purpose and configuration is explicit
+        // 4. **Type Safety**: BoxCloneService provides type erasure while preserving Clone
+        //
+        // Performance note: The boxing overhead is negligible compared to network I/O
+        // and handler execution time. Modern allocators make this essentially free.
 
-        // PHASE 2A-C: ULTRATHINK ALL-AT-ONCE COMPOSITION
-        // Compose all layers in a single ServiceBuilder chain, then box the final result
-        // This avoids Clone issues with BoxService by only boxing once at the end
+        // Start with core service as a boxed service for uniform type handling
+        let mut service: tower::util::BoxCloneService<
+            Request<Bytes>,
+            Response<Bytes>,
+            crate::ServerError,
+        > = tower::util::BoxCloneService::new(core_service);
 
-        let has_timeout = stack.timeout_config.as_ref().map_or(false, |c| c.enabled);
-        let has_validation = stack.validation_config.is_some();
-        let has_authz = stack.authz_config.is_some();
-
-        // Match on all combinations to build service composition patterns
-        match (has_timeout, has_validation, has_authz) {
-            (true, true, true) => {
-                // All three layers enabled
-                let service = tower::ServiceBuilder::new()
-                    .layer(tower_http::timeout::TimeoutLayer::new(
-                        stack.timeout_config.as_ref().unwrap().request_timeout,
-                    ))
-                    .layer(crate::middleware::ValidationLayer::new(
-                        stack.validation_config.unwrap(),
-                    ))
-                    .layer(crate::middleware::AuthzLayer::new(
-                        stack.authz_config.unwrap(),
-                    ))
-                    .service(core_service);
-                tower::util::BoxCloneService::new(service)
-            }
-            (true, true, false) => {
-                // Timeout + validation
-                let service = tower::ServiceBuilder::new()
-                    .layer(tower_http::timeout::TimeoutLayer::new(
-                        stack.timeout_config.as_ref().unwrap().request_timeout,
-                    ))
-                    .layer(crate::middleware::ValidationLayer::new(
-                        stack.validation_config.unwrap(),
-                    ))
-                    .service(core_service);
-                tower::util::BoxCloneService::new(service)
-            }
-            (true, false, true) => {
-                // Timeout + authz
-                let service = tower::ServiceBuilder::new()
-                    .layer(tower_http::timeout::TimeoutLayer::new(
-                        stack.timeout_config.as_ref().unwrap().request_timeout,
-                    ))
-                    .layer(crate::middleware::AuthzLayer::new(
-                        stack.authz_config.unwrap(),
-                    ))
-                    .service(core_service);
-                tower::util::BoxCloneService::new(service)
-            }
-            (false, true, true) => {
-                // Validation + authz
-                let service = tower::ServiceBuilder::new()
-                    .layer(crate::middleware::ValidationLayer::new(
-                        stack.validation_config.unwrap(),
-                    ))
-                    .layer(crate::middleware::AuthzLayer::new(
-                        stack.authz_config.unwrap(),
-                    ))
-                    .service(core_service);
-                tower::util::BoxCloneService::new(service)
-            }
-            (true, false, false) => {
-                // Only timeout
-                let service = tower::ServiceBuilder::new()
-                    .layer(tower_http::timeout::TimeoutLayer::new(
-                        stack.timeout_config.as_ref().unwrap().request_timeout,
-                    ))
-                    .service(core_service);
-                tower::util::BoxCloneService::new(service)
-            }
-            (false, true, false) => {
-                // Only validation
-                let service = tower::ServiceBuilder::new()
-                    .layer(crate::middleware::ValidationLayer::new(
-                        stack.validation_config.unwrap(),
-                    ))
-                    .service(core_service);
-                tower::util::BoxCloneService::new(service)
-            }
-            (false, false, true) => {
-                // Only authz
-                let service = tower::ServiceBuilder::new()
-                    .layer(crate::middleware::AuthzLayer::new(
-                        stack.authz_config.unwrap(),
-                    ))
-                    .service(core_service);
-                tower::util::BoxCloneService::new(service)
-            }
-            (false, false, false) => {
-                // No middleware
-                tower::util::BoxCloneService::new(core_service)
-            }
+        // Layer 1: Authorization (innermost - closest to handler)
+        // Applied first so it can reject unauthorized requests before expensive operations
+        if let Some(authz_config) = stack.authz_config {
+            service = tower::util::BoxCloneService::new(
+                tower::ServiceBuilder::new()
+                    .layer(crate::middleware::AuthzLayer::new(authz_config))
+                    .service(service),
+            );
         }
 
-        // TODO PHASE 2D: Add AuthLayer implementation
-        // TODO PHASE 2E: Add AuditLayer implementation
-        //
-        // Each phase will incrementally add middleware while maintaining clean composition
+        // Layer 2: Validation
+        // Validates request structure after auth but before processing
+        if let Some(validation_config) = stack.validation_config {
+            service = tower::util::BoxCloneService::new(
+                tower::ServiceBuilder::new()
+                    .layer(crate::middleware::ValidationLayer::new(validation_config))
+                    .service(service),
+            );
+        }
+
+        // Layer 3: Timeout (outermost)
+        // Applied last so it can enforce timeout on the entire request pipeline
+        if let Some(timeout_config) = stack.timeout_config
+            && timeout_config.enabled
+        {
+            service = tower::util::BoxCloneService::new(
+                tower::ServiceBuilder::new()
+                    .layer(tower_http::timeout::TimeoutLayer::new(
+                        timeout_config.request_timeout,
+                    ))
+                    .service(service),
+            );
+        }
+
+        // Future middleware can be added here with similar if-let blocks:
+        // if let Some(auth_config) = stack.auth_config { ... }
+        // if let Some(audit_config) = stack.audit_config { ... }
+        // if let Some(rate_limit_config) = stack.rate_limit_config { ... }
+
+        service
     }
 
     /// Create a new server
@@ -354,7 +312,9 @@ impl McpServer {
     /// Returns a clone of the Tower service stack, which is cheap (BoxCloneService
     /// is designed for cloning).
     #[doc(hidden)]
-    pub fn service(&self) -> tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::ServerError> {
+    pub fn service(
+        &self,
+    ) -> tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::ServerError> {
         self.service.clone()
     }
 
@@ -434,6 +394,13 @@ impl McpServer {
     }
 
     /// Run the server with STDIO transport
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Transport`] if:
+    /// - STDIO transport connection fails
+    /// - Message sending/receiving fails
+    /// - Transport disconnection fails
     #[tracing::instrument(skip(self), fields(
         transport = "stdio",
         service_name = %self.config.name,

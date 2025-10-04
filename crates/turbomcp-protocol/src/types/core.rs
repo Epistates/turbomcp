@@ -25,13 +25,25 @@ pub type ProtocolVersion = String;
 /// JSON-RPC request identifier
 pub type RequestId = MessageId;
 
-/// URI string
+/// URI string (legacy type alias)
+///
+/// **Note**: For new code, consider using the validated [`crate::types::domain::Uri`] type
+/// which provides compile-time type safety and runtime validation.
+/// This type alias is kept for backward compatibility.
 pub type Uri = String;
 
-/// MIME type
+/// MIME type (legacy type alias)
+///
+/// **Note**: For new code, consider using the validated [`crate::types::domain::MimeType`] type
+/// which provides compile-time type safety and runtime validation.
+/// This type alias is kept for backward compatibility.
 pub type MimeType = String;
 
-/// Base64 encoded data
+/// Base64 encoded data (legacy type alias)
+///
+/// **Note**: For new code, consider using the validated [`crate::types::domain::Base64String`] type
+/// which provides compile-time type safety and runtime validation.
+/// This type alias is kept for backward compatibility.
 pub type Base64String = String;
 
 /// Cursor for pagination

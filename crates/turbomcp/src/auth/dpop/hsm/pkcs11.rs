@@ -1,6 +1,6 @@
 //! PKCS#11 HSM implementation using cryptoki
 //!
-//! This module provides production-grade PKCS#11 HSM integration using the cryptoki library.
+//! This module provides proven PKCS#11 HSM integration using the cryptoki library.
 //! It supports all major PKCS#11 HSMs including:
 //!
 //! - AWS CloudHSM (Client SDK 5)
@@ -40,7 +40,7 @@ use tracing::{debug, info, trace};
 #[cfg(feature = "dpop-hsm-pkcs11")]
 use asn1::ParseError;
 
-/// PKCS#11 HSM manager with production-grade session pooling
+/// PKCS#11 HSM manager with proven session pooling
 #[derive(Debug)]
 pub struct Pkcs11HsmManager {
     /// PKCS#11 context
@@ -148,7 +148,7 @@ impl r2d2::ManageConnection for SessionManager {
 /// Production-grade ASN.1 parsing utilities for PKCS#11 key data
 #[cfg(feature = "dpop-hsm-pkcs11")]
 impl Pkcs11HsmManager {
-    /// Parse RSA public key from PKCS#11 using production-grade ASN.1 parsing
+    /// Parse RSA public key from PKCS#11 using proven ASN.1 parsing
     ///
     /// This implementation uses the asn1 crate for secure, standards-compliant parsing
     /// of RSA SubjectPublicKeyInfo structures as defined in RFC 3279 and RFC 8017.
@@ -196,7 +196,7 @@ impl Pkcs11HsmManager {
         })
     }
 
-    /// Parse EC public key from PKCS#11 using production-grade ASN.1 parsing
+    /// Parse EC public key from PKCS#11 using proven ASN.1 parsing
     ///
     /// Handles both compressed and uncompressed EC points according to SEC 1 v2.0
     /// with full curve parameter validation for P-256.
@@ -735,7 +735,7 @@ impl HsmOperations for Pkcs11HsmManager {
             },
         };
 
-        // Parse public key using production-grade ASN.1 parsing
+        // Parse public key using proven ASN.1 parsing
         let public_key = match algorithm {
             DpopAlgorithm::ES256 => {
                 let (x, y) = self.parse_ec_public_key_asn1(&public_key_bytes)?;

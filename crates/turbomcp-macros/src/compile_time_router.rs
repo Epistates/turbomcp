@@ -27,7 +27,8 @@ pub fn generate_router(
                     serde_json::json!({
                         "name": name,
                         "description": description,
-                        "inputSchema": serde_json::to_value(&schema).unwrap()
+                        "inputSchema": serde_json::to_value(&schema)
+                            .expect("Generated tool schema should always be valid JSON")
                     })
                 }
             }
@@ -299,22 +300,279 @@ pub fn generate_router(
                 true
             }
 
+            // ===================================================================
+            // JsonRpcHandler Implementation - Transport-Agnostic Request Handling
+            // ===================================================================
+
+            #[::turbomcp::async_trait]
+            impl ::turbomcp::turbomcp_core::JsonRpcHandler for #struct_name
+            where
+                Self: Clone + Send + Sync + 'static,
+            {
+                async fn handle_request(
+                    &self,
+                    req_value: serde_json::Value,
+                ) -> serde_json::Value {
+                    use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcError};
+
+                    // Parse the request
+                    let req: JsonRpcRequest = match serde_json::from_value(req_value) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "error": {
+                                    "code": -32700,
+                                    "message": format!("Parse error: {}", e)
+                                },
+                                "id": null
+                            });
+                        }
+                    };
+
+                    let response = match req.method.as_str() {
+                        "initialize" => {
+                            JsonRpcResponse::success(
+                                serde_json::json!({
+                                    "protocolVersion": "2025-06-18",
+                                    "serverInfo": {
+                                        "name": #server_name,
+                                        "version": #server_version
+                                    },
+                                    "capabilities": {
+                                        "tools": {},
+                                        "resources": {},
+                                        "prompts": {},
+                                        "elicitation": {}
+                                    }
+                                }),
+                                req.id.clone()
+                            )
+                        }
+
+                        "tools/list" => {
+                            let tools: Vec<serde_json::Value> = vec![#(#tool_list_items),*];
+                            JsonRpcResponse::success(
+                                serde_json::json!({
+                                    "tools": tools
+                                }),
+                                req.id.clone()
+                            )
+                        }
+
+                        "tools/call" => {
+                            let params = req.params.as_ref().and_then(|p| p.as_object());
+                            let tool_name = params
+                                .and_then(|p| p.get("name"))
+                                .and_then(|n| n.as_str());
+
+                            match tool_name {
+                                Some(tool_name) => {
+                                    match tool_name {
+                                        #(#tool_dispatch_cases)*
+                                        _ => {
+                                            JsonRpcResponse::error_response(
+                                                JsonRpcError {
+                                                    code: -32602,
+                                                    message: format!("Unknown tool: {}", tool_name),
+                                                    data: None,
+                                                },
+                                                req.id.clone()
+                                            )
+                                        }
+                                    }
+                                }
+                                None => {
+                                    JsonRpcResponse::error_response(
+                                        JsonRpcError {
+                                            code: -32602,
+                                            message: "Missing tool name".to_string(),
+                                            data: None,
+                                        },
+                                        req.id.clone()
+                                    )
+                                }
+                            }
+                        }
+
+                        "prompts/list" => {
+                            let prompts: Vec<serde_json::Value> = vec![#(#prompt_list_items),*];
+                            JsonRpcResponse::success(
+                                serde_json::json!({
+                                    "prompts": prompts
+                                }),
+                                req.id.clone()
+                            )
+                        }
+
+                        "prompts/get" => {
+                            let params = req.params.as_ref().and_then(|p| p.as_object());
+                            let prompt_name = params
+                                .and_then(|p| p.get("name"))
+                                .and_then(|n| n.as_str());
+                            match prompt_name {
+                                Some(prompt_name) => {
+                                    match prompt_name {
+                                        #(#prompt_dispatch_cases)*
+                                        _ => {
+                                            JsonRpcResponse::error_response(
+                                                JsonRpcError {
+                                                    code: -32601,
+                                                    message: format!("Unknown prompt: {}", prompt_name),
+                                                    data: None,
+                                                },
+                                                req.id.clone()
+                                            )
+                                        }
+                                    }
+                                }
+                                None => {
+                                    JsonRpcResponse::error_response(
+                                        JsonRpcError {
+                                            code: -32602,
+                                            message: "Missing prompt name".to_string(),
+                                            data: None,
+                                        },
+                                        req.id.clone()
+                                    )
+                                }
+                            }
+                        }
+
+                        "resources/list" => {
+                            let resources: Vec<serde_json::Value> = vec![#(#resource_list_items),*];
+                            JsonRpcResponse::success(
+                                serde_json::json!({
+                                    "resources": resources
+                                }),
+                                req.id.clone()
+                            )
+                        }
+
+                        "resources/read" => {
+                            let params = req.params.as_ref().and_then(|p| p.as_object());
+                            let resource_uri = params
+                                .and_then(|p| p.get("uri"))
+                                .and_then(|u| u.as_str());
+                            match resource_uri {
+                                Some(resource_uri) => {
+                                    match resource_uri {
+                                        #(#resource_dispatch_cases)*
+                                        _ => {
+                                            JsonRpcResponse::error_response(
+                                                JsonRpcError {
+                                                    code: -32601,
+                                                    message: format!("Unknown resource: {}", resource_uri),
+                                                    data: None,
+                                                },
+                                                req.id.clone()
+                                            )
+                                        }
+                                    }
+                                }
+                                None => {
+                                    JsonRpcResponse::error_response(
+                                        JsonRpcError {
+                                            code: -32602,
+                                            message: "Missing resource URI".to_string(),
+                                            data: None,
+                                        },
+                                        req.id.clone()
+                                    )
+                                }
+                            }
+                        }
+
+                        "elicitation/create" => {
+                            // Handle elicitation responses from client
+                            JsonRpcResponse::success(
+                                serde_json::json!({}),
+                                req.id.clone()
+                            )
+                        }
+
+                        _ => {
+                            JsonRpcResponse::error_response(
+                                JsonRpcError {
+                                    code: -32601,
+                                    message: format!("Method not found: {}", req.method),
+                                    data: None,
+                                },
+                                req.id.clone()
+                            )
+                        }
+                    };
+
+                    // Convert response to JSON
+                    serde_json::to_value(response).unwrap_or_else(|e| {
+                        serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "error": {
+                                "code": -32603,
+                                "message": format!("Internal error: {}", e)
+                            },
+                            "id": null
+                        })
+                    })
+                }
+
+                fn server_info(&self) -> ::turbomcp::turbomcp_core::ServerInfo {
+                    ::turbomcp::turbomcp_core::ServerInfo {
+                        name: #server_name.to_string(),
+                        version: #server_version.to_string(),
+                    }
+                }
+
+                fn capabilities(&self) -> serde_json::Value {
+                    serde_json::json!({
+                        "tools": {},
+                        "resources": {},
+                        "prompts": {},
+                        "elicitation": {}
+                    })
+                }
+            }
+
+            // ===================================================================
+            // Convenience Methods - Transport-Specific Helpers
+            // ===================================================================
+
             impl #struct_name
             where
                 Self: Clone + Send + Sync + 'static,
             {
-                /// Convert server into an Axum router with default "/mcp" path (compile-time routing)
+                /// Convert server into an Axum router with default "/mcp" path
                 ///
-                /// This method generates a static dispatch router with zero runtime overhead.
-                /// All handler dispatch is done at compile time via match statements.
+                /// ⚠️  **DEPRECATED**: This method only supports POST requests and is not MCP 2025-06-18 compliant.
+                ///
+                /// **Use `run_http()` or `run_http_with_path()` instead** for full MCP compliance with:
+                /// - GET support for SSE streams
+                /// - POST support for JSON-RPC messages
+                /// - DELETE support for session cleanup
+                ///
+                /// This legacy method is kept for backward compatibility but will be removed in a future version.
+                #[deprecated(
+                    since = "2.0.0",
+                    note = "Use run_http() or run_http_with_path() for full MCP 2025-06-18 compliance"
+                )]
                 pub fn into_router(self: ::std::sync::Arc<Self>) -> ::turbomcp::axum::Router {
                     self.into_router_with_path("/mcp")
                 }
 
-                /// Convert server into an Axum router with custom path (compile-time routing)
+                /// Convert server into an Axum router with custom path
                 ///
-                /// This method generates a static dispatch router with zero runtime overhead.
-                /// All handler dispatch is done at compile time via match statements.
+                /// ⚠️  **DEPRECATED**: This method only supports POST requests and is not MCP 2025-06-18 compliant.
+                ///
+                /// **Use `run_http_with_path()` instead** for full MCP compliance with:
+                /// - GET support for SSE streams
+                /// - POST support for JSON-RPC messages
+                /// - DELETE support for session cleanup
+                ///
+                /// This legacy method is kept for backward compatibility but will be removed in a future version.
+                #[deprecated(
+                    since = "2.0.0",
+                    note = "Use run_http_with_path() for full MCP 2025-06-18 compliance"
+                )]
                 pub fn into_router_with_path(self: ::std::sync::Arc<Self>, path: &str) -> ::turbomcp::axum::Router {
                     use ::turbomcp::axum::{Json, routing::post, Router};
                     use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion, JsonRpcError};
@@ -691,27 +949,41 @@ pub fn generate_router(
                 }
 
                 /// Run HTTP server with configurable endpoint path
+                ///
+                /// This method uses the MCP 2025-06-18 compliant Streamable HTTP transport with:
+                /// - ✅ GET support for SSE streams
+                /// - ✅ POST support for JSON-RPC messages
+                /// - ✅ DELETE support for session cleanup
+                /// - ✅ Full session management
+                /// - ✅ Message replay support
+                /// - ✅ Origin validation and security
                 pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs>(
                     self,
                     addr: A,
                     path: &str
                 ) -> Result<(), Box<dyn ::std::error::Error>> {
-                    use ::turbomcp::tokio::net::TcpListener;
+                    use ::std::sync::Arc;
+                    use ::turbomcp::turbomcp_transport::streamable_http_v2::{run_server, StreamableHttpConfig};
 
-                    let router = ::std::sync::Arc::new(self).into_router_with_path(path);
-
-                    // Resolve address
+                    // Resolve address to string
                     let socket_addr = addr
                         .to_socket_addrs()?
                         .next()
                         .ok_or("No address resolved")?;
 
-                    let listener = TcpListener::bind(socket_addr).await?;
+                    // Create MCP 2025-06-18 compliant transport configuration
+                    // Default security config with smart localhost handling:
+                    // - Validates Origin headers when present
+                    // - Allows localhost→localhost without Origin (Claude Code compatibility)
+                    // - Blocks remote clients without valid Origin (DNS rebinding protection)
+                    let config = StreamableHttpConfig {
+                        bind_addr: socket_addr.to_string(),
+                        endpoint_path: path.to_string(),
+                        ..Default::default()
+                    };
 
-    ::turbomcp::tracing::info!("🚀 TurboMCP server on http://{}", socket_addr);
-    ::turbomcp::tracing::info!("  📡 MCP endpoint: http://{}{}", socket_addr, path);
-
-                    ::turbomcp::axum::serve(listener, router).await?;
+                    // Run server with full MCP compliance (GET/POST/DELETE)
+                    run_server(config, Arc::new(self)).await?;
                     Ok(())
                 }
 

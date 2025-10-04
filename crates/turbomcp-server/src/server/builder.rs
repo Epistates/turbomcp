@@ -3,7 +3,6 @@
 //! Provides a fluent builder API for configuring and constructing MCP servers
 //! with handlers, configuration, and filesystem roots.
 
-
 use crate::{
     config::ServerConfig,
     error::ServerResult,
@@ -58,6 +57,13 @@ impl ServerBuilder {
     }
 
     /// Add a tool handler
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Handler`] if:
+    /// - The handler limit is exceeded
+    /// - Handler validation fails
+    /// - A handler with the same name already exists
     pub fn tool<T>(self, name: impl Into<String>, handler: T) -> ServerResult<Self>
     where
         T: ToolHandler + 'static,
@@ -67,6 +73,13 @@ impl ServerBuilder {
     }
 
     /// Add a prompt handler
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Handler`] if:
+    /// - The handler limit is exceeded
+    /// - Handler validation fails
+    /// - A handler with the same name already exists
     pub fn prompt<P>(self, name: impl Into<String>, handler: P) -> ServerResult<Self>
     where
         P: PromptHandler + 'static,
@@ -76,6 +89,13 @@ impl ServerBuilder {
     }
 
     /// Add a resource handler
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Handler`] if:
+    /// - The handler limit is exceeded
+    /// - Handler validation fails
+    /// - A handler with the same URI already exists
     pub fn resource<R>(self, name: impl Into<String>, handler: R) -> ServerResult<Self>
     where
         R: ResourceHandler + 'static,

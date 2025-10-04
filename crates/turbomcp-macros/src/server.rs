@@ -193,7 +193,8 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                         tools.push((
                             name.to_string(),
                             description.to_string(),
-                            serde_json::to_value(&schema).unwrap()
+                            serde_json::to_value(&schema)
+                                .expect("Generated tool schema should always be valid JSON")
                         ));
                     }
                 )*

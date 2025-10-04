@@ -3,12 +3,22 @@
 //! This module provides comprehensive validation for MCP protocol messages,
 //! ensuring data integrity and specification compliance.
 
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
 use crate::jsonrpc::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 use crate::types::*;
+
+/// Cached regex for URI validation (compiled once)
+static URI_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^[a-zA-Z][a-zA-Z0-9+.-]*:").expect("Invalid URI regex pattern"));
+
+/// Cached regex for method name validation (compiled once)
+static METHOD_NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^[a-zA-Z][a-zA-Z0-9_/]*$").expect("Invalid method name regex pattern")
+});
 
 /// Protocol message validator
 #[derive(Debug, Clone)]
@@ -32,12 +42,22 @@ pub struct ValidationRules {
     pub max_array_length: usize,
     /// Maximum object depth
     pub max_object_depth: usize,
-    /// URI validation regex
-    pub uri_regex: Regex,
-    /// Method name validation regex
-    pub method_name_regex: Regex,
     /// Required fields per message type
     pub required_fields: HashMap<String, HashSet<String>>,
+}
+
+impl ValidationRules {
+    /// Get the URI validation regex (cached globally)
+    #[inline]
+    pub fn uri_regex(&self) -> &Regex {
+        &URI_REGEX
+    }
+
+    /// Get the method name validation regex (cached globally)
+    #[inline]
+    pub fn method_name_regex(&self) -> &Regex {
+        &METHOD_NAME_REGEX
+    }
 }
 
 /// Validation result
@@ -88,9 +108,6 @@ struct ValidationContext {
 
 impl Default for ValidationRules {
     fn default() -> Self {
-        let uri_regex = Regex::new(r"^[a-zA-Z][a-zA-Z0-9+.-]*:").unwrap();
-        let method_name_regex = Regex::new(r"^[a-zA-Z][a-zA-Z0-9_/]*$").unwrap();
-
         let mut required_fields = HashMap::new();
 
         // JSON-RPC required fields
@@ -143,8 +160,6 @@ impl Default for ValidationRules {
             max_string_length: 1024 * 1024, // 1MB
             max_array_length: 10000,
             max_object_depth: 32,
-            uri_regex,
-            method_name_regex,
             required_fields,
         }
     }
@@ -300,7 +315,7 @@ impl ProtocolValidator {
         let mut ctx = ValidationContext::new();
 
         // Validate URI
-        if !self.rules.uri_regex.is_match(&resource.uri) {
+        if !self.rules.uri_regex().is_match(&resource.uri) {
             ctx.add_error(
                 "RESOURCE_INVALID_URI",
                 format!("Invalid URI format: {}", resource.uri),
@@ -490,7 +505,7 @@ impl ProtocolValidator {
             return;
         }
 
-        if !self.rules.method_name_regex.is_match(method) {
+        if !self.rules.method_name_regex().is_match(method) {
             ctx.add_error(
                 "INVALID_METHOD_NAME",
                 format!("Invalid method name format: {method}"),
@@ -769,13 +784,13 @@ pub mod utils {
 
     /// Check if a string is a valid URI
     pub fn is_valid_uri(uri: &str) -> bool {
-        ValidationRules::default().uri_regex.is_match(uri)
+        ValidationRules::default().uri_regex().is_match(uri)
     }
 
     /// Check if a string is a valid method name
     pub fn is_valid_method_name(method: &str) -> bool {
         ValidationRules::default()
-            .method_name_regex
+            .method_name_regex()
             .is_match(method)
     }
 }

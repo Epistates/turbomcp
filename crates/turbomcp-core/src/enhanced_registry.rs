@@ -12,6 +12,23 @@ use crate::handlers::{
 };
 use crate::registry::{Registry, RegistryError};
 
+/// Internal macro to reduce duplication in handler registration
+macro_rules! register_handler {
+    ($map:expr, $caps:expr, $name:expr, $handler:expr, $cap_field:ident) => {{
+        let name = $name.into();
+        if $map.contains_key(&name) {
+            return Err(RegistryError::AlreadyExists(name));
+        }
+
+        $map.insert(name.clone(), $handler);
+
+        // Update capabilities
+        $caps.entry(name.clone()).or_default().$cap_field = true;
+
+        Ok(())
+    }};
+}
+
 /// Enhanced registry with handler support
 pub struct EnhancedRegistry {
     /// Base registry for general components
@@ -52,20 +69,13 @@ impl EnhancedRegistry {
         name: impl Into<String>,
         handler: Arc<dyn ElicitationHandler>,
     ) -> Result<(), RegistryError> {
-        let name = name.into();
-        if self.elicitation_handlers.contains_key(&name) {
-            return Err(RegistryError::AlreadyExists(name));
-        }
-
-        self.elicitation_handlers.insert(name.clone(), handler);
-
-        // Update capabilities
-        self.capabilities
-            .entry(name.clone())
-            .or_default()
-            .elicitation = true;
-
-        Ok(())
+        register_handler!(
+            self.elicitation_handlers,
+            self.capabilities,
+            name,
+            handler,
+            elicitation
+        )
     }
 
     /// Get an elicitation handler
@@ -87,20 +97,13 @@ impl EnhancedRegistry {
         name: impl Into<String>,
         provider: Arc<dyn CompletionProvider>,
     ) -> Result<(), RegistryError> {
-        let name = name.into();
-        if self.completion_providers.contains_key(&name) {
-            return Err(RegistryError::AlreadyExists(name));
-        }
-
-        self.completion_providers.insert(name.clone(), provider);
-
-        // Update capabilities
-        self.capabilities
-            .entry(name.clone())
-            .or_default()
-            .completion = true;
-
-        Ok(())
+        register_handler!(
+            self.completion_providers,
+            self.capabilities,
+            name,
+            provider,
+            completion
+        )
     }
 
     /// Get a completion provider
@@ -137,17 +140,13 @@ impl EnhancedRegistry {
         name: impl Into<String>,
         handler: Arc<dyn ResourceTemplateHandler>,
     ) -> Result<(), RegistryError> {
-        let name = name.into();
-        if self.template_handlers.contains_key(&name) {
-            return Err(RegistryError::AlreadyExists(name));
-        }
-
-        self.template_handlers.insert(name.clone(), handler);
-
-        // Update capabilities
-        self.capabilities.entry(name.clone()).or_default().templates = true;
-
-        Ok(())
+        register_handler!(
+            self.template_handlers,
+            self.capabilities,
+            name,
+            handler,
+            templates
+        )
     }
 
     /// Get a resource template handler
@@ -161,17 +160,7 @@ impl EnhancedRegistry {
         name: impl Into<String>,
         handler: Arc<dyn PingHandler>,
     ) -> Result<(), RegistryError> {
-        let name = name.into();
-        if self.ping_handlers.contains_key(&name) {
-            return Err(RegistryError::AlreadyExists(name));
-        }
-
-        self.ping_handlers.insert(name.clone(), handler);
-
-        // Update capabilities
-        self.capabilities.entry(name.clone()).or_default().ping = true;
-
-        Ok(())
+        register_handler!(self.ping_handlers, self.capabilities, name, handler, ping)
     }
 
     /// Get a ping handler

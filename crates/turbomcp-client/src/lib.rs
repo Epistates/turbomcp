@@ -88,7 +88,7 @@
 //! ```rust,no_run
 //! use turbomcp_client::Client;
 //! use turbomcp_client::sampling::SamplingHandler;
-//! use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult};
+//! use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult, Role, Content, TextContent};
 //! use async_trait::async_trait;
 //!
 //! #[derive(Debug)]
@@ -106,15 +106,15 @@
 //!         // Allows the server to request LLM sampling through the client
 //!         
 //!         Ok(CreateMessageResult {
-//!             role: turbomcp_protocol::types::Role::Assistant,
-//!             content: turbomcp_protocol::types::Content::Text(
-//!                 turbomcp_protocol::types::TextContent {
+//!             role: Role::Assistant,
+//!             content: Content::Text(
+//!                 TextContent {
 //!                     text: "Response from LLM".to_string(),
 //!                     annotations: None,
 //!                     meta: None,
 //!                 }
 //!             ),
-//!             model: Some("gpt-4".to_string()),
+//!             model: "gpt-4".to_string(),
 //!             stop_reason: Some("end_turn".to_string()),
 //!             _meta: None,
 //!         })
@@ -144,6 +144,9 @@ pub mod handlers;
 pub mod llm;
 pub mod plugins;
 pub mod sampling;
+
+// Re-export key types for convenience
+pub use client::{ConnectionInfo, ConnectionState, ManagerConfig, ServerGroup, SessionManager};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -427,7 +430,7 @@ impl<T: Transport> SharedClient<T> {
     /// shared.initialize().await?;
     ///
     /// let result = shared.complete("complete_path", "/usr/b").await?;
-    /// println!("Completions: {:?}", result.values);
+    /// println!("Completions: {:?}", result.completion);
     /// # Ok(())
     /// # }
     /// ```
@@ -478,7 +481,7 @@ impl<T: Transport> SharedClient<T> {
     ///     Some(context)
     /// ).await?;
     ///
-    /// for completion in completions.values {
+    /// for completion in completions.completion.values {
     ///     println!("Suggestion: {}", completion);
     /// }
     /// # Ok(())
@@ -526,7 +529,7 @@ impl<T: Transport> SharedClient<T> {
     ///     None
     /// ).await?;
     ///
-    /// for completion in completions.values {
+    /// for completion in completions.completion.values {
     ///     println!("Path suggestion: {}", completion);
     /// }
     /// # Ok(())
@@ -793,6 +796,11 @@ pub struct ClientBuilder {
     log_handler: Option<Arc<dyn crate::handlers::LogHandler>>,
     resource_update_handler: Option<Arc<dyn crate::handlers::ResourceUpdateHandler>>,
     session_config: Option<crate::llm::SessionConfig>,
+    // Robustness configuration
+    enable_resilience: bool,
+    retry_config: Option<turbomcp_transport::resilience::RetryConfig>,
+    circuit_breaker_config: Option<turbomcp_transport::resilience::CircuitBreakerConfig>,
+    health_check_config: Option<turbomcp_transport::resilience::HealthCheckConfig>,
 }
 
 // Default implementation is now derived
@@ -910,6 +918,175 @@ impl ClientBuilder {
     /// * `interval_ms` - Keep-alive interval in milliseconds
     pub fn with_keepalive(mut self, interval_ms: u64) -> Self {
         self.connection_config.keepalive_ms = interval_ms;
+        self
+    }
+
+    // ============================================================================
+    // ROBUSTNESS & RESILIENCE CONFIGURATION
+    // ============================================================================
+
+    /// Enable resilient transport with circuit breaker, retry, and health checking
+    ///
+    /// When enabled, the transport layer will automatically:
+    /// - Retry failed operations with exponential backoff
+    /// - Use circuit breaker pattern to prevent cascade failures
+    /// - Perform periodic health checks
+    /// - Deduplicate messages
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::ClientBuilder;
+    /// use turbomcp_transport::stdio::StdioTransport;
+    ///
+    /// let client = ClientBuilder::new()
+    ///     .enable_resilience()
+    ///     .build(StdioTransport::new());
+    /// ```
+    pub fn enable_resilience(mut self) -> Self {
+        self.enable_resilience = true;
+        self
+    }
+
+    /// Configure retry behavior for resilient transport
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Retry configuration
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::ClientBuilder;
+    /// use turbomcp_transport::resilience::RetryConfig;
+    /// use turbomcp_transport::stdio::StdioTransport;
+    /// use std::time::Duration;
+    ///
+    /// let client = ClientBuilder::new()
+    ///     .enable_resilience()
+    ///     .with_retry_config(RetryConfig {
+    ///         max_attempts: 5,
+    ///         base_delay: Duration::from_millis(100),
+    ///         max_delay: Duration::from_secs(30),
+    ///         backoff_multiplier: 2.0,
+    ///         jitter_factor: 0.1,
+    ///         retry_on_connection_error: true,
+    ///         retry_on_timeout: true,
+    ///         custom_retry_conditions: Vec::new(),
+    ///     })
+    ///     .build(StdioTransport::new());
+    /// ```
+    pub fn with_retry_config(
+        mut self,
+        config: turbomcp_transport::resilience::RetryConfig,
+    ) -> Self {
+        self.retry_config = Some(config);
+        self.enable_resilience = true; // Auto-enable resilience
+        self
+    }
+
+    /// Configure circuit breaker for resilient transport
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Circuit breaker configuration
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::ClientBuilder;
+    /// use turbomcp_transport::resilience::CircuitBreakerConfig;
+    /// use turbomcp_transport::stdio::StdioTransport;
+    /// use std::time::Duration;
+    ///
+    /// let client = ClientBuilder::new()
+    ///     .enable_resilience()
+    ///     .with_circuit_breaker_config(CircuitBreakerConfig {
+    ///         failure_threshold: 5,
+    ///         success_threshold: 2,
+    ///         timeout: Duration::from_secs(60),
+    ///         rolling_window_size: 100,
+    ///         minimum_requests: 10,
+    ///     })
+    ///     .build(StdioTransport::new());
+    /// ```
+    pub fn with_circuit_breaker_config(
+        mut self,
+        config: turbomcp_transport::resilience::CircuitBreakerConfig,
+    ) -> Self {
+        self.circuit_breaker_config = Some(config);
+        self.enable_resilience = true; // Auto-enable resilience
+        self
+    }
+
+    /// Configure health checking for resilient transport
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Health check configuration
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::ClientBuilder;
+    /// use turbomcp_transport::resilience::HealthCheckConfig;
+    /// use turbomcp_transport::stdio::StdioTransport;
+    /// use std::time::Duration;
+    ///
+    /// let client = ClientBuilder::new()
+    ///     .enable_resilience()
+    ///     .with_health_check_config(HealthCheckConfig {
+    ///         interval: Duration::from_secs(30),
+    ///         timeout: Duration::from_secs(5),
+    ///         failure_threshold: 3,
+    ///         success_threshold: 1,
+    ///         custom_check: None,
+    ///     })
+    ///     .build(StdioTransport::new());
+    /// ```
+    pub fn with_health_check_config(
+        mut self,
+        config: turbomcp_transport::resilience::HealthCheckConfig,
+    ) -> Self {
+        self.health_check_config = Some(config);
+        self.enable_resilience = true; // Auto-enable resilience
+        self
+    }
+
+    /// Use high-reliability resilience preset
+    ///
+    /// Configures retry, circuit breaker, and health checking for high-reliability scenarios
+    pub fn with_high_reliability(mut self) -> Self {
+        let (retry, circuit, health) = turbomcp_transport::resilience::presets::high_reliability();
+        self.retry_config = Some(retry);
+        self.circuit_breaker_config = Some(circuit);
+        self.health_check_config = Some(health);
+        self.enable_resilience = true;
+        self
+    }
+
+    /// Use high-performance resilience preset
+    ///
+    /// Configures retry, circuit breaker, and health checking for high-throughput scenarios
+    pub fn with_high_performance(mut self) -> Self {
+        let (retry, circuit, health) = turbomcp_transport::resilience::presets::high_performance();
+        self.retry_config = Some(retry);
+        self.circuit_breaker_config = Some(circuit);
+        self.health_check_config = Some(health);
+        self.enable_resilience = true;
+        self
+    }
+
+    /// Use resource-constrained resilience preset
+    ///
+    /// Configures retry, circuit breaker, and health checking for low-resource scenarios
+    pub fn with_resource_constrained(mut self) -> Self {
+        let (retry, circuit, health) =
+            turbomcp_transport::resilience::presets::resource_constrained();
+        self.retry_config = Some(retry);
+        self.circuit_breaker_config = Some(circuit);
+        self.health_check_config = Some(health);
+        self.enable_resilience = true;
         self
     }
 
@@ -1174,6 +1351,121 @@ impl ClientBuilder {
         }
 
         // Initialize plugins after registration
+        if has_plugins {
+            client.initialize_plugins().await.map_err(|e| {
+                Error::bad_request(format!("Failed to initialize plugins during build: {}", e))
+            })?;
+        }
+
+        Ok(client)
+    }
+
+    /// Build a client with resilient transport (circuit breaker, retry, health checking)
+    ///
+    /// When resilience features are enabled via `enable_resilience()` or any resilience
+    /// configuration method, this wraps the transport in a `TurboTransport` that provides:
+    /// - Automatic retry with exponential backoff
+    /// - Circuit breaker pattern for fast failure
+    /// - Health checking and monitoring
+    /// - Message deduplication
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - The base transport to wrap with resilience features
+    ///
+    /// # Returns
+    ///
+    /// Returns a configured `Client<TurboTransport>` instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if plugin initialization or LLM provider setup fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::ClientBuilder;
+    /// use turbomcp_transport::stdio::StdioTransport;
+    ///
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let client = ClientBuilder::new()
+    ///     .with_high_reliability()
+    ///     .build_resilient(StdioTransport::new())
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn build_resilient<T: Transport + 'static>(
+        self,
+        transport: T,
+    ) -> Result<Client<turbomcp_transport::resilience::TurboTransport>> {
+        use turbomcp_transport::resilience::TurboTransport;
+
+        // Get configurations or use defaults
+        let retry_config = self.retry_config.unwrap_or_default();
+        let circuit_config = self.circuit_breaker_config.unwrap_or_default();
+        let health_config = self.health_check_config.unwrap_or_default();
+
+        // Wrap transport in TurboTransport
+        let robust_transport = TurboTransport::new(
+            Box::new(transport),
+            retry_config,
+            circuit_config,
+            health_config,
+        );
+
+        // Create client with resilient transport
+        let mut client = Client::with_capabilities(robust_transport, self.capabilities);
+
+        // Register handlers
+        if let Some(handler) = self.elicitation_handler {
+            client.on_elicitation(handler);
+        }
+        if let Some(handler) = self.progress_handler {
+            client.on_progress(handler);
+        }
+        if let Some(handler) = self.log_handler {
+            client.on_log(handler);
+        }
+        if let Some(handler) = self.resource_update_handler {
+            client.on_resource_update(handler);
+        }
+
+        // Set up LLM providers if any are configured
+        if !self.llm_providers.is_empty() {
+            let mut registry = crate::llm::LLMRegistry::new();
+            for (name, provider) in self.llm_providers {
+                registry
+                    .register_provider(&name, provider)
+                    .await
+                    .map_err(|e| {
+                        Error::configuration(format!(
+                            "Failed to register LLM provider '{}': {}",
+                            name, e
+                        ))
+                    })?;
+            }
+
+            if let Some(session_config) = self.session_config {
+                registry
+                    .configure_sessions(session_config)
+                    .await
+                    .map_err(|e| {
+                        Error::configuration(format!("Failed to configure sessions: {}", e))
+                    })?;
+            }
+
+            client.set_sampling_handler(Arc::new(registry));
+        }
+
+        // Register plugins
+        let has_plugins = !self.plugins.is_empty();
+        for plugin in self.plugins {
+            client.register_plugin(plugin).await.map_err(|e| {
+                Error::bad_request(format!("Failed to register plugin during build: {}", e))
+            })?;
+        }
+
         if has_plugins {
             client.initialize_plugins().await.map_err(|e| {
                 Error::bad_request(format!("Failed to initialize plugins during build: {}", e))

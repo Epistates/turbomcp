@@ -28,6 +28,52 @@
 //! └── utils/          # Utility functions
 //! ```
 //!
+//! ## Error Handling Strategy
+//!
+//! This crate uses a **unified error handling pattern** with clear separation of concerns:
+//!
+//! ### Primary Error Type: [`Error`]
+//!
+//! The main error type used across all public APIs. It provides:
+//! - Rich context with metadata and error chains
+//! - UUID-based error tracking
+//! - HTTP/JSON-RPC code mapping
+//! - Automatic retryability classification
+//!
+//! ```rust
+//! use turbomcp_core::{Error, ErrorKind, Result};
+//!
+//! fn process_request() -> Result<String> {
+//!     // Create errors with rich context
+//!     Err(Error::validation("Invalid input data")
+//!         .with_operation("process_request")
+//!         .with_context("field", "user_id"))
+//! }
+//! ```
+//!
+//! ### Domain-Specific Errors
+//!
+//! Internal modules may define domain-specific error types for better type safety:
+//! - [`RegistryError`] - For component registry operations
+//! - [`SharedError`] - For shared wrapper operations
+//!
+//! **These automatically convert to [`Error`] via `From` implementations** when crossing
+//! API boundaries, ensuring consistent error handling across the entire SDK.
+//!
+//! ```rust
+//! use turbomcp_core::{Error, RegistryError, registry::Registry};
+//! use std::any::Any;
+//! use std::sync::Arc;
+//!
+//! fn example() -> Result<(), Box<Error>> {
+//!     // RegistryError automatically converts to Error
+//!     let registry = Registry::new();
+//!     // Attempting to get a non-existent component returns Error (converted from RegistryError)
+//!     let _component = registry.get::<Arc<dyn Any + Send + Sync>>("nonexistent")?;
+//!     Ok(())
+//! }
+//! ```
+//!
 //! ## Server Capabilities
 //!
 //! The core provides a `ServerCapabilities` trait that enables server-initiated requests
@@ -112,13 +158,15 @@ pub use context::{
     ServerInitiatedType, TemplateParameter,
 };
 pub use enhanced_registry::{EnhancedRegistry, HandlerStats};
-pub use error::{Error, ErrorKind, Result};
+pub use error::{Error, ErrorContext, ErrorKind, Result, RetryInfo};
 pub use handlers::{
     CompletionItem, CompletionProvider, ElicitationHandler, ElicitationResponse,
-    HandlerCapabilities, PingHandler, PingResponse, ResolvedResource, ResourceTemplate,
-    ResourceTemplateHandler, ServerInitiatedCapabilities, TemplateParam,
+    HandlerCapabilities, JsonRpcHandler, PingHandler, PingResponse, ResolvedResource,
+    ResourceTemplate, ResourceTemplateHandler, ServerInfo, ServerInitiatedCapabilities,
+    TemplateParam,
 };
 pub use message::{Message, MessageId, MessageMetadata};
+pub use registry::RegistryError;
 pub use security::{validate_file_extension, validate_path, validate_path_within};
 pub use session::{SessionAnalytics, SessionConfig, SessionManager};
 pub use shared::{ConsumableShared, Shareable, Shared, SharedError};

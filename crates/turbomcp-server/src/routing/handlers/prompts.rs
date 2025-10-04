@@ -36,7 +36,7 @@ pub async fn handle_get(
             if let Some(handler) = context.registry.get_prompt(&prompt_request.name) {
                 match handler.handle(prompt_request, ctx).await {
                     Ok(prompt_result) => success_response(&request, prompt_result),
-                    Err(e) => error_response(&request, e.into()),
+                    Err(e) => error_response(&request, e),
                 }
             } else {
                 let error = ServerError::not_found(format!("Prompt '{}'", prompt_request.name));

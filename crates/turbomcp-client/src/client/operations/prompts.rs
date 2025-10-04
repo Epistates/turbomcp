@@ -137,7 +137,12 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
             _meta: None,
         };
 
-        self.execute_with_plugins("prompts/get", Some(serde_json::to_value(request).unwrap()))
-            .await
+        self.execute_with_plugins(
+            "prompts/get",
+            Some(serde_json::to_value(request).map_err(|e| {
+                Error::protocol(format!("Failed to serialize prompt request: {}", e))
+            })?),
+        )
+        .await
     }
 }

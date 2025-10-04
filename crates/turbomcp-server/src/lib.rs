@@ -75,18 +75,17 @@
 //!                 annotations: None,
 //!                 meta: None,
 //!             }),
+//!             metadata: None,
 //!         }],
-//!         max_tokens: 50,
-//!         // ... other fields
-//!         # model_preferences: None,
-//!         # system_prompt: Some("You are a helpful math assistant.".to_string()),
-//!         # include_context: Some(turbomcp_protocol::types::IncludeContext::None),
-//!         # temperature: Some(0.7),
-//!         # stop_sequences: None,
-//!         # metadata: None,
-//!         # _meta: None,
+//!         max_tokens: Some(50),
+//!         model_preferences: None,
+//!         system_prompt: Some("You are a helpful math assistant.".to_string()),
+//!         include_context: Some(turbomcp_protocol::types::IncludeContext::None),
+//!         temperature: Some(0.7),
+//!         stop_sequences: None,
+//!         _meta: None,
 //!     };
-//!     
+//!
 //!     // Send the request to the client
 //!     let result = ctx.create_message(request).await?;
 //!     Ok(format!("Response: {:?}", result))
@@ -200,7 +199,7 @@ pub mod prelude {
     pub use crate::{
         AuditConfig,
         AuditLayer,
-        // World-class middleware
+        // Comprehensive middleware
         AuthConfig,
         AuthLayer,
         AuthzConfig,

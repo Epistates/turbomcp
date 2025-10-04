@@ -1,6 +1,6 @@
-//! World-class middleware stack for MCP server
+//! Comprehensive middleware stack for MCP server
 //!
-//! This module provides a comprehensive middleware stack using best-in-class libraries
+//! This module provides a comprehensive middleware stack using well-established libraries
 //! for security, validation, and cross-cutting concerns. Each middleware is focused
 //! on a single responsibility and can be composed to create secure, robust MCP servers.
 //!
@@ -128,7 +128,7 @@ impl MiddlewareStack {
         S: Clone + Send + 'static,
     {
         // Use configured timeout or default to 30 seconds
-        let timeout = self.timeout_config.unwrap_or(TimeoutConfig::default());
+        let timeout = self.timeout_config.unwrap_or_default();
 
         ServiceBuilder::new()
             // 1. Security headers and CORS (outermost layer)
@@ -138,7 +138,9 @@ impl MiddlewareStack {
             .layer(PropagateRequestIdLayer::x_request_id())
             .layer(TraceLayer::new_for_http())
             // 3. Request timeout (DoS protection)
-            .layer(tower_http::timeout::TimeoutLayer::new(timeout.request_timeout))
+            .layer(tower_http::timeout::TimeoutLayer::new(
+                timeout.request_timeout,
+            ))
             // 4. Response compression
             .layer(CompressionLayer::new())
             .into_inner()

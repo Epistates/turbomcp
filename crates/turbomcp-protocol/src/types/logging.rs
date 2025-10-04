@@ -51,18 +51,20 @@ pub struct LoggingNotification {
     pub logger: Option<String>,
 }
 
-/// Progress notification
+/// Progress notification per MCP 2025-06-18 specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgressNotification {
-    /// Progress token
+    /// Progress token from the original request
     #[serde(rename = "progressToken")]
     pub progress_token: ProgressToken,
-    /// Progress value (0.0 to 1.0, or indeterminate if not provided)
+    /// Current progress value (MUST increase with each notification)
+    pub progress: f64,
+    /// Total value (MAY be floating point, omit if unknown)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub progress: Option<f64>,
-    /// Total steps (if known)
+    pub total: Option<f64>,
+    /// Human-readable progress message (SHOULD provide relevant information)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub total: Option<u64>,
+    pub message: Option<String>,
 }
 
 // Note: CancelledNotification moved to requests.rs to avoid duplicate exports

@@ -1,6 +1,6 @@
 //! YubiHSM 2 implementation using the yubihsm crate
 //!
-//! This module provides production-grade YubiHSM 2 integration using Yubico's official
+//! This module provides proven YubiHSM 2 integration using Yubico's official
 //! Rust client library. YubiHSM 2 is a hardware security module designed for small
 //! form factor and high-performance cryptographic operations.
 //!
@@ -43,7 +43,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, info, trace};
 use yubihsm::{Client, Connector, Credentials, object};
 
-// Cryptographic parsing imports for production-grade key extraction
+// Cryptographic parsing imports for proven key extraction
 use p256;
 use rsa::pkcs1::DecodeRsaPublicKey;
 use rsa::pkcs8::DecodePublicKey;
@@ -51,7 +51,7 @@ use rsa::traits::PublicKeyParts;
 
 // Production-grade JWK thumbprint computation using existing dependencies
 
-/// YubiHSM 2 manager with production-grade session management
+/// YubiHSM 2 manager with proven session management
 pub struct YubiHsmManager {
     /// YubiHSM client
     client: Arc<RwLock<Client>>,
@@ -276,7 +276,7 @@ impl YubiHsmManager {
         }
     }
 
-    /// Get the next available key ID using production-grade UUID-based allocation
+    /// Get the next available key ID using proven UUID-based allocation
     fn get_next_key_id(&self) -> Result<u16> {
         let client = self.client.read();
 
@@ -399,7 +399,7 @@ impl YubiHsmManager {
         Ok(public_key.as_ref().to_vec())
     }
 
-    /// Compute RFC 7638 compliant JWK thumbprint using production-grade implementation
+    /// Compute RFC 7638 compliant JWK thumbprint using proven implementation
     fn compute_jwk_thumbprint(
         &self,
         public_key: &DpopPublicKey,
@@ -408,7 +408,7 @@ impl YubiHsmManager {
         common::compute_jwk_thumbprint(public_key, algorithm, "YubiHSM")
     }
 
-    /// Parse public key bytes into DpopPublicKey using production-grade cryptographic libraries
+    /// Parse public key bytes into DpopPublicKey using proven cryptographic libraries
     fn parse_public_key_from_bytes(
         &self,
         key_bytes: &[u8],
@@ -518,7 +518,7 @@ impl YubiHsmManager {
         }
     }
 
-    /// Parse key ID from key label using production-grade key discovery
+    /// Parse key ID from key label using proven key discovery
     fn parse_key_id_from_label(&self, key_label: &str) -> Result<u16> {
         let client = self.client.read();
 
@@ -602,7 +602,7 @@ impl HsmOperations for YubiHsmManager {
             },
         };
 
-        // Parse public key using production-grade cryptographic libraries
+        // Parse public key using proven cryptographic libraries
         let public_key = self.parse_public_key_from_bytes(&public_key_bytes, algorithm)?;
 
         // Compute RFC 7638 compliant JWK thumbprint

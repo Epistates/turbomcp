@@ -1,6 +1,6 @@
 //! Tool timeout and cancellation management
 //!
-//! This module provides production-grade timeout and cancellation capabilities
+//! This module provides proven timeout and cancellation capabilities
 //! for tool execution in TurboMCP servers. It follows 2025 Rust async best
 //! practices for cancellation safety and proper resource cleanup.
 

@@ -194,6 +194,13 @@ impl HandlerRegistry {
     }
 
     /// Register a tool handler
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Handler`] if:
+    /// - Maximum handler limit is exceeded
+    /// - Tool name is empty or too long
+    /// - A tool with the same name already exists
     pub fn register_tool<T>(&self, name: impl Into<String>, handler: T) -> ServerResult<()>
     where
         T: ToolHandler + 'static,
@@ -235,6 +242,13 @@ impl HandlerRegistry {
     }
 
     /// Register a prompt handler
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Handler`] if:
+    /// - Maximum handler limit is exceeded
+    /// - Prompt name is empty or too long
+    /// - A prompt with the same name already exists
     pub fn register_prompt<P>(&self, name: impl Into<String>, handler: P) -> ServerResult<()>
     where
         P: PromptHandler + 'static,
@@ -276,6 +290,13 @@ impl HandlerRegistry {
     }
 
     /// Register a resource handler
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Handler`] if:
+    /// - Maximum handler limit is exceeded
+    /// - Resource name or URI is empty
+    /// - A resource with the same URI already exists
     pub fn register_resource<R>(&self, name: impl Into<String>, handler: R) -> ServerResult<()>
     where
         R: ResourceHandler + 'static,
@@ -317,6 +338,10 @@ impl HandlerRegistry {
     }
 
     /// Register a sampling handler
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Handler`] if maximum handler limit is exceeded.
     pub fn register_sampling<S>(&self, name: impl Into<String>, handler: S) -> ServerResult<()>
     where
         S: SamplingHandler + 'static,
@@ -352,6 +377,10 @@ impl HandlerRegistry {
     }
 
     /// Register a logging handler
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ServerError::Handler`] if maximum handler limit is exceeded.
     pub fn register_logging<L>(&self, name: impl Into<String>, handler: L) -> ServerResult<()>
     where
         L: LoggingHandler + 'static,

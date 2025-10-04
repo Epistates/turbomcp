@@ -8,7 +8,10 @@ use parking_lot::RwLock;
 use thiserror::Error;
 
 /// Errors that can occur in the registry
-#[derive(Error, Debug)]
+///
+/// These errors are domain-specific for registry operations and are converted
+/// to the main [`Error`](crate::Error) type when crossing API boundaries.
+#[derive(Error, Debug, Clone)]
 pub enum RegistryError {
     /// Component not found
     #[error("Component {0} not found")]
@@ -21,6 +24,28 @@ pub enum RegistryError {
     /// Type mismatch
     #[error("Type mismatch for component {0}")]
     TypeMismatch(String),
+}
+
+// Conversion to main Error type for API boundary crossing
+impl From<RegistryError> for Box<crate::error::Error> {
+    fn from(err: RegistryError) -> Self {
+        use crate::error::Error;
+        match err {
+            RegistryError::NotFound(name) => {
+                Error::not_found(format!("Component '{}' not found in registry", name))
+                    .with_component("registry")
+            }
+            RegistryError::AlreadyExists(name) => {
+                Error::validation(format!("Component '{}' already exists in registry", name))
+                    .with_component("registry")
+            }
+            RegistryError::TypeMismatch(name) => Error::internal(format!(
+                "Type mismatch when accessing component '{}' in registry",
+                name
+            ))
+            .with_component("registry"),
+        }
+    }
 }
 
 /// Component registry for dependency injection and service location

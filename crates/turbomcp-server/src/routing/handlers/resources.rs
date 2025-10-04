@@ -39,7 +39,7 @@ pub async fn handle_read(
             if let Some(handler) = context.registry.get_resource(&read_request.uri) {
                 match handler.handle(read_request, ctx).await {
                     Ok(resource_result) => success_response(&request, resource_result),
-                    Err(e) => error_response(&request, e.into()),
+                    Err(e) => error_response(&request, e),
                 }
             } else {
                 let error = ServerError::not_found(format!("Resource '{}'", read_request.uri));

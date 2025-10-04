@@ -245,6 +245,66 @@ impl<T: Transport> Client<T> {
                     self.send_response(response).await?;
                 }
             }
+            "elicitation/create" => {
+                if let Some(handler) = &self.handlers.elicitation {
+                    // Parse elicitation request params
+                    let params: crate::handlers::ElicitationRequest =
+                        serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
+                            .map_err(|e| {
+                            Error::protocol(format!("Invalid elicitation params: {}", e))
+                        })?;
+
+                    // Call the registered elicitation handler
+                    match handler.handle_elicitation(params).await {
+                        Ok(elicit_response) => {
+                            let result_value =
+                                serde_json::to_value(elicit_response).map_err(|e| {
+                                    Error::protocol(format!(
+                                        "Failed to serialize elicitation response: {}",
+                                        e
+                                    ))
+                                })?;
+                            let response = JsonRpcResponse::success(result_value, request.id);
+                            self.send_response(response).await?;
+                        }
+                        Err(e) => {
+                            // Map handler errors to JSON-RPC errors
+                            let (code, message) = match e {
+                                crate::handlers::HandlerError::UserCancelled => {
+                                    (-32800, "User cancelled elicitation request".to_string())
+                                }
+                                crate::handlers::HandlerError::Timeout { timeout_seconds } => (
+                                    -32801,
+                                    format!(
+                                        "Elicitation request timed out after {} seconds",
+                                        timeout_seconds
+                                    ),
+                                ),
+                                crate::handlers::HandlerError::InvalidInput { details } => {
+                                    (-32602, format!("Invalid user input: {}", details))
+                                }
+                                _ => (-32603, format!("Elicitation handler error: {}", e)),
+                            };
+                            let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                                code,
+                                message,
+                                data: None,
+                            };
+                            let response = JsonRpcResponse::error_response(error, request.id);
+                            self.send_response(response).await?;
+                        }
+                    }
+                } else {
+                    // No handler configured - elicitation not supported
+                    let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                        code: -32601,
+                        message: "Elicitation not supported - no handler registered".to_string(),
+                        data: None,
+                    };
+                    let response = JsonRpcResponse::error_response(error, request.id);
+                    self.send_response(response).await?;
+                }
+            }
             _ => {
                 // Unknown method
                 let error = turbomcp_protocol::jsonrpc::JsonRpcError {
@@ -314,10 +374,22 @@ impl<T: Transport> Client<T> {
     /// # }
     /// ```
     pub async fn initialize(&mut self) -> Result<InitializeResult> {
-        // Build client capabilities based on configuration
+        // Build client capabilities based on registered handlers (automatic detection)
         let mut client_caps = ProtocolClientCapabilities::default();
+
+        // Detect sampling capability from handler
         if let Some(sampling_caps) = self.get_sampling_capabilities() {
             client_caps.sampling = Some(sampling_caps);
+        }
+
+        // Detect elicitation capability from handler
+        if let Some(elicitation_caps) = self.get_elicitation_capabilities() {
+            client_caps.elicitation = Some(elicitation_caps);
+        }
+
+        // Detect roots capability from handler
+        if let Some(roots_caps) = self.get_roots_capabilities() {
+            client_caps.roots = Some(roots_caps);
         }
 
         // Send MCP initialization request
@@ -500,7 +572,9 @@ impl<T: Transport> Client<T> {
 
         self.execute_with_plugins(
             "resources/subscribe",
-            Some(serde_json::to_value(request).unwrap()),
+            Some(serde_json::to_value(request).map_err(|e| {
+                Error::protocol(format!("Failed to serialize subscribe request: {}", e))
+            })?),
         )
         .await
     }
@@ -557,7 +631,9 @@ impl<T: Transport> Client<T> {
 
         self.execute_with_plugins(
             "resources/unsubscribe",
-            Some(serde_json::to_value(request).unwrap()),
+            Some(serde_json::to_value(request).map_err(|e| {
+                Error::protocol(format!("Failed to serialize unsubscribe request: {}", e))
+            })?),
         )
         .await
     }
@@ -637,5 +713,38 @@ impl<T: Transport> Client<T> {
 
         self.plugin_registry = crate::plugins::PluginRegistry::new();
         Ok(())
+    }
+
+    // Note: Capability detection methods (has_*_handler, get_*_capabilities)
+    // are defined in their respective operation modules:
+    // - sampling.rs: has_sampling_handler, get_sampling_capabilities
+    // - handlers.rs: has_elicitation_handler, has_roots_handler
+    //
+    // Additional capability getters for elicitation and roots added below
+    // since they're used during initialization
+
+    /// Get elicitation capabilities if handler is registered
+    /// Automatically detects capability based on registered handler
+    fn get_elicitation_capabilities(
+        &self,
+    ) -> Option<turbomcp_protocol::types::ElicitationCapabilities> {
+        if self.has_elicitation_handler() {
+            // TODO: Could detect schema_validation support from handler traits in the future
+            Some(turbomcp_protocol::types::ElicitationCapabilities::default())
+        } else {
+            None
+        }
+    }
+
+    /// Get roots capabilities if handler is registered
+    fn get_roots_capabilities(&self) -> Option<turbomcp_protocol::types::RootsCapabilities> {
+        if self.has_roots_handler() {
+            // Roots capabilities indicate whether list can change
+            Some(turbomcp_protocol::types::RootsCapabilities {
+                list_changed: Some(true), // Support dynamic roots by default
+            })
+        } else {
+            None
+        }
     }
 }

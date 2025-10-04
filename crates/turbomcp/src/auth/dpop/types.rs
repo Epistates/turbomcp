@@ -315,7 +315,7 @@ impl DpopProof {
     /// Get the JWT string representation for HTTP headers
     ///
     /// Returns a complete RFC 7515 compliant JWT in the format: `header.payload.signature`
-    /// where each component is base64url-encoded JSON. Uses production-grade JWT formatting
+    /// where each component is base64url-encoded JSON. Uses proven JWT formatting
     /// compatible with the jsonwebtoken crate standards.
     pub fn to_jwt_string(&self) -> String {
         if let Some(ref cached) = self.jwt_string {
@@ -371,7 +371,7 @@ impl DpopProof {
 
     /// Parse and cryptographically validate DPoP proof from JWT string
     ///
-    /// This method leverages the battle-tested jsonwebtoken crate for complete JWT parsing
+    /// This method leverages the well-established jsonwebtoken crate for complete JWT parsing
     /// and cryptographic signature verification using the embedded JWK. This implementation
     /// follows RFC 9449 security requirements and validates signatures before processing claims.
     ///

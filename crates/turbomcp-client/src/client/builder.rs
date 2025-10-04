@@ -446,4 +446,101 @@ impl ClientBuilder {
             || self.log_handler.is_some()
             || self.resource_update_handler.is_some()
     }
+
+    // ============================================================================
+    // QUICK-START HELPERS - Maximum DX, Zero Bloat
+    // ============================================================================
+
+    /// Create client with HTTP transport (MCP 2025-06-18 compliant)
+    ///
+    /// **Quick-start for HTTP connections** - recommended defaults:
+    /// - Protocol: MCP 2025-06-18
+    /// - Endpoint: /mcp
+    /// - Retry: Exponential backoff (1s → 60s, max 10 attempts)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::ClientBuilder;
+    ///
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let mut client = ClientBuilder::new()
+    ///     .with_tools(true)
+    ///     .with_http("http://localhost:8080")
+    ///     .await?;
+    ///
+    /// client.initialize().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "http")]
+    pub async fn with_http(
+        self,
+        base_url: impl Into<String>,
+    ) -> turbomcp_core::Result<crate::Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTransport>> {
+        use turbomcp_transport::streamable_http_client::{
+            StreamableHttpClientTransport, StreamableHttpClientConfig, RetryPolicy,
+        };
+        use std::time::Duration;
+
+        let config = StreamableHttpClientConfig {
+            base_url: base_url.into(),
+            endpoint_path: "/mcp".to_string(),
+            protocol_version: "2025-06-18".to_string(),
+            timeout: Duration::from_secs(30),
+            retry_policy: RetryPolicy::Exponential {
+                base: Duration::from_secs(1),
+                max_delay: Duration::from_secs(60),
+                max_attempts: Some(10),
+            },
+            user_agent: format!("TurboMCP/{}", env!("CARGO_PKG_VERSION")),
+            ..Default::default()
+        };
+
+        let transport = StreamableHttpClientTransport::new(config);
+        self.build(transport).await
+    }
+
+    /// Create client with authenticated HTTP connection
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::ClientBuilder;
+    ///
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let client = ClientBuilder::new()
+    ///     .with_http_auth("https://api.example.com", "sk-1234")
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "http")]
+    pub async fn with_http_auth(
+        self,
+        base_url: impl Into<String>,
+        auth_token: impl Into<String>,
+    ) -> turbomcp_core::Result<crate::Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTransport>> {
+        use turbomcp_transport::streamable_http_client::{
+            StreamableHttpClientTransport, StreamableHttpClientConfig, RetryPolicy,
+        };
+        use std::time::Duration;
+
+        let config = StreamableHttpClientConfig {
+            base_url: base_url.into(),
+            auth_token: Some(auth_token.into()),
+            endpoint_path: "/mcp".to_string(),
+            protocol_version: "2025-06-18".to_string(),
+            timeout: Duration::from_secs(30),
+            retry_policy: RetryPolicy::Exponential {
+                base: Duration::from_secs(1),
+                max_delay: Duration::from_secs(60),
+                max_attempts: Some(10),
+            },
+            ..Default::default()
+        };
+
+        let transport = StreamableHttpClientTransport::new(config);
+        self.build(transport).await
+    }
 }

@@ -149,7 +149,9 @@ impl RateLimitLayer {
 
     /// Get the burst size from config or calculate from rate
     pub fn burst_size(&self) -> u32 {
-        self.config.limits.burst_size
+        self.config
+            .limits
+            .burst_size
             .map(|b| b.get())
             .unwrap_or(self.requests_per_second() as u32)
     }

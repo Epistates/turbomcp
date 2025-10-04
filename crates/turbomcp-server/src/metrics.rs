@@ -173,7 +173,7 @@ impl ResponseTimeHistogram {
 }
 
 impl ServerMetrics {
-    /// Create production-grade metrics collector with comprehensive initialization
+    /// Create proven metrics collector with comprehensive initialization
     pub fn new() -> Self {
         Self {
             requests_total: AtomicU64::new(0),

@@ -65,9 +65,28 @@ pub struct ServerCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SamplingCapabilities;
 
-/// Elicitation capabilities
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ElicitationCapabilities;
+/// Elicitation capabilities per MCP 2025-06-18 specification
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct ElicitationCapabilities {
+    /// Whether the client performs JSON schema validation on elicitation responses
+    /// If true, the client validates user input against the provided schema before sending
+    #[serde(rename = "schemaValidation", skip_serializing_if = "Option::is_none")]
+    pub schema_validation: Option<bool>,
+}
+
+impl ElicitationCapabilities {
+    /// Create elicitation capabilities with schema validation enabled
+    pub fn with_schema_validation(mut self) -> Self {
+        self.schema_validation = Some(true);
+        self
+    }
+
+    /// Create elicitation capabilities with schema validation disabled
+    pub fn without_schema_validation(mut self) -> Self {
+        self.schema_validation = Some(false);
+        self
+    }
+}
 
 /// Completion capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
