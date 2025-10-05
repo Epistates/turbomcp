@@ -207,7 +207,11 @@ pub struct TransportMessageMetadata {
     pub is_heartbeat: Option<bool>,
 }
 
-/// Transport metrics
+/// Transport metrics snapshot for serialization
+///
+/// This is the external-facing metrics structure that provides a consistent
+/// snapshot of transport metrics. For internal use, prefer `AtomicMetrics`
+/// for lock-free performance.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TransportMetrics {
     /// Total bytes sent
@@ -236,6 +240,107 @@ pub struct TransportMetrics {
 
     /// Compression ratio (if enabled)
     pub compression_ratio: Option<f64>,
+}
+
+/// Lock-free atomic metrics for high-performance counter updates
+///
+/// This structure uses `AtomicU64` for all counters, providing 10-100x better
+/// performance than `Mutex<u64>` according to 2025 Rust async best practices.
+/// Atomics are preferred for simple counters that don't need to be held across
+/// `.await` points.
+///
+/// # Performance
+/// - Lock-free increments/decrements
+/// - No contention on updates
+/// - Uses `Ordering::Relaxed` for maximum performance (counters don't need strict ordering)
+///
+/// # Usage
+/// ```no_run
+/// use turbomcp_transport::core::AtomicMetrics;
+/// use std::sync::Arc;
+/// use std::sync::atomic::Ordering;
+///
+/// let metrics = Arc::new(AtomicMetrics::default());
+/// metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
+/// metrics.bytes_sent.fetch_add(1024, Ordering::Relaxed);
+/// ```
+#[derive(Debug)]
+pub struct AtomicMetrics {
+    /// Total bytes sent (atomic counter)
+    pub bytes_sent: std::sync::atomic::AtomicU64,
+
+    /// Total bytes received (atomic counter)
+    pub bytes_received: std::sync::atomic::AtomicU64,
+
+    /// Total messages sent (atomic counter)
+    pub messages_sent: std::sync::atomic::AtomicU64,
+
+    /// Total messages received (atomic counter)
+    pub messages_received: std::sync::atomic::AtomicU64,
+
+    /// Total connection attempts (atomic counter)
+    pub connections: std::sync::atomic::AtomicU64,
+
+    /// Failed connection attempts (atomic counter)
+    pub failed_connections: std::sync::atomic::AtomicU64,
+
+    /// Current active connections (atomic counter)
+    pub active_connections: std::sync::atomic::AtomicU64,
+}
+
+impl Default for AtomicMetrics {
+    fn default() -> Self {
+        use std::sync::atomic::AtomicU64;
+        Self {
+            bytes_sent: AtomicU64::new(0),
+            bytes_received: AtomicU64::new(0),
+            messages_sent: AtomicU64::new(0),
+            messages_received: AtomicU64::new(0),
+            connections: AtomicU64::new(0),
+            failed_connections: AtomicU64::new(0),
+            active_connections: AtomicU64::new(0),
+        }
+    }
+}
+
+impl AtomicMetrics {
+    /// Create a new AtomicMetrics with all counters at zero
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a snapshot of current metrics for serialization
+    ///
+    /// Uses `Ordering::Relaxed` for maximum performance since we're reading
+    /// counters that don't require strict ordering guarantees.
+    pub fn snapshot(&self) -> TransportMetrics {
+        use std::sync::atomic::Ordering;
+
+        TransportMetrics {
+            bytes_sent: self.bytes_sent.load(Ordering::Relaxed),
+            bytes_received: self.bytes_received.load(Ordering::Relaxed),
+            messages_sent: self.messages_sent.load(Ordering::Relaxed),
+            messages_received: self.messages_received.load(Ordering::Relaxed),
+            connections: self.connections.load(Ordering::Relaxed),
+            failed_connections: self.failed_connections.load(Ordering::Relaxed),
+            active_connections: self.active_connections.load(Ordering::Relaxed),
+            average_latency_ms: 0.0, // TODO: Compute from latency sum/count
+            compression_ratio: None, // TODO: Compute from compressed/uncompressed bytes
+        }
+    }
+
+    /// Reset all metrics to zero
+    pub fn reset(&self) {
+        use std::sync::atomic::Ordering;
+
+        self.bytes_sent.store(0, Ordering::Relaxed);
+        self.bytes_received.store(0, Ordering::Relaxed);
+        self.messages_sent.store(0, Ordering::Relaxed);
+        self.messages_received.store(0, Ordering::Relaxed);
+        self.connections.store(0, Ordering::Relaxed);
+        self.failed_connections.store(0, Ordering::Relaxed);
+        self.active_connections.store(0, Ordering::Relaxed);
+    }
 }
 
 /// Transport events
@@ -303,16 +408,16 @@ pub trait Transport: Send + Sync + std::fmt::Debug {
     async fn state(&self) -> TransportState;
 
     /// Connect to the transport endpoint
-    async fn connect(&mut self) -> TransportResult<()>;
+    async fn connect(&self) -> TransportResult<()>;
 
     /// Disconnect from the transport
-    async fn disconnect(&mut self) -> TransportResult<()>;
+    async fn disconnect(&self) -> TransportResult<()>;
 
     /// Send a message
-    async fn send(&mut self, message: TransportMessage) -> TransportResult<()>;
+    async fn send(&self, message: TransportMessage) -> TransportResult<()>;
 
     /// Receive a message (non-blocking)
-    async fn receive(&mut self) -> TransportResult<Option<TransportMessage>>;
+    async fn receive(&self) -> TransportResult<Option<TransportMessage>>;
 
     /// Get transport metrics
     async fn metrics(&self) -> TransportMetrics;
@@ -328,7 +433,7 @@ pub trait Transport: Send + Sync + std::fmt::Debug {
     }
 
     /// Set configuration
-    async fn configure(&mut self, config: TransportConfig) -> TransportResult<()> {
+    async fn configure(&self, config: TransportConfig) -> TransportResult<()> {
         // Default implementation - transports can override
         let _ = config;
         Ok(())
@@ -340,16 +445,16 @@ pub trait Transport: Send + Sync + std::fmt::Debug {
 pub trait BidirectionalTransport: Transport {
     /// Send a message and wait for response
     async fn send_request(
-        &mut self,
+        &self,
         message: TransportMessage,
         timeout: Option<Duration>,
     ) -> TransportResult<TransportMessage>;
 
     /// Start request-response correlation
-    async fn start_correlation(&mut self, correlation_id: String) -> TransportResult<()>;
+    async fn start_correlation(&self, correlation_id: String) -> TransportResult<()>;
 
     /// Stop request-response correlation
-    async fn stop_correlation(&mut self, correlation_id: &str) -> TransportResult<()>;
+    async fn stop_correlation(&self, correlation_id: &str) -> TransportResult<()>;
 }
 
 /// Streaming transport trait for continuous data flow
@@ -362,10 +467,10 @@ pub trait StreamingTransport: Transport {
     type ReceiveStream: Sink<TransportMessage, Error = TransportError> + Send + Unpin;
 
     /// Get the send stream
-    async fn send_stream(&mut self) -> TransportResult<Self::SendStream>;
+    async fn send_stream(&self) -> TransportResult<Self::SendStream>;
 
     /// Get the receive stream
-    async fn receive_stream(&mut self) -> TransportResult<Self::ReceiveStream>;
+    async fn receive_stream(&self) -> TransportResult<Self::ReceiveStream>;
 }
 
 /// Transport factory for creating transport instances

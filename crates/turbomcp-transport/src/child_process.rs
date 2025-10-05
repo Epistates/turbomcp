@@ -3,24 +3,33 @@
 //! This module provides a transport implementation for communicating with MCP servers
 //! running as child processes. It uses Tokio's async process management with robust
 //! error handling, graceful shutdown, and proper STDIO stream management.
+//!
+//! # Interior Mutability Pattern
+//!
+//! This transport follows the research-backed hybrid mutex pattern:
+//!
+//! - **std::sync::Mutex** for state/queue (short-lived locks, never cross .await)
+//! - **AtomicMetrics** for lock-free counter updates (10-100x faster than Mutex)
+//! - **tokio::sync::Mutex** for child process and I/O (cross .await points)
 
 use std::collections::VecDeque;
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use parking_lot::Mutex;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, Command};
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio::time::timeout;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::core::{
-    Transport, TransportCapabilities, TransportError, TransportEvent, TransportEventEmitter,
-    TransportMessage, TransportMetrics, TransportResult, TransportState, TransportType,
+    AtomicMetrics, Transport, TransportCapabilities, TransportError, TransportEvent,
+    TransportEventEmitter, TransportMessage, TransportMetrics, TransportResult, TransportState,
+    TransportType,
 };
 use turbomcp_core::MessageId;
 
@@ -72,37 +81,46 @@ impl Default for ChildProcessConfig {
 }
 
 /// Child process transport implementation
+///
+/// # Interior Mutability Architecture
+///
+/// Following research-backed 2025 Rust async best practices:
+///
+/// - `state`: std::sync::Mutex (short-lived locks, never held across .await)
+/// - `outbound_queue`: std::sync::Mutex (infrequent access, short-lived locks)
+/// - `metrics`: AtomicMetrics (lock-free counters, 10-100x faster than Mutex)
+/// - `child`/I/O: tokio::sync::Mutex (held across .await, necessary for async operations)
 #[derive(Debug)]
 pub struct ChildProcessTransport {
-    /// Process configuration
+    /// Process configuration (immutable after construction)
     config: ChildProcessConfig,
 
-    /// Child process handle
-    child: Option<Child>,
+    /// Child process handle (tokio::sync::Mutex - crosses await boundaries)
+    child: Arc<TokioMutex<Option<Child>>>,
 
-    /// Transport state
-    state: Arc<Mutex<TransportState>>,
+    /// Transport state (std::sync::Mutex - never crosses await)
+    state: Arc<StdMutex<TransportState>>,
 
-    /// Transport capabilities
+    /// Transport capabilities (immutable after construction)
     capabilities: TransportCapabilities,
 
-    /// Metrics tracking
-    metrics: Arc<Mutex<TransportMetrics>>,
+    /// Lock-free atomic metrics (10-100x faster than Mutex)
+    metrics: Arc<AtomicMetrics>,
 
     /// Event emitter
     event_emitter: TransportEventEmitter,
 
-    /// Outbound message queue
+    /// Outbound message queue (std::sync::Mutex - short-lived locks)
     #[allow(dead_code)] // Reserved for future buffering implementation
-    outbound_queue: Arc<Mutex<VecDeque<TransportMessage>>>,
+    outbound_queue: Arc<StdMutex<VecDeque<TransportMessage>>>,
 
-    /// STDIO communication channels
-    stdin_sender: Option<mpsc::Sender<String>>,
-    stdout_receiver: Option<mpsc::Receiver<String>>,
+    /// STDIO communication channels (tokio::sync::Mutex - crosses await boundaries)
+    stdin_sender: Arc<TokioMutex<Option<mpsc::Sender<String>>>>,
+    stdout_receiver: Arc<TokioMutex<Option<mpsc::Receiver<String>>>>,
 
-    /// Background task handles
-    _stdin_task: Option<tokio::task::JoinHandle<()>>,
-    _stdout_task: Option<tokio::task::JoinHandle<()>>,
+    /// Background task handles (tokio::sync::Mutex - crosses await boundaries)
+    _stdin_task: Arc<TokioMutex<Option<tokio::task::JoinHandle<()>>>>,
+    _stdout_task: Arc<TokioMutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl ChildProcessTransport {
@@ -120,21 +138,21 @@ impl ChildProcessTransport {
 
         Self {
             config,
-            child: None,
-            state: Arc::new(Mutex::new(TransportState::Disconnected)),
+            child: Arc::new(TokioMutex::new(None)),
+            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
             capabilities,
-            metrics: Arc::new(Mutex::new(TransportMetrics::default())),
+            metrics: Arc::new(AtomicMetrics::default()),
             event_emitter: TransportEventEmitter::new().0,
-            outbound_queue: Arc::new(Mutex::new(VecDeque::new())),
-            stdin_sender: None,
-            stdout_receiver: None,
-            _stdin_task: None,
-            _stdout_task: None,
+            outbound_queue: Arc::new(StdMutex::new(VecDeque::new())),
+            stdin_sender: Arc::new(TokioMutex::new(None)),
+            stdout_receiver: Arc::new(TokioMutex::new(None)),
+            _stdin_task: Arc::new(TokioMutex::new(None)),
+            _stdout_task: Arc::new(TokioMutex::new(None)),
         }
     }
 
     /// Start the child process and set up communication channels
-    async fn start_process(&mut self) -> TransportResult<()> {
+    async fn start_process(&self) -> TransportResult<()> {
         if self.config.command.is_empty() {
             return Err(TransportError::ConfigurationError(
                 "Command cannot be empty".to_string(),
@@ -250,14 +268,14 @@ impl ChildProcessTransport {
         };
 
         // Store handles
-        self.child = Some(child);
-        self.stdin_sender = Some(stdin_tx);
-        self.stdout_receiver = Some(stdout_rx);
-        self._stdin_task = Some(stdin_task);
-        self._stdout_task = Some(stdout_task);
+        *self.child.lock().await = Some(child);
+        *self.stdin_sender.lock().await = Some(stdin_tx);
+        *self.stdout_receiver.lock().await = Some(stdout_rx);
+        *self._stdin_task.lock().await = Some(stdin_task);
+        *self._stdout_task.lock().await = Some(stdout_task);
 
         // Update state
-        *self.state.lock() = TransportState::Connected;
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Connected;
 
         // Wait for process to be ready with timeout
         match timeout(self.config.startup_timeout, self.wait_for_ready()).await {
@@ -283,8 +301,9 @@ impl ChildProcessTransport {
     }
 
     /// Wait for the process to be ready by checking if it's still running
-    async fn wait_for_ready(&mut self) -> TransportResult<()> {
-        if let Some(ref mut child) = self.child {
+    async fn wait_for_ready(&self) -> TransportResult<()> {
+        let mut child_guard = self.child.lock().await;
+        if let Some(ref mut child) = child_guard.as_mut() {
             // Check if process is still running
             match child.try_wait() {
                 Ok(Some(status)) => {
@@ -312,14 +331,14 @@ impl ChildProcessTransport {
     }
 
     /// Stop the child process gracefully
-    async fn stop_process(&mut self) -> TransportResult<()> {
+    async fn stop_process(&self) -> TransportResult<()> {
         info!("Stopping child process");
 
         // Drop communication channels first
-        self.stdin_sender = None;
-        self.stdout_receiver = None;
+        *self.stdin_sender.lock().await = None;
+        *self.stdout_receiver.lock().await = None;
 
-        if let Some(mut child) = self.child.take() {
+        if let Some(mut child) = self.child.lock().await.take() {
             // Try graceful shutdown first
             if let Err(e) = child.start_kill() {
                 warn!("Failed to send kill signal to child process: {}", e);
@@ -343,7 +362,7 @@ impl ChildProcessTransport {
         }
 
         // Update state
-        *self.state.lock() = TransportState::Disconnected;
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Disconnected;
         self.event_emitter.emit(TransportEvent::Disconnected {
             transport_type: TransportType::ChildProcess,
             endpoint: format!("{}:{:?}", self.config.command, self.config.args),
@@ -354,8 +373,9 @@ impl ChildProcessTransport {
     }
 
     /// Check if the child process is still running
-    pub fn is_process_alive(&mut self) -> bool {
-        if let Some(ref mut child) = self.child {
+    pub async fn is_process_alive(&self) -> bool {
+        let mut child_guard = self.child.lock().await;
+        if let Some(ref mut child) = child_guard.as_mut() {
             match child.try_wait() {
                 Ok(Some(_)) => false, // Process has exited
                 Ok(None) => true,     // Process is still running
@@ -369,8 +389,8 @@ impl ChildProcessTransport {
 
 #[async_trait]
 impl Transport for ChildProcessTransport {
-    async fn connect(&mut self) -> TransportResult<()> {
-        match *self.state.lock() {
+    async fn connect(&self) -> TransportResult<()> {
+        match *self.state.lock().expect("state mutex poisoned") {
             TransportState::Connected => return Ok(()),
             TransportState::Connecting => {
                 return Err(TransportError::Internal("Already connecting".to_string()));
@@ -378,16 +398,16 @@ impl Transport for ChildProcessTransport {
             _ => {}
         }
 
-        *self.state.lock() = TransportState::Connecting;
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Connecting;
         self.start_process().await
     }
 
-    async fn disconnect(&mut self) -> TransportResult<()> {
+    async fn disconnect(&self) -> TransportResult<()> {
         self.stop_process().await
     }
 
-    async fn send(&mut self, message: TransportMessage) -> TransportResult<()> {
-        let state = self.state.lock().clone();
+    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
+        let state = self.state.lock().expect("state mutex poisoned").clone();
         if state != TransportState::Connected {
             return Err(TransportError::Internal(format!(
                 "Cannot send in state: {state:?}"
@@ -408,16 +428,18 @@ impl Transport for ChildProcessTransport {
         })?;
 
         // Send through stdin channel
-        if let Some(ref sender) = self.stdin_sender {
+        let stdin_sender = self.stdin_sender.lock().await;
+        if let Some(sender) = stdin_sender.as_ref() {
             sender.send(payload_str).await.map_err(|_| {
                 error!("Failed to send message: stdin channel closed");
                 TransportError::ConnectionLost("STDIN channel closed".to_string())
             })?;
 
-            // Update metrics
-            let mut metrics = self.metrics.lock();
-            metrics.messages_sent += 1;
-            metrics.bytes_sent += message.payload.len() as u64;
+            // Update metrics (lock-free atomic operations)
+            self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .bytes_sent
+                .fetch_add(message.payload.len() as u64, Ordering::Relaxed);
 
             trace!("Sent message via child process transport");
             Ok(())
@@ -428,21 +450,22 @@ impl Transport for ChildProcessTransport {
         }
     }
 
-    async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
-        let state = self.state.lock().clone();
+    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
+        let state = self.state.lock().expect("state mutex poisoned").clone();
         if state != TransportState::Connected {
             return Ok(None);
         }
 
         // Check if process is still alive
-        if !self.is_process_alive() {
+        if !self.is_process_alive().await {
             warn!("Child process died, disconnecting transport");
             self.stop_process().await?;
             return Ok(None);
         }
 
         // Properly block and wait for messages from stdout channel
-        if let Some(ref mut receiver) = self.stdout_receiver {
+        let mut stdout_receiver = self.stdout_receiver.lock().await;
+        if let Some(ref mut receiver) = stdout_receiver.as_mut() {
             match receiver.recv().await {
                 Some(line) => {
                     let payload = Bytes::from(line);
@@ -451,10 +474,13 @@ impl Transport for ChildProcessTransport {
                         payload,
                     );
 
-                    // Update metrics
-                    let mut metrics = self.metrics.lock();
-                    metrics.messages_received += 1;
-                    metrics.bytes_received += message.payload.len() as u64;
+                    // Update metrics (lock-free atomic operations)
+                    self.metrics
+                        .messages_received
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .bytes_received
+                        .fetch_add(message.payload.len() as u64, Ordering::Relaxed);
 
                     trace!("Received message via child process transport");
                     Ok(Some(message))
@@ -470,7 +496,7 @@ impl Transport for ChildProcessTransport {
     }
 
     async fn state(&self) -> TransportState {
-        self.state.lock().clone()
+        self.state.lock().expect("state mutex poisoned").clone()
     }
 
     fn transport_type(&self) -> TransportType {
@@ -482,16 +508,21 @@ impl Transport for ChildProcessTransport {
     }
 
     async fn metrics(&self) -> TransportMetrics {
-        self.metrics.lock().clone()
+        // AtomicMetrics: lock-free snapshot with Ordering::Relaxed
+        self.metrics.snapshot()
     }
 }
 
 impl Drop for ChildProcessTransport {
     fn drop(&mut self) {
-        if let Some(mut child) = self.child.take()
-            && self.config.kill_on_drop
-        {
-            let _ = child.start_kill();
+        if self.config.kill_on_drop {
+            // Best-effort cleanup: try to lock and kill the child process
+            // Use try_lock since Drop is synchronous
+            if let Ok(mut child_guard) = self.child.try_lock()
+                && let Some(ref mut child) = child_guard.as_mut()
+            {
+                let _ = child.start_kill();
+            }
         }
     }
 }
@@ -527,7 +558,7 @@ mod tests {
     #[tokio::test]
     async fn test_empty_command_error() {
         let config = ChildProcessConfig::default();
-        let mut transport = ChildProcessTransport::new(config);
+        let transport = ChildProcessTransport::new(config);
 
         let result = transport.connect().await;
         assert!(result.is_err());
@@ -548,7 +579,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut transport = ChildProcessTransport::new(config);
+        let transport = ChildProcessTransport::new(config);
 
         // Connect should succeed
         if transport.connect().await.is_ok() {

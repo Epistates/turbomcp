@@ -20,9 +20,6 @@ pub struct ElicitationContext {
     pub message: String,
     /// Schema for user input validation (using protocol ElicitationSchema when available)
     pub schema: serde_json::Value,
-    /// Human-readable prompt or question (deprecated, use message)
-    #[deprecated(note = "Use message field instead")]
-    pub prompt: Option<String>,
     /// Input constraints and hints
     pub constraints: Option<serde_json::Value>,
     /// Default values for fields
@@ -65,8 +62,6 @@ impl ElicitationContext {
             elicitation_id: Uuid::new_v4().to_string(),
             message,
             schema,
-            #[allow(deprecated)]
-            prompt: None,
             constraints: None,
             defaults: None,
             required: true,

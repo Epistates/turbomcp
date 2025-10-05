@@ -519,23 +519,6 @@
     clippy::uninlined_format_args  // Sometimes variables in format! are clearer
 )]
 
-// Issue deprecation warning for internal-deps feature
-#[cfg(feature = "internal-deps")]
-#[deprecated(
-    since = "1.0.8",
-    note = "⚠️  The 'internal-deps' feature is deprecated and will be removed in 2.0.0.\n\
-           ✨ SOLUTION: Remove 'internal-deps' from your features - core dependencies are automatic!\n\
-           📖 MIGRATION: features = ['stdio'] or features = ['minimal'] (no internal-deps needed)\n\
-           📚 See: https://docs.rs/turbomcp/latest/turbomcp/#feature-selection-guide"
-)]
-/// Deprecated marker for internal-deps feature - triggers warning when feature is used
-pub const DEPRECATED_INTERNAL_DEPS_WARNING: &str = "internal-deps is deprecated";
-
-// Trigger the deprecation warning by referencing the deprecated constant
-#[cfg(feature = "internal-deps")]
-#[allow(deprecated)] // We intentionally trigger this warning for users
-const _: &str = DEPRECATED_INTERNAL_DEPS_WARNING;
-
 use std::collections::HashMap;
 use std::sync::Arc;
 

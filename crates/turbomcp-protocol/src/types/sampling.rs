@@ -104,56 +104,6 @@ pub struct ModelPreferences {
     pub intelligence_priority: Option<f64>,
 }
 
-// DEPRECATED: Legacy tier-based enums kept for backward compatibility
-// These are NOT part of MCP 2025-06-18 spec
-/// **DEPRECATED** - Cost tier (legacy). Use [`ModelPreferences`] with `cost_priority` instead.
-#[deprecated(
-    since = "2.0.0",
-    note = "Use ModelPreferences with priority values instead"
-)]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum CostTier {
-    /// Low cost priority
-    Low,
-    /// Medium cost priority
-    Medium,
-    /// High cost priority
-    High,
-}
-
-/// **DEPRECATED** - Speed tier (legacy). Use [`ModelPreferences`] with `speed_priority` instead.
-#[deprecated(
-    since = "2.0.0",
-    note = "Use ModelPreferences with priority values instead"
-)]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum SpeedTier {
-    /// Low speed priority
-    Low,
-    /// Medium speed priority
-    Medium,
-    /// High speed priority
-    High,
-}
-
-/// **DEPRECATED** - Intelligence tier (legacy). Use [`ModelPreferences`] with `intelligence_priority` instead.
-#[deprecated(
-    since = "2.0.0",
-    note = "Use ModelPreferences with priority values instead"
-)]
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum IntelligenceTier {
-    /// Low intelligence priority
-    Low,
-    /// Medium intelligence priority
-    Medium,
-    /// High intelligence priority
-    High,
-}
-
 /// Create message result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateMessageResult {

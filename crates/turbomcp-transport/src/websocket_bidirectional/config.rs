@@ -154,36 +154,6 @@ impl ReconnectConfig {
         Self::default()
     }
 
-    /// Disable reconnection
-    pub fn disabled() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
-    }
-
-    /// Create aggressive reconnection policy
-    pub fn aggressive() -> Self {
-        Self {
-            enabled: true,
-            initial_delay: Duration::from_millis(100),
-            max_delay: Duration::from_secs(5),
-            backoff_factor: 1.5,
-            max_retries: 20,
-        }
-    }
-
-    /// Create conservative reconnection policy
-    pub fn conservative() -> Self {
-        Self {
-            enabled: true,
-            initial_delay: Duration::from_secs(2),
-            max_delay: Duration::from_secs(60),
-            backoff_factor: 2.5,
-            max_retries: 5,
-        }
-    }
-
     /// Set whether reconnection is enabled
     pub fn with_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
@@ -326,22 +296,6 @@ mod tests {
         assert_eq!(config.keep_alive_interval, Duration::from_secs(60));
         assert!(config.enable_compression);
         assert_eq!(config.max_concurrent_elicitations, 5);
-    }
-
-    #[test]
-    fn test_reconnect_config_presets() {
-        let aggressive = ReconnectConfig::aggressive();
-        assert!(aggressive.enabled);
-        assert_eq!(aggressive.initial_delay, Duration::from_millis(100));
-        assert_eq!(aggressive.max_retries, 20);
-
-        let conservative = ReconnectConfig::conservative();
-        assert!(conservative.enabled);
-        assert_eq!(conservative.initial_delay, Duration::from_secs(2));
-        assert_eq!(conservative.max_retries, 5);
-
-        let disabled = ReconnectConfig::disabled();
-        assert!(!disabled.enabled);
     }
 
     #[test]

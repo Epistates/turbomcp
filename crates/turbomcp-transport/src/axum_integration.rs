@@ -1309,7 +1309,7 @@ async fn handle_websocket(
 #[cfg(feature = "http")]
 /// Health check handler
 async fn health_handler(State(app_state): State<McpAppState>) -> Json<serde_json::Value> {
-    let session_count = app_state.session_manager.active_session_count();
+    let session_count = app_state.session_manager.active_session_count().await;
 
     Json(serde_json::json!({
         "status": "healthy",

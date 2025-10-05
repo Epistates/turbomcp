@@ -3,18 +3,18 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Framed, LinesCodec};
 use tracing::{debug, error, info, warn};
 
 use crate::core::{
-    Transport, TransportCapabilities, TransportError, TransportMessage, TransportMetrics,
-    TransportResult, TransportState, TransportType,
+    AtomicMetrics, Transport, TransportCapabilities, TransportError, TransportMessage,
+    TransportMetrics, TransportResult, TransportState, TransportType,
 };
 use turbomcp_core::MessageId;
 
@@ -25,18 +25,18 @@ pub struct TcpTransport {
     bind_addr: SocketAddr,
     /// Remote address to connect to (for client mode)
     remote_addr: Option<SocketAddr>,
-    /// Message sender for incoming messages (bounded for backpressure)
-    sender: Option<mpsc::Sender<TransportMessage>>,
-    /// Message receiver for incoming messages (bounded for backpressure)
-    receiver: Option<mpsc::Receiver<TransportMessage>>,
-    /// Active connections map: addr -> outgoing message sender (bounded for backpressure)
-    connections: Arc<Mutex<HashMap<SocketAddr, mpsc::Sender<String>>>>,
-    /// Transport capabilities
+    /// Message sender for incoming messages (tokio mutex - crosses await)
+    sender: Arc<tokio::sync::Mutex<Option<mpsc::Sender<TransportMessage>>>>,
+    /// Message receiver for incoming messages (tokio mutex - crosses await)
+    receiver: Arc<tokio::sync::Mutex<Option<mpsc::Receiver<TransportMessage>>>>,
+    /// Active connections map: addr -> outgoing message sender (std mutex - short-lived)
+    connections: Arc<StdMutex<HashMap<SocketAddr, mpsc::Sender<String>>>>,
+    /// Transport capabilities (immutable)
     capabilities: TransportCapabilities,
-    /// Current state
-    state: TransportState,
-    /// Transport metrics
-    metrics: TransportMetrics,
+    /// Current state (std mutex - short-lived)
+    state: Arc<StdMutex<TransportState>>,
+    /// Transport metrics (lock-free atomic)
+    metrics: Arc<AtomicMetrics>,
 }
 
 impl TcpTransport {
@@ -46,17 +46,17 @@ impl TcpTransport {
         Self {
             bind_addr,
             remote_addr: None,
-            sender: None,
-            receiver: None,
-            connections: Arc::new(Mutex::new(HashMap::new())),
+            sender: Arc::new(tokio::sync::Mutex::new(None)),
+            receiver: Arc::new(tokio::sync::Mutex::new(None)),
+            connections: Arc::new(StdMutex::new(HashMap::new())),
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
                 max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
-            state: TransportState::Disconnected,
-            metrics: TransportMetrics::default(),
+            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            metrics: Arc::new(AtomicMetrics::default()),
         }
     }
 
@@ -66,36 +66,36 @@ impl TcpTransport {
         Self {
             bind_addr,
             remote_addr: Some(remote_addr),
-            sender: None,
-            receiver: None,
-            connections: Arc::new(Mutex::new(HashMap::new())),
+            sender: Arc::new(tokio::sync::Mutex::new(None)),
+            receiver: Arc::new(tokio::sync::Mutex::new(None)),
+            connections: Arc::new(StdMutex::new(HashMap::new())),
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
                 max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
-            state: TransportState::Disconnected,
-            metrics: TransportMetrics::default(),
+            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            metrics: Arc::new(AtomicMetrics::default()),
         }
     }
 
     /// Start TCP server
-    async fn start_server(&mut self) -> TransportResult<()> {
+    async fn start_server(&self) -> TransportResult<()> {
         info!("Starting TCP server on {}", self.bind_addr);
-        self.state = TransportState::Connecting;
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Connecting;
 
         let listener = TcpListener::bind(self.bind_addr).await.map_err(|e| {
-            self.state = TransportState::Failed {
+            *self.state.lock().expect("state mutex poisoned") = TransportState::Failed {
                 reason: format!("Failed to bind TCP listener: {e}"),
             };
             TransportError::ConnectionFailed(format!("Failed to bind TCP listener: {e}"))
         })?;
 
         let (tx, rx) = mpsc::channel(1000); // Bounded channel for backpressure control
-        self.sender = Some(tx.clone());
-        self.receiver = Some(rx);
-        self.state = TransportState::Connected;
+        *self.sender.lock().await = Some(tx.clone());
+        *self.receiver.lock().await = Some(rx);
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Connected;
 
         // Accept connections in background
         let connections = self.connections.clone();
@@ -132,25 +132,25 @@ impl TcpTransport {
     }
 
     /// Connect to TCP server
-    async fn connect_client(&mut self) -> TransportResult<()> {
+    async fn connect_client(&self) -> TransportResult<()> {
         let remote_addr = self.remote_addr.ok_or_else(|| {
             TransportError::ConfigurationError("No remote address set for client".into())
         })?;
 
         info!("Connecting to TCP server at {}", remote_addr);
-        self.state = TransportState::Connecting;
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Connecting;
 
         let stream = TcpStream::connect(remote_addr).await.map_err(|e| {
-            self.state = TransportState::Failed {
+            *self.state.lock().expect("state mutex poisoned") = TransportState::Failed {
                 reason: format!("Failed to connect: {e}"),
             };
             TransportError::ConnectionFailed(format!("Failed to connect to TCP server: {e}"))
         })?;
 
         let (tx, rx) = mpsc::channel(1000); // Bounded channel for backpressure control
-        self.sender = Some(tx.clone());
-        self.receiver = Some(rx);
-        self.state = TransportState::Connected;
+        *self.sender.lock().await = Some(tx.clone());
+        *self.receiver.lock().await = Some(rx);
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Connected;
 
         // Handle connection
         let connections = self.connections.clone();
@@ -171,7 +171,7 @@ async fn handle_tcp_connection_framed(
     stream: TcpStream,
     addr: SocketAddr,
     incoming_sender: mpsc::Sender<TransportMessage>,
-    connections: Arc<Mutex<HashMap<SocketAddr, mpsc::Sender<String>>>>,
+    connections: Arc<StdMutex<HashMap<SocketAddr, mpsc::Sender<String>>>>,
 ) -> TransportResult<()> {
     debug!(
         "Handling TCP connection from {} using Framed<TcpStream, LinesCodec>",
@@ -186,7 +186,10 @@ async fn handle_tcp_connection_framed(
     let (outgoing_sender, mut outgoing_receiver) = mpsc::channel::<String>(100);
 
     // Register this connection in the connections map
-    connections.lock().insert(addr, outgoing_sender);
+    connections
+        .lock()
+        .expect("connections mutex poisoned")
+        .insert(addr, outgoing_sender);
 
     // Clone for cleanup
     let connections_cleanup = connections.clone();
@@ -277,7 +280,10 @@ async fn handle_tcp_connection_framed(
     }
 
     // Clean up connection
-    connections_cleanup.lock().remove(&addr);
+    connections_cleanup
+        .lock()
+        .expect("connections mutex poisoned")
+        .remove(&addr);
     send_task.abort();
     debug!("TCP connection handler finished for {}", addr);
     Ok(())
@@ -294,10 +300,10 @@ impl Transport for TcpTransport {
     }
 
     async fn state(&self) -> TransportState {
-        self.state.clone()
+        self.state.lock().expect("state mutex poisoned").clone()
     }
 
-    async fn connect(&mut self) -> TransportResult<()> {
+    async fn connect(&self) -> TransportResult<()> {
         if self.remote_addr.is_some() {
             // Client mode
             self.connect_client().await
@@ -307,25 +313,27 @@ impl Transport for TcpTransport {
         }
     }
 
-    async fn disconnect(&mut self) -> TransportResult<()> {
+    async fn disconnect(&self) -> TransportResult<()> {
         info!("Stopping TCP transport");
-        self.state = TransportState::Disconnecting;
-        self.sender = None;
-        self.receiver = None;
-        self.state = TransportState::Disconnected;
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Disconnecting;
+        *self.sender.lock().await = None;
+        *self.receiver.lock().await = None;
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Disconnected;
         Ok(())
     }
 
-    async fn send(&mut self, message: TransportMessage) -> TransportResult<()> {
-        self.metrics.messages_sent += 1;
-        self.metrics.bytes_sent += message.size() as u64;
+    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
+        self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .bytes_sent
+            .fetch_add(message.size() as u64, Ordering::Relaxed);
 
         // Convert transport message back to JSON string for sending
         let json_str = String::from_utf8_lossy(&message.payload).to_string();
 
         // Send to all active connections (broadcast for server mode)
         // In client mode, there should be exactly one connection
-        let connections = self.connections.lock();
+        let connections = self.connections.lock().expect("connections mutex poisoned");
         if connections.is_empty() {
             return Err(TransportError::ConnectionFailed(
                 "No active TCP connections".into(),
@@ -351,7 +359,7 @@ impl Transport for TcpTransport {
         // Clean up failed connections
         drop(connections);
         if !failed_connections.is_empty() {
-            let mut connections = self.connections.lock();
+            let mut connections = self.connections.lock().expect("connections mutex poisoned");
             for addr in failed_connections {
                 connections.remove(&addr);
             }
@@ -360,16 +368,21 @@ impl Transport for TcpTransport {
         Ok(())
     }
 
-    async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
-        if let Some(ref mut receiver) = self.receiver {
+    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
+        let mut receiver_guard = self.receiver.lock().await;
+        if let Some(ref mut receiver) = *receiver_guard {
             match receiver.recv().await {
                 Some(message) => {
-                    self.metrics.messages_received += 1;
-                    self.metrics.bytes_received += message.size() as u64;
+                    self.metrics
+                        .messages_received
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .bytes_received
+                        .fetch_add(message.size() as u64, Ordering::Relaxed);
                     Ok(Some(message))
                 }
                 None => {
-                    self.state = TransportState::Failed {
+                    *self.state.lock().expect("state mutex poisoned") = TransportState::Failed {
                         reason: "Channel disconnected".into(),
                     };
                     Err(TransportError::ReceiveFailed(
@@ -385,7 +398,7 @@ impl Transport for TcpTransport {
     }
 
     async fn metrics(&self) -> TransportMetrics {
-        self.metrics.clone()
+        self.metrics.snapshot()
     }
 
     fn endpoint(&self) -> Option<String> {
@@ -516,7 +529,10 @@ mod tests {
 
         assert_eq!(transport.bind_addr, addr);
         assert_eq!(transport.remote_addr, None);
-        assert!(matches!(transport.state, TransportState::Disconnected));
+        assert!(matches!(
+            *transport.state.lock().expect("state mutex poisoned"),
+            TransportState::Disconnected
+        ));
     }
 
     #[test]

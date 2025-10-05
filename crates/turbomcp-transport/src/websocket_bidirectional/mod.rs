@@ -111,77 +111,6 @@ pub use types::{
     WebSocketConnectionStats, WebSocketStreamHandler,
 };
 
-/// Presets for common WebSocket transport configurations
-pub mod presets {
-    use super::*;
-    use std::time::Duration;
-
-    /// High-performance preset for production environments
-    pub fn high_performance() -> WebSocketBidirectionalConfig {
-        WebSocketBidirectionalConfig {
-            max_message_size: 64 * 1024 * 1024, // 64MB
-            keep_alive_interval: Duration::from_secs(15),
-            reconnect: ReconnectConfig::aggressive(),
-            elicitation_timeout: Duration::from_secs(10),
-            max_concurrent_elicitations: 50,
-            enable_compression: true,
-            ..Default::default()
-        }
-    }
-
-    /// High-reliability preset for critical systems
-    pub fn high_reliability() -> WebSocketBidirectionalConfig {
-        WebSocketBidirectionalConfig {
-            max_message_size: 16 * 1024 * 1024, // 16MB
-            keep_alive_interval: Duration::from_secs(10),
-            reconnect: ReconnectConfig::conservative(),
-            elicitation_timeout: Duration::from_secs(60),
-            max_concurrent_elicitations: 10,
-            enable_compression: false, // Prioritize reliability over performance
-            ..Default::default()
-        }
-    }
-
-    /// Low-latency preset for real-time applications
-    pub fn low_latency() -> WebSocketBidirectionalConfig {
-        WebSocketBidirectionalConfig {
-            max_message_size: 1024 * 1024, // 1MB
-            keep_alive_interval: Duration::from_secs(5),
-            reconnect: ReconnectConfig::aggressive(),
-            elicitation_timeout: Duration::from_secs(5),
-            max_concurrent_elicitations: 20,
-            enable_compression: false, // Avoid compression overhead
-            ..Default::default()
-        }
-    }
-
-    /// Resource-constrained preset for embedded or limited environments
-    pub fn resource_constrained() -> WebSocketBidirectionalConfig {
-        WebSocketBidirectionalConfig {
-            max_message_size: 256 * 1024, // 256KB
-            keep_alive_interval: Duration::from_secs(60),
-            reconnect: ReconnectConfig::conservative(),
-            elicitation_timeout: Duration::from_secs(30),
-            max_concurrent_elicitations: 3,
-            enable_compression: true, // Save bandwidth
-            ..Default::default()
-        }
-    }
-
-    /// Development preset with relaxed settings
-    pub fn development() -> WebSocketBidirectionalConfig {
-        WebSocketBidirectionalConfig {
-            max_message_size: 32 * 1024 * 1024, // 32MB
-            keep_alive_interval: Duration::from_secs(30),
-            reconnect: ReconnectConfig::disabled(),
-            elicitation_timeout: Duration::from_secs(120),
-            max_concurrent_elicitations: 100,
-            enable_compression: false,
-            ..Default::default()
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,30 +165,6 @@ mod tests {
 
         assert!(config.reconnect.enabled);
         assert_eq!(config.reconnect.max_retries, 5);
-    }
-
-    #[test]
-    fn test_presets_compilation() {
-        // Test that all presets compile and have reasonable values
-        let high_perf = presets::high_performance();
-        assert!(high_perf.enable_compression);
-        assert_eq!(high_perf.max_concurrent_elicitations, 50);
-
-        let high_rel = presets::high_reliability();
-        assert!(!high_rel.enable_compression);
-        assert_eq!(high_rel.max_concurrent_elicitations, 10);
-
-        let low_lat = presets::low_latency();
-        assert!(!low_lat.enable_compression);
-        assert_eq!(low_lat.elicitation_timeout, Duration::from_secs(5));
-
-        let resource = presets::resource_constrained();
-        assert!(resource.enable_compression);
-        assert_eq!(resource.max_concurrent_elicitations, 3);
-
-        let dev = presets::development();
-        assert!(!dev.reconnect.enabled);
-        assert_eq!(dev.max_concurrent_elicitations, 100);
     }
 
     #[tokio::test]

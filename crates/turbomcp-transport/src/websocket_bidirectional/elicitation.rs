@@ -32,14 +32,22 @@ impl WebSocketBidirectionalTransport {
         if self.is_at_elicitation_capacity() {
             return Err(TransportError::SendFailed(format!(
                 "Maximum concurrent elicitations reached ({})",
-                self.config.max_concurrent_elicitations
+                self.config
+                    .lock()
+                    .expect("config mutex poisoned")
+                    .max_concurrent_elicitations
             )));
         }
 
         let request_id = Uuid::new_v4().to_string();
         let (response_tx, response_rx) = oneshot::channel();
 
-        let timeout_duration = timeout_duration.unwrap_or(self.config.elicitation_timeout);
+        let timeout_duration = timeout_duration.unwrap_or(
+            self.config
+                .lock()
+                .expect("config mutex poisoned")
+                .elicitation_timeout,
+        );
 
         // Store pending elicitation
         let pending = PendingElicitation::new(request.clone(), response_tx, timeout_duration);
@@ -165,69 +173,68 @@ impl WebSocketBidirectionalTransport {
             .map_err(|e| TransportError::ReceiveFailed(format!("Invalid JSON: {}", e)))?;
 
         // Check if it's an elicitation response by looking for id field
-        if let Some(id) = json_value.get("id").and_then(|v| v.as_str()) {
-            if let Some((_, pending)) = self.elicitations.remove(id) {
-                debug!(
-                    "Processing elicitation response for {} in session {}",
-                    id, self.session_id
-                );
+        if let Some(id) = json_value.get("id").and_then(|v| v.as_str())
+            && let Some((_, pending)) = self.elicitations.remove(id)
+        {
+            debug!(
+                "Processing elicitation response for {} in session {}",
+                id, self.session_id
+            );
 
-                // Parse elicitation result from the result field
-                if let Some(result) = json_value.get("result") {
-                    match serde_json::from_value::<ElicitationCreateResult>(result.clone()) {
-                        Ok(elicitation_result) => {
-                            let _ = pending.response_tx.send(elicitation_result);
-                            return Ok(());
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to parse elicitation result for {} in session {}: {}",
-                                id, self.session_id, e
-                            );
-                        }
+            // Parse elicitation result from the result field
+            if let Some(result) = json_value.get("result") {
+                match serde_json::from_value::<ElicitationCreateResult>(result.clone()) {
+                    Ok(elicitation_result) => {
+                        let _ = pending.response_tx.send(elicitation_result);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse elicitation result for {} in session {}: {}",
+                            id, self.session_id, e
+                        );
                     }
                 }
-
-                // Handle error response or malformed result
-                if let Some(error) = json_value.get("error") {
-                    warn!(
-                        "Elicitation error response for {} in session {}: {}",
-                        id, self.session_id, error
-                    );
-                } else {
-                    warn!(
-                        "Malformed elicitation response for {} in session {}",
-                        id, self.session_id
-                    );
-                }
-
-                // Send cancel result for any error or malformed response
-                let cancel_result = ElicitationCreateResult {
-                    action: ElicitationAction::Cancel,
-                    content: None,
-                    meta: None,
-                };
-                let _ = pending.response_tx.send(cancel_result);
-                return Ok(());
             }
+
+            // Handle error response or malformed result
+            if let Some(error) = json_value.get("error") {
+                warn!(
+                    "Elicitation error response for {} in session {}: {}",
+                    id, self.session_id, error
+                );
+            } else {
+                warn!(
+                    "Malformed elicitation response for {} in session {}",
+                    id, self.session_id
+                );
+            }
+
+            // Send cancel result for any error or malformed response
+            let cancel_result = ElicitationCreateResult {
+                action: ElicitationAction::Cancel,
+                content: None,
+                meta: None,
+            };
+            let _ = pending.response_tx.send(cancel_result);
+            return Ok(());
         }
 
         // Process as regular message or correlation response
-        if let Some(correlation_id) = json_value.get("correlation_id").and_then(|v| v.as_str()) {
-            if let Some((_, ctx)) = self.correlations.remove(correlation_id) {
-                if let Some(tx) = ctx.response_tx {
-                    let message = TransportMessage {
-                        id: MessageId::from(Uuid::new_v4()),
-                        payload: Bytes::from(serde_json::to_vec(&json_value).unwrap_or_default()),
-                        metadata: TransportMessageMetadata::default(),
-                    };
-                    let _ = tx.send(message);
-                    debug!(
-                        "Processed correlation response for {} in session {}",
-                        correlation_id, self.session_id
-                    );
-                }
-            }
+        if let Some(correlation_id) = json_value.get("correlation_id").and_then(|v| v.as_str())
+            && let Some((_, ctx)) = self.correlations.remove(correlation_id)
+            && let Some(tx) = ctx.response_tx
+        {
+            let message = TransportMessage {
+                id: MessageId::from(Uuid::new_v4()),
+                payload: Bytes::from(serde_json::to_vec(&json_value).unwrap_or_default()),
+                metadata: TransportMessageMetadata::default(),
+            };
+            let _ = tx.send(message);
+            debug!(
+                "Processed correlation response for {} in session {}",
+                correlation_id, self.session_id
+            );
         }
 
         Ok(())

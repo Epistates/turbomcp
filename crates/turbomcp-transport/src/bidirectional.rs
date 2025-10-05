@@ -273,7 +273,7 @@ impl<T: Transport> BidirectionalTransportWrapper<T> {
     }
 
     /// Process incoming message with direction validation
-    async fn process_incoming(&mut self, message: TransportMessage) -> TransportResult<()> {
+    async fn process_incoming(&self, message: TransportMessage) -> TransportResult<()> {
         let message_type = extract_message_type(&message);
 
         // Validate direction
@@ -339,7 +339,7 @@ impl<T: Transport> BidirectionalTransportWrapper<T> {
 
     /// Send a server-initiated request
     pub async fn send_server_request(
-        &mut self,
+        &self,
         _request_type: ServerInitiatedType,
         message: TransportMessage,
         timeout_duration: Duration,
@@ -436,17 +436,17 @@ impl<T: Transport> Transport for BidirectionalTransportWrapper<T> {
         self.inner.state().await
     }
 
-    async fn connect(&mut self) -> TransportResult<()> {
+    async fn connect(&self) -> TransportResult<()> {
         self.inner.connect().await
     }
 
-    async fn disconnect(&mut self) -> TransportResult<()> {
+    async fn disconnect(&self) -> TransportResult<()> {
         // Clean up correlations
         self.correlations.clear();
         self.inner.disconnect().await
     }
 
-    async fn send(&mut self, message: TransportMessage) -> TransportResult<()> {
+    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
         // Validate direction before sending
         let message_type = extract_message_type(&message);
         if !self.validator.validate(&message_type, self.direction) {
@@ -458,7 +458,7 @@ impl<T: Transport> Transport for BidirectionalTransportWrapper<T> {
         self.inner.send(message).await
     }
 
-    async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
+    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
         if let Some(message) = self.inner.receive().await? {
             self.process_incoming(message.clone()).await?;
             Ok(Some(message))
@@ -476,7 +476,7 @@ impl<T: Transport> Transport for BidirectionalTransportWrapper<T> {
 #[async_trait]
 impl<T: Transport> BidirectionalTransport for BidirectionalTransportWrapper<T> {
     async fn send_request(
-        &mut self,
+        &self,
         message: TransportMessage,
         timeout_duration: Option<Duration>,
     ) -> TransportResult<TransportMessage> {
@@ -512,7 +512,7 @@ impl<T: Transport> BidirectionalTransport for BidirectionalTransportWrapper<T> {
         }
     }
 
-    async fn start_correlation(&mut self, correlation_id: String) -> TransportResult<()> {
+    async fn start_correlation(&self, correlation_id: String) -> TransportResult<()> {
         let context = CorrelationContext {
             correlation_id: correlation_id.clone(),
             request_id: Uuid::new_v4().to_string(),
@@ -525,7 +525,7 @@ impl<T: Transport> BidirectionalTransport for BidirectionalTransportWrapper<T> {
         Ok(())
     }
 
-    async fn stop_correlation(&mut self, correlation_id: &str) -> TransportResult<()> {
+    async fn stop_correlation(&self, correlation_id: &str) -> TransportResult<()> {
         self.correlations.remove(correlation_id);
         Ok(())
     }

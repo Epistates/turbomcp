@@ -134,7 +134,7 @@ impl McpServer {
         core_service: McpService,
         stack: MiddlewareStack,
     ) -> tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::ServerError> {
-        // WORLD-CLASS TOWER COMPOSITION - Conditional Layer Stacking
+        // COMPREHENSIVE TOWER COMPOSITION - Conditional Layer Stacking
         //
         // This approach builds the middleware stack incrementally, boxing at each step.
         // While this has a small performance cost from multiple boxing operations,
@@ -244,7 +244,7 @@ impl McpServer {
             Arc::clone(&metrics),
         );
 
-        // WORLD-CLASS TOWER SERVICE COMPOSITION
+        // COMPREHENSIVE TOWER SERVICE COMPOSITION
         // Build the complete middleware stack with proper type erasure
         //
         // This service is called from server/transport.rs for EVERY incoming request:
@@ -420,7 +420,7 @@ impl McpServer {
         self.lifecycle.start().await;
 
         // Initialize STDIO transport
-        let mut transport = StdioTransport::new();
+        let transport = StdioTransport::new();
         if let Err(e) = transport.connect().await {
             if should_log_for_stdio() {
                 tracing::error!(error = %e, "Failed to connect stdio transport");
@@ -535,7 +535,7 @@ impl McpServer {
             }
         };
 
-        let mut transport = TcpTransport::new_server(socket_addr);
+        let transport = TcpTransport::new_server(socket_addr);
         if let Err(e) = transport.connect().await {
             tracing::error!(error = %e, "Failed to connect TCP transport");
             self.lifecycle.shutdown().await;
@@ -564,7 +564,7 @@ impl McpServer {
         self.lifecycle.start().await;
 
         let socket_path = PathBuf::from(path.as_ref());
-        let mut transport = UnixTransport::new_server(socket_path);
+        let transport = UnixTransport::new_server(socket_path);
         if let Err(e) = transport.connect().await {
             tracing::error!(error = %e, "Failed to connect Unix socket transport");
             self.lifecycle.shutdown().await;

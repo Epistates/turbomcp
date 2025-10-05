@@ -18,7 +18,7 @@ use crate::core::{
 #[async_trait]
 impl BidirectionalTransport for WebSocketBidirectionalTransport {
     async fn send_request(
-        &mut self,
+        &self,
         message: TransportMessage,
         timeout: Option<Duration>,
     ) -> TransportResult<TransportMessage> {
@@ -83,7 +83,7 @@ impl BidirectionalTransport for WebSocketBidirectionalTransport {
         }
     }
 
-    async fn start_correlation(&mut self, correlation_id: String) -> TransportResult<()> {
+    async fn start_correlation(&self, correlation_id: String) -> TransportResult<()> {
         // Create a correlation context to track request-response pairs
         let ctx = CorrelationContext {
             correlation_id: correlation_id.clone(),
@@ -102,7 +102,7 @@ impl BidirectionalTransport for WebSocketBidirectionalTransport {
         Ok(())
     }
 
-    async fn stop_correlation(&mut self, correlation_id: &str) -> TransportResult<()> {
+    async fn stop_correlation(&self, correlation_id: &str) -> TransportResult<()> {
         let removed = self.correlations.remove(correlation_id).is_some();
         if removed {
             tracing::debug!(
@@ -124,7 +124,7 @@ impl BidirectionalTransport for WebSocketBidirectionalTransport {
 impl WebSocketBidirectionalTransport {
     /// Send a request with retry capability
     pub async fn send_request_with_retry(
-        &mut self,
+        &self,
         message: TransportMessage,
         max_retries: u32,
         retry_delay: Duration,
@@ -367,7 +367,7 @@ mod tests {
     #[tokio::test]
     async fn test_start_stop_correlation() {
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         let correlation_id = "test-correlation";
 
@@ -387,7 +387,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_correlation_info() {
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         let correlation_id = "test-correlation";
         transport
@@ -406,7 +406,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_all_correlation_info() {
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         transport
             .start_correlation("corr1".to_string())
@@ -424,7 +424,7 @@ mod tests {
     #[tokio::test]
     async fn test_cancel_correlation() {
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         let correlation_id = "test-correlation";
         transport
@@ -444,7 +444,7 @@ mod tests {
     #[tokio::test]
     async fn test_cancel_all_correlations() {
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         transport
             .start_correlation("corr1".to_string())
@@ -473,7 +473,7 @@ mod tests {
     #[tokio::test]
     async fn test_active_correlation_ids() {
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         assert_eq!(transport.get_active_correlation_ids().len(), 0);
 
@@ -495,7 +495,7 @@ mod tests {
     #[tokio::test]
     async fn test_correlation_counts() {
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         // All tracking-only correlations initially
         transport
@@ -541,7 +541,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_correlation_response() {
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         let correlation_id = "test-correlation";
         transport

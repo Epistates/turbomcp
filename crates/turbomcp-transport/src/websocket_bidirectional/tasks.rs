@@ -18,7 +18,11 @@ impl WebSocketBidirectionalTransport {
     /// Spawn keep-alive task to send periodic ping messages
     pub fn spawn_keep_alive_task(&self) -> tokio::task::JoinHandle<()> {
         let writer = self.writer.clone();
-        let interval = self.config.keep_alive_interval;
+        let interval = self
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .keep_alive_interval;
         let state = self.state.clone();
         let session_id = self.session_id.clone();
 
@@ -128,7 +132,7 @@ impl WebSocketBidirectionalTransport {
     /// Spawn reconnection task for automatic reconnection
     pub fn spawn_reconnection_task(&self) -> tokio::task::JoinHandle<()> {
         let state = self.state.clone();
-        let config = self.config.clone();
+        let config = self.config.lock().expect("config mutex poisoned").clone();
         let session_id = self.session_id.clone();
 
         tokio::spawn(async move {
@@ -331,7 +335,13 @@ impl WebSocketBidirectionalTransport {
         handles.push(metrics_handle);
 
         // Reconnection task (if enabled)
-        if self.config.reconnect.enabled {
+        if self
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .reconnect
+            .enabled
+        {
             let reconnect_handle = self.spawn_reconnection_task();
             handles.push(reconnect_handle);
         }
