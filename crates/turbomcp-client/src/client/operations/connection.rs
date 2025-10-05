@@ -3,6 +3,7 @@
 //! This module provides connection health checks and server configuration
 //! operations.
 
+use std::sync::atomic::Ordering;
 use turbomcp_core::{Error, Result};
 use turbomcp_protocol::types::{LogLevel, PingResult, SetLevelRequest, SetLevelResult};
 
@@ -38,8 +39,8 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn ping(&mut self) -> Result<PingResult> {
-        if !self.initialized {
+    pub async fn ping(&self) -> Result<PingResult> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 
@@ -84,8 +85,8 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn set_log_level(&mut self, level: LogLevel) -> Result<SetLevelResult> {
-        if !self.initialized {
+    pub async fn set_log_level(&self, level: LogLevel) -> Result<SetLevelResult> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 

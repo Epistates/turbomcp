@@ -24,8 +24,8 @@
 //! Use `SessionManager` when your application needs to coordinate **multiple different
 //! MCP servers** (e.g., IDE with GitHub server + filesystem server + database server).
 //!
-//! For **single server** scenarios, use:
-//! - `SharedClient` - Share one session across multiple async tasks
+//! For **single server** scenarios:
+//! - `Client<T>` is cheaply cloneable via Arc - share one session across multiple async tasks
 //! - `TurboTransport` - Add retry/circuit breaker to one session
 
 use std::collections::HashMap;
@@ -109,32 +109,9 @@ impl Default for ManagerConfig {
 }
 
 impl ManagerConfig {
-    /// Create configuration for high-reliability scenarios
-    pub fn high_reliability() -> Self {
-        Self {
-            max_connections: 20,
-            health_check_interval: Duration::from_secs(15),
-            health_check_threshold: 2,
-            health_check_timeout: Duration::from_secs(3),
-            auto_reconnect: true,
-            reconnect_delay: Duration::from_millis(500),
-            max_reconnect_delay: Duration::from_secs(30),
-            reconnect_backoff_multiplier: 1.5,
-        }
-    }
-
-    /// Create configuration for resource-constrained scenarios
-    pub fn resource_constrained() -> Self {
-        Self {
-            max_connections: 5,
-            health_check_interval: Duration::from_secs(60),
-            health_check_threshold: 5,
-            health_check_timeout: Duration::from_secs(10),
-            auto_reconnect: true,
-            reconnect_delay: Duration::from_secs(2),
-            max_reconnect_delay: Duration::from_secs(120),
-            reconnect_backoff_multiplier: 2.0,
-        }
+    /// Create a new manager configuration with default values
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -304,7 +281,7 @@ impl<T: Transport + Send + 'static> SessionManager<T> {
         }
 
         // Create client and initialize
-        let mut client = Client::new(transport);
+        let client = Client::new(transport);
         client.initialize().await?;
 
         let info = ConnectionInfo {
@@ -369,7 +346,7 @@ impl<T: Transport + Send + 'static> SessionManager<T> {
 
         // Create initial transport and client
         let transport = (factory)();
-        let mut client = Client::new(transport);
+        let client = Client::new(transport);
         client.initialize().await?;
 
         let info = ConnectionInfo {
@@ -573,14 +550,26 @@ impl SessionManager<turbomcp_transport::resilience::TurboTransport> {
     /// # async fn example() -> turbomcp_core::Result<()> {
     /// let mut manager: SessionManager<TurboTransport> = SessionManager::with_defaults();
     ///
-    /// // High reliability preset
-    /// let (retry, circuit, health) = presets::high_reliability();
+    /// // Use explicit configuration for clarity
+    /// use std::time::Duration;
     /// manager.add_resilient_server(
     ///     "github",
     ///     StdioTransport::new(),
-    ///     retry,
-    ///     circuit,
-    ///     health,
+    ///     RetryConfig {
+    ///         max_attempts: 5,
+    ///         base_delay: Duration::from_millis(200),
+    ///         ..Default::default()
+    ///     },
+    ///     CircuitBreakerConfig {
+    ///         failure_threshold: 3,
+    ///         timeout: Duration::from_secs(30),
+    ///         ..Default::default()
+    ///     },
+    ///     HealthCheckConfig {
+    ///         interval: Duration::from_secs(15),
+    ///         timeout: Duration::from_secs(5),
+    ///         ..Default::default()
+    ///     },
     /// ).await?;
     /// # Ok(())
     /// # }
@@ -607,40 +596,6 @@ impl SessionManager<turbomcp_transport::resilience::TurboTransport> {
 
         self.add_server(id, robust).await
     }
-
-    /// Add a server with high reliability preset
-    ///
-    /// Convenience method that applies the high-reliability preset configuration.
-    pub async fn add_high_reliability_server<BaseT>(
-        &mut self,
-        id: impl Into<String>,
-        transport: BaseT,
-    ) -> Result<()>
-    where
-        BaseT: Transport + 'static,
-    {
-        use turbomcp_transport::resilience::presets;
-        let (retry, circuit, health) = presets::high_reliability();
-        self.add_resilient_server(id, transport, retry, circuit, health)
-            .await
-    }
-
-    /// Add a server with high performance preset
-    ///
-    /// Convenience method that applies the high-performance preset configuration.
-    pub async fn add_high_performance_server<BaseT>(
-        &mut self,
-        id: impl Into<String>,
-        transport: BaseT,
-    ) -> Result<()>
-    where
-        BaseT: Transport + 'static,
-    {
-        use turbomcp_transport::resilience::presets;
-        let (retry, circuit, health) = presets::high_performance();
-        self.add_resilient_server(id, transport, retry, circuit, health)
-            .await
-    }
 }
 
 #[cfg(test)]
@@ -652,17 +607,6 @@ mod tests {
         let config = ManagerConfig::default();
         assert_eq!(config.max_connections, 10);
         assert!(config.auto_reconnect);
-    }
-
-    #[test]
-    fn test_manager_config_presets() {
-        let high_rel = ManagerConfig::high_reliability();
-        assert_eq!(high_rel.max_connections, 20);
-        assert!(high_rel.health_check_interval < Duration::from_secs(30));
-
-        let resource_const = ManagerConfig::resource_constrained();
-        assert_eq!(resource_const.max_connections, 5);
-        assert!(resource_const.health_check_interval > Duration::from_secs(30));
     }
 
     #[test]

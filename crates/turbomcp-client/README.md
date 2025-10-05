@@ -14,7 +14,7 @@ Production-ready MCP client with complete MCP 2025-06-18 specification support, 
 - ✅ **Plugin middleware** - Extensible request/response processing
 - ✅ **LLM integration** - Multi-provider sampling support (OpenAI, Anthropic, local)
 - ✅ **Transport agnostic** - Works with STDIO, TCP, Unix, WebSocket transports
-- ✅ **Thread-safe sharing** - SharedClient for concurrent async tasks
+- ✅ **Thread-safe sharing** - Client is cheaply cloneable via Arc for concurrent async tasks
 
 ## Supported Transports
 
@@ -81,29 +81,28 @@ let client = ClientBuilder::new()
     .await?;
 ```
 
-### SharedClient for Concurrent Usage
+### Cloning Client for Concurrent Usage
 
 ```rust
-use turbomcp_client::{Client, SharedClient};
+use turbomcp_client::Client;
 use turbomcp_transport::stdio::StdioTransport;
 
-// Create shared client
+// Create client (cheaply cloneable via Arc)
 let client = Client::new(StdioTransport::new());
-let shared = SharedClient::new(client);
 
 // Initialize once
-shared.initialize().await?;
+client.initialize().await?;
 
-// Clone for multiple async tasks
-let shared1 = shared.clone();
-let shared2 = shared.clone();
+// Clone for multiple async tasks - this is cheap (just Arc clone)
+let client1 = client.clone();
+let client2 = client.clone();
 
 let handle1 = tokio::spawn(async move {
-    shared1.list_tools().await
+    client1.list_tools().await
 });
 
 let handle2 = tokio::spawn(async move {
-    shared2.list_prompts().await
+    client2.list_prompts().await
 });
 
 let (tools, prompts) = tokio::try_join!(handle1, handle2)?;
@@ -387,11 +386,11 @@ println!("Server responded: {:?}", ping_result);
 use turbomcp_client::Client;
 use turbomcp_transport::stdio::StdioTransport;
 
-let mut client = Client::new(StdioTransport::new());
+let client = Client::new(StdioTransport::new());
 client.initialize().await?;
 
 // Spawn background task to process server messages
-let mut client_clone = /* ... need to clone or share client ... */;
+let client_clone = client.clone();  // Cheap Arc clone
 tokio::spawn(async move {
     loop {
         match client_clone.process_message().await {
@@ -466,7 +465,7 @@ turbomcp-client = { version = "2.0.0", features = ["tcp", "websocket"] }
 └─────────────────────────────────────────────┘
                     ↓
 ┌─────────────────────────────────────────────┐
-│      Client / SharedClient API              │
+│           Client API (Clone-able)           │
 │  ├── initialize(), list_tools(), etc.      │
 │  ├── Handler Registry (elicitation, etc.)  │
 │  └── Plugin Registry (metrics, etc.)       │

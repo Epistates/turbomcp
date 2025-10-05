@@ -126,7 +126,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let transport = StdioTransport::new();
 
     // Create the client with our custom sampling handler
-    let mut client = Client::new(transport);
+    let client = Client::new(transport);
     client.set_sampling_handler(Arc::new(DemoSamplingHandler));
 
     eprintln!("[Client] Initializing protocol...");

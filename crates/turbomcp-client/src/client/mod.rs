@@ -7,9 +7,10 @@
 //! - `protocol`: ProtocolClient for JSON-RPC communication
 //! - `config`: Configuration types and utilities
 //! - `builder`: ClientBuilder pattern for construction
-//! - `shared`: SharedClient thread-safe wrapper
 //! - `operations`: MCP operations (tools, resources, prompts, etc.)
 //! - `systems`: Supporting systems (handlers, plugins, connection)
+//!
+//! Note: Client<T> is now cloneable via Arc<ClientInner<T>> - no need for SharedClient!
 
 // Core modules
 pub mod config;

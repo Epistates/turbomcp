@@ -26,10 +26,13 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # }
     /// ```
     pub async fn register_plugin(
-        &mut self,
+        &self,
         plugin: std::sync::Arc<dyn crate::plugins::ClientPlugin>,
     ) -> Result<()> {
-        self.plugin_registry
+        self.inner
+            .plugin_registry
+            .lock()
+            .await
             .register_plugin(plugin)
             .await
             .map_err(|e| Error::bad_request(format!("Failed to register plugin: {}", e)))
@@ -40,8 +43,8 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # Arguments
     ///
     /// * `name` - The name of the plugin to check
-    pub fn has_plugin(&self, name: &str) -> bool {
-        self.plugin_registry.has_plugin(name)
+    pub async fn has_plugin(&self, name: &str) -> bool {
+        self.inner.plugin_registry.lock().await.has_plugin(name)
     }
 
     /// Get plugin data for a specific plugin type
@@ -57,16 +60,16 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let client = turbomcp_client::Client::new(turbomcp_transport::stdio::StdioTransport::new());
-    /// if let Some(plugin) = client.get_plugin("metrics") {
+    /// if let Some(plugin) = client.get_plugin("metrics").await {
     ///     // Use plugin data
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub fn get_plugin(
+    pub async fn get_plugin(
         &self,
         name: &str,
     ) -> Option<std::sync::Arc<dyn crate::plugins::ClientPlugin>> {
-        self.plugin_registry.get_plugin(name)
+        self.inner.plugin_registry.lock().await.get_plugin(name)
     }
 }

@@ -50,9 +50,12 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// let mut client = Client::new(StdioTransport::new());
     /// client.set_sampling_handler(Arc::new(ExampleHandler));
     /// ```
-    pub fn set_sampling_handler(&mut self, handler: Arc<dyn SamplingHandler>) {
-        self.sampling_handler = Some(handler);
-        self.capabilities.sampling = true;
+    pub fn set_sampling_handler(&self, handler: Arc<dyn SamplingHandler>) {
+        *self
+            .inner
+            .sampling_handler
+            .lock()
+            .expect("sampling_handler mutex poisoned") = Some(handler);
     }
 
     /// Check if sampling is enabled
@@ -60,16 +63,23 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// Returns true if a sampling handler has been configured and sampling
     /// capabilities are enabled.
     pub fn has_sampling_handler(&self) -> bool {
-        self.sampling_handler.is_some()
+        self.inner
+            .sampling_handler
+            .lock()
+            .expect("sampling_handler mutex poisoned")
+            .is_some()
     }
 
     /// Remove the sampling handler
     ///
     /// Disables sampling capabilities and removes the handler. The client
     /// will no longer advertise sampling support to servers.
-    pub fn remove_sampling_handler(&mut self) {
-        self.sampling_handler = None;
-        self.capabilities.sampling = false;
+    pub fn remove_sampling_handler(&self) {
+        *self
+            .inner
+            .sampling_handler
+            .lock()
+            .expect("sampling_handler mutex poisoned") = None;
     }
 
     /// Get sampling capabilities for initialization
@@ -77,7 +87,13 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// Returns the sampling capabilities to be sent during client initialization
     /// if sampling is enabled.
     pub(crate) fn get_sampling_capabilities(&self) -> Option<SamplingCapabilities> {
-        if self.capabilities.sampling {
+        if self
+            .inner
+            .sampling_handler
+            .lock()
+            .expect("sampling_handler mutex poisoned")
+            .is_some()
+        {
             Some(SamplingCapabilities)
         } else {
             None
