@@ -10,7 +10,6 @@ use super::origin::{OriginConfig, validate_origin};
 use super::rate_limit::{RateLimitConfig, RateLimiter};
 use crate::security::SecurityHeaders;
 use std::net::IpAddr;
-use std::time::Duration;
 
 /// Security validator for HTTP requests
 #[derive(Debug)]
@@ -36,47 +35,6 @@ impl SecurityValidator {
         }
     }
 
-    /// Create a security validator for development
-    pub fn for_development() -> Self {
-        Self::new(
-            OriginConfig::for_development(),
-            AuthConfig::for_development(),
-            Some(RateLimitConfig::for_development()),
-        )
-    }
-
-    /// Create a security validator for production with explicit configuration
-    ///
-    /// # Arguments
-    /// * `allowed_origins` - Allowed origins for CORS
-    /// * `api_keys` - Valid API keys for authentication
-    /// * `max_requests` - Maximum requests per rate limit window
-    /// * `rate_limit_window` - Time window for rate limiting
-    pub fn for_production(
-        allowed_origins: Vec<String>,
-        api_keys: Vec<String>,
-        max_requests: usize,
-        rate_limit_window: Duration,
-    ) -> Self {
-        Self::new(
-            OriginConfig::for_production(allowed_origins),
-            AuthConfig::for_production(api_keys, super::auth::AuthMethod::Bearer),
-            Some(RateLimitConfig::for_production(
-                max_requests,
-                rate_limit_window,
-            )),
-        )
-    }
-
-    /// Create a security validator for testing
-    pub fn for_testing() -> Self {
-        Self::new(
-            OriginConfig::for_testing(),
-            AuthConfig::for_testing(),
-            Some(RateLimitConfig::for_testing()),
-        )
-    }
-
     /// Validate Origin header to prevent DNS rebinding attacks
     ///
     /// Per MCP 2025-06-18 specification:
@@ -85,7 +43,11 @@ impl SecurityValidator {
     ///
     /// Smart localhost handling: localhost→localhost connections without Origin are allowed
     /// (DNS rebinding attacks require remote origins, so localhost clients are inherently safe)
-    pub fn validate_origin(&self, headers: &SecurityHeaders, client_ip: IpAddr) -> Result<(), SecurityError> {
+    pub fn validate_origin(
+        &self,
+        headers: &SecurityHeaders,
+        client_ip: IpAddr,
+    ) -> Result<(), SecurityError> {
         validate_origin(&self.origin_config, headers, client_ip)
     }
 
@@ -196,6 +158,7 @@ impl Default for SecurityValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::security::AuthMethod;
     use std::collections::HashMap;
     use std::time::Duration;
 
@@ -210,43 +173,24 @@ mod tests {
     }
 
     #[test]
-    fn test_security_validator_for_development() {
-        let validator = SecurityValidator::for_development();
-
-        assert!(validator.origin_config().allow_localhost);
-        assert!(!validator.auth_config().require_auth);
-
-        // Rate limiting should be disabled for development
-        if let Some(limiter) = validator.rate_limiter() {
-            assert!(!limiter.config().enabled);
-        }
-    }
-
-    #[test]
-    fn test_security_validator_for_production() {
-        let origins = vec!["https://app.example.com".to_string()];
-        let api_keys = vec!["secret123".to_string()];
-        let validator = SecurityValidator::for_production(
-            origins.clone(),
-            api_keys.clone(),
-            100,
-            Duration::from_secs(60),
-        );
-
-        assert!(!validator.origin_config().allow_localhost);
-        assert!(validator.auth_config().require_auth);
-        assert!(validator.auth_config().api_keys.contains(&api_keys[0]));
-        assert!(
-            validator
-                .origin_config()
-                .allowed_origins
-                .contains(&origins[0])
-        );
-    }
-
-    #[test]
     fn test_comprehensive_validation_success() {
-        let validator = SecurityValidator::for_testing();
+        let validator = SecurityValidator::new(
+            OriginConfig {
+                allow_localhost: true,
+                allow_any: true,
+                ..Default::default()
+            },
+            AuthConfig {
+                require_auth: true,
+                api_keys: vec!["test-api-key".to_string()].into_iter().collect(),
+                method: AuthMethod::Bearer,
+            },
+            Some(RateLimitConfig {
+                max_requests: 2,
+                window: Duration::from_secs(1),
+                enabled: true,
+            }),
+        );
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "http://localhost:3000".to_string());
         headers.insert(
@@ -261,11 +205,24 @@ mod tests {
 
     #[test]
     fn test_comprehensive_validation_origin_failure() {
-        let validator = SecurityValidator::for_production(
-            vec!["https://trusted.com".to_string()],
-            vec!["secret".to_string()],
-            100,
-            Duration::from_secs(60),
+        let validator = SecurityValidator::new(
+            OriginConfig {
+                allowed_origins: vec!["https://trusted.com".to_string()]
+                    .into_iter()
+                    .collect(),
+                allow_localhost: false,
+                allow_any: false,
+            },
+            AuthConfig {
+                require_auth: true,
+                api_keys: vec!["secret".to_string()].into_iter().collect(),
+                method: AuthMethod::Bearer,
+            },
+            Some(RateLimitConfig {
+                max_requests: 100,
+                window: Duration::from_secs(60),
+                enabled: true,
+            }),
         );
 
         let mut headers = HashMap::new();
@@ -279,11 +236,24 @@ mod tests {
 
     #[test]
     fn test_comprehensive_validation_auth_failure() {
-        let validator = SecurityValidator::for_production(
-            vec!["https://trusted.com".to_string()],
-            vec!["secret".to_string()],
-            100,
-            Duration::from_secs(60),
+        let validator = SecurityValidator::new(
+            OriginConfig {
+                allowed_origins: vec!["https://trusted.com".to_string()]
+                    .into_iter()
+                    .collect(),
+                allow_localhost: false,
+                allow_any: false,
+            },
+            AuthConfig {
+                require_auth: true,
+                api_keys: vec!["secret".to_string()].into_iter().collect(),
+                method: AuthMethod::Bearer,
+            },
+            Some(RateLimitConfig {
+                max_requests: 100,
+                window: Duration::from_secs(60),
+                enabled: true,
+            }),
         );
 
         let mut headers = HashMap::new();
@@ -297,7 +267,23 @@ mod tests {
 
     #[test]
     fn test_comprehensive_validation_rate_limit_failure() {
-        let validator = SecurityValidator::for_testing();
+        let validator = SecurityValidator::new(
+            OriginConfig {
+                allow_localhost: true,
+                allow_any: true,
+                ..Default::default()
+            },
+            AuthConfig {
+                require_auth: true,
+                api_keys: vec!["test-api-key".to_string()].into_iter().collect(),
+                method: AuthMethod::Bearer,
+            },
+            Some(RateLimitConfig {
+                max_requests: 2,
+                window: Duration::from_secs(1),
+                enabled: true,
+            }),
+        );
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "http://localhost:3000".to_string());
         headers.insert(
@@ -319,7 +305,23 @@ mod tests {
 
     #[test]
     fn test_individual_validation_methods() {
-        let validator = SecurityValidator::for_testing();
+        let validator = SecurityValidator::new(
+            OriginConfig {
+                allow_localhost: true,
+                allow_any: true,
+                ..Default::default()
+            },
+            AuthConfig {
+                require_auth: true,
+                api_keys: vec!["test-api-key".to_string()].into_iter().collect(),
+                method: AuthMethod::Bearer,
+            },
+            Some(RateLimitConfig {
+                max_requests: 2,
+                window: Duration::from_secs(1),
+                enabled: true,
+            }),
+        );
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "http://localhost:3000".to_string());
         headers.insert(
@@ -337,7 +339,23 @@ mod tests {
 
     #[test]
     fn test_request_count_tracking() {
-        let validator = SecurityValidator::for_testing();
+        let validator = SecurityValidator::new(
+            OriginConfig {
+                allow_localhost: true,
+                allow_any: true,
+                ..Default::default()
+            },
+            AuthConfig {
+                require_auth: true,
+                api_keys: vec!["test-api-key".to_string()].into_iter().collect(),
+                method: AuthMethod::Bearer,
+            },
+            Some(RateLimitConfig {
+                max_requests: 2,
+                window: Duration::from_secs(1),
+                enabled: true,
+            }),
+        );
         let client_ip = "127.0.0.1".parse().unwrap();
 
         // Initial count should be 0
@@ -357,9 +375,16 @@ mod tests {
         let mut validator = SecurityValidator::default();
 
         // Update configurations
-        let new_origin_config = OriginConfig::for_production(vec!["https://new.com".to_string()]);
-        let new_auth_config =
-            AuthConfig::for_production(vec!["newkey".to_string()], crate::AuthMethod::ApiKey);
+        let new_origin_config = OriginConfig {
+            allowed_origins: vec!["https://new.com".to_string()].into_iter().collect(),
+            allow_localhost: false,
+            allow_any: false,
+        };
+        let new_auth_config = AuthConfig {
+            require_auth: true,
+            api_keys: vec!["newkey".to_string()].into_iter().collect(),
+            method: AuthMethod::ApiKey,
+        };
 
         validator.set_origin_config(new_origin_config);
         validator.set_auth_config(new_auth_config);

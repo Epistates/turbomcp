@@ -371,6 +371,6 @@ mod tests {
         assert_eq!(size_limits::MEDIUM_MESSAGE, 1024 * 1024);
         assert_eq!(size_limits::LARGE_MESSAGE, 10 * 1024 * 1024);
         assert_eq!(size_limits::JSON_RPC_DEFAULT, size_limits::MEDIUM_MESSAGE);
-        assert!(size_limits::MAX_MESSAGE > size_limits::LARGE_MESSAGE);
+        assert_eq!(size_limits::MAX_MESSAGE, 100 * 1024 * 1024); // Updated to match actual constant
     }
 }
