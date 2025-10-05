@@ -44,12 +44,24 @@ impl SecurityConfigBuilder {
         }
     }
 
-    /// Create builder for production environment
+    /// Create builder for production environment - requires explicit configuration
+    ///
+    /// This returns a builder that needs origins and API keys configured.
+    /// Use builder methods to complete configuration with explicit, named parameters.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_transport::SecurityConfigBuilder;
+    /// let validator = SecurityConfigBuilder::for_production()
+    ///     .with_allowed_origins(vec!["https://app.example.com".to_string()])
+    ///     .with_api_keys(vec!["secret-key".to_string()])
+    ///     .build();
+    /// ```
     pub fn for_production() -> Self {
         Self {
             origin_config: OriginConfig::for_production(Vec::new()),
             auth_config: AuthConfig::for_production(Vec::new(), AuthMethod::Bearer),
-            rate_limit_config: Some(RateLimitConfig::for_production()),
+            rate_limit_config: Some(RateLimitConfig::for_production(100, Duration::from_secs(60))),
         }
     }
 
@@ -193,7 +205,19 @@ impl EnhancedSecurityConfigBuilder {
         }
     }
 
-    /// Create builder for production environment
+    /// Create builder for production environment with recommended defaults
+    ///
+    /// Returns a builder with production-grade presets for both security and sessions.
+    /// Use builder methods to customize specific settings while keeping other defaults.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_transport::EnhancedSecurityConfigBuilder;
+    /// let (validator, session_mgr) = EnhancedSecurityConfigBuilder::for_production()
+    ///     .with_allowed_origins(vec!["https://app.example.com".to_string()])
+    ///     .with_api_keys(vec!["secret-key".to_string()])
+    ///     .build();
+    /// ```
     pub fn for_production() -> Self {
         Self {
             security_config: SecurityConfigBuilder::for_production(),

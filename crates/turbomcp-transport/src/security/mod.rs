@@ -31,11 +31,10 @@
 //! use std::collections::HashMap;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // Create a security validator for production
+//! // Create a security validator for production - ergonomic builder pattern
 //! let validator = SecurityConfigBuilder::for_production()
 //!     .with_allowed_origins(vec!["https://app.example.com".to_string()])
 //!     .with_api_keys(vec!["your-secret-api-key".to_string()])
-//!     .with_rate_limit(100, std::time::Duration::from_secs(60))
 //!     .build();
 //!
 //! // Validate a request
@@ -56,13 +55,10 @@
 //! use std::time::Duration;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // Create enhanced security with session management
+//! // Create enhanced security with session management - ergonomic builder with presets
 //! let (validator, session_manager) = EnhancedSecurityConfigBuilder::for_production()
 //!     .with_allowed_origins(vec!["https://app.example.com".to_string()])
 //!     .with_api_keys(vec!["api-key".to_string()])
-//!     .with_max_sessions_per_ip(5)
-//!     .with_session_idle_timeout(Duration::from_secs(15 * 60))
-//!     .enforce_ip_binding(true)
 //!     .build();
 //!
 //! // Create and validate sessions
@@ -82,7 +78,7 @@
 //! // Development - relaxed security for ease of development
 //! let dev_validator = SecurityConfigBuilder::for_development().build();
 //!
-//! // Production - strict security
+//! // Production - strict security with ergonomic builder
 //! let prod_validator = SecurityConfigBuilder::for_production()
 //!     .with_allowed_origins(vec!["https://prod.example.com".to_string()])
 //!     .with_api_keys(vec!["prod-secret-key".to_string()])
@@ -108,7 +104,9 @@ pub use builder::{EnhancedSecurityConfigBuilder, SecurityConfigBuilder};
 pub use errors::SecurityError;
 pub use origin::{OriginConfig, validate_origin};
 pub use rate_limit::{RateLimitConfig, RateLimiter, check_rate_limit};
-pub use session::{SecureSessionInfo, SessionSecurityConfig, SessionSecurityManager};
+pub use session::{
+    ProductionSessionConfig, SecureSessionInfo, SessionSecurityConfig, SessionSecurityManager,
+};
 pub use utils::{
     HeaderValue, SecurityHeaders, create_cors_headers, create_security_headers, extract_api_key,
     extract_bearer_token, extract_client_ip, generate_secure_token, is_localhost_origin,

@@ -47,11 +47,26 @@ impl RateLimitConfig {
         }
     }
 
-    /// Create production configuration with strict limits
-    pub fn for_production() -> Self {
+    /// Create production configuration with explicit rate limits
+    ///
+    /// Production deployments MUST explicitly configure rate limits.
+    /// This prevents accidental use of permissive defaults in production.
+    ///
+    /// # Arguments
+    /// * `max_requests` - Maximum requests allowed per window
+    /// * `window` - Time window for rate limiting (e.g., Duration::from_secs(60) for 1 minute)
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_transport::RateLimitConfig;
+    /// # use std::time::Duration;
+    /// // 100 requests per minute
+    /// let config = RateLimitConfig::for_production(100, Duration::from_secs(60));
+    /// ```
+    pub fn for_production(max_requests: usize, window: Duration) -> Self {
         Self {
-            max_requests: 100,
-            window: Duration::from_secs(60),
+            max_requests,
+            window,
             enabled: true,
         }
     }
@@ -122,6 +137,10 @@ impl RateLimiter {
     /// Check if request is within rate limits
     pub fn check_rate_limit(&self, client_ip: IpAddr) -> Result<(), SecurityError> {
         if !self.config.enabled {
+            tracing::debug!(
+                client_ip = %client_ip,
+                "Rate limiting disabled, allowing request"
+            );
             return Ok(());
         }
 
@@ -131,9 +150,28 @@ impl RateLimiter {
         let requests = state.requests.entry(client_ip).or_default();
 
         // Remove old requests outside the window
+        let before_cleanup = requests.len();
         requests.retain(|&time| now.duration_since(time) < self.config.window);
+        let after_cleanup = requests.len();
+
+        if before_cleanup != after_cleanup {
+            tracing::debug!(
+                client_ip = %client_ip,
+                before = before_cleanup,
+                after = after_cleanup,
+                removed = before_cleanup - after_cleanup,
+                "Cleaned up expired rate limit entries"
+            );
+        }
 
         if requests.len() >= self.config.max_requests {
+            tracing::warn!(
+                client_ip = %client_ip,
+                current = requests.len(),
+                limit = self.config.max_requests,
+                window_secs = self.config.window.as_secs(),
+                "Rate limit exceeded"
+            );
             return Err(SecurityError::RateLimitExceeded {
                 client: client_ip.to_string(),
                 current: requests.len(),
@@ -142,6 +180,13 @@ impl RateLimiter {
         }
 
         requests.push(now);
+        tracing::debug!(
+            client_ip = %client_ip,
+            current = requests.len(),
+            limit = self.config.max_requests,
+            remaining = self.config.max_requests - requests.len(),
+            "Rate limit check passed"
+        );
         Ok(())
     }
 
@@ -237,9 +282,10 @@ mod tests {
 
     #[test]
     fn test_rate_limit_config_for_production() {
-        let config = RateLimitConfig::for_production();
+        let config = RateLimitConfig::for_production(100, Duration::from_secs(60));
         assert!(config.enabled);
         assert_eq!(config.max_requests, 100);
+        assert_eq!(config.window, Duration::from_secs(60));
     }
 
     #[test]

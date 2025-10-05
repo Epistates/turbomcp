@@ -10,6 +10,7 @@ use super::origin::{OriginConfig, validate_origin};
 use super::rate_limit::{RateLimitConfig, RateLimiter};
 use crate::security::SecurityHeaders;
 use std::net::IpAddr;
+use std::time::Duration;
 
 /// Security validator for HTTP requests
 #[derive(Debug)]
@@ -44,12 +45,26 @@ impl SecurityValidator {
         )
     }
 
-    /// Create a security validator for production
-    pub fn for_production(allowed_origins: Vec<String>, api_keys: Vec<String>) -> Self {
+    /// Create a security validator for production with explicit configuration
+    ///
+    /// # Arguments
+    /// * `allowed_origins` - Allowed origins for CORS
+    /// * `api_keys` - Valid API keys for authentication
+    /// * `max_requests` - Maximum requests per rate limit window
+    /// * `rate_limit_window` - Time window for rate limiting
+    pub fn for_production(
+        allowed_origins: Vec<String>,
+        api_keys: Vec<String>,
+        max_requests: usize,
+        rate_limit_window: Duration,
+    ) -> Self {
         Self::new(
             OriginConfig::for_production(allowed_origins),
             AuthConfig::for_production(api_keys, super::auth::AuthMethod::Bearer),
-            Some(RateLimitConfig::for_production()),
+            Some(RateLimitConfig::for_production(
+                max_requests,
+                rate_limit_window,
+            )),
         )
     }
 
@@ -182,6 +197,7 @@ impl Default for SecurityValidator {
 mod tests {
     use super::*;
     use std::collections::HashMap;
+    use std::time::Duration;
 
     #[test]
     fn test_security_validator_default() {
@@ -210,7 +226,12 @@ mod tests {
     fn test_security_validator_for_production() {
         let origins = vec!["https://app.example.com".to_string()];
         let api_keys = vec!["secret123".to_string()];
-        let validator = SecurityValidator::for_production(origins.clone(), api_keys.clone());
+        let validator = SecurityValidator::for_production(
+            origins.clone(),
+            api_keys.clone(),
+            100,
+            Duration::from_secs(60),
+        );
 
         assert!(!validator.origin_config().allow_localhost);
         assert!(validator.auth_config().require_auth);
@@ -243,6 +264,8 @@ mod tests {
         let validator = SecurityValidator::for_production(
             vec!["https://trusted.com".to_string()],
             vec!["secret".to_string()],
+            100,
+            Duration::from_secs(60),
         );
 
         let mut headers = HashMap::new();
@@ -259,6 +282,8 @@ mod tests {
         let validator = SecurityValidator::for_production(
             vec!["https://trusted.com".to_string()],
             vec!["secret".to_string()],
+            100,
+            Duration::from_secs(60),
         );
 
         let mut headers = HashMap::new();
