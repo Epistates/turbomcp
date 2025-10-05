@@ -43,22 +43,6 @@ impl DeduplicationConfig {
     pub fn new() -> Self {
         Self::default()
     }
-
-    /// Create a configuration optimized for high-throughput scenarios
-    pub fn high_throughput() -> Self {
-        Self {
-            max_size: 10000,
-            ttl: Duration::from_secs(60), // 1 minute
-        }
-    }
-
-    /// Create a configuration optimized for low-memory usage
-    pub fn low_memory() -> Self {
-        Self {
-            max_size: 100,
-            ttl: Duration::from_secs(600), // 10 minutes
-        }
-    }
 }
 
 impl DeduplicationCache {
@@ -280,16 +264,5 @@ mod tests {
         assert_eq!(stats.max_size, 100);
         assert_eq!(stats.ttl, Duration::from_secs(60));
         assert_eq!(stats.utilization_percent(), 0.0);
-    }
-
-    #[test]
-    fn test_deduplication_config_presets() {
-        let high_throughput = DeduplicationConfig::high_throughput();
-        assert_eq!(high_throughput.max_size, 10000);
-        assert_eq!(high_throughput.ttl, Duration::from_secs(60));
-
-        let low_memory = DeduplicationConfig::low_memory();
-        assert_eq!(low_memory.max_size, 100);
-        assert_eq!(low_memory.ttl, Duration::from_secs(600));
     }
 }
