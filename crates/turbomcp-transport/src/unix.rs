@@ -3,10 +3,10 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc;
 use tokio_util::codec::{Framed, LinesCodec};
@@ -14,8 +14,8 @@ use tracing::{debug, error, info, warn};
 use uuid;
 
 use crate::core::{
-    Transport, TransportCapabilities, TransportError, TransportMessage, TransportMetrics,
-    TransportResult, TransportState, TransportType,
+    AtomicMetrics, Transport, TransportCapabilities, TransportError, TransportMessage,
+    TransportMetrics, TransportResult, TransportState, TransportType,
 };
 use turbomcp_core::MessageId;
 
@@ -26,18 +26,18 @@ pub struct UnixTransport {
     socket_path: PathBuf,
     /// Server mode flag
     is_server: bool,
-    /// Message sender for incoming messages (bounded for backpressure)
-    sender: Option<mpsc::Sender<TransportMessage>>,
-    /// Message receiver for incoming messages (bounded for backpressure)
-    receiver: Option<mpsc::Receiver<TransportMessage>>,
-    /// Active connections map: path -> outgoing message sender (bounded for backpressure)
-    connections: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
-    /// Transport capabilities
+    /// Message sender for incoming messages (tokio mutex - crosses await)
+    sender: Arc<tokio::sync::Mutex<Option<mpsc::Sender<TransportMessage>>>>,
+    /// Message receiver for incoming messages (tokio mutex - crosses await)
+    receiver: Arc<tokio::sync::Mutex<Option<mpsc::Receiver<TransportMessage>>>>,
+    /// Active connections map: path -> outgoing message sender (std mutex - short-lived)
+    connections: Arc<StdMutex<HashMap<String, mpsc::Sender<String>>>>,
+    /// Transport capabilities (immutable)
     capabilities: TransportCapabilities,
-    /// Current state
-    state: TransportState,
-    /// Transport metrics
-    metrics: TransportMetrics,
+    /// Current state (std mutex - short-lived)
+    state: Arc<StdMutex<TransportState>>,
+    /// Transport metrics (lock-free atomic)
+    metrics: Arc<AtomicMetrics>,
 }
 
 impl UnixTransport {
@@ -47,17 +47,17 @@ impl UnixTransport {
         Self {
             socket_path,
             is_server: true,
-            sender: None,
-            receiver: None,
-            connections: Arc::new(Mutex::new(HashMap::new())),
+            sender: Arc::new(tokio::sync::Mutex::new(None)),
+            receiver: Arc::new(tokio::sync::Mutex::new(None)),
+            connections: Arc::new(StdMutex::new(HashMap::new())),
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
                 max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
-            state: TransportState::Disconnected,
-            metrics: TransportMetrics::default(),
+            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            metrics: Arc::new(AtomicMetrics::default()),
         }
     }
 
@@ -67,25 +67,23 @@ impl UnixTransport {
         Self {
             socket_path,
             is_server: false,
-            sender: None,
-            receiver: None,
-            connections: Arc::new(Mutex::new(HashMap::new())),
+            sender: Arc::new(tokio::sync::Mutex::new(None)),
+            receiver: Arc::new(tokio::sync::Mutex::new(None)),
+            connections: Arc::new(StdMutex::new(HashMap::new())),
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
                 max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
-            state: TransportState::Disconnected,
-            metrics: TransportMetrics::default(),
+            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            metrics: Arc::new(AtomicMetrics::default()),
         }
     }
 
     /// Create a new Unix socket transport for client mode with security validation
-    #[must_use]
-
     /// Start Unix socket server
-    async fn start_server(&mut self) -> TransportResult<()> {
+    async fn start_server(&self) -> TransportResult<()> {
         // Remove existing socket file if it exists (ASYNC - Non-blocking!)
         if self.socket_path.exists() {
             tokio::fs::remove_file(&self.socket_path)
@@ -98,19 +96,19 @@ impl UnixTransport {
         }
 
         info!("Starting Unix socket server at {:?}", self.socket_path);
-        self.state = TransportState::Connecting;
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Connecting;
 
         let listener = UnixListener::bind(&self.socket_path).map_err(|e| {
-            self.state = TransportState::Failed {
+            *self.state.lock().expect("state mutex poisoned") = TransportState::Failed {
                 reason: format!("Failed to bind: {e}"),
             };
             TransportError::ConnectionFailed(format!("Failed to bind Unix socket listener: {e}"))
         })?;
 
         let (tx, rx) = mpsc::channel(1000); // Bounded channel for backpressure control
-        self.sender = Some(tx.clone());
-        self.receiver = Some(rx);
-        self.state = TransportState::Connected;
+        *self.sender.lock().await = Some(tx.clone());
+        *self.receiver.lock().await = Some(rx);
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Connected;
 
         // Accept connections in background
         let connections = self.connections.clone();
@@ -147,12 +145,12 @@ impl UnixTransport {
 
     /// Connect to Unix socket server using standard practices
     /// Following the proven TCP transport pattern for consistent architecture
-    async fn connect_client(&mut self) -> TransportResult<()> {
+    async fn connect_client(&self) -> TransportResult<()> {
         info!("Connecting to Unix socket at {:?}", self.socket_path);
-        self.state = TransportState::Connecting;
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Connecting;
 
         let stream = UnixStream::connect(&self.socket_path).await.map_err(|e| {
-            self.state = TransportState::Failed {
+            *self.state.lock().expect("state mutex poisoned") = TransportState::Failed {
                 reason: format!("Failed to connect: {e}"),
             };
             TransportError::ConnectionFailed(format!("Failed to connect to Unix socket: {e}"))
@@ -160,9 +158,9 @@ impl UnixTransport {
 
         // Create channels for bidirectional communication (same pattern as TCP)
         let (tx, rx) = mpsc::channel(1000); // Bounded channel for backpressure control
-        self.sender = Some(tx.clone());
-        self.receiver = Some(rx);
-        self.state = TransportState::Connected;
+        *self.sender.lock().await = Some(tx.clone());
+        *self.receiver.lock().await = Some(rx);
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Connected;
 
         // Handle connection using the same framed approach as TCP and server connections
         // This ensures the client gets registered in the connections HashMap
@@ -186,7 +184,7 @@ impl UnixTransport {
 async fn handle_unix_connection_framed(
     stream: UnixStream,
     incoming_sender: mpsc::Sender<TransportMessage>,
-    connections: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
+    connections: Arc<StdMutex<HashMap<String, mpsc::Sender<String>>>>,
 ) -> TransportResult<()> {
     debug!("Handling Unix socket connection using Framed<UnixStream, LinesCodec>");
 
@@ -206,8 +204,15 @@ async fn handle_unix_connection_framed(
     );
     connections
         .lock()
+        .expect("connections mutex poisoned")
         .insert(connection_key.clone(), outgoing_sender);
-    debug!("Total connections now: {}", connections.lock().len());
+    debug!(
+        "Total connections now: {}",
+        connections
+            .lock()
+            .expect("connections mutex poisoned")
+            .len()
+    );
 
     // Clone for cleanup
     let connections_cleanup = connections.clone();
@@ -294,7 +299,10 @@ async fn handle_unix_connection_framed(
     }
 
     // Clean up connection
-    connections_cleanup.lock().remove(&cleanup_key);
+    connections_cleanup
+        .lock()
+        .expect("connections mutex poisoned")
+        .remove(&cleanup_key);
     send_task.abort();
     debug!("Unix socket connection handler finished");
     Ok(())
@@ -311,10 +319,10 @@ impl Transport for UnixTransport {
     }
 
     async fn state(&self) -> TransportState {
-        self.state.clone()
+        self.state.lock().expect("state mutex poisoned").clone()
     }
 
-    async fn connect(&mut self) -> TransportResult<()> {
+    async fn connect(&self) -> TransportResult<()> {
         if self.is_server {
             self.start_server().await
         } else {
@@ -322,11 +330,11 @@ impl Transport for UnixTransport {
         }
     }
 
-    async fn disconnect(&mut self) -> TransportResult<()> {
+    async fn disconnect(&self) -> TransportResult<()> {
         info!("Stopping Unix socket transport");
-        self.state = TransportState::Disconnecting;
-        self.sender = None;
-        self.receiver = None;
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Disconnecting;
+        *self.sender.lock().await = None;
+        *self.receiver.lock().await = None;
 
         // Clean up socket file if we're the server (ASYNC - Non-blocking!)
         if self.is_server
@@ -336,17 +344,19 @@ impl Transport for UnixTransport {
             debug!("Failed to remove socket file: {}", e);
         }
 
-        self.state = TransportState::Disconnected;
+        *self.state.lock().expect("state mutex poisoned") = TransportState::Disconnected;
         Ok(())
     }
 
-    async fn send(&mut self, message: TransportMessage) -> TransportResult<()> {
-        self.metrics.messages_sent += 1;
-        self.metrics.bytes_sent += message.size() as u64;
+    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
+        self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .bytes_sent
+            .fetch_add(message.size() as u64, Ordering::Relaxed);
 
         // Use unified channel-based approach for both server and client (same as TCP transport)
         let json_str = String::from_utf8_lossy(&message.payload).to_string();
-        let connections = self.connections.lock();
+        let connections = self.connections.lock().expect("connections mutex poisoned");
         debug!(
             "Unix transport send: {} connections registered",
             connections.len()
@@ -379,7 +389,7 @@ impl Transport for UnixTransport {
         // Clean up failed connections
         drop(connections);
         if !failed_connections.is_empty() {
-            let mut connections = self.connections.lock();
+            let mut connections = self.connections.lock().expect("connections mutex poisoned");
             for key in failed_connections {
                 connections.remove(&key);
             }
@@ -388,17 +398,22 @@ impl Transport for UnixTransport {
         Ok(())
     }
 
-    async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
+    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
         // Use unified channel-based reception for both server and client (same as TCP transport)
-        if let Some(ref mut receiver) = self.receiver {
+        let mut receiver_guard = self.receiver.lock().await;
+        if let Some(ref mut receiver) = *receiver_guard {
             match receiver.recv().await {
                 Some(message) => {
-                    self.metrics.messages_received += 1;
-                    self.metrics.bytes_received += message.size() as u64;
+                    self.metrics
+                        .messages_received
+                        .fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .bytes_received
+                        .fetch_add(message.size() as u64, Ordering::Relaxed);
                     Ok(Some(message))
                 }
                 None => {
-                    self.state = TransportState::Failed {
+                    *self.state.lock().expect("state mutex poisoned") = TransportState::Failed {
                         reason: "Channel disconnected".into(),
                     };
                     Err(TransportError::ReceiveFailed(
@@ -414,7 +429,7 @@ impl Transport for UnixTransport {
     }
 
     async fn metrics(&self) -> TransportMetrics {
-        self.metrics.clone()
+        self.metrics.snapshot()
     }
 
     fn endpoint(&self) -> Option<String> {
@@ -534,7 +549,10 @@ mod tests {
 
         assert_eq!(transport.socket_path, Path::new("/tmp/test-server.sock"));
         assert!(transport.is_server);
-        assert!(matches!(transport.state, TransportState::Disconnected));
+        assert!(matches!(
+            *transport.state.lock().expect("state mutex poisoned"),
+            TransportState::Disconnected
+        ));
     }
 
     #[test]

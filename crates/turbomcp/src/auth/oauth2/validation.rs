@@ -72,7 +72,7 @@ pub fn validate_canonical_resource_uri(uri: &str) -> McpResult<()> {
     let host_start = uri.find("://").expect("scheme checked above") + 3;
     let host_in_uri = &uri[host_start..];
     let host_end = host_in_uri
-        .find(|c: char| c == '/' || c == ':' || c == '?' || c == '#')
+        .find(['/', ':', '?', '#'])
         .unwrap_or(host_in_uri.len());
     let original_host = &host_in_uri[..host_end];
 

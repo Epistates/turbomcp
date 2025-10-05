@@ -31,15 +31,15 @@ impl Transport for WebSocketBidirectionalTransport {
         self.state.read().await.clone()
     }
 
-    async fn connect(&mut self) -> TransportResult<()> {
+    async fn connect(&self) -> TransportResult<()> {
         self.connect().await
     }
 
-    async fn disconnect(&mut self) -> TransportResult<()> {
+    async fn disconnect(&self) -> TransportResult<()> {
         self.disconnect().await
     }
 
-    async fn send(&mut self, message: TransportMessage) -> TransportResult<()> {
+    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
         if let Some(ref mut writer) = *self.writer.lock().await {
             let text = String::from_utf8(message.payload.to_vec())
                 .map_err(|e| TransportError::SendFailed(format!("Failed to serialize: {}", e)))?;
@@ -59,7 +59,7 @@ impl Transport for WebSocketBidirectionalTransport {
         }
     }
 
-    async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
+    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
         if let Some(ref mut reader) = *self.reader.lock().await {
             match reader.next().await {
                 Some(Ok(Message::Text(text))) => {
@@ -82,7 +82,7 @@ impl Transport for WebSocketBidirectionalTransport {
                 Some(Ok(Message::Binary(data))) => {
                     let message = TransportMessage {
                         id: MessageId::from(Uuid::new_v4()),
-                        payload: Bytes::from(data),
+                        payload: data,
                         metadata: TransportMessageMetadata::default(),
                     };
 
@@ -136,31 +136,33 @@ impl Transport for WebSocketBidirectionalTransport {
     }
 
     async fn metrics(&self) -> TransportMetrics {
-        let metrics = self.metrics.read().await.clone();
-
         // TODO: Add WebSocket-specific metrics when metadata field is available:
         // - active_correlations: self.active_correlations_count()
         // - pending_elicitations: self.pending_elicitations_count()
         // - session_id: self.session_id
-        // - max_message_size: self.config.max_message_size
-        // - keep_alive_interval_secs: self.config.keep_alive_interval.as_secs()
+        // - max_message_size: self.config.lock().expect("config mutex poisoned").max_message_size
+        // - keep_alive_interval_secs: self.config.lock().expect("config mutex poisoned").keep_alive_interval.as_secs()
 
-        metrics
+        self.metrics.read().await.clone()
     }
 
     fn endpoint(&self) -> Option<String> {
-        self.config.url.clone().or_else(|| {
-            self.config
+        let config_guard = self.config.lock().expect("config mutex poisoned");
+        config_guard.url.clone().or_else(|| {
+            config_guard
                 .bind_addr
                 .as_ref()
                 .map(|addr| format!("ws://{}", addr))
         })
     }
 
-    async fn configure(&mut self, config: TransportConfig) -> TransportResult<()> {
+    async fn configure(&self, config: TransportConfig) -> TransportResult<()> {
         // Update internal configuration based on transport config
         if let Some(keep_alive) = config.keep_alive {
-            self.config.keep_alive_interval = keep_alive;
+            self.config
+                .lock()
+                .expect("config mutex poisoned")
+                .keep_alive_interval = keep_alive;
         }
 
         // TODO: Handle other config fields when websocket-specific config is redesigned:
@@ -214,22 +216,38 @@ impl WebSocketBidirectionalTransport {
 
     /// Check if the transport supports a specific message size
     pub fn supports_message_size(&self, size: usize) -> bool {
-        size <= self.config.max_message_size
+        size <= self
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .max_message_size
     }
 
     /// Get the maximum supported message size
     pub fn max_message_size(&self) -> usize {
-        self.config.max_message_size
+        self.config
+            .lock()
+            .expect("config mutex poisoned")
+            .max_message_size
     }
 
     /// Validate a message before sending
     pub fn validate_message(&self, message: &TransportMessage) -> TransportResult<()> {
         // Check message size
-        if message.payload.len() > self.config.max_message_size {
+        if message.payload.len()
+            > self
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .max_message_size
+        {
             return Err(TransportError::ProtocolError(format!(
                 "Message size {} exceeds maximum {}",
                 message.payload.len(),
-                self.config.max_message_size
+                self.config
+                    .lock()
+                    .expect("config mutex poisoned")
+                    .max_message_size
             )));
         }
 
@@ -267,7 +285,7 @@ impl WebSocketBidirectionalTransport {
             messages_received: metrics.messages_received,
             connection_uptime: connection_stats.uptime(),
             last_activity: connection_stats.last_activity,
-            config: self.config.clone(),
+            config: self.config.lock().expect("config mutex poisoned").clone(),
         }
     }
 }
@@ -339,7 +357,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_without_connection() {
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         let message = TransportMessage {
             id: MessageId::from(Uuid::new_v4()),
@@ -355,7 +373,7 @@ mod tests {
     #[tokio::test]
     async fn test_receive_without_connection() {
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         let result = transport.receive().await;
         assert!(result.is_err());

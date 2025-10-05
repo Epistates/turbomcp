@@ -93,8 +93,8 @@ pub struct WebSocketBidirectionalTransport {
     /// Transport capabilities
     pub capabilities: TransportCapabilities,
 
-    /// Configuration
-    pub config: WebSocketBidirectionalConfig,
+    /// Configuration (mutex for interior mutability)
+    pub config: Arc<std::sync::Mutex<WebSocketBidirectionalConfig>>,
 
     /// Metrics collector
     pub metrics: Arc<RwLock<TransportMetrics>>,
@@ -120,8 +120,8 @@ pub struct WebSocketBidirectionalTransport {
     /// Background task handles
     pub task_handles: Arc<RwLock<Vec<tokio::task::JoinHandle<()>>>>,
 
-    /// Shutdown signal
-    pub shutdown_tx: Option<mpsc::Sender<()>>,
+    /// Shutdown signal (tokio mutex - held across await)
+    pub shutdown_tx: Arc<tokio::sync::Mutex<Option<mpsc::Sender<()>>>>,
 
     /// Session ID for this connection
     pub session_id: String,
@@ -167,7 +167,12 @@ impl WebSocketBidirectionalTransport {
 
     /// Check if the transport is at elicitation capacity
     pub fn is_at_elicitation_capacity(&self) -> bool {
-        self.elicitations.len() >= self.config.max_concurrent_elicitations
+        self.elicitations.len()
+            >= self
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .max_concurrent_elicitations
     }
 
     /// Get session ID

@@ -28,7 +28,7 @@ impl WebSocketBidirectionalTransport {
         Ok(Self {
             state: Arc::new(RwLock::new(TransportState::Disconnected)),
             capabilities,
-            config,
+            config: Arc::new(std::sync::Mutex::new(config)),
             metrics: Arc::new(RwLock::new(crate::core::TransportMetrics::default())),
             event_emitter: Arc::new(event_emitter),
             writer: Arc::new(Mutex::new(None)),
@@ -37,13 +37,13 @@ impl WebSocketBidirectionalTransport {
             elicitations: Arc::new(dashmap::DashMap::new()),
             connection_state: Arc::new(RwLock::new(ConnectionState::default())),
             task_handles: Arc::new(RwLock::new(Vec::new())),
-            shutdown_tx: Some(_shutdown_tx),
+            shutdown_tx: Arc::new(tokio::sync::Mutex::new(Some(_shutdown_tx))),
             session_id: Uuid::new_v4().to_string(),
         })
     }
 
     /// Connect to a WebSocket server (client mode)
-    pub async fn connect_client(&mut self, url: &str) -> TransportResult<()> {
+    pub async fn connect_client(&self, url: &str) -> TransportResult<()> {
         info!("Connecting to WebSocket server at {}", url);
 
         let (stream, _response) = connect_async(url).await.map_err(|e| {
@@ -69,7 +69,7 @@ impl WebSocketBidirectionalTransport {
 
     /// Setup the WebSocket stream and start background tasks
     pub async fn setup_stream(
-        &mut self,
+        &self,
         stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
     ) -> TransportResult<()> {
         let (writer, reader) = stream.split();
@@ -123,7 +123,13 @@ impl WebSocketBidirectionalTransport {
         handles.push(timeout_handle);
 
         // Reconnection task (if enabled)
-        if self.config.reconnect.enabled {
+        if self
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .reconnect
+            .enabled
+        {
             let reconnect_handle = self.spawn_reconnection_task();
             handles.push(reconnect_handle);
         }
@@ -132,11 +138,22 @@ impl WebSocketBidirectionalTransport {
     }
 
     /// Connect using the configured URL
-    pub async fn connect(&mut self) -> TransportResult<()> {
-        let url = self.config.url.clone();
+    pub async fn connect(&self) -> TransportResult<()> {
+        let url = self
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .url
+            .clone();
         if let Some(url) = url {
             self.connect_client(&url).await
-        } else if self.config.bind_addr.is_some() {
+        } else if self
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .bind_addr
+            .is_some()
+        {
             // Server mode would be initiated by accept_connection
             Ok(())
         } else {
@@ -147,13 +164,13 @@ impl WebSocketBidirectionalTransport {
     }
 
     /// Disconnect from the WebSocket
-    pub async fn disconnect(&mut self) -> TransportResult<()> {
+    pub async fn disconnect(&self) -> TransportResult<()> {
         info!("Disconnecting WebSocket transport");
 
         *self.state.write().await = TransportState::Disconnecting;
 
         // Send shutdown signal
-        if let Some(tx) = self.shutdown_tx.take() {
+        if let Some(tx) = self.shutdown_tx.lock().await.take() {
             let _ = tx.send(()).await;
         }
 
@@ -236,24 +253,52 @@ impl WebSocketBidirectionalTransport {
 
     /// Reconnect with exponential backoff
     pub async fn reconnect(&mut self) -> TransportResult<()> {
-        if !self.config.reconnect.enabled {
+        if !self
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .reconnect
+            .enabled
+        {
             return Err(TransportError::NotAvailable(
                 "Reconnection is disabled".to_string(),
             ));
         }
 
-        let url = self.config.url.clone().ok_or_else(|| {
-            TransportError::ConfigurationError("No URL configured for reconnection".to_string())
-        })?;
+        let url = self
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .url
+            .clone()
+            .ok_or_else(|| {
+                TransportError::ConfigurationError("No URL configured for reconnection".to_string())
+            })?;
 
         let mut retry_count = 0;
-        let mut delay = self.config.reconnect.initial_delay;
+        let mut delay = self
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .reconnect
+            .initial_delay;
 
-        while retry_count < self.config.reconnect.max_retries {
+        while retry_count
+            < self
+                .config
+                .lock()
+                .expect("config mutex poisoned")
+                .reconnect
+                .max_retries
+        {
             info!(
                 "Attempting reconnection {} of {}",
                 retry_count + 1,
-                self.config.reconnect.max_retries
+                self.config
+                    .lock()
+                    .expect("config mutex poisoned")
+                    .reconnect
+                    .max_retries
             );
 
             // Update metrics
@@ -271,13 +316,33 @@ impl WebSocketBidirectionalTransport {
                     warn!("Reconnection attempt {} failed: {}", retry_count + 1, e);
                     retry_count += 1;
 
-                    if retry_count < self.config.reconnect.max_retries {
+                    if retry_count
+                        < self
+                            .config
+                            .lock()
+                            .expect("config mutex poisoned")
+                            .reconnect
+                            .max_retries
+                    {
                         tokio::time::sleep(delay).await;
 
                         // Exponential backoff
                         delay = std::time::Duration::from_secs_f64(
-                            (delay.as_secs_f64() * self.config.reconnect.backoff_factor)
-                                .min(self.config.reconnect.max_delay.as_secs_f64()),
+                            (delay.as_secs_f64()
+                                * self
+                                    .config
+                                    .lock()
+                                    .expect("config mutex poisoned")
+                                    .reconnect
+                                    .backoff_factor)
+                                .min(
+                                    self.config
+                                        .lock()
+                                        .expect("config mutex poisoned")
+                                        .reconnect
+                                        .max_delay
+                                        .as_secs_f64(),
+                                ),
                         );
                     }
                 }
@@ -286,7 +351,11 @@ impl WebSocketBidirectionalTransport {
 
         Err(TransportError::ConnectionFailed(format!(
             "Reconnection failed after {} attempts",
-            self.config.reconnect.max_retries
+            self.config
+                .lock()
+                .expect("config mutex poisoned")
+                .reconnect
+                .max_retries
         )))
     }
 
@@ -342,7 +411,7 @@ mod tests {
     async fn test_connection_config_validation() {
         // Test with no URL or bind address
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         let result = transport.connect().await;
         assert!(result.is_err());
@@ -380,7 +449,7 @@ mod tests {
     #[tokio::test]
     async fn test_disconnect_without_connection() {
         let config = WebSocketBidirectionalConfig::default();
-        let mut transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
+        let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         // Should be able to disconnect even if not connected
         let result = transport.disconnect().await;

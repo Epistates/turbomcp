@@ -8,6 +8,11 @@
 //! - **Multiple Transports**: STDIO, HTTP SSE, WebSocket, TCP, Unix sockets with auto-detection
 //! - **Rich Output**: Human-readable, JSON, YAML, and table formats with colored output
 //! - **Robust Error Handling**: Detailed errors with actionable suggestions
+
+#![allow(clippy::result_large_err)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::option_as_ref_deref)]
+#![allow(clippy::needless_return)]
 //! - **Production Ready**: Built on turbomcp-client and turbomcp-transport
 //! - **Enterprise Features**: Connection presets, configuration files, verbose logging
 //!

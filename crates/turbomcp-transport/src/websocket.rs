@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{SinkExt as _, StreamExt as _};
+use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 use turbomcp_core::MessageId;
@@ -15,7 +16,7 @@ use crate::core::{
 /// WebSocket transport implementation
 #[derive(Debug)]
 pub struct WebSocketTransport {
-    stream: Option<WebSocketStream<MaybeTlsStream<TcpStream>>>,
+    stream: Arc<tokio::sync::Mutex<Option<WebSocketStream<MaybeTlsStream<TcpStream>>>>>,
 }
 
 impl WebSocketTransport {
@@ -26,15 +27,17 @@ impl WebSocketTransport {
             .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
 
         Ok(Self {
-            stream: Some(stream),
+            stream: Arc::new(tokio::sync::Mutex::new(Some(stream))),
         })
     }
 
     /// Create a new WebSocket transport without connection (for testing)
     #[doc(hidden)]
     #[must_use]
-    pub const fn new_disconnected() -> Self {
-        Self { stream: None }
+    pub fn new_disconnected() -> Self {
+        Self {
+            stream: Arc::new(tokio::sync::Mutex::new(None)),
+        }
     }
 }
 
@@ -60,20 +63,21 @@ impl Transport for WebSocketTransport {
     }
 
     async fn state(&self) -> TransportState {
-        if self.stream.is_some() {
+        if self.stream.lock().await.is_some() {
             TransportState::Connected
         } else {
             TransportState::Disconnected
         }
     }
 
-    async fn connect(&mut self) -> TransportResult<()> {
+    async fn connect(&self) -> TransportResult<()> {
         // WebSocket connection is established in new()
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> TransportResult<()> {
-        if let Some(mut stream) = self.stream.take() {
+    async fn disconnect(&self) -> TransportResult<()> {
+        let mut stream_guard = self.stream.lock().await;
+        if let Some(mut stream) = stream_guard.take() {
             stream
                 .close(None)
                 .await
@@ -82,8 +86,9 @@ impl Transport for WebSocketTransport {
         Ok(())
     }
 
-    async fn send(&mut self, message: TransportMessage) -> TransportResult<()> {
-        if let Some(ref mut stream) = self.stream {
+    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
+        let mut stream_guard = self.stream.lock().await;
+        if let Some(ref mut stream) = *stream_guard {
             let text = String::from_utf8(message.payload.to_vec())
                 .map_err(|e| TransportError::SendFailed(e.to_string()))?;
 
@@ -100,8 +105,9 @@ impl Transport for WebSocketTransport {
         }
     }
 
-    async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
-        if let Some(ref mut stream) = self.stream {
+    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
+        let mut stream_guard = self.stream.lock().await;
+        if let Some(ref mut stream) = *stream_guard {
             match stream.next().await {
                 Some(Ok(Message::Text(text))) => {
                     let id = MessageId::from(uuid::Uuid::new_v4()); // Generate a new message ID

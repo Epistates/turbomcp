@@ -516,7 +516,7 @@ fn constant_time_compare(a: &str, b: &str) -> bool {
 /// Automated key rotation service for production deployments
 ///
 /// This service runs as a background task, monitoring key expiration and automatically
-/// rotating keys based on the configured rotation policy. Provides 
+/// rotating keys based on the configured rotation policy. Provides
 /// key lifecycle management with monitoring and error recovery.
 #[derive(Debug)]
 pub struct AutoRotationService {

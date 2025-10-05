@@ -197,19 +197,19 @@ impl<T: Transport> Transport for SharedTransport<T> {
         self.state().await
     }
 
-    async fn connect(&mut self) -> TransportResult<()> {
+    async fn connect(&self) -> TransportResult<()> {
         self.connect().await
     }
 
-    async fn disconnect(&mut self) -> TransportResult<()> {
+    async fn disconnect(&self) -> TransportResult<()> {
         self.disconnect().await
     }
 
-    async fn send(&mut self, message: TransportMessage) -> TransportResult<()> {
+    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
         self.send(message).await
     }
 
-    async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
+    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
         self.receive().await
     }
 
@@ -226,7 +226,7 @@ impl<T: Transport> Transport for SharedTransport<T> {
         panic!("Use SharedTransport::endpoint() async method instead")
     }
 
-    async fn configure(&mut self, config: TransportConfig) -> TransportResult<()> {
+    async fn configure(&self, config: TransportConfig) -> TransportResult<()> {
         self.configure(config).await
     }
 }

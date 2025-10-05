@@ -6,7 +6,7 @@ use crate::axum::service::McpAppState;
 
 /// Metrics handler - returns detailed service metrics
 pub async fn metrics_handler(State(app_state): State<McpAppState>) -> Json<serde_json::Value> {
-    let sessions = app_state.session_manager.list_sessions();
+    let sessions = app_state.session_manager.list_sessions().await;
     let total_sessions = sessions.len();
     let avg_duration = if total_sessions > 0 {
         sessions.iter().map(|s| s.duration().as_secs()).sum::<u64>() / total_sessions as u64

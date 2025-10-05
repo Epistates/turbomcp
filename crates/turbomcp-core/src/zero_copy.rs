@@ -388,8 +388,6 @@ pub mod mmap {
     }
 
     impl MmapMessage {
-        /// Create a message from a memory-mapped file with comprehensive security validation
-
         /// Create a message from a memory-mapped file (legacy method without security)
         ///
         /// **SECURITY WARNING**: This method bypasses security validation.
