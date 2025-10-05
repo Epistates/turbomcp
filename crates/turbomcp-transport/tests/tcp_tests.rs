@@ -234,7 +234,7 @@ mod tcp_tests {
         use turbomcp_core::MessageId;
         use turbomcp_transport::core::TransportMessage;
 
-        let mut transport = TcpTransport::new_server("127.0.0.1:8080".parse().unwrap());
+        let transport = TcpTransport::new_server("127.0.0.1:8080".parse().unwrap());
         let message = TransportMessage::new(
             MessageId::String("test".to_string()),
             Bytes::from("test message"),
@@ -256,7 +256,7 @@ mod tcp_tests {
 
     #[tokio::test]
     async fn test_tcp_transport_receive_when_disconnected() {
-        let mut transport = TcpTransport::new_server("127.0.0.1:8080".parse().unwrap());
+        let transport = TcpTransport::new_server("127.0.0.1:8080".parse().unwrap());
 
         let result = transport.receive().await;
         assert!(result.is_err());
@@ -274,7 +274,7 @@ mod tcp_tests {
 
     #[tokio::test]
     async fn test_tcp_transport_disconnect() {
-        let mut transport = TcpTransport::new_server("127.0.0.1:8080".parse().unwrap());
+        let transport = TcpTransport::new_server("127.0.0.1:8080".parse().unwrap());
 
         let result = transport.disconnect().await;
         assert!(result.is_ok());

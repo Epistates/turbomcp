@@ -49,7 +49,7 @@ async fn test_real_tcp_bidirectional_mcp() {
     // Start real TCP server in background task
     let _server_service = service.clone();
     let server_task = tokio::spawn(async move {
-        let mut server_transport = TcpTransport::new_server(server_addr.parse().unwrap());
+        let server_transport = TcpTransport::new_server(server_addr.parse().unwrap());
         server_transport
             .connect()
             .await
@@ -157,7 +157,7 @@ async fn test_real_tcp_bidirectional_mcp() {
     sleep(Duration::from_millis(300)).await;
 
     // Create TCP client and test full MCP communication
-    let mut client_transport =
+    let client_transport =
         TcpTransport::new_client("0.0.0.0:0".parse().unwrap(), server_addr.parse().unwrap());
     client_transport
         .connect()
@@ -308,7 +308,7 @@ async fn test_real_unix_bidirectional_mcp() {
     // Start real Unix socket server in background task
     let server_socket_path = socket_path.clone();
     let server_task = tokio::spawn(async move {
-        let mut server_transport = UnixTransport::new_server(server_socket_path);
+        let server_transport = UnixTransport::new_server(server_socket_path);
         server_transport
             .connect()
             .await
@@ -416,7 +416,7 @@ async fn test_real_unix_bidirectional_mcp() {
     sleep(Duration::from_millis(300)).await;
 
     // Create Unix socket client and test full MCP communication
-    let mut client_transport = UnixTransport::new_client(socket_path.clone());
+    let client_transport = UnixTransport::new_client(socket_path.clone());
     client_transport
         .connect()
         .await
@@ -572,7 +572,7 @@ async fn test_real_transport_capabilities() {
 #[tokio::test]
 async fn test_real_transport_state_management() {
     // Test TCP transport state
-    let mut tcp_transport = TcpTransport::new_server("127.0.0.1:7778".parse().unwrap());
+    let tcp_transport = TcpTransport::new_server("127.0.0.1:7778".parse().unwrap());
 
     // Initial state should be Disconnected
     let initial_state = tcp_transport.state().await;

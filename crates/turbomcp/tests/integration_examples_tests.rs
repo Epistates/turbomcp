@@ -115,8 +115,9 @@ async fn test_example_jsonrpc(
     // Wait for process to exit with timeout
     let wait_result = tokio::time::timeout(
         Duration::from_secs(2),
-        tokio::task::spawn_blocking(move || child.wait())
-    ).await;
+        tokio::task::spawn_blocking(move || child.wait()),
+    )
+    .await;
 
     match wait_result {
         Ok(Ok(Ok(_))) => {
@@ -498,15 +499,17 @@ async fn test_clean_json_output() {
         (bytes, line)
     });
 
-    let (stdout_bytes, stdout_line) = match tokio::time::timeout(Duration::from_secs(5), read_stdout).await {
-        Ok(Ok(result)) => result,
-        _ => (0, String::new()),
-    };
+    let (stdout_bytes, stdout_line) =
+        match tokio::time::timeout(Duration::from_secs(5), read_stdout).await {
+            Ok(Ok(result)) => result,
+            _ => (0, String::new()),
+        };
 
-    let (stderr_bytes, stderr_line) = match tokio::time::timeout(Duration::from_secs(5), read_stderr).await {
-        Ok(Ok(result)) => result,
-        _ => (0, String::new()),
-    };
+    let (stderr_bytes, stderr_line) =
+        match tokio::time::timeout(Duration::from_secs(5), read_stderr).await {
+            Ok(Ok(result)) => result,
+            _ => (0, String::new()),
+        };
 
     // Clean up process with timeout
     drop(writer); // Close stdin
@@ -516,8 +519,9 @@ async fn test_clean_json_output() {
 
     let wait_result = tokio::time::timeout(
         Duration::from_secs(2),
-        tokio::task::spawn_blocking(move || child.wait())
-    ).await;
+        tokio::task::spawn_blocking(move || child.wait()),
+    )
+    .await;
 
     match wait_result {
         Ok(Ok(Ok(status))) => {

@@ -339,14 +339,14 @@ async fn test_progress_floating_point_values() {
     server
         .send_progress(ProgressNotification {
             progress_token: ProgressToken::Integer(1),
-            progress: 3.14159,
+            progress: std::f64::consts::PI,
             total: Some(10.5),
             message: Some("Pi progress".to_string()),
         })
         .await;
 
     let captured = server.get_captured_progress().await;
-    assert_eq!(captured[0].progress, 3.14159);
+    assert_eq!(captured[0].progress, std::f64::consts::PI);
     assert_eq!(captured[0].total, Some(10.5));
 }
 
@@ -373,7 +373,7 @@ async fn test_progress_unknown_total() {
 async fn test_progress_human_readable_messages() {
     let server = MockUtilitiesServer::new();
 
-    let messages = vec![
+    let messages = [
         "Initializing...",
         "Downloading dependencies...",
         "Compiling source files...",
@@ -688,11 +688,11 @@ async fn test_utilities_combined_workflow() {
 - ✅ Unknown request tolerance
 - ✅ Initialize protection
 
-## Test Coverage: 100% → WORLD-CLASS ✅
+## Test Coverage: 100% ✅
 **Tests**: 20 comprehensive integration tests
 **Lines of Test Code**: ~650
 **Protocol Features**: 3/3 (Ping, Progress, Cancellation)
 **Error Scenarios**: Comprehensive
 **Edge Cases**: Complete
-**Production Readiness**: ✅ WORLD-CLASS
+**Production Readiness**: ✅ Comprehensive testing
 */

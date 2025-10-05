@@ -21,60 +21,82 @@
 //! This file adds specific unit tests for the production config parameter requirements.
 
 use std::time::Duration;
-use turbomcp_transport::security::{RateLimitConfig, SecurityValidator};
+use turbomcp_transport::security::{
+    AuthConfig, AuthMethod, OriginConfig, RateLimitConfig, SecurityValidator,
+};
 
 #[test]
-fn test_production_configs_require_explicit_parameters() {
-    // Bug fix: Production configs should require explicit parameters to prevent
-    // accidental use of permissive defaults in production
+fn test_explicit_configuration_pattern() {
+    // API: All configs use explicit struct initialization
+    // This prevents accidental misconfigurations and makes settings discoverable
 
-    println!("🔍 Testing Production Config Parameter Requirements");
+    println!("🔍 Testing Explicit Configuration Pattern");
 
-    // RateLimitConfig::for_production now requires explicit parameters
-    let rate_limit = RateLimitConfig::for_production(100, Duration::from_secs(60));
+    // RateLimitConfig with explicit fields - clear and discoverable
+    let rate_limit = RateLimitConfig {
+        max_requests: 100,
+        window: Duration::from_secs(60),
+        enabled: true,
+    };
     assert_eq!(rate_limit.max_requests, 100);
     assert_eq!(rate_limit.window, Duration::from_secs(60));
     assert!(rate_limit.enabled);
-    println!("✅ RateLimitConfig::for_production requires explicit max_requests and window");
+    println!("✅ RateLimitConfig uses explicit struct initialization");
 
-    // SecurityValidator::for_production now requires explicit rate limit parameters
-    let validator = SecurityValidator::for_production(
-        vec!["https://app.example.com".to_string()],
-        vec!["secret-key".to_string()],
-        100,
-        Duration::from_secs(60),
+    // SecurityValidator with explicit configuration - no magic
+    let validator = SecurityValidator::new(
+        OriginConfig {
+            allowed_origins: vec!["https://app.example.com".to_string()]
+                .into_iter()
+                .collect(),
+            allow_localhost: false,
+            allow_any: false,
+        },
+        AuthConfig {
+            require_auth: true,
+            api_keys: vec!["secret-key".to_string()].into_iter().collect(),
+            method: AuthMethod::Bearer,
+        },
+        Some(RateLimitConfig {
+            max_requests: 100,
+            window: Duration::from_secs(60),
+            enabled: true,
+        }),
     );
 
     assert!(validator.rate_limiter().is_some());
-    println!("✅ SecurityValidator::for_production requires explicit rate limit parameters");
+    println!("✅ SecurityValidator uses explicit configuration - all settings visible");
 
-    // This prevents accidental misconfigurations like:
-    // let validator = SecurityValidator::for_production(origins, keys); // Old API - would use defaults
-    // Now developers MUST specify: SecurityValidator::for_production(origins, keys, 100, Duration::from_secs(60))
-
-    println!("✅ Production configs require explicit parameters - prevents accidental permissive defaults");
+    println!(
+        "✅ Explicit configuration prevents accidental misconfigurations and improves discoverability"
+    );
 }
 
 #[tokio::test]
 async fn test_rate_limit_logging() {
     // Bug fix: Rate limiting now has comprehensive logging for debugging
 
-    use turbomcp_transport::security::RateLimiter;
     use std::net::IpAddr;
     use std::str::FromStr;
+    use turbomcp_transport::security::RateLimiter;
 
     println!("🔍 Testing Rate Limit Logging");
 
     // Create a rate limiter with low limit for testing
-    let rate_limit_config = RateLimitConfig::for_production(3, Duration::from_secs(60));
+    let rate_limit_config = RateLimitConfig {
+        max_requests: 3,
+        window: Duration::from_secs(60),
+        enabled: true,
+    };
     let limiter = RateLimiter::new(rate_limit_config);
 
     let test_ip = IpAddr::from_str("127.0.0.1").unwrap();
 
     // These should succeed
     for i in 1..=3 {
-        limiter.check_rate_limit(test_ip)
-            .expect(&format!("Request {} should succeed", i));
+        limiter
+            .check_rate_limit(test_ip)
+            .unwrap_or_else(|_| panic!("Request {} should succeed", i));
         println!("✅ Request {}/3 allowed", i);
     }
 
