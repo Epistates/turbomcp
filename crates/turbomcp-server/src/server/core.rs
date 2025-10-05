@@ -465,8 +465,8 @@ impl McpServer {
         // This avoids all DashMap lifetime issues and provides maximum performance
         Err(crate::ServerError::configuration(
             "Direct HTTP support has been replaced with compile-time routing. \
-             Use the #[server] macro which generates into_router() and run_http_direct() methods \
-             with zero lifetime issues and maximum performance.",
+             Use the #[server] macro which generates into_mcp_router() and run_http() methods \
+             with MCP 2025-06-18 compliance, zero lifetime issues, and maximum performance.",
         ))
     }
 
