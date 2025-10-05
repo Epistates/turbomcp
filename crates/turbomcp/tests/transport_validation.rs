@@ -801,7 +801,7 @@ async fn test_http_sse_origin_validation_security() {
     ];
 
     for origin in valid_origins {
-        let headers = HashMap::from([("Origin".to_string(), origin.to_string())]);
+        let _headers = HashMap::from([("Origin".to_string(), origin.to_string())]);
 
         // Validate localhost origins
         let is_localhost = origin.contains("localhost")
@@ -824,7 +824,7 @@ async fn test_http_sse_origin_validation_security() {
     ];
 
     for origin in invalid_origins {
-        let headers = HashMap::from([("Origin".to_string(), origin.to_string())]);
+        let _headers = HashMap::from([("Origin".to_string(), origin.to_string())]);
 
         // These MUST be rejected to prevent DNS rebinding
         let is_localhost = origin.contains("localhost")

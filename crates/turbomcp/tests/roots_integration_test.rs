@@ -404,7 +404,10 @@ async fn test_roots_concurrent_access() {
                     .await;
             } else {
                 let request = ListRootsRequest { _meta: None };
-                let _ = client_clone.handle_list_roots_request(request).await;
+                client_clone
+                    .handle_list_roots_request(request)
+                    .await
+                    .expect("List roots request should succeed");
             }
         });
         handles.push(handle);
@@ -486,7 +489,10 @@ async fn test_roots_request_tracking() {
     // Make multiple requests
     for _ in 0..5 {
         let request = ListRootsRequest { _meta: None };
-        let _ = client.handle_list_roots_request(request).await;
+        client
+            .handle_list_roots_request(request)
+            .await
+            .expect("List roots request should succeed");
     }
 
     // Verify all requests were captured
