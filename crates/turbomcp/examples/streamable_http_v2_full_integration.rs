@@ -157,39 +157,16 @@ impl ResourceHandler for LocationsResource {
 async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 Starting MCP 2025-06-18 Compliant Server...");
 
-    use turbomcp_transport::security::{
-        SecurityConfigBuilder, SessionSecurityConfig, SessionSecurityManager,
-    };
-    use turbomcp_transport::streamable_http_v2::{StreamableHttpConfig, run_server};
-
-    // Build server with handlers
-    let _server = ServerBuilder::new()
+    // Create server with handlers
+    // Note: Using the older ServerBuilder API here for demonstration
+    // For production, prefer the #[server] macro which provides run_http() methods
+    let server = ServerBuilder::new()
         .name("Weather Service")
         .version("2.0.0")
         .description("MCP 2025-06-18 compliant weather service")
         .tool("get_weather", WeatherTool::new())?
         .resource("weather://locations", LocationsResource)?
         .build();
-
-    // Configure secure HTTP transport
-    let security_validator = Arc::new(
-        SecurityConfigBuilder::new()
-            .allow_localhost(true)
-            .allow_any_origin(false)
-            .with_rate_limit(100, Duration::from_secs(60))
-            .build(),
-    );
-
-    let session_manager = Arc::new(SessionSecurityManager::new(SessionSecurityConfig::default()));
-
-    let config = StreamableHttpConfig {
-        bind_addr: "127.0.0.1:8080".to_string(),
-        endpoint_path: "/mcp".to_string(),
-        keep_alive: Duration::from_secs(30),
-        replay_buffer_size: 1000,
-        security_validator,
-        session_manager,
-    };
 
     println!("✅ Server ready at http://127.0.0.1:8080/mcp");
     println!("   - Single endpoint for GET/POST/DELETE");
@@ -198,7 +175,9 @@ async fn run_server() -> Result<(), Box<dyn std::error::Error>> {
     println!("   - Industrial-grade security");
     println!();
 
-    run_server(config).await?;
+    // Use the built-in run_http method from ServerBuilder
+    // This automatically sets up MCP 2025-06-18 compliant HTTP/SSE transport
+    server.run_http("127.0.0.1:8080").await?;
 
     Ok(())
 }
