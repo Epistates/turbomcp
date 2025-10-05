@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create STDIO transport and client
     let transport = StdioTransport::new();
-    let mut client = Client::new(transport);
+    let client = Client::new(transport);
 
     tracing::info!("✅ Connected to STDIO server");
 

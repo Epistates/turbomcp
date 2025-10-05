@@ -29,9 +29,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create TCP transport and client
     let bind_addr: SocketAddr = "0.0.0.0:0".parse()?; // Auto-assign local port
     let remote_addr: SocketAddr = "127.0.0.1:7071".parse()?;
-    let mut transport = TcpTransport::new_client(bind_addr, remote_addr);
+    let transport = TcpTransport::new_client(bind_addr, remote_addr);
     transport.connect().await?;
-    let mut client = Client::new(transport);
+    let client = Client::new(transport);
 
     tracing::info!("✅ Connected to TCP server");
 

@@ -28,9 +28,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create Unix socket transport and client
     let socket_path = PathBuf::from("/tmp/turbomcp-process.sock");
-    let mut transport = UnixTransport::new_client(socket_path);
+    let transport = UnixTransport::new_client(socket_path);
     transport.connect().await?;
-    let mut client = Client::new(transport);
+    let client = Client::new(transport);
 
     tracing::info!("✅ Connected to Unix socket server");
 

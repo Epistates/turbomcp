@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build minimal server - STDIO compliant
     let server = ServerBuilder::new()
         .name("TurboMCP-Demo")
-        .version("1.0.8")
+        .version("2.0.0")
         .description("Clean MCP demo - JSON only")
         .tool("hello", FunctionToolHandler::new(tool, hello))?
         .build();

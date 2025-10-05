@@ -36,13 +36,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // CONFIGURE RETRY POLICY
     // ============================================================================
     let retry_config = RetryConfig {
-        max_attempts: 5,                              // Retry up to 5 times
-        base_delay: Duration::from_millis(100),       // Start with 100ms
-        max_delay: Duration::from_secs(30),           // Cap at 30s
-        backoff_multiplier: 2.0,                      // Exponential backoff
-        jitter_factor: 0.1,                           // 10% jitter to prevent thundering herd
-        retry_on_connection_error: true,              // Retry connection failures
-        retry_on_timeout: true,                       // Retry timeouts
+        max_attempts: 5,                        // Retry up to 5 times
+        base_delay: Duration::from_millis(100), // Start with 100ms
+        max_delay: Duration::from_secs(30),     // Cap at 30s
+        backoff_multiplier: 2.0,                // Exponential backoff
+        jitter_factor: 0.1,                     // 10% jitter to prevent thundering herd
+        retry_on_connection_error: true,        // Retry connection failures
+        retry_on_timeout: true,                 // Retry timeouts
         custom_retry_conditions: Vec::new(),
     };
 
@@ -50,26 +50,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // CONFIGURE CIRCUIT BREAKER
     // ============================================================================
     let circuit_breaker_config = CircuitBreakerConfig {
-        failure_threshold: 5,                         // Open after 5 failures
-        success_threshold: 2,                         // Close after 2 successes
-        timeout: Duration::from_secs(60),             // Try again after 60s
-        rolling_window_size: 100,                     // Track last 100 requests
-        minimum_requests: 10,                         // Need 10 requests before opening
+        failure_threshold: 5,             // Open after 5 failures
+        success_threshold: 2,             // Close after 2 successes
+        timeout: Duration::from_secs(60), // Try again after 60s
+        rolling_window_size: 100,         // Track last 100 requests
+        minimum_requests: 10,             // Need 10 requests before opening
     };
 
     // ============================================================================
     // CONFIGURE HEALTH CHECKING
     // ============================================================================
     let health_check_config = HealthCheckConfig {
-        interval: Duration::from_secs(30),            // Check every 30s
-        timeout: Duration::from_secs(5),              // Health check timeout
-        failure_threshold: 3,                         // Mark unhealthy after 3 failures
-        success_threshold: 1,                         // Mark healthy after 1 success
-        custom_check: None,                           // Use default ping-based check
+        interval: Duration::from_secs(30), // Check every 30s
+        timeout: Duration::from_secs(5),   // Health check timeout
+        failure_threshold: 3,              // Mark unhealthy after 3 failures
+        success_threshold: 1,              // Mark healthy after 1 success
+        custom_check: None,                // Use default ping-based check
     };
 
-    tracing::info!("🔧 Retry: {} attempts, exponential backoff", retry_config.max_attempts);
-    tracing::info!("🔌 Circuit Breaker: {} failure threshold", circuit_breaker_config.failure_threshold);
+    tracing::info!(
+        "🔧 Retry: {} attempts, exponential backoff",
+        retry_config.max_attempts
+    );
+    tracing::info!(
+        "🔌 Circuit Breaker: {} failure threshold",
+        circuit_breaker_config.failure_threshold
+    );
     tracing::info!("❤️  Health Check: every {:?}", health_check_config.interval);
 
     // ============================================================================
@@ -106,40 +112,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("✅ Client created with resilient transport");
 
     // ============================================================================
-    // METHOD 3: Preset Configurations (Easiest)
+    // METHOD 3: Explicit Configuration with Defaults
     // ============================================================================
-    tracing::info!("\n📦 Method 3: Preset configurations (EASIEST)");
+    tracing::info!("\n📦 Method 3: Using explicit configuration with sensible defaults");
 
-    // High Reliability Preset
-    let _high_reliability_client = ClientBuilder::new()
-        .with_high_reliability()  // Aggressive retry, tight health checks
+    // Network scenario - customize critical settings, use defaults for others
+    let _network_client = ClientBuilder::new()
+        .with_retry_config(RetryConfig {
+            max_attempts: 5,
+            base_delay: Duration::from_millis(200),
+            ..Default::default()
+        })
+        .with_circuit_breaker_config(CircuitBreakerConfig {
+            failure_threshold: 3,
+            timeout: Duration::from_secs(30),
+            ..Default::default()
+        })
+        .with_health_check_config(HealthCheckConfig {
+            interval: Duration::from_secs(15),
+            timeout: Duration::from_secs(5),
+            ..Default::default()
+        })
         .build_resilient(StdioTransport::new())
         .await?;
 
-    tracing::info!("✅ High reliability preset: aggressive retry + tight health checks");
+    tracing::info!("✅ Network config: balanced retry + circuit breaker + health checks");
 
-    // High Performance Preset
-    let _high_performance_client = ClientBuilder::new()
-        .with_high_performance()  // Fast fail, optimized for throughput
+    // Local scenario - faster checks, less overhead
+    let _local_client = ClientBuilder::new()
+        .with_health_check_config(HealthCheckConfig {
+            interval: Duration::from_secs(60),
+            timeout: Duration::from_secs(10),
+            failure_threshold: 5,
+            ..Default::default()
+        })
         .build_resilient(StdioTransport::new())
         .await?;
 
-    tracing::info!("✅ High performance preset: fast fail + optimized throughput");
-
-    // Resource Constrained Preset
-    let _resource_constrained_client = ClientBuilder::new()
-        .with_resource_constrained()  // Minimal overhead, low memory
-        .build_resilient(StdioTransport::new())
-        .await?;
-
-    tracing::info!("✅ Resource constrained preset: minimal overhead + low memory");
+    tracing::info!("✅ Local config: optimized for low-latency local connections");
 
     tracing::info!("\n🎯 TurboTransport Features Demonstrated:");
     tracing::info!("  ✓ Automatic retry with exponential backoff");
     tracing::info!("  ✓ Circuit breaker pattern for fast failure");
     tracing::info!("  ✓ Periodic health checking");
     tracing::info!("  ✓ Message deduplication");
-    tracing::info!("  ✓ Three preset configurations for common scenarios");
+    tracing::info!("  ✓ Explicit, composable configuration");
 
     Ok(())
 }

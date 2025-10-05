@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📍 Bind address: {}", bind_addr);
 
     // Create and start TCP transport server using builder pattern
-    let mut server = TcpTransportBuilder::new()
+    let server = TcpTransportBuilder::new()
         .bind_addr(bind_addr)
         .connect_timeout_ms(10000)
         .keep_alive(true)

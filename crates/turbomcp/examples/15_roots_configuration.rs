@@ -39,7 +39,8 @@ impl FileServer {
 2. file:///tmp - Temporary Files
 3. file:///home - Home Directory
 
-Use these URIs to access resources within each root."#.to_string())
+Use these URIs to access resources within each root."#
+            .to_string())
     }
 
     #[resource("file:///{root}/status")]

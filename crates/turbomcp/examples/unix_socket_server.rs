@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📍 Socket path: {:?}", socket_path);
 
     // Create and start Unix transport server
-    let mut server = UnixTransport::new_server(socket_path.clone());
+    let server = UnixTransport::new_server(socket_path.clone());
     server.connect().await?;
 
     println!("✅ Unix socket server listening");
