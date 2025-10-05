@@ -90,7 +90,9 @@ impl TransportShowcase {
 
         let file_locations = match transport_name.to_lowercase().as_str() {
             "stdio" => "crates/turbomcp-transport/src/stdio.rs:379",
-            "http" => "crates/turbomcp-transport/src/http_sse.rs:432",
+            "http" => {
+                "crates/turbomcp-transport/src/streamable_http_client.rs (client) + streamable_http_v2.rs (server)"
+            }
             "websocket" => "crates/turbomcp-transport/src/websocket.rs (already correct)",
             "tcp" => "crates/turbomcp-transport/src/tcp.rs:288",
             "unix" => "crates/turbomcp-transport/src/unix.rs:312",
@@ -180,7 +182,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("This demo PROVES all transport types are working!");
     tracing::info!("");
     tracing::info!("✅ STDIO: Standard MCP (this demo)");
-    tracing::info!("✅ HTTP/SSE: Web compatible - crates/turbomcp-transport/src/http_sse.rs");
+    tracing::info!(
+        "✅ HTTP Streamable: MCP 2025-06-18 compliant - crates/turbomcp-transport/src/streamable_http_v2.rs"
+    );
     tracing::info!(
         "✅ WebSocket: Real-time bidirectional - crates/turbomcp-transport/src/websocket.rs"
     );

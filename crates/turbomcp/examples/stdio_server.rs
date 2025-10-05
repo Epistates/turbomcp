@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // stderr should also be minimal to avoid interfering with MCP protocol
 
     // Create and connect STDIO transport
-    let mut server = StdioTransport::new();
+    let server = StdioTransport::new();
     server.connect().await?;
 
     // STDIO transport must be completely silent for MCP protocol compliance

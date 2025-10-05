@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-use tracing_subscriber;
 
 use turbomcp::handlers::{ResourceHandler, ToolHandler};
 use turbomcp::prelude::*;
@@ -207,7 +206,7 @@ async fn run_client() -> Result<(), Box<dyn std::error::Error>> {
     let transport = StreamableHttpClientTransport::new(transport_config);
 
     // Build client
-    let mut client = ClientBuilder::new()
+    let client = ClientBuilder::new()
         .with_tools(true)
         .with_prompts(true)
         .with_resources(true)
@@ -286,19 +285,16 @@ async fn run_client() -> Result<(), Box<dyn std::error::Error>> {
         println!("📖 Reading resource: {}...", uri);
         let read_result = client.read_resource(uri).await?;
         for content in read_result.contents {
-            match content {
-                ResourceContent::Text(text_resource) => {
-                    println!(
-                        "   Content:\n{}",
-                        text_resource
-                            .text
-                            .lines()
-                            .map(|l| format!("      {}", l))
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    );
-                }
-                _ => {}
+            if let ResourceContent::Text(text_resource) = content {
+                println!(
+                    "   Content:\n{}",
+                    text_resource
+                        .text
+                        .lines()
+                        .map(|l| format!("      {}", l))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
             }
         }
     }

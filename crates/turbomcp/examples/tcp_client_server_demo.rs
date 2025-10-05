@@ -140,10 +140,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind_addr: SocketAddr = "0.0.0.0:0".parse()?; // Auto-assign local port
     let remote_addr: SocketAddr = "127.0.0.1:7070".parse()?;
 
-    let mut transport = TcpTransport::new_client(bind_addr, remote_addr);
+    let transport = TcpTransport::new_client(bind_addr, remote_addr);
     transport.connect().await?;
 
-    let mut client = ClientBuilder::new()
+    let client = ClientBuilder::new()
         .with_tools(true)
         .with_resources(true)
         .build_sync(transport);

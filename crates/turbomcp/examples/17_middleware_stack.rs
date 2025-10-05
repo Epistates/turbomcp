@@ -19,8 +19,8 @@
 
 use std::num::NonZeroU32;
 use std::time::Duration;
-use turbomcp_server::prelude::*;
 use turbomcp_server::middleware::rate_limit::{RateLimitStrategy, RateLimits};
+use turbomcp_server::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -97,12 +97,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ============================================================================
     let middleware_stack = MiddlewareStack::new()
         .with_security(security_config) // Apply security headers first
-        .with_timeout(timeout_config)   // Enforce timeouts early
+        .with_timeout(timeout_config) // Enforce timeouts early
         .with_validation(validation_config) // Validate before processing
-        .with_auth(auth_config)         // Authenticate user
-        .with_authz(authz_config)       // Authorize access
+        .with_auth(auth_config) // Authenticate user
+        .with_authz(authz_config) // Authorize access
         .with_rate_limit(rate_limit_config) // Rate limit requests
-        .with_audit(audit_config);      // Audit after all checks
+        .with_audit(audit_config); // Audit after all checks
 
     tracing::info!("\n📚 Middleware Stack Order:");
     tracing::info!("  1. SecurityLayer (CORS, CSP, HSTS)");

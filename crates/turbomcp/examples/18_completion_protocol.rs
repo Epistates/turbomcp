@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("⌨️  Completion Protocol Demo - Autocompletion");
 
     // Create client with completion support
-    let mut client = ClientBuilder::new()
+    let client = ClientBuilder::new()
         .with_tools(true)
         .with_prompts(true)
         .with_resources(true)
