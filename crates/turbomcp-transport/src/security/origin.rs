@@ -35,33 +35,6 @@ impl OriginConfig {
         Self::default()
     }
 
-    /// Create development configuration allowing localhost
-    pub fn for_development() -> Self {
-        Self {
-            allowed_origins: HashSet::new(),
-            allow_localhost: true,
-            allow_any: false,
-        }
-    }
-
-    /// Create production configuration with specific allowed origins
-    pub fn for_production(allowed_origins: Vec<String>) -> Self {
-        Self {
-            allowed_origins: allowed_origins.into_iter().collect(),
-            allow_localhost: false,
-            allow_any: false,
-        }
-    }
-
-    /// Create testing configuration allowing any origin (DANGEROUS)
-    pub fn for_testing() -> Self {
-        Self {
-            allowed_origins: HashSet::new(),
-            allow_localhost: true,
-            allow_any: true,
-        }
-    }
-
     /// Add an allowed origin
     pub fn add_origin(&mut self, origin: String) {
         self.allowed_origins.insert(origin);
@@ -166,24 +139,11 @@ mod tests {
     }
 
     #[test]
-    fn test_origin_config_for_development() {
-        let config = OriginConfig::for_development();
-        assert!(config.allow_localhost);
-        assert!(!config.allow_any);
-    }
-
-    #[test]
-    fn test_origin_config_for_production() {
-        let origins = vec!["https://app.example.com".to_string()];
-        let config = OriginConfig::for_production(origins.clone());
-        assert!(!config.allow_localhost);
-        assert!(!config.allow_any);
-        assert!(config.allowed_origins.contains(&origins[0]));
-    }
-
-    #[test]
     fn test_validate_origin_allows_localhost() {
-        let config = OriginConfig::for_development();
+        let config = OriginConfig {
+            allow_localhost: true,
+            ..Default::default()
+        };
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "http://localhost:3000".to_string());
         let client_ip = "127.0.0.1".parse().unwrap();
@@ -193,7 +153,10 @@ mod tests {
 
     #[test]
     fn test_validate_origin_blocks_evil_origin() {
-        let config = OriginConfig::for_development();
+        let config = OriginConfig {
+            allow_localhost: true,
+            ..Default::default()
+        };
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "http://evil.com".to_string());
         let client_ip = "192.168.1.100".parse().unwrap();
@@ -203,7 +166,13 @@ mod tests {
 
     #[test]
     fn test_validate_origin_allows_configured_origin() {
-        let config = OriginConfig::for_production(vec!["https://trusted.com".to_string()]);
+        let config = OriginConfig {
+            allowed_origins: vec!["https://trusted.com".to_string()]
+                .into_iter()
+                .collect(),
+            allow_localhost: false,
+            ..Default::default()
+        };
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "https://trusted.com".to_string());
         let client_ip = "192.168.1.100".parse().unwrap();
@@ -213,7 +182,10 @@ mod tests {
 
     #[test]
     fn test_validate_origin_missing_header_localhost_client() {
-        let config = OriginConfig::for_development();
+        let config = OriginConfig {
+            allow_localhost: true,
+            ..Default::default()
+        };
         let headers = HashMap::new();
         let client_ip = "127.0.0.1".parse().unwrap();
 
@@ -223,7 +195,10 @@ mod tests {
 
     #[test]
     fn test_validate_origin_missing_header_remote_client() {
-        let config = OriginConfig::for_development();
+        let config = OriginConfig {
+            allow_localhost: true,
+            ..Default::default()
+        };
         let headers = HashMap::new();
         let client_ip = "192.168.1.100".parse().unwrap();
 
@@ -233,7 +208,11 @@ mod tests {
 
     #[test]
     fn test_validate_origin_allow_any() {
-        let config = OriginConfig::for_testing();
+        let config = OriginConfig {
+            allow_localhost: true,
+            allow_any: true,
+            ..Default::default()
+        };
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "http://anything.com".to_string());
         let client_ip = "192.168.1.100".parse().unwrap();

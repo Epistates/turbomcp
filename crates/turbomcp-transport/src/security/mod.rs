@@ -27,15 +27,29 @@
 //! ## Quick Start
 //!
 //! ```rust,no_run
-//! use turbomcp_transport::security::{SecurityValidator, SecurityConfigBuilder};
+//! use turbomcp_transport::security::{SecurityValidator, OriginConfig, AuthConfig, RateLimitConfig};
 //! use std::collections::HashMap;
+//! use std::time::Duration;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // Create a security validator for production - ergonomic builder pattern
-//! let validator = SecurityConfigBuilder::for_production()
-//!     .with_allowed_origins(vec!["https://app.example.com".to_string()])
-//!     .with_api_keys(vec!["your-secret-api-key".to_string()])
-//!     .build();
+//! // Create a security validator with explicit configuration
+//! let validator = SecurityValidator::new(
+//!     OriginConfig {
+//!         allowed_origins: vec!["https://app.example.com".to_string()].into_iter().collect(),
+//!         allow_localhost: false,
+//!         allow_any: false,
+//!     },
+//!     AuthConfig {
+//!         require_auth: true,
+//!         api_keys: vec!["your-secret-api-key".to_string()].into_iter().collect(),
+//!         method: turbomcp_transport::security::AuthMethod::Bearer,
+//!     },
+//!     Some(RateLimitConfig {
+//!         max_requests: 100,
+//!         window: Duration::from_secs(60),
+//!         enabled: true,
+//!     }),
+//! );
 //!
 //! // Validate a request
 //! let mut headers = HashMap::new();
@@ -48,44 +62,27 @@
 //! # }
 //! ```
 //!
-//! ## Enhanced Security with Session Management
+//! ## Using Builders for Convenience
 //!
 //! ```rust,no_run
-//! use turbomcp_transport::security::{EnhancedSecurityConfigBuilder, SessionSecurityManager};
+//! use turbomcp_transport::security::SecurityConfigBuilder;
 //! use std::time::Duration;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // Create enhanced security with session management - ergonomic builder with presets
-//! let (validator, session_manager) = EnhancedSecurityConfigBuilder::for_production()
+//! // Create security validator using builder pattern
+//! let validator = SecurityConfigBuilder::new()
 //!     .with_allowed_origins(vec!["https://app.example.com".to_string()])
 //!     .with_api_keys(vec!["api-key".to_string()])
+//!     .require_authentication(true)
+//!     .with_rate_limit(100, Duration::from_secs(60))
 //!     .build();
 //!
-//! // Create and validate sessions
-//! let client_ip = "192.168.1.100".parse()?;
-//! let session = session_manager.create_session(client_ip, Some("Mozilla/5.0"))?;
-//! println!("Created session: {}", session.id);
+//! // Or use defaults and customize specific settings
+//! let dev_validator = SecurityConfigBuilder::new()
+//!     .allow_localhost(true)
+//!     .disable_rate_limiting()
+//!     .build();
 //! # Ok(())
-//! # }
-//! ```
-//!
-//! ## Environment-Specific Configurations
-//!
-//! ```rust,no_run
-//! use turbomcp_transport::security::{SecurityConfigBuilder, OriginConfig, AuthConfig};
-//!
-//! # fn example() {
-//! // Development - relaxed security for ease of development
-//! let dev_validator = SecurityConfigBuilder::for_development().build();
-//!
-//! // Production - strict security with ergonomic builder
-//! let prod_validator = SecurityConfigBuilder::for_production()
-//!     .with_allowed_origins(vec!["https://prod.example.com".to_string()])
-//!     .with_api_keys(vec!["prod-secret-key".to_string()])
-//!     .build();
-//!
-//! // Testing - minimal security for fast tests
-//! let test_validator = SecurityConfigBuilder::for_testing().build();
 //! # }
 //! ```
 
@@ -104,9 +101,7 @@ pub use builder::{EnhancedSecurityConfigBuilder, SecurityConfigBuilder};
 pub use errors::SecurityError;
 pub use origin::{OriginConfig, validate_origin};
 pub use rate_limit::{RateLimitConfig, RateLimiter, check_rate_limit};
-pub use session::{
-    ProductionSessionConfig, SecureSessionInfo, SessionSecurityConfig, SessionSecurityManager,
-};
+pub use session::{SecureSessionInfo, SessionSecurityConfig, SessionSecurityManager};
 pub use utils::{
     HeaderValue, SecurityHeaders, create_cors_headers, create_security_headers, extract_api_key,
     extract_bearer_token, extract_client_ip, generate_secure_token, is_localhost_origin,
@@ -115,146 +110,22 @@ pub use utils::{
 };
 pub use validator::SecurityValidator;
 
-/// Presets for common security configurations
-pub mod presets {
-    use super::*;
-    use std::time::Duration;
-
-    /// High-security preset for critical production systems
-    pub fn high_security() -> (
-        OriginConfig,
-        AuthConfig,
-        RateLimitConfig,
-        SessionSecurityConfig,
-    ) {
-        (
-            OriginConfig {
-                allowed_origins: std::collections::HashSet::new(),
-                allow_localhost: false,
-                allow_any: false,
-            },
-            AuthConfig {
-                require_auth: true,
-                api_keys: std::collections::HashSet::new(),
-                method: AuthMethod::Bearer,
-            },
-            RateLimitConfig {
-                max_requests: 50,
-                window: Duration::from_secs(60),
-                enabled: true,
-            },
-            SessionSecurityConfig {
-                max_lifetime: Duration::from_secs(4 * 60 * 60), // 4 hours
-                idle_timeout: Duration::from_secs(10 * 60),     // 10 minutes
-                max_sessions_per_ip: 3,
-                enforce_ip_binding: true,
-                regenerate_session_ids: true,
-                regeneration_interval: Duration::from_secs(15 * 60), // 15 minutes
-            },
-        )
-    }
-
-    /// Balanced preset for typical production use
-    pub fn balanced() -> (
-        OriginConfig,
-        AuthConfig,
-        RateLimitConfig,
-        SessionSecurityConfig,
-    ) {
-        (
-            OriginConfig {
-                allowed_origins: std::collections::HashSet::new(),
-                allow_localhost: false,
-                allow_any: false,
-            },
-            AuthConfig {
-                require_auth: true,
-                api_keys: std::collections::HashSet::new(),
-                method: AuthMethod::Bearer,
-            },
-            RateLimitConfig {
-                max_requests: 100,
-                window: Duration::from_secs(60),
-                enabled: true,
-            },
-            SessionSecurityConfig {
-                max_lifetime: Duration::from_secs(8 * 60 * 60), // 8 hours
-                idle_timeout: Duration::from_secs(30 * 60),     // 30 minutes
-                max_sessions_per_ip: 5,
-                enforce_ip_binding: true,
-                regenerate_session_ids: true,
-                regeneration_interval: Duration::from_secs(60 * 60), // 1 hour
-            },
-        )
-    }
-
-    /// Relaxed preset for development environments
-    pub fn relaxed() -> (
-        OriginConfig,
-        AuthConfig,
-        RateLimitConfig,
-        SessionSecurityConfig,
-    ) {
-        (
-            OriginConfig {
-                allowed_origins: std::collections::HashSet::new(),
-                allow_localhost: true,
-                allow_any: false,
-            },
-            AuthConfig {
-                require_auth: false,
-                api_keys: std::collections::HashSet::new(),
-                method: AuthMethod::Bearer,
-            },
-            RateLimitConfig {
-                max_requests: 1000,
-                window: Duration::from_secs(60),
-                enabled: false,
-            },
-            SessionSecurityConfig {
-                max_lifetime: Duration::from_secs(24 * 60 * 60), // 24 hours
-                idle_timeout: Duration::from_secs(60 * 60),      // 1 hour
-                max_sessions_per_ip: 100,
-                enforce_ip_binding: false,
-                regenerate_session_ids: false,
-                regeneration_interval: Duration::from_secs(24 * 60 * 60),
-            },
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_presets_compilation() {
-        // Test that all presets compile and can be used
-        let (origin, auth, rate_limit, session) = presets::high_security();
-        assert!(!origin.allow_localhost);
-        assert!(auth.require_auth);
-        assert!(rate_limit.enabled);
-        assert!(session.enforce_ip_binding);
-
-        let (origin, auth, rate_limit, session) = presets::balanced();
-        assert!(!origin.allow_localhost);
-        assert!(auth.require_auth);
-        assert!(rate_limit.enabled);
-        assert!(session.enforce_ip_binding);
-
-        let (origin, auth, rate_limit, session) = presets::relaxed();
-        assert!(origin.allow_localhost);
-        assert!(!auth.require_auth);
-        assert!(!rate_limit.enabled);
-        assert!(!session.enforce_ip_binding);
-    }
 
     #[test]
     fn test_comprehensive_example() {
         use std::collections::HashMap;
 
         // Test the example from the module documentation
-        let validator = SecurityConfigBuilder::for_testing().build();
+        let validator = SecurityConfigBuilder::new()
+            .allow_localhost(true)
+            .allow_any_origin(true)
+            .require_authentication(true)
+            .with_api_keys(vec!["test-api-key".to_string()])
+            .with_rate_limit(2, std::time::Duration::from_secs(1))
+            .build();
 
         let mut headers = HashMap::new();
         headers.insert("Origin".to_string(), "http://localhost:3000".to_string());
@@ -272,7 +143,11 @@ mod tests {
     #[test]
     fn test_enhanced_security_example() {
         // Test enhanced security configuration
-        let (_validator, session_manager) = EnhancedSecurityConfigBuilder::for_testing().build();
+        let (_validator, session_manager) = EnhancedSecurityConfigBuilder::new()
+            .allow_localhost(true)
+            .allow_any_origin(true)
+            .with_max_sessions_per_ip(2)
+            .build();
 
         let client_ip = "127.0.0.1".parse().unwrap();
         let session = session_manager

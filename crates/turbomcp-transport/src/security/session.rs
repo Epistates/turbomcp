@@ -5,19 +5,14 @@
 //! - IP binding to prevent session hijacking (disabled by default)
 //! - User agent fingerprinting for anomaly detection
 //! - Session expiration and timeout handling
-//! - Concurrent session limits per IP (1000 default - high and permissive)
+//! - Concurrent session limits per IP
 //!
 //! ## Design Philosophy
 //! This is a **library**, not a security product. Defaults are permissive to avoid friction.
 //! Users should configure security policies appropriate for their deployment:
-//! - Use `for_production(max_sessions, ip_binding, regenerate_ids)` with explicit parameters for production
-//! - Use `for_development()` for relaxed constraints during development
-//! - Create custom configs for specialized needs
+//! - Use explicit configuration via struct initialization for production
+//! - Customize individual settings via struct fields
 //! - Layer application-level policies on top as needed
-//!
-//! **Production Configuration Philosophy**: Production presets require explicit configuration
-//! to ensure developers consciously choose their security posture, preventing accidental use
-//! of permissive defaults in production environments.
 
 use super::errors::SecurityError;
 use parking_lot::Mutex;
@@ -25,20 +20,6 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-
-/// Production session security configuration parameters
-///
-/// Used with `SessionSecurityConfig::production()` for explicit, self-documenting
-/// production configuration with named fields.
-#[derive(Clone, Debug)]
-pub struct ProductionSessionConfig {
-    /// Maximum concurrent sessions per IP address
-    pub max_sessions_per_ip: usize,
-    /// Whether to enforce IP binding (prevents session hijacking)
-    pub enforce_ip_binding: bool,
-    /// Whether to regularly regenerate session IDs (defense in depth)
-    pub regenerate_session_ids: bool,
-}
 
 /// Session security configuration
 #[derive(Clone, Debug)]
@@ -62,9 +43,9 @@ impl Default for SessionSecurityConfig {
         Self {
             max_lifetime: Duration::from_secs(24 * 60 * 60), // 24 hour max session
             idle_timeout: Duration::from_secs(30 * 60),      // 30 minute idle timeout
-            max_sessions_per_ip: usize::MAX,                 // Unlimited by default - users add limits if needed
-            enforce_ip_binding: false,                       // Disabled - users enable if needed
-            regenerate_session_ids: false,                   // Disabled - users enable if needed
+            max_sessions_per_ip: usize::MAX, // Unlimited by default - users add limits if needed
+            enforce_ip_binding: false,       // Disabled - users enable if needed
+            regenerate_session_ids: false,   // Disabled - users enable if needed
             regeneration_interval: Duration::from_secs(60 * 60), // Regenerate every hour
         }
     }
@@ -74,82 +55,6 @@ impl SessionSecurityConfig {
     /// Create a new session security configuration
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Create development configuration with relaxed security
-    pub fn for_development() -> Self {
-        Self {
-            max_lifetime: Duration::from_secs(24 * 60 * 60),
-            idle_timeout: Duration::from_secs(60 * 60), // 1 hour idle timeout
-            max_sessions_per_ip: 100,                   // High limit for development
-            enforce_ip_binding: false,                  // Allow IP changes for dev
-            regenerate_session_ids: false,              // Disabled for easier debugging
-            regeneration_interval: Duration::from_secs(24 * 60 * 60),
-        }
-    }
-
-    /// Create strict production configuration - recommended for most production deployments
-    ///
-    /// This preset provides strong security with:
-    /// - 5 sessions per IP (prevents session exhaustion)
-    /// - IP binding enabled (prevents session hijacking)
-    /// - Session ID regeneration (defense in depth)
-    ///
-    /// For custom production config, use `production()` with `ProductionSessionConfig`.
-    ///
-    /// # Example
-    /// ```
-    /// # use turbomcp_transport::SessionSecurityConfig;
-    /// // Recommended production preset
-    /// let config = SessionSecurityConfig::for_production();
-    /// ```
-    pub fn for_production() -> Self {
-        Self {
-            max_lifetime: Duration::from_secs(8 * 60 * 60),
-            idle_timeout: Duration::from_secs(15 * 60),
-            max_sessions_per_ip: 5,
-            enforce_ip_binding: true,
-            regenerate_session_ids: true,
-            regeneration_interval: Duration::from_secs(30 * 60),
-        }
-    }
-
-    /// Create custom production configuration with explicit parameters
-    ///
-    /// Use this when you need production-grade security with custom limits.
-    /// Named struct fields make configuration explicit and self-documenting.
-    ///
-    /// # Example
-    /// ```
-    /// # use turbomcp_transport::{SessionSecurityConfig, ProductionSessionConfig};
-    /// // Custom production config
-    /// let config = SessionSecurityConfig::production(ProductionSessionConfig {
-    ///     max_sessions_per_ip: 10,
-    ///     enforce_ip_binding: true,
-    ///     regenerate_session_ids: false, // Disabled for high-traffic
-    /// });
-    /// ```
-    pub fn production(config: ProductionSessionConfig) -> Self {
-        Self {
-            max_lifetime: Duration::from_secs(8 * 60 * 60),
-            idle_timeout: Duration::from_secs(15 * 60),
-            max_sessions_per_ip: config.max_sessions_per_ip,
-            enforce_ip_binding: config.enforce_ip_binding,
-            regenerate_session_ids: config.regenerate_session_ids,
-            regeneration_interval: Duration::from_secs(30 * 60),
-        }
-    }
-
-    /// Create testing configuration with very short timeouts
-    pub fn for_testing() -> Self {
-        Self {
-            max_lifetime: Duration::from_secs(10),
-            idle_timeout: Duration::from_secs(5),
-            max_sessions_per_ip: 2,
-            enforce_ip_binding: true,
-            regenerate_session_ids: true,
-            regeneration_interval: Duration::from_secs(2),
-        }
     }
 }
 
@@ -492,33 +397,6 @@ mod tests {
         assert!(!config.enforce_ip_binding);
         assert!(!config.regenerate_session_ids);
         assert_eq!(config.max_sessions_per_ip, usize::MAX);
-    }
-
-    #[test]
-    fn test_session_config_for_development() {
-        let config = SessionSecurityConfig::for_development();
-        assert!(!config.enforce_ip_binding);
-        assert!(!config.regenerate_session_ids);
-    }
-
-    #[test]
-    fn test_session_config_for_production() {
-        let config = SessionSecurityConfig::for_production();
-        assert!(config.enforce_ip_binding);
-        assert!(config.regenerate_session_ids);
-        assert_eq!(config.max_sessions_per_ip, 5);
-    }
-
-    #[test]
-    fn test_session_config_production_custom() {
-        let config = SessionSecurityConfig::production(ProductionSessionConfig {
-            max_sessions_per_ip: 10,
-            enforce_ip_binding: true,
-            regenerate_session_ids: false,
-        });
-        assert!(config.enforce_ip_binding);
-        assert!(!config.regenerate_session_ids);
-        assert_eq!(config.max_sessions_per_ip, 10);
     }
 
     #[test]

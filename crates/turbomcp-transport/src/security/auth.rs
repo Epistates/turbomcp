@@ -46,36 +46,6 @@ impl AuthConfig {
         Self::default()
     }
 
-    /// Create development configuration with no authentication required
-    pub fn for_development() -> Self {
-        Self {
-            require_auth: false,
-            api_keys: HashSet::new(),
-            method: AuthMethod::Bearer,
-        }
-    }
-
-    /// Create production configuration with required authentication
-    pub fn for_production(api_keys: Vec<String>, method: AuthMethod) -> Self {
-        Self {
-            require_auth: true,
-            api_keys: api_keys.into_iter().collect(),
-            method,
-        }
-    }
-
-    /// Create testing configuration with a test API key
-    pub fn for_testing() -> Self {
-        let mut api_keys = HashSet::new();
-        api_keys.insert("test-api-key".to_string());
-
-        Self {
-            require_auth: true,
-            api_keys,
-            method: AuthMethod::Bearer,
-        }
-    }
-
     /// Add an API key
     pub fn add_api_key(&mut self, key: String) {
         self.api_keys.insert(key);
@@ -198,22 +168,12 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_config_for_development() {
-        let config = AuthConfig::for_development();
-        assert!(!config.require_auth);
-    }
-
-    #[test]
-    fn test_auth_config_for_production() {
-        let keys = vec!["secret123".to_string()];
-        let config = AuthConfig::for_production(keys.clone(), AuthMethod::Bearer);
-        assert!(config.require_auth);
-        assert!(config.api_keys.contains(&keys[0]));
-    }
-
-    #[test]
     fn test_bearer_authentication_success() {
-        let config = AuthConfig::for_production(vec!["secret123".to_string()], AuthMethod::Bearer);
+        let config = AuthConfig {
+            require_auth: true,
+            api_keys: vec!["secret123".to_string()].into_iter().collect(),
+            method: AuthMethod::Bearer,
+        };
 
         let mut headers = HashMap::new();
         headers.insert("Authorization".to_string(), "Bearer secret123".to_string());
@@ -223,7 +183,11 @@ mod tests {
 
     #[test]
     fn test_bearer_authentication_invalid_token() {
-        let config = AuthConfig::for_production(vec!["secret123".to_string()], AuthMethod::Bearer);
+        let config = AuthConfig {
+            require_auth: true,
+            api_keys: vec!["secret123".to_string()].into_iter().collect(),
+            method: AuthMethod::Bearer,
+        };
 
         let mut headers = HashMap::new();
         headers.insert("Authorization".to_string(), "Bearer wrong".to_string());
@@ -233,7 +197,11 @@ mod tests {
 
     #[test]
     fn test_bearer_authentication_invalid_format() {
-        let config = AuthConfig::for_production(vec!["secret123".to_string()], AuthMethod::Bearer);
+        let config = AuthConfig {
+            require_auth: true,
+            api_keys: vec!["secret123".to_string()].into_iter().collect(),
+            method: AuthMethod::Bearer,
+        };
 
         let mut headers = HashMap::new();
         headers.insert("Authorization".to_string(), "Basic secret123".to_string());
@@ -243,7 +211,11 @@ mod tests {
 
     #[test]
     fn test_api_key_authentication() {
-        let config = AuthConfig::for_production(vec!["api123".to_string()], AuthMethod::ApiKey);
+        let config = AuthConfig {
+            require_auth: true,
+            api_keys: vec!["api123".to_string()].into_iter().collect(),
+            method: AuthMethod::ApiKey,
+        };
 
         let mut headers = HashMap::new();
         headers.insert("Authorization".to_string(), "ApiKey api123".to_string());
@@ -253,10 +225,11 @@ mod tests {
 
     #[test]
     fn test_custom_header_authentication() {
-        let config = AuthConfig::for_production(
-            vec!["custom123".to_string()],
-            AuthMethod::Custom("X-API-Key".to_string()),
-        );
+        let config = AuthConfig {
+            require_auth: true,
+            api_keys: vec!["custom123".to_string()].into_iter().collect(),
+            method: AuthMethod::Custom("X-API-Key".to_string()),
+        };
 
         let mut headers = HashMap::new();
         headers.insert("X-API-Key".to_string(), "custom123".to_string());
@@ -266,7 +239,10 @@ mod tests {
 
     #[test]
     fn test_no_auth_required() {
-        let config = AuthConfig::for_development();
+        let config = AuthConfig {
+            require_auth: false,
+            ..Default::default()
+        };
         let headers = HashMap::new();
 
         assert!(validate_authentication(&config, &headers).is_ok());
@@ -274,7 +250,11 @@ mod tests {
 
     #[test]
     fn test_missing_authorization_header() {
-        let config = AuthConfig::for_production(vec!["secret".to_string()], AuthMethod::Bearer);
+        let config = AuthConfig {
+            require_auth: true,
+            api_keys: vec!["secret".to_string()].into_iter().collect(),
+            method: AuthMethod::Bearer,
+        };
         let headers = HashMap::new();
 
         assert!(validate_authentication(&config, &headers).is_err());

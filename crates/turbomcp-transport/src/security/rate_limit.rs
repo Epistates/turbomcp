@@ -38,57 +38,6 @@ impl RateLimitConfig {
         Self::default()
     }
 
-    /// Create development configuration with generous limits
-    pub fn for_development() -> Self {
-        Self {
-            max_requests: 1000,
-            window: Duration::from_secs(60),
-            enabled: false, // Disabled for development ease
-        }
-    }
-
-    /// Create production configuration with explicit rate limits
-    ///
-    /// Production deployments MUST explicitly configure rate limits.
-    /// This prevents accidental use of permissive defaults in production.
-    ///
-    /// # Arguments
-    /// * `max_requests` - Maximum requests allowed per window
-    /// * `window` - Time window for rate limiting (e.g., Duration::from_secs(60) for 1 minute)
-    ///
-    /// # Example
-    /// ```
-    /// # use turbomcp_transport::RateLimitConfig;
-    /// # use std::time::Duration;
-    /// // 100 requests per minute
-    /// let config = RateLimitConfig::for_production(100, Duration::from_secs(60));
-    /// ```
-    pub fn for_production(max_requests: usize, window: Duration) -> Self {
-        Self {
-            max_requests,
-            window,
-            enabled: true,
-        }
-    }
-
-    /// Create high-traffic configuration
-    pub fn for_high_traffic() -> Self {
-        Self {
-            max_requests: 1000,
-            window: Duration::from_secs(60),
-            enabled: true,
-        }
-    }
-
-    /// Create testing configuration with very low limits
-    pub fn for_testing() -> Self {
-        Self {
-            max_requests: 2,
-            window: Duration::from_secs(1),
-            enabled: true,
-        }
-    }
-
     /// Set maximum requests per window
     pub fn set_max_requests(&mut self, max_requests: usize) {
         self.max_requests = max_requests;
@@ -275,20 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn test_rate_limit_config_for_development() {
-        let config = RateLimitConfig::for_development();
-        assert!(!config.enabled);
-    }
-
-    #[test]
-    fn test_rate_limit_config_for_production() {
-        let config = RateLimitConfig::for_production(100, Duration::from_secs(60));
-        assert!(config.enabled);
-        assert_eq!(config.max_requests, 100);
-        assert_eq!(config.window, Duration::from_secs(60));
-    }
-
-    #[test]
     fn test_rate_limiter_allows_requests_within_limit() {
         let config = RateLimitConfig {
             max_requests: 2,
@@ -381,7 +316,11 @@ mod tests {
 
     #[test]
     fn test_get_request_count() {
-        let config = RateLimitConfig::for_testing();
+        let config = RateLimitConfig {
+            max_requests: 2,
+            window: Duration::from_secs(1),
+            enabled: true,
+        };
         let rate_limiter = RateLimiter::new(config);
         let client_ip = "127.0.0.1".parse().unwrap();
 

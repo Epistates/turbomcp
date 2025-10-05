@@ -35,45 +35,6 @@ impl SecurityConfigBuilder {
         }
     }
 
-    /// Create builder for development environment
-    pub fn for_development() -> Self {
-        Self {
-            origin_config: OriginConfig::for_development(),
-            auth_config: AuthConfig::for_development(),
-            rate_limit_config: Some(RateLimitConfig::for_development()),
-        }
-    }
-
-    /// Create builder for production environment - requires explicit configuration
-    ///
-    /// This returns a builder that needs origins and API keys configured.
-    /// Use builder methods to complete configuration with explicit, named parameters.
-    ///
-    /// # Example
-    /// ```
-    /// # use turbomcp_transport::SecurityConfigBuilder;
-    /// let validator = SecurityConfigBuilder::for_production()
-    ///     .with_allowed_origins(vec!["https://app.example.com".to_string()])
-    ///     .with_api_keys(vec!["secret-key".to_string()])
-    ///     .build();
-    /// ```
-    pub fn for_production() -> Self {
-        Self {
-            origin_config: OriginConfig::for_production(Vec::new()),
-            auth_config: AuthConfig::for_production(Vec::new(), AuthMethod::Bearer),
-            rate_limit_config: Some(RateLimitConfig::for_production(100, Duration::from_secs(60))),
-        }
-    }
-
-    /// Create builder for testing environment
-    pub fn for_testing() -> Self {
-        Self {
-            origin_config: OriginConfig::for_testing(),
-            auth_config: AuthConfig::for_testing(),
-            rate_limit_config: Some(RateLimitConfig::for_testing()),
-        }
-    }
-
     /// Set allowed origins for CORS
     pub fn with_allowed_origins(mut self, origins: Vec<String>) -> Self {
         self.origin_config.allowed_origins = origins.into_iter().collect();
@@ -194,42 +155,6 @@ impl EnhancedSecurityConfigBuilder {
         Self {
             security_config: SecurityConfigBuilder::new(),
             session_config: SessionSecurityConfig::default(),
-        }
-    }
-
-    /// Create builder for development environment
-    pub fn for_development() -> Self {
-        Self {
-            security_config: SecurityConfigBuilder::for_development(),
-            session_config: SessionSecurityConfig::for_development(),
-        }
-    }
-
-    /// Create builder for production environment with recommended defaults
-    ///
-    /// Returns a builder with production-grade presets for both security and sessions.
-    /// Use builder methods to customize specific settings while keeping other defaults.
-    ///
-    /// # Example
-    /// ```
-    /// # use turbomcp_transport::EnhancedSecurityConfigBuilder;
-    /// let (validator, session_mgr) = EnhancedSecurityConfigBuilder::for_production()
-    ///     .with_allowed_origins(vec!["https://app.example.com".to_string()])
-    ///     .with_api_keys(vec!["secret-key".to_string()])
-    ///     .build();
-    /// ```
-    pub fn for_production() -> Self {
-        Self {
-            security_config: SecurityConfigBuilder::for_production(),
-            session_config: SessionSecurityConfig::for_production(),
-        }
-    }
-
-    /// Create builder for testing environment
-    pub fn for_testing() -> Self {
-        Self {
-            security_config: SecurityConfigBuilder::for_testing(),
-            session_config: SessionSecurityConfig::for_testing(),
         }
     }
 
@@ -387,37 +312,6 @@ mod tests {
     }
 
     #[test]
-    fn test_security_config_builder_for_development() {
-        let validator = SecurityConfigBuilder::for_development().build();
-
-        assert!(validator.origin_config().allow_localhost);
-        assert!(!validator.auth_config().require_auth);
-
-        // Rate limiting should be disabled for development
-        if let Some(limiter) = validator.rate_limiter() {
-            assert!(!limiter.config().enabled);
-        }
-    }
-
-    #[test]
-    fn test_security_config_builder_for_production() {
-        let validator = SecurityConfigBuilder::for_production()
-            .with_allowed_origins(vec!["https://app.example.com".to_string()])
-            .with_api_keys(vec!["prod-key".to_string()])
-            .build();
-
-        assert!(!validator.origin_config().allow_localhost);
-        assert!(validator.auth_config().require_auth);
-        assert!(
-            validator
-                .origin_config()
-                .allowed_origins
-                .contains("https://app.example.com")
-        );
-        assert!(validator.auth_config().api_keys.contains("prod-key"));
-    }
-
-    #[test]
     fn test_security_config_builder_disable_rate_limiting() {
         let validator = SecurityConfigBuilder::new().disable_rate_limiting().build();
 
@@ -442,28 +336,6 @@ mod tests {
         );
         assert!(session_manager.config().enforce_ip_binding);
         assert!(session_manager.config().regenerate_session_ids);
-    }
-
-    #[test]
-    fn test_enhanced_security_config_builder_for_environments() {
-        // Development
-        let (validator, session_manager) = EnhancedSecurityConfigBuilder::for_development().build();
-        assert!(validator.origin_config().allow_localhost);
-        assert!(!session_manager.config().enforce_ip_binding);
-
-        // Production
-        let (validator, session_manager) = EnhancedSecurityConfigBuilder::for_production()
-            .with_allowed_origins(vec!["https://prod.com".to_string()])
-            .with_api_keys(vec!["prod-key".to_string()])
-            .build();
-        assert!(!validator.origin_config().allow_localhost);
-        assert!(session_manager.config().enforce_ip_binding);
-        assert_eq!(session_manager.config().max_sessions_per_ip, 5);
-
-        // Testing
-        let (validator, session_manager) = EnhancedSecurityConfigBuilder::for_testing().build();
-        assert!(validator.origin_config().allow_any);
-        assert_eq!(session_manager.config().max_sessions_per_ip, 2);
     }
 
     #[test]
