@@ -1,11 +1,23 @@
 //! Session security management for transport layer
 //!
-//! This module provides comprehensive session security including:
+//! This module provides **optional** session security mechanisms that users can enable:
 //! - Cryptographically secure session ID generation
-//! - IP binding to prevent session hijacking
+//! - IP binding to prevent session hijacking (disabled by default)
 //! - User agent fingerprinting for anomaly detection
 //! - Session expiration and timeout handling
-//! - Concurrent session limits per IP
+//! - Concurrent session limits per IP (1000 default - high and permissive)
+//!
+//! ## Design Philosophy
+//! This is a **library**, not a security product. Defaults are permissive to avoid friction.
+//! Users should configure security policies appropriate for their deployment:
+//! - Use `for_production(max_sessions, ip_binding, regenerate_ids)` with explicit parameters for production
+//! - Use `for_development()` for relaxed constraints during development
+//! - Create custom configs for specialized needs
+//! - Layer application-level policies on top as needed
+//!
+//! **Production Configuration Philosophy**: Production presets require explicit configuration
+//! to ensure developers consciously choose their security posture, preventing accidental use
+//! of permissive defaults in production environments.
 
 use super::errors::SecurityError;
 use parking_lot::Mutex;
@@ -13,6 +25,20 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// Production session security configuration parameters
+///
+/// Used with `SessionSecurityConfig::production()` for explicit, self-documenting
+/// production configuration with named fields.
+#[derive(Clone, Debug)]
+pub struct ProductionSessionConfig {
+    /// Maximum concurrent sessions per IP address
+    pub max_sessions_per_ip: usize,
+    /// Whether to enforce IP binding (prevents session hijacking)
+    pub enforce_ip_binding: bool,
+    /// Whether to regularly regenerate session IDs (defense in depth)
+    pub regenerate_session_ids: bool,
+}
 
 /// Session security configuration
 #[derive(Clone, Debug)]
@@ -36,9 +62,9 @@ impl Default for SessionSecurityConfig {
         Self {
             max_lifetime: Duration::from_secs(24 * 60 * 60), // 24 hour max session
             idle_timeout: Duration::from_secs(30 * 60),      // 30 minute idle timeout
-            max_sessions_per_ip: 10,                         // Max 10 sessions per IP
-            enforce_ip_binding: true,                        // Prevent session hijacking
-            regenerate_session_ids: true,                    // Prevent session fixation
+            max_sessions_per_ip: usize::MAX,                 // Unlimited by default - users add limits if needed
+            enforce_ip_binding: false,                       // Disabled - users enable if needed
+            regenerate_session_ids: false,                   // Disabled - users enable if needed
             regeneration_interval: Duration::from_secs(60 * 60), // Regenerate every hour
         }
     }
@@ -62,15 +88,55 @@ impl SessionSecurityConfig {
         }
     }
 
-    /// Create production configuration with strict security
+    /// Create strict production configuration - recommended for most production deployments
+    ///
+    /// This preset provides strong security with:
+    /// - 5 sessions per IP (prevents session exhaustion)
+    /// - IP binding enabled (prevents session hijacking)
+    /// - Session ID regeneration (defense in depth)
+    ///
+    /// For custom production config, use `production()` with `ProductionSessionConfig`.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_transport::SessionSecurityConfig;
+    /// // Recommended production preset
+    /// let config = SessionSecurityConfig::for_production();
+    /// ```
     pub fn for_production() -> Self {
         Self {
-            max_lifetime: Duration::from_secs(8 * 60 * 60), // 8 hour max session
-            idle_timeout: Duration::from_secs(15 * 60),     // 15 minute idle timeout
-            max_sessions_per_ip: 5,                         // Strict session limit
-            enforce_ip_binding: true,                       // Strict IP binding
-            regenerate_session_ids: true,                   // Regular regeneration
-            regeneration_interval: Duration::from_secs(30 * 60), // Every 30 minutes
+            max_lifetime: Duration::from_secs(8 * 60 * 60),
+            idle_timeout: Duration::from_secs(15 * 60),
+            max_sessions_per_ip: 5,
+            enforce_ip_binding: true,
+            regenerate_session_ids: true,
+            regeneration_interval: Duration::from_secs(30 * 60),
+        }
+    }
+
+    /// Create custom production configuration with explicit parameters
+    ///
+    /// Use this when you need production-grade security with custom limits.
+    /// Named struct fields make configuration explicit and self-documenting.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_transport::{SessionSecurityConfig, ProductionSessionConfig};
+    /// // Custom production config
+    /// let config = SessionSecurityConfig::production(ProductionSessionConfig {
+    ///     max_sessions_per_ip: 10,
+    ///     enforce_ip_binding: true,
+    ///     regenerate_session_ids: false, // Disabled for high-traffic
+    /// });
+    /// ```
+    pub fn production(config: ProductionSessionConfig) -> Self {
+        Self {
+            max_lifetime: Duration::from_secs(8 * 60 * 60),
+            idle_timeout: Duration::from_secs(15 * 60),
+            max_sessions_per_ip: config.max_sessions_per_ip,
+            enforce_ip_binding: config.enforce_ip_binding,
+            regenerate_session_ids: config.regenerate_session_ids,
+            regeneration_interval: Duration::from_secs(30 * 60),
         }
     }
 
@@ -269,6 +335,12 @@ impl SessionSecurityManager {
             if let Some(&count) = ip_counts.get(&ip)
                 && count >= self.config.max_sessions_per_ip
             {
+                tracing::warn!(
+                    client_ip = %ip,
+                    current_sessions = count,
+                    max_sessions = self.config.max_sessions_per_ip,
+                    "Session limit exceeded - rejecting new session"
+                );
                 return Err(SecurityError::SessionViolation(format!(
                     "Maximum sessions per IP exceeded: {}/{}",
                     count, self.config.max_sessions_per_ip
@@ -416,9 +488,10 @@ mod tests {
     #[test]
     fn test_session_config_default() {
         let config = SessionSecurityConfig::default();
-        assert!(config.enforce_ip_binding);
-        assert!(config.regenerate_session_ids);
-        assert_eq!(config.max_sessions_per_ip, 10);
+        // Library defaults are unlimited - users configure their own policy
+        assert!(!config.enforce_ip_binding);
+        assert!(!config.regenerate_session_ids);
+        assert_eq!(config.max_sessions_per_ip, usize::MAX);
     }
 
     #[test]
@@ -434,6 +507,18 @@ mod tests {
         assert!(config.enforce_ip_binding);
         assert!(config.regenerate_session_ids);
         assert_eq!(config.max_sessions_per_ip, 5);
+    }
+
+    #[test]
+    fn test_session_config_production_custom() {
+        let config = SessionSecurityConfig::production(ProductionSessionConfig {
+            max_sessions_per_ip: 10,
+            enforce_ip_binding: true,
+            regenerate_session_ids: false,
+        });
+        assert!(config.enforce_ip_binding);
+        assert!(!config.regenerate_session_ids);
+        assert_eq!(config.max_sessions_per_ip, 10);
     }
 
     #[test]
@@ -481,23 +566,37 @@ mod tests {
 
     #[test]
     fn test_session_ip_binding() {
-        let config = SessionSecurityConfig::default();
+        // Default config has IP binding disabled
+        let default_config = SessionSecurityConfig::default();
         let original_ip = "127.0.0.1".parse().unwrap();
         let different_ip = "192.168.1.1".parse().unwrap();
 
         let session = SecureSessionInfo::new(original_ip, Some("Mozilla/5.0"));
 
-        // Should fail with different IP
+        // With default config (IP binding off), different IP should succeed
         assert!(
             session
-                .validate_security(&config, different_ip, Some("Mozilla/5.0"))
+                .validate_security(&default_config, different_ip, Some("Mozilla/5.0"))
+                .is_ok()
+        );
+
+        // Test with IP binding enabled
+        let strict_config = SessionSecurityConfig {
+            enforce_ip_binding: true,
+            ..SessionSecurityConfig::default()
+        };
+
+        // Should fail with different IP when IP binding is enabled
+        assert!(
+            session
+                .validate_security(&strict_config, different_ip, Some("Mozilla/5.0"))
                 .is_err()
         );
 
         // Should succeed with same IP
         assert!(
             session
-                .validate_security(&config, original_ip, Some("Mozilla/5.0"))
+                .validate_security(&strict_config, original_ip, Some("Mozilla/5.0"))
                 .is_ok()
         );
     }
