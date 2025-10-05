@@ -83,10 +83,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // CRITICAL: Test all generated methods exist and work
 
-    // Test Arc conversion and router generation (these methods MUST exist)
+    // Test Arc conversion and MCP-compliant router generation (these methods MUST exist)
     let server_arc = Arc::new(server.clone());
-    let _router = server_arc.into_router();
-    let _router_with_path = server_arc.into_router_with_path("/test");
+    let _router = server_arc.clone().into_mcp_router();
+    let _router_with_path = server_arc.into_mcp_router_with_path("/test");
 
     // Test metadata access (must be public)
     let tools_metadata = TestServer::get_tools_metadata();

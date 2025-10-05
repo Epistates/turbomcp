@@ -588,7 +588,10 @@ async fn test_completion_request_tracking() {
             context: None,
         };
 
-        let _ = server.handle_complete_request(params).await;
+        server
+            .handle_complete_request(params)
+            .await
+            .expect("Complete request should succeed");
     }
 
     // Verify all requests captured
