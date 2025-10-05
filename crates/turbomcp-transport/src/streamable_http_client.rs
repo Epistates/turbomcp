@@ -1,4 +1,4 @@
-//! MCP 2025-06-18 Compliant Streamable HTTP Client - World-Class Implementation
+//! MCP 2025-06-18 Compliant Streamable HTTP Client - Standard Implementation
 //!
 //! This client provides **strict MCP 2025-06-18 specification compliance** with:
 //! - ✅ Single MCP endpoint for all communication
@@ -61,16 +61,16 @@ impl Default for RetryPolicy {
 }
 
 impl RetryPolicy {
-    fn delay(&self, attempt: u32) -> Option<Duration> {
+    pub(crate) fn delay(&self, attempt: u32) -> Option<Duration> {
         match self {
             Self::Fixed {
                 interval,
                 max_attempts,
             } => {
-                if let Some(max) = max_attempts {
-                    if attempt >= *max {
-                        return None;
-                    }
+                if let Some(max) = max_attempts
+                    && attempt >= *max
+                {
+                    return None;
                 }
                 Some(*interval)
             }
@@ -79,10 +79,10 @@ impl RetryPolicy {
                 max_delay,
                 max_attempts,
             } => {
-                if let Some(max) = max_attempts {
-                    if attempt >= *max {
-                        return None;
-                    }
+                if let Some(max) = max_attempts
+                    && attempt >= *max
+                {
+                    return None;
                 }
                 let delay = base.as_secs() * 2u64.pow(attempt);
                 Some(Duration::from_secs(delay.min(max_delay.as_secs())))
@@ -157,6 +157,10 @@ pub struct StreamableHttpClientTransport {
     sse_receiver: Arc<Mutex<mpsc::Receiver<TransportMessage>>>,
     sse_sender: mpsc::Sender<TransportMessage>,
 
+    /// Channel for immediate JSON responses from POST requests
+    response_receiver: Arc<Mutex<mpsc::Receiver<TransportMessage>>>,
+    response_sender: mpsc::Sender<TransportMessage>,
+
     /// SSE connection task handle
     sse_task_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
@@ -174,6 +178,7 @@ impl StreamableHttpClientTransport {
     /// Create new streamable HTTP client transport
     pub fn new(config: StreamableHttpClientConfig) -> Self {
         let (sse_tx, sse_rx) = mpsc::channel(1000);
+        let (response_tx, response_rx) = mpsc::channel(100);
         let (event_emitter, _) = TransportEventEmitter::new();
 
         let http_client = HttpClient::builder()
@@ -202,6 +207,8 @@ impl StreamableHttpClientTransport {
             last_event_id: Arc::new(RwLock::new(None)),
             sse_receiver: Arc::new(Mutex::new(sse_rx)),
             sse_sender: sse_tx,
+            response_receiver: Arc::new(Mutex::new(response_rx)),
+            response_sender: response_tx,
             sse_task_handle: Arc::new(Mutex::new(None)),
         }
     }
@@ -307,6 +314,7 @@ impl StreamableHttpClientTransport {
     }
 
     /// SSE connection task with auto-reconnect
+    #[allow(clippy::too_many_arguments)]
     async fn sse_connection_task(
         endpoint_url: String,
         config: StreamableHttpClientConfig,
@@ -510,11 +518,78 @@ impl StreamableHttpClientTransport {
             }
         }
     }
+
+    /// Process SSE event from POST response
+    async fn process_post_sse_event(
+        event_str: &str,
+        response_sender: &mpsc::Sender<TransportMessage>,
+        last_event_id: &Arc<RwLock<Option<String>>>,
+    ) -> TransportResult<()> {
+        let lines: Vec<&str> = event_str.lines().collect();
+        let mut event_data: Vec<String> = Vec::new();
+        let mut event_id: Option<String> = None;
+
+        for line in lines {
+            if line.is_empty() {
+                continue;
+            }
+
+            if let Some(colon_pos) = line.find(':') {
+                let field = &line[..colon_pos];
+                let value = line[colon_pos + 1..].trim_start();
+
+                match field {
+                    "data" => event_data.push(value.to_string()),
+                    "id" => event_id = Some(value.to_string()),
+                    "event" => {
+                        // Event type field - we primarily care about "message" events
+                        // but we'll process any event with data
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Save event ID
+        if let Some(id) = event_id {
+            *last_event_id.write().await = Some(id);
+        }
+
+        if event_data.is_empty() {
+            return Ok(());
+        }
+
+        let data_str = event_data.join("\n");
+
+        // Parse as JSON-RPC message
+        let json_value: serde_json::Value = serde_json::from_str(&data_str).map_err(|e| {
+            TransportError::SerializationFailed(format!("Invalid JSON in POST SSE: {}", e))
+        })?;
+
+        let message = TransportMessage::new(
+            MessageId::from("post-sse-response".to_string()),
+            Bytes::from(
+                serde_json::to_vec(&json_value)
+                    .map_err(|e| TransportError::SerializationFailed(e.to_string()))?,
+            ),
+        );
+
+        response_sender
+            .send(message.clone())
+            .await
+            .map_err(|e| TransportError::ConnectionLost(e.to_string()))?;
+
+        debug!(
+            "Queued message from POST SSE stream: {}",
+            String::from_utf8_lossy(&message.payload)
+        );
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl Transport for StreamableHttpClientTransport {
-    async fn send(&mut self, message: TransportMessage) -> TransportResult<()> {
+    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
         debug!("Sending message via HTTP POST");
 
         // Get message endpoint (discovered or default)
@@ -552,17 +627,85 @@ impl Transport for StreamableHttpClientTransport {
             *self.session_id.write().await = Some(session_id.to_string());
         }
 
-        // Check if response is SSE stream
+        // MCP 2025-06-18: HTTP 202 Accepted means notification/response was accepted (no body)
+        if response.status() == reqwest::StatusCode::ACCEPTED {
+            debug!("Received HTTP 202 Accepted (no response body expected)");
+            // Update metrics
+            {
+                let mut metrics = self.metrics.write().await;
+                metrics.messages_sent += 1;
+                metrics.bytes_sent += message.payload.len() as u64;
+            }
+            return Ok(());
+        }
+
+        // Check response content type and handle accordingly
         let content_type = response
             .headers()
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
 
-        if content_type.contains("text/event-stream") {
-            info!("Received SSE stream response from POST");
-            // TODO: Handle SSE stream from POST
-            // For now, we'll just consume it
+        if content_type.contains("application/json") {
+            // MCP 2025-06-18: Server returned immediate JSON response
+            debug!("Received JSON response from POST");
+
+            let response_bytes = response
+                .bytes()
+                .await
+                .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
+
+            let response_message =
+                TransportMessage::new(MessageId::from("http-response".to_string()), response_bytes);
+
+            // Queue the response for the next receive() call
+            self.response_sender
+                .send(response_message)
+                .await
+                .map_err(|e| TransportError::ConnectionLost(e.to_string()))?;
+
+            debug!("JSON response queued successfully");
+        } else if content_type.contains("text/event-stream") {
+            // MCP 2025-06-18: Server returned SSE stream response from POST
+            // Process the stream synchronously to ensure responses are available
+            debug!("Received SSE stream response from POST, processing events");
+
+            let response_sender = self.response_sender.clone();
+            let last_event_id = Arc::clone(&self.last_event_id);
+
+            // Process SSE stream inline (not spawned) to ensure proper ordering
+            let mut stream = response.bytes_stream();
+            let mut buffer = String::new();
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        let chunk_str = String::from_utf8_lossy(&chunk);
+                        buffer.push_str(&chunk_str);
+
+                        // Process complete events
+                        while let Some(pos) = buffer.find("\n\n") {
+                            let event_str = buffer[..pos].to_string();
+                            buffer = buffer[pos + 2..].to_string();
+
+                            if let Err(e) = Self::process_post_sse_event(
+                                &event_str,
+                                &response_sender,
+                                &last_event_id,
+                            )
+                            .await
+                            {
+                                warn!("Failed to process POST SSE event: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Error reading POST SSE stream: {}", e);
+                        break;
+                    }
+                }
+            }
+            debug!("POST SSE stream processing completed");
         }
 
         // Update metrics
@@ -576,11 +719,38 @@ impl Transport for StreamableHttpClientTransport {
         Ok(())
     }
 
-    async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
-        let mut receiver = self.sse_receiver.lock().await;
+    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
+        // CRITICAL: Check response queue FIRST (for immediate JSON responses from POST)
+        // This ensures request-response pattern works correctly per MCP 2025-06-18
+        {
+            let mut response_receiver = self.response_receiver.lock().await;
+            match response_receiver.try_recv() {
+                Ok(message) => {
+                    debug!("Received queued JSON response");
+                    // Update metrics
+                    {
+                        let mut metrics = self.metrics.write().await;
+                        metrics.messages_received += 1;
+                        metrics.bytes_received += message.payload.len() as u64;
+                    }
+                    return Ok(Some(message));
+                }
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    // No queued responses, continue to check SSE channel
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    return Err(TransportError::ConnectionLost(
+                        "Response channel disconnected".to_string(),
+                    ));
+                }
+            }
+        }
 
-        match receiver.try_recv() {
+        // Check SSE channel for server-initiated messages
+        let mut sse_receiver = self.sse_receiver.lock().await;
+        match sse_receiver.try_recv() {
             Ok(message) => {
+                debug!("Received SSE message");
                 // Update metrics
                 {
                     let mut metrics = self.metrics.write().await;
@@ -612,7 +782,7 @@ impl Transport for StreamableHttpClientTransport {
         self.metrics.read().await.clone()
     }
 
-    async fn connect(&mut self) -> TransportResult<()> {
+    async fn connect(&self) -> TransportResult<()> {
         info!("Connecting to {}", self.get_endpoint_url());
 
         *self.state.write().await = TransportState::Connecting;
@@ -629,7 +799,7 @@ impl Transport for StreamableHttpClientTransport {
         Ok(())
     }
 
-    async fn disconnect(&mut self) -> TransportResult<()> {
+    async fn disconnect(&self) -> TransportResult<()> {
         info!("Disconnecting");
 
         *self.state.write().await = TransportState::Disconnecting;

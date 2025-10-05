@@ -65,27 +65,25 @@
 //! # }
 //! ```
 //!
-//! ### HTTP Server-Sent Events
+//! ### MCP 2025-06-18 Streamable HTTP (Client)
 //!
 //! ```rust,no_run
 //! # #[cfg(feature = "http")]
 //! # {
-//! use turbomcp_transport::http_sse::HttpSseConfig;
+//! use turbomcp_transport::streamable_http_client::{StreamableHttpClientConfig, StreamableHttpClientTransport};
 //! use std::time::Duration;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let config = HttpSseConfig {
-//!         bind_addr: "127.0.0.1:3000".to_string(),
-//!         sse_path: "/events".to_string(),
-//!         post_path: "/mcp".to_string(),
-//!         keep_alive_interval: Duration::from_secs(30),
-//!         max_sessions: 100,
+//!     let config = StreamableHttpClientConfig {
+//!         base_url: "http://localhost:8080".to_string(),
+//!         endpoint_path: "/mcp".to_string(),
+//!         timeout: Duration::from_secs(30),
 //!         ..Default::default()
 //!     };
 //!
-//!     // HTTP/SSE transport configuration ready
-//!     println!("HTTP SSE transport configured on {}", config.bind_addr);
+//!     let mut transport = StreamableHttpClientTransport::new(config);
+//!     // Full MCP 2025-06-18 compliance with SSE support
 //!     Ok(())
 //! }
 //! # }
@@ -136,12 +134,6 @@
 pub mod bidirectional;
 pub mod core;
 
-#[cfg(feature = "http")]
-pub mod http_sse;
-
-#[cfg(feature = "http")]
-pub mod http_sse_client;
-
 // MCP 2025-06-18 Compliant Streamable HTTP Transport (Recommended)
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
@@ -150,14 +142,6 @@ pub mod streamable_http_v2;
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub mod streamable_http_client;
-
-// Legacy HTTP transport (deprecated in favor of streamable_http_v2)
-#[cfg(feature = "http")]
-#[deprecated(
-    since = "2.0.0",
-    note = "Use streamable_http_v2 instead for MCP 2025-06-18 compliance"
-)]
-pub mod streamable_http;
 
 #[cfg(feature = "stdio")]
 pub mod stdio;
@@ -224,10 +208,6 @@ pub use tower::{SessionInfo, SessionManager, TowerTransportAdapter};
 // Re-export Axum integration
 #[cfg(feature = "http")]
 pub use axum::{AxumMcpExt, McpAppState, McpServerConfig, McpService};
-
-// Re-export HTTP/SSE client transport
-#[cfg(feature = "http")]
-pub use http_sse_client::{HttpSseClientConfig, HttpSseClientTransport};
 
 #[cfg(feature = "websocket")]
 pub use websocket::WebSocketTransport;

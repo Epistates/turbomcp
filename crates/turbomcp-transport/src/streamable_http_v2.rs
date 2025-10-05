@@ -1,4 +1,4 @@
-//! MCP 2025-06-18 Compliant Streamable HTTP Transport - World-Class Implementation
+//! MCP 2025-06-18 Compliant Streamable HTTP Transport - Standard Implementation
 //!
 //! This transport provides **strict MCP 2025-06-18 specification compliance** with:
 //! - ✅ Single MCP endpoint supporting GET, POST, and DELETE
@@ -362,11 +362,10 @@ async fn mcp_post_handler<H: turbomcp_core::JsonRpcHandler>(
     let is_request = !is_notification && !is_response;
 
     // Handle initialization specially
-    if let Some(method) = request.get("method").and_then(|m| m.as_str()) {
-        if method == "initialize" {
-            return handle_initialize(&state, request, addr.ip(), user_agent, protocol_version)
-                .await;
-        }
+    if let Some(method) = request.get("method").and_then(|m| m.as_str())
+        && method == "initialize"
+    {
+        return handle_initialize(&state, request, addr.ip(), user_agent, protocol_version).await;
     }
 
     // Validate session for non-initialization requests
