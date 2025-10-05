@@ -79,16 +79,6 @@ impl TurboTransport {
         )
     }
 
-    /// Create TurboTransport optimized for network operations
-    pub fn for_network(transport: Box<dyn Transport>) -> Self {
-        Self::new(
-            transport,
-            RetryConfig::for_network(),
-            CircuitBreakerConfig::for_network(),
-            HealthCheckConfig::for_network(),
-        )
-    }
-
     /// Execute operation with retry logic
     async fn execute_with_retry<F, Fut, T>(&self, mut operation: F) -> TransportResult<T>
     where
@@ -261,24 +251,24 @@ impl Transport for TurboTransport {
         inner.state().await
     }
 
-    async fn connect(&mut self) -> TransportResult<()> {
+    async fn connect(&self) -> TransportResult<()> {
         let inner = self.inner.clone();
         self.execute_with_retry(move || {
             let inner = inner.clone();
             async move {
-                let mut transport = inner.lock().await;
+                let transport = inner.lock().await;
                 transport.connect().await
             }
         })
         .await
     }
 
-    async fn disconnect(&mut self) -> TransportResult<()> {
-        let mut inner = self.inner.lock().await;
+    async fn disconnect(&self) -> TransportResult<()> {
+        let inner = self.inner.lock().await;
         inner.disconnect().await
     }
 
-    async fn send(&mut self, message: TransportMessage) -> TransportResult<()> {
+    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
         // Check for duplicate messages
         {
             let mut dedup = self.dedup_cache.write().await;
@@ -294,19 +284,19 @@ impl Transport for TurboTransport {
             let inner = inner.clone();
             let msg = msg.clone();
             async move {
-                let mut transport = inner.lock().await;
+                let transport = inner.lock().await;
                 transport.send(msg).await
             }
         })
         .await
     }
 
-    async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
+    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
         let inner = self.inner.clone();
         self.execute_with_retry(move || {
             let inner = inner.clone();
             async move {
-                let mut transport = inner.lock().await;
+                let transport = inner.lock().await;
                 transport.receive().await
             }
         })
@@ -329,8 +319,8 @@ impl Transport for TurboTransport {
         }
     }
 
-    async fn configure(&mut self, config: TransportConfig) -> TransportResult<()> {
-        let mut inner = self.inner.lock().await;
+    async fn configure(&self, config: TransportConfig) -> TransportResult<()> {
+        let inner = self.inner.lock().await;
         inner.configure(config).await
     }
 }

@@ -105,28 +105,6 @@ impl CircuitBreakerConfig {
     pub fn new() -> Self {
         Self::default()
     }
-
-    /// Create a configuration optimized for network operations
-    pub fn for_network() -> Self {
-        Self {
-            failure_threshold: 3,
-            success_threshold: 2,
-            timeout: Duration::from_secs(30),
-            rolling_window_size: 50,
-            minimum_requests: 5,
-        }
-    }
-
-    /// Create a configuration optimized for I/O operations
-    pub fn for_io() -> Self {
-        Self {
-            failure_threshold: 10,
-            success_threshold: 5,
-            timeout: Duration::from_secs(120),
-            rolling_window_size: 200,
-            minimum_requests: 20,
-        }
-    }
 }
 
 impl CircuitBreaker {

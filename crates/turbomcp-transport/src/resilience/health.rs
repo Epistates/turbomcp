@@ -103,28 +103,6 @@ impl HealthCheckConfig {
     pub fn new() -> Self {
         Self::default()
     }
-
-    /// Create a configuration optimized for network transports
-    pub fn for_network() -> Self {
-        Self {
-            interval: Duration::from_secs(15),
-            timeout: Duration::from_secs(3),
-            failure_threshold: 2,
-            success_threshold: 1,
-            custom_check: None,
-        }
-    }
-
-    /// Create a configuration optimized for local transports
-    pub fn for_local() -> Self {
-        Self {
-            interval: Duration::from_secs(60),
-            timeout: Duration::from_secs(1),
-            failure_threshold: 5,
-            success_threshold: 2,
-            custom_check: None,
-        }
-    }
 }
 
 impl HealthChecker {
@@ -252,26 +230,28 @@ mod tests {
 
     #[derive(Debug)]
     struct MockTransport {
-        connected: bool,
+        connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
     }
 
     #[async_trait]
     impl Transport for MockTransport {
-        async fn connect(&mut self) -> TransportResult<()> {
-            self.connected = true;
+        async fn connect(&self) -> TransportResult<()> {
+            self.connected
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         }
 
-        async fn disconnect(&mut self) -> TransportResult<()> {
-            self.connected = false;
+        async fn disconnect(&self) -> TransportResult<()> {
+            self.connected
+                .store(false, std::sync::atomic::Ordering::Relaxed);
             Ok(())
         }
 
-        async fn send(&mut self, _message: TransportMessage) -> TransportResult<()> {
+        async fn send(&self, _message: TransportMessage) -> TransportResult<()> {
             Ok(())
         }
 
-        async fn receive(&mut self) -> TransportResult<Option<TransportMessage>> {
+        async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
             Ok(Some(TransportMessage::new(
                 MessageId::from(Uuid::new_v4()),
                 Bytes::from("test"),
@@ -279,7 +259,7 @@ mod tests {
         }
 
         async fn state(&self) -> TransportState {
-            if self.connected {
+            if self.connected.load(std::sync::atomic::Ordering::Relaxed) {
                 TransportState::Connected
             } else {
                 TransportState::Disconnected
@@ -304,10 +284,7 @@ mod tests {
             Some("mock://test".to_string())
         }
 
-        async fn configure(
-            &mut self,
-            _config: crate::core::TransportConfig,
-        ) -> TransportResult<()> {
+        async fn configure(&self, _config: crate::core::TransportConfig) -> TransportResult<()> {
             Ok(())
         }
     }
@@ -315,7 +292,9 @@ mod tests {
     #[tokio::test]
     async fn test_health_checker_healthy_transport() {
         let mut checker = HealthChecker::with_defaults();
-        let transport = MockTransport { connected: true };
+        let transport = MockTransport {
+            connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        };
 
         let result = checker.check_health(&transport).await;
         assert!(result);
@@ -326,7 +305,9 @@ mod tests {
     #[tokio::test]
     async fn test_health_checker_unhealthy_transport() {
         let mut checker = HealthChecker::with_defaults();
-        let transport = MockTransport { connected: false };
+        let transport = MockTransport {
+            connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
 
         let result = checker.check_health(&transport).await;
         assert!(!result);
@@ -341,7 +322,9 @@ mod tests {
             ..HealthCheckConfig::default()
         };
         let mut checker = HealthChecker::new(config);
-        let transport = MockTransport { connected: true };
+        let transport = MockTransport {
+            connected: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        };
 
         // First success
         checker.check_health(&transport).await;
@@ -351,17 +334,6 @@ mod tests {
         checker.check_health(&transport).await;
         assert_eq!(checker.health_info().status, HealthStatus::Healthy);
         assert!(checker.is_healthy());
-    }
-
-    #[test]
-    fn test_health_config_presets() {
-        let network_config = HealthCheckConfig::for_network();
-        assert_eq!(network_config.interval, Duration::from_secs(15));
-        assert_eq!(network_config.failure_threshold, 2);
-
-        let local_config = HealthCheckConfig::for_local();
-        assert_eq!(local_config.interval, Duration::from_secs(60));
-        assert_eq!(local_config.failure_threshold, 5);
     }
 
     #[test]

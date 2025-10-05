@@ -62,34 +62,6 @@ impl RetryConfig {
         Self::default()
     }
 
-    /// Create a retry configuration optimized for network operations
-    pub fn for_network() -> Self {
-        Self {
-            max_attempts: 5,
-            base_delay: Duration::from_millis(200),
-            max_delay: Duration::from_secs(60),
-            backoff_multiplier: 1.5,
-            jitter_factor: 0.2,
-            retry_on_connection_error: true,
-            retry_on_timeout: true,
-            custom_retry_conditions: Vec::new(),
-        }
-    }
-
-    /// Create a retry configuration optimized for I/O operations
-    pub fn for_io() -> Self {
-        Self {
-            max_attempts: 3,
-            base_delay: Duration::from_millis(50),
-            max_delay: Duration::from_secs(10),
-            backoff_multiplier: 2.0,
-            jitter_factor: 0.1,
-            retry_on_connection_error: false,
-            retry_on_timeout: true,
-            custom_retry_conditions: Vec::new(),
-        }
-    }
-
     /// Calculate the delay for a given attempt with exponential backoff and jitter
     pub fn calculate_delay(&self, attempt: u32) -> Duration {
         if attempt == 0 {
