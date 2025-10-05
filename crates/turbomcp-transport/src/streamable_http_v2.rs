@@ -321,10 +321,11 @@ async fn mcp_post_handler<H: turbomcp_core::JsonRpcHandler>(
     }
 
     // Protocol version validation
+    // Default to latest supported version (2025-06-18) for best client compatibility
     let protocol_version = headers
         .get("MCP-Protocol-Version")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("2025-03-26"); // Default per spec
+        .unwrap_or("2025-06-18");
 
     if !matches!(protocol_version, "2025-06-18" | "2025-03-26" | "2024-11-05") {
         return (
@@ -597,19 +598,24 @@ async fn handle_request_with_sse<H: turbomcp_core::JsonRpcHandler>(
 ) -> (StatusCode, HeaderMap, impl IntoResponse) {
     let (tx, mut rx) = mpsc::unbounded_channel::<StoredEvent>();
 
-    // Send request acknowledgment as first event
-    let ack_event = StoredEvent {
-        id: Uuid::new_v4().to_string(),
-        event_type: "message".to_string(),
-        data: serde_json::json!({
-            "jsonrpc": "2.0",
-            "result": {"processing": true},
-            "id": request.get("id")
-        })
-        .to_string(),
-    };
+    // Process the request asynchronously and send result over SSE
+    let handler = state.handler.clone();
+    let request_clone = request.clone();
+    let tx_clone = tx.clone();
 
-    tx.send(ack_event).ok();
+    tokio::spawn(async move {
+        // Actually process the request!
+        let response = handler.handle_request(request_clone).await;
+
+        // Send the real response as SSE event
+        let response_event = StoredEvent {
+            id: Uuid::new_v4().to_string(),
+            event_type: "message".to_string(),
+            data: serde_json::to_string(&response).unwrap_or_default(),
+        };
+
+        tx_clone.send(response_event).ok();
+    });
 
     // Register for session events
     let mut sessions = state.sessions.write().await;
