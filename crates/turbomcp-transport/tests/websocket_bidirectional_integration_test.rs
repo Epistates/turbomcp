@@ -10,6 +10,8 @@
 //! - Comprehensive: Coverage includes success paths, error paths, and edge cases
 //! - Concurrent: Tests validate behavior under concurrent load
 
+#![cfg(feature = "websocket")]
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -182,28 +184,28 @@ impl ElicitationTestServer {
             match msg? {
                 Message::Text(text) => {
                     // Parse JSON-RPC request
-                    if let Ok(request) = serde_json::from_str::<serde_json::Value>(&text) {
-                        if request["method"] == "elicitation/create" {
-                            // Simulate processing delay
-                            let delay = *response_delay.read().await;
-                            sleep(delay).await;
+                    if let Ok(request) = serde_json::from_str::<serde_json::Value>(&text)
+                        && request["method"] == "elicitation/create"
+                    {
+                        // Simulate processing delay
+                        let delay = *response_delay.read().await;
+                        sleep(delay).await;
 
-                            // Send elicitation response
-                            let response = json!({
-                                "jsonrpc": "2.0",
-                                "result": {
-                                    "action": "submit",
-                                    "data": {
-                                        "response": "Test response"
-                                    }
-                                },
-                                "id": request["id"]
-                            });
+                        // Send elicitation response
+                        let response = json!({
+                            "jsonrpc": "2.0",
+                            "result": {
+                                "action": "submit",
+                                "data": {
+                                    "response": "Test response"
+                                }
+                            },
+                            "id": request["id"]
+                        });
 
-                            writer
-                                .send(Message::Text(response.to_string().into()))
-                                .await?;
-                        }
+                        writer
+                            .send(Message::Text(response.to_string().into()))
+                            .await?;
                     }
                 }
                 Message::Ping(data) => {
@@ -332,7 +334,7 @@ async fn test_websocket_connect_disconnect() {
         .expect("Failed to start server");
 
     let config = WebSocketBidirectionalConfig::client(server.url());
-    let mut transport = WebSocketBidirectionalTransport::new(config)
+    let transport = WebSocketBidirectionalTransport::new(config)
         .await
         .expect("Failed to create transport");
 
@@ -412,7 +414,10 @@ async fn test_websocket_reconnection_disabled() {
         .await
         .expect("Failed to start server");
 
-    let reconnect_config = ReconnectConfig::disabled();
+    let reconnect_config = ReconnectConfig {
+        enabled: false,
+        ..Default::default()
+    };
     let config =
         WebSocketBidirectionalConfig::client(server.url()).with_reconnect_config(reconnect_config);
 
@@ -467,7 +472,7 @@ async fn test_websocket_client_to_server_messages() {
         .expect("Failed to start server");
 
     let config = WebSocketBidirectionalConfig::client(server.url());
-    let mut transport = WebSocketBidirectionalTransport::new(config)
+    let transport = WebSocketBidirectionalTransport::new(config)
         .await
         .expect("Failed to create transport");
 
@@ -584,7 +589,7 @@ async fn test_websocket_server_to_client_elicitation() {
 async fn test_websocket_connection_failure() {
     // Try to connect to non-existent server
     let config = WebSocketBidirectionalConfig::client("ws://127.0.0.1:9999".to_string());
-    let mut transport = WebSocketBidirectionalTransport::new(config)
+    let transport = WebSocketBidirectionalTransport::new(config)
         .await
         .expect("Failed to create transport");
 
@@ -601,7 +606,7 @@ async fn test_websocket_connection_failure() {
 #[tokio::test]
 async fn test_websocket_send_without_connection() {
     let config = WebSocketBidirectionalConfig::default();
-    let mut transport = WebSocketBidirectionalTransport::new(config)
+    let transport = WebSocketBidirectionalTransport::new(config)
         .await
         .expect("Failed to create transport");
 
@@ -619,7 +624,7 @@ async fn test_websocket_send_without_connection() {
 #[tokio::test]
 async fn test_websocket_receive_without_connection() {
     let config = WebSocketBidirectionalConfig::default();
-    let mut transport = WebSocketBidirectionalTransport::new(config)
+    let transport = WebSocketBidirectionalTransport::new(config)
         .await
         .expect("Failed to create transport");
 
@@ -636,7 +641,7 @@ async fn test_websocket_message_size_validation() {
 
     let config = WebSocketBidirectionalConfig::client(server.url()).with_max_message_size(100);
 
-    let mut transport = WebSocketBidirectionalTransport::new(config)
+    let transport = WebSocketBidirectionalTransport::new(config)
         .await
         .expect("Failed to create transport");
 
@@ -708,7 +713,7 @@ async fn test_websocket_keep_alive_maintains_connection() {
     let config = WebSocketBidirectionalConfig::client(server.url())
         .with_keep_alive_interval(Duration::from_millis(200));
 
-    let mut transport = WebSocketBidirectionalTransport::new(config)
+    let transport = WebSocketBidirectionalTransport::new(config)
         .await
         .expect("Failed to create transport");
 
@@ -778,7 +783,14 @@ async fn test_websocket_tls_config() {
         .expect("Failed to create transport");
 
     // Verify TLS config is stored
-    assert!(transport.config.tls_config.is_some());
+    assert!(
+        transport
+            .config
+            .lock()
+            .expect("config mutex poisoned")
+            .tls_config
+            .is_some()
+    );
 }
 
 #[tokio::test]
@@ -793,8 +805,9 @@ async fn test_websocket_tls_insecure() {
         .expect("Failed to create transport");
 
     // Verify insecure mode
-    assert!(transport.config.tls_config.is_some());
-    assert!(transport.config.tls_config.unwrap().skip_verify);
+    let config_guard = transport.config.lock().expect("config mutex poisoned");
+    assert!(config_guard.tls_config.is_some());
+    assert!(config_guard.tls_config.as_ref().unwrap().skip_verify);
 }
 
 // ============================================================================
@@ -811,7 +824,7 @@ async fn test_websocket_multiple_clients() {
     let mut clients = vec![];
     for _ in 0..5 {
         let config = WebSocketBidirectionalConfig::client(server.url());
-        let mut transport = WebSocketBidirectionalTransport::new(config)
+        let transport = WebSocketBidirectionalTransport::new(config)
             .await
             .expect("Failed to create transport");
 
@@ -858,12 +871,12 @@ async fn test_websocket_concurrent_session_isolation() {
 
     // Create two clients with different session IDs
     let config1 = WebSocketBidirectionalConfig::client(server.url());
-    let mut transport1 = WebSocketBidirectionalTransport::new(config1)
+    let transport1 = WebSocketBidirectionalTransport::new(config1)
         .await
         .expect("Failed to create transport 1");
 
     let config2 = WebSocketBidirectionalConfig::client(server.url());
-    let mut transport2 = WebSocketBidirectionalTransport::new(config2)
+    let transport2 = WebSocketBidirectionalTransport::new(config2)
         .await
         .expect("Failed to create transport 2");
 
@@ -891,7 +904,7 @@ async fn test_websocket_high_throughput() {
     let config =
         WebSocketBidirectionalConfig::client(server.url()).with_max_message_size(1024 * 1024); // 1MB
 
-    let mut transport = WebSocketBidirectionalTransport::new(config)
+    let transport = WebSocketBidirectionalTransport::new(config)
         .await
         .expect("Failed to create transport");
 
@@ -936,7 +949,7 @@ async fn test_websocket_backpressure_handling() {
     let config =
         WebSocketBidirectionalConfig::client(server.url()).with_max_message_size(10 * 1024 * 1024); // 10MB
 
-    let mut transport = WebSocketBidirectionalTransport::new(config)
+    let transport = WebSocketBidirectionalTransport::new(config)
         .await
         .expect("Failed to create transport");
 
@@ -975,36 +988,13 @@ async fn test_websocket_backpressure_handling() {
 // ============================================================================
 
 #[tokio::test]
-async fn test_websocket_preset_configurations() {
-    use turbomcp_transport::websocket_bidirectional::presets;
-
-    // Test all presets
-    let high_perf = presets::high_performance();
-    assert!(high_perf.enable_compression);
-    assert_eq!(high_perf.max_concurrent_elicitations, 50);
-
-    let high_rel = presets::high_reliability();
-    assert!(!high_rel.enable_compression);
-    assert_eq!(high_rel.elicitation_timeout, Duration::from_secs(60));
-
-    let low_lat = presets::low_latency();
-    assert_eq!(low_lat.keep_alive_interval, Duration::from_secs(5));
-
-    let resource_constrained = presets::resource_constrained();
-    assert_eq!(resource_constrained.max_message_size, 256 * 1024);
-
-    let dev = presets::development();
-    assert!(!dev.reconnect.enabled);
-}
-
-#[tokio::test]
 async fn test_websocket_connection_statistics() {
     let server = WebSocketTestServer::start()
         .await
         .expect("Failed to start server");
 
     let config = WebSocketBidirectionalConfig::client(server.url());
-    let mut transport = WebSocketBidirectionalTransport::new(config)
+    let transport = WebSocketBidirectionalTransport::new(config)
         .await
         .expect("Failed to create transport");
 
@@ -1040,7 +1030,7 @@ async fn test_websocket_metrics_collection() {
         .expect("Failed to start server");
 
     let config = WebSocketBidirectionalConfig::client(server.url());
-    let mut transport = WebSocketBidirectionalTransport::new(config)
+    let transport = WebSocketBidirectionalTransport::new(config)
         .await
         .expect("Failed to create transport");
 

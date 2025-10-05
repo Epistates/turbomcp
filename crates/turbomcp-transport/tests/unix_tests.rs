@@ -216,7 +216,7 @@ mod unix_tests {
         use turbomcp_core::MessageId;
         use turbomcp_transport::core::TransportMessage;
 
-        let mut transport = UnixTransport::new_server(PathBuf::from("/tmp/send.sock"));
+        let transport = UnixTransport::new_server(PathBuf::from("/tmp/send.sock"));
         let message = TransportMessage::new(
             MessageId::String("test".to_string()),
             Bytes::from("test message"),
@@ -236,7 +236,7 @@ mod unix_tests {
 
     #[tokio::test]
     async fn test_unix_transport_receive_when_disconnected() {
-        let mut transport = UnixTransport::new_server(PathBuf::from("/tmp/receive.sock"));
+        let transport = UnixTransport::new_server(PathBuf::from("/tmp/receive.sock"));
 
         let result = transport.receive().await;
         assert!(result.is_err());
@@ -252,7 +252,7 @@ mod unix_tests {
 
     #[tokio::test]
     async fn test_unix_transport_disconnect() {
-        let mut transport = UnixTransport::new_server(PathBuf::from("/tmp/disconnect.sock"));
+        let transport = UnixTransport::new_server(PathBuf::from("/tmp/disconnect.sock"));
 
         let result = transport.disconnect().await;
         assert!(result.is_ok());
@@ -503,7 +503,7 @@ mod unix_tests {
             std::fs::metadata(&socket_path).expect("Failed to get old file metadata");
 
         // Create transport that should clean up the existing socket
-        let mut transport = UnixTransport::new_server(socket_path.clone());
+        let transport = UnixTransport::new_server(socket_path.clone());
 
         // Test that connect performs async cleanup without blocking
         let start_time = std::time::Instant::now();
@@ -567,7 +567,7 @@ mod unix_tests {
                     // Create test socket for each concurrent operation
                     std::fs::File::create(&transport_path).ok();
 
-                    let mut concurrent_transport = UnixTransport::new_server(transport_path);
+                    let concurrent_transport = UnixTransport::new_server(transport_path);
                     concurrent_transport.connect().await
                 })
             })
@@ -600,7 +600,7 @@ mod unix_tests {
         let non_existent_dir = temp_dir.path().join("does_not_exist");
         let invalid_socket_path = non_existent_dir.join("invalid.sock");
 
-        let mut transport = UnixTransport::new_server(invalid_socket_path.clone());
+        let transport = UnixTransport::new_server(invalid_socket_path.clone());
 
         // Test error handling for file removal failures
         let result = transport.connect().await;

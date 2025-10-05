@@ -1004,7 +1004,7 @@ except KeyboardInterrupt:
     };
 
     // Create REAL child process transport
-    let mut transport = ChildProcessTransport::new(config);
+    let transport = ChildProcessTransport::new(config);
 
     println!("🔧 Starting REAL STDIO MCP server subprocess");
     transport
@@ -1205,7 +1205,7 @@ async fn test_real_performance_stress_test() {
                 kill_on_drop: true,
             };
 
-            let mut transport = ChildProcessTransport::new(config);
+            let transport = ChildProcessTransport::new(config);
             if transport.connect().await.is_err() {
                 return (client_id, 0, 0); // Failed to connect
             }
@@ -1338,7 +1338,7 @@ async fn test_real_world_integration_demo() {
         kill_on_drop: true,
     };
 
-    let mut stdio_transport = ChildProcessTransport::new(stdio_config);
+    let stdio_transport = ChildProcessTransport::new(stdio_config);
     let stdio_connected = stdio_transport.connect().await.is_ok();
 
     let mut stdio_conn = ServerConnection {

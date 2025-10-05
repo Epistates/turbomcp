@@ -90,7 +90,7 @@ async fn test_mcp_initialization_protocol_compliance() {
     println!("Expected: This should now PASS due to blocking recv().await fix");
 
     let config = create_test_config();
-    let mut transport = ChildProcessTransport::new(config);
+    let transport = ChildProcessTransport::new(config);
 
     // Connect the transport
     transport
@@ -162,7 +162,7 @@ async fn test_request_response_pattern_success() {
     println!("✅ Testing Request/Response Pattern Success");
 
     let config = create_test_config();
-    let mut transport = ChildProcessTransport::new(config);
+    let transport = ChildProcessTransport::new(config);
 
     transport.connect().await.expect("Failed to connect");
 
@@ -208,7 +208,7 @@ async fn test_multiple_rapid_calls_demonstrate_blocking_behavior() {
     println!("✅ Testing Proper Blocking vs Polling Behavior");
 
     let config = create_test_config();
-    let mut transport = ChildProcessTransport::new(config);
+    let transport = ChildProcessTransport::new(config);
 
     transport.connect().await.expect("Failed to connect");
 
@@ -314,7 +314,7 @@ async fn test_transport_state_consistency() {
     // Verify transport state transitions properly with blocking behavior
 
     let config = create_test_config();
-    let mut transport = ChildProcessTransport::new(config);
+    let transport = ChildProcessTransport::new(config);
 
     // Initially disconnected
     assert_eq!(transport.state().await, TransportState::Disconnected);
@@ -361,7 +361,7 @@ async fn test_metrics_collection_during_failure() {
     // Verify that metrics are still collected properly even with receive failures
 
     let config = create_test_config();
-    let mut transport = ChildProcessTransport::new(config);
+    let transport = ChildProcessTransport::new(config);
     transport.connect().await.unwrap();
 
     let initial_metrics = transport.metrics().await;
@@ -649,7 +649,10 @@ async fn test_json_rpc_2_0_request_id_reuse_detection() {
     let id_3 = request_3_reused["id"].as_str().unwrap();
     let is_duplicate = !used_ids.insert(id_3.to_string());
     assert!(is_duplicate);
-    println!("⚠️  Request ID '{}' reused (MUST be rejected in same session)", id_3);
+    println!(
+        "⚠️  Request ID '{}' reused (MUST be rejected in same session)",
+        id_3
+    );
 
     println!("✅ Request ID uniqueness validation complete");
 }

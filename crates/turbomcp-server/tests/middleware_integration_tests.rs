@@ -106,8 +106,8 @@ fn test_authz_resource_extraction() {
     ];
 
     for (path, expected) in test_cases {
-        let resource = if path.starts_with('/') {
-            let parts: Vec<&str> = path[1..].split('/').collect();
+        let resource = if let Some(stripped) = path.strip_prefix('/') {
+            let parts: Vec<&str> = stripped.split('/').collect();
             let first_part = parts.first().unwrap_or(&"default");
             if first_part.is_empty() {
                 "default".to_string()

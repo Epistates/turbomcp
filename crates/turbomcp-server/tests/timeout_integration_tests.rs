@@ -19,8 +19,10 @@ use turbomcp_server::{
 
 /// Helper function to create a test timeout manager
 fn create_test_timeout_manager() -> ToolTimeoutManager {
-    let mut config = TimeoutConfig::default();
-    config.tool_execution_timeout = Duration::from_millis(500); // 500ms default timeout
+    let config = TimeoutConfig {
+        tool_execution_timeout: Duration::from_millis(500), // 500ms default timeout
+        ..Default::default()
+    };
     let metrics = Arc::new(ServerMetrics::new());
     ToolTimeoutManager::new(config, metrics)
 }

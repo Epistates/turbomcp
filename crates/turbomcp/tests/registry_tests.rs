@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use turbomcp::registry::{
-    HandlerRegistry, PromptRegistration, PromptRequest, ResourceRegistration, ResourceRequest,
-    ToolRegistration, ToolRequest,
+    HandlerRegistry, PromptRequest, ResourceRegistration, ResourceRequest, ToolRegistration,
+    ToolRequest,
 };
 use turbomcp::{CallToolResult, McpResult};
 use turbomcp_core::RequestContext;
@@ -66,161 +66,8 @@ fn dummy_prompt_handler(
     })
 }
 
-#[test]
-fn test_handler_registry_creation() {
-    let registry = HandlerRegistry::new();
-
-    // Registry should be created successfully
-    // The actual content depends on whether any handlers are registered via inventory
-    // but we can test that the methods work
-    let _tools = registry.tools();
-    let _resources = registry.resources();
-    let _prompts = registry.prompts();
-}
-
-#[test]
-fn test_handler_registry_default() {
-    let registry = HandlerRegistry::default();
-
-    // Should be equivalent to new()
-    let _tools = registry.tools();
-    let _resources = registry.resources();
-    let _prompts = registry.prompts();
-}
-
-#[test]
-fn test_tool_registration_structure() {
-    let registration = ToolRegistration {
-        name: "test_tool",
-        description: "A test tool",
-        schema: Some(json!({"type": "object", "properties": {}})),
-        allowed_roles: Some(&["admin", "user"]),
-        handler: dummy_tool_handler,
-    };
-
-    assert_eq!(registration.name, "test_tool");
-    assert_eq!(registration.description, "A test tool");
-    assert!(registration.schema.is_some());
-    assert!(registration.allowed_roles.is_some());
-    assert_eq!(registration.allowed_roles.unwrap().len(), 2);
-    assert_eq!(registration.allowed_roles.unwrap()[0], "admin");
-    assert_eq!(registration.allowed_roles.unwrap()[1], "user");
-}
-
-#[test]
-fn test_tool_registration_no_schema_no_roles() {
-    let registration = ToolRegistration {
-        name: "simple_tool",
-        description: "A simple tool",
-        schema: None,
-        allowed_roles: None,
-        handler: dummy_tool_handler,
-    };
-
-    assert_eq!(registration.name, "simple_tool");
-    assert_eq!(registration.description, "A simple tool");
-    assert!(registration.schema.is_none());
-    assert!(registration.allowed_roles.is_none());
-}
-
-#[test]
-fn test_resource_registration_structure() {
-    let registration = ResourceRegistration {
-        name: "test_resource",
-        description: "A test resource",
-        uri_template: Some("file://{path}"),
-        handler: dummy_resource_handler,
-    };
-
-    assert_eq!(registration.name, "test_resource");
-    assert_eq!(registration.description, "A test resource");
-    assert_eq!(registration.uri_template.unwrap(), "file://{path}");
-}
-
-#[test]
-fn test_resource_registration_no_uri_template() {
-    let registration = ResourceRegistration {
-        name: "simple_resource",
-        description: "A simple resource",
-        uri_template: None,
-        handler: dummy_resource_handler,
-    };
-
-    assert_eq!(registration.name, "simple_resource");
-    assert_eq!(registration.description, "A simple resource");
-    assert!(registration.uri_template.is_none());
-}
-
-#[test]
-fn test_prompt_registration_structure() {
-    let registration = PromptRegistration {
-        name: "test_prompt",
-        description: "A test prompt",
-        handler: dummy_prompt_handler,
-    };
-
-    assert_eq!(registration.name, "test_prompt");
-    assert_eq!(registration.description, "A test prompt");
-}
-
-#[test]
-fn test_tool_request_structure() {
-    let context = RequestContext::new().with_session_id("test_session");
-
-    let mut arguments = HashMap::new();
-    arguments.insert("param1".to_string(), json!("value1"));
-    arguments.insert("param2".to_string(), json!(42));
-
-    let request = ToolRequest { context, arguments };
-
-    assert_eq!(request.context.session_id.as_ref().unwrap(), "test_session");
-    assert_eq!(request.arguments.len(), 2);
-    assert_eq!(request.arguments.get("param1").unwrap(), &json!("value1"));
-    assert_eq!(request.arguments.get("param2").unwrap(), &json!(42));
-}
-
-#[test]
-fn test_resource_request_structure() {
-    let context = RequestContext::new().with_session_id("test_session");
-
-    let mut parameters = HashMap::new();
-    parameters.insert("path".to_string(), "/home/user/file.txt".to_string());
-    parameters.insert("format".to_string(), "json".to_string());
-
-    let request = ResourceRequest {
-        context,
-        uri: "file:///home/user/file.txt".to_string(),
-        parameters,
-    };
-
-    assert_eq!(request.context.session_id.as_ref().unwrap(), "test_session");
-    assert_eq!(request.uri, "file:///home/user/file.txt");
-    assert_eq!(request.parameters.len(), 2);
-    assert_eq!(
-        request.parameters.get("path").unwrap(),
-        "/home/user/file.txt"
-    );
-    assert_eq!(request.parameters.get("format").unwrap(), "json");
-}
-
-#[test]
-fn test_prompt_request_structure() {
-    let context = RequestContext::new().with_session_id("test_session");
-
-    let mut arguments = HashMap::new();
-    arguments.insert("topic".to_string(), json!("rust programming"));
-    arguments.insert("level".to_string(), json!("beginner"));
-
-    let request = PromptRequest { context, arguments };
-
-    assert_eq!(request.context.session_id.as_ref().unwrap(), "test_session");
-    assert_eq!(request.arguments.len(), 2);
-    assert_eq!(
-        request.arguments.get("topic").unwrap(),
-        &json!("rust programming")
-    );
-    assert_eq!(request.arguments.get("level").unwrap(), &json!("beginner"));
-}
+// Removed naive structure tests - these only verified field assignment which is trivial
+// Real behavioral tests start here:
 
 #[tokio::test]
 async fn test_tool_handler_execution() {
@@ -338,8 +185,7 @@ impl RealRegistryTestServer {
     }
 
     fn get_call_count(&self) -> usize {
-        self.call_count
-            .load(std::sync::atomic::Ordering::SeqCst)
+        self.call_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     fn increment_call_count(&self) {
@@ -364,25 +210,26 @@ async fn test_tool_handler_invocation_through_registry_pattern() {
     let request = ToolRequest { context, arguments };
 
     // Simulate the registry's handler invocation
-    let handler_fn = |server: &RealRegistryTestServer, request: ToolRequest| -> McpResult<CallToolResult> {
-        server.increment_call_count();
+    let handler_fn =
+        |server: &RealRegistryTestServer, request: ToolRequest| -> McpResult<CallToolResult> {
+            server.increment_call_count();
 
-        // Validate request structure
-        assert!(request.context.session_id.is_some());
-        assert!(!request.arguments.is_empty());
+            // Validate request structure
+            assert!(request.context.session_id.is_some());
+            assert!(!request.arguments.is_empty());
 
-        // Return MCP-compliant result
-        Ok(CallToolResult {
-            content: vec![ContentBlock::Text(TextContent {
-                text: format!("Processed: {:?}", request.arguments),
-                annotations: None,
-                meta: None,
-            })],
-            is_error: Some(false),
-            structured_content: None,
-            _meta: None,
-        })
-    };
+            // Return MCP-compliant result
+            Ok(CallToolResult {
+                content: vec![ContentBlock::Text(TextContent {
+                    text: format!("Processed: {:?}", request.arguments),
+                    annotations: None,
+                    meta: None,
+                })],
+                is_error: Some(false),
+                structured_content: None,
+                _meta: None,
+            })
+        };
 
     // Invoke handler (simulating registry.find_tool() + invoke)
     let result = handler_fn(&server, request);
@@ -421,7 +268,9 @@ async fn test_resource_handler_invocation_through_registry_pattern() {
     };
 
     // Simulate the registry's resource handler invocation
-    let handler_fn = |server: &RealRegistryTestServer, request: ResourceRequest| -> McpResult<ReadResourceResult> {
+    let handler_fn = |server: &RealRegistryTestServer,
+                      request: ResourceRequest|
+     -> McpResult<ReadResourceResult> {
         server.increment_call_count();
 
         // Validate request structure
@@ -478,24 +327,25 @@ async fn test_prompt_handler_invocation_through_registry_pattern() {
     let request = PromptRequest { context, arguments };
 
     // Simulate the registry's prompt handler invocation
-    let handler_fn = |server: &RealRegistryTestServer, request: PromptRequest| -> McpResult<GetPromptResult> {
-        server.increment_call_count();
+    let handler_fn =
+        |server: &RealRegistryTestServer, request: PromptRequest| -> McpResult<GetPromptResult> {
+            server.increment_call_count();
 
-        // Validate request structure
-        assert!(request.context.session_id.is_some());
-        assert!(!request.arguments.is_empty());
+            // Validate request structure
+            assert!(request.context.session_id.is_some());
+            assert!(!request.arguments.is_empty());
 
-        // Extract arguments (real argument extraction pattern)
-        let topic = request.arguments.get("topic").unwrap();
-        let style = request.arguments.get("style").unwrap();
+            // Extract arguments (real argument extraction pattern)
+            let topic = request.arguments.get("topic").unwrap();
+            let style = request.arguments.get("style").unwrap();
 
-        // Return MCP-compliant result
-        Ok(GetPromptResult {
-            description: Some(format!("Prompt for {}: {}", topic, style)),
-            messages: vec![],
-            _meta: None,
-        })
-    };
+            // Return MCP-compliant result
+            Ok(GetPromptResult {
+                description: Some(format!("Prompt for {}: {}", topic, style)),
+                messages: vec![],
+                _meta: None,
+            })
+        };
 
     // Invoke handler (simulating registry.find_prompt() + invoke)
     let result = handler_fn(&server, request);
@@ -507,10 +357,12 @@ async fn test_prompt_handler_invocation_through_registry_pattern() {
     assert!(result.is_ok());
     let prompt_result = result.unwrap();
     assert!(prompt_result.description.is_some());
-    assert!(prompt_result
-        .description
-        .unwrap()
-        .contains("Prompt for \"testing\": \"concise\""));
+    assert!(
+        prompt_result
+            .description
+            .unwrap()
+            .contains("Prompt for \"testing\": \"concise\"")
+    );
 
     println!("✅ Prompt handler invocation pattern validated");
 }
@@ -529,14 +381,16 @@ async fn test_concurrent_handler_invocations() {
     for i in 0..10 {
         let server_clone = Arc::clone(&server);
         join_set.spawn(async move {
-            let context = RequestContext::new().with_session_id(&format!("concurrent_{}", i));
+            let context = RequestContext::new().with_session_id(format!("concurrent_{}", i));
             let mut arguments = HashMap::new();
             arguments.insert("index".to_string(), json!(i));
 
             let request = ToolRequest { context, arguments };
 
             // Simulate handler invocation
-            let handler_fn = |server: &RealRegistryTestServer, _request: ToolRequest| -> McpResult<CallToolResult> {
+            let handler_fn = |server: &RealRegistryTestServer,
+                              _request: ToolRequest|
+             -> McpResult<CallToolResult> {
                 server.increment_call_count();
                 Ok(CallToolResult {
                     content: vec![ContentBlock::Text(TextContent {
@@ -550,7 +404,7 @@ async fn test_concurrent_handler_invocations() {
                 })
             };
 
-            handler_fn(&*server_clone, request)
+            handler_fn(&server_clone, request)
         });
     }
 
@@ -582,21 +436,22 @@ async fn test_handler_error_propagation() {
     };
 
     // Handler that returns an error
-    let error_handler_fn = |server: &RealRegistryTestServer, _request: ToolRequest| -> McpResult<CallToolResult> {
-        server.increment_call_count();
+    let error_handler_fn =
+        |server: &RealRegistryTestServer, _request: ToolRequest| -> McpResult<CallToolResult> {
+            server.increment_call_count();
 
-        // Return MCP-compliant error result
-        Ok(CallToolResult {
-            content: vec![ContentBlock::Text(TextContent {
-                text: "Tool execution failed: Invalid parameters".to_string(),
-                annotations: None,
-                meta: None,
-            })],
-            is_error: Some(true), // Indicate error condition
-            structured_content: None,
-            _meta: None,
-        })
-    };
+            // Return MCP-compliant error result
+            Ok(CallToolResult {
+                content: vec![ContentBlock::Text(TextContent {
+                    text: "Tool execution failed: Invalid parameters".to_string(),
+                    annotations: None,
+                    meta: None,
+                })],
+                is_error: Some(true), // Indicate error condition
+                structured_content: None,
+                _meta: None,
+            })
+        };
 
     let result = error_handler_fn(&server, request);
 
