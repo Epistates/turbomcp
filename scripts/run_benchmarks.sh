@@ -1,5 +1,5 @@
 #!/bin/bash
-# TurboMCP World-Class Benchmarking Script
+# TurboMCP Standard Benchmarking Script
 #
 # Provides comprehensive performance testing with regression detection,
 # historical tracking, and CI/CD integration capabilities.
@@ -33,7 +33,7 @@ OUTPUT_FORMAT="terminal"
 # Usage information
 show_usage() {
     cat << EOF
-🚀 TurboMCP World-Class Benchmarking Suite
+🚀 TurboMCP Standard Benchmarking Suite
 
 USAGE:
     $0 [OPTIONS] [COMMAND]
@@ -368,7 +368,7 @@ main() {
     fi
 
     # Start execution
-    log_info "🚀 TurboMCP World-Class Benchmarking Suite"
+    log_info "🚀 TurboMCP Standard Benchmarking Suite"
     log_info "Mode: $MODE"
 
     setup_directories

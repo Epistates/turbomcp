@@ -102,20 +102,25 @@ let config = ChildProcessConfig::new()
 let child_transport = StdioTransport::with_child_process(config).await?;
 ```
 
-### HTTP/SSE Transport
+### MCP 2025-06-18 Streamable HTTP (Client)
 
-For web application integration:
+For connecting to HTTP-based MCP servers with full SSE support:
 
 ```rust
-use turbomcp_transport::http::{HttpTransport, SseConfig};
+use turbomcp_transport::streamable_http_client::{
+    StreamableHttpClientConfig, StreamableHttpClientTransport
+};
+use std::time::Duration;
 
-// HTTP transport with Server-Sent Events
-let config = SseConfig::new()
-    .endpoint("/api/mcp")
-    .heartbeat_interval(Duration::from_secs(30))
-    .max_message_size(1024 * 1024); // 1MB
+// MCP 2025-06-18 compliant HTTP client with SSE
+let config = StreamableHttpClientConfig {
+    base_url: "http://localhost:8080".to_string(),
+    endpoint_path: "/mcp".to_string(),
+    timeout: Duration::from_secs(30),
+    ..Default::default()
+};
 
-let transport = HttpTransport::new_sse(config);
+let mut transport = StreamableHttpClientTransport::new(config);
 ```
 
 ### WebSocket Transport
