@@ -395,26 +395,6 @@ impl ClientBuilder {
         Ok(client)
     }
 
-    /// Build a SharedClient with the specified transport
-    ///
-    /// This creates a thread-safe client that can be cloned and used
-    /// across multiple threads.
-    ///
-    /// # Arguments
-    ///
-    /// * `transport` - Transport implementation
-    ///
-    /// # Returns
-    ///
-    /// A shared client ready for initialization
-    pub async fn build_shared<T: Transport>(
-        self,
-        transport: T,
-    ) -> turbomcp_core::Result<crate::SharedClient<T>> {
-        let client = self.build(transport).await?;
-        Ok(crate::SharedClient::new(client))
-    }
-
     // ============================================================================
     // INSPECTION METHODS
     // ============================================================================

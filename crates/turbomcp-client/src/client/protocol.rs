@@ -29,7 +29,7 @@ impl<T: Transport> ProtocolClient<T> {
 
     /// Send JSON-RPC request and await typed response
     pub(super) async fn request<R: serde::de::DeserializeOwned>(
-        &mut self,
+        &self,
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<R> {
@@ -75,7 +75,7 @@ impl<T: Transport> ProtocolClient<T> {
 
     /// Send JSON-RPC notification (no response expected)
     pub(super) async fn notify(
-        &mut self,
+        &self,
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<()> {
@@ -101,7 +101,7 @@ impl<T: Transport> ProtocolClient<T> {
 
     /// Connect the transport
     #[allow(dead_code)] // Reserved for future use
-    pub(super) async fn connect(&mut self) -> Result<()> {
+    pub(super) async fn connect(&self) -> Result<()> {
         self.transport
             .connect()
             .await
@@ -110,7 +110,7 @@ impl<T: Transport> ProtocolClient<T> {
 
     /// Disconnect the transport
     #[allow(dead_code)] // Reserved for future use
-    pub(super) async fn disconnect(&mut self) -> Result<()> {
+    pub(super) async fn disconnect(&self) -> Result<()> {
         self.transport
             .disconnect()
             .await
@@ -118,13 +118,7 @@ impl<T: Transport> ProtocolClient<T> {
     }
 
     /// Get transport reference
-    #[allow(dead_code)] // Reserved for future use
     pub(super) fn transport(&self) -> &T {
         &self.transport
-    }
-
-    /// Get mutable transport reference
-    pub(super) fn transport_mut(&mut self) -> &mut T {
-        &mut self.transport
     }
 }

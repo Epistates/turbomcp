@@ -4,6 +4,7 @@
 //! calling tools, and processing tool results.
 
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 
 use turbomcp_core::{Error, Result};
 use turbomcp_protocol::types::{CallToolRequest, CallToolResult, Content, ListToolsResult, Tool};
@@ -39,8 +40,8 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn list_tools(&mut self) -> Result<Vec<Tool>> {
-        if !self.initialized {
+    pub async fn list_tools(&self) -> Result<Vec<Tool>> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 
@@ -74,7 +75,7 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn list_tool_names(&mut self) -> Result<Vec<String>> {
+    pub async fn list_tool_names(&self) -> Result<Vec<String>> {
         let tools = self.list_tools().await?;
         Ok(tools.into_iter().map(|tool| tool.name).collect())
     }
@@ -111,11 +112,11 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # }
     /// ```
     pub async fn call_tool(
-        &mut self,
+        &self,
         name: &str,
         arguments: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<serde_json::Value> {
-        if !self.initialized {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 
@@ -129,6 +130,7 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
         with_plugins!(self, "tools/call", request_data, {
             // Core protocol call - plugins execute automatically around this
             let result: CallToolResult = self
+                .inner
                 .protocol
                 .request("tools/call", Some(serde_json::to_value(&request_data)?))
                 .await?;

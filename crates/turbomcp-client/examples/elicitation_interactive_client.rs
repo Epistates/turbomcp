@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let transport = StdioTransport::new();
 
     // Create the client
-    let mut client = Client::new(transport);
+    let client = Client::new(transport);
 
     // Initialize the connection
     eprintln!("[Client] Connecting to server...");

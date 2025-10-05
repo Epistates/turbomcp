@@ -3,6 +3,8 @@
 //! This module provides resource-related functionality including listing resources,
 //! reading resource content, and managing resource templates.
 
+use std::sync::atomic::Ordering;
+
 use turbomcp_core::{Error, Result};
 use turbomcp_protocol::types::{
     ListResourceTemplatesResult, ListResourcesResult, ReadResourceRequest, ReadResourceResult,
@@ -41,8 +43,8 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn list_resources(&mut self) -> Result<Vec<String>> {
-        if !self.initialized {
+    pub async fn list_resources(&self) -> Result<Vec<String>> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 
@@ -95,8 +97,8 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn read_resource(&mut self, uri: &str) -> Result<ReadResourceResult> {
-        if !self.initialized {
+    pub async fn read_resource(&self, uri: &str) -> Result<ReadResourceResult> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 
@@ -149,8 +151,8 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn list_resource_templates(&mut self) -> Result<Vec<String>> {
-        if !self.initialized {
+    pub async fn list_resource_templates(&self) -> Result<Vec<String>> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 

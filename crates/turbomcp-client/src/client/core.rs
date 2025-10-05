@@ -8,8 +8,18 @@
 //! - MCP operation support (tools, prompts, resources, sampling, etc.)
 //! - Plugin middleware integration
 //! - Handler registration and management
+//!
+//! # Architecture
+//!
+//! Client<T> is implemented as a cheaply-cloneable Arc wrapper with interior
+//! mutability (same pattern as reqwest and AWS SDK):
+//!
+//! - **AtomicBool** for initialized flag (lock-free)
+//! - **Arc<Mutex<...>>** for handlers/plugins (infrequent mutation)
+//! - **Arc<ClientInner<T>>** for cheap cloning
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 
 use turbomcp_core::{Error, PROTOCOL_VERSION, Result};
 use turbomcp_protocol::jsonrpc::*;
@@ -23,11 +33,57 @@ use super::config::InitializeResult;
 use super::protocol::ProtocolClient;
 use crate::{ClientCapabilities, handlers::HandlerRegistry, sampling::SamplingHandler};
 
+/// Inner client state with interior mutability
+///
+/// This structure contains the actual client state and is wrapped in Arc<...>
+/// to enable cheap cloning (same pattern as reqwest and AWS SDK).
+pub(super) struct ClientInner<T: Transport> {
+    /// Protocol client for low-level communication
+    pub(super) protocol: ProtocolClient<T>,
+
+    /// Client capabilities (immutable after construction)
+    pub(super) capabilities: ClientCapabilities,
+
+    /// Initialization state (lock-free atomic boolean)
+    pub(super) initialized: AtomicBool,
+
+    /// Optional sampling handler (mutex for dynamic updates)
+    pub(super) sampling_handler: Arc<StdMutex<Option<Arc<dyn SamplingHandler>>>>,
+
+    /// Handler registry for bidirectional communication (mutex for registration)
+    pub(super) handlers: Arc<StdMutex<HandlerRegistry>>,
+
+    /// Plugin registry for middleware (tokio mutex - holds across await)
+    pub(super) plugin_registry: Arc<tokio::sync::Mutex<crate::plugins::PluginRegistry>>,
+}
+
 /// The core MCP client implementation
 ///
 /// Client provides a comprehensive interface for communicating with MCP servers,
 /// supporting all protocol features including tools, prompts, resources, sampling,
 /// elicitation, and bidirectional communication patterns.
+///
+/// # Clone Pattern
+///
+/// Client<T> is cheaply cloneable via Arc (same pattern as reqwest and AWS SDK).
+/// All clones share the same underlying connection and state:
+///
+/// ```rust,no_run
+/// use turbomcp_client::Client;
+/// use turbomcp_transport::stdio::StdioTransport;
+///
+/// # async fn example() -> turbomcp_core::Result<()> {
+/// let client = Client::new(StdioTransport::new());
+/// client.initialize().await?;
+///
+/// // Cheap clone - shares same connection
+/// let client2 = client.clone();
+/// tokio::spawn(async move {
+///     client2.list_tools().await.ok();
+/// });
+/// # Ok(())
+/// # }
+/// ```
 ///
 /// The client must be initialized before use by calling `initialize()` to perform
 /// the MCP handshake and capability negotiation.
@@ -40,6 +96,7 @@ use crate::{ClientCapabilities, handlers::HandlerRegistry, sampling::SamplingHan
 /// - **Handler Registry**: Callbacks for server-initiated operations
 /// - **Connection Management**: Robust error handling and recovery
 /// - **Type Safety**: Compile-time guarantees for MCP message types
+/// - **Cheap Cloning**: Arc-based sharing like reqwest/AWS SDK
 ///
 /// # Examples
 ///
@@ -49,8 +106,8 @@ use crate::{ClientCapabilities, handlers::HandlerRegistry, sampling::SamplingHan
 /// use std::collections::HashMap;
 ///
 /// # async fn example() -> turbomcp_core::Result<()> {
-/// // Create and initialize client
-/// let mut client = Client::new(StdioTransport::new());
+/// // Create and initialize client (no mut needed!)
+/// let client = Client::new(StdioTransport::new());
 /// let init_result = client.initialize().await?;
 /// println!("Connected to: {}", init_result.server_info.name);
 ///
@@ -62,17 +119,20 @@ use crate::{ClientCapabilities, handlers::HandlerRegistry, sampling::SamplingHan
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug)]
 pub struct Client<T: Transport> {
-    pub(super) protocol: ProtocolClient<T>,
-    pub(super) capabilities: ClientCapabilities,
-    pub(super) initialized: bool,
-    #[allow(dead_code)]
-    pub(super) sampling_handler: Option<Arc<dyn SamplingHandler>>,
-    /// Handler registry for bidirectional communication
-    pub(super) handlers: HandlerRegistry,
-    /// Plugin registry for middleware and extensibility
-    pub(super) plugin_registry: crate::plugins::PluginRegistry,
+    pub(super) inner: Arc<ClientInner<T>>,
+}
+
+/// Clone implementation via Arc (same pattern as reqwest/AWS SDK)
+///
+/// Cloning a Client is cheap (just an Arc clone) and all clones share
+/// the same underlying connection and state.
+impl<T: Transport> Clone for Client<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 impl<T: Transport> Client<T> {
@@ -96,12 +156,16 @@ impl<T: Transport> Client<T> {
     /// ```
     pub fn new(transport: T) -> Self {
         Self {
-            protocol: ProtocolClient::new(transport),
-            capabilities: ClientCapabilities::default(),
-            initialized: false,
-            sampling_handler: None,
-            handlers: HandlerRegistry::new(),
-            plugin_registry: crate::plugins::PluginRegistry::new(),
+            inner: Arc::new(ClientInner {
+                protocol: ProtocolClient::new(transport),
+                capabilities: ClientCapabilities::default(),
+                initialized: AtomicBool::new(false),
+                sampling_handler: Arc::new(StdMutex::new(None)),
+                handlers: Arc::new(StdMutex::new(HandlerRegistry::new())),
+                plugin_registry: Arc::new(tokio::sync::Mutex::new(
+                    crate::plugins::PluginRegistry::new(),
+                )),
+            }),
         }
     }
 
@@ -130,12 +194,16 @@ impl<T: Transport> Client<T> {
     /// ```
     pub fn with_capabilities(transport: T, capabilities: ClientCapabilities) -> Self {
         Self {
-            protocol: ProtocolClient::new(transport),
-            capabilities,
-            initialized: false,
-            sampling_handler: None,
-            handlers: HandlerRegistry::new(),
-            plugin_registry: crate::plugins::PluginRegistry::new(),
+            inner: Arc::new(ClientInner {
+                protocol: ProtocolClient::new(transport),
+                capabilities,
+                initialized: AtomicBool::new(false),
+                sampling_handler: Arc::new(StdMutex::new(None)),
+                handlers: Arc::new(StdMutex::new(HandlerRegistry::new())),
+                plugin_registry: Arc::new(tokio::sync::Mutex::new(
+                    crate::plugins::PluginRegistry::new(),
+                )),
+            }),
         }
     }
 
@@ -167,9 +235,9 @@ impl<T: Transport> Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn process_message(&mut self) -> Result<bool> {
+    pub async fn process_message(&self) -> Result<bool> {
         // Try to receive a message without blocking
-        let message = match self.protocol.transport_mut().receive().await {
+        let message = match self.inner.protocol.transport().receive().await {
             Ok(Some(msg)) => msg,
             Ok(None) => return Ok(false),
             Err(e) => {
@@ -206,10 +274,16 @@ impl<T: Transport> Client<T> {
         }
     }
 
-    async fn handle_request(&mut self, request: JsonRpcRequest) -> Result<()> {
+    async fn handle_request(&self, request: JsonRpcRequest) -> Result<()> {
         match request.method.as_str() {
             "sampling/createMessage" => {
-                if let Some(handler) = &self.sampling_handler {
+                let handler_opt = self
+                    .inner
+                    .sampling_handler
+                    .lock()
+                    .expect("sampling_handler mutex poisoned")
+                    .clone();
+                if let Some(handler) = handler_opt {
                     let params: CreateMessageRequest =
                         serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
                             .map_err(|e| {
@@ -246,7 +320,15 @@ impl<T: Transport> Client<T> {
                 }
             }
             "elicitation/create" => {
-                if let Some(handler) = &self.handlers.elicitation {
+                // Clone handler Arc before await to avoid holding mutex across await
+                let handler_opt = self
+                    .inner
+                    .handlers
+                    .lock()
+                    .expect("handlers mutex poisoned")
+                    .elicitation
+                    .clone();
+                if let Some(handler) = handler_opt {
                     // Parse elicitation request params
                     let params: crate::handlers::ElicitationRequest =
                         serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
@@ -319,13 +401,13 @@ impl<T: Transport> Client<T> {
         Ok(())
     }
 
-    async fn handle_notification(&mut self, _notification: JsonRpcNotification) -> Result<()> {
+    async fn handle_notification(&self, _notification: JsonRpcNotification) -> Result<()> {
         // Handle notifications if needed
         // Currently MCP doesn't define client-side notifications
         Ok(())
     }
 
-    async fn send_response(&mut self, response: JsonRpcResponse) -> Result<()> {
+    async fn send_response(&self, response: JsonRpcResponse) -> Result<()> {
         let payload = serde_json::to_vec(&response)
             .map_err(|e| Error::protocol(format!("Failed to serialize response: {}", e)))?;
 
@@ -334,8 +416,9 @@ impl<T: Transport> Client<T> {
             payload.into(),
         );
 
-        self.protocol
-            .transport_mut()
+        self.inner
+            .protocol
+            .transport()
             .send(message)
             .await
             .map_err(|e| Error::transport(format!("Failed to send response: {}", e)))?;
@@ -373,7 +456,7 @@ impl<T: Transport> Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn initialize(&mut self) -> Result<InitializeResult> {
+    pub async fn initialize(&self) -> Result<InitializeResult> {
         // Build client capabilities based on registered handlers (automatic detection)
         let mut client_caps = ProtocolClientCapabilities::default();
 
@@ -405,13 +488,17 @@ impl<T: Transport> Client<T> {
         };
 
         let protocol_response: ProtocolInitializeResult = self
+            .inner
             .protocol
             .request("initialize", Some(serde_json::to_value(request)?))
             .await?;
-        self.initialized = true;
+
+        // AtomicBool: lock-free store with Ordering::Relaxed
+        self.inner.initialized.store(true, Ordering::Relaxed);
 
         // Send initialized notification
-        self.protocol
+        self.inner
+            .protocol
             .notify("notifications/initialized", None)
             .await?;
 
@@ -426,7 +513,7 @@ impl<T: Transport> Client<T> {
     ///
     /// This is a generic helper for wrapping protocol calls with plugin middleware.
     pub(crate) async fn execute_with_plugins<R>(
-        &mut self,
+        &self,
         method_name: &str,
         params: Option<serde_json::Value>,
     ) -> Result<R>
@@ -447,7 +534,10 @@ impl<T: Transport> Client<T> {
 
         // 2. Execute before_request plugin middleware
         if let Err(e) = self
+            .inner
             .plugin_registry
+            .lock()
+            .await
             .execute_before_request(&mut req_ctx)
             .await
         {
@@ -460,6 +550,7 @@ impl<T: Transport> Client<T> {
         // 3. Execute the actual protocol call
         let start_time = std::time::Instant::now();
         let protocol_result: Result<R> = self
+            .inner
             .protocol
             .request(method_name, req_ctx.params().cloned())
             .await;
@@ -478,7 +569,10 @@ impl<T: Transport> Client<T> {
 
         // 5. Execute after_response plugin middleware
         if let Err(e) = self
+            .inner
             .plugin_registry
+            .lock()
+            .await
             .execute_after_response(&mut resp_ctx)
             .await
         {
@@ -556,8 +650,8 @@ impl<T: Transport> Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn subscribe(&mut self, uri: &str) -> Result<EmptyResult> {
-        if !self.initialized {
+    pub async fn subscribe(&self, uri: &str) -> Result<EmptyResult> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 
@@ -615,8 +709,8 @@ impl<T: Transport> Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn unsubscribe(&mut self, uri: &str) -> Result<EmptyResult> {
-        if !self.initialized {
+    pub async fn unsubscribe(&self, uri: &str) -> Result<EmptyResult> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 
@@ -640,13 +734,13 @@ impl<T: Transport> Client<T> {
 
     /// Get the client's capabilities configuration
     pub fn capabilities(&self) -> &ClientCapabilities {
-        &self.capabilities
+        &self.inner.capabilities
     }
 
     /// Initialize all registered plugins
     ///
     /// This should be called after registration but before using the client.
-    pub async fn initialize_plugins(&mut self) -> Result<()> {
+    pub async fn initialize_plugins(&self) -> Result<()> {
         // Set up client context for plugins with actual client capabilities
         let mut capabilities = std::collections::HashMap::new();
         capabilities.insert(
@@ -676,11 +770,11 @@ impl<T: Transport> Client<T> {
         );
         config.insert(
             "initialized".to_string(),
-            serde_json::json!(self.initialized),
+            serde_json::json!(self.inner.initialized.load(Ordering::Relaxed)),
         );
         config.insert(
             "plugin_count".to_string(),
-            serde_json::json!(self.plugin_registry.plugin_count()),
+            serde_json::json!(self.inner.plugin_registry.lock().await.plugin_count()),
         );
 
         let context = crate::plugins::PluginContext::new(
@@ -691,7 +785,11 @@ impl<T: Transport> Client<T> {
             vec![], // Will be populated by the registry
         );
 
-        self.plugin_registry.set_client_context(context);
+        self.inner
+            .plugin_registry
+            .lock()
+            .await
+            .set_client_context(context);
 
         // Note: Individual plugins are initialized automatically during registration
         // via PluginRegistry::register_plugin(). This method ensures the registry
@@ -702,16 +800,15 @@ impl<T: Transport> Client<T> {
     /// Cleanup all registered plugins
     ///
     /// This should be called when the client is being shut down.
-    pub async fn cleanup_plugins(&mut self) -> Result<()> {
+    pub async fn cleanup_plugins(&self) -> Result<()> {
         // Clear the plugin registry - plugins will be dropped and cleaned up automatically
         // The Rust ownership system ensures proper cleanup when the Arc<dyn ClientPlugin>
         // references are dropped.
 
         // Note: The plugin system uses RAII (Resource Acquisition Is Initialization)
         // pattern where plugins clean up their resources in their Drop implementation.
-        // No explicit cleanup is needed beyond clearing the registry.
-
-        self.plugin_registry = crate::plugins::PluginRegistry::new();
+        // Replace the registry with a fresh one (mutex ensures safe access)
+        *self.inner.plugin_registry.lock().await = crate::plugins::PluginRegistry::new();
         Ok(())
     }
 

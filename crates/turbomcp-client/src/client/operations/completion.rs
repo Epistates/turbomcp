@@ -3,6 +3,7 @@
 //! This module provides autocompletion functionality for prompts and resources,
 //! supporting the MCP completion protocol with context and argument validation.
 
+use std::sync::atomic::Ordering;
 use turbomcp_core::{Error, Result};
 use turbomcp_protocol::types::{
     ArgumentInfo, CompleteRequestParams, CompleteResult, CompletionContext, CompletionReference,
@@ -14,13 +15,13 @@ use crate::with_plugins;
 impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// Internal helper for completion operations - DRYed up common logic
     async fn complete_internal(
-        &mut self,
+        &self,
         argument_name: &str,
         argument_value: &str,
         reference: CompletionReference,
         context: Option<CompletionContext>,
     ) -> Result<CompletionResponse> {
-        if !self.initialized {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 
@@ -37,6 +38,7 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
 
         with_plugins!(self, "completion/complete", serialized_params, {
             let result: CompleteResult = self
+                .inner
                 .protocol
                 .request("completion/complete", Some(serialized_params))
                 .await?;
@@ -73,7 +75,7 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # }
     /// ```
     pub async fn complete(
-        &mut self,
+        &self,
         handler_name: &str,
         argument_value: &str,
     ) -> Result<CompletionResponse> {
@@ -128,7 +130,7 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # }
     /// ```
     pub async fn complete_prompt(
-        &mut self,
+        &self,
         prompt_name: &str,
         argument_name: &str,
         argument_value: &str,
@@ -178,7 +180,7 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # }
     /// ```
     pub async fn complete_resource(
-        &mut self,
+        &self,
         resource_uri: &str,
         argument_name: &str,
         argument_value: &str,

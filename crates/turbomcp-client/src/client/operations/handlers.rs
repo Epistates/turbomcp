@@ -51,8 +51,12 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     ///     project_dir: "/home/user/projects/myproject".to_string(),
     /// }));
     /// ```
-    pub fn on_roots(&mut self, handler: Arc<dyn RootsHandler>) {
-        self.handlers.set_roots_handler(handler);
+    pub fn on_roots(&self, handler: Arc<dyn RootsHandler>) {
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .set_roots_handler(handler);
     }
 
     /// Register an elicitation handler for processing user input requests
@@ -94,8 +98,12 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// let mut client = Client::new(StdioTransport::new());
     /// client.on_elicitation(Arc::new(MyElicitationHandler));
     /// ```
-    pub fn on_elicitation(&mut self, handler: Arc<dyn ElicitationHandler>) {
-        self.handlers.set_elicitation_handler(handler);
+    pub fn on_elicitation(&self, handler: Arc<dyn ElicitationHandler>) {
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .set_elicitation_handler(handler);
     }
 
     /// Register a progress handler for processing operation progress updates
@@ -131,8 +139,12 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// let mut client = Client::new(StdioTransport::new());
     /// client.on_progress(Arc::new(MyProgressHandler));
     /// ```
-    pub fn on_progress(&mut self, handler: Arc<dyn ProgressHandler>) {
-        self.handlers.set_progress_handler(handler);
+    pub fn on_progress(&self, handler: Arc<dyn ProgressHandler>) {
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .set_progress_handler(handler);
     }
 
     /// Register a log handler for processing server log messages
@@ -168,8 +180,12 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// let mut client = Client::new(StdioTransport::new());
     /// client.on_log(Arc::new(MyLogHandler));
     /// ```
-    pub fn on_log(&mut self, handler: Arc<dyn LogHandler>) {
-        self.handlers.set_log_handler(handler);
+    pub fn on_log(&self, handler: Arc<dyn LogHandler>) {
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .set_log_handler(handler);
     }
 
     /// Register a resource update handler for processing resource change notifications
@@ -208,32 +224,56 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// let mut client = Client::new(StdioTransport::new());
     /// client.on_resource_update(Arc::new(MyResourceUpdateHandler));
     /// ```
-    pub fn on_resource_update(&mut self, handler: Arc<dyn ResourceUpdateHandler>) {
-        self.handlers.set_resource_update_handler(handler);
+    pub fn on_resource_update(&self, handler: Arc<dyn ResourceUpdateHandler>) {
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .set_resource_update_handler(handler);
     }
 
     /// Check if a roots handler is registered
     pub fn has_roots_handler(&self) -> bool {
-        self.handlers.has_roots_handler()
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .has_roots_handler()
     }
 
     /// Check if an elicitation handler is registered
     pub fn has_elicitation_handler(&self) -> bool {
-        self.handlers.has_elicitation_handler()
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .has_elicitation_handler()
     }
 
     /// Check if a progress handler is registered
     pub fn has_progress_handler(&self) -> bool {
-        self.handlers.has_progress_handler()
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .has_progress_handler()
     }
 
     /// Check if a log handler is registered
     pub fn has_log_handler(&self) -> bool {
-        self.handlers.has_log_handler()
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .has_log_handler()
     }
 
     /// Check if a resource update handler is registered
     pub fn has_resource_update_handler(&self) -> bool {
-        self.handlers.has_resource_update_handler()
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .has_resource_update_handler()
     }
 }

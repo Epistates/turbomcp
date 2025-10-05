@@ -74,7 +74,7 @@ macro_rules! with_plugins {
         );
 
         // 2. Execute before_request plugin middleware
-        $client.plugin_registry.execute_before_request(&mut req_ctx).await
+        $client.inner.plugin_registry.lock().await.execute_before_request(&mut req_ctx).await
             .map_err(|e| turbomcp_core::Error::bad_request(
                 format!("Plugin before_request failed: {}", e)
             ))?;
@@ -109,7 +109,7 @@ macro_rules! with_plugins {
         };
 
         // 5. Execute after_response plugin middleware
-        $client.plugin_registry.execute_after_response(&mut resp_ctx).await
+        $client.inner.plugin_registry.lock().await.execute_after_response(&mut resp_ctx).await
             .map_err(|e| turbomcp_core::Error::bad_request(
                 format!("Plugin after_response failed: {}", e)
             ))?;

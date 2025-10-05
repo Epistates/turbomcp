@@ -272,17 +272,16 @@ pub struct ProgressNotification {
 /// #[async_trait]
 /// impl ProgressHandler for ProgressBarHandler {
 ///     async fn handle_progress(&self, notification: ProgressNotification) -> HandlerResult<()> {
-///         if let Some(progress_val) = notification.progress.progress {
-///             if let Some(total) = notification.progress.total {
-///                 let percentage = (progress_val / total as f64) * 100.0;
-///                 println!("Progress: {:.1}% - {}", percentage,
-///                     notification.message.unwrap_or_default());
-///             } else {
-///                 println!("Progress: {} - {}", progress_val,
-///                     notification.message.unwrap_or_default());
-///             }
+///         let progress_val = notification.progress.progress;
+///         if let Some(total) = notification.progress.total {
+///             let percentage = (progress_val / total) * 100.0;
+///             println!("Progress: {:.1}% - {}", percentage,
+///                 notification.message.unwrap_or_default());
+///         } else {
+///             println!("Progress: {} - {}", progress_val,
+///                 notification.message.unwrap_or_default());
 ///         }
-///         
+///
 ///         if notification.completed {
 ///             if let Some(error) = notification.error {
 ///                 println!("Operation failed: {}", error);
@@ -290,7 +289,7 @@ pub struct ProgressNotification {
 ///                 println!("Operation completed successfully!");
 ///             }
 ///         }
-///         
+///
 ///         Ok(())
 ///     }
 /// }

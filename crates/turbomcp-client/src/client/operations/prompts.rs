@@ -3,6 +3,8 @@
 //! This module provides prompt-related functionality including listing prompts,
 //! retrieving prompt templates, and supporting parameter substitution.
 
+use std::sync::atomic::Ordering;
+
 use turbomcp_core::{Error, Result};
 use turbomcp_protocol::types::{
     GetPromptRequest, GetPromptResult, ListPromptsResult, Prompt, PromptInput,
@@ -55,8 +57,8 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn list_prompts(&mut self) -> Result<Vec<Prompt>> {
-        if !self.initialized {
+    pub async fn list_prompts(&self) -> Result<Vec<Prompt>> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 
@@ -118,11 +120,11 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # }
     /// ```
     pub async fn get_prompt(
-        &mut self,
+        &self,
         name: &str,
         arguments: Option<PromptInput>,
     ) -> Result<GetPromptResult> {
-        if !self.initialized {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 

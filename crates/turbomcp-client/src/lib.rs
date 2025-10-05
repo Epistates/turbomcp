@@ -150,13 +150,8 @@ pub use client::{ConnectionInfo, ConnectionState, ManagerConfig, ServerGroup, Se
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use turbomcp_core::{Error, Result};
-use turbomcp_protocol::types::{
-    EmptyResult, GetPromptResult, LogLevel, PingResult, Prompt, PromptInput, ReadResourceResult,
-    SetLevelResult, Tool,
-};
 use turbomcp_transport::Transport;
 
 // Note: Handler types are now used only in client/operations modules
@@ -223,478 +218,30 @@ pub struct ClientCapabilities {
 // Re-export Client from the core module
 pub use client::core::Client;
 
-/// Thread-safe wrapper for sharing Client across async tasks
-///
-/// This wrapper encapsulates the Arc/Mutex complexity and provides a clean API
-/// for concurrent access to MCP client functionality. It addresses the limitations
-/// identified in PR feedback where Client requires `&mut self` for all operations
-/// but needs to be shared across multiple async tasks.
-///
-/// # Design Rationale
-///
-/// All Client methods require `&mut self` because:
-/// - MCP connections maintain state (initialized flag, connection status)
-/// - Request correlation tracking for JSON-RPC requires mutation
-/// - Handler and plugin registries need mutable access
-///
-/// While Client implements Send + Sync, this only means it's safe to move/share
-/// between threads, not that multiple tasks can mutate it concurrently.
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// use turbomcp_client::{Client, SharedClient};
-/// use turbomcp_transport::stdio::StdioTransport;
-///
-/// # async fn example() -> turbomcp_core::Result<()> {
-/// let transport = StdioTransport::new();
-/// let client = Client::new(transport);
-/// let shared = SharedClient::new(client);
-///
-/// // Initialize once
-/// shared.initialize().await?;
-///
-/// // Clone for sharing across tasks
-/// let shared1 = shared.clone();
-/// let shared2 = shared.clone();
-///
-/// // Both tasks can use the client concurrently
-/// let handle1 = tokio::spawn(async move {
-///     shared1.list_tools().await
-/// });
-///
-/// let handle2 = tokio::spawn(async move {
-///     shared2.list_prompts().await
-/// });
-///
-/// let (tools, prompts) = tokio::try_join!(handle1, handle2).unwrap();
-/// # Ok(())
-/// # }
-/// ```
-pub struct SharedClient<T: Transport> {
-    inner: Arc<Mutex<Client<T>>>,
-}
+// Thread-safe wrapper for sharing Client across async tasks
+//
+// This wrapper encapsulates the Arc/Mutex complexity and provides a clean API
+// for concurrent access to MCP client functionality. It addresses the limitations
+// identified in PR feedback where Client requires `&mut self` for all operations
+// but needs to be shared across multiple async tasks.
+//
+// # Design Rationale
+//
+// All Client methods require `&mut self` because:
+// - MCP connections maintain state (initialized flag, connection status)
+// - Request correlation tracking for JSON-RPC requires mutation
+// - Handler and plugin registries need mutable access
+//
+// Note: SharedClient has been removed in v2 - Client is now directly cloneable via Arc
 
-impl<T: Transport> SharedClient<T> {
-    /// Create a new shared client wrapper
-    ///
-    /// Takes ownership of a Client and wraps it for thread-safe sharing.
-    /// The original client can no longer be accessed directly after this call.
-    pub fn new(client: Client<T>) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(client)),
-        }
-    }
+// ----------------------------------------------------------------------------
+// Re-exports
+// ----------------------------------------------------------------------------
 
-    /// Initialize the MCP connection
-    ///
-    /// This method should be called once before using any other client operations.
-    /// It negotiates capabilities with the server and establishes the communication protocol.
-    pub async fn initialize(&self) -> Result<InitializeResult> {
-        self.inner.lock().await.initialize().await
-    }
-
-    /// List all available tools from the MCP server
-    ///
-    /// Returns a list of complete tool definitions with schemas that can be used
-    /// for form generation, validation, and documentation. Tools represent
-    /// executable functions provided by the server.
-    pub async fn list_tools(&self) -> Result<Vec<Tool>> {
-        self.inner.lock().await.list_tools().await
-    }
-
-    /// List available tool names from the MCP server
-    ///
-    /// Returns only the tool names for cases where full schemas are not needed.
-    /// For most use cases, prefer `list_tools()` which provides complete tool definitions.
-    pub async fn list_tool_names(&self) -> Result<Vec<String>> {
-        self.inner.lock().await.list_tool_names().await
-    }
-
-    /// Execute a tool with the given name and arguments
-    ///
-    /// Calls a specific tool on the MCP server with the provided arguments.
-    /// The arguments should match the tool's expected parameter schema.
-    pub async fn call_tool(
-        &self,
-        name: &str,
-        arguments: Option<HashMap<String, serde_json::Value>>,
-    ) -> Result<serde_json::Value> {
-        self.inner.lock().await.call_tool(name, arguments).await
-    }
-
-    /// List all available prompts from the MCP server
-    ///
-    /// Returns full Prompt objects with metadata including name, title, description,
-    /// and argument schemas. This information can be used to generate UI forms
-    /// for prompt parameter collection.
-    pub async fn list_prompts(&self) -> Result<Vec<Prompt>> {
-        self.inner.lock().await.list_prompts().await
-    }
-
-    /// Get a prompt with optional argument substitution
-    ///
-    /// Retrieves a prompt from the server. If arguments are provided, template
-    /// parameters (e.g., `{parameter}`) will be substituted with the given values.
-    /// Pass `None` for arguments to get the raw template form.
-    pub async fn get_prompt(
-        &self,
-        name: &str,
-        arguments: Option<PromptInput>,
-    ) -> Result<GetPromptResult> {
-        self.inner.lock().await.get_prompt(name, arguments).await
-    }
-
-    /// List available resources from the MCP server
-    ///
-    /// Resources represent data or content that can be read by the client.
-    /// Returns a list of resource identifiers and metadata.
-    pub async fn list_resources(&self) -> Result<Vec<String>> {
-        self.inner.lock().await.list_resources().await
-    }
-
-    /// Read a specific resource from the MCP server
-    ///
-    /// Retrieves the content of a resource identified by its URI.
-    /// The content format depends on the specific resource type.
-    pub async fn read_resource(&self, uri: &str) -> Result<ReadResourceResult> {
-        self.inner.lock().await.read_resource(uri).await
-    }
-
-    /// List resource templates from the MCP server
-    ///
-    /// Resource templates define patterns for generating resource URIs.
-    /// They allow servers to describe families of related resources.
-    pub async fn list_resource_templates(&self) -> Result<Vec<String>> {
-        self.inner.lock().await.list_resource_templates().await
-    }
-
-    /// Set the logging level for the MCP server
-    ///
-    /// Controls the verbosity of logs sent from the server to the client.
-    /// Higher log levels provide more detailed information.
-    pub async fn set_log_level(&self, level: LogLevel) -> Result<SetLevelResult> {
-        self.inner.lock().await.set_log_level(level).await
-    }
-
-    /// Subscribe to notifications from a specific URI
-    ///
-    /// Registers interest in receiving notifications when the specified
-    /// resource or endpoint changes. Used for real-time updates.
-    pub async fn subscribe(&self, uri: &str) -> Result<EmptyResult> {
-        self.inner.lock().await.subscribe(uri).await
-    }
-
-    /// Unsubscribe from notifications for a specific URI
-    ///
-    /// Removes a previously registered subscription to stop receiving
-    /// notifications for the specified resource or endpoint.
-    pub async fn unsubscribe(&self, uri: &str) -> Result<EmptyResult> {
-        self.inner.lock().await.unsubscribe(uri).await
-    }
-
-    /// Send a ping to test connection health
-    ///
-    /// Verifies that the MCP connection is still active and responsive.
-    /// Used for health checking and keepalive functionality.
-    pub async fn ping(&self) -> Result<PingResult> {
-        self.inner.lock().await.ping().await
-    }
-
-    /// Get the client's configured capabilities
-    ///
-    /// Returns the capabilities that this client supports.
-    /// These are negotiated during initialization.
-    pub async fn capabilities(&self) -> ClientCapabilities {
-        let client = self.inner.lock().await;
-        client.capabilities().clone()
-    }
-
-    /// Request argument completion from the MCP server
-    ///
-    /// Provides autocompletion suggestions for prompt arguments and resource URIs.
-    /// Supports rich, IDE-like experiences with contextual suggestions.
-    ///
-    /// # Arguments
-    ///
-    /// * `handler_name` - The completion handler name
-    /// * `argument_value` - The partial value to complete
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use turbomcp_client::{Client, SharedClient};
-    /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # async fn example() -> turbomcp_core::Result<()> {
-    /// let shared = SharedClient::new(Client::new(StdioTransport::new()));
-    /// shared.initialize().await?;
-    ///
-    /// let result = shared.complete("complete_path", "/usr/b").await?;
-    /// println!("Completions: {:?}", result.completion);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn complete(
-        &self,
-        handler_name: &str,
-        argument_value: &str,
-    ) -> Result<turbomcp_protocol::types::CompletionResponse> {
-        self.inner
-            .lock()
-            .await
-            .complete(handler_name, argument_value)
-            .await
-    }
-
-    /// Complete a prompt argument with full MCP protocol support
-    ///
-    /// This method provides access to the complete MCP completion protocol,
-    /// allowing specification of argument names, prompt references, and context.
-    ///
-    /// # Arguments
-    ///
-    /// * `prompt_name` - Name of the prompt to complete for
-    /// * `argument_name` - Name of the argument being completed
-    /// * `argument_value` - Current value for completion matching
-    /// * `context` - Optional context with previously resolved arguments
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use turbomcp_client::{Client, SharedClient};
-    /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # use turbomcp_protocol::types::CompletionContext;
-    /// # use std::collections::HashMap;
-    /// # async fn example() -> turbomcp_core::Result<()> {
-    /// let shared = SharedClient::new(Client::new(StdioTransport::new()));
-    /// shared.initialize().await?;
-    ///
-    /// // Complete with context
-    /// let mut context_args = HashMap::new();
-    /// context_args.insert("language".to_string(), "rust".to_string());
-    /// let context = CompletionContext { arguments: Some(context_args) };
-    ///
-    /// let completions = shared.complete_prompt(
-    ///     "code_review",
-    ///     "framework",
-    ///     "tok",
-    ///     Some(context)
-    /// ).await?;
-    ///
-    /// for completion in completions.completion.values {
-    ///     println!("Suggestion: {}", completion);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn complete_prompt(
-        &self,
-        prompt_name: &str,
-        argument_name: &str,
-        argument_value: &str,
-        context: Option<turbomcp_protocol::types::CompletionContext>,
-    ) -> Result<turbomcp_protocol::types::CompletionResponse> {
-        self.inner
-            .lock()
-            .await
-            .complete_prompt(prompt_name, argument_name, argument_value, context)
-            .await
-    }
-
-    /// Complete a resource template URI with full MCP protocol support
-    ///
-    /// This method provides completion for resource template URIs, allowing
-    /// servers to suggest values for URI template variables.
-    ///
-    /// # Arguments
-    ///
-    /// * `resource_uri` - Resource template URI (e.g., "/files/{path}")
-    /// * `argument_name` - Name of the argument being completed
-    /// * `argument_value` - Current value for completion matching
-    /// * `context` - Optional context with previously resolved arguments
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use turbomcp_client::{Client, SharedClient};
-    /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # async fn example() -> turbomcp_core::Result<()> {
-    /// let shared = SharedClient::new(Client::new(StdioTransport::new()));
-    /// shared.initialize().await?;
-    ///
-    /// let completions = shared.complete_resource(
-    ///     "/files/{path}",
-    ///     "path",
-    ///     "/home/user/doc",
-    ///     None
-    /// ).await?;
-    ///
-    /// for completion in completions.completion.values {
-    ///     println!("Path suggestion: {}", completion);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn complete_resource(
-        &self,
-        resource_uri: &str,
-        argument_name: &str,
-        argument_value: &str,
-        context: Option<turbomcp_protocol::types::CompletionContext>,
-    ) -> Result<turbomcp_protocol::types::CompletionResponse> {
-        self.inner
-            .lock()
-            .await
-            .complete_resource(resource_uri, argument_name, argument_value, context)
-            .await
-    }
-
-    // Note: roots/list is a SERVER->CLIENT request per MCP 2025-06-18 specification.
-    // The server asks the client for its filesystem roots, not the other way around.
-    // Clients should implement a roots handler to respond to server requests.
-    // See: ServerRequest = PingRequest | CreateMessageRequest | ListRootsRequest | ElicitRequest
-
-    /// Register an elicitation handler for processing server requests for user information
-    ///
-    /// Elicitation handlers respond to server requests for additional information
-    /// from users during interactions. Supports interactive workflows where
-    /// servers can gather necessary information dynamically.
-    ///
-    /// # Arguments
-    ///
-    /// * `handler` - The elicitation handler implementation
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use turbomcp_client::{Client, SharedClient};
-    /// use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, ElicitationAction, HandlerResult};
-    /// use turbomcp_transport::stdio::StdioTransport;
-    /// use async_trait::async_trait;
-    /// use std::sync::Arc;
-    ///
-    /// #[derive(Debug)]
-    /// struct MyElicitationHandler;
-    ///
-    /// #[async_trait]
-    /// impl ElicitationHandler for MyElicitationHandler {
-    ///     async fn handle_elicitation(&self, request: ElicitationRequest) -> HandlerResult<ElicitationResponse> {
-    ///         // Process user input request and return response
-    ///         Ok(ElicitationResponse {
-    ///             action: ElicitationAction::Accept,
-    ///             content: Some(serde_json::json!({"name": "example"})),
-    ///         })
-    ///     }
-    /// }
-    ///
-    /// # async fn example() -> turbomcp_core::Result<()> {
-    /// let shared = SharedClient::new(Client::new(StdioTransport::new()));
-    /// shared.on_elicitation(Arc::new(MyElicitationHandler)).await;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn on_elicitation(&self, handler: Arc<dyn crate::handlers::ElicitationHandler>) {
-        self.inner.lock().await.on_elicitation(handler);
-    }
-
-    /// Register a progress handler for processing server progress notifications
-    ///
-    /// Progress handlers receive updates about long-running operations on the server.
-    /// Provides progress bars, status updates, and better user experience during
-    /// extended operations.
-    ///
-    /// # Arguments
-    ///
-    /// * `handler` - The progress handler implementation
-    pub async fn on_progress(&self, handler: Arc<dyn crate::handlers::ProgressHandler>) {
-        self.inner.lock().await.on_progress(handler);
-    }
-
-    /// Register a log handler for processing server log messages
-    ///
-    /// Log handlers receive log messages from the server and can route them
-    /// to the client's logging system. This is useful for debugging and
-    /// maintaining a unified log across client and server.
-    ///
-    /// # Arguments
-    ///
-    /// * `handler` - The log handler implementation
-    pub async fn on_log(&self, handler: Arc<dyn crate::handlers::LogHandler>) {
-        self.inner.lock().await.on_log(handler);
-    }
-
-    /// Register a resource update handler for processing resource change notifications
-    ///
-    /// Resource update handlers receive notifications when subscribed resources
-    /// change on the server. Supports reactive updates to cached data or
-    /// UI refreshes when server-side resources change.
-    ///
-    /// # Arguments
-    ///
-    /// * `handler` - The resource update handler implementation
-    pub async fn on_resource_update(
-        &self,
-        handler: Arc<dyn crate::handlers::ResourceUpdateHandler>,
-    ) {
-        self.inner.lock().await.on_resource_update(handler);
-    }
-
-    /// Check if an elicitation handler is registered
-    pub async fn has_elicitation_handler(&self) -> bool {
-        self.inner.lock().await.has_elicitation_handler()
-    }
-
-    /// Check if a progress handler is registered
-    pub async fn has_progress_handler(&self) -> bool {
-        self.inner.lock().await.has_progress_handler()
-    }
-
-    /// Check if a log handler is registered
-    pub async fn has_log_handler(&self) -> bool {
-        self.inner.lock().await.has_log_handler()
-    }
-
-    /// Check if a resource update handler is registered
-    pub async fn has_resource_update_handler(&self) -> bool {
-        self.inner.lock().await.has_resource_update_handler()
-    }
-}
-
-impl<T: Transport> Clone for SharedClient<T> {
-    /// Clone the shared client for use in multiple async tasks
-    ///
-    /// This creates a new reference to the same underlying client,
-    /// allowing multiple tasks to share access safely.
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
-    }
-}
-
-/// Result of client initialization
-///
-/// Contains information about the server and the negotiated capabilities
-/// after a successful initialization handshake.
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// # use turbomcp_client::Client;
-/// # use turbomcp_transport::stdio::StdioTransport;
-/// # async fn example() -> turbomcp_core::Result<()> {
-/// let mut client = Client::new(StdioTransport::new());
-/// let result = client.initialize().await?;
-///
-/// println!("Server: {}", result.server_info.name);
-/// println!("Version: {}", result.server_info.version);
-/// if let Some(title) = result.server_info.title {
-///     println!("Title: {}", title);
-/// }
-/// # Ok(())
-/// # }
-/// ```
-// Re-export InitializeResult from config module
+#[doc = "Result of client initialization"]
+#[doc = ""]
+#[doc = "Contains information about the server and the negotiated capabilities"]
+#[doc = "after a successful initialization handshake."]
 pub use client::config::InitializeResult;
 
 // ServerCapabilities is now imported from turbomcp_protocol::types
@@ -1053,43 +600,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Use high-reliability resilience preset
-    ///
-    /// Configures retry, circuit breaker, and health checking for high-reliability scenarios
-    pub fn with_high_reliability(mut self) -> Self {
-        let (retry, circuit, health) = turbomcp_transport::resilience::presets::high_reliability();
-        self.retry_config = Some(retry);
-        self.circuit_breaker_config = Some(circuit);
-        self.health_check_config = Some(health);
-        self.enable_resilience = true;
-        self
-    }
-
-    /// Use high-performance resilience preset
-    ///
-    /// Configures retry, circuit breaker, and health checking for high-throughput scenarios
-    pub fn with_high_performance(mut self) -> Self {
-        let (retry, circuit, health) = turbomcp_transport::resilience::presets::high_performance();
-        self.retry_config = Some(retry);
-        self.circuit_breaker_config = Some(circuit);
-        self.health_check_config = Some(health);
-        self.enable_resilience = true;
-        self
-    }
-
-    /// Use resource-constrained resilience preset
-    ///
-    /// Configures retry, circuit breaker, and health checking for low-resource scenarios
-    pub fn with_resource_constrained(mut self) -> Self {
-        let (retry, circuit, health) =
-            turbomcp_transport::resilience::presets::resource_constrained();
-        self.retry_config = Some(retry);
-        self.circuit_breaker_config = Some(circuit);
-        self.health_check_config = Some(health);
-        self.enable_resilience = true;
-        self
-    }
-
     // ============================================================================
     // PLUGIN SYSTEM CONFIGURATION
     // ============================================================================
@@ -1291,7 +801,7 @@ impl ClientBuilder {
     /// ```
     pub async fn build<T: Transport>(self, transport: T) -> Result<Client<T>> {
         // Create base client with capabilities
-        let mut client = Client::with_capabilities(transport, self.capabilities);
+        let client = Client::with_capabilities(transport, self.capabilities);
 
         // Register handlers
         if let Some(handler) = self.elicitation_handler {
@@ -1386,10 +896,26 @@ impl ClientBuilder {
     /// ```rust,no_run
     /// use turbomcp_client::ClientBuilder;
     /// use turbomcp_transport::stdio::StdioTransport;
+    /// use turbomcp_transport::resilience::{RetryConfig, CircuitBreakerConfig, HealthCheckConfig};
+    /// use std::time::Duration;
     ///
     /// # async fn example() -> turbomcp_core::Result<()> {
     /// let client = ClientBuilder::new()
-    ///     .with_high_reliability()
+    ///     .with_retry_config(RetryConfig {
+    ///         max_attempts: 5,
+    ///         base_delay: Duration::from_millis(200),
+    ///         ..Default::default()
+    ///     })
+    ///     .with_circuit_breaker_config(CircuitBreakerConfig {
+    ///         failure_threshold: 3,
+    ///         timeout: Duration::from_secs(30),
+    ///         ..Default::default()
+    ///     })
+    ///     .with_health_check_config(HealthCheckConfig {
+    ///         interval: Duration::from_secs(15),
+    ///         timeout: Duration::from_secs(5),
+    ///         ..Default::default()
+    ///     })
     ///     .build_resilient(StdioTransport::new())
     ///     .await?;
     /// # Ok(())
@@ -1415,7 +941,7 @@ impl ClientBuilder {
         );
 
         // Create client with resilient transport
-        let mut client = Client::with_capabilities(robust_transport, self.capabilities);
+        let client = Client::with_capabilities(robust_transport, self.capabilities);
 
         // Register handlers
         if let Some(handler) = self.elicitation_handler {
@@ -1499,7 +1025,7 @@ impl ClientBuilder {
     ///     .build_sync(StdioTransport::new());
     /// ```
     pub fn build_sync<T: Transport>(self, transport: T) -> Client<T> {
-        let mut client = Client::with_capabilities(transport, self.capabilities);
+        let client = Client::with_capabilities(transport, self.capabilities);
 
         // Register synchronous handlers only
         if let Some(handler) = self.elicitation_handler {
