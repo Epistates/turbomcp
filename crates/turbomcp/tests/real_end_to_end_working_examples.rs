@@ -7,21 +7,32 @@
 //! NO MOCKS! NO SHORTCUTS! ONLY WORKING SERVERS AND CLIENTS!
 
 use serde_json::{Value, json};
-use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::RwLock;
-use tokio::task::JoinHandle;
-use tokio::time::{sleep, timeout};
+use tokio::time::timeout;
 use turbomcp::prelude::*;
 use turbomcp_core::MessageId;
 use turbomcp_transport::{
     child_process::{ChildProcessConfig, ChildProcessTransport},
     core::{Transport, TransportMessage, TransportState},
 };
+
+// TCP-specific imports (only needed when tcp feature is enabled)
+#[cfg(feature = "tcp")]
+use std::net::SocketAddr;
+#[cfg(feature = "tcp")]
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(feature = "tcp")]
+use tokio::net::{TcpListener, TcpStream};
+#[cfg(feature = "tcp")]
+use tokio::task::JoinHandle;
+#[cfg(feature = "tcp")]
+use tokio::time::sleep;
+
+// Unix-specific imports
+#[cfg(feature = "unix")]
+use std::path::PathBuf;
 
 /// A REAL production-grade MCP server for testing
 #[derive(Clone)]

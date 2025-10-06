@@ -8,6 +8,8 @@
 //! - Session management and cleanup
 //! - Multi-provider support
 
+#![cfg(feature = "auth")]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};

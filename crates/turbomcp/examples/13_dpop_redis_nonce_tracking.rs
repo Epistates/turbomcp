@@ -5,10 +5,10 @@
 //!
 //! ## Prerequisites
 //!
-//! 1. Enable the 'redis-storage' feature:
+//! 1. Enable the 'dpop-redis' feature:
 //!    ```toml
 //!    [dependencies]
-//!    turbomcp = { version = "1.1.0", features = ["redis-storage"] }
+//!    turbomcp = { version = "2.0.0", features = ["dpop-redis"] }
 //!    ```
 //!
 //! 2. Start Redis server:
@@ -37,16 +37,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("===========================================\n");
 
     // Demonstrate feature-gated Redis usage
-    #[cfg(feature = "redis-storage")]
+    #[cfg(feature = "dpop-redis")]
     {
         demonstrate_redis_nonce_tracking().await?;
     }
 
-    #[cfg(not(feature = "redis-storage"))]
+    #[cfg(not(feature = "dpop-redis"))]
     {
         println!("❌ Redis storage feature not enabled");
-        println!("   Add 'redis-storage' feature to Cargo.toml:");
-        println!("   turbomcp = {{ version = \"1.1.0\", features = [\"redis-storage\"] }}");
+        println!("   Add 'dpop-redis' feature to Cargo.toml:");
+        println!("   turbomcp = {{ version = \"2.0.0\", features = [\"dpop-redis\"] }}");
         println!();
         println!("   Then start Redis and run this example again.");
         println!();
@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(not(feature = "dpop"))]
         {
             println!("💡 For memory-based fallback, enable the 'dpop' feature");
-            println!("   turbomcp = {{ version = \"1.1.0\", features = [\"dpop\"] }}");
+            println!("   turbomcp = {{ version = \"2.0.0\", features = [\"dpop\"] }}");
         }
     }
 
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Demonstrate Redis-based nonce tracking (when feature enabled)
-#[cfg(feature = "redis-storage")]
+#[cfg(feature = "dpop-redis")]
 async fn demonstrate_redis_nonce_tracking() -> Result<(), Box<dyn std::error::Error>> {
     use turbomcp::auth::dpop::{DpopKeyManager, DpopProofGenerator, RedisNonceTracker};
 
@@ -192,19 +192,24 @@ async fn demonstrate_memory_fallback() -> Result<(), Box<dyn std::error::Error>>
     println!("   • State lost on server restart");
     println!("   • Manual cleanup required for long-running processes");
     println!();
-    println!("💡 Consider enabling 'redis-storage' feature for production use");
+    println!("💡 Consider enabling 'dpop-redis' feature for production use");
 
     Ok(())
 }
 
-#[cfg(feature = "redis-storage")]
+#[cfg(feature = "dpop-redis")]
 mod redis_integration_tests {
     use super::*;
+    use std::time::Duration;
     use turbomcp::auth::dpop::{DpopKeyManager, DpopProofGenerator, RedisNonceTracker};
 
     /// Test Redis nonce tracker with custom configuration
+    ///
+    /// This test requires an external Redis server to be running.
+    /// Run with: docker run -p 6379:6379 redis:alpine
+    /// Then run: cargo test --features dpop-redis test_redis_custom_config -- --ignored
     #[tokio::test]
-    #[ignore] // Requires Redis server
+    #[ignore] // Requires external Redis server (docker run -p 6379:6379 redis:alpine)
     async fn test_redis_custom_config() {
         let tracker = RedisNonceTracker::with_config(
             "redis://127.0.0.1:6379",
