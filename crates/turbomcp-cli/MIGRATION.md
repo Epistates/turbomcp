@@ -304,7 +304,7 @@ If issues arise, rollback is simple:
 - ✅ Cohesive with rest of TurboMCP
 - ✅ Showcases the power of `turbomcp-client`
 - ✅ Enterprise-ready CLI
-- ✅ Competitive with other MCP CLIs
+- ✅ Production-grade MCP tooling
 
 ## Next Steps
 
