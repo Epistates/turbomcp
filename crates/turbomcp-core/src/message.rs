@@ -566,9 +566,11 @@ impl Message {
                                     e
                                 ))
                             })?;
-                        serde_cbor::to_vec(&value).map(Bytes::from).map_err(|e| {
+                        let mut buf = Vec::new();
+                        ciborium::ser::into_writer(&value, &mut buf).map_err(|e| {
                             Error::serialization(format!("CBOR serialization failed: {}", e))
-                        })
+                        })?;
+                        Ok(Bytes::from(buf))
                     }
                 }
             }

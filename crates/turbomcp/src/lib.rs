@@ -103,7 +103,9 @@
 //!
 //! ## Runtime Transport Selection
 //!
-//! ```no_run
+//! ```ignore
+//! // Note: This example requires the `tcp` and `unix` features to compile
+//! // cargo run --features "tcp,unix"
 //! use turbomcp::prelude::*;
 //! use std::sync::Arc;
 //!
@@ -125,10 +127,11 @@
 //!     let server = Calculator {
 //!         operations: Arc::new(std::sync::atomic::AtomicU64::new(0)),
 //!     };
-//!     
+//!
 //!     // Runtime transport selection based on environment
 //!     match std::env::var("TRANSPORT").as_deref() {
 //!         Ok("tcp") => {
+//!             // Requires "tcp" feature
 //!             let port: u16 = std::env::var("PORT")
 //!                 .unwrap_or_else(|_| "8080".to_string())
 //!                 .parse()
@@ -136,11 +139,13 @@
 //!             server.run_tcp(format!("127.0.0.1:{}", port)).await?;
 //!         }
 //!         Ok("unix") => {
+//!             // Requires "unix" feature
 //!             let path = std::env::var("SOCKET_PATH")
 //!                 .unwrap_or_else(|_| "/tmp/mcp.sock".to_string());
 //!             server.run_unix(path).await?;
 //!         }
 //!         _ => {
+//!             // Always available (default feature)
 //!             server.run_stdio().await?;
 //!         }
 //!     }
@@ -551,20 +556,22 @@ pub use async_trait::async_trait;
 // This allows generated code to use ::turbomcp::axum::Router instead of axum::Router
 #[cfg(feature = "http")]
 pub use axum;
-#[cfg(any(feature = "tcp", feature = "unix"))]
+// tokio and turbomcp_transport are always dependencies, always re-export for macros
 pub use tokio;
 // Re-export core and protocol types for macro use
 pub use turbomcp_core;
 pub use turbomcp_protocol;
-#[cfg(any(feature = "tcp", feature = "unix", feature = "http"))]
 pub use turbomcp_transport;
 // Re-export tracing for logging in macro-generated code
 pub use tracing;
 
 // Core TurboMCP modules
-// Temporary module during auth decomposition - will be removed after migration
-pub mod auth;
-mod auth_impl;
+// 2.0.0: Auth and DPoP extracted to separate optional crates
+#[cfg(feature = "auth")]
+pub use turbomcp_auth as auth;
+
+#[cfg(feature = "dpop")]
+pub use turbomcp_dpop as dpop;
 pub mod context;
 pub mod context_factory;
 pub mod elicitation;
@@ -579,6 +586,7 @@ pub mod router;
 pub mod server;
 pub mod session;
 pub mod simd;
+#[cfg(feature = "http")]
 pub mod sse_server;
 pub mod structured;
 #[cfg(test)]
@@ -594,12 +602,10 @@ pub mod schema;
 
 // Re-export from submodules
 // Note: auth and session both define SessionConfig, so we rename one to avoid ambiguous re-exports
-pub use crate::auth::SessionConfig as AuthSessionConfig;
-pub use crate::auth::{
-    ApiKeyProvider, AuthConfig, AuthContext, AuthCredentials, AuthManager, AuthMiddleware,
-    AuthProvider, AuthProviderConfig, AuthProviderType, OAuth2Config, OAuth2FlowType,
-    OAuth2Provider, TokenInfo, UserInfo,
-};
+#[cfg(feature = "auth")]
+pub use turbomcp_auth::{AuthContext, AuthManager, AuthProvider, OAuth2Config};
+
+// DPoP re-exports (when both auth and dpop features enabled)
 pub use crate::context::*;
 pub use crate::context_factory::{
     ContextCreationStrategy, ContextFactory, ContextFactoryConfig, ContextFactoryProvider,
@@ -641,10 +647,13 @@ pub use crate::router::{ToolRouter, ToolRouterExt};
 pub use crate::server::*;
 pub use crate::session::*;
 pub use crate::simd::*;
+#[cfg(feature = "http")]
 pub use crate::sse_server::*;
 pub use crate::structured::*;
 pub use crate::transport::*;
 pub use crate::validation::*;
+#[cfg(all(feature = "auth", feature = "dpop"))]
+pub use turbomcp_dpop::{DpopKeyManager, DpopProofGenerator};
 
 // Re-export inventory for macro use
 pub use inventory;
@@ -692,15 +701,17 @@ pub mod prelude {
         template, tool, tool_result,
     };
 
+    // Core types (always available)
     pub use super::{
-        ApiKeyProvider, AuthConfig, AuthContext, AuthCredentials, AuthManager, AuthMiddleware,
-        AuthProvider, AuthProviderConfig, AuthProviderType, CallToolRequest, CallToolResult,
-        Context, ElicitationManager, HandlerMetadata, HandlerRegistration, McpError, McpErrorExt,
-        McpResult, McpServer, OAuth2Config, OAuth2FlowType, OAuth2Provider, RequestContext, Server,
-        ServerBuilder, ServerError, TokenInfo, Transport, TransportConfig, TransportFactory,
-        TurboMcpServer, UserInfo, error_text, handlers, prompt_result, resource_result, text,
-        tool_error, tool_success,
+        CallToolRequest, CallToolResult, Context, ElicitationManager, HandlerMetadata,
+        HandlerRegistration, McpError, McpErrorExt, McpResult, McpServer, RequestContext, Server,
+        ServerBuilder, ServerError, Transport, TransportConfig, TransportFactory, TurboMcpServer,
+        error_text, handlers, prompt_result, resource_result, text, tool_error, tool_success,
     };
+
+    // Auth types (feature-gated)
+    #[cfg(feature = "auth")]
+    pub use super::{AuthContext, AuthManager, AuthProvider, OAuth2Config};
 
     // Re-export essential protocol types to avoid manual imports
     pub use turbomcp_protocol::types::{
@@ -877,6 +888,7 @@ impl From<std::io::Error> for McpError {
     }
 }
 
+#[cfg(feature = "http")]
 impl From<reqwest::Error> for McpError {
     fn from(err: reqwest::Error) -> Self {
         Self::Network(format!("Network error: {err}"))

@@ -354,6 +354,9 @@ pub mod fast {
         }
     }
 
+    /// Standard JSON validation (non-SIMD fallback)
+    ///
+    /// Validates JSON syntax using serde_json's parser.
     #[cfg(not(feature = "simd"))]
     #[inline]
     pub fn validate_json_fast(bytes: &[u8]) -> bool {

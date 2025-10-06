@@ -24,9 +24,7 @@ type WrappedToolHandler = Arc<
 //use serde::{Deserialize, Serialize};
 
 // Re-export core routing functionality from mcp-server
-pub use turbomcp_server::{
-    HandlerRegistry, MiddlewareStack, RequestRouter, ToolHandler as ServerToolHandler,
-};
+pub use turbomcp_server::{HandlerRegistry, RequestRouter, ToolHandler as ServerToolHandler};
 
 use crate::{McpError, McpResult};
 use turbomcp_core::RequestContext;

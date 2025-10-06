@@ -10,13 +10,14 @@
 // Re-export core transport functionality
 pub use turbomcp_transport::{StdioTransport, Transport, TransportConfig, TransportResult};
 
+#[cfg(feature = "websocket")]
+use crate::McpResult;
+
 #[cfg(feature = "http")]
 pub use turbomcp_transport::{AxumMcpExt, McpAppState, McpServerConfig, McpService};
 
 #[cfg(feature = "websocket")]
 pub use turbomcp_transport::WebSocketTransport;
-
-use crate::{/*McpError,*/ McpResult};
 
 /// Ergonomic transport factory for quick setup
 pub struct TransportFactory;

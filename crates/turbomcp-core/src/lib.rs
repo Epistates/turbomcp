@@ -134,6 +134,7 @@ pub mod enhanced_registry;
 pub mod error;
 pub mod error_utils;
 pub mod handlers;
+#[cfg(feature = "lock-free")]
 pub mod lock_free;
 pub mod message;
 pub mod registry;
