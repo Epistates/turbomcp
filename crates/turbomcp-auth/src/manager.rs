@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 
 use super::config::AuthConfig;
 use super::types::{AuthContext, AuthCredentials, AuthProvider};
-use crate::{McpError, McpResult};
+use turbomcp_core::{Error as McpError, Result as McpResult};
 
 /// Authentication manager for coordinating multiple authentication providers
 #[derive(Debug)]
@@ -78,13 +78,13 @@ impl AuthManager {
         credentials: AuthCredentials,
     ) -> McpResult<AuthContext> {
         if !self.config.enabled {
-            return Err(McpError::Tool("Authentication is disabled".to_string()));
+            return Err(McpError::internal("Authentication is disabled".to_string()));
         }
 
         let providers = self.providers.read().await;
         let provider = providers
             .get(provider_name)
-            .ok_or_else(|| McpError::Tool(format!("Provider '{provider_name}' not found")))?;
+            .ok_or_else(|| McpError::internal(format!("Provider '{provider_name}' not found")))?;
 
         let mut auth_context = provider.authenticate(credentials).await?;
 
@@ -110,15 +110,15 @@ impl AuthManager {
         provider_name: Option<&str>,
     ) -> McpResult<AuthContext> {
         if !self.config.enabled {
-            return Err(McpError::Tool("Authentication is disabled".to_string()));
+            return Err(McpError::internal("Authentication is disabled".to_string()));
         }
 
         let providers = self.providers.read().await;
 
         if let Some(provider_name) = provider_name {
-            let provider = providers
-                .get(provider_name)
-                .ok_or_else(|| McpError::Tool(format!("Provider '{provider_name}' not found")))?;
+            let provider = providers.get(provider_name).ok_or_else(|| {
+                McpError::internal(format!("Provider '{provider_name}' not found"))
+            })?;
             provider.validate_token(token).await
         } else {
             // Try all providers
@@ -127,7 +127,7 @@ impl AuthManager {
                     return Ok(context);
                 }
             }
-            Err(McpError::Tool("Token validation failed".to_string()))
+            Err(McpError::internal("Token validation failed".to_string()))
         }
     }
 
@@ -143,7 +143,7 @@ impl AuthManager {
             .write()
             .await
             .remove(session_id)
-            .ok_or_else(|| McpError::Tool("Session not found".to_string()))?;
+            .ok_or_else(|| McpError::internal("Session not found".to_string()))?;
 
         // Try to revoke token with provider
         let providers = self.providers.read().await;
@@ -198,7 +198,7 @@ pub async fn check_auth(token: &str) -> McpResult<AuthContext> {
     if let Some(manager) = global_auth_manager().await {
         manager.validate_token(token, None).await
     } else {
-        Err(McpError::Tool(
+        Err(McpError::internal(
             "Authentication manager not initialized".to_string(),
         ))
     }
@@ -207,7 +207,7 @@ pub async fn check_auth(token: &str) -> McpResult<AuthContext> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::auth::{
+    use crate::{
         config::{
             AuthorizationConfig, OAuth2Config, OAuth2FlowType, SecurityLevel, SessionConfig,
             SessionStorageType,

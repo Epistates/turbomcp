@@ -5,7 +5,7 @@
 //! - URI format and security validation
 //! - Canonical form validation
 
-use crate::{McpError, McpResult};
+use turbomcp_core::{Error as McpError, Result as McpResult};
 
 /// RFC 8707 canonical URI validation for Resource Indicators
 ///
@@ -30,36 +30,36 @@ pub fn validate_canonical_resource_uri(uri: &str) -> McpResult<()> {
 
     // Check canonical form BEFORE parsing (URL parser normalizes automatically)
     // RFC 8707 requires canonical URIs: lowercase scheme and host
-    let scheme_end = uri.find("://").ok_or_else(|| {
-        McpError::InvalidInput("Resource URI must have a valid scheme".to_string())
-    })?;
+    let scheme_end = uri
+        .find("://")
+        .ok_or_else(|| McpError::validation("Resource URI must have a valid scheme".to_string()))?;
 
     let scheme = &uri[..scheme_end];
     if scheme != scheme.to_lowercase() {
-        return Err(McpError::InvalidInput(
+        return Err(McpError::validation(
             "Resource URI must use canonical form (lowercase scheme and host)".to_string(),
         ));
     }
 
-    let parsed = Url::parse(uri)
-        .map_err(|e| McpError::InvalidInput(format!("Invalid resource URI: {e}")))?;
+    let parsed =
+        Url::parse(uri).map_err(|e| McpError::validation(format!("Invalid resource URI: {e}")))?;
 
     // RFC 8707 requirements
     if parsed.scheme() != "https" && parsed.scheme() != "http" {
-        return Err(McpError::InvalidInput(
+        return Err(McpError::validation(
             "Resource URI must use http or https scheme".to_string(),
         ));
     }
 
     if parsed.fragment().is_some() {
-        return Err(McpError::InvalidInput(
+        return Err(McpError::validation(
             "Resource URI must not contain fragment".to_string(),
         ));
     }
 
     // MCP-specific validation for canonical URIs
     if parsed.host_str().is_none() {
-        return Err(McpError::InvalidInput(
+        return Err(McpError::validation(
             "Resource URI must include host".to_string(),
         ));
     }
@@ -77,7 +77,7 @@ pub fn validate_canonical_resource_uri(uri: &str) -> McpResult<()> {
     let original_host = &host_in_uri[..host_end];
 
     if original_host != original_host.to_lowercase() {
-        return Err(McpError::InvalidInput(
+        return Err(McpError::validation(
             "Resource URI must use canonical form (lowercase scheme and host)".to_string(),
         ));
     }

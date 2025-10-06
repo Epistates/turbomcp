@@ -10,7 +10,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::{McpError, McpResult};
+use turbomcp_core::{Error as McpError, Result as McpResult};
 
 // DPoP support (feature-gated)
 #[cfg(feature = "dpop")]
@@ -373,7 +373,7 @@ impl McpResourceRegistry {
                 Ok(true)
             }
         } else {
-            Err(McpError::InvalidInput(format!(
+            Err(McpError::validation(format!(
                 "Unknown resource: {}",
                 resource_uri
             )))
@@ -559,13 +559,13 @@ impl DynamicClientRegistration {
             .json(&registration_request)
             .send()
             .await
-            .map_err(|e| McpError::InvalidInput(format!("Registration request failed: {}", e)))?;
+            .map_err(|e| McpError::validation(format!("Registration request failed: {}", e)))?;
 
         // Handle response
         if response.status().is_success() {
             let registration_response: ClientRegistrationResponse =
                 response.json().await.map_err(|e| {
-                    McpError::InvalidInput(format!("Invalid registration response: {}", e))
+                    McpError::validation(format!("Invalid registration response: {}", e))
                 })?;
             Ok(registration_response)
         } else {
@@ -573,8 +573,8 @@ impl DynamicClientRegistration {
             let error_response: ClientRegistrationError = response
                 .json()
                 .await
-                .map_err(|e| McpError::InvalidInput(format!("Invalid error response: {}", e)))?;
-            Err(McpError::InvalidInput(format!(
+                .map_err(|e| McpError::validation(format!("Invalid error response: {}", e)))?;
+            Err(McpError::validation(format!(
                 "Client registration failed: {} - {}",
                 error_response.error as u32,
                 error_response.error_description.unwrap_or_default()

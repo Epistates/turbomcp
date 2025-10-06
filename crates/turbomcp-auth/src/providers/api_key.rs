@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 
 use super::super::config::AuthProviderType;
 use super::super::types::{AuthContext, AuthCredentials, AuthProvider, TokenInfo, UserInfo};
-use crate::{McpError, McpResult};
+use turbomcp_core::{Error as McpError, Result as McpResult};
 
 /// API Key authentication provider
 #[derive(Debug)]
@@ -82,10 +82,10 @@ impl AuthProvider for ApiKeyProvider {
                         metadata: HashMap::new(),
                     })
                 } else {
-                    Err(McpError::Tool("Invalid API key".to_string()))
+                    Err(McpError::internal("Invalid API key".to_string()))
                 }
             }
-            _ => Err(McpError::Tool(
+            _ => Err(McpError::internal(
                 "Invalid credentials for API key provider".to_string(),
             )),
         }
@@ -99,7 +99,7 @@ impl AuthProvider for ApiKeyProvider {
     }
 
     async fn refresh_token(&self, _refresh_token: &str) -> McpResult<TokenInfo> {
-        Err(McpError::Tool(
+        Err(McpError::internal(
             "API keys do not support token refresh".to_string(),
         ))
     }
@@ -109,7 +109,7 @@ impl AuthProvider for ApiKeyProvider {
         if removed {
             Ok(())
         } else {
-            Err(McpError::Tool("API key not found".to_string()))
+            Err(McpError::internal("API key not found".to_string()))
         }
     }
 
@@ -118,6 +118,6 @@ impl AuthProvider for ApiKeyProvider {
         api_keys
             .get(token)
             .cloned()
-            .ok_or_else(|| McpError::Tool("Invalid API key".to_string()))
+            .ok_or_else(|| McpError::internal("Invalid API key".to_string()))
     }
 }

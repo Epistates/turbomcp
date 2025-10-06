@@ -3,21 +3,21 @@
 //! This module provides Redis-backed persistent storage for DPoP nonce
 //! tracking and replay protection when the `redis-storage` feature is enabled.
 
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 use super::{DpopError, NonceStorage, Result};
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 use async_trait::async_trait;
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 use redis::{AsyncCommands, Client, RedisResult};
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 use tracing::{debug, error, trace, warn};
 
 /// Redis-based nonce storage implementation with comprehensive DPoP tracking
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 #[derive(Debug, Clone)]
 pub struct RedisNonceStorage {
     /// Redis client for async operations
@@ -40,7 +40,7 @@ pub struct RedisNonceStorage {
 }
 
 /// Stored nonce information with metadata
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredNonce {
     /// The nonce value
@@ -65,7 +65,7 @@ struct StoredNonce {
     usage_count: u32,
 }
 
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 impl RedisNonceStorage {
     /// Create a new Redis nonce storage instance with production configuration
     pub async fn new(connection_string: &str) -> Result<Self> {
@@ -167,7 +167,7 @@ impl RedisNonceStorage {
     }
 }
 
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 #[async_trait]
 impl NonceStorage for RedisNonceStorage {
     async fn store_nonce(
@@ -330,11 +330,11 @@ impl NonceStorage for RedisNonceStorage {
 
 /// Redis storage implementation when feature is disabled
 /// This provides clear error messages for misconfiguration
-#[cfg(not(feature = "dpop-redis"))]
+#[cfg(not(feature = "redis-storage"))]
 #[derive(Debug)]
 pub struct RedisNonceStorage;
 
-#[cfg(not(feature = "dpop-redis"))]
+#[cfg(not(feature = "redis-storage"))]
 impl RedisNonceStorage {
     /// Create a new Redis nonce storage instance (feature disabled)
     ///

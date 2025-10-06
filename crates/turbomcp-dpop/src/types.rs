@@ -376,7 +376,6 @@ impl DpopProof {
     /// follows RFC 9449 security requirements and validates signatures before processing claims.
     ///
     /// Requires the `jwt-validation` feature to be enabled.
-    #[cfg(feature = "dpop")]
     pub fn from_jwt_string(jwt: &str) -> super::Result<Self> {
         use jsonwebtoken::{Algorithm, Validation, decode, decode_header};
 
@@ -582,7 +581,6 @@ fn is_valid_http_uri(uri: &str) -> bool {
 /// This function converts our DpopJwk to a DecodingKey that can be used
 /// with the jsonwebtoken crate for signature verification. This is critical
 /// for proper DPoP security as per RFC 9449 requirements.
-#[cfg(feature = "dpop")]
 fn create_decoding_key_from_jwk(
     jwk: &DpopJwk,
 ) -> Result<jsonwebtoken::DecodingKey, Box<dyn std::error::Error>> {

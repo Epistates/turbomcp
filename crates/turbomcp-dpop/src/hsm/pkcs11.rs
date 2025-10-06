@@ -37,7 +37,7 @@ use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, info, trace};
 
 // Production-grade ASN.1 parsing for PKCS#11 key data
-#[cfg(feature = "dpop-hsm-pkcs11")]
+#[cfg(feature = "hsm-pkcs11")]
 use asn1::ParseError;
 
 /// PKCS#11 HSM manager with proven session pooling
@@ -146,7 +146,7 @@ impl r2d2::ManageConnection for SessionManager {
 }
 
 /// Production-grade ASN.1 parsing utilities for PKCS#11 key data
-#[cfg(feature = "dpop-hsm-pkcs11")]
+#[cfg(feature = "hsm-pkcs11")]
 impl Pkcs11HsmManager {
     /// Parse RSA public key from PKCS#11 using proven ASN.1 parsing
     ///
