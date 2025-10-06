@@ -26,7 +26,7 @@ use super::{
     },
 };
 
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 use super::{redis_storage::RedisNonceStorage, types::NonceStorage};
 
 /// DPoP proof generator with comprehensive security features
@@ -155,7 +155,6 @@ impl DpopProofGenerator {
     /// It combines JWT parsing and comprehensive DPoP validation in one call.
     ///
     /// Requires the `jwt-validation` feature to be enabled.
-    #[cfg(feature = "dpop")]
     pub async fn parse_and_validate_jwt(
         &self,
         jwt_string: &str,
@@ -488,7 +487,7 @@ impl Default for MemoryNonceTracker {
 /// This implementation provides Redis-backed nonce tracking with full
 /// DPoP replay protection across multiple server instances. Only available
 /// when the `redis-storage` feature is enabled.
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 #[derive(Debug)]
 pub struct RedisNonceTracker {
     /// Underlying Redis storage implementation
@@ -497,7 +496,7 @@ pub struct RedisNonceTracker {
     default_client_id: String,
 }
 
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 impl RedisNonceTracker {
     /// Create a new Redis nonce tracker with default configuration
     ///
@@ -568,7 +567,7 @@ impl RedisNonceTracker {
     }
 }
 
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 #[async_trait]
 impl NonceTracker for RedisNonceTracker {
     async fn track_nonce(&self, nonce: &str, issued_at: i64) -> Result<()> {
@@ -626,11 +625,11 @@ impl NonceTracker for RedisNonceTracker {
 ///
 /// When the `redis-storage` feature is not enabled, this provides clear
 /// error messages directing users to enable the feature.
-#[cfg(not(feature = "dpop-redis"))]
+#[cfg(not(feature = "redis-storage"))]
 #[derive(Debug)]
 pub struct RedisNonceTracker;
 
-#[cfg(not(feature = "dpop-redis"))]
+#[cfg(not(feature = "redis-storage"))]
 impl RedisNonceTracker {
     /// Create a new Redis nonce tracker (feature disabled)
     ///

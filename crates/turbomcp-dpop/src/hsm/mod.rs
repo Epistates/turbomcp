@@ -18,7 +18,7 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! # #[cfg(feature = "dpop-hsm-pkcs11")]
+//! # #[cfg(feature = "hsm-pkcs11")]
 //! # {
 //! use turbomcp_dpop::hsm::{HsmManager, HsmConfig};
 //! use turbomcp_dpop::DpopAlgorithm;
@@ -54,22 +54,22 @@
 //! turbomcp-dpop = { version = "1.1.0-exp.3", features = ["hsm-pkcs11", "hsm-yubico"] }
 //! ```
 
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 use super::{DpopAlgorithm, DpopError, DpopKeyPair, Result};
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 use std::time::SystemTime;
 
 /// Core HSM operations trait
 ///
 /// This trait defines the interface for all HSM implementations, ensuring
 /// consistent behavior across different HSM types and vendors.
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 #[async_trait]
 pub trait HsmOperations: Send + Sync {
     /// Generate a DPoP key pair in the HSM
@@ -99,21 +99,21 @@ pub trait HsmOperations: Send + Sync {
 }
 
 /// HSM configuration with support for multiple backends
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HsmConfig {
     /// PKCS#11 HSM configuration (SafeNet Luna, Thales, AWS CloudHSM, etc.)
-    #[cfg(feature = "dpop-hsm-pkcs11")]
+    #[cfg(feature = "hsm-pkcs11")]
     Pkcs11(Pkcs11Config),
     /// YubiHSM 2 configuration
-    #[cfg(feature = "dpop-hsm-yubico")]
+    #[cfg(feature = "hsm-yubico")]
     YubiHsm(YubiHsmConfig),
 }
 
 /// PKCS#11 HSM configuration
 #[derive(Debug, Clone, Serialize)]
-#[cfg_attr(not(feature = "dpop-hsm-pkcs11"), derive(Deserialize))]
+#[cfg_attr(not(feature = "hsm-pkcs11"), derive(Deserialize))]
 pub struct Pkcs11Config {
     /// Path to PKCS#11 library (e.g., "/opt/cloudhsm/lib/libcloudhsm_pkcs11.so")
     pub library_path: PathBuf,
@@ -125,21 +125,21 @@ pub struct Pkcs11Config {
     pub token_label: Option<String>,
 
     /// User PIN for HSM authentication
-    #[cfg(feature = "dpop-hsm-pkcs11")]
+    #[cfg(feature = "hsm-pkcs11")]
     #[serde(skip)]
     pub user_pin: secrecy::SecretString,
 
     /// User PIN as string (for deserialization)
-    #[cfg(not(feature = "dpop-hsm-pkcs11"))]
+    #[cfg(not(feature = "hsm-pkcs11"))]
     pub user_pin: String,
 
     /// SO PIN for administrative operations (optional)
-    #[cfg(feature = "dpop-hsm-pkcs11")]
+    #[cfg(feature = "hsm-pkcs11")]
     #[serde(skip)]
     pub so_pin: Option<secrecy::SecretString>,
 
     /// SO PIN as string (for deserialization)
-    #[cfg(not(feature = "dpop-hsm-pkcs11"))]
+    #[cfg(not(feature = "hsm-pkcs11"))]
     pub so_pin: Option<String>,
 
     /// Session pool configuration
@@ -157,7 +157,7 @@ pub struct Pkcs11Config {
 
 /// YubiHSM configuration
 #[derive(Debug, Clone, Serialize)]
-#[cfg_attr(not(feature = "dpop-hsm-yubico"), derive(Deserialize))]
+#[cfg_attr(not(feature = "hsm-yubico"), derive(Deserialize))]
 pub struct YubiHsmConfig {
     /// Connection type (HTTP or USB)
     pub connector: YubiHsmConnector,
@@ -166,12 +166,12 @@ pub struct YubiHsmConfig {
     pub auth_key_id: u16,
 
     /// Authentication password
-    #[cfg(feature = "dpop-hsm-yubico")]
+    #[cfg(feature = "hsm-yubico")]
     #[serde(skip)]
     pub password: secrecy::SecretString,
 
     /// Password as string (for deserialization)
-    #[cfg(not(feature = "dpop-hsm-yubico"))]
+    #[cfg(not(feature = "hsm-yubico"))]
     pub password: String,
 
     /// Operation timeouts
@@ -195,7 +195,7 @@ pub enum YubiHsmConnector {
 }
 
 // Custom Deserialize implementations for HSM configs with secret fields
-#[cfg(feature = "dpop-hsm-pkcs11")]
+#[cfg(feature = "hsm-pkcs11")]
 impl<'de> serde::Deserialize<'de> for Pkcs11Config {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -342,7 +342,7 @@ impl<'de> serde::Deserialize<'de> for Pkcs11Config {
     }
 }
 
-#[cfg(feature = "dpop-hsm-yubico")]
+#[cfg(feature = "hsm-yubico")]
 impl<'de> serde::Deserialize<'de> for YubiHsmConfig {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -493,7 +493,7 @@ pub struct RetryConfig {
 }
 
 /// HSM health status information
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HsmHealthStatus {
     /// Overall health status
@@ -538,7 +538,7 @@ pub struct TokenInfo {
 }
 
 /// HSM information and capabilities
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HsmInfo {
     /// HSM type and backend
@@ -561,7 +561,7 @@ pub struct HsmInfo {
 }
 
 /// HSM operation statistics
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct HsmStats {
     /// Total keys generated
@@ -625,13 +625,13 @@ pub struct PerformanceStats {
 }
 
 /// Unified HSM manager for all supported HSM types
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 pub struct HsmManager {
     inner: Box<dyn HsmOperations>,
     config: HsmConfig,
 }
 
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 impl std::fmt::Debug for HsmManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HsmManager")
@@ -641,7 +641,7 @@ impl std::fmt::Debug for HsmManager {
     }
 }
 
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 impl HsmManager {
     /// Create a new HSM manager with the specified configuration
     pub async fn new(config: HsmConfig) -> Result<Self> {
@@ -649,11 +649,11 @@ impl HsmManager {
         info!("Initializing HSM manager with config: {:?}", config);
 
         let inner: Box<dyn HsmOperations> = match &config {
-            #[cfg(feature = "dpop-hsm-pkcs11")]
+            #[cfg(feature = "hsm-pkcs11")]
             HsmConfig::Pkcs11(pkcs11_config) => {
                 Box::new(pkcs11::Pkcs11HsmManager::new(pkcs11_config.clone()).await?)
             }
-            #[cfg(feature = "dpop-hsm-yubico")]
+            #[cfg(feature = "hsm-yubico")]
             HsmConfig::YubiHsm(yubi_config) => {
                 Box::new(yubihsm::YubiHsmManager::new(yubi_config.clone()).await?)
             }
@@ -737,16 +737,16 @@ impl Default for RetryConfig {
     }
 }
 
-#[cfg(any(feature = "dpop-hsm-pkcs11", feature = "dpop-hsm-yubico"))]
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 impl HsmConfig {
     /// Create a new PKCS#11 configuration builder
-    #[cfg(feature = "dpop-hsm-pkcs11")]
+    #[cfg(feature = "hsm-pkcs11")]
     pub fn pkcs11() -> Pkcs11ConfigBuilder {
         Pkcs11ConfigBuilder::default()
     }
 
     /// Create a new YubiHSM configuration builder
-    #[cfg(feature = "dpop-hsm-yubico")]
+    #[cfg(feature = "hsm-yubico")]
     pub fn yubihsm() -> YubiHsmConfigBuilder {
         YubiHsmConfigBuilder::default()
     }
@@ -754,7 +754,7 @@ impl HsmConfig {
 
 // Configuration builders
 
-#[cfg(feature = "dpop-hsm-pkcs11")]
+#[cfg(feature = "hsm-pkcs11")]
 #[derive(Debug, Default)]
 /// Builder for PKCS#11 HSM configuration
 pub struct Pkcs11ConfigBuilder {
@@ -769,7 +769,7 @@ pub struct Pkcs11ConfigBuilder {
     vendor_config: HashMap<String, String>,
 }
 
-#[cfg(feature = "dpop-hsm-pkcs11")]
+#[cfg(feature = "hsm-pkcs11")]
 impl Pkcs11ConfigBuilder {
     /// Set the PKCS#11 library path
     pub fn library_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
@@ -851,7 +851,7 @@ impl Pkcs11ConfigBuilder {
     }
 }
 
-#[cfg(feature = "dpop-hsm-yubico")]
+#[cfg(feature = "hsm-yubico")]
 #[derive(Debug, Default)]
 /// Builder for YubiHSM configuration
 pub struct YubiHsmConfigBuilder {
@@ -862,7 +862,7 @@ pub struct YubiHsmConfigBuilder {
     retry_config: RetryConfig,
 }
 
-#[cfg(feature = "dpop-hsm-yubico")]
+#[cfg(feature = "hsm-yubico")]
 impl YubiHsmConfigBuilder {
     /// Set HTTP connector with URL
     pub fn http_connector<S: Into<String>>(mut self, url: S) -> Self {
@@ -920,10 +920,10 @@ impl YubiHsmConfigBuilder {
 // HSM backend modules
 pub mod common;
 
-#[cfg(feature = "dpop-hsm-pkcs11")]
+#[cfg(feature = "hsm-pkcs11")]
 pub mod pkcs11;
 
-#[cfg(feature = "dpop-hsm-yubico")]
+#[cfg(feature = "hsm-yubico")]
 pub mod yubihsm;
 
 // Note: HsmManager only exists when HSM features are enabled

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use oauth2::{AuthUrl, ClientId, ClientSecret, RedirectUrl, TokenUrl, basic::BasicClient};
 
-use crate::{McpError, McpResult};
+use turbomcp_core::{Error as McpError, Result as McpResult};
 
 use super::super::config::{OAuth2Config, ProviderConfig, ProviderType, RefreshBehavior};
 
@@ -34,10 +34,10 @@ impl OAuth2Client {
     pub fn new(config: &OAuth2Config, provider_type: ProviderType) -> McpResult<Self> {
         // Validate URLs
         let auth_url = AuthUrl::new(config.auth_url.clone())
-            .map_err(|_| McpError::InvalidInput("Invalid authorization URL".to_string()))?;
+            .map_err(|_| McpError::validation("Invalid authorization URL".to_string()))?;
 
         let token_url = TokenUrl::new(config.token_url.clone())
-            .map_err(|_| McpError::InvalidInput("Invalid token URL".to_string()))?;
+            .map_err(|_| McpError::validation("Invalid token URL".to_string()))?;
 
         // Enhanced redirect URI validation with comprehensive security checks
         let redirect_url = Self::validate_redirect_uri(&config.redirect_uri)?;
@@ -151,7 +151,7 @@ impl OAuth2Client {
 
         // Parse and validate URL structure
         let parsed = Url::parse(uri)
-            .map_err(|e| McpError::InvalidInput(format!("Invalid redirect URI format: {e}")))?;
+            .map_err(|e| McpError::validation(format!("Invalid redirect URI format: {e}")))?;
 
         // Security: Validate scheme
         match parsed.scheme() {
@@ -167,13 +167,13 @@ impl OAuth2Client {
                         || host.starts_with("0.0.0.0:");
 
                     if !is_localhost {
-                        return Err(McpError::InvalidInput(
+                        return Err(McpError::validation(
                             "HTTP redirect URIs only allowed for localhost in development"
                                 .to_string(),
                         ));
                     }
                 } else {
-                    return Err(McpError::InvalidInput(
+                    return Err(McpError::validation(
                         "Redirect URI must have a valid host".to_string(),
                     ));
                 }
@@ -188,7 +188,7 @@ impl OAuth2Client {
                 // Allow app-specific custom schemes
             }
             _ => {
-                return Err(McpError::InvalidInput(format!(
+                return Err(McpError::validation(format!(
                     "Unsupported redirect URI scheme: {}. Use https, http (localhost only), or app-specific schemes",
                     parsed.scheme()
                 )));
@@ -197,7 +197,7 @@ impl OAuth2Client {
 
         // Security: Prevent fragment in redirect URI (per OAuth 2.0 spec)
         if parsed.fragment().is_some() {
-            return Err(McpError::InvalidInput(
+            return Err(McpError::validation(
                 "Redirect URI must not contain URL fragment".to_string(),
             ));
         }
@@ -208,7 +208,7 @@ impl OAuth2Client {
         if let Some(path) = parsed.path_segments() {
             for segment in path {
                 if segment == ".." {
-                    return Err(McpError::InvalidInput(
+                    return Err(McpError::validation(
                         "Redirect URI path must not contain traversal sequences".to_string(),
                     ));
                 }
@@ -220,7 +220,7 @@ impl OAuth2Client {
         // For production security, implement exact whitelist matching of allowed URIs
         // (not pattern matching, which is error-prone per OAuth Security Best Practice RFC)
         RedirectUrl::new(uri.to_string())
-            .map_err(|_| McpError::InvalidInput("Failed to create redirect URL".to_string()))
+            .map_err(|_| McpError::validation("Failed to create redirect URL".to_string()))
     }
 
     /// Get access to the authorization code client

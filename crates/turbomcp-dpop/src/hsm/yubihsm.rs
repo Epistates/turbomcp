@@ -34,7 +34,7 @@ use super::{
     common,
 };
 use async_trait::async_trait;
-#[cfg(feature = "dpop-hsm-yubico")]
+#[cfg(feature = "hsm-yubico")]
 use parking_lot::RwLock;
 use secrecy::ExposeSecret;
 use std::collections::HashMap;

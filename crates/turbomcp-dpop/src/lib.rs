@@ -1,10 +1,7 @@
-//! DPoP (Demonstrating Proof-of-Possession) Implementation
+//! # TurboMCP DPoP - RFC 9449 Implementation
 //!
-//! This module implements RFC 9449 - OAuth 2.0 Demonstrating Proof-of-Possession at the
-//! Application Layer (DPoP). DPoP binds access tokens to cryptographic key pairs, preventing
-//! token theft and replay attacks.
-//!
-//! **This module is feature-gated and only available with the `dpop` feature.**
+//! DPoP (Demonstrating Proof-of-Possession) implementation for OAuth 2.0 as specified in RFC 9449.
+//! DPoP binds access tokens to cryptographic key pairs, preventing token theft and replay attacks.
 //!
 //! ## Core Features
 //!
@@ -20,20 +17,19 @@
 //! - `types` - Core DPoP types (algorithms, key pairs, proofs)
 //! - `keys` - Key management and rotation
 //! - `proof` - Proof generation and validation
-//! - `redis_storage` - Redis backend (feature-gated: `dpop-redis`)
+//! - `redis_storage` - Redis backend (feature-gated: `redis-storage`)
 //! - `hsm` - Hardware Security Module support (feature-gated)
-//!   - `hsm::pkcs11` - PKCS#11 HSM integration (feature: `dpop-hsm-pkcs11`)
-//!   - `hsm::yubihsm` - YubiHSM integration (feature: `dpop-hsm-yubico`)
+//!   - `hsm::pkcs11` - PKCS#11 HSM integration (feature: `hsm-pkcs11`)
+//!   - `hsm::yubihsm` - YubiHSM integration (feature: `hsm-yubico`)
 //!
 //! ## Feature Flags
 //!
-//! - `dpop` - Core DPoP functionality (required for this module)
-//! - `dpop-redis` - Redis storage backend for nonce tracking
-//! - `dpop-hsm-pkcs11` - PKCS#11 HSM support
-//! - `dpop-hsm-yubico` - YubiHSM support
-//! - `dpop-test-utils` - Test utilities for DPoP testing
-
-#![cfg(feature = "dpop")]
+//! - `default` - Core DPoP functionality (no optional features)
+//! - `redis-storage` - Redis storage backend for nonce tracking
+//! - `hsm-pkcs11` - PKCS#11 HSM support
+//! - `hsm-yubico` - YubiHSM support
+//! - `hsm` - Enable all HSM backends
+//! - `test-utils` - Test utilities for DPoP testing
 
 // Core modules (always available when dpop feature is enabled)
 pub mod errors;
@@ -45,10 +41,10 @@ pub mod types;
 pub mod hsm;
 
 // Optional feature modules
-#[cfg(feature = "dpop-redis")]
+#[cfg(feature = "redis-storage")]
 pub mod redis_storage;
 
-#[cfg(feature = "dpop-test-utils")]
+#[cfg(feature = "test-utils")]
 pub mod test_utils;
 
 // Re-export core types for convenience

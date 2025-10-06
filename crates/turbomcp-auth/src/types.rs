@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use oauth2::RefreshToken;
 use serde::{Deserialize, Serialize};
 
-use crate::{McpError, McpResult};
+use turbomcp_core::{Error as McpError, Result as McpResult};
 
 use super::config::AuthProviderType;
 
@@ -244,6 +244,6 @@ impl AuthMiddleware for DefaultAuthMiddleware {
 
     async fn handle_auth_failure(&self, error: McpError) -> McpResult<()> {
         tracing::warn!("Authentication failed: {}", error);
-        Err(error)
+        Err(Box::new(error))
     }
 }
