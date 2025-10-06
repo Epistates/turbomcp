@@ -191,6 +191,8 @@ async fn test_transport_showcase_stdio() {
             "07_transport_showcase",
             "--package",
             "turbomcp",
+            "--features",
+            "all-transports",
         ])
         .env("RUST_LOG", "") // Empty string to disable logging
         .output()
@@ -294,8 +296,8 @@ async fn test_jsonrpc_protocol_compliance() {
 }
 
 /// Complex integration test - validates server hardening against malformed inputs
+/// This ensures the server handles malformed JSON-RPC requests gracefully without crashing
 #[tokio::test]
-#[ignore] // This is a stress test, run with --ignored flag
 async fn test_invalid_jsonrpc_robustness_integration() {
     let invalid_requests = vec![
         // Missing jsonrpc field

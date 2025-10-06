@@ -2,18 +2,20 @@
 //!
 //! **Learning Goals:**
 //! - Configure server middleware for production deployments
-//! - Implement authentication and authorization
+//! - Implement authentication at the protocol layer
 //! - Set up rate limiting and request validation
 //! - Add security headers and audit logging
 //!
 //! **What this example demonstrates:**
 //! - Complete middleware stack configuration
 //! - AuthConfig for JWT authentication
-//! - AuthzConfig for RBAC authorization
 //! - RateLimitConfig for API protection
 //! - ValidationConfig for request validation
 //! - SecurityConfig for headers (CORS, CSP, HSTS)
 //! - AuditConfig for compliance logging
+//!
+//! **Note:** Authorization/RBAC should be handled at the application layer,
+//! not in the protocol middleware. See the application examples for RBAC patterns.
 //!
 //! **Run with:** `cargo run --example 17_middleware_stack`
 
@@ -38,13 +40,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auth_config = AuthConfig::default(); // Uses default JWT settings
 
     tracing::info!("✅ Auth: JWT validation (HS256 algorithm)");
-
-    // ============================================================================
-    // AUTHORIZATION MIDDLEWARE (RBAC with Casbin)
-    // ============================================================================
-    let authz_config = AuthzConfig::default();
-
-    tracing::info!("✅ Authz: RBAC with Casbin policy engine");
 
     // ============================================================================
     // RATE LIMITING MIDDLEWARE (GCRA with tower-governor)
@@ -100,7 +95,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_timeout(timeout_config) // Enforce timeouts early
         .with_validation(validation_config) // Validate before processing
         .with_auth(auth_config) // Authenticate user
-        .with_authz(authz_config) // Authorize access
         .with_rate_limit(rate_limit_config) // Rate limit requests
         .with_audit(audit_config); // Audit after all checks
 
@@ -119,9 +113,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(_auth_layer) = middleware_stack.auth_layer() {
         tracing::info!("\n✓ Auth layer configured");
     }
-    if let Some(_authz_layer) = middleware_stack.authz_layer() {
-        tracing::info!("✓ Authz layer configured");
-    }
     if let Some(_rate_limit_layer) = middleware_stack.rate_limit_layer() {
         tracing::info!("✓ Rate limit layer configured");
     }
@@ -133,7 +124,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     tracing::info!("\n✨ Middleware stack fully configured");
-    tracing::info!("🎯 Features: auth + authz + rate limiting + validation + security + audit");
+    tracing::info!("🎯 Features: auth + rate limiting + validation + security + audit");
+    tracing::info!("📌 Note: Authorization/RBAC belongs in the application layer");
 
     // For demo purposes, just show configuration
     tracing::info!("\n📝 Middleware demonstrates:");
