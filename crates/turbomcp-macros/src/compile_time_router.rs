@@ -569,6 +569,7 @@ pub fn generate_router(
                 /// ```
                 ///
                 /// For standalone servers, use `run_http()` instead.
+                #[cfg(feature = "http")]
                 pub fn into_mcp_router(self: ::std::sync::Arc<Self>) -> ::turbomcp::axum::Router {
                     self.into_mcp_router_with_path("/mcp")
                 }
@@ -605,6 +606,7 @@ pub fn generate_router(
                 /// ```
                 ///
                 /// For standalone servers, use `run_http_with_path()` instead.
+                #[cfg(feature = "http")]
                 pub fn into_mcp_router_with_path(self: ::std::sync::Arc<Self>, path: &str) -> ::turbomcp::axum::Router {
                     use ::std::sync::Arc;
                     use ::turbomcp::turbomcp_transport::streamable_http_v2::{create_router, StreamableHttpConfig};
@@ -677,6 +679,7 @@ pub fn generate_router(
                 }
 
                 /// Run server with TCP transport
+                #[cfg(feature = "tcp")]
                 pub async fn run_tcp<A: ::std::net::ToSocketAddrs>(
                     self,
                     addr: A
@@ -735,6 +738,7 @@ pub fn generate_router(
                 }
 
                 /// Run server with Unix domain socket
+                #[cfg(feature = "unix")]
                 pub async fn run_unix<P: AsRef<::std::path::Path>>(
                     self,
                     path: P
@@ -801,6 +805,7 @@ pub fn generate_router(
 
                 /// Run server with HTTP transport (compile-time routing, zero lifetime issues!)
                 /// Run HTTP server with default "/mcp" endpoint
+                #[cfg(feature = "http")]
                 pub async fn run_http<A: ::std::net::ToSocketAddrs>(
                     self,
                     addr: A
@@ -817,6 +822,7 @@ pub fn generate_router(
                 /// - ✅ Full session management
                 /// - ✅ Message replay support
                 /// - ✅ Origin validation and security
+                #[cfg(feature = "http")]
                 pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs>(
                     self,
                     addr: A,
