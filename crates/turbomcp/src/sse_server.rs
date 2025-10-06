@@ -2,6 +2,10 @@
 //!
 //! Real Server-Sent Events HTTP server with session management, authentication,
 //! and comprehensive MCP protocol support.
+//!
+//! **This module is only available with the `http` feature.**
+
+#![cfg(feature = "http")]
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -27,9 +31,11 @@ use tower_http::cors::{Any, CorsLayer};
 use tower_http::set_header::SetResponseHeaderLayer;
 use uuid::Uuid;
 
+#[cfg(feature = "auth")]
+use turbomcp_auth::{AuthContext, AuthManager};
+
 use crate::{
     McpError, McpResult,
-    auth::{AuthContext, AuthManager},
     session::{CreateSessionRequest, /*SessionInfo,*/ SessionManager},
 };
 
@@ -91,6 +97,7 @@ pub struct SseConnection {
     /// Last activity timestamp
     pub last_activity: std::time::SystemTime,
     /// Authentication context
+    #[cfg(feature = "auth")]
     pub auth_context: Option<AuthContext>,
     /// Connection metadata
     pub metadata: HashMap<String, String>,
@@ -117,6 +124,7 @@ pub struct SseServerState {
     /// Session manager
     pub session_manager: Arc<SessionManager>,
     /// Authentication manager
+    #[cfg(feature = "auth")]
     pub auth_manager: Option<Arc<AuthManager>>,
     /// Active SSE connections
     pub connections: Arc<RwLock<HashMap<String, SseConnection>>>,
@@ -177,13 +185,14 @@ impl SseServerState {
     pub fn new(
         config: SseServerConfig,
         session_manager: Arc<SessionManager>,
-        auth_manager: Option<Arc<AuthManager>>,
+        #[cfg(feature = "auth")] auth_manager: Option<Arc<AuthManager>>,
     ) -> Self {
         let (broadcaster, _) = broadcast::channel(1000);
 
         Self {
             config,
             session_manager,
+            #[cfg(feature = "auth")]
             auth_manager,
             connections: Arc::new(RwLock::new(HashMap::new())),
             broadcaster,
@@ -267,29 +276,44 @@ pub async fn sse_handler(
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
     // Authenticate if token provided
+    #[cfg(feature = "auth")]
     let mut auth_context = None;
-    if let Some(token) = &params.token {
-        if let Some(auth_manager) = &state.auth_manager {
-            match auth_manager.validate_token(token, None).await {
-                Ok(context) => {
-                    auth_context = Some(context);
-                }
-                Err(e) => {
-                    tracing::warn!("SSE authentication failed: {}", e);
-                    if state.config.require_auth {
-                        return Err((
-                            StatusCode::UNAUTHORIZED,
-                            Json(serde_json::json!({"error": "Authentication required"})),
-                        )
-                            .into_response());
+
+    #[cfg(feature = "auth")]
+    {
+        if let Some(token) = &params.token {
+            if let Some(auth_manager) = &state.auth_manager {
+                match auth_manager.validate_token(token, None).await {
+                    Ok(context) => {
+                        auth_context = Some(context);
+                    }
+                    Err(e) => {
+                        tracing::warn!("SSE authentication failed: {}", e);
+                        if state.config.require_auth {
+                            return Err((
+                                StatusCode::UNAUTHORIZED,
+                                Json(serde_json::json!({"error": "Authentication required"})),
+                            )
+                                .into_response());
+                        }
                     }
                 }
             }
+        } else if state.config.require_auth {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "Authentication required"})),
+            )
+                .into_response());
         }
-    } else if state.config.require_auth {
+    }
+
+    #[cfg(not(feature = "auth"))]
+    if state.config.require_auth {
+        tracing::warn!("Authentication required but 'auth' feature not enabled");
         return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": "Authentication required"})),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "Authentication not configured"})),
         )
             .into_response());
     }
@@ -351,6 +375,7 @@ pub async fn sse_handler(
         client_id: client_id.clone(),
         connected_at: std::time::SystemTime::now(),
         last_activity: std::time::SystemTime::now(),
+        #[cfg(feature = "auth")]
         auth_context,
         metadata: HashMap::new(),
     };
@@ -537,11 +562,12 @@ pub fn create_sse_router(state: Arc<SseServerState>) -> Router {
 pub async fn start_sse_server(
     config: SseServerConfig,
     session_manager: Arc<SessionManager>,
-    auth_manager: Option<Arc<AuthManager>>,
+    #[cfg(feature = "auth")] auth_manager: Option<Arc<AuthManager>>,
 ) -> McpResult<()> {
     let state = Arc::new(SseServerState::new(
         config.clone(),
         session_manager,
+        #[cfg(feature = "auth")]
         auth_manager,
     ));
     let router = create_sse_router(state.clone());
@@ -628,6 +654,7 @@ mod tests {
             client_id: "test-client".to_string(),
             connected_at: std::time::SystemTime::now() - Duration::from_secs(3600),
             last_activity: std::time::SystemTime::now() - Duration::from_secs(3600),
+            #[cfg(feature = "auth")]
             auth_context: None,
             metadata: HashMap::new(),
         };
