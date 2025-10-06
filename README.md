@@ -4,14 +4,83 @@
 [![Documentation](https://docs.rs/turbomcp/badge.svg)](https://docs.rs/turbomcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Tests](https://github.com/Epistates/turbomcp/actions/workflows/test.yml/badge.svg)](https://github.com/Epistates/turbomcp/actions/workflows/test.yml)
-[![Security](https://img.shields.io/badge/Security-Zero%20Vulnerabilities-green.svg)](./deny.toml)
+[![Security](https://img.shields.io/badge/Security-Audited-green.svg)](./SECURITY.md)
 [![Performance](https://img.shields.io/badge/Performance-Benchmarked-brightgreen.svg)](./benches/)
 
-High-performance Rust SDK for the Model Context Protocol (MCP) with compile-time optimization and zero-boilerplate server development.
+**Production-ready Rust SDK for the Model Context Protocol (MCP) with zero-boilerplate development and progressive enhancement.**
+
+Build MCP servers in minutes with automatic schema generation, type-safe handlers, and multiple transport protocols.
 
 ---
 
-## Features
+## 60-Second Quick Start
+
+```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct Calculator;
+
+#[server(name = "calculator", version = "1.0.0")]
+impl Calculator {
+    #[tool("Add two numbers")]
+    async fn add(&self, a: f64, b: f64) -> McpResult<f64> {
+        Ok(a + b)
+    }
+
+    #[tool("Multiply two numbers")]
+    async fn multiply(&self, a: f64, b: f64) -> McpResult<f64> {
+        Ok(a * b)
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    Calculator.run_stdio().await?;
+    Ok(())
+}
+```
+
+**That's it.** Save as `main.rs`, run `cargo run`, and connect from Claude Desktop.
+
+→ **[Full Tutorial](docs/TUTORIAL.md)** | **[Examples (46+)](crates/turbomcp/examples/)** | **[API Docs](https://docs.rs/turbomcp)**
+
+---
+
+## Why TurboMCP?
+
+### ✨ Zero Boilerplate
+
+Automatic JSON schema generation from function signatures. No manual schema construction, argument parsing, or result wrapping.
+
+### 🚀 Progressive Enhancement
+
+Start minimal (STDIO only), add features as needed:
+- HTTP/SSE for web integration
+- WebSocket for bidirectional streaming
+- TCP for network services
+- OAuth 2.1 for authentication
+- SIMD for high throughput
+
+### 🔒 Production Ready
+
+- Zero known runtime vulnerabilities
+- Comprehensive error handling
+- Session management with cleanup
+- Rate limiting and security headers
+- Type-safe from compile to runtime
+
+### 🎯 Developer Experience
+
+- Context injection for dependencies
+- Interactive elicitation forms
+- Automatic logging and tracing
+- 46+ working examples
+- Extensive documentation
+
+---
+
+## Key Features
 
 **Procedural Macro System**
 - `#[server]` - Zero-boilerplate server definition with capability configuration

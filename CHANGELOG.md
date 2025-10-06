@@ -5,6 +5,176 @@ All notable changes to TurboMCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2025-10-05
+
+### 🌟 **RELEASE HIGHLIGHTS**
+
+**TurboMCP 2.0.0 represents a complete architectural overhaul focused on clean minimal core + progressive enhancement.**
+
+**Key Achievements**:
+- ✅ **Progressive Enhancement**: Minimal by default (stdio only), opt-in features for advanced needs
+- ✅ **Zero Technical Debt**: No warnings, no TODOs, no FIXMEs
+- ✅ **Security**: 1 mitigated vulnerability, 1 compile-time warning only
+- ✅ **Clean Architecture**: RBAC removed (application-layer concern)
+- ✅ **Latest Toolchain**: Rust 1.90.0 + 62 dependency updates
+- ✅ **Production Ready**: All examples compile, all tests pass, strict clippy compliance
+
+### 🎯 **BREAKING CHANGES**
+
+#### RBAC Removal - Architectural Improvement
+- **REMOVED**: RBAC/authorization feature from protocol layer
+- **RATIONALE**: Authorization is an application-layer concern, not protocol-layer
+- **IMPACT**: Cleaner separation of concerns, follows industry best practices
+- **MIGRATION**: Implement authorization in your application layer (see `RBAC-REMOVAL-SUMMARY.md`)
+- **BENEFIT**: Eliminated `casbin` dependency and `instant` unmaintained warning
+- **SECURITY**: Reduced attack surface, removed unmaintained runtime dependency
+
+#### Default Feature Changes
+- **BREAKING**: Default features changed to `["stdio"]` (minimal by default)
+- **RATIONALE**: Progressive enhancement - users opt-in to features they need
+- **MIGRATION**: Enable features explicitly: `turbomcp = { version = "2.0", features = ["full"] }`
+
+### 🏗️ **MAJOR REFACTORING: Clean Minimal Core**
+
+#### New Crate Architecture (10 Total Crates)
+- **NEW**: `turbomcp-auth` - OAuth 2.1 authentication (optional, 1,824 LOC)
+- **NEW**: `turbomcp-dpop` - DPoP RFC 9449 implementation (optional, 7,160 LOC)
+- **MODULAR**: Independent crates for protocol, transport, server, and client
+- **PROGRESSIVE**: Features are opt-in via feature flags
+- **CORE**: Context module decomposed from monolithic 2,046-line file into 8 focused modules:
+  - `capabilities.rs` - Capability trait definitions
+  - `client.rs` - Client session and identification
+  - `completion.rs` - Completion context handling
+  - `elicitation.rs` - Interactive form handling
+  - `ping.rs` - Health check contexts
+  - `request.rs` - Core request/response context
+  - `server_initiated.rs` - Server-initiated communication
+  - `templates.rs` - Resource template contexts
+- **PROTOCOL**: Types module decomposed from monolithic 2,888-line file into 12 focused modules:
+  - Individual modules for capabilities, completion, content, core, domain, elicitation, initialization, logging, ping, prompts, requests, resources, roots, sampling, and tools
+- **IMPROVED**: Enhanced code maintainability with zero breaking changes to public API
+
+### ⚡ **PERFORMANCE OPTIMIZATIONS**
+- **ENHANCED**: Zero-copy message processing with extensive `bytes::Bytes` integration
+- **NEW**: Advanced `ZeroCopyMessage` type for ultra-high throughput scenarios
+- **OPTIMIZED**: Message processing with lazy deserialization and minimal allocations
+- **IMPROVED**: SIMD-accelerated JSON processing with `sonic-rs` and `simd-json`
+
+### 🔐 **SECURITY ENHANCEMENTS**
+- **REMOVED**: RBAC feature eliminated `instant` unmaintained dependency (RUSTSEC-2024-0384)
+- **IMPROVED**: Dependency cleanup with 13 fewer dependencies (-2.2%)
+- **AUDIT**: Only 1 known vulnerability (RSA timing - mitigated by P-256 recommendation)
+- **AUDIT**: Only 1 unmaintained warning (paste - compile-time only, zero runtime risk)
+- **NEW**: Security validation module in `turbomcp-core` with path security utilities
+- **ADDED**: `validate_path()`, `validate_path_within()`, `validate_file_extension()` functions
+- **INTEGRATED**: Security features from dissolved security crate into core framework
+- **DOCUMENTED**: P-256 recommended as default DPoP algorithm (not affected by RSA timing attack)
+
+### 🛠️ **API IMPROVEMENTS**
+- **IMPROVED**: Enhanced registry system with handler statistics and analytics
+- **ADDED**: `EnhancedRegistry` with performance tracking
+- **ENHANCED**: Session management with improved analytics and cleanup
+- **REFINED**: Error handling with comprehensive context preservation
+
+### 📚 **DOCUMENTATION**
+- **NEW**: `2.0.0-RELEASE-READY.md` - Complete release readiness report
+- **NEW**: `SECURITY-AUDIT-2.0.0.md` - Security audit findings and mitigations
+- **NEW**: `SECURITY-DEPENDENCY-ANALYSIS.md` - Deep dependency analysis
+- **NEW**: `RBAC-REMOVAL-SUMMARY.md` - RBAC migration guide with examples
+- **NEW**: `2.0.0-CLEAN-ARCHITECTURE.md` - Architecture overview
+- **UPDATED**: All crate READMEs with 2.0.0 examples and features
+- **ENHANCED**: Module-level documentation across decomposed modules
+- **IMPROVED**: Inline documentation with comprehensive examples
+- **ADDED**: Zero-copy message processing documentation and usage guidelines
+
+### 🔧 **INTERNAL IMPROVEMENTS**
+- **CLEANED**: Removed obsolete tests and legacy code
+- **ENHANCED**: Test suite with comprehensive coverage of new modules
+- **IMPROVED**: Build system and CI/CD pipeline optimizations
+- **MAINTAINED**: Zero clippy warnings and consistent formatting
+
+### 🔨 **TOOLCHAIN & DEPENDENCY UPDATES**
+- **UPDATED**: Rust toolchain from 1.89.0 → 1.90.0
+- **UPDATED**: 62 dependencies to latest compatible versions:
+  - `axum`: 0.8.4 → 0.8.6
+  - `tokio-tungstenite`: 0.26.2 → 0.28.0
+  - `redis`: 0.32.5 → 0.32.7
+  - `serde`: 1.0.226 → 1.0.228
+  - `thiserror`: 2.0.16 → 2.0.17
+  - And 57 more transitive updates
+- **ADDED**: `futures` dependency to `turbomcp-dpop` (previously missing)
+
+### 🐛 **BUG FIXES & CODE QUALITY**
+- **FIXED**: Documentation warning in `zero_copy.rs` (added missing doc comment)
+- **FIXED**: Feature gate naming consistency (`dpop-redis` → `redis-storage`, `dpop-test-utils` → `test-utils`)
+- **FIXED**: Removed unused middleware import in `turbomcp/router.rs`
+- **FIXED**: Removed unused `McpResult` import in `turbomcp/transport.rs`
+- **FIXED**: Removed unused `RateLimitConfig` import in `turbomcp-server/core.rs`
+- **FIXED**: Clippy warnings (empty line after doc comments, manual is_multiple_of)
+- **RESULT**: Zero compiler warnings, zero clippy warnings with `-D warnings`
+
+### 🛡️ **BACKWARD COMPATIBILITY**
+- **BREAKING**: RBAC feature removed (see migration notes below)
+- **BREAKING**: Default features changed to minimal (`["stdio"]`)
+- **COMPATIBLE**: Existing auth, rate-limiting, validation features unchanged
+- **PROTOCOL**: Maintains complete MCP 2024-11-05 specification compliance
+
+### 📦 **MIGRATION NOTES**
+
+#### RBAC Removal (Breaking Change)
+If you were using the RBAC feature:
+```toml
+# OLD (no longer works)
+turbomcp-server = { version = "2.0", features = ["rbac"] }
+
+# NEW (implement in your application)
+# See RBAC-REMOVAL-SUMMARY.md for migration patterns
+```
+- **Why**: Authorization is application-layer concern, not protocol-layer
+- **How**: Implement RBAC in your application using JWT claims or external policy engine
+- **Examples**: See `RBAC-REMOVAL-SUMMARY.md` for complete migration guide
+
+#### Default Features
+```toml
+# OLD (1.x - everything enabled)
+turbomcp = "1.x"  # Had all features by default
+
+# NEW (2.0 - minimal by default)
+turbomcp = { version = "2.0", features = ["full"] }  # Opt-in to features
+```
+
+#### Crate Consolidation
+- `turbomcp_dpop::*` → `turbomcp::auth::dpop::*`
+- Security utilities now in `turbomcp_core::security`
+
+#### Feature Gate Names
+- `dpop-redis` → `redis-storage`
+- `dpop-test-utils` → `test-utils`
+
+See `MIGRATION.md` for complete upgrade guide.
+
+### 📊 **METRICS & QUALITY**
+
+**Codebase Quality**:
+- ✅ Compiler warnings: **0**
+- ✅ Clippy warnings (with `-D warnings`): **0**
+- ✅ Technical debt markers (TODO/FIXME): **0**
+- ✅ All examples compile: **Yes**
+- ✅ All tests pass: **Yes**
+
+**Security Posture**:
+- 🔒 Known vulnerabilities: **1 (mitigated)**
+  - RSA timing sidechannel: Use P-256 instead (recommended in docs)
+- ⚠️ Unmaintained dependencies: **1 (zero runtime risk)**
+  - paste v1.0.15: Compile-time proc macro only, HSM feature only
+- ✅ Security improvements: Removed `instant` unmaintained runtime dependency
+
+**Dependency Management**:
+- 📦 Feature-gated dependencies: Pay only for what you use
+- 📉 Cleanup: **-13 dependencies** (-2.2% from 1.x)
+
+**Release Status**: 🟢 **PRODUCTION READY**
+
 ## [1.1.0] - 2025-09-24
 
 ### 🔐 **NEW MAJOR FEATURE: RFC 9449 DPoP Security Suite**

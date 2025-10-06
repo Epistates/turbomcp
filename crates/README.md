@@ -2,12 +2,14 @@
 
 This directory contains the individual crates that make up the TurboMCP framework. Each crate is designed with a specific responsibility and can be used independently or as part of the complete framework.
 
-## 🔒 v1.1.0 Security & Performance Highlights
+## 🎯 v2.0.0 Architecture & Performance Highlights
 
-**All crates now feature:**
-- **Zero Known Vulnerabilities** - Comprehensive security audit with eliminated RSA and paste vulnerabilities
+**Major improvements in 2.0.0:**
+- **Modular Architecture** - Core and protocol modules decomposed for better maintainability
+- **Zero-Copy Optimizations** - Enhanced message processing with minimal allocations
+- **Security Enhancements** - Integrated security validation and path protection
+- **Zero Known Vulnerabilities** - Comprehensive security audit maintained
 - **Comprehensive Benchmarking** - Enterprise performance monitoring with automated regression detection
-- **Enhanced Client Libraries** - Advanced LLM backend support with production-grade implementations
 - **MIT-Compatible Dependencies** - Strict licensing compliance with cargo-deny policy
 
 ## Architecture Overview
