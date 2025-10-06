@@ -3,6 +3,8 @@
 //! This middleware implements sophisticated rate limiting using the Generic Cell Rate Algorithm (GCRA)
 //! through the tower-governor crate. It supports both global and per-client rate limiting.
 
+#![cfg(feature = "rate-limiting")]
+
 use std::num::NonZeroU32;
 use std::time::Duration;
 

@@ -9,24 +9,30 @@
 //! The middleware stack follows the Tower pattern and is ordered for optimal security:
 //! 1. Security headers and CORS
 //! 2. Authentication (JWT verification)
-//! 3. Authorization (Casbin RBAC)
-//! 4. Rate limiting (tower-governor)
-//! 5. Request validation (JSON Schema)
-//! 6. Audit logging
-//! 7. Timeout management
-//! 8. Business handlers (pure logic)
+//! 3. Rate limiting (tower-governor)
+//! 4. Request validation (JSON Schema)
+//! 5. Audit logging
+//! 6. Timeout management
+//! 7. Business handlers (pure logic)
+//!
+//! **Note**: Authorization/RBAC should be handled at the application layer, not in the
+//! protocol middleware. The MCP server focuses on protocol-level concerns.
+
+#![cfg(feature = "middleware")]
 
 pub mod audit;
+#[cfg(feature = "auth")]
 pub mod auth;
-pub mod authz;
+#[cfg(feature = "rate-limiting")]
 pub mod rate_limit;
 pub mod security;
 pub mod timeout;
 pub mod validation;
 
 pub use audit::{AuditConfig, AuditLayer};
+#[cfg(feature = "auth")]
 pub use auth::{AuthConfig, AuthLayer, Claims};
-pub use authz::{AuthzConfig, AuthzLayer};
+#[cfg(feature = "rate-limiting")]
 pub use rate_limit::{RateLimitConfig, RateLimitLayer};
 pub use security::{SecurityConfig, SecurityLayer};
 pub use timeout::{TimeoutConfig, TimeoutLayer};
@@ -42,8 +48,9 @@ use tower_http::{
 /// Complete middleware stack builder for MCP servers
 #[derive(Debug, Clone)]
 pub struct MiddlewareStack {
+    #[cfg(feature = "auth")]
     pub(crate) auth_config: Option<AuthConfig>,
-    pub(crate) authz_config: Option<AuthzConfig>,
+    #[cfg(feature = "rate-limiting")]
     pub(crate) rate_limit_config: Option<RateLimitConfig>,
     pub(crate) validation_config: Option<ValidationConfig>,
     pub(crate) security_config: SecurityConfig,
@@ -54,8 +61,9 @@ pub struct MiddlewareStack {
 impl Default for MiddlewareStack {
     fn default() -> Self {
         Self {
+            #[cfg(feature = "auth")]
             auth_config: None,
-            authz_config: None,
+            #[cfg(feature = "rate-limiting")]
             rate_limit_config: None,
             validation_config: Some(ValidationConfig::default()),
             security_config: SecurityConfig::default(),
@@ -72,18 +80,14 @@ impl MiddlewareStack {
     }
 
     /// Enable JWT authentication
+    #[cfg(feature = "auth")]
     pub fn with_auth(mut self, config: AuthConfig) -> Self {
         self.auth_config = Some(config);
         self
     }
 
-    /// Enable Casbin authorization
-    pub fn with_authz(mut self, config: AuthzConfig) -> Self {
-        self.authz_config = Some(config);
-        self
-    }
-
     /// Enable rate limiting
+    #[cfg(feature = "rate-limiting")]
     pub fn with_rate_limit(mut self, config: RateLimitConfig) -> Self {
         self.rate_limit_config = Some(config);
         self
@@ -121,7 +125,7 @@ impl MiddlewareStack {
     /// 3. Response compression
     /// 4. Request timeout (always applied for DoS protection)
     ///
-    /// For advanced middleware (auth, authz, rate limiting, validation, audit),
+    /// For advanced middleware (auth, rate limiting, validation, audit),
     /// use the individual layer builders and compose manually, or use preset stacks.
     pub fn build<S>(self) -> impl tower::Layer<S>
     where
@@ -147,13 +151,9 @@ impl MiddlewareStack {
     }
 
     /// Get the auth layer if configured
+    #[cfg(feature = "auth")]
     pub fn auth_layer(&self) -> Option<AuthLayer> {
         self.auth_config.clone().map(AuthLayer::new)
-    }
-
-    /// Get the authz layer if configured
-    pub fn authz_layer(&self) -> Option<AuthzLayer> {
-        self.authz_config.clone().map(AuthzLayer::new)
     }
 
     /// Get the audit layer if configured
@@ -167,6 +167,7 @@ impl MiddlewareStack {
     }
 
     /// Get the rate limit layer if configured
+    #[cfg(feature = "rate-limiting")]
     pub fn rate_limit_layer(&self) -> Option<RateLimitLayer> {
         self.rate_limit_config.clone().map(RateLimitLayer::new)
     }

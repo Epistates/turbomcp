@@ -12,6 +12,7 @@ use serde_json::json;
 use tower::{Layer, Service};
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "auth")]
 use super::auth::Claims;
 
 /// Audit configuration
@@ -162,11 +163,15 @@ where
             let method = req.method().to_string();
             let path = req.uri().path().to_string();
 
-            // Extract user info if available
+            // Extract user info if available (only when auth feature is enabled)
+            #[cfg(feature = "auth")]
             let user_id = req
                 .extensions()
                 .get::<Claims>()
                 .map(|claims| claims.sub.clone());
+
+            #[cfg(not(feature = "auth"))]
+            let user_id: Option<String> = None;
 
             // Log request start
             if config.log_success {
