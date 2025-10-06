@@ -10,7 +10,8 @@ members = [
     "crates/turbomcp-cli",
     "crates/turbomcp",
     "crates/turbomcp-macros",
-    # "crates/turbomcp-dpop", # INTEGRATED: DPoP functionality moved to turbomcp/src/auth/dpop/
+    "crates/turbomcp-dpop",  # 2.0.0: Re-extracted for clean minimal build
+    "crates/turbomcp-auth",  # 2.0.0: Extracted for clean minimal build
     # "crates/turbomcp-security", # DISSOLVED: Security functionality moved to individual crates per ephemeral strategy
     "demo",
 ]
@@ -138,15 +139,15 @@ testcontainers = "0.25.0"
 doc-comment = "0.3"
 
 # Workspace dependencies are defined below
-# Internal crate dependencies - 2.0.0 PRODUCTION RELEASE
+# Internal crate dependencies - 2.0.0 PRODUCTION RELEASE (with default-features = false for granular control)
 turbomcp = { version = "2.0.0", path = "crates/turbomcp" }
-turbomcp-core = { version = "2.0.0", path = "crates/turbomcp-core" }
-turbomcp-protocol = { version = "2.0.0", path = "crates/turbomcp-protocol" }
-turbomcp-transport = { version = "2.0.0", path = "crates/turbomcp-transport" }
-turbomcp-client = { version = "2.0.0", path = "crates/turbomcp-client" }
-turbomcp-server = { version = "2.0.0", path = "crates/turbomcp-server" }
-turbomcp-macros = { version = "2.0.0", path = "crates/turbomcp-macros" }
-turbomcp-cli = { version = "2.0.0", path = "crates/turbomcp-cli" }
+turbomcp-core = { version = "2.0.0", path = "crates/turbomcp-core", default-features = false }
+turbomcp-protocol = { version = "2.0.0", path = "crates/turbomcp-protocol", default-features = false }
+turbomcp-transport = { version = "2.0.0", path = "crates/turbomcp-transport", default-features = false }
+turbomcp-client = { version = "2.0.0", path = "crates/turbomcp-client", default-features = false }
+turbomcp-server = { version = "2.0.0", path = "crates/turbomcp-server", default-features = false }
+turbomcp-macros = { version = "2.0.0", path = "crates/turbomcp-macros", default-features = false }
+turbomcp-cli = { version = "2.0.0", path = "crates/turbomcp-cli", default-features = false }
 # turbomcp-dpop = { version = "2.0.0", path = "crates/turbomcp-dpop" }  # INTEGRATED into turbomcp/src/auth/dpop/
 
 [profile.dev]

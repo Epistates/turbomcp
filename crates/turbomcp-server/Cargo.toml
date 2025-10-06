@@ -13,7 +13,7 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
-turbomcp-core = { version = "2.0.0", path = "../turbomcp-core" }
+turbomcp-core = { version = "2.0.0", path = "../turbomcp-core", default-features = false, features = ["std"] }
 turbomcp-protocol = { version = "2.0.0", path = "../turbomcp-protocol" }
 turbomcp-transport = { version = "2.0.0", path = "../turbomcp-transport", optional = true }
 turbomcp-macros = { version = "2.0.0", path = "../turbomcp-macros" }
@@ -35,14 +35,13 @@ bytes = { workspace = true }
 regex = "1.10"
 jsonschema = { version = "0.17.1", default-features = false, features = ["resolve-file"] }
 
-# Standard middleware dependencies
-tower = { version = "0.4", features = ["util"] }
-tower-http = { version = "0.5", features = ["cors", "auth", "request-id", "trace", "timeout", "limit", "compression-br", "add-extension", "set-header", "sensitive-headers"] }
-tower_governor = "0.7"
-casbin = { version = "2.2", default-features = false, features = ["runtime-tokio"] }
-jsonwebtoken = "9.2"
-secrecy = { version = "0.8", features = ["serde"] }
-http = "1.0"
+# Middleware dependencies (optional - only needed for HTTP/advanced features)
+tower = { version = "0.4", features = ["util"] }  # Core abstraction layer (lightweight)
+tower-http = { version = "0.5", features = ["cors", "auth", "request-id", "trace", "timeout", "limit", "compression-br", "add-extension", "set-header", "sensitive-headers"], optional = true }
+tower_governor = { version = "0.7", optional = true }
+jsonwebtoken = { version = "9.2", optional = true }
+secrecy = { version = "0.8", features = ["serde"], optional = true }
+http = { version = "1.0" }  # Core HTTP types for Service abstraction (lightweight)
 
 # Observability dependencies
 once_cell = "1.19"
@@ -57,19 +56,22 @@ name = "middleware_benchmarks"
 harness = false
 
 [features]
-default = ["auth", "health-checks", "metrics", "stdio"]
-auth = []
+default = ["stdio"]
+# Core capabilities (minimal by default)
+auth = ["dep:jsonwebtoken", "dep:secrecy"]
 health-checks = []
 hot-reload = []
 metrics = []
-middleware = []
+middleware = ["dep:tower-http"]  # tower and http are now core deps
+rate-limiting = ["middleware", "dep:tower_governor"]
 graceful-shutdown = []
 observability = []
 # Transport features (progressive enhancement)
 stdio = ["dep:turbomcp-transport", "turbomcp-transport/stdio"]
-http = ["dep:turbomcp-transport", "turbomcp-transport/http"]
-websocket = ["dep:turbomcp-transport", "turbomcp-transport/websocket"]
+http = ["dep:turbomcp-transport", "turbomcp-transport/http", "middleware"]
+websocket = ["dep:turbomcp-transport", "turbomcp-transport/websocket", "http"]
 tcp = ["dep:turbomcp-transport", "turbomcp-transport/tcp"]
 unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
 # Convenience feature bundles
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]
+full = ["all-transports", "auth", "health-checks", "metrics", "middleware", "rate-limiting", "graceful-shutdown"]
