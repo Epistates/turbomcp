@@ -11,11 +11,13 @@ use crate::{
     error::ServerResult,
     lifecycle::{HealthStatus, ServerLifecycle},
     metrics::ServerMetrics,
-    middleware::{MiddlewareStack, RateLimitConfig},
     registry::HandlerRegistry,
     routing::RequestRouter,
     service::McpService,
 };
+
+#[cfg(feature = "middleware")]
+use crate::middleware::MiddlewareStack;
 
 use bytes::Bytes;
 use http::{Request, Response};
@@ -130,6 +132,7 @@ impl McpServer {
     ///
     /// To add new middleware, update the match arms below to include your layer.
     /// Follow the pattern of conditional inclusion based on config flags.
+    #[cfg(feature = "middleware")]
     fn build_middleware_stack(
         core_service: McpService,
         stack: MiddlewareStack,
@@ -155,38 +158,36 @@ impl McpServer {
             crate::ServerError,
         > = tower::util::BoxCloneService::new(core_service);
 
-        // Layer 1: Authorization (innermost - closest to handler)
-        // Applied first so it can reject unauthorized requests before expensive operations
-        if let Some(authz_config) = stack.authz_config {
-            service = tower::util::BoxCloneService::new(
-                tower::ServiceBuilder::new()
-                    .layer(crate::middleware::AuthzLayer::new(authz_config))
-                    .service(service),
-            );
-        }
+        // Authorization layer removed in 2.0.0 - handle at application layer
 
         // Layer 2: Validation
         // Validates request structure after auth but before processing
-        if let Some(validation_config) = stack.validation_config {
-            service = tower::util::BoxCloneService::new(
-                tower::ServiceBuilder::new()
-                    .layer(crate::middleware::ValidationLayer::new(validation_config))
-                    .service(service),
-            );
+        #[cfg(feature = "middleware")]
+        {
+            if let Some(validation_layer) = stack.validation_layer() {
+                service = tower::util::BoxCloneService::new(
+                    tower::ServiceBuilder::new()
+                        .layer(validation_layer)
+                        .service(service),
+                );
+            }
         }
 
         // Layer 3: Timeout (outermost)
         // Applied last so it can enforce timeout on the entire request pipeline
-        if let Some(timeout_config) = stack.timeout_config
-            && timeout_config.enabled
+        #[cfg(feature = "middleware")]
         {
-            service = tower::util::BoxCloneService::new(
-                tower::ServiceBuilder::new()
-                    .layer(tower_http::timeout::TimeoutLayer::new(
-                        timeout_config.request_timeout,
-                    ))
-                    .service(service),
-            );
+            if let Some(timeout_config) = stack.timeout_config
+                && timeout_config.enabled
+            {
+                service = tower::util::BoxCloneService::new(
+                    tower::ServiceBuilder::new()
+                        .layer(tower_http::timeout::TimeoutLayer::new(
+                            timeout_config.request_timeout,
+                        ))
+                        .service(service),
+                );
+            }
         }
 
         // Future middleware can be added here with similar if-let blocks:
@@ -213,15 +214,17 @@ impl McpServer {
             Arc::clone(&metrics),
         ));
         // Build middleware stack configuration
-        let mut stack = MiddlewareStack::new();
+        #[cfg(feature = "middleware")]
+        let stack = crate::middleware::MiddlewareStack::new();
 
         // Auto-install rate limiting if enabled in config
+        #[cfg(feature = "rate-limiting")]
         if config.rate_limiting.enabled {
             use crate::middleware::rate_limit::{RateLimitStrategy, RateLimits};
             use std::num::NonZeroU32;
             use std::time::Duration;
 
-            let rate_config = RateLimitConfig {
+            let rate_config = crate::middleware::RateLimitConfig {
                 strategy: RateLimitStrategy::Global,
                 limits: RateLimits {
                     requests_per_period: NonZeroU32::new(
@@ -259,7 +262,11 @@ impl McpServer {
         // ✓ And more layers as configured
         //
         // BoxCloneService is Clone but !Sync - this is the Tower pattern
+        #[cfg(feature = "middleware")]
         let service = Self::build_middleware_stack(core_service, stack);
+
+        #[cfg(not(feature = "middleware"))]
+        let service = tower::util::BoxCloneService::new(core_service);
 
         let lifecycle = Arc::new(ServerLifecycle::new());
 

@@ -11,13 +11,15 @@
 //! - Middleware execution order
 //! - Error handling through middleware
 
+#![cfg(feature = "middleware")]
+
 use bytes::Bytes;
 use http::{Request, StatusCode};
 use std::time::Duration;
 use tower::ServiceExt;
 use turbomcp_server::{
     ServerBuilder,
-    middleware::{AuthzConfig, MiddlewareStack, TimeoutConfig, ValidationConfig},
+    middleware::{MiddlewareStack, TimeoutConfig, ValidationConfig},
 };
 
 /// Test basic middleware stack creation and configuration
@@ -37,15 +39,12 @@ fn test_middleware_builder_patterns() {
     // Test chained configuration builds successfully
     let _stack = MiddlewareStack::new()
         .with_timeout(TimeoutConfig::default())
-        .with_validation(ValidationConfig::default())
-        .with_authz(AuthzConfig::default());
+        .with_validation(ValidationConfig::default());
 
     // Test individual configurations
     let _timeout_stack = MiddlewareStack::new().with_timeout(TimeoutConfig::strict());
 
     let _validation_stack = MiddlewareStack::new().with_validation(ValidationConfig::default());
-
-    let _authz_stack = MiddlewareStack::new().with_authz(AuthzConfig::default());
 }
 
 /// Test timeout configuration options
@@ -88,22 +87,8 @@ fn test_validation_configuration() {
     assert!(response_validation_config.validate_responses);
 }
 
-/// Test authorization configuration
-#[test]
-fn test_authorization_configuration() {
-    let config = AuthzConfig::default();
-    assert!(!config.fail_open); // Fail closed by default for security
-    assert!(config.log_decisions);
-    assert_eq!(config.model_path, "src/policies/rbac_model.conf");
-    assert_eq!(config.policy_path, "src/policies/rbac_policy.csv");
-
-    // Test configuration methods
-    let fail_open_config = config.clone().with_fail_open(true);
-    assert!(fail_open_config.fail_open);
-
-    let no_logging_config = config.with_logging(false);
-    assert!(!no_logging_config.log_decisions);
-}
+// Authorization configuration tests removed - RBAC feature removed in 2.0.0
+// Authorization should be handled at the application layer
 
 /// Test ServerBuilder creates servers successfully
 #[test]
@@ -153,13 +138,11 @@ fn test_configuration_validation() {
     // Test valid configurations don't panic
     let _config1 = TimeoutConfig::default();
     let _config2 = ValidationConfig::default();
-    let _config3 = AuthzConfig::default();
 
     // Test configuration chaining
     let _stack = MiddlewareStack::default()
         .with_timeout(TimeoutConfig::strict())
-        .with_validation(ValidationConfig::default())
-        .with_authz(AuthzConfig::default().with_fail_open(false));
+        .with_validation(ValidationConfig::default());
 }
 
 // ============================================================================

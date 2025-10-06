@@ -3,6 +3,8 @@
 //! This middleware handles JWT token verification and user identity extraction.
 //! It follows security best practices for token validation and claim extraction.
 
+#![cfg(feature = "auth")]
+
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};

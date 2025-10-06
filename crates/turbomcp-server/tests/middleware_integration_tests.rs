@@ -3,6 +3,8 @@
 //! These tests validate that all middleware layers work together correctly
 //! in production-like scenarios.
 
+#![cfg(feature = "middleware")]
+
 use std::time::Duration;
 
 use jsonwebtoken::Algorithm;
@@ -205,20 +207,16 @@ fn test_rate_limit_layer_helper_methods() {
 fn test_complete_middleware_composition() {
     // This tests that all middleware can be composed together
     // without type errors or conflicts
+    // Note: Authorization (RBAC) removed in 2.0.0 - handle at application layer
 
     let middleware = MiddlewareStack::new()
         .with_auth(AuthConfig::new(Secret::new("secret".to_string())))
-        .with_authz(AuthzConfig::new(
-            "src/policies/rbac_model.conf".to_string(),
-            "src/policies/rbac_policy.csv".to_string(),
-        ))
         .with_rate_limit(RateLimitConfig::strict())
         .with_timeout(TimeoutConfig::strict())
         .with_audit(AuditConfig::default());
 
     // All layers should be accessible before building
     assert!(middleware.auth_layer().is_some());
-    assert!(middleware.authz_layer().is_some());
     assert!(middleware.rate_limit_layer().is_some());
     assert!(middleware.audit_layer().is_some());
 

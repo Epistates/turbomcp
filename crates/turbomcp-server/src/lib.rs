@@ -136,6 +136,7 @@ pub mod handlers;
 // pub mod http_server;
 pub mod lifecycle;
 pub mod metrics;
+#[cfg(feature = "middleware")]
 pub mod middleware;
 pub mod observability;
 pub mod registry;
@@ -156,11 +157,19 @@ pub use handlers::{
 };
 pub use lifecycle::{HealthStatus, ServerLifecycle, ShutdownSignal};
 pub use metrics::{MetricsCollector, ServerMetrics};
+
+// Re-export middleware components (feature-gated)
+#[cfg(feature = "middleware")]
 pub use middleware::{
-    AuditConfig, AuditLayer, AuthConfig, AuthLayer, AuthzConfig, AuthzLayer, Claims,
-    MiddlewareStack, RateLimitConfig, RateLimitLayer, SecurityConfig, SecurityLayer, TimeoutConfig,
+    AuditConfig, AuditLayer, MiddlewareStack, SecurityConfig, SecurityLayer, TimeoutConfig,
     TimeoutLayer, ValidationConfig, ValidationLayer,
 };
+
+#[cfg(all(feature = "middleware", feature = "auth"))]
+pub use middleware::{AuthConfig, AuthLayer, Claims};
+
+#[cfg(all(feature = "middleware", feature = "rate-limiting"))]
+pub use middleware::{RateLimitConfig, RateLimitLayer};
 pub use observability::{
     ObservabilityConfig, ObservabilityGuard, OtlpProtocol, PerformanceMonitor, SamplingConfig,
     SecurityAuditLogger, global_observability,
@@ -196,42 +205,27 @@ pub fn server() -> ServerBuilder {
 
 /// Prelude for common server functionality
 pub mod prelude {
+    // Core types (always available)
     pub use crate::{
-        AuditConfig,
-        AuditLayer,
-        // Comprehensive middleware
-        AuthConfig,
-        AuthLayer,
-        AuthzConfig,
-        AuthzLayer,
-        Claims,
-        HealthStatus,
-        McpServer,
-        MiddlewareStack,
-        PromptHandler,
-        RateLimitConfig,
-        RateLimitLayer,
-        Registry,
-        RegistryBuilder,
-        RequestRouter,
-        ResourceHandler,
-        Router,
-        SamplingHandler,
-        SecurityConfig,
-        SecurityLayer,
-        ServerBuilder,
-        ServerConfig,
-        ServerError,
-        ServerLifecycle,
-        ServerResult,
-        TimeoutConfig,
-        TimeoutLayer,
-        ToolHandler,
-        ValidationConfig,
-        ValidationLayer,
-        default_config,
-        server,
+        HealthStatus, McpServer, PromptHandler, Registry, RegistryBuilder, RequestRouter,
+        ResourceHandler, Router, SamplingHandler, ServerBuilder, ServerConfig, ServerError,
+        ServerLifecycle, ServerResult, ToolHandler, default_config, server,
     };
+
+    // Middleware types (requires middleware feature)
+    #[cfg(feature = "middleware")]
+    pub use crate::{
+        AuditConfig, AuditLayer, MiddlewareStack, SecurityConfig, SecurityLayer, TimeoutConfig,
+        TimeoutLayer, ValidationConfig, ValidationLayer,
+    };
+
+    // Auth middleware (requires middleware + auth features)
+    #[cfg(all(feature = "middleware", feature = "auth"))]
+    pub use crate::{AuthConfig, AuthLayer, Claims};
+
+    // Rate limiting middleware (requires middleware + rate-limiting features)
+    #[cfg(all(feature = "middleware", feature = "rate-limiting"))]
+    pub use crate::{RateLimitConfig, RateLimitLayer};
 
     // Re-export macros
     pub use turbomcp_macros::{prompt, resource, server as server_macro, tool};
