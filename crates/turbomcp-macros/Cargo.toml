@@ -37,7 +37,7 @@ turbomcp-transport = { version = "2.0.0", path = "../turbomcp-transport", option
 [dev-dependencies]
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
 turbomcp-protocol = { version = "2.0.0", path = "../turbomcp-protocol" }
-turbomcp-core = { version = "2.0.0", path = "../turbomcp-core" }
+turbomcp-core = { version = "2.0.0", path = "../turbomcp-core", default-features = false, features = ["std"] }
 async-trait = "0.1"
 
 [features]

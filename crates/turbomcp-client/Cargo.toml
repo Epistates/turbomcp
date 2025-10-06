@@ -13,7 +13,7 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
-turbomcp-core = { workspace = true }
+turbomcp-core = { workspace = true, features = ["std"] }
 turbomcp-protocol = { workspace = true }
 turbomcp-transport = { workspace = true }
 async-trait = { workspace = true }

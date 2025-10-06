@@ -32,49 +32,21 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Database examples moved to separate examples crate to keep core SDK dependency-free
 
-# Transport dependencies
-reqwest = { version = "0.12", features = ["json", "stream"] }
+# Transport dependencies (optional - only needed for http/client features)
+reqwest = { version = "0.12", features = ["json", "stream"], optional = true }
 chrono = { version = "0.4", features = ["serde"] }
 fastrand = "2.0"
 tokio-util = "0.7"
 tokio-stream = "0.1"
 futures = "0.3"
 
-# HTTP server for SSE support
-axum = { version = "0.8.4", features = ["ws"] }
-tower-http = { version = "0.6.6", features = ["cors", "compression-gzip", "set-header"] }
+# HTTP server for SSE support (optional - only needed for http/sse features)
+axum = { version = "0.8.4", features = ["ws"], optional = true }
+tower-http = { version = "0.6.6", features = ["cors", "compression-gzip", "set-header"], optional = true }
 
-# Authentication dependencies - using battle-tested OAuth2 library
-oauth2 = "4.4.2"
-base64 = "0.22"
-sha2 = "0.10"
-urlencoding = "2.1"
-url = "2.5"
-
-# DPoP cryptographic dependencies (integrated from turbomcp-dpop)
-jsonwebtoken = { version = "9.3", optional = true }
-ring = { version = "0.17", optional = true }
-rsa = { version = "0.9", features = ["sha2"], optional = true }
-p256 = { version = "0.13", features = ["ecdsa"], optional = true }
-rand = { version = "0.8.5", optional = true }
-signature = { version = "2.2", optional = true }
-hex = { version = "0.4", optional = true }
-zeroize = { version = "1.7", optional = true }
-
-# DPoP Redis storage (optional)
-redis = { version = "0.32.5", features = ["aio", "tokio-comp", "safe_iterators"], optional = true }
-
-# DPoP HSM support - Standard hardware security module integration (optional)
-cryptoki = { version = "0.10", optional = true }
-yubihsm = { version = "0.42", optional = true, features = ["usb", "http"] }
-r2d2 = { version = "0.8", optional = true }
-deadpool = { version = "0.12.3", features = ["managed", "rt_tokio_1"], optional = true }
-secrecy = { version = "0.8.0", optional = true }
-parking_lot = { workspace = true, optional = true }
-asn1 = { version = "0.22.0", optional = true }
-
-# DPoP support is now integrated directly into turbomcp (no external crate)
-# turbomcp-dpop = { version = "2.0.0", path = "../turbomcp-dpop", optional = true }
+# Authentication and DPoP support (now as separate optional crates for clean minimal build)
+turbomcp-auth = { version = "2.0.0", path = "../turbomcp-auth", optional = true }
+turbomcp-dpop = { version = "2.0.0", path = "../turbomcp-dpop", optional = true }
 # JSON Schema generation
 schemars = { version = "1.0", features = ["chrono04", "uuid1"], optional = true }
 regex = { version = "1.0", optional = true }
@@ -86,8 +58,8 @@ uuid = { version = "1.0", features = ["v4", "v7", "serde"] }
 simd-json = { workspace = true, optional = true }
 sonic-rs = { workspace = true, optional = true }
 
-# HTTP dependencies
-http = "1.0"
+# HTTP dependencies (optional - only needed for http/sse features)
+http = { version = "1.0", optional = true }
 
 # Internal dependencies (always required)
 turbomcp-core = { version = "2.0.0", path = "../turbomcp-core", features = ["simd"] }
@@ -110,8 +82,101 @@ turbomcp-client = { version = "2.0.0", path = "../turbomcp-client" }
 tokio-tungstenite = "0.27.0"
 proptest = "1.5"
 
+# Example configurations with required features
+[[example]]
+name = "openai_mcp_server"
+required-features = ["http"]
+
+[[example]]
+name = "anthropic_mcp_server"
+required-features = ["http"]
+
+[[example]]
+name = "http_client"
+required-features = ["http"]
+
+[[example]]
+name = "13_dpop_redis_nonce_tracking"
+required-features = ["dpop", "dpop-redis"]
+
+[[example]]
+name = "14_dpop_auto_key_rotation"
+required-features = ["dpop"]
+
+[[example]]
+name = "17_middleware_stack"
+required-features = ["full"]
+
+[[example]]
+name = "07_transport_showcase"
+required-features = ["all-transports"]
+
+[[example]]
+name = "transport_http_server"
+required-features = ["http"]
+
+[[example]]
+name = "transport_tcp_server"
+required-features = ["tcp"]
+
+[[example]]
+name = "transport_unix_server"
+required-features = ["unix"]
+
+[[example]]
+name = "streamable_http_v2_full_integration"
+required-features = ["http"]
+
+[[example]]
+name = "tcp_client_server_demo"
+required-features = ["tcp"]
+
+[[example]]
+name = "all_transports_demo"
+required-features = ["all-transports"]
+
+[[example]]
+name = "transport_tcp_client"
+required-features = ["tcp"]
+
+[[example]]
+name = "transport_unix_client"
+required-features = ["unix"]
+
+[[example]]
+name = "transport_websocket_client"
+required-features = ["websocket"]
+
+[[example]]
+name = "transport_websocket_server"
+required-features = ["websocket"]
+
+[[example]]
+name = "tcp_client"
+required-features = ["tcp"]
+
+[[example]]
+name = "tcp_server"
+required-features = ["tcp"]
+
+[[example]]
+name = "unix_socket_client"
+required-features = ["unix"]
+
+[[example]]
+name = "unix_socket_server"
+required-features = ["unix"]
+
+[[example]]
+name = "websocket_client"
+required-features = ["websocket"]
+
+[[example]]
+name = "websocket_server"
+required-features = ["websocket"]
+
 [features]
-default = ["full", "simd"]  # Full includes all transports for convenience
+default = ["stdio"]  # 2.0.0 BREAKING: Minimal by default. Use features = ["full"] for 1.x behavior
 
 # 🎯 RECOMMENDED FEATURE SETS (choose one):
 
@@ -144,29 +209,28 @@ context-injection = []                 # Enhanced Context API features
 uri-templates = ["regex"]             # URI template matching for resources
 # database feature removed - examples moved to separate crate for clean dependencies
 
-# Security enhancement features - DPoP (Demonstration of Proof-of-Possession)
-dpop = [
-    "dep:jsonwebtoken",  # JWT validation (always included with dpop)
-    "dep:ring",
-    "dep:rsa",
-    "dep:p256",
-    "dep:rand",
-    "dep:signature",
-    "dep:hex",
-    "dep:zeroize",
-]
-dpop-redis = ["dpop", "dep:redis"]  # Redis-based DPoP nonce tracking (distributed)
-dpop-hsm-pkcs11 = ["dpop", "dep:cryptoki", "dep:r2d2", "dep:secrecy", "dep:parking_lot", "dep:asn1"]
-dpop-hsm-yubico = ["dpop", "dep:yubihsm", "dep:secrecy"]
-dpop-hsm = ["dpop-hsm-pkcs11", "dpop-hsm-yubico"]  # Enable all HSM backends
-dpop-test-utils = ["dpop"]  # Test utilities for DPoP
+# Authentication and Security Features (2.0.0: Now separate optional crates)
+auth = ["dep:turbomcp-auth"]  # OAuth 2.1, API key authentication
+dpop = ["dep:turbomcp-dpop", "auth", "turbomcp-auth/dpop"]  # DPoP (RFC 9449) requires auth
+dpop-redis = ["dpop", "turbomcp-dpop/redis-storage"]  # Redis-based DPoP nonce tracking
+dpop-hsm-pkcs11 = ["dpop", "turbomcp-dpop/hsm-pkcs11"]  # PKCS#11 HSM support
+dpop-hsm-yubico = ["dpop", "turbomcp-dpop/hsm-yubico"]  # YubiHSM support
+dpop-hsm = ["dpop-hsm-pkcs11", "dpop-hsm-yubico"]  # All HSM backends
+dpop-test-utils = ["dpop", "turbomcp-dpop/test-utils"]  # Test utilities
 
-# Deprecated feature aliases (for backwards compatibility)
+# Deprecated feature aliases (backwards compatibility)
 redis-storage = ["dpop-redis"]
 
 # Transport protocols (progressive enhancement)
 stdio = ["turbomcp-transport/stdio", "turbomcp-server/stdio"]           # Standard MCP transport
-http = ["turbomcp-transport/http", "turbomcp-server/http"]               # HTTP/SSE for web apps  
+http = [
+    "turbomcp-transport/http",
+    "turbomcp-server/http",
+    "dep:axum",
+    "dep:tower-http",
+    "dep:reqwest",
+    "dep:http",
+]  # HTTP/SSE for web apps
 websocket = ["turbomcp-transport/websocket", "turbomcp-server/websocket"] # WebSocket bidirectional
 tcp = ["turbomcp-transport/tcp", "turbomcp-server/tcp"]                   # Raw TCP sockets
 unix = ["turbomcp-transport/unix", "turbomcp-server/unix"]               # Unix domain sockets
