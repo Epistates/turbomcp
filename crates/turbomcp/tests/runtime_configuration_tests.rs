@@ -318,65 +318,6 @@ async fn test_multithreaded_runtime_config() {
     }
 }
 
-/// Test memory efficiency of runtime configuration
-#[tokio::test]
-async fn test_memory_efficiency() {
-    let start_memory = get_memory_usage();
-
-    // Create many servers with different configurations
-    let mut servers = Vec::new();
-    for i in 0..1000 {
-        servers.push(ConfigurableServer {
-            environment: format!("env_{}", i),
-        });
-    }
-
-    // Use the servers - validate they all work
-    for server in &servers {
-        let result = server.get_environment().await;
-        assert!(
-            result.is_ok(),
-            "Server should respond correctly in memory test"
-        );
-    }
-
-    let end_memory = get_memory_usage();
-    let memory_diff = end_memory - start_memory;
-
-    // Memory usage should be reasonable (less than 100MB for 1000 servers
-    assert!(
-        memory_diff < 100_000_000,
-        "Memory usage should be efficient, used {} bytes",
-        memory_diff
-    );
-
-    drop(servers); // Clean up
-}
-
-/// Helper function to get current memory usage (approximate
-fn get_memory_usage() -> usize {
-    // Simple approximation using heap allocations
-    // In a real test, you might use a more sophisticated memory tracking method
-    use std::alloc::{GlobalAlloc, Layout, System};
-
-    #[allow(dead_code)]
-    struct MemoryTracker;
-    unsafe impl GlobalAlloc for MemoryTracker {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            // SAFETY: We are properly forwarding to the system allocator
-            unsafe { System.alloc(layout) }
-        }
-        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-            // SAFETY: We are properly forwarding to the system allocator
-            unsafe { System.dealloc(ptr, layout) }
-        }
-    }
-
-    // For this test, we'll return a placeholder value
-    // In practice, you'd implement proper memory tracking
-    0
-}
-
 /// Test configuration validation
 #[tokio::test]
 async fn test_configuration_validation() {
