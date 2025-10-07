@@ -158,6 +158,9 @@ pub mod websocket;
 #[cfg(feature = "websocket")]
 pub mod websocket_bidirectional;
 
+#[cfg(all(feature = "websocket", feature = "http"))]
+pub mod websocket_server;
+
 #[cfg(feature = "tcp")]
 pub mod tcp;
 
