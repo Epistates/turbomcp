@@ -730,8 +730,14 @@ pub mod prelude {
     #[cfg(feature = "http")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
     pub use turbomcp_transport::streamable_http_v2::{
-        StreamableHttpConfig, create_router as create_http_router, run_server as run_http_server,
+        StreamableHttpConfig, StreamableHttpConfigBuilder, create_router as create_http_router,
+        run_server as run_http_server,
     };
+
+    /// Security configuration types for HTTP transport
+    #[cfg(feature = "http")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
+    pub use turbomcp_transport::security::{SecurityConfigBuilder, SecurityValidator};
 
     /// Streamable HTTP v2 client transport and configuration
     #[cfg(feature = "http")]
@@ -739,6 +745,49 @@ pub mod prelude {
     pub use turbomcp_transport::streamable_http_client::{
         RetryPolicy, StreamableHttpClientConfig, StreamableHttpClientTransport,
     };
+
+    // ============================================================================
+    // Ergonomic Type Aliases for Beautiful DX
+    // ============================================================================
+
+    /// Ergonomic alias for HTTP server configuration builder
+    ///
+    /// Instead of:
+    /// ```ignore
+    /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// ```
+    ///
+    /// Use:
+    /// ```
+    /// use turbomcp::prelude::*;
+    /// # #[cfg(feature = "http")]
+    /// let config = HttpConfig::new()
+    ///     .with_bind_address("0.0.0.0:8080")
+    ///     .build();
+    /// ```
+    #[cfg(feature = "http")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
+    pub use StreamableHttpConfigBuilder as HttpConfig;
+
+    /// Ergonomic alias for HTTP client configuration
+    ///
+    /// Instead of:
+    /// ```ignore
+    /// use turbomcp_transport::streamable_http_client::StreamableHttpClientConfig;
+    /// ```
+    ///
+    /// Use:
+    /// ```
+    /// use turbomcp::prelude::*;
+    /// # #[cfg(feature = "http")]
+    /// let config = HttpClientConfig {
+    ///     base_url: "http://localhost:8080".to_string(),
+    ///     ..Default::default()
+    /// };
+    /// ```
+    #[cfg(feature = "http")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
+    pub use StreamableHttpClientConfig as HttpClientConfig;
 
     // ============================================================================
     // Other Transport Implementations

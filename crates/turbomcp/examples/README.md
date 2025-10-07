@@ -1,130 +1,210 @@
 # TurboMCP Examples
 
-This directory contains comprehensive examples demonstrating TurboMCP's capabilities, from basic "Hello World" servers to advanced transport implementations and deployment examples.
+**17 focused examples demonstrating TurboMCP 2.0 - from Hello World to production apps.**
 
-## 📚 Learning Path
-
-### 🚀 Getting Started (Numbered Tutorial Series)
-
-Follow these examples in order to learn TurboMCP step-by-step:
-
-1. **`01_hello_world.rs`** - Simplest possible MCP server with basic tool
-2. **`02_clean_server.rs`** - Well-structured server with proper organization
-3. **`03_basic_tools.rs`** - Multiple tools with various parameter types
-4. **`04_resources_and_prompts.rs`** - Resources and prompt handlers
-5. **`05_stateful_patterns.rs`** - Managing server state and persistence
-6. **`06_architecture_patterns.rs`** - Advanced architectural patterns
-7. **`07_transport_showcase.rs`** - Transport layer demonstration
-8. **`08_elicitation_*.rs`** - Interactive user input (server, client, complete)
-9. **`09_bidirectional_communication.rs`** - Two-way protocol communication
-10. **`10_protocol_mastery.rs`** - Advanced MCP protocol features
-11. **`11_production_deployment.rs`** - Production-ready deployment patterns
-
-### 🏗️ Transport Examples
-
-**Discrete Transport Implementations:**
-- **`transport_stdio_server.rs` / `transport_stdio_client.rs`** - Standard I/O transport
-- **`transport_tcp_server.rs` / `transport_tcp_client.rs`** - TCP socket transport
-- **`transport_http_server.rs` / `transport_http_client.rs`** - HTTP/SSE transport
-- **`transport_websocket_server.rs` / `transport_websocket_client.rs`** - WebSocket transport
-- **`transport_unix_server.rs` / `transport_unix_client.rs`** - Unix domain sockets
-
-**Legacy Transport Examples (being deprecated):**
-- `stdio_server.rs` / `stdio_client.rs` - Basic STDIO examples
-- `tcp_server.rs` / `tcp_client.rs` - Basic TCP examples
-- `http_server.rs` / `http_client.rs` - Basic HTTP examples
-- `websocket_server.rs` / `websocket_client.rs` - Basic WebSocket examples
-- `unix_socket_server.rs` / `unix_socket_client.rs` - Basic Unix socket examples
-
-**Multi-Transport Demos:**
-- **`all_transports_demo.rs`** - Single server supporting all transport types
-- **`tcp_client_server_demo.rs`** - Complete TCP client-server demonstration
-
-### 🎯 Architecture Patterns
-
-- **`06_architecture_patterns.rs`** - Various server architecture approaches
-- **`06b_architecture_client.rs`** - Client architecture patterns
-
-### 🔄 Advanced Features
-
-- **`08_elicitation_server.rs`** - Server-initiated user input requests
-- **`08_elicitation_client.rs`** - Client handling elicitation flows
-- **`08_elicitation_complete.rs`** - Complete elicitation demonstration
-- **`09_bidirectional_communication.rs`** - Two-way protocol communication
-- **`10_protocol_mastery.rs`** - Advanced MCP protocol features
-
-## 🎯 Quick Start
+## 🚀 Quick Start
 
 ```bash
-# Start with the basics
-cargo run --example 01_hello_world
+# Simplest server (24 lines)
+cargo run --example hello_world
 
-# Try different transports
-cargo run --example transport_stdio_server
-cargo run --example transport_tcp_server
+# Clean macro-based server (58 lines)
+cargo run --example macro_server
 
-# See advanced features
-cargo run --example 11_production_deployment
+# Complete STDIO app
+cargo run --example stdio_app
+
+# HTTP server
+cargo run --example http_server --features http
+
+# TCP transport
+cargo run --example tcp_transport_demo --features tcp
+
+# Unix socket transport
+cargo run --example unix_transport_demo --features unix
 ```
-
-## 🛠️ Testing Examples
-
-Test any example with turbomcp-cli:
-
-```bash
-# Test a STDIO server
-turbomcp-cli tools-list --command "cargo run --example transport_stdio_server"
-
-# Test initialization
-turbomcp-cli initialize --command "cargo run --example 01_hello_world"
-```
-
-## 📖 Example Categories
-
-### By Transport Type
-- **STDIO**: `transport_stdio_*`, `stdio_*`
-- **TCP**: `transport_tcp_*`, `tcp_*`
-- **HTTP/SSE**: `transport_http_*`, `http_*`
-- **WebSocket**: `transport_websocket_*`, `websocket_*`
-- **Unix Sockets**: `transport_unix_*`, `unix_socket_*`
-
-### By Complexity Level
-- **Beginner**: `01_hello_world.rs` → `04_resources_and_prompts.rs`
-- **Intermediate**: `05_stateful_patterns.rs` → `07_transport_showcase.rs`
-- **Advanced**: `08_elicitation_*.rs` → `11_production_deployment.rs`
-
-### By Use Case
-- **Simple CLI Tool**: Start with `01_hello_world.rs`
-- **Web Service**: Use `transport_http_*` or `transport_websocket_*`
-- **Local IPC**: Use `transport_unix_*`
-- **Network Service**: Use `transport_tcp_*`
-- **Interactive Tools**: See `08_elicitation_*`
-
-## 🔍 Example Standards
-
-All examples follow these standards:
-- ✅ **Production-ready code** - No shortcuts or placeholders
-- ✅ **Complete functionality** - Working end-to-end examples
-- ✅ **Comprehensive documentation** - Clear learning goals and usage
-- ✅ **MCP 2025-06-18 compliance** - Latest specification adherence
-- ✅ **Error handling** - Proper error management patterns
-- ✅ **Type safety** - Full compile-time validation
-
-## 📊 Summary
-
-- **Total Examples**: 35
-- **Transport Types**: 5 (STDIO, TCP, HTTP/SSE, WebSocket, Unix)
-- **Tutorial Progression**: 11 numbered examples
-- **Architecture Coverage**: Complete MCP specification
-- **Quality**: Production-ready, zero-tolerance for shortcuts
-
-## 🔗 Related Documentation
-
-- [TurboMCP Main Documentation](https://docs.rs/turbomcp)
-- [MCP 2025-06-18 Specification](https://modelcontextprotocol.io)
-- [Transport Guide](../../../docs/transports.md)
-- [Getting Started Guide](../../../README.md)
 
 ---
 
-**Need help?** Start with `01_hello_world.rs` and work through the numbered examples in order!
+## 📚 Learning Path
+
+### 1️⃣ Server Examples (Start Here!)
+
+Learn server creation patterns:
+
+| Example | Lines | What It Teaches |
+|---------|-------|----------------|
+| **hello_world.rs** | 24 | Absolute simplest MCP server - one tool |
+| **macro_server.rs** | 58 | Clean `#[server]` macro API, multiple tools |
+| **tools.rs** | 77 | Parameter types, validation, error handling |
+| **resources.rs** | 59 | Resource handlers with URIs |
+| **stateful.rs** | 59 | Arc<RwLock<T>> shared state pattern |
+| **http_server.rs** | 38 | HTTP/SSE transport (web-compatible) |
+
+**Total:** 6 examples averaging 53 lines
+
+---
+
+### 2️⃣ Client Examples
+
+Learn client usage patterns:
+
+| Example | Lines | What It Teaches |
+|---------|-------|----------------|
+| **basic_client.rs** | 45 | Connect, list tools, call tools |
+| **comprehensive.rs** | 76 | All MCP features (tools, resources, prompts) |
+| **elicitation_interactive_client.rs** | 237 | Interactive user input handling |
+| **sampling_client.rs** | 277 | LLM sampling protocol |
+
+**Total:** 4 examples averaging 159 lines
+
+---
+
+### 3️⃣ Transport Examples
+
+Learn different transport mechanisms:
+
+| Example | Lines | What It Teaches |
+|---------|-------|----------------|
+| **tcp_transport_demo.rs** | 63 | TCP network communication |
+| **unix_transport_demo.rs** | 78 | Unix socket IPC (local processes) |
+
+**Total:** 2 examples averaging 71 lines
+
+---
+
+### 4️⃣ Validation Examples
+
+Learn parameter validation strategies:
+
+| Example | What It Teaches |
+|---------|----------------|
+| **validation.rs** | All validation approaches with CLI flags |
+
+```bash
+# Run all demonstrations
+cargo run --example validation
+
+# Show specific approach
+cargo run --example validation -- --approach newtype
+cargo run --example validation -- --approach garde
+cargo run --example validation -- --approach validator
+cargo run --example validation -- --approach nutype
+
+# Show comparison and decision tree
+cargo run --example validation -- --compare
+```
+
+**Approaches covered:**
+- Manual newtypes (zero dependencies)
+- garde (modern runtime validation)
+- validator (mature ecosystem)
+- nutype (type-level guarantees)
+
+**See also:** `VALIDATION_GUIDE.md` for comprehensive documentation
+
+---
+
+### 5️⃣ Complete Applications
+
+Production-ready reference implementations:
+
+| Example | Lines | What It Teaches |
+|---------|-------|----------------|
+| **stdio_app.rs** | 43 | Complete STDIO application |
+| **http_app.rs** | 59 | Complete HTTP application with state |
+| **anthropic_integration.rs** | 178 | Anthropic Claude integration |
+| **openai_integration.rs** | 184 | OpenAI GPT integration |
+
+**Total:** 4 examples averaging 116 lines
+
+---
+
+## 📖 By Use Case
+
+**Want to build a CLI tool?**
+→ Start with `hello_world.rs`, then `macro_server.rs`
+
+**Want to build a web service?**
+→ Use `http_server.rs`, then `http_app.rs`
+
+**Want to validate parameters?**
+→ Run `validation.rs --compare` to choose the right approach
+
+**Want TCP network communication?**
+→ Use `tcp_transport_demo.rs` for TCP server
+
+**Want local IPC (Inter-Process Communication)?**
+→ Use `unix_transport_demo.rs` for fast Unix socket IPC
+
+**Want to integrate with Claude/GPT?**
+→ See `anthropic_integration.rs` or `openai_integration.rs`
+
+**Want to build a client?**
+→ Start with `basic_client.rs`, then `comprehensive.rs`
+
+**Need shared state?**
+→ See `stateful.rs` for Arc<RwLock<T>> pattern
+
+---
+
+## ✨ Example Standards
+
+All examples follow TurboMCP 2.0 principles:
+
+✅ **Minimal & Focused** - One concept per example (avg 95 lines)
+✅ **Production-Ready** - Real code, no placeholders
+✅ **MCP 2025-06-18 Compliant** - Latest specification
+✅ **Type-Safe** - Full compile-time validation
+✅ **Well-Documented** - Clear purpose and usage
+
+---
+
+## 🎯 Features Required
+
+Most examples use `stdio` (default):
+```bash
+cargo run --example hello_world
+```
+
+HTTP examples need the `http` feature:
+```bash
+cargo run --example http_server --features http
+```
+
+Transport examples need their specific features:
+```bash
+# TCP transport
+cargo run --example tcp_transport_demo --features tcp
+
+# Unix sockets (Unix/Linux/macOS only)
+cargo run --example unix_transport_demo --features unix
+```
+
+Or use `--all-features` to enable everything:
+```bash
+cargo build --examples --all-features
+```
+
+---
+
+## 📊 Summary
+
+- **Total Examples:** 16 (was 48)
+- **Average Length:** 95 lines (was 250)
+- **All Runnable:** 100% configured
+- **Zero Bloat:** Every example teaches one thing
+- **New in 2.0:** Transport demos (TCP, Unix)
+
+---
+
+## 🔗 Related Documentation
+
+- [TurboMCP Documentation](https://docs.rs/turbomcp)
+- [MCP Specification](https://modelcontextprotocol.io)
+- [Migration Guide](../../../MIGRATION.md)
+- [Main README](../../../README.md)
+
+---
+
+**New to MCP?** Start with `hello_world.rs` and work through the server examples!

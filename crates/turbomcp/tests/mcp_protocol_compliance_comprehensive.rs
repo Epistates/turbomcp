@@ -777,9 +777,40 @@ async fn test_annotations_and_metadata_support() {
         // Schema should be valid even without _meta
         assert!(schema.is_object());
 
-        // TODO: Add support for _meta fields in tool definitions
-        // TODO: Add support for annotations (audience, priority, lastModified)
-        // TODO: Add support for icons array
+        // Verify _meta support (already implemented in turbomcp-protocol)
+        let tool_with_meta = turbomcp_protocol::types::Tool {
+            name: "test_meta".to_string(),
+            title: Some("Test Meta Tool".to_string()),
+            description: Some("Tool with metadata".to_string()),
+            input_schema: turbomcp_protocol::types::ToolInputSchema::default(),
+            output_schema: None,
+            annotations: Some(turbomcp_protocol::types::ToolAnnotations {
+                title: Some("Annotated Title".to_string()),
+                audience: Some(vec!["user".to_string(), "assistant".to_string()]),
+                priority: Some(1.0),
+                destructive_hint: Some(false),
+                idempotent_hint: Some(true),
+                open_world_hint: Some(false),
+                read_only_hint: Some(true),
+                custom: std::collections::HashMap::new(),
+            }),
+            meta: Some({
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "custom_field".to_string(),
+                    serde_json::json!("custom_value"),
+                );
+                m
+            }),
+        };
+
+        // Serialize and verify structure
+        let serialized = serde_json::to_value(&tool_with_meta).unwrap();
+        assert!(serialized["_meta"].is_object());
+        assert!(serialized["annotations"].is_object());
+        assert_eq!(serialized["annotations"]["title"], "Annotated Title");
+        assert_eq!(serialized["annotations"]["priority"], 1.0);
+        assert_eq!(serialized["annotations"]["readOnlyHint"], true);
     }
 
     // Test Icon support structure per MCP schema

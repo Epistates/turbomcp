@@ -169,15 +169,6 @@ where
         let value = serde_json::to_value(map).map_err(crate::McpError::Serialization)?;
         Self::from_json(value)
     }
-
-    /// Parse and validate parameters from a JSON map
-    pub fn from_map_with_validation(
-        map: serde_json::Map<String, serde_json::Value>,
-        validator: Option<&crate::validation::SchemaValidator>,
-    ) -> crate::McpResult<Self> {
-        // Use the validation module's extract_and_validate function
-        crate::validation::extract_and_validate::<T>(&map, validator).map(Parameters)
-    }
 }
 
 #[cfg(test)]

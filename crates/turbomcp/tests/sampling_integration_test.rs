@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use turbomcp_protocol::types::{
     AudioContent, Content, CreateMessageRequest, CreateMessageResult, ImageContent, IncludeContext,
-    ModelPreferences, Role, SamplingMessage, TextContent,
+    ModelPreferences, Role, SamplingMessage, StopReason, TextContent,
 };
 
 /// Mock LLM client for testing sampling flows
@@ -57,7 +57,7 @@ impl MockLlmClient {
                     meta: None,
                 }),
                 model: "mock-model-v1".to_string(),
-                stop_reason: Some("end_turn".to_string()),
+                stop_reason: Some(StopReason::EndTurn),
                 _meta: None,
             })
         }
@@ -111,7 +111,7 @@ async fn test_sampling_basic_request_response() {
             meta: None,
         }),
         model: "claude-3-5-sonnet-20241022".to_string(),
-        stop_reason: Some("end_turn".to_string()),
+        stop_reason: Some(StopReason::EndTurn),
         _meta: None,
     };
 
@@ -126,7 +126,7 @@ async fn test_sampling_basic_request_response() {
     // Verify response structure
     assert_eq!(result.role, Role::Assistant);
     assert_eq!(result.model, "claude-3-5-sonnet-20241022");
-    assert_eq!(result.stop_reason, Some("end_turn".to_string()));
+    assert_eq!(result.stop_reason, Some(StopReason::EndTurn));
 
     // Verify content
     if let Content::Text(text_content) = &result.content {
@@ -184,7 +184,7 @@ async fn test_sampling_model_preferences() {
             meta: None,
         }),
         model: "claude-3-5-sonnet-20241022".to_string(),
-        stop_reason: Some("end_turn".to_string()),
+        stop_reason: Some(StopReason::EndTurn),
         _meta: None,
     };
 
@@ -237,7 +237,7 @@ async fn test_sampling_stop_reasons() {
     };
 
     // Test different stop reasons
-    for stop_reason in &["end_turn", "max_tokens", "stop_sequence"] {
+    for stop_reason in &[StopReason::EndTurn, StopReason::MaxTokens, StopReason::StopSequence] {
         mock_client.clear_captured_requests().await;
 
         let response = CreateMessageResult {
@@ -248,14 +248,14 @@ async fn test_sampling_stop_reasons() {
                 meta: None,
             }),
             model: "test-model".to_string(),
-            stop_reason: Some(stop_reason.to_string()),
+            stop_reason: Some(*stop_reason),
             _meta: None,
         };
 
         mock_client.add_response(response).await;
         let result = mock_client.handle_request(request.clone()).await.unwrap();
 
-        assert_eq!(result.stop_reason.as_deref(), Some(*stop_reason));
+        assert_eq!(result.stop_reason, Some(*stop_reason));
     }
 }
 
@@ -302,7 +302,7 @@ async fn test_sampling_include_context() {
                 meta: None,
             }),
             model: "test-model".to_string(),
-            stop_reason: Some("end_turn".to_string()),
+            stop_reason: Some(StopReason::EndTurn),
             _meta: None,
         };
 
@@ -354,7 +354,7 @@ async fn test_sampling_parameter_validation() {
                 meta: None,
             }),
             model: "test-model".to_string(),
-            stop_reason: Some("end_turn".to_string()),
+            stop_reason: Some(StopReason::EndTurn),
             _meta: None,
         };
 
@@ -397,7 +397,7 @@ async fn test_sampling_error_cases() {
     // Should return default response instead of error
     let result = mock_client.handle_request(request).await.unwrap();
     assert_eq!(result.model, "mock-model-v1");
-    assert_eq!(result.stop_reason, Some("end_turn".to_string()));
+    assert_eq!(result.stop_reason, Some(StopReason::EndTurn));
 }
 
 // =============================================================================
@@ -456,7 +456,7 @@ async fn test_sampling_multi_turn_conversation() {
             meta: None,
         }),
         model: "test-model".to_string(),
-        stop_reason: Some("end_turn".to_string()),
+        stop_reason: Some(StopReason::EndTurn),
         _meta: None,
     };
 
@@ -497,7 +497,7 @@ async fn test_sampling_concurrent_requests() {
                 meta: None,
             }),
             model: "test-model".to_string(),
-            stop_reason: Some("end_turn".to_string()),
+            stop_reason: Some(StopReason::EndTurn),
             _meta: None,
         };
         mock_client.add_response(response).await;
@@ -584,7 +584,7 @@ async fn test_sampling_image_content() {
             meta: None,
         }),
         model: "vision-model-v1".to_string(),
-        stop_reason: Some("end_turn".to_string()),
+        stop_reason: Some(StopReason::EndTurn),
         _meta: None,
     };
 
@@ -647,7 +647,7 @@ async fn test_sampling_audio_content() {
             meta: None,
         }),
         model: "whisper-v3".to_string(),
-        stop_reason: Some("end_turn".to_string()),
+        stop_reason: Some(StopReason::EndTurn),
         _meta: None,
     };
 
@@ -727,7 +727,7 @@ async fn test_sampling_empty_messages_validation() {
             meta: None,
         }),
         model: "error-handler".to_string(),
-        stop_reason: Some("end_turn".to_string()),
+        stop_reason: Some(StopReason::EndTurn),
         _meta: None,
     };
 
@@ -784,7 +784,7 @@ async fn test_sampling_metadata_propagation() {
             meta: None,
         }),
         model: "metadata-aware-model".to_string(),
-        stop_reason: Some("end_turn".to_string()),
+        stop_reason: Some(StopReason::EndTurn),
         _meta: Some(serde_json::json!({
             "correlation_id": "corr-99999",
             "processing_time_ms": 250
@@ -852,7 +852,7 @@ async fn test_sampling_stop_sequences_edge_cases() {
             meta: None,
         }),
         model: "code-model".to_string(),
-        stop_reason: Some("stop_sequence".to_string()),
+        stop_reason: Some(StopReason::StopSequence),
         _meta: None,
     };
 
@@ -894,7 +894,7 @@ async fn test_sampling_stop_sequences_edge_cases() {
             meta: None,
         }),
         model: "test-model".to_string(),
-        stop_reason: Some("max_tokens".to_string()),
+        stop_reason: Some(StopReason::MaxTokens),
         _meta: None,
     };
 
@@ -972,7 +972,7 @@ async fn test_sampling_model_preference_combinations() {
                 meta: None,
             }),
             model: expected_model.to_string(),
-            stop_reason: Some("end_turn".to_string()),
+            stop_reason: Some(StopReason::EndTurn),
             _meta: None,
         };
 
@@ -1040,7 +1040,7 @@ async fn test_sampling_system_prompt_variations() {
                 meta: None,
             }),
             model: "test-model".to_string(),
-            stop_reason: Some("end_turn".to_string()),
+            stop_reason: Some(StopReason::EndTurn),
             _meta: None,
         };
 
@@ -1139,7 +1139,7 @@ async fn test_sampling_mixed_content_multimodal_conversation() {
             meta: None,
         }),
         model: "gpt-4-vision-audio".to_string(),
-        stop_reason: Some("end_turn".to_string()),
+        stop_reason: Some(StopReason::EndTurn),
         _meta: None,
     };
 

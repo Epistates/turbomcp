@@ -22,7 +22,7 @@ workspace = true
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
-tokio = { version = "1.0", features = ["full"] }
+tokio = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 async-trait = "0.1"
@@ -42,7 +42,7 @@ futures = "0.3"
 
 # HTTP server for SSE support (optional - only needed for http/sse features)
 axum = { version = "0.8.4", features = ["ws"], optional = true }
-tower-http = { version = "0.6.6", features = ["cors", "compression-gzip", "set-header"], optional = true }
+tower-http = { workspace = true, optional = true }
 
 # Authentication and DPoP support (now as separate optional crates for clean minimal build)
 turbomcp-auth = { version = "2.0.0", path = "../turbomcp-auth", optional = true }
@@ -62,11 +62,12 @@ sonic-rs = { workspace = true, optional = true }
 http = { version = "1.0", optional = true }
 
 # Internal dependencies (always required)
-turbomcp-core = { version = "2.0.0", path = "../turbomcp-core", features = ["simd"] }
-turbomcp-protocol = { version = "2.0.0", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "2.0.0", path = "../turbomcp-transport" }
-turbomcp-server = { version = "2.0.0", path = "../turbomcp-server" }
-turbomcp-macros = { version = "2.0.0", path = "../turbomcp-macros" }
+# CRITICAL: Use default-features = false to prevent feature leakage
+turbomcp-core = { version = "2.0.0", path = "../turbomcp-core", default-features = false, features = ["std"] }
+turbomcp-protocol = { version = "2.0.0", path = "../turbomcp-protocol", default-features = false }
+turbomcp-transport = { version = "2.0.0", path = "../turbomcp-transport", default-features = false }
+turbomcp-server = { version = "2.0.0", path = "../turbomcp-server", default-features = false }
+turbomcp-macros = { version = "2.0.0", path = "../turbomcp-macros", default-features = false }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -81,99 +82,76 @@ walkdir = { workspace = true }
 turbomcp-client = { version = "2.0.0", path = "../turbomcp-client" }
 tokio-tungstenite = "0.27.0"
 proptest = "1.5"
+oauth2 = "4.4.2"  # Required for oauth_integration_tests.rs
 
 # Example configurations with required features
+# Server examples
 [[example]]
-name = "openai_mcp_server"
+name = "hello_world"
+required-features = ["stdio"]
+
+[[example]]
+name = "macro_server"
+required-features = ["stdio"]
+
+[[example]]
+name = "tools"
+required-features = ["stdio"]
+
+[[example]]
+name = "resources"
+required-features = ["stdio"]
+
+[[example]]
+name = "stateful"
+required-features = ["stdio"]
+
+[[example]]
+name = "http_server"
+required-features = ["http"]
+
+# Client examples
+[[example]]
+name = "basic_client"
+required-features = ["stdio"]
+
+[[example]]
+name = "comprehensive"
+required-features = ["stdio"]
+
+[[example]]
+name = "elicitation_interactive_client"
+required-features = ["stdio"]
+
+[[example]]
+name = "sampling_client"
+required-features = ["stdio"]
+
+# Complete apps
+[[example]]
+name = "stdio_app"
+required-features = ["stdio"]
+
+[[example]]
+name = "http_app"
 required-features = ["http"]
 
 [[example]]
-name = "anthropic_mcp_server"
+name = "anthropic_integration"
 required-features = ["http"]
 
 [[example]]
-name = "http_client"
+name = "openai_integration"
 required-features = ["http"]
 
+# Transport examples
 [[example]]
-name = "13_dpop_redis_nonce_tracking"
-required-features = ["dpop", "dpop-redis"]
-
-[[example]]
-name = "14_dpop_auto_key_rotation"
-required-features = ["dpop"]
-
-[[example]]
-name = "17_middleware_stack"
-required-features = ["full"]
-
-[[example]]
-name = "07_transport_showcase"
-required-features = ["all-transports"]
-
-[[example]]
-name = "transport_http_server"
-required-features = ["http"]
-
-[[example]]
-name = "transport_tcp_server"
+name = "tcp_transport_demo"
 required-features = ["tcp"]
 
 [[example]]
-name = "transport_unix_server"
+name = "unix_transport_demo"
 required-features = ["unix"]
-
-[[example]]
-name = "streamable_http_v2_full_integration"
-required-features = ["http"]
-
-[[example]]
-name = "tcp_client_server_demo"
-required-features = ["tcp"]
-
-[[example]]
-name = "all_transports_demo"
-required-features = ["all-transports"]
-
-[[example]]
-name = "transport_tcp_client"
-required-features = ["tcp"]
-
-[[example]]
-name = "transport_unix_client"
-required-features = ["unix"]
-
-[[example]]
-name = "transport_websocket_client"
-required-features = ["websocket"]
-
-[[example]]
-name = "transport_websocket_server"
-required-features = ["websocket"]
-
-[[example]]
-name = "tcp_client"
-required-features = ["tcp"]
-
-[[example]]
-name = "tcp_server"
-required-features = ["tcp"]
-
-[[example]]
-name = "unix_socket_client"
-required-features = ["unix"]
-
-[[example]]
-name = "unix_socket_server"
-required-features = ["unix"]
-
-[[example]]
-name = "websocket_client"
-required-features = ["websocket"]
-
-[[example]]
-name = "websocket_server"
-required-features = ["websocket"]
 
 [features]
 default = ["stdio"]  # 2.0.0 BREAKING: Minimal by default. Use features = ["full"] for 1.x behavior
@@ -204,7 +182,7 @@ server-only = ["tcp", "unix"]
 # 📦 INDIVIDUAL FEATURES:
 
 # Core functionality
-schema-generation = ["schemars"]       # JSON Schema generation (recommended)
+schema-generation = ["schemars", "turbomcp-macros/schema"]  # JSON Schema generation (recommended)
 context-injection = []                 # Enhanced Context API features
 uri-templates = ["regex"]             # URI template matching for resources
 # database feature removed - examples moved to separate crate for clean dependencies
@@ -226,14 +204,15 @@ stdio = ["turbomcp-transport/stdio", "turbomcp-server/stdio"]           # Standa
 http = [
     "turbomcp-transport/http",
     "turbomcp-server/http",
+    "turbomcp-macros/http",
     "dep:axum",
     "dep:tower-http",
     "dep:reqwest",
     "dep:http",
 ]  # HTTP/SSE for web apps
 websocket = ["turbomcp-transport/websocket", "turbomcp-server/websocket"] # WebSocket bidirectional
-tcp = ["turbomcp-transport/tcp", "turbomcp-server/tcp"]                   # Raw TCP sockets
-unix = ["turbomcp-transport/unix", "turbomcp-server/unix"]               # Unix domain sockets
+tcp = ["turbomcp-transport/tcp", "turbomcp-server/tcp", "turbomcp-macros/tcp"]  # Raw TCP sockets
+unix = ["turbomcp-transport/unix", "turbomcp-server/unix", "turbomcp-macros/unix"]  # Unix domain sockets
 
 # Performance
 simd = ["turbomcp-core/simd", "simd-json", "sonic-rs"]  # SIMD JSON acceleration

@@ -5,8 +5,6 @@
 //!
 //! **This module is only available with the `http` feature.**
 
-#![cfg(feature = "http")]
-
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::Arc;

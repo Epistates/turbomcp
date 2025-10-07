@@ -1,4 +1,4 @@
-//! # 02: Clean Server - Modern Minimal MCP
+//! # Macro Server - Modern Minimal MCP
 //!
 //! **Learning Goals (5 minutes):**
 //! - Understand the macro-based API for clean server definition
@@ -10,7 +10,7 @@
 //! - Automatic schema generation from function signatures
 //! - Zero boilerplate with maximum functionality
 //!
-//! **Run with:** `cargo run --example 02_clean_server`
+//! **Run with:** `cargo run --example macro_server`
 
 use turbomcp::prelude::*;
 

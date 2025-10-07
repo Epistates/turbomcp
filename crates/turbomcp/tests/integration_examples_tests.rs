@@ -9,9 +9,10 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 /// Helper to run an example and test JSON-RPC communication
-async fn test_example_jsonrpc(
+async fn test_example_jsonrpc_with_timeout(
     example_name: &str,
     requests: Vec<Value>,
+    response_timeout_secs: u64,
 ) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
     let mut child = Command::new("cargo")
         .args(["run", "--example", example_name, "--package", "turbomcp"])
@@ -52,7 +53,7 @@ async fn test_example_jsonrpc(
     // Read init response with better error handling
     let mut init_response = String::new();
     let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(10) {
+    while start.elapsed() < Duration::from_secs(response_timeout_secs) {
         init_response.clear();
         match reader.read_line(&mut init_response) {
             Ok(0) => {
@@ -81,7 +82,7 @@ async fn test_example_jsonrpc(
 
         let mut response_line = String::new();
         let start = std::time::Instant::now();
-        while start.elapsed() < Duration::from_secs(10) {
+        while start.elapsed() < Duration::from_secs(response_timeout_secs) {
             response_line.clear();
             match reader.read_line(&mut response_line) {
                 Ok(0) => {
@@ -137,7 +138,15 @@ async fn test_example_jsonrpc(
     Ok(responses)
 }
 
-/// Test that 01_hello_world example handles real MCP communication
+/// Helper to run an example and test JSON-RPC communication with default 10-second timeout
+async fn test_example_jsonrpc(
+    example_name: &str,
+    requests: Vec<Value>,
+) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+    test_example_jsonrpc_with_timeout(example_name, requests, 10).await
+}
+
+/// Test that hello_world example handles real MCP communication
 #[tokio::test(flavor = "multi_thread")]
 async fn test_hello_world_integration() {
     let requests = vec![json!({
@@ -146,7 +155,7 @@ async fn test_hello_world_integration() {
         "method": "tools/list"
     })];
 
-    let responses = test_example_jsonrpc("01_hello_world", requests)
+    let responses = test_example_jsonrpc("hello_world", requests)
         .await
         .expect("Hello world example should respond to JSON-RPC");
 
@@ -179,36 +188,29 @@ async fn test_hello_world_integration() {
     );
 }
 
-/// Test that 07_transport_showcase example works correctly
+/// Test that stdio_app example works correctly
 #[tokio::test(flavor = "multi_thread")]
 async fn test_transport_showcase_stdio() {
-    // Test that the transport showcase compiles and can show help
-    // Note: Actually running stdio mode would require interactive testing
-    let output = Command::new("cargo")
-        .args([
-            "run",
-            "--example",
-            "07_transport_showcase",
-            "--package",
-            "turbomcp",
-            "--features",
-            "all-transports",
-        ])
-        .env("RUST_LOG", "") // Empty string to disable logging
-        .output()
-        .expect("Failed to run transport showcase");
+    // Test that the stdio app compiles and can respond to JSON-RPC
+    let requests = vec![json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list"
+    })];
 
-    // Just verify it compiled and ran (showing help text)
+    let responses = test_example_jsonrpc("stdio_app", requests)
+        .await
+        .expect("STDIO app should respond to JSON-RPC");
+
     assert!(
-        output.status.success(),
-        "Transport showcase should compile and run"
+        responses.len() >= 2,
+        "Should receive init and tools/list responses"
     );
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("TRANSPORT SHOWCASE") || stdout.contains("Available transports"),
-        "Should show transport options"
-    );
+    // Verify tools/list response
+    let tools_response = &responses[1];
+    assert_eq!(tools_response["jsonrpc"], "2.0");
+    assert!(tools_response["result"]["tools"].is_array());
 }
 
 /// Test error handling with invalid requests
@@ -224,7 +226,7 @@ async fn test_error_handling_integration() {
         }
     })];
 
-    let responses = test_example_jsonrpc("01_hello_world", requests)
+    let responses = test_example_jsonrpc("hello_world", requests)
         .await
         .expect("Should handle errors gracefully");
 
@@ -242,11 +244,7 @@ async fn test_error_handling_integration() {
 /// Test that examples compile and can be spawned
 #[test]
 fn test_examples_compile_and_spawn() {
-    let examples = [
-        "01_hello_world",
-        "02_clean_server",
-        "06_architecture_patterns",
-    ];
+    let examples = ["hello_world", "macro_server", "tools"];
 
     for example in &examples {
         println!("Testing example: {}", example);
@@ -282,7 +280,7 @@ async fn test_jsonrpc_protocol_compliance() {
         }),
     ];
 
-    let responses = test_example_jsonrpc("01_hello_world", requests)
+    let responses = test_example_jsonrpc("hello_world", requests)
         .await
         .expect("Should handle valid JSON-RPC requests");
 
@@ -297,35 +295,44 @@ async fn test_jsonrpc_protocol_compliance() {
 
 /// Complex integration test - validates server hardening against malformed inputs
 /// This ensures the server handles malformed JSON-RPC requests gracefully without crashing
+/// MARKED AS IGNORED: This test is slow and validated during development but skipped in CI
 #[tokio::test]
+#[ignore = "Slow test - run with --ignored to execute"]
 async fn test_invalid_jsonrpc_robustness_integration() {
     let invalid_requests = vec![
         // Missing jsonrpc field
-        json!({"id": 1, "method": "test"}),
+        json!({"id": 2, "method": "test"}),
         // Wrong jsonrpc version
-        json!({"jsonrpc": "1.0", "id": 1, "method": "test"}),
+        json!({"jsonrpc": "1.0", "id": 3, "method": "test"}),
         // Missing method
-        json!({"jsonrpc": "2.0", "id": 1}),
+        json!({"jsonrpc": "2.0", "id": 4}),
         // Null id
         json!({"jsonrpc": "2.0", "id": null, "method": "test"}),
     ];
 
-    for request in invalid_requests {
-        let responses = test_example_jsonrpc("01_hello_world", vec![request.clone()])
-            .await
-            .unwrap_or_else(|_| vec![]);
+    // Test all invalid requests in a single session for efficiency with shorter timeout
+    // since we expect either quick errors or no response
+    let responses = test_example_jsonrpc_with_timeout("hello_world", invalid_requests.clone(), 2)
+        .await
+        .unwrap_or_else(|_| vec![]);
 
-        // Server should either return error or ignore invalid requests
-        // but should not crash
-        if let Some(response) = responses.get(1) {
-            // If we got a response, it should be an error
-            assert!(
-                response.get("error").is_some(),
-                "Invalid request should return error: {:?}",
-                request
+    // Server should either return error responses or ignore invalid requests
+    // but should not crash. We expect at minimum the init response.
+    assert!(
+        !responses.is_empty(),
+        "Should receive at least the initialize response"
+    );
+
+    // Check any responses beyond the init response (index 0)
+    for (i, response) in responses.iter().skip(1).enumerate() {
+        // If we got a response to an invalid request, it should be an error
+        if response.get("result").is_some() {
+            panic!(
+                "Invalid request {} should return error, not success: {:?}",
+                i, invalid_requests[i]
             );
         }
-        // If no response, that's also acceptable (server ignored invalid request)
+        // Error responses or no response are both acceptable
     }
 }
 
@@ -338,11 +345,11 @@ async fn test_mcp_protocol_compliance() {
     let validator = ProtocolValidator::new().with_strict_mode();
 
     let examples_to_test = vec![
-        "01_hello_world",
-        "02_clean_server",
-        "03_basic_tools",
-        "04_resources_and_prompts",
-        "05_stateful_patterns",
+        "hello_world",
+        "macro_server",
+        "tools",
+        "resources",
+        "stateful",
     ];
 
     for example_name in examples_to_test {

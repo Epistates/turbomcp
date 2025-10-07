@@ -36,6 +36,7 @@ use std::path::PathBuf;
 
 /// A REAL production-grade MCP server for testing
 #[derive(Clone)]
+#[allow(dead_code)]
 struct RealProductionMcpServer {
     name: String,
     version: String,
@@ -141,6 +142,7 @@ fn create_tools_list_request() -> Value {
     })
 }
 
+#[allow(dead_code)]
 fn create_echo_tool_call(message: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -155,6 +157,7 @@ fn create_echo_tool_call(message: &str) -> Value {
     })
 }
 
+#[allow(dead_code)]
 fn create_add_tool_call(a: i64, b: i64) -> Value {
     json!({
         "jsonrpc": "2.0",
