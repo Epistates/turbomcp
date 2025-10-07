@@ -1,6 +1,6 @@
 //! Completion handler for MCP completion operations
 
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
     types::{CompleteRequestParams, CompleteResult},

@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use std::sync::Arc;
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::types::{CallToolRequest, CallToolResult, Tool};
 
 use crate::ServerResult;

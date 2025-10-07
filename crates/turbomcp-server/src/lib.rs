@@ -62,7 +62,7 @@
 //!
 //! ```rust,no_run
 //! use turbomcp_server::sampling::SamplingExt;
-//! use turbomcp_core::RequestContext;
+//! use turbomcp_protocol::RequestContext;
 //! use turbomcp_protocol::types::{CreateMessageRequest, SamplingMessage, Role, Content, TextContent};
 //!
 //! async fn my_tool(ctx: RequestContext) -> Result<String, Box<dyn std::error::Error>> {
@@ -77,7 +77,7 @@
 //!             }),
 //!             metadata: None,
 //!         }],
-//!         max_tokens: Some(50),
+//!         max_tokens: 50,
 //!         model_preferences: None,
 //!         system_prompt: Some("You are a helpful math assistant.".to_string()),
 //!         include_context: Some(turbomcp_protocol::types::IncludeContext::None),
@@ -187,7 +187,7 @@ pub use turbomcp_protocol::types::{CallToolRequest, CallToolResult, ListToolsRes
 pub use turbomcp_protocol::types::{ClientCapabilities, ServerCapabilities};
 
 // Re-export core functionality
-pub use turbomcp_core::{MessageId, RequestContext};
+pub use turbomcp_protocol::{MessageId, RequestContext};
 
 // Elicitation support
 pub use elicitation::{ElicitationCoordinator, ElicitationTransport, SharedElicitationCoordinator};

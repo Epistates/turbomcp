@@ -11,7 +11,7 @@ pub mod roots;
 pub mod sampling;
 pub mod tools;
 
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
 
 use crate::registry::HandlerRegistry;

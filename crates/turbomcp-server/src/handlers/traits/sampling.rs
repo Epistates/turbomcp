@@ -1,7 +1,7 @@
 //! Sampling handler trait for processing sampling requests
 
 use async_trait::async_trait;
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult, SamplingCapabilities};
 
 use crate::ServerResult;

@@ -1,6 +1,6 @@
 //! Logging handler for MCP logging operations
 
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
     types::{SetLevelRequest, SetLevelResult},

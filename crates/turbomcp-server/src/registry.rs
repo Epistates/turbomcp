@@ -1,7 +1,26 @@
-//! Handler registry for dynamic loading and management
+//! Server-side handler registry for MCP protocol implementation.
 //!
-//! The registry provides centralized management of MCP handlers including tools,
-//! prompts, resources, sampling, and logging handlers.
+//! This is a **server-specific registry** distinct from the protocol-level registries.
+//! It manages actual MCP protocol handler instances with dynamic dispatch for
+//! tools, prompts, resources, sampling, and logging.
+//!
+//! ## Key Differences from Protocol Registries
+//!
+//! | Registry | Purpose | Handlers |
+//! |----------|---------|----------|
+//! | `turbomcp_protocol::Registry` | Generic component storage | Any `Send + Sync` trait objects |
+//! | `turbomcp_protocol::EnhancedRegistry` | Protocol handlers + stats | Elicitation, completion, templates, ping |
+//! | **This registry** (`HandlerRegistry`) | **Server implementation** | **Tools, prompts, resources, sampling, logging** |
+//!
+//! ## When to Use This Registry
+//!
+//! Use `HandlerRegistry` when building an MCP **server** implementation. This registry:
+//! - Stores actual tool/prompt/resource handler implementations
+//! - Provides the DashMap-based concurrent access needed for server workloads
+//! - Integrates with server middleware and request routing
+//! - Tracks metrics and validation specific to server operations
+//!
+//! For **protocol-level** abstractions, use the registries in `turbomcp_protocol` instead.
 //!
 //! # Examples
 //!

@@ -4,7 +4,7 @@
 //! to clients, enabling server-initiated LLM interactions.
 
 use crate::{ServerError, ServerResult};
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::types::{
     CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsResult,
 };
@@ -34,78 +34,55 @@ impl SamplingExt for RequestContext {
         request: CreateMessageRequest,
     ) -> ServerResult<CreateMessageResult> {
         let capabilities = self
-            .server_capabilities()
+            .server_to_client()
             .ok_or_else(|| ServerError::Handler {
                 message: "No server capabilities available for sampling requests".to_string(),
                 context: Some("sampling".to_string()),
             })?;
 
-        let request_json = serde_json::to_value(request).map_err(|e| ServerError::Handler {
-            message: format!("Failed to serialize request: {}", e),
-            context: Some("sampling".to_string()),
-        })?;
-
-        let result_json = capabilities
-            .create_message(request_json)
+        // Fully typed - no serialization needed!
+        capabilities
+            .create_message(request, self.clone())
             .await
             .map_err(|e| ServerError::Handler {
                 message: format!("Sampling request failed: {}", e),
                 context: Some("sampling".to_string()),
-            })?;
-
-        serde_json::from_value(result_json).map_err(|e| ServerError::Handler {
-            message: format!("Failed to deserialize response: {}", e),
-            context: Some("sampling".to_string()),
-        })
+            })
     }
 
     async fn elicit(&self, request: ElicitRequest) -> ServerResult<ElicitResult> {
         let capabilities = self
-            .server_capabilities()
+            .server_to_client()
             .ok_or_else(|| ServerError::Handler {
                 message: "No server capabilities available for elicitation requests".to_string(),
                 context: Some("elicitation".to_string()),
             })?;
 
-        let request_json = serde_json::to_value(request).map_err(|e| ServerError::Handler {
-            message: format!("Failed to serialize request: {}", e),
-            context: Some("elicitation".to_string()),
-        })?;
-
-        let result_json =
-            capabilities
-                .elicit(request_json)
-                .await
-                .map_err(|e| ServerError::Handler {
-                    message: format!("Elicitation request failed: {}", e),
-                    context: Some("elicitation".to_string()),
-                })?;
-
-        serde_json::from_value(result_json).map_err(|e| ServerError::Handler {
-            message: format!("Failed to deserialize response: {}", e),
-            context: Some("elicitation".to_string()),
-        })
+        // Fully typed - no serialization needed!
+        capabilities
+            .elicit(request, self.clone())
+            .await
+            .map_err(|e| ServerError::Handler {
+                message: format!("Elicitation request failed: {}", e),
+                context: Some("elicitation".to_string()),
+            })
     }
 
     async fn list_roots(&self) -> ServerResult<ListRootsResult> {
         let capabilities = self
-            .server_capabilities()
+            .server_to_client()
             .ok_or_else(|| ServerError::Handler {
                 message: "No server capabilities available for roots listing".to_string(),
                 context: Some("roots".to_string()),
             })?;
 
-        let result_json = capabilities
-            .list_roots()
+        // Fully typed - no serialization needed!
+        capabilities
+            .list_roots(self.clone())
             .await
             .map_err(|e| ServerError::Handler {
                 message: format!("Roots listing failed: {}", e),
                 context: Some("roots".to_string()),
-            })?;
-
-        serde_json::from_value(result_json).map_err(|e| ServerError::Handler {
-            message: format!("Failed to deserialize response: {}", e),
-            context: Some("roots".to_string()),
-        })
+            })
     }
 }

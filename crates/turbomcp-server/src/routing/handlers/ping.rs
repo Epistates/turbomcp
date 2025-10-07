@@ -1,6 +1,6 @@
 //! Ping handler for health check operations
 
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
     types::{PingRequest, PingResult},

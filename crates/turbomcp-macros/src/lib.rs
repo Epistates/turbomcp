@@ -272,7 +272,7 @@ pub fn mcp_error(input: TokenStream) -> TokenStream {
 /// ## With Schema Validation
 /// ```ignore
 /// use turbomcp::prelude::*;
-/// use ::turbomcp::turbomcp_protocol::elicitation::ElicitationSchema;
+/// use ::turbomcp::turbomcp_protocol::types::ElicitationSchema;
 ///
 /// let schema = ElicitationSchema::new()
 ///     .add_string_property("theme", Some("Color theme"))

@@ -1,6 +1,6 @@
 //! Router traits and type definitions
 
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
     types::{

@@ -476,11 +476,9 @@ impl ProtocolValidator {
             );
         }
 
-        // Validate properties if present
-        if let Some(ref properties) = schema.properties {
-            for (key, prop) in properties {
-                self.validate_primitive_schema(prop, &format!("properties.{}", key), &mut ctx);
-            }
+        // Validate properties
+        for (key, prop) in &schema.properties {
+            self.validate_primitive_schema(prop, &format!("properties.{}", key), &mut ctx);
         }
 
         ctx.into_result()

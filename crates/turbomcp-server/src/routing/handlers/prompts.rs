@@ -1,6 +1,6 @@
 //! Prompt handlers for MCP prompt operations
 
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
     types::{GetPromptRequest, ListPromptsResult},

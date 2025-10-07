@@ -3,7 +3,7 @@
 //! This module contains only the core business logic for tool operations.
 //! All cross-cutting concerns (logging, timeout, performance) are handled by middleware.
 
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
     types::{CallToolRequest, ListToolsResult},

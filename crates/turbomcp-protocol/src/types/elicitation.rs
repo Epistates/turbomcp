@@ -21,12 +21,11 @@ pub enum ElicitationAction {
 /// Schema for elicitation input validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElicitationSchema {
-    /// Schema type (must be "object")
+    /// Schema type (must be "object", required by MCP spec)
     #[serde(rename = "type")]
     pub schema_type: String,
-    /// Schema properties
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub properties: Option<HashMap<String, PrimitiveSchemaDefinition>>,
+    /// Schema properties (required by MCP spec)
+    pub properties: HashMap<String, PrimitiveSchemaDefinition>,
     /// Required properties
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
@@ -43,7 +42,7 @@ impl ElicitationSchema {
     pub fn new() -> Self {
         Self {
             schema_type: "object".to_string(),
-            properties: Some(HashMap::new()),
+            properties: HashMap::new(),
             required: Some(Vec::new()),
             additional_properties: Some(false),
         }
@@ -66,9 +65,7 @@ impl ElicitationSchema {
             enum_names: None,
         };
 
-        if let Some(ref mut properties) = self.properties {
-            properties.insert(name.clone(), property);
-        }
+        self.properties.insert(name.clone(), property);
 
         if required && let Some(ref mut required_fields) = self.required {
             required_fields.push(name);
@@ -93,9 +90,7 @@ impl ElicitationSchema {
             maximum,
         };
 
-        if let Some(ref mut properties) = self.properties {
-            properties.insert(name.clone(), property);
-        }
+        self.properties.insert(name.clone(), property);
 
         if required && let Some(ref mut required_fields) = self.required {
             required_fields.push(name);
@@ -118,9 +113,7 @@ impl ElicitationSchema {
             default,
         };
 
-        if let Some(ref mut properties) = self.properties {
-            properties.insert(name.clone(), property);
-        }
+        self.properties.insert(name.clone(), property);
 
         if required && let Some(ref mut required_fields) = self.required {
             required_fields.push(name);

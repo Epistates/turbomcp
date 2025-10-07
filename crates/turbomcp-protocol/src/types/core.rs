@@ -14,10 +14,54 @@
 //! - [`Annotations`] - Common annotation structure
 //! - [`Role`] - Message role enum (User/Assistant)
 //! - [`JsonRpcError`] - JSON-RPC error structure
+//! - [`Timestamp`] - UTC timestamp wrapper
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use turbomcp_core::MessageId;
+use std::{collections::HashMap, fmt};
+use crate::MessageId;
+
+/// Timestamp wrapper for consistent time handling
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Timestamp(pub DateTime<Utc>);
+
+impl Timestamp {
+    /// Create a new timestamp with current time
+    #[must_use]
+    pub fn now() -> Self {
+        Self(Utc::now())
+    }
+
+    /// Create a timestamp from a DateTime
+    #[must_use]
+    pub const fn from_datetime(dt: DateTime<Utc>) -> Self {
+        Self(dt)
+    }
+
+    /// Get the inner DateTime
+    #[must_use]
+    pub const fn datetime(&self) -> DateTime<Utc> {
+        self.0
+    }
+
+    /// Get duration since this timestamp
+    #[must_use]
+    pub fn elapsed(&self) -> chrono::Duration {
+        Utc::now() - self.0
+    }
+}
+
+impl fmt::Display for Timestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.to_rfc3339())
+    }
+}
+
+impl From<DateTime<Utc>> for Timestamp {
+    fn from(dt: DateTime<Utc>) -> Self {
+        Self(dt)
+    }
+}
 
 /// Protocol version string
 pub type ProtocolVersion = String;

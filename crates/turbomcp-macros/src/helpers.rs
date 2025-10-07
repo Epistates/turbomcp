@@ -58,7 +58,7 @@ pub fn generate_error(input: TokenStream) -> TokenStream {
     let args = &format_args.args;
 
     let expanded = quote! {
-        ::turbomcp_core::Error::handler(format!(#format_string, #(#args),*))
+        ::turbomcp_protocol::Error::handler(format!(#format_string, #(#args),*))
     };
 
     TokenStream::from(expanded)
@@ -253,28 +253,33 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
             // Generate code for simple elicitation without schema
             quote! {
                 {
-                    use ::turbomcp_protocol::elicitation::{ElicitationCreateRequest, ElicitationSchema};
+                    use ::turbomcp_protocol::types::{ElicitRequest, ElicitationSchema};
 
                     // Create empty schema for simple prompt
                     let schema = ElicitationSchema::new();
-                    let request = ElicitationCreateRequest {
-                        message: #message.to_string(),
-                        requested_schema: schema,
+                    let request = ElicitRequest {
+                        params: ::turbomcp_protocol::types::ElicitRequestParams {
+                            message: #message.to_string(),
+                            schema,
+                            timeout_ms: None,
+                            cancellable: Some(true),
+                        },
+                        _meta: None,
                     };
 
                     // Handle both Context (with .request) and RequestContext directly
                     #context.request.server_capabilities()
-                        .ok_or_else(|| ::turbomcp_core::Error::handler(
+                        .ok_or_else(|| ::turbomcp_protocol::Error::handler(
                             "Server capabilities not available for elicitation".to_string()
                         ))?
                         .elicit(serde_json::to_value(request).map_err(|e|
-                            ::turbomcp_core::Error::handler(format!("Failed to serialize elicitation: {}", e))
+                            ::turbomcp_protocol::Error::handler(format!("Failed to serialize elicitation: {}", e))
                         )?)
                         .await
-                        .map_err(|e| ::turbomcp_core::Error::handler(format!("Elicitation failed: {}", e)))
+                        .map_err(|e| ::turbomcp_protocol::Error::handler(format!("Elicitation failed: {}", e)))
                         .and_then(|response| {
-                            serde_json::from_value::<::turbomcp_protocol::elicitation::ElicitationCreateResult>(response)
-                                .map_err(|e| ::turbomcp_core::Error::handler(format!("Failed to parse response: {}", e)))
+                            serde_json::from_value::<::turbomcp_protocol::types::ElicitResult>(response)
+                                .map_err(|e| ::turbomcp_protocol::Error::handler(format!("Failed to parse response: {}", e)))
                                 .map(|r| r.into())
                         })
                 }
@@ -288,26 +293,31 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
             // Generate code for elicitation with provided schema
             quote! {
                 {
-                    use ::turbomcp_protocol::elicitation::{ElicitationCreateRequest};
+                    use ::turbomcp_protocol::types::{ElicitRequest};
 
-                    let request = ElicitationCreateRequest {
-                        message: #message.to_string(),
-                        requested_schema: #schema,
+                    let request = ElicitRequest {
+                        params: ::turbomcp_protocol::types::ElicitRequestParams {
+                            message: #message.to_string(),
+                            schema: #schema,
+                            timeout_ms: None,
+                            cancellable: Some(true),
+                        },
+                        _meta: None,
                     };
 
                     // Handle both Context (with .request) and RequestContext directly
                     #context.request.server_capabilities()
-                        .ok_or_else(|| ::turbomcp_core::Error::handler(
+                        .ok_or_else(|| ::turbomcp_protocol::Error::handler(
                             "Server capabilities not available for elicitation".to_string()
                         ))?
                         .elicit(serde_json::to_value(request).map_err(|e|
-                            ::turbomcp_core::Error::handler(format!("Failed to serialize elicitation: {}", e))
+                            ::turbomcp_protocol::Error::handler(format!("Failed to serialize elicitation: {}", e))
                         )?)
                         .await
-                        .map_err(|e| ::turbomcp_core::Error::handler(format!("Elicitation failed: {}", e)))
+                        .map_err(|e| ::turbomcp_protocol::Error::handler(format!("Elicitation failed: {}", e)))
                         .and_then(|response| {
-                            serde_json::from_value::<::turbomcp_protocol::elicitation::ElicitationCreateResult>(response)
-                                .map_err(|e| ::turbomcp_core::Error::handler(format!("Failed to parse response: {}", e)))
+                            serde_json::from_value::<::turbomcp_protocol::types::ElicitResult>(response)
+                                .map_err(|e| ::turbomcp_protocol::Error::handler(format!("Failed to parse response: {}", e)))
                                 .map(|r| r.into())
                         })
                 }

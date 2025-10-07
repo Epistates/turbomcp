@@ -10,12 +10,12 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
-use turbomcp_protocol::elicitation::{
-    ElicitationAction, ElicitationCreateRequest, ElicitationCreateResult,
+use turbomcp_protocol::types::{
+    ElicitationAction, ElicitRequest, ElicitResult,
 };
 
 use crate::ServerError;
-use turbomcp_core::Shareable;
+use turbomcp_protocol::Shareable;
 
 /// Global elicitation coordinator for a server instance
 ///
@@ -45,10 +45,10 @@ struct PendingElicitation {
     _request_id: String,
 
     /// The original request
-    _request: ElicitationCreateRequest,
+    _request: ElicitRequest,
 
     /// Channel to deliver response to waiting tool
-    response_sender: oneshot::Sender<ElicitationCreateResult>,
+    response_sender: oneshot::Sender<ElicitResult>,
 
     /// When this request was created
     created_at: Instant,
@@ -73,7 +73,7 @@ pub struct OutgoingElicitation {
     pub request_id: String,
 
     /// The elicitation request to send
-    pub request: ElicitationCreateRequest,
+    pub request: ElicitRequest,
 
     /// Target transport ID (if specific transport required)
     pub transport_id: Option<String>,
@@ -102,7 +102,7 @@ pub struct IncomingElicitationResponse {
     pub request_id: String,
 
     /// The response from the client
-    pub response: ElicitationCreateResult,
+    pub response: ElicitResult,
 
     /// Transport ID that delivered this response
     pub transport_id: String,
@@ -144,21 +144,21 @@ impl ElicitationCoordinator {
     /// Send an elicitation request and wait for response
     pub async fn send_elicitation(
         &self,
-        request: ElicitationCreateRequest,
+        request: ElicitRequest,
         tool_name: Option<String>,
-    ) -> Result<ElicitationCreateResult, ServerError> {
+    ) -> Result<ElicitResult, ServerError> {
         self.send_with_options(request, tool_name, None, 0, 3).await
     }
 
     /// Send with custom options
     pub async fn send_with_options(
         &self,
-        request: ElicitationCreateRequest,
+        request: ElicitRequest,
         tool_name: Option<String>,
         timeout: Option<Duration>,
         retry_count: u32,
         max_retries: u32,
-    ) -> Result<ElicitationCreateResult, ServerError> {
+    ) -> Result<ElicitResult, ServerError> {
         let request_id = Uuid::new_v4().to_string();
         let timeout = timeout.unwrap_or(self.default_timeout);
 
@@ -298,13 +298,12 @@ impl ElicitationCoordinator {
                     let mut pending_map = pending.write().await;
                     for id in expired {
                         if let Some(req) = pending_map.remove(&id) {
-                            let _ = req.response_sender.send(ElicitationCreateResult {
+                            let _ = req.response_sender.send(ElicitResult {
                                 action: ElicitationAction::Cancel,
                                 content: None,
-                                meta: Some(HashMap::from([(
-                                    "error".to_string(),
-                                    serde_json::json!("Request timed out"),
-                                )])),
+                                _meta: Some(serde_json::json!({
+                                    "error": "Request timed out"
+                                })),
                             });
                         }
                     }
@@ -404,7 +403,7 @@ impl ElicitationBridge {
         request: serde_json::Value,
     ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync>> {
         // Deserialize request
-        let elicitation_request: ElicitationCreateRequest = serde_json::from_value(request)?;
+        let elicitation_request: ElicitRequest = serde_json::from_value(request)?;
 
         // Send through coordinator
         let response = self
@@ -428,7 +427,7 @@ impl ElicitationBridge {
 ///
 /// ```rust,no_run
 /// use turbomcp_server::elicitation::{ElicitationCoordinator, SharedElicitationCoordinator};
-/// use turbomcp_core::shared::Shareable;
+/// use turbomcp_protocol::shared::Shareable;
 /// use std::time::Duration;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -463,9 +462,9 @@ impl SharedElicitationCoordinator {
     /// This delegates to the inner coordinator's send_elicitation method.
     pub async fn send_elicitation(
         &self,
-        request: ElicitationCreateRequest,
+        request: ElicitRequest,
         tool_name: Option<String>,
-    ) -> Result<ElicitationCreateResult, ServerError> {
+    ) -> Result<ElicitResult, ServerError> {
         self.inner.send_elicitation(request, tool_name).await
     }
 
@@ -474,12 +473,12 @@ impl SharedElicitationCoordinator {
     /// This delegates to the inner coordinator's send_with_options method.
     pub async fn send_with_options(
         &self,
-        request: ElicitationCreateRequest,
+        request: ElicitRequest,
         tool_name: Option<String>,
         timeout: Option<Duration>,
         retry_count: u32,
         max_retries: u32,
-    ) -> Result<ElicitationCreateResult, ServerError> {
+    ) -> Result<ElicitResult, ServerError> {
         self.inner
             .send_with_options(request, tool_name, timeout, retry_count, max_retries)
             .await
@@ -547,7 +546,7 @@ impl Shareable<ElicitationCoordinator> for SharedElicitationCoordinator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use turbomcp_protocol::elicitation::{ElicitationSchema, ElicitationValue};
+    use turbomcp_protocol::types::ElicitationSchema;
 
     #[tokio::test]
     async fn test_coordinator_creation() {
@@ -560,9 +559,14 @@ mod tests {
     async fn test_coordinator_timeout() {
         let coordinator = ElicitationCoordinator::with_config(Duration::from_millis(100));
 
-        let request = ElicitationCreateRequest {
-            message: "Test".to_string(),
-            requested_schema: ElicitationSchema::new(),
+        let request = ElicitRequest {
+            params: turbomcp_protocol::types::ElicitRequestParams {
+                message: "Test".to_string(),
+                schema: ElicitationSchema::new(),
+                timeout_ms: None,
+                cancellable: Some(true),
+            },
+            _meta: None,
         };
 
         let result = coordinator
@@ -578,9 +582,14 @@ mod tests {
     async fn test_coordinator_response_handling() {
         let coordinator = ElicitationCoordinator::new();
 
-        let request = ElicitationCreateRequest {
-            message: "Test".to_string(),
-            requested_schema: ElicitationSchema::new(),
+        let request = ElicitRequest {
+            params: turbomcp_protocol::types::ElicitRequestParams {
+                message: "Test".to_string(),
+                schema: ElicitationSchema::new(),
+                timeout_ms: None,
+                cancellable: Some(true),
+            },
+            _meta: None,
         };
 
         // Start request in background
@@ -604,13 +613,13 @@ mod tests {
             // Submit response
             let response = IncomingElicitationResponse {
                 request_id,
-                response: ElicitationCreateResult {
+                response: ElicitResult {
                     action: ElicitationAction::Accept,
                     content: Some(HashMap::from([(
                         "test".to_string(),
-                        ElicitationValue::String("value".to_string()),
+                        serde_json::json!("value"),
                     )])),
-                    meta: None,
+                    _meta: None,
                 },
                 transport_id: "test_transport".to_string(),
                 metadata: HashMap::new(),
@@ -634,9 +643,14 @@ mod tests {
 
         // Create multiple pending requests
         for i in 0..3 {
-            let request = ElicitationCreateRequest {
-                message: format!("Test {}", i),
-                requested_schema: ElicitationSchema::new(),
+            let request = ElicitRequest {
+                params: turbomcp_protocol::types::ElicitRequestParams {
+                    message: format!("Test {}", i),
+                    schema: ElicitationSchema::new(),
+                    timeout_ms: None,
+                    cancellable: Some(true),
+                },
+                _meta: None,
             };
 
             let coordinator_clone = coordinator.clone();

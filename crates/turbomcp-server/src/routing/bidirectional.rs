@@ -1,6 +1,6 @@
 //! Server-initiated request handling (bidirectional communication)
 
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::types::{
     CreateMessageRequest, ElicitRequest, ElicitResult, ListRootsResult, PingRequest, PingResult,
 };

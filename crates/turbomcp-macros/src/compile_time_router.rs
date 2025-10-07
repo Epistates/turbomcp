@@ -305,7 +305,7 @@ pub fn generate_router(
             // ===================================================================
 
             #[::turbomcp::async_trait]
-            impl ::turbomcp::turbomcp_core::JsonRpcHandler for #struct_name
+            impl ::turbomcp::turbomcp_protocol::JsonRpcHandler for #struct_name
             where
                 Self: Clone + Send + Sync + 'static,
             {
@@ -516,8 +516,8 @@ pub fn generate_router(
                     })
                 }
 
-                fn server_info(&self) -> ::turbomcp::turbomcp_core::ServerInfo {
-                    ::turbomcp::turbomcp_core::ServerInfo {
+                fn server_info(&self) -> ::turbomcp::turbomcp_protocol::ServerInfo {
+                    ::turbomcp::turbomcp_protocol::ServerInfo {
                         name: #server_name.to_string(),
                         version: #server_version.to_string(),
                     }
@@ -952,7 +952,7 @@ pub fn generate_router(
                         "initialize" => {
                             JsonRpcResponse::success(
                                 serde_json::json!({
-                                    "protocolVersion": ::turbomcp::turbomcp_core::PROTOCOL_VERSION,
+                                    "protocolVersion": ::turbomcp::turbomcp_protocol::PROTOCOL_VERSION,
                                     "serverInfo": {
                                         "name": #server_name,
                                         "version": #server_version

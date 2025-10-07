@@ -21,7 +21,7 @@ use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::warn;
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
     types::{
@@ -35,7 +35,7 @@ use crate::registry::HandlerRegistry;
 use crate::{ServerError, ServerResult};
 
 use handlers::{HandlerContext, ProtocolHandlers};
-use turbomcp_core::context::capabilities::ServerToClientRequests;
+use turbomcp_protocol::context::capabilities::ServerToClientRequests;
 use utils::{error_response, method_not_found_response};
 use validation::{validate_request, validate_response};
 
@@ -356,7 +356,7 @@ impl Clone for RequestRouter {
 //
 // RequestRouter currently uses BidirectionalRouter for server-initiated requests
 // (sampling, elicitation, roots) instead of directly implementing the ServerCapabilities
-// trait from turbomcp_core::context::capabilities.
+// trait from turbomcp_protocol::context::capabilities.
 //
 // Current Pattern:
 // - RequestRouter contains BidirectionalRouter which handles server-to-client requests
@@ -378,7 +378,7 @@ pub type Router = RequestRouter;
 // ===================================================================
 
 #[async_trait::async_trait]
-impl turbomcp_core::JsonRpcHandler for RequestRouter {
+impl turbomcp_protocol::JsonRpcHandler for RequestRouter {
     /// Handle a JSON-RPC request via the HTTP transport
     ///
     /// This implementation enables `RequestRouter` to be used directly with

@@ -1,13 +1,26 @@
-//! # MCP Protocol Implementation
+//! # TurboMCP Protocol
 //!
-//! This crate provides a complete implementation of the Model Context Protocol (MCP)
-//! specification version 2025-06-18. It includes all protocol types, JSON-RPC integration,
-//! and capability negotiation.
+//! Complete Model Context Protocol (MCP) implementation in Rust, providing all protocol types,
+//! traits, context management, and message handling for building MCP applications.
+//!
+//! ## What's Inside
+//!
+//! This crate provides everything needed for MCP:
+//!
+//! - **Types**: All MCP request/response types from the MCP 2025-06-18 specification
+//! - **Traits**: `ServerToClientRequests` for bidirectional communication
+//! - **Context**: Request and response context management with full observability
+//! - **JSON-RPC**: JSON-RPC 2.0 implementation with batching and notifications
+//! - **Validation**: JSON Schema validation with comprehensive constraints
+//! - **Error Handling**: Rich error types with context and tracing
+//! - **Message Handling**: Optimized message processing with zero-copy support
+//! - **Session Management**: Configurable LRU eviction and lifecycle management
+//! - **Zero-Copy**: Optional zero-copy optimizations for high performance
 //!
 //! ## Features
 //!
 //! ### Core Protocol Support
-//! - Complete MCP 2025-06-18 protocol implementation  
+//! - Complete MCP 2025-06-18 protocol implementation
 //! - JSON-RPC 2.0 support with batching and notifications
 //! - Type-safe capability negotiation and compatibility checking
 //! - Protocol versioning with backward compatibility
@@ -15,111 +28,71 @@
 //!
 //! ### Advanced Protocol Features
 //! - **Elicitation Protocol** - Server-initiated user input requests with rich schema validation
-//! - **Sampling Support** - Bidirectional LLM sampling message types
+//! - **Sampling Support** - Bidirectional LLM sampling with fully-typed interfaces
 //! - **Roots Protocol** - Filesystem boundaries with `roots/list` support
+//! - **Server-to-Client Requests** - Fully typed trait for sampling, elicitation, and roots
 //! - **Comprehensive Schema Builders** - Type-safe builders for all schema types
 //!
-//! ### Validation & Security
-//! - Comprehensive validation constraints (min/max, patterns, required fields)
-//! - Type-safe schema builders with fluent API
-//! - Protocol method validation and error handling
-//! - Security-focused design with proper boundary checking
+//! ### Performance & Observability
+//! - **SIMD-Accelerated JSON** - Fast processing with `simd-json` and `sonic-rs`
+//! - **Zero-Copy Processing** - Memory-efficient message handling with `Bytes`
+//! - **Request Context** - Full request/response context tracking for observability
+//! - **Session Management** - Memory-bounded state management with cleanup tasks
+//! - **Observability Ready** - Built-in support for tracing and metrics collection
 //!
-//! ## Usage Examples
+//! ## Migration from v1.x
 //!
-//! ### Basic Protocol Types
-//!
-//! ```rust
-//! use turbomcp_protocol::types::{Tool, ToolInputSchema, CallToolRequest, CallToolResult};
-//! use std::collections::HashMap;
-//!
-//! // Define a tool schema
-//! let tool = Tool {
-//!     name: "calculate".to_string(),
-//!     title: Some("Calculator".to_string()),
-//!     description: Some("Perform mathematical calculations".to_string()),
-//!     input_schema: ToolInputSchema {
-//!         schema_type: "object".to_string(),
-//!         properties: Some({
-//!             let mut props = HashMap::new();
-//!             props.insert("operation".to_string(), serde_json::json!({
-//!                 "type": "string",
-//!                 "enum": ["add", "subtract", "multiply", "divide"]
-//!             }));
-//!             props
-//!         }),
-//!         required: Some(vec!["operation".to_string()]),
-//!         additional_properties: Some(false),
-//!     },
-//!     output_schema: None,
-//!     annotations: None,
-//!     meta: None,
-//! };
-//! ```
-//!
-//! ### Elicitation Schema Building
+//! In v2.0.0, `turbomcp-core` was merged into `turbomcp-protocol` to eliminate circular
+//! dependencies and enable fully-typed bidirectional communication.
 //!
 //! ```rust
-//! use turbomcp_protocol::elicitation::{ElicitationSchema, EnumSchema, BooleanSchema, PrimitiveSchemaDefinition};
+//! // v1.x
+//! use turbomcp_protocol::{RequestContext, Error};
+//! use turbomcp_protocol::{CreateMessageRequest};
 //!
-//! // Build an elicitation schema with validation
-//! let schema = ElicitationSchema::new()
-//!     .add_property("theme".to_string(), PrimitiveSchemaDefinition::Enum(EnumSchema {
-//!         schema_type: "string".to_string(),
-//!         title: Some("Theme".to_string()),
-//!         description: Some("UI color theme".to_string()),
-//!         enum_values: vec!["light".to_string(), "dark".to_string(), "auto".to_string()],
-//!         enum_names: None,
-//!     }))
-//!     .add_property("notifications".to_string(), PrimitiveSchemaDefinition::Boolean(BooleanSchema {
-//!         schema_type: "boolean".to_string(),
-//!         title: Some("Notifications".to_string()),
-//!         description: Some("Enable push notifications".to_string()),
-//!         default: Some(true),
-//!     }))
-//!     .require(vec!["theme".to_string()]);
+//! // v2.0.0
+//! use turbomcp_protocol::{RequestContext, Error, CreateMessageRequest};
 //! ```
 //!
-//! ### Type-State Capability Builders
+//! All functionality is preserved, just the import path changed!
 //!
-//! TurboMCP provides const-generic type-state builders that ensure capabilities
-//! are configured correctly at compile time, providing compile-time safety with
-//! zero-cost abstractions.
+//! ## Architecture
 //!
-//! ```rust
-//! use turbomcp_protocol::capabilities::builders::{
-//!     ServerCapabilitiesBuilder, ClientCapabilitiesBuilder
-//! };
-//!
-//! // Server capabilities with compile-time validation
-//! let server_caps = ServerCapabilitiesBuilder::new()
-//!     .enable_experimental()
-//!     .enable_tools()
-//!     .enable_prompts()
-//!     .enable_tool_list_changed()  // Only available when tools are enabled!
-//!     .enable_prompts_list_changed() // Only available when prompts are enabled!
-//!     .with_simd_optimization("avx2") // Performance optimization
-//!     .with_enterprise_security(true) // Security enhancement
-//!     .build();
-//!
-//! // Client capabilities with type safety
-//! let client_caps = ClientCapabilitiesBuilder::full_featured()
-//!     .with_llm_provider("openai", "gpt-4") // LLM integration
-//!     .with_ui_capabilities(vec!["form", "dialog"]) // UI enhancement
-//!     .build();
-//!
-//! // Convenience builders for common configurations
-//! let minimal_server = ServerCapabilitiesBuilder::minimal().build();
-//! let sampling_client = ClientCapabilitiesBuilder::sampling_focused().build();
+//! ```text
+//! turbomcp-protocol/
+//! ├── error/              # Error types and handling
+//! ├── message/            # Message types and serialization
+//! ├── context/            # Request/response context with server capabilities
+//! ├── types/              # MCP protocol types
+//! ├── jsonrpc/            # JSON-RPC 2.0 implementation
+//! ├── validation/         # Schema validation
+//! ├── session/            # Session management
+//! ├── registry/           # Component registry
+//! └── utils/              # Utility functions
 //! ```
 //!
-//! **Key Benefits:**
-//! - **Compile-time capability validation** - Methods only available when capabilities enabled
-//! - **Performance optimizations** - SIMD optimization hints, enterprise security, LLM metadata
-//! - **Advanced error prevention** - Impossible to misconfigure capability relationships
-//! - **Zero-cost abstractions** - All validation happens at compile time
-//! - **Backwards compatible** - Existing `ServerCapabilities::default()` still works
+//! ## Server-to-Client Communication
 //!
+//! The protocol provides a `ServerToClientRequests` trait that enables server-initiated requests
+//! to clients, supporting bidirectional communication patterns like sampling and elicitation:
+//!
+//! ```rust,no_run
+//! use turbomcp_protocol::{RequestContext, CreateMessageRequest, ServerToClientRequests};
+//!
+//! // Tools can access server capabilities through the context
+//! async fn my_tool(ctx: RequestContext) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//!     if let Some(capabilities) = ctx.server_to_client() {
+//!         // Make a fully-typed sampling request to the client
+//!         let request = CreateMessageRequest {
+//!             messages: vec![/* ... */],
+//!             max_tokens: 100,
+//!             ..Default::default()
+//!         };
+//!         let response = capabilities.create_message(request, ctx).await?;
+//!     }
+//!     Ok(())
+//! }
+//! ```
 
 #![warn(
     missing_docs,
@@ -128,123 +101,103 @@
     unreachable_pub,
     clippy::all
 )]
-#![deny(unsafe_code)]
+#![cfg_attr(
+    all(not(feature = "mmap"), not(feature = "lock-free")),
+    deny(unsafe_code)
+)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(
     clippy::module_name_repetitions,
     clippy::missing_errors_doc,  // Error documentation in progress
-    clippy::wildcard_imports,  // Used in test modules
+    clippy::cast_possible_truncation,  // Intentional in metrics/performance code
+    clippy::cast_possible_wrap,  // Intentional in metrics/performance code
+    clippy::cast_precision_loss,  // Intentional for f64 metrics
+    clippy::cast_sign_loss,  // Intentional for metrics
     clippy::must_use_candidate,  // Too pedantic for library APIs
     clippy::return_self_not_must_use,  // Constructor methods don't need must_use
     clippy::struct_excessive_bools,  // Sometimes bools are the right design
     clippy::missing_panics_doc,  // Panic docs added where genuinely needed
-    clippy::default_trait_access  // Default::default() is sometimes clearer
+    clippy::default_trait_access,  // Default::default() is sometimes clearer
+    clippy::significant_drop_tightening,  // Overly pedantic about drop timing
+    clippy::used_underscore_binding,  // Sometimes underscore bindings are needed
+    clippy::wildcard_imports  // Used in test modules
 )]
-#![cfg_attr(docsrs, feature(doc_cfg))]
 
-// Re-export core functionality
-// Note: Error handling types (Error, Result) are intentionally NOT re-exported
-// from the protocol crate. This crate focuses on pure MCP protocol types.
-// Higher-level crates (server, client) should import error handling separately.
+// Core abstractions (from turbomcp-core)
+pub mod config;
+pub mod context;
+pub mod enhanced_registry;
+pub mod error;
+pub mod error_utils;
+pub mod handlers;
+#[cfg(feature = "lock-free")]
+pub mod lock_free;
+pub mod message;
+pub mod registry;
+pub mod security;
+pub mod session;
+pub mod shared;
+pub mod state;
+pub mod utils;
+pub mod zero_copy;
 
-// Core protocol modules
+// Protocol-specific modules
 pub mod capabilities;
-pub mod elicitation;
+// Old elicitation module removed - use types::elicitation instead (MCP 2025-06-18 compliant)
 pub mod jsonrpc;
 pub mod types;
 pub mod validation;
 pub mod versioning;
 
-// Re-export commonly used types
-pub use types::{
-    ArgumentInfo,
-    CallToolRequest,
-    CallToolResult,
-    // Capability types
-    ClientCapabilities,
-    ClientNotification,
-    // Core types
-    ClientRequest,
-    // Completion types
-    CompleteRequestParams,
-    CompleteResult,
-    CompletionReference,
-    CompletionResponse,
-    // Content types
-    Content,
-    // Sampling
-    CreateMessageRequest,
-    CreateMessageResult,
-    // Elicitation types
-    ElicitRequest,
-    ElicitRequestParams,
-    ElicitResult,
-    ElicitationAction,
-    ElicitationSchema,
-    EmbeddedResource,
-    EmptyResult,
-    GetPromptRequest,
-    GetPromptResult,
-    ImageContent,
-    Implementation,
+// Re-export core types
+pub use context::{
+    BidirectionalContext, ClientCapabilities as ContextClientCapabilities, ClientId,
+    ClientIdExtractor, ClientSession, CommunicationDirection, CommunicationInitiator,
+    CompletionCapabilities, CompletionContext, CompletionOption, CompletionReference as ContextCompletionReference,
+    ConnectionMetrics, ElicitationContext, ElicitationState, PingContext, PingOrigin,
+    RequestContext, RequestContextExt, RequestInfo, ResourceTemplateContext, ResponseContext,
+    ServerToClientRequests, ServerInitiatedContext, ServerInitiatedType, TemplateParameter,
+};
+// Timestamp and ContentType are now in types module
+pub use enhanced_registry::{EnhancedRegistry, HandlerStats};
+pub use error::{Error, ErrorContext, ErrorKind, Result, RetryInfo};
+pub use handlers::{
+    CompletionItem, CompletionProvider, ElicitationHandler, ElicitationResponse,
+    HandlerCapabilities, JsonRpcHandler, PingHandler, PingResponse, ResolvedResource,
+    ResourceTemplate as HandlerResourceTemplate, ResourceTemplateHandler, ServerInfo,
+    ServerInitiatedCapabilities, TemplateParam,
+};
+pub use message::{Message, MessageId, MessageMetadata};
+pub use registry::RegistryError;
+pub use security::{validate_file_extension, validate_path, validate_path_within};
+pub use session::{SessionAnalytics, SessionConfig, SessionManager};
+pub use shared::{ConsumableShared, Shareable, Shared, SharedError};
+pub use state::StateManager;
 
+// Re-export ONLY essential types at root (v2.0 - world-class DX)
+// Everything else requires module qualification: turbomcp_protocol::types::*
+pub use types::{
+    // Most common request/response pairs (initialization flow)
     InitializeRequest,
     InitializeResult,
-    InitializedNotification,
 
-    ListPromptsRequest,
-    ListPromptsResult,
+    // Most common tool operations
+    CallToolRequest,
+    CallToolResult,
 
-    ListResourceTemplatesRequest,
-    ListResourceTemplatesResult,
-    ListResourcesRequest,
-    ListResourcesResult,
-    ListRootsRequest,
-    ListRootsResult,
-    ListToolsRequest,
-    ListToolsResult,
-
-    // Logging and progress
-    LogLevel,
-    LoggingNotification,
-    // Ping types
-    PingParams,
-    PingRequest,
-    PingResult,
-    ProgressNotification,
-    ProgressToken,
-    // Prompt types
-    Prompt,
-    PromptInput,
-    ProtocolVersion,
+    // Macro API types (used by generated code - not typically imported by users)
+    GetPromptRequest,
+    GetPromptResult,
     ReadResourceRequest,
     ReadResourceResult,
-    RequestId,
-    // Resource types
-    Resource,
-    ResourceContents,
-    // Resource Template types
-    ResourceTemplate,
-    ResourceUpdatedNotification,
-    Result,
-    // Roots
-    Root,
-    RootsListChangedNotification,
-    SamplingMessage,
 
+    // Capability negotiation (used in every initialize)
     ServerCapabilities,
-    ServerNotification,
-    ServerRequest,
-    SetLevelRequest,
-    SetLevelResult,
-
-    SubscribeRequest,
-    TextContent,
-    // Tool types
-    Tool,
-    ToolInputSchema,
-    ToolOutputSchema,
-    UnsubscribeRequest,
+    ClientCapabilities,
 };
+
+// Note: types module is already declared as `pub mod types;` above
+// Users access other types via turbomcp_protocol::types::Tool, etc.
 
 pub use jsonrpc::{
     JsonRpcBatch, JsonRpcError, JsonRpcErrorCode, JsonRpcNotification, JsonRpcRequest,
@@ -261,11 +214,26 @@ pub use capabilities::{
 
 pub use versioning::{VersionCompatibility, VersionManager, VersionRequirement};
 
-/// Current MCP protocol version
+/// Alias for RequestContext for backward compatibility
+pub type Context = RequestContext;
+
+/// Current MCP protocol version supported by this SDK
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
-/// Supported MCP protocol versions
+/// Supported protocol versions for compatibility
 pub const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+
+/// Maximum message size in bytes (1MB) - Reduced for security (DoS protection)
+pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+
+/// Default timeout for operations in milliseconds
+pub const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+
+/// SDK version information
+pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// SDK name identifier
+pub const SDK_NAME: &str = "turbomcp";
 
 /// Protocol feature flags
 pub mod features {
@@ -388,13 +356,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_protocol_constants() {
+    fn test_version_constants() {
         assert_eq!(PROTOCOL_VERSION, "2025-06-18");
         assert!(SUPPORTED_VERSIONS.contains(&PROTOCOL_VERSION));
-        #[allow(clippy::const_is_empty)]
-        {
-            assert!(!SUPPORTED_VERSIONS.is_empty());
-        }
+    }
+
+    #[test]
+    fn test_size_constants() {
+        // Constants are statically verified at compile-time
+        const _: () = assert!(
+            MAX_MESSAGE_SIZE > 1024,
+            "MAX_MESSAGE_SIZE must be larger than 1KB"
+        );
+        const _: () = assert!(
+            MAX_MESSAGE_SIZE == 1024 * 1024,
+            "MAX_MESSAGE_SIZE must be 1MB for security"
+        );
+
+        const _: () = assert!(
+            DEFAULT_TIMEOUT_MS > 1000,
+            "DEFAULT_TIMEOUT_MS must be larger than 1 second"
+        );
+        const _: () = assert!(
+            DEFAULT_TIMEOUT_MS == 30_000,
+            "DEFAULT_TIMEOUT_MS must be 30 seconds"
+        );
     }
 
     #[test]

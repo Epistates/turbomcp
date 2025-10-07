@@ -1,8 +1,8 @@
 //! Logging handler trait for processing logging requests
 
 use async_trait::async_trait;
-use turbomcp_core::RequestContext;
-use turbomcp_protocol::LogLevel;
+use turbomcp_protocol::RequestContext;
+use turbomcp_protocol::types::LogLevel;
 use turbomcp_protocol::types::{EmptyResult, LoggingCapabilities, SetLevelRequest};
 
 use crate::ServerResult;

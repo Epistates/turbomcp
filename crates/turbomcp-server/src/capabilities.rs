@@ -38,15 +38,14 @@
 //! v2.0: Improved trait design to eliminate double serialization and enable context propagation.
 
 use futures::future::BoxFuture;
-use turbomcp_core::context::capabilities::ServerToClientRequests;
-use turbomcp_core::{Error as McpError, RequestContext};
+use turbomcp_protocol::context::capabilities::ServerToClientRequests;
+use turbomcp_protocol::{Error as McpError, RequestContext};
 use turbomcp_protocol::types::{
     CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsRequest,
     ListRootsResult,
 };
 
 use crate::routing::BidirectionalRouter;
-use crate::ServerError;
 
 /// Adapter that implements the `ServerToClientRequests` trait by delegating to `BidirectionalRouter`.
 ///
@@ -113,10 +112,7 @@ impl ServerToClientRequests for ServerToClientAdapter {
             self.bidirectional
                 .send_create_message_to_client(request, ctx)
                 .await
-                .map_err(|e| McpError::Handler {
-                    message: format!("Sampling request failed: {}", e),
-                    context: Some("sampling".to_string()),
-                })
+                .map_err(|e| *McpError::handler(format!("Sampling request failed: {}", e)))
         })
     }
 
@@ -131,10 +127,7 @@ impl ServerToClientRequests for ServerToClientAdapter {
             self.bidirectional
                 .send_elicitation_to_client(request, ctx)
                 .await
-                .map_err(|e| McpError::Handler {
-                    message: format!("Elicitation request failed: {}", e),
-                    context: Some("elicitation".to_string()),
-                })
+                .map_err(|e| *McpError::handler(format!("Elicitation request failed: {}", e)))
         })
     }
 
@@ -151,10 +144,7 @@ impl ServerToClientRequests for ServerToClientAdapter {
             self.bidirectional
                 .send_list_roots_to_client(list_roots_request, ctx)
                 .await
-                .map_err(|e| McpError::Handler {
-                    message: format!("Roots listing request failed: {}", e),
-                    context: Some("roots".to_string()),
-                })
+                .map_err(|e| *McpError::handler(format!("Roots listing request failed: {}", e)))
         })
     }
 }

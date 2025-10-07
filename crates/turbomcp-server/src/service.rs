@@ -13,7 +13,7 @@ use http::{Request, Response, StatusCode};
 use tower::Service;
 use tracing::{error, info, warn};
 
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::jsonrpc::{
     JsonRpcError, JsonRpcMessage, JsonRpcResponse, JsonRpcResponsePayload, JsonRpcVersion,
     ResponseId,

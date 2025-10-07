@@ -49,9 +49,9 @@ pub struct CreateMessageRequest {
     /// Temperature for sampling (0.0 to 2.0)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f64>,
-    /// Maximum number of tokens to generate
-    #[serde(rename = "maxTokens", skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
+    /// Maximum number of tokens to generate (required by MCP spec)
+    #[serde(rename = "maxTokens")]
+    pub max_tokens: u32,
     /// Stop sequences
     #[serde(rename = "stopSequences", skip_serializing_if = "Option::is_none")]
     pub stop_sequences: Option<Vec<String>>,

@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::types::{GetPromptRequest, GetPromptResult, Prompt};
 
 use crate::ServerResult;

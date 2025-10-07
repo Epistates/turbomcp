@@ -1,6 +1,6 @@
 //! Roots handler for MCP roots operations
 
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
     types::{ListRootsRequest, ListRootsResult},

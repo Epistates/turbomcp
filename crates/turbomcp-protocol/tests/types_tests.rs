@@ -309,7 +309,7 @@ fn test_role_serialization() {
 #[test]
 fn test_role_clone() {
     let original = Role::User;
-    let cloned = original.clone();
+    let cloned = original;
     assert!(matches!(cloned, Role::User));
 }
 
@@ -1035,7 +1035,7 @@ fn test_sampling_api_comprehensive_workflow() {
         system_prompt: Some("You are a helpful assistant for testing.".to_string()),
         include_context: Some(IncludeContext::ThisServer),
         temperature: Some(0.7),
-        max_tokens: Some(1000),
+        max_tokens: 1000,
         stop_sequences: Some(vec!["STOP".to_string(), "END".to_string()]),
         _meta: None,
     };

@@ -5,7 +5,7 @@
 //! can also be used directly for quick handler creation.
 
 use std::collections::HashMap;
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::types::{
     CallToolRequest, CallToolResult, GetPromptRequest, GetPromptResult, Prompt,
     ReadResourceRequest, ReadResourceResult, Resource, Tool, ToolInputSchema,
@@ -30,7 +30,7 @@ use crate::handlers::traits::{PromptHandler, ResourceHandler, ToolHandler};
 ///
 /// ```rust,no_run
 /// use turbomcp_server::handlers::utils::tool;
-/// use turbomcp_core::RequestContext;
+/// use turbomcp_protocol::RequestContext;
 /// use turbomcp_protocol::types::{CallToolRequest, CallToolResult, Content, TextContent};
 ///
 /// let my_tool = tool("echo", "Echoes back the input", |req: CallToolRequest, _ctx: RequestContext| async move {

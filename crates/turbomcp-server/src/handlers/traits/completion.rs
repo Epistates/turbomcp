@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::types::{CompleteRequestParams, CompletionResponse};
 
 use crate::ServerResult;

@@ -9,7 +9,7 @@ pub type ServerResult<T> = Result<T, ServerError>;
 pub enum ServerError {
     /// Core errors
     #[error("Core error: {0}")]
-    Core(#[from] turbomcp_core::registry::RegistryError),
+    Core(#[from] turbomcp_protocol::registry::RegistryError),
 
     /// Transport layer errors
     #[error("Transport error: {0}")]
@@ -373,9 +373,9 @@ impl ErrorContext {
 }
 
 // Conversion from core errors to server errors
-impl From<Box<turbomcp_core::Error>> for ServerError {
-    fn from(core_error: Box<turbomcp_core::Error>) -> Self {
-        use turbomcp_core::ErrorKind;
+impl From<Box<turbomcp_protocol::Error>> for ServerError {
+    fn from(core_error: Box<turbomcp_protocol::Error>) -> Self {
+        use turbomcp_protocol::ErrorKind;
 
         match core_error.kind {
             ErrorKind::Handler => Self::Handler {

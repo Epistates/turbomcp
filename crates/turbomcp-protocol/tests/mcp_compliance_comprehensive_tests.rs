@@ -216,7 +216,7 @@ mod mcp_compliance_tests {
             system_prompt: None,
             include_context: None,
             temperature: None,
-            max_tokens: Some(100),
+            max_tokens: 100,
             stop_sequences: None,
             _meta: Some(json!({"message_meta": "test"})),
         };

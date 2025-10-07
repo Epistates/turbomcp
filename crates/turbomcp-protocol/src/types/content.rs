@@ -12,11 +12,24 @@
 //! - [`AudioContent`] - Base64-encoded audio content
 //! - [`ResourceLink`] - Reference to external resource
 //! - [`EmbeddedResource`] - Embedded resource content
+//! - [`ContentType`] - Content type enumeration (JSON/Binary/Text)
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::core::{Annotations, Base64String, MimeType, Uri};
+
+/// Content type enumeration
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ContentType {
+    /// JSON content
+    Json,
+    /// Binary content
+    Binary,
+    /// Plain text content
+    Text,
+}
 
 /// Content block union type per MCP 2025-06-18 specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
