@@ -238,35 +238,31 @@ impl StreamableHttpClientTransport {
     async fn build_headers(&self, accept: &str) -> header::HeaderMap {
         let mut headers = header::HeaderMap::new();
 
-        headers.insert(
-            header::ACCEPT,
-            header::HeaderValue::from_str(accept).unwrap(),
-        );
+        // Use safe header value construction - skip invalid headers rather than panic
+        if let Ok(accept_value) = header::HeaderValue::from_str(accept) {
+            headers.insert(header::ACCEPT, accept_value);
+        }
 
-        headers.insert(
-            "MCP-Protocol-Version",
-            header::HeaderValue::from_str(&self.config.protocol_version).unwrap(),
-        );
+        if let Ok(protocol_value) = header::HeaderValue::from_str(&self.config.protocol_version) {
+            headers.insert("MCP-Protocol-Version", protocol_value);
+        }
 
         if let Some(session_id) = self.session_id.read().await.as_ref() {
-            headers.insert(
-                "Mcp-Session-Id",
-                header::HeaderValue::from_str(session_id).unwrap(),
-            );
+            if let Ok(session_value) = header::HeaderValue::from_str(session_id) {
+                headers.insert("Mcp-Session-Id", session_value);
+            }
         }
 
         if let Some(last_event_id) = self.last_event_id.read().await.as_ref() {
-            headers.insert(
-                "Last-Event-ID",
-                header::HeaderValue::from_str(last_event_id).unwrap(),
-            );
+            if let Ok(event_value) = header::HeaderValue::from_str(last_event_id) {
+                headers.insert("Last-Event-ID", event_value);
+            }
         }
 
         if let Some(token) = &self.config.auth_token {
-            headers.insert(
-                header::AUTHORIZATION,
-                header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-            );
+            if let Ok(auth_value) = header::HeaderValue::from_str(&format!("Bearer {}", token)) {
+                headers.insert(header::AUTHORIZATION, auth_value);
+            }
         }
 
         for (key, value) in &self.config.headers {
@@ -346,30 +342,27 @@ impl StreamableHttpClientTransport {
                 header::ACCEPT,
                 header::HeaderValue::from_static("text/event-stream"),
             );
-            headers.insert(
-                "MCP-Protocol-Version",
-                header::HeaderValue::from_str(&config.protocol_version).unwrap(),
-            );
+
+            if let Ok(protocol_value) = header::HeaderValue::from_str(&config.protocol_version) {
+                headers.insert("MCP-Protocol-Version", protocol_value);
+            }
 
             if let Some(sid) = session_id.read().await.as_ref() {
-                headers.insert(
-                    "Mcp-Session-Id",
-                    header::HeaderValue::from_str(sid).unwrap(),
-                );
+                if let Ok(session_value) = header::HeaderValue::from_str(sid) {
+                    headers.insert("Mcp-Session-Id", session_value);
+                }
             }
 
             if let Some(last_id) = last_event_id.read().await.as_ref() {
-                headers.insert(
-                    "Last-Event-ID",
-                    header::HeaderValue::from_str(last_id).unwrap(),
-                );
+                if let Ok(event_value) = header::HeaderValue::from_str(last_id) {
+                    headers.insert("Last-Event-ID", event_value);
+                }
             }
 
             if let Some(token) = &config.auth_token {
-                headers.insert(
-                    header::AUTHORIZATION,
-                    header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-                );
+                if let Ok(auth_value) = header::HeaderValue::from_str(&format!("Bearer {}", token)) {
+                    headers.insert(header::AUTHORIZATION, auth_value);
+                }
             }
 
             // Connect to SSE endpoint
@@ -813,10 +806,9 @@ impl Transport for StreamableHttpClientTransport {
         if let Some(session_id) = self.session_id.read().await.as_ref() {
             let url = self.get_endpoint_url();
             let mut headers = header::HeaderMap::new();
-            headers.insert(
-                "Mcp-Session-Id",
-                header::HeaderValue::from_str(session_id).unwrap(),
-            );
+            if let Ok(session_value) = header::HeaderValue::from_str(session_id) {
+                headers.insert("Mcp-Session-Id", session_value);
+            }
 
             let _ = self.http_client.delete(&url).headers(headers).send().await;
         }

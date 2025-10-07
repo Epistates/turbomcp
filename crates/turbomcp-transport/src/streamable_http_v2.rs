@@ -533,14 +533,12 @@ async fn mcp_post_handler<H: turbomcp_protocol::JsonRpcHandler>(
     // Per spec: Return 202 Accepted for notifications and responses
     if is_notification || is_response {
         let mut response_headers = HeaderMap::new();
-        response_headers.insert(
-            "Mcp-Session-Id",
-            HeaderValue::from_str(&secure_session.id).unwrap(),
-        );
-        response_headers.insert(
-            "MCP-Protocol-Version",
-            HeaderValue::from_str(protocol_version).unwrap(),
-        );
+        if let Ok(session_value) = HeaderValue::from_str(&secure_session.id) {
+            response_headers.insert("Mcp-Session-Id", session_value);
+        }
+        if let Ok(protocol_value) = HeaderValue::from_str(protocol_version) {
+            response_headers.insert("MCP-Protocol-Version", protocol_value);
+        }
 
         // Broadcast to session's SSE streams
         broadcast_to_session(&state, &secure_session.id, request).await;
@@ -576,11 +574,13 @@ async fn mcp_post_handler<H: turbomcp_protocol::JsonRpcHandler>(
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         "Mcp-Session-Id",
-        HeaderValue::from_str(&secure_session.id).unwrap(),
+        HeaderValue::from_str(&secure_session.id)
+            .unwrap_or_else(|_| HeaderValue::from_static("invalid-session-id")),
     );
     response_headers.insert(
         "MCP-Protocol-Version",
-        HeaderValue::from_str(protocol_version).unwrap(),
+        HeaderValue::from_str(protocol_version)
+            .unwrap_or_else(|_| HeaderValue::from_static("2025-06-18")),
     );
 
     (StatusCode::OK, response_headers, Json(response_value)).into_response()
@@ -690,11 +690,13 @@ async fn handle_initialize<H: turbomcp_protocol::JsonRpcHandler>(
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         "Mcp-Session-Id",
-        HeaderValue::from_str(&secure_session.id).unwrap(),
+        HeaderValue::from_str(&secure_session.id)
+            .unwrap_or_else(|_| HeaderValue::from_static("invalid-session-id")),
     );
     response_headers.insert(
         "MCP-Protocol-Version",
-        HeaderValue::from_str(protocol_version).unwrap(),
+        HeaderValue::from_str(protocol_version)
+            .unwrap_or_else(|_| HeaderValue::from_static("2025-06-18")),
     );
 
     // Get server info and capabilities from handler
@@ -784,10 +786,13 @@ async fn handle_request_with_sse<H: turbomcp_protocol::JsonRpcHandler>(
     };
 
     let mut response_headers = HeaderMap::new();
-    response_headers.insert("Mcp-Session-Id", HeaderValue::from_str(session_id).unwrap());
+    if let Ok(session_value) = HeaderValue::from_str(session_id) {
+        response_headers.insert("Mcp-Session-Id", session_value);
+    }
     response_headers.insert(
         "MCP-Protocol-Version",
-        HeaderValue::from_str(protocol_version).unwrap(),
+        HeaderValue::from_str(protocol_version)
+            .unwrap_or_else(|_| HeaderValue::from_static("2025-06-18")),
     );
     response_headers.insert(
         header::CONTENT_TYPE,

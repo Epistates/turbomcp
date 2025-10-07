@@ -337,7 +337,7 @@ mod tests {
                 message: "Test message".to_string(),
                 schema: ElicitationSchema {
                     schema_type: "object".to_string(),
-                    properties: None,
+                    properties: std::collections::HashMap::new(),
                     required: None,
                     additional_properties: None,
                 },
