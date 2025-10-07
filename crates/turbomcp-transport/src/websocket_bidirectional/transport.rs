@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt as _};
+use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{error, trace};
 use uuid::Uuid;
@@ -136,14 +137,32 @@ impl Transport for WebSocketBidirectionalTransport {
     }
 
     async fn metrics(&self) -> TransportMetrics {
-        // TODO: Add WebSocket-specific metrics when metadata field is available:
-        // - active_correlations: self.active_correlations_count()
-        // - pending_elicitations: self.pending_elicitations_count()
-        // - session_id: self.session_id
-        // - max_message_size: self.config.lock().expect("config mutex poisoned").max_message_size
-        // - keep_alive_interval_secs: self.config.lock().expect("config mutex poisoned").keep_alive_interval.as_secs()
+        let mut base_metrics = self.metrics.read().await.clone();
 
-        self.metrics.read().await.clone()
+        // Add WebSocket-specific metrics to metadata
+        let config = self.config.lock().expect("config mutex poisoned");
+        base_metrics.metadata.insert(
+            "active_correlations".to_string(),
+            serde_json::json!(self.active_correlations_count()),
+        );
+        base_metrics.metadata.insert(
+            "pending_elicitations".to_string(),
+            serde_json::json!(self.pending_elicitations_count()),
+        );
+        base_metrics.metadata.insert(
+            "session_id".to_string(),
+            serde_json::json!(self.session_id.to_string()),
+        );
+        base_metrics.metadata.insert(
+            "max_message_size".to_string(),
+            serde_json::json!(config.max_message_size),
+        );
+        base_metrics.metadata.insert(
+            "keep_alive_interval_secs".to_string(),
+            serde_json::json!(config.keep_alive_interval.as_secs()),
+        );
+
+        base_metrics
     }
 
     fn endpoint(&self) -> Option<String> {
@@ -157,18 +176,42 @@ impl Transport for WebSocketBidirectionalTransport {
     }
 
     async fn configure(&self, config: TransportConfig) -> TransportResult<()> {
-        // Update internal configuration based on transport config
+        let mut ws_config = self.config.lock().expect("config mutex poisoned");
+
+        // Update keep-alive from standard config
         if let Some(keep_alive) = config.keep_alive {
-            self.config
-                .lock()
-                .expect("config mutex poisoned")
-                .keep_alive_interval = keep_alive;
+            ws_config.keep_alive_interval = keep_alive;
         }
 
-        // TODO: Handle other config fields when websocket-specific config is redesigned:
-        // - Use config.custom for max_message_size if needed
-        // - Use config.read_timeout for elicitation_timeout if appropriate
-        // - Store config metadata when metadata field is available
+        // Extract WebSocket-specific config from custom field
+        if let Some(max_msg_size) = config.custom.get("max_message_size")
+            && let Some(size) = max_msg_size.as_u64()
+        {
+            ws_config.max_message_size = size as usize;
+            trace!(
+                "Updated max_message_size to {} for session {}",
+                size, self.session_id
+            );
+        }
+
+        // Use read_timeout for elicitation_timeout if provided
+        if let Some(read_timeout) = config.read_timeout {
+            if let Some(elicitation_timeout) = config
+                .custom
+                .get("elicitation_timeout")
+                .and_then(|v| v.as_u64())
+                .map(Duration::from_secs)
+            {
+                ws_config.elicitation_timeout = elicitation_timeout;
+            } else {
+                // Fall back to read_timeout if elicitation_timeout not explicitly set
+                ws_config.elicitation_timeout = read_timeout;
+            }
+            trace!(
+                "Updated elicitation_timeout to {:?} for session {}",
+                ws_config.elicitation_timeout, self.session_id
+            );
+        }
 
         trace!(
             "Updated transport configuration for session {}",

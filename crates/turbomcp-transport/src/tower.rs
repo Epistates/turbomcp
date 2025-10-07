@@ -405,12 +405,15 @@ impl TowerTransportAdapter {
             TransportMessage::new(MessageId::from(Uuid::new_v4()), response_bytes);
 
         // Update processing metrics (lock-free atomic operations)
-        let _processing_time = start_time.elapsed();
+        let processing_time = start_time.elapsed();
         self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
         self.metrics
             .bytes_sent
             .fetch_add(response_message.size() as u64, Ordering::Relaxed);
-        // TODO: Track average_latency_ms with separate atomic sum/count for computed average
+
+        // Track latency using exponential moving average
+        self.metrics
+            .update_latency_us(processing_time.as_micros() as u64);
 
         // Emit response event
         self.event_emitter

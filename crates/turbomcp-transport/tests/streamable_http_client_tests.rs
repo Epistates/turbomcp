@@ -127,7 +127,7 @@ mod streamable_http_client_tests {
             ..Default::default()
         };
 
-        let mut transport = StreamableHttpClientTransport::new(config);
+        let transport = StreamableHttpClientTransport::new(config);
 
         // Send initialize request
         let request = create_jsonrpc_request("1", "initialize");
@@ -168,7 +168,7 @@ mod streamable_http_client_tests {
             ..Default::default()
         };
 
-        let mut transport = StreamableHttpClientTransport::new(config);
+        let transport = StreamableHttpClientTransport::new(config);
 
         // Send notification
         let notification = create_jsonrpc_notification("initialized");
@@ -215,7 +215,7 @@ mod streamable_http_client_tests {
 
         Mock::given(method("POST"))
             .and(path("/mcp"))
-            .and(body_json(&serde_json::json!({
+            .and(body_json(serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": "1",
                 "method": "initialize",
@@ -234,7 +234,7 @@ mod streamable_http_client_tests {
         // Mock 2: Initialized notification -> HTTP 202 Accepted
         Mock::given(method("POST"))
             .and(path("/mcp"))
-            .and(body_json(&serde_json::json!({
+            .and(body_json(serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": "initialized",
                 "params": {}
@@ -263,7 +263,7 @@ mod streamable_http_client_tests {
 
         Mock::given(method("POST"))
             .and(path("/mcp"))
-            .and(body_json(&serde_json::json!({
+            .and(body_json(serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": "2",
                 "method": "tools/list",
@@ -410,7 +410,7 @@ mod streamable_http_client_tests {
             ..Default::default()
         };
 
-        let mut transport = StreamableHttpClientTransport::new(config);
+        let transport = StreamableHttpClientTransport::new(config);
 
         // Receive without sending anything should return None
         let result = transport.receive().await.unwrap();

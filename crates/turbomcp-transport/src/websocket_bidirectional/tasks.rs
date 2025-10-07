@@ -302,8 +302,20 @@ impl WebSocketBidirectionalTransport {
                 {
                     let mut metrics_guard = metrics.write().await;
                     metrics_guard.active_connections = if correlation_count > 0 { 1 } else { 0 };
-                    // TODO: Store custom metrics (active_correlations, active_elicitations, session_id)
-                    // when a metadata field is added to TransportMetrics or alternative approach is implemented
+
+                    // Store WebSocket-specific metrics in metadata
+                    metrics_guard.metadata.insert(
+                        "active_correlations".to_string(),
+                        serde_json::json!(correlation_count),
+                    );
+                    metrics_guard.metadata.insert(
+                        "active_elicitations".to_string(),
+                        serde_json::json!(elicitation_count),
+                    );
+                    metrics_guard.metadata.insert(
+                        "session_id".to_string(),
+                        serde_json::json!(session_id.to_string()),
+                    );
                 }
 
                 trace!(

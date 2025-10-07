@@ -34,8 +34,8 @@ anyhow = { workspace = true }
 
 # HTTP/WebSocket (optional)
 axum = { version = "0.8.4", optional = true, features = ["ws", "json"] }
-tower = { version = "0.5.2", optional = true }
-tower-http = { version = "0.6.6", optional = true, features = ["cors", "compression-gzip", "timeout", "trace"] }
+tower = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
 hyper = { version = "1.0", optional = true }
 hyper-util = { version = "0.1", optional = true }
 tokio-tungstenite = { version = "0.27.0", optional = true }

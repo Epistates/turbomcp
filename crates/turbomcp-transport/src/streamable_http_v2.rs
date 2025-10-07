@@ -67,23 +67,171 @@ pub struct StreamableHttpConfig {
 
 impl Default for StreamableHttpConfig {
     fn default() -> Self {
-        let security_validator = Arc::new(
-            SecurityConfigBuilder::new()
-                .allow_localhost(true)
-                .allow_any_origin(false)
-                .require_authentication(false)
-                .with_rate_limit(100, Duration::from_secs(60))
-                .build(),
-        );
+        StreamableHttpConfigBuilder::new().build()
+    }
+}
 
-        let session_manager =
-            Arc::new(SessionSecurityManager::new(SessionSecurityConfig::default()));
+/// Builder for StreamableHttpConfig with ergonomic configuration
+///
+/// # Examples
+///
+/// ```rust
+/// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+/// use std::time::Duration;
+///
+/// // Custom rate limits for benchmarking
+/// let config = StreamableHttpConfigBuilder::new()
+///     .with_bind_address("127.0.0.1:3000")
+///     .with_rate_limit(100_000, Duration::from_secs(60))
+///     .build();
+///
+/// // Production configuration
+/// let config = StreamableHttpConfigBuilder::new()
+///     .with_bind_address("0.0.0.0:8080")
+///     .with_endpoint_path("/api/mcp")
+///     .with_rate_limit(1000, Duration::from_secs(60))
+///     .allow_any_origin(true)
+///     .require_authentication(true)
+///     .build();
+///
+/// // Development (no rate limit)
+/// let config = StreamableHttpConfigBuilder::new()
+///     .without_rate_limit()
+///     .build();
+/// ```
+#[derive(Debug, Clone)]
+pub struct StreamableHttpConfigBuilder {
+    bind_addr: String,
+    endpoint_path: String,
+    keep_alive: Duration,
+    replay_buffer_size: usize,
 
+    // Security configuration
+    allow_localhost: bool,
+    allow_any_origin: bool,
+    require_authentication: bool,
+    rate_limit: Option<(u32, Duration)>,
+}
+
+impl Default for StreamableHttpConfigBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StreamableHttpConfigBuilder {
+    /// Create a new builder with sensible defaults
+    pub fn new() -> Self {
         Self {
             bind_addr: "127.0.0.1:8080".to_string(),
             endpoint_path: "/mcp".to_string(),
             keep_alive: Duration::from_secs(30),
             replay_buffer_size: MAX_REPLAY_BUFFER,
+            allow_localhost: true,
+            allow_any_origin: false,
+            require_authentication: false,
+            rate_limit: Some((100, Duration::from_secs(60))), // Default: 100 req/min
+        }
+    }
+
+    /// Set the bind address (default: "127.0.0.1:8080")
+    pub fn with_bind_address(mut self, addr: impl Into<String>) -> Self {
+        self.bind_addr = addr.into();
+        self
+    }
+
+    /// Set the endpoint path (default: "/mcp")
+    pub fn with_endpoint_path(mut self, path: impl Into<String>) -> Self {
+        self.endpoint_path = path.into();
+        self
+    }
+
+    /// Set the SSE keep-alive interval (default: 30 seconds)
+    pub fn with_keep_alive(mut self, duration: Duration) -> Self {
+        self.keep_alive = duration;
+        self
+    }
+
+    /// Set the replay buffer size (default: 1000 events)
+    pub fn with_replay_buffer_size(mut self, size: usize) -> Self {
+        self.replay_buffer_size = size;
+        self
+    }
+
+    /// Configure rate limiting (requests per time window)
+    ///
+    /// # Examples
+    /// ```rust
+    /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// use std::time::Duration;
+    ///
+    /// // 1000 requests per minute
+    /// let config = StreamableHttpConfigBuilder::new()
+    ///     .with_rate_limit(1000, Duration::from_secs(60))
+    ///     .build();
+    ///
+    /// // 100,000 requests per minute (benchmarking)
+    /// let config = StreamableHttpConfigBuilder::new()
+    ///     .with_rate_limit(100_000, Duration::from_secs(60))
+    ///     .build();
+    /// ```
+    pub fn with_rate_limit(mut self, requests: u32, window: Duration) -> Self {
+        self.rate_limit = Some((requests, window));
+        self
+    }
+
+    /// Disable rate limiting entirely (useful for development/testing)
+    ///
+    /// # Security Warning
+    /// Only use this in trusted environments. Production deployments should
+    /// always have rate limiting enabled.
+    pub fn without_rate_limit(mut self) -> Self {
+        self.rate_limit = None;
+        self
+    }
+
+    /// Allow localhost connections (default: true)
+    pub fn allow_localhost(mut self, allow: bool) -> Self {
+        self.allow_localhost = allow;
+        self
+    }
+
+    /// Allow any origin for CORS (default: false)
+    ///
+    /// # Security Warning
+    /// Only enable in development. Production should specify exact origins.
+    pub fn allow_any_origin(mut self, allow: bool) -> Self {
+        self.allow_any_origin = allow;
+        self
+    }
+
+    /// Require authentication (default: false)
+    pub fn require_authentication(mut self, require: bool) -> Self {
+        self.require_authentication = require;
+        self
+    }
+
+    /// Build the configuration
+    pub fn build(self) -> StreamableHttpConfig {
+        let mut security_builder = SecurityConfigBuilder::new()
+            .allow_localhost(self.allow_localhost)
+            .allow_any_origin(self.allow_any_origin)
+            .require_authentication(self.require_authentication);
+
+        // Add rate limit if configured
+        if let Some((requests, window)) = self.rate_limit {
+            security_builder = security_builder.with_rate_limit(requests as usize, window);
+        }
+
+        let security_validator = Arc::new(security_builder.build());
+        let session_manager =
+            Arc::new(SessionSecurityManager::new(SessionSecurityConfig::default()));
+
+        StreamableHttpConfig {
+            bind_addr: self.bind_addr,
+            endpoint_path: self.endpoint_path,
+            keep_alive: self.keep_alive,
+            replay_buffer_size: self.replay_buffer_size,
             security_validator,
             session_manager,
         }

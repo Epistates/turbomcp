@@ -212,6 +212,19 @@ pub struct TransportMessageMetadata {
 /// This is the external-facing metrics structure that provides a consistent
 /// snapshot of transport metrics. For internal use, prefer `AtomicMetrics`
 /// for lock-free performance.
+///
+/// # Custom Transport Metrics
+///
+/// Transport implementations can store custom metrics in the `metadata` field:
+///
+/// ```no_run
+/// use turbomcp_transport::core::TransportMetrics;
+/// use serde_json::json;
+///
+/// let mut metrics = TransportMetrics::default();
+/// metrics.metadata.insert("active_correlations".to_string(), json!(42));
+/// metrics.metadata.insert("session_id".to_string(), json!("abc123"));
+/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TransportMetrics {
     /// Total bytes sent
@@ -240,6 +253,16 @@ pub struct TransportMetrics {
 
     /// Compression ratio (if enabled)
     pub compression_ratio: Option<f64>,
+
+    /// Custom transport-specific metrics
+    ///
+    /// This field allows transport implementations to store custom metrics
+    /// without breaking the core metrics API. Examples:
+    /// - WebSocket: active_correlations, pending_elicitations, session_id
+    /// - HTTP/SSE: connection_pool_size, keep_alive_timeout
+    /// - TCP: socket_buffer_size, congestion_window
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub metadata: HashMap<String, serde_json::Value>,
 }
 
 /// Lock-free atomic metrics for high-performance counter updates
@@ -263,6 +286,7 @@ pub struct TransportMetrics {
 /// let metrics = Arc::new(AtomicMetrics::default());
 /// metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
 /// metrics.bytes_sent.fetch_add(1024, Ordering::Relaxed);
+/// metrics.update_latency_us(1500); // Track latency
 /// ```
 #[derive(Debug)]
 pub struct AtomicMetrics {
@@ -286,6 +310,15 @@ pub struct AtomicMetrics {
 
     /// Current active connections (atomic counter)
     pub active_connections: std::sync::atomic::AtomicU64,
+
+    /// Average latency in microseconds (exponential moving average)
+    avg_latency_us: std::sync::atomic::AtomicU64,
+
+    /// Total bytes before compression
+    uncompressed_bytes: std::sync::atomic::AtomicU64,
+
+    /// Total bytes after compression
+    compressed_bytes: std::sync::atomic::AtomicU64,
 }
 
 impl Default for AtomicMetrics {
@@ -299,6 +332,9 @@ impl Default for AtomicMetrics {
             connections: AtomicU64::new(0),
             failed_connections: AtomicU64::new(0),
             active_connections: AtomicU64::new(0),
+            avg_latency_us: AtomicU64::new(0),
+            uncompressed_bytes: AtomicU64::new(0),
+            compressed_bytes: AtomicU64::new(0),
         }
     }
 }
@@ -309,12 +345,84 @@ impl AtomicMetrics {
         Self::default()
     }
 
+    /// Update average latency using exponential moving average
+    ///
+    /// Uses EMA (Exponential Moving Average) with alpha = 0.1 for smooth latency tracking.
+    /// This is the same algorithm used in the resilience module's LatencyTracker.
+    ///
+    /// # Arguments
+    /// * `latency_us` - Latency measurement in microseconds
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use turbomcp_transport::core::AtomicMetrics;
+    /// # use std::time::Instant;
+    /// let metrics = AtomicMetrics::new();
+    /// let start = Instant::now();
+    /// // ... perform operation ...
+    /// metrics.update_latency_us(start.elapsed().as_micros() as u64);
+    /// ```
+    pub fn update_latency_us(&self, latency_us: u64) {
+        use std::sync::atomic::Ordering;
+
+        let current = self.avg_latency_us.load(Ordering::Relaxed);
+        let new_avg = if current == 0 {
+            latency_us
+        } else {
+            // EMA with alpha = 0.1: new_avg = old_avg * 0.9 + new_value * 0.1
+            (current * 9 + latency_us) / 10
+        };
+        self.avg_latency_us.store(new_avg, Ordering::Relaxed);
+    }
+
+    /// Record compression statistics
+    ///
+    /// Call this method when compressing data to track compression ratio.
+    ///
+    /// # Arguments
+    /// * `uncompressed_size` - Size before compression in bytes
+    /// * `compressed_size` - Size after compression in bytes
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use turbomcp_transport::core::AtomicMetrics;
+    /// let metrics = AtomicMetrics::new();
+    /// let original_data = vec![0u8; 1000];
+    /// let compressed_data = vec![0u8; 250]; // 4:1 compression
+    /// metrics.record_compression(original_data.len() as u64, compressed_data.len() as u64);
+    /// ```
+    pub fn record_compression(&self, uncompressed_size: u64, compressed_size: u64) {
+        use std::sync::atomic::Ordering;
+
+        self.uncompressed_bytes
+            .fetch_add(uncompressed_size, Ordering::Relaxed);
+        self.compressed_bytes
+            .fetch_add(compressed_size, Ordering::Relaxed);
+    }
+
     /// Create a snapshot of current metrics for serialization
     ///
     /// Uses `Ordering::Relaxed` for maximum performance since we're reading
     /// counters that don't require strict ordering guarantees.
+    ///
+    /// **Latency**: Returns average latency in milliseconds, computed from microsecond EMA.
+    /// Call `update_latency_us()` after each operation to maintain accurate averages.
+    ///
+    /// **Compression ratio**: Returns `Some(ratio)` if compression data has been recorded,
+    /// where ratio = uncompressed / compressed. Returns `None` if no compression tracked.
+    /// Call `record_compression()` when compressing data.
     pub fn snapshot(&self) -> TransportMetrics {
         use std::sync::atomic::Ordering;
+
+        let avg_latency_us = self.avg_latency_us.load(Ordering::Relaxed);
+        let uncompressed = self.uncompressed_bytes.load(Ordering::Relaxed);
+        let compressed = self.compressed_bytes.load(Ordering::Relaxed);
+
+        let compression_ratio = if compressed > 0 && uncompressed > 0 {
+            Some(uncompressed as f64 / compressed as f64)
+        } else {
+            None
+        };
 
         TransportMetrics {
             bytes_sent: self.bytes_sent.load(Ordering::Relaxed),
@@ -324,8 +432,9 @@ impl AtomicMetrics {
             connections: self.connections.load(Ordering::Relaxed),
             failed_connections: self.failed_connections.load(Ordering::Relaxed),
             active_connections: self.active_connections.load(Ordering::Relaxed),
-            average_latency_ms: 0.0, // TODO: Compute from latency sum/count
-            compression_ratio: None, // TODO: Compute from compressed/uncompressed bytes
+            average_latency_ms: (avg_latency_us as f64) / 1000.0, // Convert μs to ms
+            compression_ratio,
+            metadata: HashMap::new(), // Empty metadata for base atomic metrics
         }
     }
 
@@ -340,6 +449,9 @@ impl AtomicMetrics {
         self.connections.store(0, Ordering::Relaxed);
         self.failed_connections.store(0, Ordering::Relaxed);
         self.active_connections.store(0, Ordering::Relaxed);
+        self.avg_latency_us.store(0, Ordering::Relaxed);
+        self.uncompressed_bytes.store(0, Ordering::Relaxed);
+        self.compressed_bytes.store(0, Ordering::Relaxed);
     }
 }
 
