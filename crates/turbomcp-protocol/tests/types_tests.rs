@@ -1121,7 +1121,7 @@ fn test_create_message_result_complete() {
             meta: None,
         }),
         model: "claude-3-5-sonnet-20241022".to_string(),
-        stop_reason: Some("stop_sequence".to_string()),
+        stop_reason: Some(StopReason::StopSequence),
         _meta: None,
     };
 
@@ -1130,7 +1130,7 @@ fn test_create_message_result_complete() {
 
     assert_eq!(deserialized.role, Role::Assistant);
     assert_eq!(deserialized.model, "claude-3-5-sonnet-20241022".to_string());
-    assert_eq!(deserialized.stop_reason, Some("stop_sequence".to_string()));
+    assert_eq!(deserialized.stop_reason, Some(StopReason::StopSequence));
 
     if let Content::Text(text_content) = &deserialized.content {
         assert_eq!(text_content.text, "This is a test response from the model.");

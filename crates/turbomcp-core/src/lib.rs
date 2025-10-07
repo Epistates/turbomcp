@@ -1,4 +1,4 @@
-//! # TurboMCP Core
+//! # `TurboMCP` Core
 //!
 //! Foundation crate for the Model Context Protocol (MCP) SDK providing core types,
 //! error handling, and optimized abstractions for building MCP applications.
@@ -155,7 +155,7 @@ pub use context::{
     CommunicationDirection, CommunicationInitiator, CompletionCapabilities, CompletionContext,
     CompletionOption, CompletionReference, ConnectionMetrics, ElicitationContext, ElicitationState,
     PingContext, PingOrigin, RequestContext, RequestContextExt, RequestInfo,
-    ResourceTemplateContext, ResponseContext, ServerCapabilities, ServerInitiatedContext,
+    ResourceTemplateContext, ResponseContext, ServerToClientRequests, ServerInitiatedContext,
     ServerInitiatedType, TemplateParameter,
 };
 pub use enhanced_registry::{EnhancedRegistry, HandlerStats};

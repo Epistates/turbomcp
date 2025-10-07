@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use super::capabilities::ServerCapabilities;
+use super::capabilities::ServerToClientRequests;
 use crate::types::Timestamp;
 
 /// Context information for request processing
@@ -47,10 +47,10 @@ pub struct RequestContext {
     /// Cancellation token
     pub cancellation_token: Option<Arc<CancellationToken>>,
 
-    /// Server capabilities for server-initiated requests
-    /// This is used by turbomcp-server to provide access to sampling
+    /// Server-to-client requests interface for server-initiated requests
+    /// This is used by turbomcp-server to provide access to sampling, elicitation, and roots
     #[doc(hidden)]
-    pub(crate) server_capabilities: Option<Arc<dyn ServerCapabilities>>,
+    pub(crate) server_to_client: Option<Arc<dyn ServerToClientRequests>>,
 }
 
 impl fmt::Debug for RequestContext {
@@ -62,7 +62,7 @@ impl fmt::Debug for RequestContext {
             .field("client_id", &self.client_id)
             .field("timestamp", &self.timestamp)
             .field("metadata", &self.metadata)
-            .field("server_capabilities", &self.server_capabilities.is_some())
+            .field("server_to_client", &self.server_to_client.is_some())
             .finish()
     }
 }
@@ -142,7 +142,7 @@ impl RequestContext {
             #[cfg(feature = "tracing")]
             span: None,
             cancellation_token: None,
-            server_capabilities: None,
+            server_to_client: None,
         }
     }
 
@@ -209,8 +209,12 @@ impl RequestContext {
     /// Set server capabilities for server-initiated requests
     /// This is used by turbomcp-server to inject its capabilities
     #[must_use]
-    pub fn with_server_capabilities(mut self, capabilities: Arc<dyn ServerCapabilities>) -> Self {
-        self.server_capabilities = Some(capabilities);
+    /// Set the server-to-client requests interface for this context
+    ///
+    /// This enables tools to make server-initiated requests (sampling, elicitation, roots)
+    /// with full context propagation for tracing and attribution.
+    pub fn with_server_to_client(mut self, capabilities: Arc<dyn ServerToClientRequests>) -> Self {
+        self.server_to_client = Some(capabilities);
         self
     }
 
@@ -266,8 +270,11 @@ impl RequestContext {
 
     /// Get the server capabilities if present
     #[doc(hidden)]
-    pub fn server_capabilities(&self) -> Option<&Arc<dyn ServerCapabilities>> {
-        self.server_capabilities.as_ref()
+    /// Get the server-to-client requests interface
+    ///
+    /// Returns `None` if not configured (e.g., for unidirectional transports)
+    pub fn server_to_client(&self) -> Option<&Arc<dyn ServerToClientRequests>> {
+        self.server_to_client.as_ref()
     }
 }
 
@@ -360,7 +367,7 @@ impl RequestInfo {
     }
 }
 
-/// Extension trait for RequestContext with enhanced client ID handling
+/// Extension trait for `RequestContext` with enhanced client ID handling
 pub trait RequestContextExt {
     /// Set client ID using `ClientId` enum
     #[must_use]

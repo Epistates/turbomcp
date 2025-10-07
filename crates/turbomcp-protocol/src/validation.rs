@@ -371,6 +371,239 @@ impl ProtocolValidator {
         ctx.into_result()
     }
 
+    /// Validate model preferences (priority ranges must be 0.0-1.0)
+    ///
+    /// Per MCP 2025-06-18 schema (lines 1346-1370), priority values must be in range [0.0, 1.0].
+    pub fn validate_model_preferences(
+        &self,
+        prefs: &crate::types::ModelPreferences,
+    ) -> ValidationResult {
+        let mut ctx = ValidationContext::new();
+
+        // Validate each priority field
+        let priorities = [
+            ("costPriority", prefs.cost_priority),
+            ("speedPriority", prefs.speed_priority),
+            ("intelligencePriority", prefs.intelligence_priority),
+        ];
+
+        for (name, value) in priorities {
+            if let Some(v) = value
+                && !(0.0..=1.0).contains(&v)
+            {
+                ctx.add_error(
+                    "PRIORITY_OUT_OF_RANGE",
+                    format!(
+                        "{} must be between 0.0 and 1.0 (inclusive), got {}",
+                        name, v
+                    ),
+                    Some(name.to_string()),
+                );
+            }
+        }
+
+        ctx.into_result()
+    }
+
+    /// Validate elicitation result (content required for 'accept' action)
+    ///
+    /// Per MCP 2025-06-18 schema (line 634), content is "only present when action is 'accept'".
+    pub fn validate_elicit_result(
+        &self,
+        result: &crate::types::ElicitResult,
+    ) -> ValidationResult {
+        let mut ctx = ValidationContext::new();
+
+        use crate::types::ElicitationAction;
+
+        match result.action {
+            ElicitationAction::Accept => {
+                if result.content.is_none() {
+                    ctx.add_error(
+                        "MISSING_CONTENT_ON_ACCEPT",
+                        "ElicitResult must have content when action is 'accept'".to_string(),
+                        Some("content".to_string()),
+                    );
+                }
+            }
+            ElicitationAction::Decline | ElicitationAction::Cancel => {
+                if result.content.is_some() {
+                    ctx.add_warning(
+                        "UNEXPECTED_CONTENT",
+                        format!(
+                            "Content should not be present when action is '{:?}'",
+                            result.action
+                        ),
+                        Some("content".to_string()),
+                    );
+                }
+            }
+        }
+
+        ctx.into_result()
+    }
+
+    /// Validate elicitation schema structure
+    ///
+    /// Per MCP 2025-06-18 spec, schemas must be flat objects with primitive properties only.
+    pub fn validate_elicitation_schema(
+        &self,
+        schema: &crate::types::ElicitationSchema,
+    ) -> ValidationResult {
+        let mut ctx = ValidationContext::new();
+
+        // Schema type must be "object" (schema.json:585)
+        if schema.schema_type != "object" {
+            ctx.add_error(
+                "SCHEMA_NOT_OBJECT",
+                format!(
+                    "Elicitation schema type must be 'object', got '{}'",
+                    schema.schema_type
+                ),
+                Some("type".to_string()),
+            );
+        }
+
+        // Validate additionalProperties = false (flat constraint)
+        if let Some(additional) = schema.additional_properties
+            && additional
+        {
+            ctx.add_warning(
+                "ADDITIONAL_PROPERTIES_NOT_RECOMMENDED",
+                "Elicitation schemas should have additionalProperties=false for flat structure"
+                    .to_string(),
+                Some("additionalProperties".to_string()),
+            );
+        }
+
+        // Validate properties if present
+        if let Some(ref properties) = schema.properties {
+            for (key, prop) in properties {
+                self.validate_primitive_schema(prop, &format!("properties.{}", key), &mut ctx);
+            }
+        }
+
+        ctx.into_result()
+    }
+
+    /// Validate primitive schema definition
+    fn validate_primitive_schema(
+        &self,
+        schema: &crate::types::PrimitiveSchemaDefinition,
+        field_path: &str,
+        ctx: &mut ValidationContext,
+    ) {
+        use crate::types::PrimitiveSchemaDefinition;
+
+        match schema {
+            PrimitiveSchemaDefinition::String {
+                enum_values,
+                enum_names,
+                format,
+                ..
+            } => {
+                // Validate enum/enumNames length match (schema.json:679-708)
+                if let (Some(values), Some(names)) = (enum_values, enum_names)
+                    && values.len() != names.len()
+                {
+                    ctx.add_error(
+                        "ENUM_NAMES_LENGTH_MISMATCH",
+                        format!(
+                            "enum and enumNames arrays must have equal length: {} vs {}",
+                            values.len(),
+                            names.len()
+                        ),
+                        Some(format!("{}.enumNames", field_path)),
+                    );
+                }
+
+                // Validate format if present (schema.json:2244-2251)
+                if let Some(fmt) = format {
+                    let valid_formats = ["email", "uri", "date", "date-time"];
+                    if !valid_formats.contains(&fmt.as_str()) {
+                        ctx.add_warning(
+                            "UNKNOWN_STRING_FORMAT",
+                            format!(
+                                "Unknown format '{}', expected one of: {:?}",
+                                fmt, valid_formats
+                            ),
+                            Some(format!("{}.format", field_path)),
+                        );
+                    }
+                }
+            }
+            PrimitiveSchemaDefinition::Number { .. }
+            | PrimitiveSchemaDefinition::Integer { .. } => {
+                // Number/Integer validation could go here
+            }
+            PrimitiveSchemaDefinition::Boolean { .. } => {
+                // Boolean validation could go here
+            }
+        }
+    }
+
+    /// Validate string value against format constraints
+    ///
+    /// Validates email, uri, date, and date-time formats per MCP 2025-06-18 spec.
+    pub fn validate_string_format(value: &str, format: &str) -> std::result::Result<(), String> {
+        match format {
+            "email" => {
+                // RFC 5322 basic validation
+                if !value.contains('@') || !value.contains('.') {
+                    return Err(format!("Invalid email format: {}", value));
+                }
+                let parts: Vec<&str> = value.split('@').collect();
+                if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+                    return Err(format!("Invalid email format: {}", value));
+                }
+            }
+            "uri" => {
+                // Basic URI validation - must have a scheme
+                if !value.contains("://") && !value.starts_with('/') {
+                    return Err(format!("Invalid URI format: {}", value));
+                }
+            }
+            "date" => {
+                // ISO 8601 date format: YYYY-MM-DD
+                let parts: Vec<&str> = value.split('-').collect();
+                if parts.len() != 3 {
+                    return Err("Date must be in ISO 8601 format (YYYY-MM-DD)".to_string());
+                }
+                if parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2 {
+                    return Err("Date must be in ISO 8601 format (YYYY-MM-DD)".to_string());
+                }
+                // Basic numeric check
+                for part in parts {
+                    if !part.chars().all(|c| c.is_ascii_digit()) {
+                        return Err("Date components must be numeric".to_string());
+                    }
+                }
+            }
+            "date-time" => {
+                // ISO 8601 datetime format: YYYY-MM-DDTHH:MM:SS[.sss][Z|±HH:MM]
+                if !value.contains('T') {
+                    return Err(
+                        "DateTime must contain 'T' separator (ISO 8601 format)".to_string()
+                    );
+                }
+                let parts: Vec<&str> = value.split('T').collect();
+                if parts.len() != 2 {
+                    return Err("DateTime must be in ISO 8601 format".to_string());
+                }
+                // Validate date part
+                Self::validate_string_format(parts[0], "date")?;
+                // Time part should have colons
+                if !parts[1].contains(':') {
+                    return Err("Time component must contain ':'".to_string());
+                }
+            }
+            _ => {
+                // Unknown formats don't fail validation (forward compatibility)
+            }
+        }
+        Ok(())
+    }
+
     // Private validation methods
 
     fn validate_jsonrpc_request(&self, request: &JsonRpcRequest, ctx: &mut ValidationContext) {

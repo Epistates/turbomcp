@@ -853,6 +853,94 @@ pub fn generate_router(
                     Ok(())
                 }
 
+                /// Run HTTP server with custom configuration
+                ///
+                /// This method allows complete control over security, rate limiting, and transport settings:
+                ///
+                /// # Examples
+                ///
+                /// ```no_run
+                /// use turbomcp::prelude::*;
+                /// use std::time::Duration;
+                ///
+                /// #[derive(Clone)]
+                /// struct MyServer;
+                ///
+                /// #[server(name = "my-server", version = "1.0.0")]
+                /// impl MyServer {
+                ///     #[tool("Test tool")]
+                ///     async fn test(&self) -> McpResult<String> {
+                ///         Ok("test".into())
+                ///     }
+                /// }
+                ///
+                /// #[tokio::main]
+                /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+                ///     // Custom configuration for benchmarking (no rate limit)
+                ///     let config = StreamableHttpConfigBuilder::new()
+                ///         .without_rate_limit()
+                ///         .with_endpoint_path("/api/mcp")
+                ///         .build();
+                ///
+                ///     let server = MyServer;
+                ///     server.run_http_with_config("127.0.0.1:3000", config).await?;
+                ///     Ok(())
+                /// }
+                /// ```
+                ///
+                /// # Common Configurations
+                ///
+                /// **Development (no limits):**
+                /// ```no_run
+                /// # use turbomcp::prelude::*;
+                /// let config = StreamableHttpConfigBuilder::new()
+                ///     .without_rate_limit()
+                ///     .allow_any_origin(true)
+                ///     .build();
+                /// ```
+                ///
+                /// **Production (secure):**
+                /// ```no_run
+                /// # use turbomcp::prelude::*;
+                /// # use std::time::Duration;
+                /// let config = StreamableHttpConfigBuilder::new()
+                ///     .with_rate_limit(1000, Duration::from_secs(60))
+                ///     .require_authentication(true)
+                ///     .build();
+                /// ```
+                ///
+                /// **Benchmarking (high throughput):**
+                /// ```no_run
+                /// # use turbomcp::prelude::*;
+                /// # use std::time::Duration;
+                /// let config = StreamableHttpConfigBuilder::new()
+                ///     .with_rate_limit(100_000, Duration::from_secs(60))
+                ///     .build();
+                /// ```
+                #[cfg(feature = "http")]
+                pub async fn run_http_with_config<A: ::std::net::ToSocketAddrs>(
+                    self,
+                    addr: A,
+                    config: ::turbomcp::turbomcp_transport::streamable_http_v2::StreamableHttpConfig
+                ) -> Result<(), Box<dyn ::std::error::Error>> {
+                    use ::std::sync::Arc;
+                    use ::turbomcp::turbomcp_transport::streamable_http_v2::run_server;
+
+                    // Resolve address to string
+                    let socket_addr = addr
+                        .to_socket_addrs()?
+                        .next()
+                        .ok_or("No address resolved")?;
+
+                    // Use provided config but override bind_addr with resolved address
+                    let mut final_config = config;
+                    final_config.bind_addr = socket_addr.to_string();
+
+                    // Run server with full MCP compliance (GET/POST/DELETE)
+                    run_server(final_config, Arc::new(self)).await?;
+                    Ok(())
+                }
+
                 /// Handle a single JSON-RPC request with compile-time dispatch
                 async fn handle_request(
                     self: ::std::sync::Arc<Self>,

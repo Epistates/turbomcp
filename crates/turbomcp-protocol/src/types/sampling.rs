@@ -114,16 +114,20 @@ pub struct CreateMessageResult {
     /// Model used for generation (required by MCP specification)
     pub model: String,
     /// Stop reason (if applicable)
+    ///
+    /// Uses the StopReason enum with camelCase serialization for MCP 2025-06-18 compliance.
     #[serde(rename = "stopReason", skip_serializing_if = "Option::is_none")]
-    pub stop_reason: Option<String>,
+    pub stop_reason: Option<StopReason>,
     /// Optional metadata per MCP 2025-06-18 specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
 
 /// Stop reason for generation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
+///
+/// Per MCP 2025-06-18 spec, these values use camelCase serialization for interoperability.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "camelCase")]
 pub enum StopReason {
     /// Generation completed naturally
     EndTurn,

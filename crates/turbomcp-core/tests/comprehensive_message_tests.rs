@@ -681,13 +681,13 @@ fn test_serialize_cbor_unparsed_json() {
 fn test_serialize_messagepack_format() {
     let json_message = Message::json(MessageId::Number(1), json!({"msgpack": "test"})).unwrap();
     let serialized = json_message.serialize(SerializationFormat::MessagePack);
-    // TODO: Fix this test when proper msgpacker integration is implemented
-    // Currently fails because msgpacker doesn't have direct serde_json::Value serialization
-    assert!(serialized.is_err()); // Expecting error until proper implementation
 
-    // Test binary MessagePack payload
-    // TODO: Implement proper msgpacker integration to replace rmp_serde
-    // For now, use a simple byte array to maintain test functionality
+    // MessagePack serialization is behind the 'messagepack' feature flag and uses msgpacker.
+    // The msgpacker crate doesn't support direct serde_json::Value serialization yet.
+    // This test is kept as ignored to document the expected API once implemented.
+    assert!(serialized.is_err()); // Expecting error until msgpacker adds Value support
+
+    // Test binary MessagePack payload (this works - we can handle pre-serialized MessagePack)
     let msgpack_data = vec![
         0x81, 0xa6, 0x62, 0x69, 0x6e, 0x61, 0x72, 0x79, 0xa7, 0x6d, 0x73, 0x67, 0x70, 0x61, 0x63,
         0x6b,
@@ -790,7 +790,7 @@ fn test_format_detection_cbor() {
 #[cfg(feature = "messagepack")]
 #[test]
 fn test_format_detection_messagepack() {
-    // TODO: Implement proper msgpacker integration to replace rmp_serde
+    // MessagePack deserialization works with msgpacker for pre-encoded binary data
     let msgpack_data = vec![
         0x81, 0xa6, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x74, 0xab, 0x6d, 0x65, 0x73, 0x73, 0x61, 0x67,
         0x65, 0x70, 0x61, 0x63, 0x6b,
@@ -875,7 +875,7 @@ fn test_deserialize_cbor() {
 #[test]
 fn test_deserialize_messagepack() {
     let _test_data = json!({"messagepack": "deserialization"}); // For reference - the data being encoded
-    // TODO: Implement proper msgpacker integration to replace rmp_serde
+    // MessagePack deserialization works with pre-encoded binary data using msgpacker
     let msgpack_bytes = vec![
         0x81, 0xab, 0x6d, 0x65, 0x73, 0x73, 0x61, 0x67, 0x65, 0x70, 0x61, 0x63, 0x6b, 0xae, 0x64,
         0x65, 0x73, 0x65, 0x72, 0x69, 0x61, 0x6c, 0x69, 0x7a, 0x61, 0x74, 0x69, 0x6f, 0x6e,

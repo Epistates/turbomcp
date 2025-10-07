@@ -197,6 +197,24 @@ impl Error {
         Self::new(ErrorKind::Validation, message)
     }
 
+    /// Create an invalid parameters error (MCP -32602)
+    ///
+    /// This is the standard MCP error code for parameter validation failures,
+    /// including missing required parameters, invalid types, out-of-range values,
+    /// or any other parameter-related validation errors.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_core::Error;
+    ///
+    /// let error = Error::invalid_params("Email must be valid");
+    /// assert_eq!(error.jsonrpc_error_code(), -32602);
+    /// ```
+    pub fn invalid_params(message: impl Into<String>) -> Box<Self> {
+        Self::new(ErrorKind::Validation, message)
+    }
+
     /// Create an authentication error
     pub fn authentication(message: impl Into<String>) -> Box<Self> {
         Self::new(ErrorKind::Authentication, message)
@@ -382,9 +400,9 @@ impl Error {
     /// Convert to a JSON-RPC error code
     pub const fn jsonrpc_error_code(&self) -> i32 {
         match self.kind {
-            ErrorKind::BadRequest | ErrorKind::Validation => -32600, // Invalid Request
+            ErrorKind::BadRequest => -32600,                         // Invalid Request
+            ErrorKind::Validation | ErrorKind::Serialization => -32602, // Invalid params
             ErrorKind::Protocol => -32601,                           // Method not found
-            ErrorKind::Serialization => -32602,                      // Invalid params
             ErrorKind::Internal => -32603,                           // Internal error
             ErrorKind::NotFound => -32001,                           // Custom: Not found
             ErrorKind::Authentication => -32002, // Custom: Authentication failed

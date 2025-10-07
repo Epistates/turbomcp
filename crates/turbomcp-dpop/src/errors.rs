@@ -10,6 +10,7 @@ use thiserror::Error;
 
 /// DPoP-specific errors with detailed context for debugging and security analysis
 #[derive(Error, Debug, Clone)]
+#[non_exhaustive]
 pub enum DpopError {
     /// Invalid DPoP proof structure or format
     #[error("Invalid DPoP proof structure: {reason}")]

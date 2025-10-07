@@ -477,11 +477,15 @@ fn test_http_status_codes() {
 
 #[test]
 fn test_jsonrpc_error_codes() {
+    // Standard JSON-RPC error codes
     assert_eq!(Error::bad_request("test").jsonrpc_error_code(), -32600);
-    assert_eq!(Error::validation("test").jsonrpc_error_code(), -32600);
     assert_eq!(Error::protocol("test").jsonrpc_error_code(), -32601);
-    assert_eq!(Error::serialization("test").jsonrpc_error_code(), -32602);
     assert_eq!(Error::internal("test").jsonrpc_error_code(), -32603);
+
+    // -32602 (Invalid params) - MCP spec requires this for validation errors
+    assert_eq!(Error::validation("test").jsonrpc_error_code(), -32602);
+    assert_eq!(Error::invalid_params("test").jsonrpc_error_code(), -32602);
+    assert_eq!(Error::serialization("test").jsonrpc_error_code(), -32602);
 
     // Custom codes
     assert_eq!(Error::not_found("test").jsonrpc_error_code(), -32001);

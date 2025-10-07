@@ -18,7 +18,7 @@ pub struct ElicitationContext {
     pub elicitation_id: String,
     /// Message presented to user
     pub message: String,
-    /// Schema for user input validation (using protocol ElicitationSchema when available)
+    /// Schema for user input validation (using protocol `ElicitationSchema` when available)
     pub schema: serde_json::Value,
     /// Input constraints and hints
     pub constraints: Option<serde_json::Value>,

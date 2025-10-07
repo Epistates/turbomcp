@@ -836,14 +836,12 @@ impl HsmOperations for Pkcs11HsmManager {
         let mut key_ids = Vec::new();
 
         for handle in objects {
-            if let Ok(attrs) = session.get_attributes(handle, &[AttributeType::Label]) {
-                if let Some(Attribute::Label(label_bytes)) = attrs.first() {
-                    if let Ok(label) = String::from_utf8(label_bytes.clone()) {
-                        if label.starts_with("dpop_") {
-                            key_ids.push(label);
-                        }
-                    }
-                }
+            if let Ok(attrs) = session.get_attributes(handle, &[AttributeType::Label])
+                && let Some(Attribute::Label(label_bytes)) = attrs.first()
+                && let Ok(label) = String::from_utf8(label_bytes.clone())
+                && label.starts_with("dpop_")
+            {
+                key_ids.push(label);
             }
         }
 
@@ -874,10 +872,10 @@ impl HsmOperations for Pkcs11HsmManager {
                 Attribute::Label(key_id_owned.as_bytes().to_vec()),
             ];
 
-            if let Ok(objects) = session.find_objects(&public_template) {
-                if let Some(public_handle) = objects.first() {
-                    let _ = session.destroy_object(*public_handle);
-                }
+            if let Ok(objects) = session.find_objects(&public_template)
+                && let Some(public_handle) = objects.first()
+            {
+                let _ = session.destroy_object(*public_handle);
             }
 
             Ok::<(), DpopError>(())

@@ -1,14 +1,14 @@
 //! Optimized message types and serialization.
 //!
-//! This module provides the standard message handling abstraction for TurboMCP.
-//! It supports multiple serialization formats (JSON, MessagePack, CBOR) and
+//! This module provides the standard message handling abstraction for `TurboMCP`.
+//! It supports multiple serialization formats (`JSON`, `MessagePack`, `CBOR`) and
 //! includes SIMD acceleration when available.
 //!
 //! ## Message Types
 //!
 //! This is the **recommended message type** for most use cases. It provides:
 //!
-//! - Multiple serialization formats (JSON, MessagePack, CBOR)
+//! - Multiple serialization formats (`JSON`, `MessagePack`, `CBOR`)
 //! - Automatic format detection
 //! - SIMD-accelerated JSON parsing (when `simd` feature enabled)
 //! - Cached parsed values for efficient reuse
@@ -74,7 +74,7 @@ pub enum JsonValue {
 
 #[cfg(feature = "messagepack")]
 impl JsonValue {
-    /// Converts a serde_json::Value into a JsonValue for msgpacker serialization
+    /// Converts a `serde_json::Value` into a `JsonValue` for msgpacker serialization
     pub fn from_serde_json(value: &serde_json::Value) -> Self {
         match value {
             serde_json::Value::Null => JsonValue::Null,
