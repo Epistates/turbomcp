@@ -1,6 +1,6 @@
 //! Core Client implementation for MCP communication
 //!
-//! This module contains the main Client<T> struct and its implementation,
+//! This module contains the main `Client<T>` struct and its implementation,
 //! providing the core MCP client functionality including:
 //!
 //! - Connection initialization and lifecycle management
@@ -11,12 +11,12 @@
 //!
 //! # Architecture
 //!
-//! Client<T> is implemented as a cheaply-cloneable Arc wrapper with interior
+//! `Client<T>` is implemented as a cheaply-cloneable Arc wrapper with interior
 //! mutability (same pattern as reqwest and AWS SDK):
 //!
 //! - **AtomicBool** for initialized flag (lock-free)
 //! - **Arc<Mutex<...>>** for handlers/plugins (infrequent mutation)
-//! - **Arc<ClientInner<T>>** for cheap cloning
+//! - **`Arc<ClientInner<T>>`** for cheap cloning
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -65,7 +65,7 @@ pub(super) struct ClientInner<T: Transport> {
 ///
 /// # Clone Pattern
 ///
-/// Client<T> is cheaply cloneable via Arc (same pattern as reqwest and AWS SDK).
+/// `Client<T>` is cheaply cloneable via Arc (same pattern as reqwest and AWS SDK).
 /// All clones share the same underlying connection and state:
 ///
 /// ```rust,no_run
@@ -206,7 +206,231 @@ impl<T: Transport> Client<T> {
             }),
         }
     }
+}
 
+// ============================================================================
+// HTTP-Specific Convenience Constructors (Feature-Gated)
+// ============================================================================
+
+#[cfg(feature = "http")]
+impl Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTransport> {
+    /// Connect to an HTTP MCP server (convenience method)
+    ///
+    /// This is a beautiful one-liner alternative to manual configuration.
+    /// Creates an HTTP client, connects, and initializes in one call.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The base URL of the MCP server (e.g., "http://localhost:8080")
+    ///
+    /// # Returns
+    ///
+    /// Returns an initialized `Client` ready to use.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The URL is invalid
+    /// - Connection to the server fails
+    /// - Initialization handshake fails
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::Client;
+    ///
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// // Beautiful one-liner - balanced with server DX
+    /// let client = Client::connect_http("http://localhost:8080").await?;
+    ///
+    /// // Now use it directly
+    /// let tools = client.list_tools().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Compare to verbose approach (10+ lines):
+    /// ```rust,no_run
+    /// use turbomcp_client::Client;
+    /// use turbomcp_transport::streamable_http_client::{
+    ///     StreamableHttpClientConfig, StreamableHttpClientTransport
+    /// };
+    ///
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let config = StreamableHttpClientConfig {
+    ///     base_url: "http://localhost:8080".to_string(),
+    ///     ..Default::default()
+    /// };
+    /// let transport = StreamableHttpClientTransport::new(config);
+    /// let client = Client::new(transport);
+    /// client.initialize().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn connect_http(url: impl Into<String>) -> Result<Self> {
+        use turbomcp_transport::streamable_http_client::{
+            StreamableHttpClientConfig, StreamableHttpClientTransport,
+        };
+
+        let config = StreamableHttpClientConfig {
+            base_url: url.into(),
+            ..Default::default()
+        };
+
+        let transport = StreamableHttpClientTransport::new(config);
+        let client = Self::new(transport);
+
+        // Initialize connection immediately
+        client.initialize().await?;
+
+        Ok(client)
+    }
+
+    /// Connect to an HTTP MCP server with custom configuration
+    ///
+    /// Provides more control than `connect_http()` while still being ergonomic.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The base URL of the MCP server
+    /// * `config_fn` - Function to customize the configuration
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::Client;
+    /// use std::time::Duration;
+    ///
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let client = Client::connect_http_with("http://localhost:8080", |config| {
+    ///     config.timeout = Duration::from_secs(60);
+    ///     config.endpoint_path = "/api/mcp".to_string();
+    /// }).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn connect_http_with<F>(url: impl Into<String>, config_fn: F) -> Result<Self>
+    where
+        F: FnOnce(&mut turbomcp_transport::streamable_http_client::StreamableHttpClientConfig),
+    {
+        use turbomcp_transport::streamable_http_client::{
+            StreamableHttpClientConfig, StreamableHttpClientTransport,
+        };
+
+        let mut config = StreamableHttpClientConfig {
+            base_url: url.into(),
+            ..Default::default()
+        };
+
+        config_fn(&mut config);
+
+        let transport = StreamableHttpClientTransport::new(config);
+        let client = Self::new(transport);
+
+        client.initialize().await?;
+
+        Ok(client)
+    }
+}
+
+// ============================================================================
+// TCP-Specific Convenience Constructors (Feature-Gated)
+// ============================================================================
+
+#[cfg(feature = "tcp")]
+impl Client<turbomcp_transport::tcp::TcpTransport> {
+    /// Connect to a TCP MCP server (convenience method)
+    ///
+    /// Beautiful one-liner for TCP connections - balanced DX.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - Server address (e.g., "127.0.0.1:8765" or localhost:8765")
+    ///
+    /// # Returns
+    ///
+    /// Returns an initialized `Client` ready to use.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(feature = "tcp")]
+    /// use turbomcp_client::Client;
+    ///
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let client = Client::connect_tcp("127.0.0.1:8765").await?;
+    /// let tools = client.list_tools().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn connect_tcp(addr: impl AsRef<str>) -> Result<Self> {
+        use std::net::SocketAddr;
+        use turbomcp_transport::tcp::TcpTransport;
+
+        let server_addr: SocketAddr = addr
+            .as_ref()
+            .parse()
+            .map_err(|e| Error::bad_request(format!("Invalid address: {}", e)))?;
+
+        // Client binds to 0.0.0.0:0 (any available port)
+        let bind_addr: SocketAddr = if server_addr.is_ipv6() {
+            "[::]:0".parse().unwrap()
+        } else {
+            "0.0.0.0:0".parse().unwrap()
+        };
+
+        let transport = TcpTransport::new_client(bind_addr, server_addr);
+        let client = Self::new(transport);
+
+        client.initialize().await?;
+
+        Ok(client)
+    }
+}
+
+// ============================================================================
+// Unix Socket-Specific Convenience Constructors (Feature-Gated)
+// ============================================================================
+
+#[cfg(all(unix, feature = "unix"))]
+impl Client<turbomcp_transport::unix::UnixTransport> {
+    /// Connect to a Unix socket MCP server (convenience method)
+    ///
+    /// Beautiful one-liner for Unix socket IPC - balanced DX.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Socket file path (e.g., "/tmp/mcp.sock")
+    ///
+    /// # Returns
+    ///
+    /// Returns an initialized `Client` ready to use.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # #[cfg(all(unix, feature = "unix"))]
+    /// use turbomcp_client::Client;
+    ///
+    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// let client = Client::connect_unix("/tmp/mcp.sock").await?;
+    /// let tools = client.list_tools().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn connect_unix(path: impl Into<std::path::PathBuf>) -> Result<Self> {
+        use turbomcp_transport::unix::UnixTransport;
+
+        let transport = UnixTransport::new_client(path.into());
+        let client = Self::new(transport);
+
+        client.initialize().await?;
+
+        Ok(client)
+    }
+}
+
+impl<T: Transport> Client<T> {
     /// Process incoming messages from the server
     ///
     /// This method should be called in a loop to handle server-initiated requests
@@ -826,7 +1050,9 @@ impl<T: Transport> Client<T> {
         &self,
     ) -> Option<turbomcp_protocol::types::ElicitationCapabilities> {
         if self.has_elicitation_handler() {
-            // TODO: Could detect schema_validation support from handler traits in the future
+            // Currently returns default capabilities. In the future, schema_validation support
+            // could be detected from handler traits by adding a HasSchemaValidation marker trait
+            // that handlers could implement. For now, handlers validate schemas themselves.
             Some(turbomcp_protocol::types::ElicitationCapabilities::default())
         } else {
             None

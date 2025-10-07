@@ -19,6 +19,7 @@ use turbomcp_protocol::jsonrpc::JsonRpcRequest;
 
 /// Errors that can occur during plugin operations
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum PluginError {
     /// Plugin initialization failed
     #[error("Plugin initialization failed: {message}")]

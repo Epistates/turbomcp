@@ -88,7 +88,7 @@
 //! ```rust,no_run
 //! use turbomcp_client::Client;
 //! use turbomcp_client::sampling::SamplingHandler;
-//! use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult, Role, Content, TextContent};
+//! use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult, Role, Content, StopReason, TextContent};
 //! use async_trait::async_trait;
 //!
 //! #[derive(Debug)]
@@ -114,8 +114,8 @@
 //!                     meta: None,
 //!                 }
 //!             ),
-//!             model: "gpt-4".to_string(),
-//!             stop_reason: Some("end_turn".to_string()),
+//!              model: "gpt-4".to_string(),
+//!             stop_reason: Some(StopReason::EndTurn),
 //!             _meta: None,
 //!         })
 //!     }
@@ -141,14 +141,12 @@
 
 pub mod client;
 pub mod handlers;
-pub mod llm;
 pub mod plugins;
 pub mod sampling;
 
 // Re-export key types for convenience
 pub use client::{ConnectionInfo, ConnectionState, ManagerConfig, ServerGroup, SessionManager};
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use turbomcp_core::{Error, Result};
@@ -279,10 +277,9 @@ impl Default for ConnectionConfig {
 /// The enhanced builder pattern supports comprehensive configuration including:
 /// - Protocol capabilities
 /// - Plugin registration
-/// - LLM provider configuration
 /// - Handler registration
 /// - Connection settings
-/// - Session management
+/// - Resilience configuration
 ///
 /// # Examples
 ///
@@ -305,7 +302,6 @@ impl Default for ConnectionConfig {
 /// ```rust,no_run
 /// use turbomcp_client::{ClientBuilder, ConnectionConfig};
 /// use turbomcp_client::plugins::{MetricsPlugin, PluginConfig};
-/// use turbomcp_client::llm::{OpenAIProvider, LLMProviderConfig};
 /// use turbomcp_transport::stdio::StdioTransport;
 /// use std::sync::Arc;
 ///
@@ -322,11 +318,6 @@ impl Default for ConnectionConfig {
 ///         keepalive_ms: 30_000,
 ///     })
 ///     .with_plugin(Arc::new(MetricsPlugin::new(PluginConfig::Metrics)))
-///     .with_llm_provider("openai", Arc::new(OpenAIProvider::new(LLMProviderConfig {
-///         api_key: std::env::var("OPENAI_API_KEY")?,
-///         model: "gpt-4".to_string(),
-///         ..Default::default()
-///     })?))
 ///     .build(StdioTransport::new())
 ///     .await?;
 /// # Ok(())
@@ -337,12 +328,10 @@ pub struct ClientBuilder {
     capabilities: ClientCapabilities,
     connection_config: ConnectionConfig,
     plugins: Vec<Arc<dyn crate::plugins::ClientPlugin>>,
-    llm_providers: HashMap<String, Arc<dyn crate::llm::LLMProvider>>,
     elicitation_handler: Option<Arc<dyn crate::handlers::ElicitationHandler>>,
     progress_handler: Option<Arc<dyn crate::handlers::ProgressHandler>>,
     log_handler: Option<Arc<dyn crate::handlers::LogHandler>>,
     resource_update_handler: Option<Arc<dyn crate::handlers::ResourceUpdateHandler>>,
-    session_config: Option<crate::llm::SessionConfig>,
     // Robustness configuration
     enable_resilience: bool,
     retry_config: Option<turbomcp_transport::resilience::RetryConfig>,
@@ -647,74 +636,6 @@ impl ClientBuilder {
     }
 
     // ============================================================================
-    // LLM PROVIDER CONFIGURATION
-    // ============================================================================
-
-    /// Register an LLM provider
-    ///
-    /// LLM providers handle server-initiated sampling requests by forwarding them
-    /// to language model services like OpenAI, Anthropic, or local models.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Unique name for the provider
-    /// * `provider` - The LLM provider implementation
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use turbomcp_client::ClientBuilder;
-    /// use turbomcp_client::llm::{OpenAIProvider, AnthropicProvider, LLMProviderConfig};
-    /// use std::sync::Arc;
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    /// let client = ClientBuilder::new()
-    ///     .with_llm_provider("openai", Arc::new(OpenAIProvider::new(LLMProviderConfig {
-    ///         api_key: std::env::var("OPENAI_API_KEY")?,
-    ///         model: "gpt-4".to_string(),
-    ///         ..Default::default()
-    ///     })?))
-    ///     .with_llm_provider("anthropic", Arc::new(AnthropicProvider::new(LLMProviderConfig {
-    ///         api_key: std::env::var("ANTHROPIC_API_KEY")?,
-    ///         model: "claude-3-5-sonnet-20241022".to_string(),
-    ///         ..Default::default()
-    ///     })?));
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn with_llm_provider(
-        mut self,
-        name: impl Into<String>,
-        provider: Arc<dyn crate::llm::LLMProvider>,
-    ) -> Self {
-        self.llm_providers.insert(name.into(), provider);
-        self
-    }
-
-    /// Register multiple LLM providers at once
-    ///
-    /// # Arguments
-    ///
-    /// * `providers` - Map of provider names to implementations
-    pub fn with_llm_providers(
-        mut self,
-        providers: HashMap<String, Arc<dyn crate::llm::LLMProvider>>,
-    ) -> Self {
-        self.llm_providers.extend(providers);
-        self
-    }
-
-    /// Configure session management for conversations
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Session configuration for conversation tracking
-    pub fn with_session_config(mut self, config: crate::llm::SessionConfig) -> Self {
-        self.session_config = Some(config);
-        self
-    }
-
-    // ============================================================================
     // HANDLER REGISTRATION
     // ============================================================================
 
@@ -817,37 +738,6 @@ impl ClientBuilder {
             client.on_resource_update(handler);
         }
 
-        // Set up LLM providers if any are configured
-        if !self.llm_providers.is_empty() {
-            // Create LLM registry and register providers
-            let mut registry = crate::llm::LLMRegistry::new();
-            for (name, provider) in self.llm_providers {
-                registry
-                    .register_provider(&name, provider)
-                    .await
-                    .map_err(|e| {
-                        Error::configuration(format!(
-                            "Failed to register LLM provider '{}': {}",
-                            name, e
-                        ))
-                    })?;
-            }
-
-            // Configure session management if provided
-            if let Some(session_config) = self.session_config {
-                registry
-                    .configure_sessions(session_config)
-                    .await
-                    .map_err(|e| {
-                        Error::configuration(format!("Failed to configure sessions: {}", e))
-                    })?;
-            }
-
-            // Set up the registry as the sampling handler
-            let sampling_handler = Arc::new(registry);
-            client.set_sampling_handler(sampling_handler);
-        }
-
         // Apply connection configuration (store for future use in actual connections)
         // Note: The current Client doesn't expose connection config setters,
         // so we'll store this for when the transport supports it
@@ -889,7 +779,7 @@ impl ClientBuilder {
     ///
     /// # Errors
     ///
-    /// Returns an error if plugin initialization or LLM provider setup fails.
+    /// Returns an error if plugin initialization fails.
     ///
     /// # Examples
     ///
@@ -957,33 +847,6 @@ impl ClientBuilder {
             client.on_resource_update(handler);
         }
 
-        // Set up LLM providers if any are configured
-        if !self.llm_providers.is_empty() {
-            let mut registry = crate::llm::LLMRegistry::new();
-            for (name, provider) in self.llm_providers {
-                registry
-                    .register_provider(&name, provider)
-                    .await
-                    .map_err(|e| {
-                        Error::configuration(format!(
-                            "Failed to register LLM provider '{}': {}",
-                            name, e
-                        ))
-                    })?;
-            }
-
-            if let Some(session_config) = self.session_config {
-                registry
-                    .configure_sessions(session_config)
-                    .await
-                    .map_err(|e| {
-                        Error::configuration(format!("Failed to configure sessions: {}", e))
-                    })?;
-            }
-
-            client.set_sampling_handler(Arc::new(registry));
-        }
-
         // Register plugins
         let has_plugins = !self.plugins.is_empty();
         for plugin in self.plugins {
@@ -1004,7 +867,7 @@ impl ClientBuilder {
     /// Build a client synchronously with basic configuration only
     ///
     /// This is a convenience method for simple use cases where no async setup
-    /// is required. For advanced features like LLM providers, use `build()` instead.
+    /// is required. For advanced features like plugins, use `build()` instead.
     ///
     /// # Arguments
     ///
@@ -1061,11 +924,6 @@ impl ClientBuilder {
     /// Get the number of registered plugins
     pub fn plugin_count(&self) -> usize {
         self.plugins.len()
-    }
-
-    /// Get the number of registered LLM providers
-    pub fn llm_provider_count(&self) -> usize {
-        self.llm_providers.len()
     }
 
     /// Check if any handlers are registered

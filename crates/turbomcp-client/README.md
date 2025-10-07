@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/turbomcp-client/badge.svg)](https://docs.rs/turbomcp-client)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Production-ready MCP client with complete MCP 2025-06-18 specification support, plugin middleware system, and LLM integration.
+Production-ready MCP client with complete MCP 2025-06-18 specification support and plugin middleware system.
 
 ## Overview
 
@@ -12,7 +12,7 @@ Production-ready MCP client with complete MCP 2025-06-18 specification support, 
 - ✅ **Full MCP 2025-06-18 compliance** - All server and client features
 - ✅ **Bidirectional communication** - Server-initiated requests (sampling, elicitation)
 - ✅ **Plugin middleware** - Extensible request/response processing
-- ✅ **LLM integration** - Multi-provider sampling support (OpenAI, Anthropic, local)
+- ✅ **Sampling protocol support** - Handle server-initiated sampling requests
 - ✅ **Transport agnostic** - Works with STDIO, TCP, Unix, WebSocket transports
 - ✅ **Thread-safe sharing** - Client is cheaply cloneable via Arc for concurrent async tasks
 
@@ -21,16 +21,16 @@ Production-ready MCP client with complete MCP 2025-06-18 specification support, 
 | Transport | Status | Feature Flag | Use Case |
 |-----------|--------|--------------|----------|
 | **STDIO** | ✅ Full | default | Local process communication |
+| **HTTP/SSE** | ✅ Full | `http` | Web-compatible HTTP servers (New in 2.0!) |
 | **TCP** | ✅ Full | `tcp` | Network socket communication |
 | **Unix** | ✅ Full | `unix` | Fast local IPC |
 | **WebSocket** | ✅ Full | `websocket` | Real-time bidirectional |
-| **HTTP/SSE** | ⚠️ Server-only | `http` | Currently server-side only |
 
-> **Note**: HTTP/SSE client transport is planned for future release. Use WebSocket for web-based MCP servers.
+> **New in 2.0**: HTTP/SSE client transport with beautiful `Client::connect_http()` convenience API!
 
 ## Quick Start
 
-### Basic Client
+### Basic Client (STDIO)
 
 ```rust
 use turbomcp_client::Client;
@@ -39,7 +39,8 @@ use turbomcp_transport::stdio::StdioTransport;
 #[tokio::main]
 async fn main() -> turbomcp_core::Result<()> {
     // Create client with STDIO transport
-    let mut client = Client::new(StdioTransport::new());
+    let transport = StdioTransport::new();
+    let client = Client::new(transport);
 
     // Initialize connection
     let result = client.initialize().await?;
@@ -64,6 +65,34 @@ async fn main() -> turbomcp_core::Result<()> {
     println!("Result: {}", result);
     Ok(())
 }
+```
+
+### HTTP Client (Beautiful One-Liner)
+
+```rust
+use turbomcp_client::Client;
+
+#[tokio::main]
+async fn main() -> turbomcp_core::Result<()> {
+    // Beautiful one-liner - connects and initializes automatically!
+    let client = Client::connect_http("http://localhost:8080").await?;
+
+    // Ready to use immediately
+    let tools = client.list_tools().await?;
+    println!("Found {} tools", tools.len());
+
+    Ok(())
+}
+```
+
+### TCP/Unix Clients (Equally Beautiful)
+
+```rust
+// TCP
+let client = Client::connect_tcp("127.0.0.1:8765").await?;
+
+// Unix socket
+let client = Client::connect_unix("/tmp/mcp.sock").await?;
 ```
 
 ### With ClientBuilder
@@ -120,22 +149,67 @@ let transport = StdioTransport::new();
 let mut client = Client::new(transport);
 ```
 
+### HTTP Transport (New in 2.0!)
+
+```rust
+use turbomcp_client::Client;
+
+// Beautiful one-liner - connects and initializes automatically
+let client = Client::connect_http("http://localhost:8080").await?;
+```
+
+Or with custom configuration:
+
+```rust
+use turbomcp_client::Client;
+use std::time::Duration;
+
+let client = Client::connect_http_with("http://localhost:8080", |config| {
+    config.timeout = Duration::from_secs(60);
+    config.endpoint_path = "/api/mcp".to_string();
+}).await?;
+```
+
 ### TCP Transport
 
 ```rust
-use turbomcp_transport::tcp::TcpTransport;
+use turbomcp_client::Client;
 
-let transport = TcpTransport::new("127.0.0.1:8080").await?;
+// Beautiful one-liner - connects and initializes automatically
+let client = Client::connect_tcp("127.0.0.1:8765").await?;
+```
+
+Or using transport directly:
+
+```rust
+use turbomcp_transport::tcp::TcpTransport;
+use std::net::SocketAddr;
+
+let server_addr: SocketAddr = "127.0.0.1:8765".parse()?;
+let bind_addr: SocketAddr = "0.0.0.0:0".parse()?;  // Any available port
+let transport = TcpTransport::new_client(bind_addr, server_addr);
 let mut client = Client::new(transport);
+client.initialize().await?;
 ```
 
 ### Unix Socket Transport
 
 ```rust
-use turbomcp_transport::unix::UnixTransport;
+use turbomcp_client::Client;
 
-let transport = UnixTransport::new("/tmp/mcp.sock").await?;
+// Beautiful one-liner - connects and initializes automatically
+let client = Client::connect_unix("/tmp/mcp.sock").await?;
+```
+
+Or using transport directly:
+
+```rust
+use turbomcp_transport::unix::UnixTransport;
+use std::path::PathBuf;
+
+let transport = UnixTransport::new_client(PathBuf::from("/tmp/mcp.sock"));
 let mut client = Client::new(transport);
+client.initialize().await?;
 ```
 
 ### WebSocket Transport
@@ -218,25 +292,47 @@ let client = ClientBuilder::new()
     .await?;
 ```
 
-### LLM Integration for Sampling
+### Sampling Handler Integration
+
+Handle server-initiated sampling requests by implementing a custom sampling handler:
 
 ```rust
-use turbomcp_client::ClientBuilder;
-use turbomcp_client::llm::{OpenAIProvider, LLMProviderConfig};
+use turbomcp_client::sampling::SamplingHandler;
+use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult, Role, Content, TextContent};
+use async_trait::async_trait;
 use std::sync::Arc;
 
-let client = ClientBuilder::new()
-    .with_sampling(true)
-    .with_llm_provider("openai", Arc::new(OpenAIProvider::new(LLMProviderConfig {
-        api_key: std::env::var("OPENAI_API_KEY")?,
-        model: "gpt-4".to_string(),
-        ..Default::default()
-    })?))
-    .build(StdioTransport::new())
-    .await?;
+#[derive(Debug)]
+struct MySamplingHandler {
+    // Your LLM integration (OpenAI, Anthropic, local model, etc.)
+}
 
-// Client now handles server-initiated sampling requests automatically
+#[async_trait]
+impl SamplingHandler for MySamplingHandler {
+    async fn handle_create_message(&self, request: CreateMessageRequest)
+        -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>>
+    {
+        // Forward to your LLM service
+        // Return the generated response
+        Ok(CreateMessageResult {
+            role: Role::Assistant,
+            content: Content::Text(TextContent {
+                text: "Generated response".to_string(),
+                annotations: None,
+                meta: None,
+            }),
+            model: Some("your-model".to_string()),
+            stop_reason: None,
+        })
+    }
+}
+
+// Register the handler
+let handler = Arc::new(MySamplingHandler { /* ... */ });
+client.set_sampling_handler(handler);
 ```
+
+**Note:** TurboMCP provides the sampling protocol infrastructure. You implement your own LLM integration (OpenAI SDK, Anthropic SDK, local models, etc.) as needed for your use case.
 
 ### Handler Registration
 
@@ -432,7 +528,7 @@ match client.call_tool("my_tool", None).await {
 
 See the `examples/` directory for complete working examples:
 
-- **`sampling_client.rs`** - Client with LLM sampling support
+- **`sampling_client.rs`** - Client with server-initiated sampling protocol
 - **`elicitation_interactive_client.rs`** - Interactive elicitation handling
 
 Run examples:
@@ -529,9 +625,14 @@ cargo run --example sampling_client
 
 ## Roadmap
 
+### Completed in 2.0
+
+- [x] **HTTP/SSE Client Transport** - Client-side HTTP/SSE with `Client::connect_http()`
+- [x] **Convenience Constructors** - One-liner client creation for all transports
+- [x] **Ergonomic Config Builders** - Simplified configuration APIs
+
 ### Planned Features
 
-- [ ] **HTTP/SSE Client Transport** - Client-side HTTP/SSE for web servers
 - [ ] **Connection Pool Management** - Multi-server connection pooling
 - [ ] **Session Persistence** - Automatic state preservation across reconnects
 - [ ] **Roots Handler** - Complete filesystem roots implementation

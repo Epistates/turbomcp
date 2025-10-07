@@ -90,6 +90,7 @@ use turbomcp_protocol::types::{
 
 /// Errors that can occur during handler operations
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum HandlerError {
     /// Handler operation failed due to user cancellation
     #[error("User cancelled the operation")]
