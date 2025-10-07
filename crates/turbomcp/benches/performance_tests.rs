@@ -102,7 +102,7 @@ fn bench_helper_functions(c: &mut Criterion) {
 
 /// Benchmark context operations
 fn bench_context_operations(c: &mut Criterion) {
-    use turbomcp_core::RequestContext;
+    use turbomcp_protocol::RequestContext;
 
     c.bench_function("context_creation", |b| {
         b.iter(|| {

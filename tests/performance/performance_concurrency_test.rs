@@ -12,7 +12,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use turbomcp::*;
 use turbomcp_server::*;
 use turbomcp_transport::*;
-use turbomcp_core::*;
+use turbomcp_protocol::*;
 
 // Performance Metrics Collection
 #[derive(Debug, Clone)]

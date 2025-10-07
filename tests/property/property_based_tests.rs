@@ -12,7 +12,7 @@ use proptest::string::string_regex;
 use turbomcp::*;
 use turbomcp_transport::resilience::*;
 use turbomcp_protocol::validation::*;
-use turbomcp_core::*;
+use turbomcp_protocol::*;
 
 // Property-based test for circuit breaker state transitions
 proptest! {

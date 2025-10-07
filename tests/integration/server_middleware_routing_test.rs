@@ -11,7 +11,7 @@ use tokio::time::{sleep, timeout};
 use turbomcp_server::middleware::*;
 use turbomcp_server::routing::*;
 use turbomcp_server::handlers::*;
-use turbomcp_core::{RequestContext, ResponseContext};
+use turbomcp_protocol::{RequestContext, ResponseContext};
 use turbomcp_protocol::types::*;
 use turbomcp::{McpError, McpResult};
 

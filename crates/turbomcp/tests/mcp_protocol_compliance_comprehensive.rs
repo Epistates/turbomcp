@@ -17,7 +17,7 @@
 
 use serde_json::{Value, json};
 use turbomcp::*;
-use turbomcp_protocol::RequestId;
+use turbomcp_protocol::MessageId;
 use turbomcp_protocol::jsonrpc::{JsonRpcError, JsonRpcResponse};
 
 /// Load the official MCP schema as JSON Value for validation
@@ -388,7 +388,7 @@ async fn test_json_rpc_response_structure() {
         ]
     });
 
-    let tools_response = JsonRpcResponse::success(result, RequestId::String("test-1".to_string()));
+    let tools_response = JsonRpcResponse::success(result, MessageId::String("test-1".to_string()));
 
     // Serialize to JSON
     let response_json = serde_json::to_value(&tools_response).unwrap();
@@ -584,7 +584,7 @@ async fn test_error_response_compliance() {
     };
 
     let error_response =
-        JsonRpcResponse::error_response(error, RequestId::String("error-test".to_string()));
+        JsonRpcResponse::error_response(error, MessageId::String("error-test".to_string()));
 
     let error_json = serde_json::to_value(&error_response).unwrap();
 

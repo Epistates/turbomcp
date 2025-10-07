@@ -381,7 +381,7 @@ fn test_all_error_variants_coverage() {
     // This test ensures we cover all error variants for completeness
 
     // Core error (would need actual registry error)
-    // let core_err = ServerError::Core(turbomcp_core::registry::RegistryError::...);
+    // let core_err = ServerError::Core(turbomcp_protocol::registry::RegistryError::...);
 
     // Transport error (would need actual transport error)
     // let transport_err = ServerError::Transport(...);

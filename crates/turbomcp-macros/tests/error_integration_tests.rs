@@ -1,9 +1,9 @@
 //! Integration tests for error handling after circular dependency fix
 //!
-//! These tests verify that mcp_error! macro now generates turbomcp_core::Error
+//! These tests verify that mcp_error! macro now generates turbomcp_protocol::Error
 //! and works correctly at the macro layer without creating circular dependencies.
 
-use turbomcp_core::{Error as CoreError, ErrorKind};
+use turbomcp_protocol::{Error as CoreError, ErrorKind};
 use turbomcp_macros::*;
 
 #[test]

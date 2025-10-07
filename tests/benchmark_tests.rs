@@ -5,7 +5,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use serde_json::json;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
-use turbomcp_core::{Error, ErrorKind, MessageId, StateManager};
+use turbomcp_protocol::{Error, ErrorKind, MessageId, StateManager};
 use turbomcp_transport::core::{
     TransportConfig, TransportMessage, TransportMessageMetadata, TransportType,
 };

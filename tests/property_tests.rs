@@ -1,7 +1,7 @@
 //! Property-based tests for TurboMCP
 
 use serde_json::json;
-use turbomcp_core::{MessageId, StateManager};
+use turbomcp_protocol::{MessageId, StateManager};
 
 // Note: Property-based testing requires proptest crate to be added to Cargo.toml
 // For now, we'll use regular randomized tests until proptest is added

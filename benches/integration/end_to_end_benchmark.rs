@@ -197,7 +197,7 @@ fn bench_request_latency(c: &mut Criterion) {
             |b, (tool, params)| {
                 b.to_async(&rt).iter(|| async {
                     let ctx = Context::new(
-                        turbomcp_core::RequestContext::new(),
+                        turbomcp_protocol::RequestContext::new(),
                         HandlerMetadata {
                             name: tool.to_string(),
                             handler_type: "tool".to_string(),
@@ -258,7 +258,7 @@ fn bench_sustained_throughput(c: &mut Criterion) {
                         let server = server.clone();
                         let handle = tokio::spawn(async move {
                             let ctx = Context::new(
-                                turbomcp_core::RequestContext::new(),
+                                turbomcp_protocol::RequestContext::new(),
                                 HandlerMetadata {
                                     name: "fast_computation".to_string(),
                                     handler_type: "tool".to_string(),
@@ -298,7 +298,7 @@ fn bench_error_handling(c: &mut Criterion) {
             |b, &err_type| {
                 b.to_async(&rt).iter(|| async {
                     let ctx = Context::new(
-                        turbomcp_core::RequestContext::new(),
+                        turbomcp_protocol::RequestContext::new(),
                         HandlerMetadata {
                             name: "error_scenario".to_string(),
                             handler_type: "tool".to_string(),
@@ -333,7 +333,7 @@ fn bench_memory_efficiency(c: &mut Criterion) {
             |b, &size_kb| {
                 b.to_async(&rt).iter(|| async {
                     let ctx = Context::new(
-                        turbomcp_core::RequestContext::new(),
+                        turbomcp_protocol::RequestContext::new(),
                         HandlerMetadata {
                             name: "memory_operation".to_string(),
                             handler_type: "tool".to_string(),

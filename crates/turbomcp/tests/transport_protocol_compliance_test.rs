@@ -11,7 +11,7 @@ use serde_json::json;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 use tokio_util::bytes::Bytes;
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 use turbomcp_transport::child_process::{ChildProcessConfig, ChildProcessTransport};
 use turbomcp_transport::core::{Transport, TransportMessage, TransportState};
 

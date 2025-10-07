@@ -1,7 +1,7 @@
 //! Comprehensive tests for the StateManager
 
 use serde_json::json;
-use turbomcp_core::StateManager;
+use turbomcp_protocol::StateManager;
 
 #[test]
 fn test_key_value_store() {

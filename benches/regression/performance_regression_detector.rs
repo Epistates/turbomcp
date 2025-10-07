@@ -146,7 +146,7 @@ fn bench_critical_path_operations(c: &mut Criterion) {
         b.iter_batched(
             || vec![0u8; 1024],
             |data| {
-                use turbomcp_core::zero_copy::{MessageId, ZeroCopyMessage};
+                use turbomcp_protocol::zero_copy::{MessageId, ZeroCopyMessage};
                 use bytes::Bytes;
 
                 let msg = ZeroCopyMessage::from_bytes(
@@ -200,7 +200,7 @@ fn bench_critical_path_operations(c: &mut Criterion) {
 
     // Context creation overhead
     group.bench_function("context_creation_overhead", |b| {
-        use turbomcp_core::RequestContext;
+        use turbomcp_protocol::RequestContext;
         use turbomcp::HandlerMetadata;
 
         b.iter(|| {
@@ -256,7 +256,7 @@ fn bench_memory_allocation_regression(c: &mut Criterion) {
 
     // Buffer pool efficiency
     group.bench_function("buffer_pool_allocation", |b| {
-        use turbomcp_core::zero_copy::BufferPool;
+        use turbomcp_protocol::zero_copy::BufferPool;
 
         let pool = BufferPool::new(100, 4096);
 
@@ -269,7 +269,7 @@ fn bench_memory_allocation_regression(c: &mut Criterion) {
 
     // Message batch efficiency
     group.bench_function("message_batch_creation", |b| {
-        use turbomcp_core::zero_copy::{MessageBatch, MessageId};
+        use turbomcp_protocol::zero_copy::{MessageBatch, MessageId};
         use bytes::Bytes;
 
         b.iter(|| {
@@ -318,7 +318,7 @@ fn bench_throughput_regression(c: &mut Criterion) {
 
     // Message processing throughput
     group.bench_function("message_processing_throughput", |b| {
-        use turbomcp_core::zero_copy::{MessageId, ZeroCopyMessage};
+        use turbomcp_protocol::zero_copy::{MessageId, ZeroCopyMessage};
         use bytes::Bytes;
 
         let messages: Vec<_> = (0..1000).map(|i| {

@@ -9,7 +9,7 @@ use turbomcp::registry::{
     ToolRequest,
 };
 use turbomcp::{CallToolResult, McpResult};
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::types::{
     ContentBlock, GetPromptResult, ReadResourceResult, ResourceContent, TextContent,
     TextResourceContents,

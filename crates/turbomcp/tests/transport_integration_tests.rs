@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 use turbomcp::prelude::*;
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 use turbomcp_transport::{
     Transport, TransportMessage, TransportState, tcp::TcpTransport, unix::UnixTransport,
 };

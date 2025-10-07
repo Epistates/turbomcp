@@ -97,7 +97,7 @@ async fn test_sampling_basic_request_response() {
         system_prompt: None,
         include_context: None,
         temperature: None,
-        max_tokens: Some(100),
+        max_tokens: 100,
         stop_sequences: None,
         _meta: None,
     };
@@ -138,7 +138,7 @@ async fn test_sampling_basic_request_response() {
     // Verify request was captured
     let captured = mock_client.get_captured_requests().await;
     assert_eq!(captured.len(), 1);
-    assert_eq!(captured[0].max_tokens, Some(100));
+    assert_eq!(captured[0].max_tokens, 100);
 }
 
 // =============================================================================
@@ -171,7 +171,7 @@ async fn test_sampling_model_preferences() {
         system_prompt: Some("You are an expert code reviewer.".to_string()),
         include_context: None,
         temperature: Some(0.7),
-        max_tokens: Some(500),
+        max_tokens: 500,
         stop_sequences: None,
         _meta: None,
     };
@@ -206,7 +206,7 @@ async fn test_sampling_model_preferences() {
 
     // Verify other parameters
     assert_eq!(captured[0].temperature, Some(0.7));
-    assert_eq!(captured[0].max_tokens, Some(500));
+    assert_eq!(captured[0].max_tokens, 500);
 }
 
 // =============================================================================
@@ -231,7 +231,7 @@ async fn test_sampling_stop_reasons() {
         system_prompt: None,
         include_context: None,
         temperature: None,
-        max_tokens: Some(10), // Very low to trigger max_tokens stop
+        max_tokens: 10, // Very low to trigger max_tokens stop
         stop_sequences: Some(vec!["STOP".to_string()]),
         _meta: None,
     };
@@ -289,7 +289,7 @@ async fn test_sampling_include_context() {
             system_prompt: None,
             include_context: Some(context_option.clone()),
             temperature: None,
-            max_tokens: Some(100),
+            max_tokens: 100,
             stop_sequences: None,
             _meta: None,
         };
@@ -341,7 +341,7 @@ async fn test_sampling_parameter_validation() {
             system_prompt: None,
             include_context: None,
             temperature: Some(*temperature),
-            max_tokens: Some(100),
+            max_tokens: 100,
             stop_sequences: None,
             _meta: None,
         };
@@ -389,7 +389,7 @@ async fn test_sampling_error_cases() {
         system_prompt: None,
         include_context: None,
         temperature: None,
-        max_tokens: Some(100),
+        max_tokens: 100,
         stop_sequences: None,
         _meta: None,
     };
@@ -443,7 +443,7 @@ async fn test_sampling_multi_turn_conversation() {
         system_prompt: Some("You are a helpful math assistant.".to_string()),
         include_context: None,
         temperature: None,
-        max_tokens: Some(100),
+        max_tokens: 100,
         stop_sequences: None,
         _meta: None,
     };
@@ -522,7 +522,7 @@ async fn test_sampling_concurrent_requests() {
                 system_prompt: None,
                 include_context: None,
                 temperature: None,
-                max_tokens: Some(100),
+                max_tokens: 100,
                 stop_sequences: None,
                 _meta: None,
             };
@@ -571,7 +571,7 @@ async fn test_sampling_image_content() {
         system_prompt: Some("Analyze this image".to_string()),
         include_context: None,
         temperature: None,
-        max_tokens: Some(500),
+        max_tokens: 500,
         stop_sequences: None,
         _meta: None,
     };
@@ -634,7 +634,7 @@ async fn test_sampling_audio_content() {
         system_prompt: Some("Transcribe this audio".to_string()),
         include_context: None,
         temperature: None,
-        max_tokens: Some(1000),
+        max_tokens: 1000,
         stop_sequences: None,
         _meta: None,
     };
@@ -688,7 +688,7 @@ async fn test_sampling_malformed_response_handling() {
         system_prompt: None,
         include_context: None,
         temperature: None,
-        max_tokens: Some(100),
+        max_tokens: 100,
         stop_sequences: None,
         _meta: None,
     };
@@ -714,7 +714,7 @@ async fn test_sampling_empty_messages_validation() {
         system_prompt: None,
         include_context: None,
         temperature: None,
-        max_tokens: Some(100),
+        max_tokens: 100,
         stop_sequences: None,
         _meta: None,
     };
@@ -768,7 +768,7 @@ async fn test_sampling_metadata_propagation() {
         system_prompt: None,
         include_context: None,
         temperature: None,
-        max_tokens: Some(100),
+        max_tokens: 100,
         stop_sequences: None,
         _meta: Some(serde_json::json!({
             "correlation_id": "corr-99999",
@@ -835,7 +835,7 @@ async fn test_sampling_stop_sequences_edge_cases() {
         system_prompt: None,
         include_context: None,
         temperature: None,
-        max_tokens: Some(1000),
+        max_tokens: 1000,
         stop_sequences: Some(vec![
             "```".to_string(),
             "END".to_string(),
@@ -881,7 +881,7 @@ async fn test_sampling_stop_sequences_edge_cases() {
         system_prompt: None,
         include_context: None,
         temperature: None,
-        max_tokens: Some(100),
+        max_tokens: 100,
         stop_sequences: Some(vec![]),
         _meta: None,
     };
@@ -959,7 +959,7 @@ async fn test_sampling_model_preference_combinations() {
             system_prompt: None,
             include_context: None,
             temperature: None,
-            max_tokens: Some(100),
+            max_tokens: 100,
             stop_sequences: None,
             _meta: None,
         };
@@ -1027,7 +1027,7 @@ async fn test_sampling_system_prompt_variations() {
             system_prompt: system_prompt.clone(),
             include_context: None,
             temperature: None,
-            max_tokens: Some(100),
+            max_tokens: 100,
             stop_sequences: None,
             _meta: None,
         };
@@ -1126,7 +1126,7 @@ async fn test_sampling_mixed_content_multimodal_conversation() {
         ),
         include_context: Some(IncludeContext::ThisServer),
         temperature: Some(0.7),
-        max_tokens: Some(500),
+        max_tokens: 500,
         stop_sequences: None,
         _meta: None,
     };

@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::RequestId;
 use turbomcp_protocol::jsonrpc::*;
 use turbomcp_server::middleware::*;

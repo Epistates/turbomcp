@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use std::sync::Arc;
-use turbomcp_core::{MessageId, StateManager};
+use turbomcp_protocol::{MessageId, StateManager};
 use turbomcp_server::{McpServer, ServerConfig};
 use turbomcp_transport::core::{Transport, TransportConfig, TransportType};
 use turbomcp_transport::stdio::StdioTransport;
@@ -77,7 +77,7 @@ async fn test_stdio_transport_lifecycle() {
 
 #[tokio::test]
 async fn test_message_serialization() {
-    use turbomcp_core::MessageId;
+    use turbomcp_protocol::MessageId;
 
     // Test MessageId serialization
     let message_id = MessageId::from("test-123");
@@ -119,7 +119,7 @@ async fn test_concurrent_state_operations() {
 
 #[tokio::test]
 async fn test_error_handling() {
-    use turbomcp_core::{Error, ErrorKind, Result};
+    use turbomcp_protocol::{Error, ErrorKind, Result};
 
     // Test error creation and display
     let error = Error::new(ErrorKind::Transport, "Connection failed");
@@ -380,7 +380,7 @@ async fn test_comprehensive_performance_simulation() {
 
 #[tokio::test]
 async fn test_comprehensive_error_handling() {
-    use turbomcp_core::{Error, ErrorKind};
+    use turbomcp_protocol::{Error, ErrorKind};
     
     // Test various error scenarios
     let errors = vec![

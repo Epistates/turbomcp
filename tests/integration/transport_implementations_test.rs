@@ -12,7 +12,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use turbomcp_transport::*;
-use turbomcp_core::*;
+use turbomcp_protocol::*;
 use turbomcp_protocol::jsonrpc::*;
 use turbomcp::{McpError, McpResult};
 

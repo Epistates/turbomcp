@@ -12,7 +12,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 use turbomcp::prelude::*;
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 use turbomcp_transport::{
     child_process::{ChildProcessConfig, ChildProcessTransport},
     core::{Transport, TransportMessage, TransportState},

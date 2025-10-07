@@ -1,6 +1,6 @@
 //! Comprehensive coverage tests for all TurboMCP modules
 
-use turbomcp_core::*;
+use turbomcp_protocol::*;
 use turbomcp_server::{McpServer, ServerConfig};
 use turbomcp_transport::core::*;
 use turbomcp_transport::stdio::StdioTransport;

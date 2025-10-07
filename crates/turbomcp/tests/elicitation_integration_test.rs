@@ -8,9 +8,8 @@ use std::sync::Arc;
 
 use turbomcp::elicitation_api::{ElicitationManager, ElicitationResult};
 use turbomcp::prelude::*;
-use turbomcp_protocol::elicitation::{
-    ElicitationAction, ElicitationCreateResult, ElicitationValue,
-};
+use turbomcp_protocol::types::{ElicitationAction, ElicitResult};
+use serde_json::json;
 
 /// Test server with elicitation-enabled tools
 #[derive(Clone)]
@@ -55,17 +54,14 @@ impl TestServer {
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
                 // Simulate client response
-                let result = ElicitationCreateResult {
+                let result = ElicitResult {
                     action: ElicitationAction::Accept,
                     content: Some(HashMap::from([
-                        (
-                            "name".to_string(),
-                            ElicitationValue::String("test-project".to_string()),
-                        ),
-                        ("port".to_string(), ElicitationValue::Integer(3000)),
-                        ("debug".to_string(), ElicitationValue::Boolean(true)),
+                        ("name".to_string(), json!("test-project")),
+                        ("port".to_string(), json!(3000)),
+                        ("debug".to_string(), json!(true)),
                     ])),
-                    meta: None,
+                    _meta: None,
                 };
 
                 // OK: Test completion handler - errors are expected in some test scenarios
@@ -117,13 +113,13 @@ impl TestServer {
             let id = env_request_id.clone();
             async move {
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                let result = ElicitationCreateResult {
+                let result = ElicitResult {
                     action: ElicitationAction::Accept,
                     content: Some(HashMap::from([(
                         "env".to_string(),
-                        ElicitationValue::String("production".to_string()),
+                        json!("production"),
                     )])),
-                    meta: None,
+                    _meta: None,
                 };
                 // OK: Test completion handler - errors are expected in some test scenarios
                 let _ = manager.complete(id, result).await; // OK: Test completion handler - errors are expected in test scenarios
@@ -158,13 +154,13 @@ impl TestServer {
                 let proj = project.clone();
                 async move {
                     tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                    let result = ElicitationCreateResult {
+                    let result = ElicitResult {
                         action: ElicitationAction::Accept,
                         content: Some(HashMap::from([
-                            ("confirm".to_string(), ElicitationValue::Boolean(true)),
-                            ("typed_name".to_string(), ElicitationValue::String(proj)),
+                            ("confirm".to_string(), json!(true)),
+                            ("typed_name".to_string(), json!(proj)),
                         ])),
-                        meta: None,
+                        _meta: None,
                     };
                     // OK: Test completion handler - errors are expected in some test scenarios
                     let _ = manager.complete(id, result).await; // OK: Test completion handler - errors are expected in test scenarios
@@ -330,10 +326,10 @@ async fn test_elicitation_decline_action() {
         let id = request_id.clone();
         async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-            let result = ElicitationCreateResult {
+            let result = ElicitResult {
                 action: ElicitationAction::Decline,
                 content: None,
-                meta: None,
+                _meta: None,
             };
             let _ = manager.complete(id, result).await; // OK: Test completion handler - errors are expected in test scenarios
         }
@@ -359,10 +355,10 @@ async fn test_elicitation_cancel_action() {
         let id = request_id.clone();
         async move {
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-            let result = ElicitationCreateResult {
+            let result = ElicitResult {
                 action: ElicitationAction::Cancel,
                 content: None,
-                meta: None,
+                _meta: None,
             };
             let _ = manager.complete(id, result).await; // OK: Test completion handler - errors are expected in test scenarios
         }

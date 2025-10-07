@@ -6,7 +6,7 @@ use std::sync::{
     Arc,
 };
 use std::time::Duration;
-use turbomcp_core::{Error, ErrorKind, StateManager};
+use turbomcp_protocol::{Error, ErrorKind, StateManager};
 use turbomcp_transport::core::{Transport, TransportConfig, TransportType};
 use turbomcp_transport::stdio::StdioTransport;
 

@@ -1,10 +1,10 @@
 //! Tests for error handling
 
-use turbomcp_core::{Error, Result};
+use turbomcp_protocol::{Error, Result};
 
 #[test]
 fn test_error_variants() {
-    use turbomcp_core::ErrorKind;
+    use turbomcp_protocol::ErrorKind;
 
     // Test Transport error
     let transport_err = Error::new(ErrorKind::Transport, "Connection failed");
@@ -25,7 +25,7 @@ fn test_error_variants() {
 
 #[test]
 fn test_error_display() {
-    use turbomcp_core::ErrorKind;
+    use turbomcp_protocol::ErrorKind;
 
     let err = Error::new(ErrorKind::Configuration, "Invalid configuration");
     assert!(err.to_string().contains("Invalid configuration"));
@@ -64,7 +64,7 @@ fn test_error_from_serde() {
 
 #[test]
 fn test_result_type_alias() {
-    use turbomcp_core::ErrorKind;
+    use turbomcp_protocol::ErrorKind;
 
     fn test_function() -> Result<i32> {
         Ok(42)
@@ -84,7 +84,7 @@ fn test_result_type_alias() {
 
 #[test]
 fn test_error_context() {
-    use turbomcp_core::ErrorKind;
+    use turbomcp_protocol::ErrorKind;
 
     let err = Error::new(ErrorKind::Transport, "Connection timeout")
         .with_context("operation", "server_connection");

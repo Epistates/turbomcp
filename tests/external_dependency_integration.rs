@@ -201,7 +201,7 @@ fn test_no_direct_imports_in_generated_code() {
             "use axum::",  // Should be ::turbomcp::axum::
             "use tokio::", // Should be ::turbomcp::tokio::
             "use turbomcp_protocol::", // Should be ::turbomcp::turbomcp_protocol::
-            "use turbomcp_core::", // Should be ::turbomcp::turbomcp_core::
+            "use turbomcp_protocol::", // Should be ::turbomcp::turbomcp_protocol::
             "axum::", // Should be ::turbomcp::axum::
             "tokio::", // Should be ::turbomcp::tokio::
             // Allow ::turbomcp:: prefixed versions
@@ -255,7 +255,7 @@ fn test_required_reexports_exist() {
     let required_reexports = vec![
         "pub use axum;",
         "pub use tokio;",
-        "pub use turbomcp_core;",
+        "pub use turbomcp_protocol;",
         "pub use turbomcp_protocol;",
         "pub use tracing;",
     ];
