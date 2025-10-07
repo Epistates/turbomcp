@@ -642,10 +642,34 @@ impl McpServer {
         Ok(())
     }
 
-    /// Run server with WebSocket transport (progressive enhancement - runtime configuration)
-    /// Note: WebSocket transport in this library is primarily client-oriented
-    /// For production WebSocket servers, consider using the ServerBuilder with WebSocket middleware
-    #[cfg(feature = "websocket")]
+    /// Run server with WebSocket transport (full bidirectional support)
+    ///
+    /// This provides a simple API for WebSocket servers with sensible defaults:
+    /// - Default endpoint: `/mcp/ws`
+    /// - Full MCP 2025-06-18 compliance
+    /// - Bidirectional communication
+    /// - Elicitation support
+    /// - Session management and middleware
+    ///
+    /// For custom configuration, use `run_websocket_with_config()`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use turbomcp_server::ServerBuilder;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let server = ServerBuilder::new()
+    ///         .name("ws-server")
+    ///         .version("1.0.0")
+    ///         .build();
+    ///
+    ///     server.run_websocket("127.0.0.1:8080").await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(all(feature = "websocket", feature = "http"))]
     #[tracing::instrument(skip(self), fields(
         transport = "websocket",
         service_name = %self.config.name,
@@ -656,16 +680,83 @@ impl McpServer {
         self,
         addr: A,
     ) -> ServerResult<()> {
-        tracing::info!(
-            ?addr,
-            "WebSocket transport server mode not implemented - WebSocket transport is client-oriented"
-        );
-        tracing::info!(
-            "Consider using ServerBuilder with WebSocket middleware for WebSocket server functionality"
-        );
-        Err(crate::ServerError::configuration(
-            "WebSocket server transport not supported - use ServerBuilder with middleware",
-        ))
+        use turbomcp_transport::websocket_server::WebSocketServerConfig;
+
+        // Build default configuration
+        let config = WebSocketServerConfig::default();
+
+        self.run_websocket_with_config(addr, config).await
+    }
+
+    /// Run server with WebSocket transport and custom configuration
+    ///
+    /// This provides full control over WebSocket server configuration including:
+    /// - Custom endpoint path
+    /// - MCP server settings (middleware, security, etc.)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use turbomcp_server::ServerBuilder;
+    /// use turbomcp_transport::websocket_server::WebSocketServerConfig;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let server = ServerBuilder::new()
+    ///         .name("custom-ws-server")
+    ///         .version("1.0.0")
+    ///         .build();
+    ///
+    ///     let config = WebSocketServerConfig {
+    ///         bind_addr: "0.0.0.0:8080".to_string(),
+    ///         endpoint_path: "/custom/ws".to_string(),
+    ///         ..Default::default()
+    ///     };
+    ///
+    ///     server.run_websocket_with_config("127.0.0.1:8080", config).await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    #[cfg(all(feature = "websocket", feature = "http"))]
+    #[tracing::instrument(skip(self, config), fields(
+        transport = "websocket",
+        service_name = %self.config.name,
+        service_version = %self.config.version,
+        addr = ?addr
+    ))]
+    pub async fn run_websocket_with_config<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
+        self,
+        addr: A,
+        config: turbomcp_transport::websocket_server::WebSocketServerConfig,
+    ) -> ServerResult<()> {
+        use turbomcp_transport::websocket_server::run_websocket_server_with_config;
+
+        info!("Starting MCP server with WebSocket transport");
+        info!(config = ?config, "WebSocket configuration");
+
+        // Resolve address to string
+        let socket_addr = addr
+            .to_socket_addrs()
+            .map_err(|e| crate::ServerError::configuration(format!("Invalid address: {}", e)))?
+            .next()
+            .ok_or_else(|| crate::ServerError::configuration("No address resolved"))?;
+
+        info!("Resolved address: {}", socket_addr);
+
+        // Use provided config but override bind_addr with resolved address
+        let mut final_config = config;
+        final_config.bind_addr = socket_addr.to_string();
+
+        // Run WebSocket server with the router
+        run_websocket_server_with_config(final_config, self.router.clone())
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "WebSocket server failed");
+                crate::ServerError::handler(e.to_string())
+            })?;
+
+        info!("WebSocket server shutdown complete");
+        Ok(())
     }
 
     /// Run server with TCP transport (progressive enhancement - runtime configuration)
