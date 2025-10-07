@@ -12,7 +12,7 @@ use turbomcp_server::{handlers::FunctionToolHandler, ServerBuilder};
 /// Simple hello function for MCP testing
 async fn hello(
     req: CallToolRequest,
-    _ctx: turbomcp_core::RequestContext,
+    _ctx: turbomcp_protocol::RequestContext,
 ) -> Result<CallToolResult, turbomcp_server::ServerError> {
     let name = req
         .arguments

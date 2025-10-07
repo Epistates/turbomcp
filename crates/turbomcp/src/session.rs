@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // Re-export core state management functionality
-pub use turbomcp_core::RequestContext;
-pub use turbomcp_core::state::StateManager;
+pub use turbomcp_protocol::RequestContext;
+pub use turbomcp_protocol::state::StateManager;
 
 use crate::{McpError, McpResult};
 

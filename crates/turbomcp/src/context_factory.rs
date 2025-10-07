@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use crate::context::Container;
 use crate::{Context, HandlerMetadata, McpResult};
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 
 /// Correlation ID for request tracing and distributed observability
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

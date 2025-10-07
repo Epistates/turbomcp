@@ -5,7 +5,7 @@
 //! 2. Macro implementation for common patterns
 
 use std::collections::HashMap;
-use turbomcp_core::{Error, Result};
+use turbomcp_protocol::{Error, Result};
 use turbomcp_protocol::types::{CallToolRequest, CallToolResult};
 
 struct MockClient {
@@ -61,7 +61,7 @@ impl MockClient {
 
         let json_rpc_request = turbomcp_protocol::jsonrpc::JsonRpcRequest {
             jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-            id: turbomcp_core::MessageId::Number(
+            id: turbomcp_protocol::MessageId::Number(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()

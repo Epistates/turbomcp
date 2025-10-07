@@ -45,7 +45,7 @@ inventory::collect!(ToolRegistration);
 /// Simplified request type for tool handlers
 pub struct ToolRequest {
     /// Request context
-    pub context: turbomcp_core::RequestContext,
+    pub context: turbomcp_protocol::RequestContext,
     /// Tool arguments
     pub arguments: std::collections::HashMap<String, serde_json::Value>,
 }
@@ -67,7 +67,7 @@ inventory::collect!(ResourceRegistration);
 /// Simplified request type for resource handlers
 pub struct ResourceRequest {
     /// Request context
-    pub context: turbomcp_core::RequestContext,
+    pub context: turbomcp_protocol::RequestContext,
     /// Resource URI
     pub uri: String,
     /// URI parameters
@@ -89,7 +89,7 @@ inventory::collect!(PromptRegistration);
 /// Simplified request type for prompt handlers
 pub struct PromptRequest {
     /// Request context
-    pub context: turbomcp_core::RequestContext,
+    pub context: turbomcp_protocol::RequestContext,
     /// Prompt arguments
     pub arguments: std::collections::HashMap<String, serde_json::Value>,
 }

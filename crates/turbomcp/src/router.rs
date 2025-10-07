@@ -27,7 +27,7 @@ type WrappedToolHandler = Arc<
 pub use turbomcp_server::{HandlerRegistry, RequestRouter, ToolHandler as ServerToolHandler};
 
 use crate::{McpError, McpResult};
-use turbomcp_core::RequestContext;
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcVersion},
     types::{CallToolRequest, CallToolResult, Tool, ToolInputSchema},
@@ -97,7 +97,7 @@ where
         // Convert to mcp-server request format
         let request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
-            id: turbomcp_core::MessageId::String(context.request_id.clone()),
+            id: turbomcp_protocol::MessageId::String(context.request_id.clone()),
             method: "tools/call".to_string(),
             params: Some(serde_json::json!({
                 "name": tool_name,

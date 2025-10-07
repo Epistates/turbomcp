@@ -531,18 +531,27 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-// Re-export core types for convenience
-pub use turbomcp_core::{MessageId, RequestContext};
-// Re-export key protocol types (avoiding * import to prevent ambiguous re-exports)
-pub use turbomcp_protocol::GetPromptResult;
-pub use turbomcp_protocol::jsonrpc::{
+// Re-export core types for convenience (all re-exported at top level of turbomcp_protocol)
+// v2.0: Re-export essential types from turbomcp_protocol root + module-qualified types
+pub use turbomcp_protocol::{
+    // Core types (at protocol root)
+    MessageId, RequestContext,
+    InitializeRequest, InitializeResult,
+    CallToolRequest, CallToolResult,
+    ServerCapabilities, ClientCapabilities,
+    // JSON-RPC types
     JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
 };
+
+// Re-export commonly used types from turbomcp_protocol::types
 pub use turbomcp_protocol::types::{
-    CallToolRequest, CallToolResult, ClientCapabilities, CompleteResult, CompletionResponse,
-    Content, ElicitRequest, ElicitResult, ElicitationAction, ImageContent, Implementation,
-    InitializeRequest, InitializeResult, PingRequest, PingResult, PromptMessage, Resource,
-    ServerCapabilities, TextContent, Tool, ToolInputSchema,
+    CompleteResult, CompletionResponse, Content,
+    CreateMessageRequest, CreateMessageResult,
+    ElicitRequest, ElicitResult, ElicitationAction,
+    GetPromptResult, ImageContent, Implementation,
+    ListRootsResult, PingRequest, PingResult,
+    Resource, SamplingMessage, TextContent,
+    Tool, ToolInputSchema,
 };
 pub use turbomcp_server::{
     McpServer, McpServer as Server, ServerBuilder, ServerError, ServerResult, ShutdownHandle,
@@ -559,7 +568,6 @@ pub use axum;
 // tokio and turbomcp_transport are always dependencies, always re-export for macros
 pub use tokio;
 // Re-export core and protocol types for macro use
-pub use turbomcp_core;
 pub use turbomcp_protocol;
 pub use turbomcp_transport;
 // Re-export tracing for logging in macro-generated code
@@ -619,24 +627,8 @@ pub use crate::elicitation_api::{
     ElicitationManager,
     ElicitationResult,
     // Zero ceremony constructors - beautiful title-first API
-    array,
-    boolean,
-    // Advanced builder constructors for full control
-    boolean_builder,
-    checkbox,
-    choices,
+    // Zero-ceremony builder functions removed - use MCP-compliant types directly
     elicit,
-    enum_of,
-    integer,
-    integer_builder,
-    integer_field,
-    number,
-    number_builder,
-    number_field,
-    object,
-    options,
-    string,
-    string_builder,
 };
 pub use crate::helpers::*;
 pub use crate::injection::*;
@@ -922,8 +914,8 @@ impl From<turbomcp_transport::core::TransportError> for McpError {
     }
 }
 
-impl From<Box<turbomcp_core::Error>> for McpError {
-    fn from(core_error: Box<turbomcp_core::Error>) -> Self {
+impl From<Box<turbomcp_protocol::Error>> for McpError {
+    fn from(core_error: Box<turbomcp_protocol::Error>) -> Self {
         // Convert core error to server error first, then to McpError
         let server_error: turbomcp_server::ServerError = core_error.into();
         Self::Server(server_error)
@@ -1342,9 +1334,9 @@ impl Context {
     /// # Example
     ///
     /// ```ignore
-    /// use turbomcp_protocol::types::{CreateMessageRequest, SamplingMessage, Role, Content, TextContent};
+    /// use turbomcp::{CreateMessageRequest, SamplingMessage, Role, Content, TextContent};
     ///
-    /// let request = serde_json::to_value(CreateMessageRequest {
+    /// let request = CreateMessageRequest {
     ///     messages: vec![SamplingMessage {
     ///         role: Role::User,
     ///         content: Content::Text(TextContent {
@@ -1352,6 +1344,7 @@ impl Context {
     ///             annotations: None,
     ///             meta: None,
     ///         }),
+    ///         metadata: None,
     ///     }],
     ///     max_tokens: 500,
     ///     model_preferences: None,
@@ -1359,15 +1352,18 @@ impl Context {
     ///     include_context: None,
     ///     temperature: None,
     ///     stop_sequences: None,
-    ///     metadata: None,
-    /// })?;
+    ///     _meta: None,
+    /// };
     ///
     /// let response = ctx.create_message(request).await?;
     /// ```
-    pub async fn create_message(&self, request: serde_json::Value) -> McpResult<serde_json::Value> {
-        if let Some(capabilities) = self.request.server_capabilities() {
+    pub async fn create_message(
+        &self,
+        request: turbomcp_protocol::types::CreateMessageRequest,
+    ) -> McpResult<turbomcp_protocol::types::CreateMessageResult> {
+        if let Some(capabilities) = self.request.server_to_client() {
             capabilities
-                .create_message(request)
+                .create_message(request, self.request.clone())
                 .await
                 .map_err(|e| McpError::Context(format!("Sampling failed: {}", e)))
         } else {
