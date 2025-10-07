@@ -63,7 +63,6 @@ http = { version = "1.0", optional = true }
 
 # Internal dependencies (always required)
 # CRITICAL: Use default-features = false to prevent feature leakage
-turbomcp-core = { version = "2.0.0", path = "../turbomcp-core", default-features = false, features = ["std"] }
 turbomcp-protocol = { version = "2.0.0", path = "../turbomcp-protocol", default-features = false }
 turbomcp-transport = { version = "2.0.0", path = "../turbomcp-transport", default-features = false }
 turbomcp-server = { version = "2.0.0", path = "../turbomcp-server", default-features = false }
@@ -215,7 +214,7 @@ tcp = ["turbomcp-transport/tcp", "turbomcp-server/tcp", "turbomcp-macros/tcp"]  
 unix = ["turbomcp-transport/unix", "turbomcp-server/unix", "turbomcp-macros/unix"]  # Unix domain sockets
 
 # Performance
-simd = ["turbomcp-core/simd", "simd-json", "sonic-rs"]  # SIMD JSON acceleration
+simd = ["turbomcp-protocol/simd", "simd-json", "sonic-rs"]  # SIMD JSON acceleration
 # Advanced combinations
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]  # All transports without extra features
 

@@ -3,24 +3,84 @@ name = "turbomcp-protocol"
 version = "2.0.0"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
-description = "Model Context Protocol (MCP) specification implementation with JSON-RPC and schema validation"
+description = "Complete MCP protocol implementation with types, traits, context management, and message handling"
 license = "MIT"
 repository = "https://github.com/Epistates/turbomcp"
 homepage = "https://turbomcp.org"
-keywords = ["mcp", "protocol", "jsonrpc", "schema", "validation"]
-categories = ["development-tools", "network-programming"]
+keywords = ["mcp", "protocol", "jsonrpc", "llm", "ai"]
+categories = ["development-tools", "encoding", "parser-implementations"]
 readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
-turbomcp-core = { version = "2.0.0", path = "../turbomcp-core", default-features = false, features = ["std"] }
+# Core async
+tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+pin-project-lite = { workspace = true }
+
+# Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
-chrono = { workspace = true }
+bytes = { workspace = true }
+msgpacker = { workspace = true, optional = true, features = ["derive", "alloc"] }
+ciborium = "0.2"
+
+# Error handling
 thiserror = { workspace = true }
+miette = { workspace = true, optional = true }
+
+# Observability
 tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+metrics = { workspace = true, optional = true }
+
+# Performance
+smallvec = { workspace = true }
+compact_str = { workspace = true }
+ahash = { workspace = true }
+once_cell = { workspace = true }
+arc-swap = { workspace = true }
+
+# SIMD support
+simd-json = { workspace = true, optional = true }
+sonic-rs = { workspace = true, optional = true }
+simdutf8 = { version = "0.1", optional = true }
+
+# Time
+chrono = { workspace = true }
+uuid = { workspace = true }
+
+# Concurrency
+parking_lot = { workspace = true }
+crossbeam = { workspace = true }
+dashmap = { workspace = true }
+
+# Random number generation for jitter
+rand = "0.8"
+
+# Memory-mapped files (optional, requires unsafe feature)
+memmap2 = { version = "0.9", optional = true }
+
+# Validation
 regex = "1.10"
-once_cell = "1.20"
 
 [dev-dependencies]
+criterion = { workspace = true }
+tokio-test = { workspace = true }
+pretty_assertions = { workspace = true }
 proptest = "1.5"
+
+[features]
+default = ["std", "simd", "lock-free"]
+std = []
+simd = ["simd-json", "sonic-rs", "simdutf8"]
+zero-copy = ["bytes/serde"]
+messagepack = ["msgpacker"]
+tracing = ["dep:tracing-opentelemetry"]
+metrics = ["dep:metrics"]
+wasm = []
+fancy-errors = ["miette"]
+mmap = ["memmap2"]  # Enable memory-mapped file support
+lock-free = []  # Enable lock-free data structures (requires unsafe)

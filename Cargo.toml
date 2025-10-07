@@ -2,7 +2,6 @@
 
 [workspace]
 members = [
-    "crates/turbomcp-core",
     "crates/turbomcp-protocol",
     "crates/turbomcp-transport",
     "crates/turbomcp-server",
@@ -141,7 +140,7 @@ doc-comment = "0.3"
 # Workspace dependencies are defined below
 # Internal crate dependencies - 2.0.0 PRODUCTION RELEASE (with default-features = false for granular control)
 turbomcp = { version = "2.0.0", path = "crates/turbomcp" }
-turbomcp-core = { version = "2.0.0", path = "crates/turbomcp-core", default-features = false }
+# turbomcp-core merged into turbomcp-protocol in v2.0.0
 turbomcp-protocol = { version = "2.0.0", path = "crates/turbomcp-protocol", default-features = false }
 turbomcp-transport = { version = "2.0.0", path = "crates/turbomcp-transport", default-features = false }
 turbomcp-client = { version = "2.0.0", path = "crates/turbomcp-client", default-features = false }
