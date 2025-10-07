@@ -14,6 +14,14 @@ pub struct BidirectionalRouter {
     dispatcher: Option<std::sync::Arc<dyn ServerRequestDispatcher>>,
 }
 
+impl std::fmt::Debug for BidirectionalRouter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BidirectionalRouter")
+            .field("has_dispatcher", &self.dispatcher.is_some())
+            .finish()
+    }
+}
+
 impl BidirectionalRouter {
     /// Create a new bidirectional router
     pub fn new() -> Self {

@@ -59,18 +59,22 @@ pub struct CorsConfig {
 /// CORS origin configuration
 #[derive(Debug, Clone)]
 pub enum CorsOrigins {
-    /// Allow any origin
+    /// Allow any origin (⚠️ WARNING: Insecure - only use for development/testing)
     Any,
-    /// Allow specific origins
+    /// Allow specific origins (recommended for production)
     List(Vec<String>),
-    /// Mirror the Origin header (careful with credentials!)
-    Mirror,
 }
 
 impl Default for CorsConfig {
+    /// Default CORS configuration
+    ///
+    /// ⚠️ **WARNING**: Uses `CorsOrigins::Any` which allows requests from ANY origin.
+    /// This is INSECURE and should only be used for development/testing.
+    ///
+    /// For production, use `CorsConfig::production_safe()` or configure specific origins.
     fn default() -> Self {
         Self {
-            allowed_origins: CorsOrigins::Any, // TODO: Restrict in production
+            allowed_origins: CorsOrigins::Any, // ⚠️ INSECURE: Only for development!
             allowed_methods: vec![
                 Method::GET,
                 Method::POST,
@@ -88,6 +92,39 @@ impl Default for CorsConfig {
             max_age: Some(Duration::from_secs(3600)), // 1 hour
             allow_credentials: false,                 // Safer default
         }
+    }
+}
+
+impl CorsConfig {
+    /// Production-safe CORS configuration
+    ///
+    /// Starts with NO allowed origins - you must explicitly configure them.
+    /// This prevents accidentally allowing requests from any origin.
+    ///
+    /// # Example
+    /// ```rust
+    /// use turbomcp_server::middleware::security::CorsConfig;
+    ///
+    /// let cors = CorsConfig::production_safe()
+    ///     .with_origins(vec!["https://app.example.com".to_string()]);
+    /// ```
+    pub fn production_safe() -> Self {
+        Self {
+            allowed_origins: CorsOrigins::List(vec![]), // Must be explicitly configured
+            ..Self::default()
+        }
+    }
+
+    /// Set allowed origins
+    pub fn with_origins(mut self, origins: Vec<String>) -> Self {
+        self.allowed_origins = CorsOrigins::List(origins);
+        self
+    }
+
+    /// Allow any origin (⚠️ INSECURE - development only)
+    pub fn allow_any_origin(mut self) -> Self {
+        self.allowed_origins = CorsOrigins::Any;
+        self
     }
 }
 
@@ -238,7 +275,6 @@ impl SecurityLayer {
                     }
                 }
             }
-            CorsOrigins::Mirror => cors.allow_origin(tower_http::cors::Any), // TODO: Implement mirror
         };
 
         // Set allowed methods

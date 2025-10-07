@@ -12,6 +12,7 @@ mod utils;
 mod validation;
 
 // Re-export public types to maintain API compatibility
+pub use bidirectional::BidirectionalRouter;
 pub use config::RouterConfig;
 pub use traits::{Route, RouteHandler, RouteMetadata, ServerRequestDispatcher};
 
@@ -28,12 +29,13 @@ use turbomcp_protocol::{
     },
 };
 
+use crate::capabilities::ServerToClientAdapter;
 use crate::metrics::ServerMetrics;
 use crate::registry::HandlerRegistry;
 use crate::{ServerError, ServerResult};
 
-use bidirectional::BidirectionalRouter;
 use handlers::{HandlerContext, ProtocolHandlers};
+use turbomcp_core::context::capabilities::ServerToClientRequests;
 use utils::{error_response, method_not_found_response};
 use validation::{validate_request, validate_response};
 
@@ -52,6 +54,9 @@ pub struct RequestRouter {
     bidirectional: BidirectionalRouter,
     /// Protocol handlers
     handlers: ProtocolHandlers,
+    /// Server-to-client requests adapter for tool-initiated requests (sampling, elicitation, roots)
+    /// This is injected into RequestContext so tools can make server-initiated requests
+    server_to_client: Arc<dyn ServerToClientRequests>,
 }
 
 impl std::fmt::Debug for RequestRouter {
@@ -72,13 +77,21 @@ impl RequestRouter {
 
         let handler_context = HandlerContext::new(Arc::clone(&registry));
 
+        let bidirectional = BidirectionalRouter::new();
+
+        // Create the server-to-client adapter that bridges bidirectional router
+        // to the ServerToClientRequests trait (type-safe, zero-cost abstraction)
+        let server_to_client: Arc<dyn ServerToClientRequests> =
+            Arc::new(ServerToClientAdapter::new(bidirectional.clone()));
+
         Self {
             registry,
             config,
             custom_routes: HashMap::new(),
             resource_subscriptions: DashMap::new(),
-            bidirectional: BidirectionalRouter::new(),
+            bidirectional,
             handlers: ProtocolHandlers::new(handler_context),
+            server_to_client,
         }
     }
 
@@ -93,13 +106,21 @@ impl RequestRouter {
 
         let handler_context = HandlerContext::new(Arc::clone(&registry));
 
+        let bidirectional = BidirectionalRouter::new();
+
+        // Create the server-to-client adapter that bridges bidirectional router
+        // to the ServerToClientRequests trait (type-safe, zero-cost abstraction)
+        let server_to_client: Arc<dyn ServerToClientRequests> =
+            Arc::new(ServerToClientAdapter::new(bidirectional.clone()));
+
         Self {
             registry,
             config,
             custom_routes: HashMap::new(),
             resource_subscriptions: DashMap::new(),
-            bidirectional: BidirectionalRouter::new(),
+            bidirectional,
             handlers: ProtocolHandlers::new(handler_context),
+            server_to_client,
         }
     }
 
@@ -151,6 +172,10 @@ impl RequestRouter {
 
     /// Route a JSON-RPC request to the appropriate handler
     pub async fn route(&self, request: JsonRpcRequest, ctx: RequestContext) -> JsonRpcResponse {
+        // Inject server-to-client capabilities into context for tool-initiated requests
+        // Enables type-safe sampling, elicitation, and roots listing with full context propagation
+        let ctx = ctx.with_server_to_client(Arc::clone(&self.server_to_client));
+
         // Validate request if enabled
         if self.config.validate_requests
             && let Err(e) = validate_request(&request)
@@ -230,6 +255,7 @@ impl RequestRouter {
         requests: Vec<JsonRpcRequest>,
         ctx: RequestContext,
     ) -> Vec<JsonRpcResponse> {
+        // Note: Server capabilities are injected in route() for each request
         let max_in_flight = self.config.max_concurrent_requests.max(1);
         stream::iter(requests.into_iter())
             .map(|req| {
@@ -321,12 +347,89 @@ impl Clone for RequestRouter {
             resource_subscriptions: DashMap::new(),
             bidirectional: self.bidirectional.clone(),
             handlers: ProtocolHandlers::new(HandlerContext::new(Arc::clone(&self.registry))),
+            server_to_client: Arc::clone(&self.server_to_client),
         }
     }
 }
 
-// TODO: Implement ServerCapabilities trait for RequestRouter
-// This will be needed for server-initiated requests functionality
+// Design Note: ServerCapabilities trait implementation
+//
+// RequestRouter currently uses BidirectionalRouter for server-initiated requests
+// (sampling, elicitation, roots) instead of directly implementing the ServerCapabilities
+// trait from turbomcp_core::context::capabilities.
+//
+// Current Pattern:
+// - RequestRouter contains BidirectionalRouter which handles server-to-client requests
+// - BidirectionalRouter uses ServerRequestDispatcher trait for transport-agnostic dispatch
+// - This pattern provides better separation of concerns and testability
+//
+// Alternative (not implemented):
+// - RequestRouter could implement ServerCapabilities trait directly
+// - This would allow passing router as &dyn ServerCapabilities to tools
+// - Current pattern is preferred as it keeps routing and bidirectional concerns separate
+//
+// See: crates/turbomcp-server/src/routing/bidirectional.rs for current implementation
 
 /// Router alias for convenience
 pub type Router = RequestRouter;
+
+// ===================================================================
+// JsonRpcHandler Implementation - For HTTP Transport Integration
+// ===================================================================
+
+#[async_trait::async_trait]
+impl turbomcp_core::JsonRpcHandler for RequestRouter {
+    /// Handle a JSON-RPC request via the HTTP transport
+    ///
+    /// This implementation enables `RequestRouter` to be used directly with
+    /// the HTTP transport layer (`run_server`), supporting the builder pattern
+    /// for programmatic server construction.
+    ///
+    /// # Architecture
+    ///
+    /// - Parses raw JSON into `JsonRpcRequest`
+    /// - Creates default `RequestContext` (no auth/session for HTTP)
+    /// - Routes through the existing `route()` method
+    /// - Serializes `JsonRpcResponse` back to JSON
+    ///
+    /// This provides the same request handling as the macro pattern but
+    /// allows runtime handler registration via `ServerBuilder`.
+    async fn handle_request(&self, req_value: serde_json::Value) -> serde_json::Value {
+        // Parse the request
+        let req: JsonRpcRequest = match serde_json::from_value(req_value) {
+            Ok(r) => r,
+            Err(e) => {
+                return serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32700,
+                        "message": format!("Parse error: {}", e)
+                    },
+                    "id": null
+                });
+            }
+        };
+
+        // Create default context for HTTP requests
+        // Note: For authenticated HTTP requests, middleware should inject auth info
+        let ctx = RequestContext::default();
+
+        // Route the request through the standard routing system
+        let response = self.route(req, ctx).await;
+
+        // Serialize response
+        match serde_json::to_value(&response) {
+            Ok(v) => v,
+            Err(e) => {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32603,
+                        "message": format!("Internal error: failed to serialize response: {}", e)
+                    },
+                    "id": response.id
+                })
+            }
+        }
+    }
+}

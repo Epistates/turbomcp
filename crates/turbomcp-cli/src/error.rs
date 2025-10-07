@@ -5,6 +5,7 @@ use thiserror::Error;
 
 /// CLI-specific errors with rich context
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum CliError {
     /// Transport layer errors
     #[error("Transport error: {0}")]

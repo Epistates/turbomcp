@@ -127,6 +127,7 @@ pub const SERVER_NAME: &str = "turbomcp-server";
 /// Server version
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod capabilities;
 pub mod config;
 pub mod elicitation;
 pub mod error;

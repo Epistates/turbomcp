@@ -3,8 +3,6 @@
 //! This middleware handles JWT token verification and user identity extraction.
 //! It follows security best practices for token validation and claim extraction.
 
-#![cfg(feature = "auth")]
-
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -70,10 +68,19 @@ pub struct AuthConfig {
     pub validate_nbf: bool,
 }
 
-impl Default for AuthConfig {
-    fn default() -> Self {
+impl AuthConfig {
+    /// Create new auth config with explicit secret
+    ///
+    /// # Example
+    /// ```rust
+    /// use turbomcp_server::middleware::auth::AuthConfig;
+    /// use secrecy::Secret;
+    ///
+    /// let config = AuthConfig::new(Secret::new("your-secret-key".to_string()));
+    /// ```
+    pub fn new(secret: Secret<String>) -> Self {
         Self {
-            secret: Secret::new("your-secret-key".to_string()), // TODO: Load from environment
+            secret,
             algorithm: Algorithm::HS256,
             issuer: None,
             audience: None,
@@ -82,15 +89,58 @@ impl Default for AuthConfig {
             validate_nbf: true,
         }
     }
-}
 
-impl AuthConfig {
-    /// Create new auth config with secret
-    pub fn new(secret: Secret<String>) -> Self {
-        Self {
-            secret,
-            ..Self::default()
-        }
+    /// Load auth config from environment variables
+    ///
+    /// Required environment variables:
+    /// - `AUTH_JWT_SECRET`: JWT secret key
+    ///
+    /// Optional environment variables:
+    /// - `AUTH_JWT_ALGORITHM`: Algorithm (default: HS256)
+    /// - `AUTH_JWT_ISSUER`: Required issuer
+    /// - `AUTH_JWT_AUDIENCE`: Required audience
+    /// - `AUTH_JWT_LEEWAY`: Clock skew leeway in seconds (default: 60)
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// use turbomcp_server::middleware::auth::AuthConfig;
+    ///
+    /// let config = AuthConfig::from_env().expect("Failed to load auth config");
+    /// ```
+    ///
+    /// # Errors
+    /// Returns error if `AUTH_JWT_SECRET` is not set.
+    pub fn from_env() -> Result<Self, String> {
+        let secret = std::env::var("AUTH_JWT_SECRET")
+            .map_err(|_| "AUTH_JWT_SECRET environment variable not set. See PRODUCTION_DEPLOYMENT.md for configuration guide.".to_string())?;
+
+        let algorithm = std::env::var("AUTH_JWT_ALGORITHM")
+            .ok()
+            .and_then(|s| match s.as_str() {
+                "HS256" => Some(Algorithm::HS256),
+                "HS384" => Some(Algorithm::HS384),
+                "HS512" => Some(Algorithm::HS512),
+                _ => None,
+            })
+            .unwrap_or(Algorithm::HS256);
+
+        let issuer = std::env::var("AUTH_JWT_ISSUER").ok();
+        let audience = std::env::var("AUTH_JWT_AUDIENCE").ok();
+
+        let leeway = std::env::var("AUTH_JWT_LEEWAY")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(60);
+
+        Ok(Self {
+            secret: Secret::new(secret),
+            algorithm,
+            issuer,
+            audience,
+            leeway,
+            validate_exp: true,
+            validate_nbf: true,
+        })
     }
 
     /// Set the algorithm

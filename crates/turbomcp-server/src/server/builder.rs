@@ -60,7 +60,7 @@ impl ServerBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ServerError::Handler`] if:
+    /// Returns [`crate::ServerError::Handler`] if:
     /// - The handler limit is exceeded
     /// - Handler validation fails
     /// - A handler with the same name already exists
@@ -76,7 +76,7 @@ impl ServerBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ServerError::Handler`] if:
+    /// Returns [`crate::ServerError::Handler`] if:
     /// - The handler limit is exceeded
     /// - Handler validation fails
     /// - A handler with the same name already exists
@@ -92,7 +92,7 @@ impl ServerBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ServerError::Handler`] if:
+    /// Returns [`crate::ServerError::Handler`] if:
     /// - The handler limit is exceeded
     /// - Handler validation fails
     /// - A handler with the same URI already exists

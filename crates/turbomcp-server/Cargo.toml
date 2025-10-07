@@ -36,8 +36,8 @@ regex = "1.10"
 jsonschema = { version = "0.17.1", default-features = false, features = ["resolve-file"] }
 
 # Middleware dependencies (optional - only needed for HTTP/advanced features)
-tower = { version = "0.4", features = ["util"] }  # Core abstraction layer (lightweight)
-tower-http = { version = "0.5", features = ["cors", "auth", "request-id", "trace", "timeout", "limit", "compression-br", "add-extension", "set-header", "sensitive-headers"], optional = true }
+tower = { workspace = true }  # Core abstraction layer (uses workspace 0.5.2)
+tower-http = { workspace = true, optional = true }
 tower_governor = { version = "0.7", optional = true }
 jsonwebtoken = { version = "9.2", optional = true }
 secrecy = { version = "0.8", features = ["serde"], optional = true }

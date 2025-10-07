@@ -5,6 +5,7 @@ pub type ServerResult<T> = Result<T, ServerError>;
 
 /// Comprehensive server error types
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ServerError {
     /// Core errors
     #[error("Core error: {0}")]

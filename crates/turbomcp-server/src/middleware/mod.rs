@@ -18,8 +18,6 @@
 //! **Note**: Authorization/RBAC should be handled at the application layer, not in the
 //! protocol middleware. The MCP server focuses on protocol-level concerns.
 
-#![cfg(feature = "middleware")]
-
 pub mod audit;
 #[cfg(feature = "auth")]
 pub mod auth;

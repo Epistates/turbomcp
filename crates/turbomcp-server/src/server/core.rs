@@ -68,8 +68,10 @@ pub(crate) fn should_log_for_stdio() -> bool {
 /// This is intentional and follows Tower's design - users clone the server instead of
 /// Arc-wrapping it.
 ///
-/// **Current Status**: The service field is built but not yet wired into the request
-/// processing pipeline. See `server/transport.rs` TODOs for integration plan.
+/// **Architecture Note**: The service field provides tower::Service integration for
+/// advanced middleware patterns. The request processing pipeline currently uses the
+/// RequestRouter directly. Tower integration can be added via custom middleware layers
+/// when needed for specific use cases (e.g., custom rate limiting, advanced tracing).
 #[derive(Clone)]
 pub struct McpServer {
     /// Server configuration (Clone-able)
@@ -215,7 +217,8 @@ impl McpServer {
         ));
         // Build middleware stack configuration
         #[cfg(feature = "middleware")]
-        let stack = crate::middleware::MiddlewareStack::new();
+        #[cfg_attr(not(feature = "rate-limiting"), allow(unused_mut))]
+        let mut stack = crate::middleware::MiddlewareStack::new();
 
         // Auto-install rate limiting if enabled in config
         #[cfg(feature = "rate-limiting")]
@@ -404,7 +407,7 @@ impl McpServer {
     ///
     /// # Errors
     ///
-    /// Returns [`ServerError::Transport`] if:
+    /// Returns [`crate::ServerError::Transport`] if:
     /// - STDIO transport connection fails
     /// - Message sending/receiving fails
     /// - Transport disconnection fails
@@ -447,34 +450,196 @@ impl McpServer {
         self.lifecycle.health().await
     }
 
-    /// Run server with HTTP transport - Simple HTTP/JSON-RPC server
-    /// Run server with HTTP transport
+    /// Run server with HTTP transport using default configuration
     ///
     /// This provides a working HTTP server with:
-    /// - Standard HTTP POST for request/response at `/mcp`
-    /// - Full MCP protocol compliance
+    /// - Standard HTTP POST/GET/DELETE for MCP protocol at `/mcp`
+    /// - Full MCP 2025-06-18 protocol compliance
     /// - Graceful shutdown support
+    /// - Default rate limiting (100 req/60s)
+    /// - Default security settings (localhost allowed, CORS disabled)
     ///
-    /// Note: WebSocket and SSE support temporarily disabled due to DashMap lifetime
-    /// variance issues that require architectural changes to the handler registry.
+    /// For custom configuration (rate limits, security, CORS), use `run_http_with_config`.
+    ///
+    /// # Examples
+    ///
+    /// ## Basic usage with default configuration
+    /// ```no_run
+    /// use turbomcp_server::ServerBuilder;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let server = ServerBuilder::new()
+    ///         .name("my-server")
+    ///         .version("1.0.0")
+    ///         .build();
+    ///
+    ///     server.run_http("127.0.0.1:3000").await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// ## With custom configuration
+    /// ```no_run
+    /// use turbomcp_server::ServerBuilder;
+    /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// use std::time::Duration;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let server = ServerBuilder::new()
+    ///         .name("my-server")
+    ///         .version("1.0.0")
+    ///         .build();
+    ///
+    ///     let config = StreamableHttpConfigBuilder::new()
+    ///         .without_rate_limit()  // For benchmarking
+    ///         .allow_any_origin(true)  // Enable CORS
+    ///         .build();
+    ///
+    ///     server.run_http_with_config("127.0.0.1:3000", config).await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ServerError::Transport`] if:
+    /// - Address resolution fails
+    /// - HTTP server fails to start
+    /// - Transport disconnection fails
     #[cfg(feature = "http")]
     #[tracing::instrument(skip(self), fields(
         transport = "http",
         service_name = %self.config.name,
         service_version = %self.config.version,
-        addr = ?_addr
+        addr = ?addr
     ))]
     pub async fn run_http<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
         self,
-        _addr: A,
+        addr: A,
     ) -> ServerResult<()> {
-        // HTTP support is now provided via compile-time routing in the macro-generated code
-        // This avoids all DashMap lifetime issues and provides maximum performance
-        Err(crate::ServerError::configuration(
-            "Direct HTTP support has been replaced with compile-time routing. \
-             Use the #[server] macro which generates into_mcp_router() and run_http() methods \
-             with MCP 2025-06-18 compliance, zero lifetime issues, and maximum performance.",
-        ))
+        use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+
+        // Build default configuration
+        let config = StreamableHttpConfigBuilder::new().build();
+
+        self.run_http_with_config(addr, config).await
+    }
+
+    /// Run server with HTTP transport and custom configuration
+    ///
+    /// This provides full control over HTTP server configuration including:
+    /// - Rate limiting (requests per time window, or disabled entirely)
+    /// - Security settings (CORS, origin validation, authentication)
+    /// - Network settings (bind address, endpoint path, keep-alive)
+    /// - Advanced settings (replay buffer size, etc.)
+    ///
+    /// # Examples
+    ///
+    /// ## Benchmarking configuration (no rate limits)
+    /// ```no_run
+    /// use turbomcp_server::ServerBuilder;
+    /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let server = ServerBuilder::new()
+    ///         .name("benchmark-server")
+    ///         .version("1.0.0")
+    ///         .build();
+    ///
+    ///     let config = StreamableHttpConfigBuilder::new()
+    ///         .without_rate_limit()  // Disable rate limiting
+    ///         .build();
+    ///
+    ///     server.run_http_with_config("127.0.0.1:3000", config).await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// ## Production configuration (secure, rate limited)
+    /// ```no_run
+    /// use turbomcp_server::ServerBuilder;
+    /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// use std::time::Duration;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let server = ServerBuilder::new()
+    ///         .name("production-server")
+    ///         .version("1.0.0")
+    ///         .build();
+    ///
+    ///     let config = StreamableHttpConfigBuilder::new()
+    ///         .with_rate_limit(1000, Duration::from_secs(60))  // 1000 req/min
+    ///         .allow_any_origin(false)  // Strict CORS
+    ///         .require_authentication(true)  // Require auth
+    ///         .build();
+    ///
+    ///     server.run_http_with_config("127.0.0.1:3000", config).await?;
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::ServerError::Transport`] if:
+    /// - Address resolution fails
+    /// - HTTP server fails to start
+    /// - Transport disconnection fails
+    #[cfg(feature = "http")]
+    #[tracing::instrument(skip(self, config), fields(
+        transport = "http",
+        service_name = %self.config.name,
+        service_version = %self.config.version,
+        addr = ?addr
+    ))]
+    pub async fn run_http_with_config<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
+        self,
+        addr: A,
+        config: turbomcp_transport::streamable_http_v2::StreamableHttpConfig,
+    ) -> ServerResult<()> {
+        use turbomcp_transport::streamable_http_v2::run_server;
+
+        info!("Starting MCP server with HTTP transport");
+        info!(
+            config = ?config,
+            "HTTP configuration loaded"
+        );
+
+        self.lifecycle.start().await;
+
+        // Resolve address to string
+        let socket_addr = addr
+            .to_socket_addrs()
+            .map_err(|e| crate::ServerError::configuration(format!("Invalid address: {}", e)))?
+            .next()
+            .ok_or_else(|| crate::ServerError::configuration("No address resolved"))?;
+
+        info!("Resolved address: {}", socket_addr);
+
+        // Use provided config but override bind_addr with resolved address
+        let mut final_config = config;
+        final_config.bind_addr = socket_addr.to_string();
+
+        info!(
+            bind_addr = %final_config.bind_addr,
+            endpoint_path = %final_config.endpoint_path,
+            "HTTP server configuration finalized"
+        );
+
+        // Run HTTP server with the router
+        // The router implements the required handler trait for HTTP transport
+        run_server(final_config, self.router.clone())
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "HTTP server failed");
+                crate::ServerError::handler(e.to_string())
+            })?;
+
+        info!("HTTP server shutdown complete");
+        Ok(())
     }
 
     /// Run server with WebSocket transport (progressive enhancement - runtime configuration)
