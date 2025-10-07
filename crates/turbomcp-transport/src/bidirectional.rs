@@ -12,7 +12,7 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::time::timeout;
-use turbomcp_core::ServerInitiatedType;
+use turbomcp_protocol::ServerInitiatedType;
 use uuid::Uuid;
 
 use crate::core::{
@@ -561,7 +561,7 @@ mod tests {
         });
 
         let message = TransportMessage {
-            id: turbomcp_core::MessageId::from("test-message-id"),
+            id: turbomcp_protocol::MessageId::from("test-message-id"),
             payload: br#"{"method": "test"}"#.to_vec().into(),
             metadata: Default::default(),
         };

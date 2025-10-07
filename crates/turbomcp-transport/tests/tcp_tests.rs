@@ -195,7 +195,7 @@ mod tcp_tests {
 
         assert!(caps.supports_bidirectional);
         assert!(caps.supports_streaming);
-        assert_eq!(caps.max_message_size, Some(1024 * 1024)); // 1MB per turbomcp_core::MAX_MESSAGE_SIZE
+        assert_eq!(caps.max_message_size, Some(1024 * 1024)); // 1MB per turbomcp_protocol::MAX_MESSAGE_SIZE
     }
 
     #[test]
@@ -231,7 +231,7 @@ mod tcp_tests {
     #[tokio::test]
     async fn test_tcp_transport_send_when_disconnected() {
         use bytes::Bytes;
-        use turbomcp_core::MessageId;
+        use turbomcp_protocol::MessageId;
         use turbomcp_transport::core::TransportMessage;
 
         let transport = TcpTransport::new_server("127.0.0.1:8080".parse().unwrap());

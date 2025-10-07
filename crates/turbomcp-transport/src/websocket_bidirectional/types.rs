@@ -14,7 +14,7 @@ use serde_json::json;
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::Message};
-use turbomcp_protocol::elicitation::{ElicitationCreateRequest, ElicitationCreateResult};
+use turbomcp_protocol::types::{ElicitRequest, ElicitResult};
 use uuid::Uuid;
 
 use super::config::WebSocketBidirectionalConfig;
@@ -36,10 +36,10 @@ pub struct PendingElicitation {
     pub request_id: String,
 
     /// The elicitation request
-    pub request: ElicitationCreateRequest,
+    pub request: ElicitRequest,
 
     /// Response channel
-    pub response_tx: oneshot::Sender<ElicitationCreateResult>,
+    pub response_tx: oneshot::Sender<ElicitResult>,
 
     /// Timeout deadline
     pub deadline: tokio::time::Instant,
@@ -51,8 +51,8 @@ pub struct PendingElicitation {
 impl PendingElicitation {
     /// Create a new pending elicitation
     pub fn new(
-        request: ElicitationCreateRequest,
-        response_tx: oneshot::Sender<ElicitationCreateResult>,
+        request: ElicitRequest,
+        response_tx: oneshot::Sender<ElicitResult>,
         timeout: Duration,
     ) -> Self {
         Self {
@@ -330,16 +330,21 @@ mod tests {
 
     #[test]
     fn test_pending_elicitation_creation() {
-        use std::collections::HashMap;
-        use turbomcp_protocol::elicitation::ElicitationSchema;
+        use turbomcp_protocol::types::ElicitationSchema;
 
-        let request = ElicitationCreateRequest {
-            message: "Test message".to_string(),
-            requested_schema: ElicitationSchema {
-                schema_type: "object".to_string(),
-                properties: HashMap::new(),
-                required: None,
+        let request = ElicitRequest {
+            params: turbomcp_protocol::types::ElicitRequestParams {
+                message: "Test message".to_string(),
+                schema: ElicitationSchema {
+                    schema_type: "object".to_string(),
+                    properties: None,
+                    required: None,
+                    additional_properties: None,
+                },
+                timeout_ms: None,
+                cancellable: Some(true),
             },
+            _meta: None,
         };
         let (tx, _rx) = oneshot::channel();
         let timeout = Duration::from_secs(30);

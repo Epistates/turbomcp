@@ -10,7 +10,7 @@ use futures::{Sink, Stream};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::mpsc;
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 
 /// Result type for transport operations
 pub type TransportResult<T> = std::result::Result<T, TransportError>;
@@ -688,7 +688,7 @@ impl Default for TransportEventEmitter {
 impl Default for TransportCapabilities {
     fn default() -> Self {
         Self {
-            max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE),
+            max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE),
             supports_compression: false,
             supports_streaming: false,
             supports_bidirectional: true,
@@ -854,7 +854,7 @@ mod tests {
     #[test]
     fn test_transport_capabilities_default() {
         let caps = TransportCapabilities::default();
-        assert_eq!(caps.max_message_size, Some(turbomcp_core::MAX_MESSAGE_SIZE));
+        assert_eq!(caps.max_message_size, Some(turbomcp_protocol::MAX_MESSAGE_SIZE));
         assert!(caps.supports_bidirectional);
     }
 

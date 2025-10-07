@@ -12,7 +12,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use super::types::WebSocketBidirectionalTransport;
 use crate::core::TransportState;
-use turbomcp_protocol::elicitation::{ElicitationAction, ElicitationCreateResult};
+use turbomcp_protocol::types::{ElicitationAction, ElicitResult};
 
 impl WebSocketBidirectionalTransport {
     /// Spawn keep-alive task to send periodic ping messages
@@ -106,10 +106,10 @@ impl WebSocketBidirectionalTransport {
                             request_id, session_id, pending.retry_count
                         );
 
-                        let result = ElicitationCreateResult {
+                        let result = ElicitResult {
                             action: ElicitationAction::Cancel,
                             content: None,
-                            meta: None,
+                            _meta: None,
                         };
 
                         // Send timeout result to waiting caller

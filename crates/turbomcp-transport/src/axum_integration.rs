@@ -27,7 +27,7 @@
 //! #         &self,
 //! #         _request: serde_json::Value,
 //! #         _session: &SessionInfo,
-//! #     ) -> turbomcp_core::Result<serde_json::Value> {
+//! #     ) -> turbomcp_protocol::Result<serde_json::Value> {
 //! #         Ok(serde_json::json!({}))
 //! #     }
 //! # }
@@ -61,7 +61,7 @@
 //! #         &self,
 //! #         _request: serde_json::Value,
 //! #         _session: &SessionInfo,
-//! #     ) -> turbomcp_core::Result<serde_json::Value> {
+//! #     ) -> turbomcp_protocol::Result<serde_json::Value> {
 //! #         Ok(serde_json::json!({}))
 //! #     }
 //! # }
@@ -125,7 +125,7 @@ use tracing::{debug, error, info, trace, warn};
 #[cfg(feature = "http")]
 use crate::tower::{SessionInfo, SessionManager};
 #[cfg(feature = "http")]
-use turbomcp_core::Result as McpResult;
+use turbomcp_protocol::Result as McpResult;
 
 #[cfg(feature = "http")]
 /// MCP service trait for handling MCP requests
@@ -803,7 +803,7 @@ pub trait AxumMcpExt {
     /// #         &self,
     /// #         _request: serde_json::Value,
     /// #         _session: &SessionInfo,
-    /// #     ) -> turbomcp_core::Result<serde_json::Value> {
+    /// #     ) -> turbomcp_protocol::Result<serde_json::Value> {
     /// #         Ok(serde_json::json!({}))
     /// #     }
     /// # }

@@ -27,7 +27,7 @@ pub mod common {
 
     use super::super::*;
     use crate::tower::SessionInfo;
-    use turbomcp_core::Result as McpResult;
+    use turbomcp_protocol::Result as McpResult;
 
     /// Test MCP service implementation for use in tests
     #[derive(Clone, Debug)]

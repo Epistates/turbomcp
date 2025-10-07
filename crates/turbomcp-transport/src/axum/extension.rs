@@ -24,7 +24,7 @@ use crate::axum::{
     middleware::*,
     types::{McpAppState, McpService},
 };
-use turbomcp_core::SessionManager;
+use turbomcp_protocol::SessionManager;
 
 /// Axum integration extension trait
 ///
@@ -81,7 +81,7 @@ pub trait AxumMcpExt {
     /// #         &self,
     /// #         _request: serde_json::Value,
     /// #         _session: &SessionInfo,
-    /// #     ) -> turbomcp_core::Result<serde_json::Value> {
+    /// #     ) -> turbomcp_protocol::Result<serde_json::Value> {
     /// #         Ok(serde_json::json!({}))
     /// #     }
     /// # }

@@ -89,7 +89,7 @@ impl McpAppState {
         &self,
         request: serde_json::Value,
         session: &crate::tower::SessionInfo,
-    ) -> turbomcp_core::Result<serde_json::Value> {
+    ) -> turbomcp_protocol::Result<serde_json::Value> {
         self.service.process_request(request, session).await
     }
 }

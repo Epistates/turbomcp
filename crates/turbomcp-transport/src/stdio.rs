@@ -25,7 +25,7 @@ use tokio::io::{BufReader, Stdin, Stdout};
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use tracing::{debug, error, trace, warn};
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 use uuid::Uuid;
 
 use crate::core::{
@@ -87,7 +87,7 @@ impl StdioTransport {
         Self {
             state: Arc::new(StdMutex::new(TransportState::Disconnected)),
             capabilities: TransportCapabilities {
-                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE),
+                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE),
                 supports_compression: false,
                 supports_streaming: true,
                 supports_bidirectional: true,
@@ -125,7 +125,7 @@ impl StdioTransport {
         Self {
             state: Arc::new(StdMutex::new(TransportState::Disconnected)),
             capabilities: TransportCapabilities {
-                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE),
+                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE),
                 supports_compression: false,
                 supports_streaming: true,
                 supports_bidirectional: true,

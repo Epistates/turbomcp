@@ -362,7 +362,7 @@ mod tests {
     use crate::core::TransportMessageMetadata;
     use crate::websocket_bidirectional::config::WebSocketBidirectionalConfig;
     use bytes::Bytes;
-    use turbomcp_core::MessageId;
+    use turbomcp_protocol::MessageId;
 
     #[tokio::test]
     async fn test_start_stop_correlation() {

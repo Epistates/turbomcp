@@ -16,7 +16,7 @@ use crate::core::{
     Transport, TransportCapabilities, TransportConfig, TransportError, TransportMessage,
     TransportMessageMetadata, TransportMetrics, TransportResult, TransportState, TransportType,
 };
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 
 #[async_trait]
 impl Transport for WebSocketBidirectionalTransport {

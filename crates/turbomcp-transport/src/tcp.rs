@@ -16,7 +16,7 @@ use crate::core::{
     AtomicMetrics, Transport, TransportCapabilities, TransportError, TransportMessage,
     TransportMetrics, TransportResult, TransportState, TransportType,
 };
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 
 /// TCP transport implementation
 #[derive(Debug)]
@@ -52,7 +52,7 @@ impl TcpTransport {
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
-                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
+                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
             state: Arc::new(StdMutex::new(TransportState::Disconnected)),
@@ -72,7 +72,7 @@ impl TcpTransport {
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
-                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
+                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
             state: Arc::new(StdMutex::new(TransportState::Disconnected)),
@@ -222,7 +222,7 @@ async fn handle_tcp_connection_framed(
                 // Validate message size (1MB limit for security)
                 if let Err(e) = crate::security::validate_message_size(
                     line.as_bytes(),
-                    turbomcp_core::MAX_MESSAGE_SIZE,
+                    turbomcp_protocol::MAX_MESSAGE_SIZE,
                 ) {
                     error!("Message size validation failed from {}: {}", addr, e);
                     break;

@@ -28,7 +28,7 @@ use crate::core::{
     AtomicMetrics, Transport, TransportCapabilities, TransportError, TransportEventEmitter,
     TransportMessage, TransportMetrics, TransportResult, TransportState, TransportType,
 };
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 
 /// Session identifier for tracking connections in Tower services
 pub type SessionId = String;
@@ -618,7 +618,7 @@ impl Transport for TowerTransportAdapter {
 }
 
 // Import alias to avoid conflicts
-use turbomcp_core::Result as McpResult;
+use turbomcp_protocol::Result as McpResult;
 
 #[cfg(test)]
 mod tests {

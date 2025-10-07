@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use turbomcp_core::{MessageId, RequestContext};
+use turbomcp_protocol::{MessageId, RequestContext};
 use uuid::Uuid;
 
 use crate::core::{

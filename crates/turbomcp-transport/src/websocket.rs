@@ -6,7 +6,7 @@ use futures::{SinkExt as _, StreamExt as _};
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 
 use crate::core::{
     Transport, TransportCapabilities, TransportError, TransportMessage, TransportMetrics,

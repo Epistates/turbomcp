@@ -23,7 +23,7 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::time::sleep;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 use turbomcp_transport::core::{
     Transport, TransportMessage, TransportMessageMetadata, TransportState,
 };

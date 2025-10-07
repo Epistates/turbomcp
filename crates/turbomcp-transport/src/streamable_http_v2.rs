@@ -294,7 +294,7 @@ impl Session {
 }
 
 /// Shared application state
-struct AppState<H: turbomcp_core::JsonRpcHandler> {
+struct AppState<H: turbomcp_protocol::JsonRpcHandler> {
     sessions: Arc<RwLock<HashMap<String, Session>>>,
     security_validator: Arc<SecurityValidator>,
     session_manager: Arc<SessionSecurityManager>,
@@ -302,7 +302,7 @@ struct AppState<H: turbomcp_core::JsonRpcHandler> {
     handler: Arc<H>,
 }
 
-impl<H: turbomcp_core::JsonRpcHandler> Clone for AppState<H> {
+impl<H: turbomcp_protocol::JsonRpcHandler> Clone for AppState<H> {
     fn clone(&self) -> Self {
         Self {
             sessions: self.sessions.clone(),
@@ -328,7 +328,7 @@ impl<H: turbomcp_core::JsonRpcHandler> Clone for AppState<H> {
 /// # Returns
 ///
 /// Axum router configured with GET/POST/DELETE handlers for full MCP 2025-06-18 compliance
-pub fn create_router<H: turbomcp_core::JsonRpcHandler>(
+pub fn create_router<H: turbomcp_protocol::JsonRpcHandler>(
     config: StreamableHttpConfig,
     handler: Arc<H>,
 ) -> Router {
@@ -358,7 +358,7 @@ pub fn create_router<H: turbomcp_core::JsonRpcHandler>(
 /// - First event MUST be type="endpoint" with message endpoint URL
 /// - Supports Last-Event-ID for resumability
 /// - Can send server requests and notifications
-async fn mcp_get_handler<H: turbomcp_core::JsonRpcHandler>(
+async fn mcp_get_handler<H: turbomcp_protocol::JsonRpcHandler>(
     State(state): State<AppState<H>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -452,7 +452,7 @@ async fn mcp_get_handler<H: turbomcp_core::JsonRpcHandler>(
 /// - Accept header MUST include both application/json and text/event-stream
 /// - For requests: Can return SSE stream OR JSON response
 /// - For notifications/responses: Return 202 Accepted
-async fn mcp_post_handler<H: turbomcp_core::JsonRpcHandler>(
+async fn mcp_post_handler<H: turbomcp_protocol::JsonRpcHandler>(
     State(state): State<AppState<H>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -591,7 +591,7 @@ async fn mcp_post_handler<H: turbomcp_core::JsonRpcHandler>(
 /// Per MCP 2025-06-18:
 /// - Client sends DELETE with Mcp-Session-Id header
 /// - Server responds 200 OK or 405 Method Not Allowed
-async fn mcp_delete_handler<H: turbomcp_core::JsonRpcHandler>(
+async fn mcp_delete_handler<H: turbomcp_protocol::JsonRpcHandler>(
     State(state): State<AppState<H>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -616,7 +616,7 @@ async fn mcp_delete_handler<H: turbomcp_core::JsonRpcHandler>(
 // ============================================================================
 
 /// Validate security (Origin header, rate limiting, etc.)
-fn validate_security<H: turbomcp_core::JsonRpcHandler>(
+fn validate_security<H: turbomcp_protocol::JsonRpcHandler>(
     state: &AppState<H>,
     headers: &HeaderMap,
     client_ip: std::net::IpAddr,
@@ -648,7 +648,7 @@ fn convert_headers(headers: &HeaderMap) -> SecurityHeaders {
 }
 
 /// Get or create secure session
-async fn get_or_create_session<H: turbomcp_core::JsonRpcHandler>(
+async fn get_or_create_session<H: turbomcp_protocol::JsonRpcHandler>(
     state: &AppState<H>,
     session_id: Option<&str>,
     client_ip: std::net::IpAddr,
@@ -668,7 +668,7 @@ async fn get_or_create_session<H: turbomcp_core::JsonRpcHandler>(
 }
 
 /// Handle initialize request
-async fn handle_initialize<H: turbomcp_core::JsonRpcHandler>(
+async fn handle_initialize<H: turbomcp_protocol::JsonRpcHandler>(
     state: &AppState<H>,
     request: serde_json::Value,
     client_ip: std::net::IpAddr,
@@ -718,7 +718,7 @@ async fn handle_initialize<H: turbomcp_core::JsonRpcHandler>(
 }
 
 /// Broadcast message to session's SSE streams
-async fn broadcast_to_session<H: turbomcp_core::JsonRpcHandler>(
+async fn broadcast_to_session<H: turbomcp_protocol::JsonRpcHandler>(
     state: &AppState<H>,
     session_id: &str,
     message: serde_json::Value,
@@ -737,7 +737,7 @@ async fn broadcast_to_session<H: turbomcp_core::JsonRpcHandler>(
 }
 
 /// Handle request with SSE response
-async fn handle_request_with_sse<H: turbomcp_core::JsonRpcHandler>(
+async fn handle_request_with_sse<H: turbomcp_protocol::JsonRpcHandler>(
     state: &AppState<H>,
     session_id: &str,
     request: serde_json::Value,
@@ -815,7 +815,7 @@ async fn handle_request_with_sse<H: turbomcp_core::JsonRpcHandler>(
 /// # Returns
 ///
 /// Result indicating success or error
-pub async fn run_server<H: turbomcp_core::JsonRpcHandler>(
+pub async fn run_server<H: turbomcp_protocol::JsonRpcHandler>(
     config: StreamableHttpConfig,
     handler: Arc<H>,
 ) -> Result<(), Box<dyn std::error::Error>> {

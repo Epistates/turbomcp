@@ -16,18 +16,18 @@ use uuid::Uuid;
 
 use super::types::{PendingElicitation, WebSocketBidirectionalTransport};
 use crate::core::{TransportError, TransportMessage, TransportMessageMetadata, TransportResult};
-use turbomcp_core::MessageId;
-use turbomcp_protocol::elicitation::{
-    ElicitationAction, ElicitationCreateRequest, ElicitationCreateResult,
+use turbomcp_protocol::MessageId;
+use turbomcp_protocol::types::{
+    ElicitationAction, ElicitRequest, ElicitResult,
 };
 
 impl WebSocketBidirectionalTransport {
     /// Send an elicitation request
     pub async fn send_elicitation(
         &self,
-        request: ElicitationCreateRequest,
+        request: ElicitRequest,
         timeout_duration: Option<Duration>,
-    ) -> TransportResult<ElicitationCreateResult> {
+    ) -> TransportResult<ElicitResult> {
         // Check if we're at capacity
         if self.is_at_elicitation_capacity() {
             return Err(TransportError::SendFailed(format!(
@@ -124,11 +124,11 @@ impl WebSocketBidirectionalTransport {
     /// Send an elicitation with retry capability
     pub async fn send_elicitation_with_retry(
         &self,
-        request: ElicitationCreateRequest,
+        request: ElicitRequest,
         max_retries: u32,
         retry_delay: Duration,
         timeout_duration: Option<Duration>,
-    ) -> TransportResult<ElicitationCreateResult> {
+    ) -> TransportResult<ElicitResult> {
         let mut attempts = 0;
         let mut last_error = None;
 
@@ -183,7 +183,7 @@ impl WebSocketBidirectionalTransport {
 
             // Parse elicitation result from the result field
             if let Some(result) = json_value.get("result") {
-                match serde_json::from_value::<ElicitationCreateResult>(result.clone()) {
+                match serde_json::from_value::<ElicitResult>(result.clone()) {
                     Ok(elicitation_result) => {
                         let _ = pending.response_tx.send(elicitation_result);
                         return Ok(());
@@ -211,10 +211,10 @@ impl WebSocketBidirectionalTransport {
             }
 
             // Send cancel result for any error or malformed response
-            let cancel_result = ElicitationCreateResult {
+            let cancel_result = ElicitResult {
                 action: ElicitationAction::Cancel,
                 content: None,
-                meta: None,
+                _meta: None,
             };
             let _ = pending.response_tx.send(cancel_result);
             return Ok(());
@@ -251,10 +251,10 @@ impl WebSocketBidirectionalTransport {
     /// Cancel a pending elicitation
     pub fn cancel_elicitation(&self, request_id: &str) -> bool {
         if let Some((_, pending)) = self.elicitations.remove(request_id) {
-            let cancel_result = ElicitationCreateResult {
+            let cancel_result = ElicitResult {
                 action: ElicitationAction::Cancel,
                 content: None,
-                meta: None,
+                _meta: None,
             };
             let _ = pending.response_tx.send(cancel_result);
             debug!(
@@ -362,7 +362,7 @@ pub struct ElicitationInfo {
     /// Request ID
     pub request_id: String,
     /// The elicitation request
-    pub request: ElicitationCreateRequest,
+    pub request: ElicitRequest,
     /// Timeout deadline
     pub deadline: tokio::time::Instant,
     /// Number of retries attempted

@@ -213,7 +213,7 @@ mod unix_tests {
     #[tokio::test]
     async fn test_unix_transport_send_when_disconnected() {
         use bytes::Bytes;
-        use turbomcp_core::MessageId;
+        use turbomcp_protocol::MessageId;
         use turbomcp_transport::core::TransportMessage;
 
         let transport = UnixTransport::new_server(PathBuf::from("/tmp/send.sock"));

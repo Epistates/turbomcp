@@ -25,7 +25,7 @@
 //! use turbomcp_transport::websocket_bidirectional::{
 //!     WebSocketBidirectionalTransport, WebSocketBidirectionalConfig
 //! };
-//! use turbomcp_protocol::elicitation::{ElicitationCreateRequest, ElicitationAction};
+//! use turbomcp_protocol::types::{ElicitRequest, ElicitRequestParams, ElicitationAction};
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create client configuration
@@ -38,7 +38,7 @@
 //! transport.connect().await?;
 //!
 //! // Send an elicitation request
-//! use turbomcp_protocol::elicitation::{ElicitationSchema, PrimitiveSchemaDefinition, StringSchema};
+//! use turbomcp_protocol::types::{ElicitationSchema, PrimitiveSchemaDefinition, StringSchema};
 //! let string_schema = StringSchema {
 //!     schema_type: "string".to_string(),
 //!     title: Some("Name".to_string()),
@@ -50,9 +50,14 @@
 //! };
 //! let schema = ElicitationSchema::new()
 //!     .add_property("name".to_string(), PrimitiveSchemaDefinition::String(string_schema));
-//! let request = ElicitationCreateRequest {
-//!     message: "Please provide your name".to_string(),
-//!     requested_schema: schema,
+//! let request = ElicitRequest {
+//!     params: ElicitRequestParams {
+//!         message: "Please provide your name".to_string(),
+//!         schema,
+//!         timeout_ms: None,
+//!         cancellable: Some(true),
+//!     },
+//!     _meta: None,
 //! };
 //!
 //! let result = transport.send_elicitation(request, None).await?;

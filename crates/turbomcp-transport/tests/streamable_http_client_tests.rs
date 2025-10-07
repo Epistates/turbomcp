@@ -12,7 +12,7 @@
 mod streamable_http_client_tests {
     use bytes::Bytes;
     use std::time::Duration;
-    use turbomcp_core::MessageId;
+    use turbomcp_protocol::MessageId;
     use turbomcp_transport::core::{Transport, TransportMessage};
     use turbomcp_transport::streamable_http_client::{
         RetryPolicy, StreamableHttpClientConfig, StreamableHttpClientTransport,

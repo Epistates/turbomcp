@@ -6,7 +6,7 @@
 #[cfg(feature = "http")]
 use crate::tower::SessionInfo;
 #[cfg(feature = "http")]
-use turbomcp_core::Result as McpResult;
+use turbomcp_protocol::Result as McpResult;
 
 #[cfg(feature = "http")]
 /// Core MCP service trait

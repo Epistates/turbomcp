@@ -20,7 +20,7 @@ use std::time::Duration;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 
 use crate::core::{
     Transport, TransportCapabilities, TransportError, TransportEventEmitter, TransportMessage,
@@ -192,7 +192,7 @@ impl StreamableHttpClientTransport {
             http_client,
             state: Arc::new(RwLock::new(TransportState::Disconnected)),
             capabilities: TransportCapabilities {
-                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE),
+                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE),
                 supports_compression: false,
                 supports_streaming: true,
                 supports_bidirectional: true,

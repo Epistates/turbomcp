@@ -225,7 +225,7 @@ mod tests {
         TransportCapabilities, TransportMessage, TransportMetrics, TransportState, TransportType,
     };
     use bytes::Bytes;
-    use turbomcp_core::MessageId;
+    use turbomcp_protocol::MessageId;
     use uuid::Uuid;
 
     #[derive(Debug)]

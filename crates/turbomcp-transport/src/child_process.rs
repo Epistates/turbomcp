@@ -31,7 +31,7 @@ use crate::core::{
     TransportEventEmitter, TransportMessage, TransportMetrics, TransportResult, TransportState,
     TransportType,
 };
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 
 /// Configuration for child process transport
 #[derive(Debug, Clone)]

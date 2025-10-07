@@ -17,7 +17,7 @@ use crate::core::{
     AtomicMetrics, Transport, TransportCapabilities, TransportError, TransportMessage,
     TransportMetrics, TransportResult, TransportState, TransportType,
 };
-use turbomcp_core::MessageId;
+use turbomcp_protocol::MessageId;
 
 /// Unix domain socket transport implementation with integrated security
 #[derive(Debug)]
@@ -53,7 +53,7 @@ impl UnixTransport {
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
-                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
+                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
             state: Arc::new(StdMutex::new(TransportState::Disconnected)),
@@ -73,7 +73,7 @@ impl UnixTransport {
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
-                max_message_size: Some(turbomcp_core::MAX_MESSAGE_SIZE), // 1MB for security
+                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
             state: Arc::new(StdMutex::new(TransportState::Disconnected)),
@@ -242,7 +242,7 @@ async fn handle_unix_connection_framed(
                 // Validate message size (1MB limit for security)
                 if let Err(e) = crate::security::validate_message_size(
                     line.as_bytes(),
-                    turbomcp_core::MAX_MESSAGE_SIZE,
+                    turbomcp_protocol::MAX_MESSAGE_SIZE,
                 ) {
                     error!("Message size validation failed from Unix socket: {}", e);
                     break;
