@@ -9,7 +9,7 @@ use thiserror::Error;
 pub enum CliError {
     /// Transport layer errors
     #[error("Transport error: {0}")]
-    Transport(#[from] turbomcp_core::Error),
+    Transport(#[from] turbomcp_protocol::Error),
 
     /// Invalid command arguments
     #[error("Invalid arguments: {0}")]
@@ -144,8 +144,8 @@ impl From<&str> for CliError {
     }
 }
 
-impl From<Box<turbomcp_core::Error>> for CliError {
-    fn from(err: Box<turbomcp_core::Error>) -> Self {
+impl From<Box<turbomcp_protocol::Error>> for CliError {
+    fn from(err: Box<turbomcp_protocol::Error>) -> Self {
         Self::Transport(*err)
     }
 }

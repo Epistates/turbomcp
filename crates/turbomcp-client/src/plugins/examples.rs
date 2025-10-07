@@ -369,7 +369,7 @@ impl RetryPlugin {
         }
     }
 
-    fn should_retry(&self, error: &turbomcp_core::Error) -> bool {
+    fn should_retry(&self, error: &turbomcp_protocol::Error) -> bool {
         let error_string = error.to_string().to_lowercase();
 
         if self.config.retry_on_connection_error

@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 
 use super::super::config::AuthProviderType;
 use super::super::types::{AuthContext, AuthCredentials, AuthProvider, TokenInfo, UserInfo};
-use turbomcp_core::{Error as McpError, Result as McpResult};
+use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 /// API Key authentication provider
 #[derive(Debug)]

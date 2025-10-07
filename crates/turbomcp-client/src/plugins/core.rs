@@ -231,7 +231,7 @@ pub struct ResponseContext {
     pub response: Option<Value>,
 
     /// Error information (if failed)
-    pub error: Option<turbomcp_core::Error>,
+    pub error: Option<turbomcp_protocol::Error>,
 
     /// Request duration
     pub duration: Duration,
@@ -245,7 +245,7 @@ impl ResponseContext {
     pub fn new(
         request_context: RequestContext,
         response: Option<Value>,
-        error: Option<turbomcp_core::Error>,
+        error: Option<turbomcp_protocol::Error>,
         duration: Duration,
     ) -> Self {
         Self {
@@ -481,7 +481,7 @@ pub trait ClientPlugin: Send + Sync + fmt::Debug {
 mod tests {
     use super::*;
     use serde_json::json;
-    use turbomcp_core::MessageId;
+    use turbomcp_protocol::MessageId;
     use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcVersion};
 
     #[test]

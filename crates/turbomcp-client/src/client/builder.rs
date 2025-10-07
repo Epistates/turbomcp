@@ -20,7 +20,7 @@ use crate::ClientCapabilities;
 /// use turbomcp_transport::stdio::StdioTransport;
 /// use std::sync::Arc;
 ///
-/// # async fn example() -> turbomcp_core::Result<()> {
+/// # async fn example() -> turbomcp_protocol::Result<()> {
 /// let mut client = ClientBuilder::new()
 ///     .with_tools(true)
 ///     .with_prompts(true)
@@ -357,7 +357,7 @@ impl ClientBuilder {
     /// # Returns
     ///
     /// A configured client ready for initialization
-    pub async fn build<T: Transport>(self, transport: T) -> turbomcp_core::Result<crate::Client<T>> {
+    pub async fn build<T: Transport>(self, transport: T) -> turbomcp_protocol::Result<crate::Client<T>> {
         let mut client = crate::Client::new(transport);
 
         // Apply capabilities
@@ -443,7 +443,7 @@ impl ClientBuilder {
     /// ```rust,no_run
     /// use turbomcp_client::ClientBuilder;
     ///
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut client = ClientBuilder::new()
     ///     .with_tools(true)
     ///     .with_http("http://localhost:8080")
@@ -457,7 +457,7 @@ impl ClientBuilder {
     pub async fn with_http(
         self,
         base_url: impl Into<String>,
-    ) -> turbomcp_core::Result<crate::Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTransport>> {
+    ) -> turbomcp_protocol::Result<crate::Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTransport>> {
         use turbomcp_transport::streamable_http_client::{
             StreamableHttpClientTransport, StreamableHttpClientConfig, RetryPolicy,
         };
@@ -488,7 +488,7 @@ impl ClientBuilder {
     /// ```rust,no_run
     /// use turbomcp_client::ClientBuilder;
     ///
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let client = ClientBuilder::new()
     ///     .with_http_auth("https://api.example.com", "sk-1234")
     ///     .await?;
@@ -500,7 +500,7 @@ impl ClientBuilder {
         self,
         base_url: impl Into<String>,
         auth_token: impl Into<String>,
-    ) -> turbomcp_core::Result<crate::Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTransport>> {
+    ) -> turbomcp_protocol::Result<crate::Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTransport>> {
         use turbomcp_transport::streamable_http_client::{
             StreamableHttpClientTransport, StreamableHttpClientConfig, RetryPolicy,
         };

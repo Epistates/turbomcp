@@ -10,7 +10,7 @@ use tokio::sync::RwLock;
 
 use super::config::AuthConfig;
 use super::types::{AuthContext, AuthCredentials, AuthProvider};
-use turbomcp_core::{Error as McpError, Result as McpResult};
+use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 /// Authentication manager for coordinating multiple authentication providers
 #[derive(Debug)]

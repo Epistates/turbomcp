@@ -431,7 +431,7 @@ mod tests {
     use serde_json::json;
     use std::sync::Mutex;
     use tokio;
-    use turbomcp_core::MessageId;
+    use turbomcp_protocol::MessageId;
     use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcVersion};
 
     // Test plugin for validation

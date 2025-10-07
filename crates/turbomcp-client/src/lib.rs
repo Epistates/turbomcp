@@ -36,7 +36,7 @@
 //! use turbomcp_client::{Client, ClientBuilder};
 //! use turbomcp_transport::stdio::StdioTransport;
 //!
-//! # async fn example() -> turbomcp_core::Result<()> {
+//! # async fn example() -> turbomcp_protocol::Result<()> {
 //! // Create a client with stdio transport
 //! let transport = StdioTransport::new();
 //! let mut client = Client::new(transport);
@@ -129,7 +129,7 @@
 //! ```rust,no_run
 //! # use turbomcp_client::Client;
 //! # use turbomcp_transport::stdio::StdioTransport;
-//! # async fn example() -> turbomcp_core::Result<()> {
+//! # async fn example() -> turbomcp_protocol::Result<()> {
 //! # let mut client = Client::new(StdioTransport::new());
 //! match client.call_tool("my_tool", None).await {
 //!     Ok(result) => println!("Tool result: {:?}", result),
@@ -149,7 +149,7 @@ pub use client::{ConnectionInfo, ConnectionState, ManagerConfig, ServerGroup, Se
 
 use std::sync::Arc;
 
-use turbomcp_core::{Error, Result};
+use turbomcp_protocol::{Error, Result};
 use turbomcp_transport::Transport;
 
 // Note: Handler types are now used only in client/operations modules
@@ -204,7 +204,7 @@ pub struct ClientCapabilities {
 /// use turbomcp_client::Client;
 /// use turbomcp_transport::stdio::StdioTransport;
 ///
-/// # async fn example() -> turbomcp_core::Result<()> {
+/// # async fn example() -> turbomcp_protocol::Result<()> {
 /// let transport = StdioTransport::new();
 /// let mut client = Client::new(transport);
 ///
@@ -288,7 +288,7 @@ impl Default for ConnectionConfig {
 /// use turbomcp_client::ClientBuilder;
 /// use turbomcp_transport::stdio::StdioTransport;
 ///
-/// # async fn example() -> turbomcp_core::Result<()> {
+/// # async fn example() -> turbomcp_protocol::Result<()> {
 /// let client = ClientBuilder::new()
 ///     .with_tools(true)
 ///     .with_prompts(true)
@@ -711,7 +711,7 @@ impl ClientBuilder {
     /// use turbomcp_client::ClientBuilder;
     /// use turbomcp_transport::stdio::StdioTransport;
     ///
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let client = ClientBuilder::new()
     ///     .with_tools(true)
     ///     .with_prompts(true)
@@ -789,7 +789,7 @@ impl ClientBuilder {
     /// use turbomcp_transport::resilience::{RetryConfig, CircuitBreakerConfig, HealthCheckConfig};
     /// use std::time::Duration;
     ///
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let client = ClientBuilder::new()
     ///     .with_retry_config(RetryConfig {
     ///         max_attempts: 5,

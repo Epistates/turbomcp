@@ -4,7 +4,7 @@
 //! operations.
 
 use std::sync::atomic::Ordering;
-use turbomcp_core::{Error, Result};
+use turbomcp_protocol::{Error, Result};
 use turbomcp_protocol::types::{LogLevel, PingResult, SetLevelRequest, SetLevelResult};
 
 impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
@@ -30,7 +30,7 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// ```rust,no_run
     /// # use turbomcp_client::Client;
     /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut client = Client::new(StdioTransport::new());
     /// client.initialize().await?;
     ///
@@ -75,7 +75,7 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// # use turbomcp_client::Client;
     /// # use turbomcp_transport::stdio::StdioTransport;
     /// # use turbomcp_protocol::types::LogLevel;
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut client = Client::new(StdioTransport::new());
     /// client.initialize().await?;
     ///

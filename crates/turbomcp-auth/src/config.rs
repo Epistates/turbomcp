@@ -10,7 +10,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use turbomcp_core::{Error as McpError, Result as McpResult};
+use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 // DPoP support (feature-gated)
 #[cfg(feature = "dpop")]

@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use turbomcp_core::{Error, Result};
+use turbomcp_protocol::{Error, Result};
 use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
 use turbomcp_transport::{Transport, TransportMessage};
 
@@ -36,7 +36,7 @@ impl<T: Transport> ProtocolClient<T> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
-            id: turbomcp_core::MessageId::from(id.to_string()),
+            id: turbomcp_protocol::MessageId::from(id.to_string()),
             method: method.to_string(),
             params,
         };
@@ -46,7 +46,7 @@ impl<T: Transport> ProtocolClient<T> {
             .map_err(|e| Error::protocol(format!("Failed to serialize request: {e}")))?;
 
         let message = TransportMessage::new(
-            turbomcp_core::MessageId::from(format!("req-{id}")),
+            turbomcp_protocol::MessageId::from(format!("req-{id}")),
             payload.into(),
         );
         self.transport
@@ -89,7 +89,7 @@ impl<T: Transport> ProtocolClient<T> {
             .map_err(|e| Error::protocol(format!("Failed to serialize notification: {e}")))?;
 
         let message = TransportMessage::new(
-            turbomcp_core::MessageId::from("notification"),
+            turbomcp_protocol::MessageId::from("notification"),
             payload.into(),
         );
 

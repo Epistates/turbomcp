@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use oauth2::RefreshToken;
 use serde::{Deserialize, Serialize};
 
-use turbomcp_core::{Error as McpError, Result as McpResult};
+use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 use super::config::AuthProviderType;
 

@@ -302,7 +302,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
     use tokio;
-    use turbomcp_core::MessageId;
+    use turbomcp_protocol::MessageId;
     use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcVersion};
 
     // Test middleware implementations

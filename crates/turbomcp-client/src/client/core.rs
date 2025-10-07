@@ -21,7 +21,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use turbomcp_core::{Error, PROTOCOL_VERSION, Result};
+use turbomcp_protocol::{Error, PROTOCOL_VERSION, Result};
 use turbomcp_protocol::jsonrpc::*;
 use turbomcp_protocol::types::{
     ClientCapabilities as ProtocolClientCapabilities, InitializeResult as ProtocolInitializeResult,
@@ -72,7 +72,7 @@ pub(super) struct ClientInner<T: Transport> {
 /// use turbomcp_client::Client;
 /// use turbomcp_transport::stdio::StdioTransport;
 ///
-/// # async fn example() -> turbomcp_core::Result<()> {
+/// # async fn example() -> turbomcp_protocol::Result<()> {
 /// let client = Client::new(StdioTransport::new());
 /// client.initialize().await?;
 ///
@@ -105,7 +105,7 @@ pub(super) struct ClientInner<T: Transport> {
 /// use turbomcp_transport::stdio::StdioTransport;
 /// use std::collections::HashMap;
 ///
-/// # async fn example() -> turbomcp_core::Result<()> {
+/// # async fn example() -> turbomcp_protocol::Result<()> {
 /// // Create and initialize client (no mut needed!)
 /// let client = Client::new(StdioTransport::new());
 /// let init_result = client.initialize().await?;
@@ -239,7 +239,7 @@ impl Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTran
     /// ```rust,no_run
     /// use turbomcp_client::Client;
     ///
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// // Beautiful one-liner - balanced with server DX
     /// let client = Client::connect_http("http://localhost:8080").await?;
     ///
@@ -256,7 +256,7 @@ impl Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTran
     ///     StreamableHttpClientConfig, StreamableHttpClientTransport
     /// };
     ///
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let config = StreamableHttpClientConfig {
     ///     base_url: "http://localhost:8080".to_string(),
     ///     ..Default::default()
@@ -301,7 +301,7 @@ impl Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTran
     /// use turbomcp_client::Client;
     /// use std::time::Duration;
     ///
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let client = Client::connect_http_with("http://localhost:8080", |config| {
     ///     config.timeout = Duration::from_secs(60);
     ///     config.endpoint_path = "/api/mcp".to_string();
@@ -357,7 +357,7 @@ impl Client<turbomcp_transport::tcp::TcpTransport> {
     /// # #[cfg(feature = "tcp")]
     /// use turbomcp_client::Client;
     ///
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let client = Client::connect_tcp("127.0.0.1:8765").await?;
     /// let tools = client.list_tools().await?;
     /// # Ok(())
@@ -412,7 +412,7 @@ impl Client<turbomcp_transport::unix::UnixTransport> {
     /// # #[cfg(all(unix, feature = "unix"))]
     /// use turbomcp_client::Client;
     ///
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let client = Client::connect_unix("/tmp/mcp.sock").await?;
     /// let tools = client.list_tools().await?;
     /// # Ok(())
@@ -445,7 +445,7 @@ impl<T: Transport> Client<T> {
     /// ```rust,no_run
     /// # use turbomcp_client::Client;
     /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut client = Client::new(StdioTransport::new());
     ///
     /// // Process messages in background
@@ -636,7 +636,7 @@ impl<T: Transport> Client<T> {
             .map_err(|e| Error::protocol(format!("Failed to serialize response: {}", e)))?;
 
         let message = TransportMessage::new(
-            turbomcp_core::MessageId::from("response".to_string()),
+            turbomcp_protocol::MessageId::from("response".to_string()),
             payload.into(),
         );
 
@@ -672,7 +672,7 @@ impl<T: Transport> Client<T> {
     /// ```rust,no_run
     /// # use turbomcp_client::Client;
     /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut client = Client::new(StdioTransport::new());
     ///
     /// let result = client.initialize().await?;
@@ -703,7 +703,7 @@ impl<T: Transport> Client<T> {
         let request = InitializeRequest {
             protocol_version: PROTOCOL_VERSION.to_string(),
             capabilities: client_caps,
-            client_info: turbomcp_protocol::Implementation {
+            client_info: turbomcp_protocol::types::Implementation {
                 name: "turbomcp-client".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 title: Some("TurboMCP Client".to_string()),
@@ -747,7 +747,7 @@ impl<T: Transport> Client<T> {
         // Create JSON-RPC request for plugin context
         let json_rpc_request = turbomcp_protocol::jsonrpc::JsonRpcRequest {
             jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-            id: turbomcp_core::MessageId::Number(1),
+            id: turbomcp_protocol::MessageId::Number(1),
             method: method_name.to_string(),
             params: params.clone(),
         };
@@ -864,7 +864,7 @@ impl<T: Transport> Client<T> {
     /// ```rust,no_run
     /// # use turbomcp_client::Client;
     /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut client = Client::new(StdioTransport::new());
     /// client.initialize().await?;
     ///
@@ -923,7 +923,7 @@ impl<T: Transport> Client<T> {
     /// ```rust,no_run
     /// # use turbomcp_client::Client;
     /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut client = Client::new(StdioTransport::new());
     /// client.initialize().await?;
     ///

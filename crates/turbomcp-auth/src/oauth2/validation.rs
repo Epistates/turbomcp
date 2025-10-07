@@ -5,7 +5,7 @@
 //! - URI format and security validation
 //! - Canonical form validation
 
-use turbomcp_core::{Error as McpError, Result as McpResult};
+use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 /// RFC 8707 canonical URI validation for Resource Indicators
 ///

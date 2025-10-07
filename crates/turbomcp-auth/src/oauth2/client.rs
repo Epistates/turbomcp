@@ -12,7 +12,7 @@ use std::collections::HashMap;
 
 use oauth2::{AuthUrl, ClientId, ClientSecret, RedirectUrl, TokenUrl, basic::BasicClient};
 
-use turbomcp_core::{Error as McpError, Result as McpResult};
+use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 use super::super::config::{OAuth2Config, ProviderConfig, ProviderType, RefreshBehavior};
 

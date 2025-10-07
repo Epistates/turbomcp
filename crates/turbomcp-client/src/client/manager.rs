@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::time::Instant;
-use turbomcp_core::{Error, Result};
+use turbomcp_protocol::{Error, Result};
 use turbomcp_transport::Transport;
 
 use super::core::Client;
@@ -191,7 +191,7 @@ impl ServerGroup {
 /// use turbomcp_client::SessionManager;
 /// use turbomcp_transport::stdio::StdioTransport;
 ///
-/// # async fn example() -> turbomcp_core::Result<()> {
+/// # async fn example() -> turbomcp_protocol::Result<()> {
 /// let mut manager = SessionManager::with_defaults();
 ///
 /// // Add sessions to different servers
@@ -251,7 +251,7 @@ impl<T: Transport + Send + 'static> SessionManager<T> {
     /// ```rust,no_run
     /// # use turbomcp_client::SessionManager;
     /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut manager = SessionManager::with_defaults();
     /// let github_transport = StdioTransport::new();
     /// let fs_transport = StdioTransport::new();
@@ -323,7 +323,7 @@ impl<T: Transport + Send + 'static> SessionManager<T> {
     /// ```rust,no_run
     /// # use turbomcp_client::SessionManager;
     /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut manager = SessionManager::with_defaults();
     ///
     /// // Transport with reconnection factory
@@ -547,7 +547,7 @@ impl SessionManager<turbomcp_transport::resilience::TurboTransport> {
     /// # use turbomcp_client::SessionManager;
     /// # use turbomcp_transport::stdio::StdioTransport;
     /// # use turbomcp_transport::resilience::*;
-    /// # async fn example() -> turbomcp_core::Result<()> {
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut manager: SessionManager<TurboTransport> = SessionManager::with_defaults();
     ///
     /// // Use explicit configuration for clarity

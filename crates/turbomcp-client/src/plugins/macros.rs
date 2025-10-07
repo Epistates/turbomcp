@@ -20,7 +20,7 @@
 /// use std::collections::HashMap;
 ///
 /// impl Client {
-///     pub async fn call_tool(&mut self, name: &str, args: Option<HashMap<String, serde_json::Value>>) -> turbomcp_core::Result<serde_json::Value> {
+///     pub async fn call_tool(&mut self, name: &str, args: Option<HashMap<String, serde_json::Value>>) -> turbomcp_protocol::Result<serde_json::Value> {
 ///         let request_data = turbomcp_protocol::types::CallToolRequest {
 ///             name: name.to_string(),
 ///             arguments: Some(args.unwrap_or_default()),
@@ -50,7 +50,7 @@
 macro_rules! with_plugins {
     ($client:expr, $method:expr, $request_data:expr, $protocol_call:block) => {{
         // Create JSON-RPC request for plugin context with unique ID
-        let request_id = turbomcp_core::MessageId::Number(
+        let request_id = turbomcp_protocol::MessageId::Number(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -62,7 +62,7 @@ macro_rules! with_plugins {
             id: request_id,
             method: $method.to_string(),
             params: Some(serde_json::to_value(&$request_data)
-                .map_err(|e| turbomcp_core::Error::bad_request(
+                .map_err(|e| turbomcp_protocol::Error::bad_request(
                     format!("Failed to serialize request data: {}", e)
                 ))?),
         };
@@ -75,20 +75,20 @@ macro_rules! with_plugins {
 
         // 2. Execute before_request plugin middleware
         $client.inner.plugin_registry.lock().await.execute_before_request(&mut req_ctx).await
-            .map_err(|e| turbomcp_core::Error::bad_request(
+            .map_err(|e| turbomcp_protocol::Error::bad_request(
                 format!("Plugin before_request failed: {}", e)
             ))?;
 
         // 3. Execute the actual protocol call with timing
         let start_time = std::time::Instant::now();
-        let protocol_result: turbomcp_core::Result<_> = async $protocol_call.await;
+        let protocol_result: turbomcp_protocol::Result<_> = async $protocol_call.await;
         let duration = start_time.elapsed();
 
         // 4. Create response context based on result
         let mut resp_ctx = match protocol_result {
             Ok(ref response_value) => {
                 let serialized_response = serde_json::to_value(response_value)
-                    .map_err(|e| turbomcp_core::Error::bad_request(
+                    .map_err(|e| turbomcp_protocol::Error::bad_request(
                         format!("Failed to serialize response: {}", e)
                     ))?;
                 $crate::plugins::ResponseContext::new(
@@ -110,7 +110,7 @@ macro_rules! with_plugins {
 
         // 5. Execute after_response plugin middleware
         $client.inner.plugin_registry.lock().await.execute_after_response(&mut resp_ctx).await
-            .map_err(|e| turbomcp_core::Error::bad_request(
+            .map_err(|e| turbomcp_protocol::Error::bad_request(
                 format!("Plugin after_response failed: {}", e)
             ))?;
 
@@ -158,7 +158,7 @@ macro_rules! with_plugins {
 /// use turbomcp_client::with_simple_plugins;
 ///
 /// impl Client {
-///     pub async fn ping(&mut self) -> turbomcp_core::Result<()> {
+///     pub async fn ping(&mut self) -> turbomcp_protocol::Result<()> {
 ///         with_simple_plugins!(self, "ping", {
 ///             self.protocol.request("ping", None).await
 ///         })
@@ -195,7 +195,7 @@ mod tests {
         let id1 = {
             let json_rpc_request = turbomcp_protocol::jsonrpc::JsonRpcRequest {
                 jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-                id: turbomcp_core::MessageId::Number(
+                id: turbomcp_protocol::MessageId::Number(
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -213,7 +213,7 @@ mod tests {
         let id2 = {
             let json_rpc_request = turbomcp_protocol::jsonrpc::JsonRpcRequest {
                 jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-                id: turbomcp_core::MessageId::Number(
+                id: turbomcp_protocol::MessageId::Number(
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
@@ -233,7 +233,7 @@ mod tests {
     fn test_error_propagation() {
         // Test that our error wrapping works correctly
         let error_message = "Failed to serialize request data: test error";
-        let wrapped_error = turbomcp_core::Error::bad_request(error_message);
+        let wrapped_error = turbomcp_protocol::Error::bad_request(error_message);
 
         assert!(
             wrapped_error
@@ -244,7 +244,7 @@ mod tests {
 
         // Test response serialization error wrapping as well
         let response_error_message = "Failed to serialize response: test response error";
-        let wrapped_response_error = turbomcp_core::Error::bad_request(response_error_message);
+        let wrapped_response_error = turbomcp_protocol::Error::bad_request(response_error_message);
 
         assert!(
             wrapped_response_error

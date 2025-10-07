@@ -9,7 +9,7 @@ use turbomcp_protocol::types::ServerCapabilities;
 #[derive(Debug, Clone)]
 pub struct InitializeResult {
     /// Information about the server
-    pub server_info: turbomcp_protocol::Implementation,
+    pub server_info: turbomcp_protocol::types::Implementation,
 
     /// Capabilities supported by the server
     pub server_capabilities: ServerCapabilities,
