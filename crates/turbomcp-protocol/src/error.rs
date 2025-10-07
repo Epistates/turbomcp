@@ -206,7 +206,7 @@ impl Error {
     /// # Example
     ///
     /// ```rust
-    /// use turbomcp_core::Error;
+    /// use turbomcp_protocol::Error;
     ///
     /// let error = Error::invalid_params("Email must be valid");
     /// assert_eq!(error.jsonrpc_error_code(), -32602);

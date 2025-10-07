@@ -10,7 +10,7 @@
 //! ```
 //! # #[cfg(feature = "fancy-errors")]
 //! # {
-//! use turbomcp_core::config::CoreConfig;
+//! use turbomcp_protocol::config::CoreConfig;
 //!
 //! let config = CoreConfig::default();
 //! assert_eq!(config.max_message_size, 64 * 1024 * 1024);
@@ -24,7 +24,7 @@
 //! ```
 //! # #[cfg(feature = "fancy-errors")]
 //! # {
-//! use turbomcp_core::config::ConfigBuilder;
+//! use turbomcp_protocol::config::ConfigBuilder;
 //!
 //! let config = ConfigBuilder::new()
 //!     .max_message_size(1024 * 1024).unwrap() // 1MB
@@ -88,7 +88,7 @@ impl ConfigBuilder {
     /// ```
     /// # #[cfg(feature = "fancy-errors")]
     /// # {
-    /// use turbomcp_core::config::ConfigBuilder;
+    /// use turbomcp_protocol::config::ConfigBuilder;
     ///
     /// let config = ConfigBuilder::new()
     ///     .max_message_size(1024 * 1024).unwrap()

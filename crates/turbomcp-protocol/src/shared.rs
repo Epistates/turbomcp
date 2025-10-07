@@ -32,7 +32,7 @@ use tokio::sync::Mutex;
 /// ```rust
 /// use std::sync::Arc;
 /// use tokio::sync::Mutex;
-/// use turbomcp_core::shared::Shareable;
+/// use turbomcp_protocol::shared::Shareable;
 ///
 /// struct MyService {
 ///     counter: u64,
@@ -96,7 +96,7 @@ pub trait Shareable<T>: Clone + Send + Sync + 'static {
 /// # Examples
 ///
 /// ```rust
-/// use turbomcp_core::shared::{Shared, Shareable};
+/// use turbomcp_protocol::shared::{Shared, Shareable};
 ///
 /// #[derive(Debug)]
 /// struct Counter {
@@ -232,7 +232,7 @@ where
 /// # Examples
 ///
 /// ```rust
-/// use turbomcp_core::shared::{ConsumableShared, Shareable};
+/// use turbomcp_protocol::shared::{ConsumableShared, Shareable};
 ///
 /// struct Server {
 ///     name: String,

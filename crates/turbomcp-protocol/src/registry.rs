@@ -1,4 +1,22 @@
-//! Component registry system for extensible architecture.
+//! Generic component registry for dependency injection and service location.
+//!
+//! This is the **base registry** providing type-safe component storage with minimal overhead.
+//! It uses `Any + Send + Sync` trait objects for maximum flexibility.
+//!
+//! ## When to Use This Registry
+//!
+//! Use this registry when you need:
+//! - Simple, zero-overhead component registration and lookup
+//! - Type-safe access to registered components
+//! - Dependency injection patterns
+//! - Service locator patterns
+//!
+//! ## Related Registries
+//!
+//! - [`EnhancedRegistry`](crate::enhanced_registry::EnhancedRegistry) - Extended version with statistics tracking and observability
+//! - `turbomcp_server::registry::HandlerRegistry` - Server-specific registry for MCP protocol handlers
+//!
+//! This is the foundation - use [`EnhancedRegistry`](crate::enhanced_registry::EnhancedRegistry) if you need advanced features.
 
 use std::any::{Any, TypeId};
 use std::collections::HashMap;

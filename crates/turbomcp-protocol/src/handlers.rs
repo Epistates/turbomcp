@@ -23,8 +23,8 @@
 //! ## Example: Implementing an Elicitation Handler
 //!
 //! ```rust
-//! use turbomcp_core::{ElicitationHandler, ElicitationContext, ElicitationResponse};
-//! use turbomcp_core::Result;
+//! use turbomcp_protocol::{ElicitationHandler, ElicitationContext, ElicitationResponse};
+//! use turbomcp_protocol::Result;
 //! use async_trait::async_trait;
 //! use std::collections::HashMap;
 //!
@@ -73,8 +73,8 @@
 //! ## Example: Implementing a Completion Provider
 //!
 //! ```rust
-//! use turbomcp_core::{CompletionProvider, CompletionContext, CompletionItem};
-//! use turbomcp_core::Result;
+//! use turbomcp_protocol::{CompletionProvider, CompletionContext, CompletionItem};
+//! use turbomcp_protocol::Result;
 //! use async_trait::async_trait;
 //!
 //! struct FilePathCompletionProvider;
@@ -353,7 +353,7 @@ impl HandlerCapabilities {
 /// # Example: Macro-Generated Implementation
 ///
 /// ```rust,ignore
-/// use turbomcp_core::JsonRpcHandler;
+/// use turbomcp_protocol::JsonRpcHandler;
 /// use async_trait::async_trait;
 /// use serde_json::Value;
 ///

@@ -19,7 +19,7 @@
 //! ## Example
 //!
 //! ```rust
-//! use turbomcp_core::{Message, MessageId};
+//! use turbomcp_protocol::{Message, MessageId};
 //! use serde_json::json;
 //!
 //! // Create a JSON message
@@ -708,7 +708,7 @@ impl MessageMetadata {
     pub fn new(content_type: ContentType, size: usize) -> Self {
         Self {
             created_at: Timestamp::now(),
-            protocol_version: ProtocolVersion::default(),
+            protocol_version: crate::PROTOCOL_VERSION.to_string(),
             encoding: None,
             content_type,
             size,

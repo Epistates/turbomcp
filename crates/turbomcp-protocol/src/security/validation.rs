@@ -18,7 +18,7 @@ use tracing::{debug, warn};
 /// # Examples
 ///
 /// ```rust,no_run
-/// use turbomcp_core::security::validate_path;
+/// use turbomcp_protocol::security::validate_path;
 ///
 /// // Safe path
 /// let safe_path = validate_path("/home/user/data.txt")?;
@@ -74,7 +74,7 @@ pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use turbomcp_core::security::validate_path_within;
+/// use turbomcp_protocol::security::validate_path_within;
 ///
 /// let base = "/home/user/workspace";
 /// let file_path = validate_path_within("/home/user/workspace/project/file.txt", base)?;

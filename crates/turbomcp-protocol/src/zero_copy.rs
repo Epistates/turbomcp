@@ -27,7 +27,7 @@
 //! ### Example Usage
 //!
 //! ```rust
-//! use turbomcp_core::zero_copy::{ZeroCopyMessage, MessageId};
+//! use turbomcp_protocol::zero_copy::{ZeroCopyMessage, MessageId};
 //! use bytes::Bytes;
 //!
 //! // Create from raw bytes (no allocation)

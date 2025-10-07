@@ -14,7 +14,7 @@
 //! ## Example
 //!
 //! ```rust
-//! use turbomcp_core::{SessionManager, SessionConfig};
+//! use turbomcp_protocol::{SessionManager, SessionConfig};
 //! use chrono::Duration;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,7 +44,7 @@
 //! );
 //!
 //! // Track request analytics
-//! use turbomcp_core::RequestInfo;
+//! use turbomcp_protocol::RequestInfo;
 //! let request_info = RequestInfo::new(
 //!     "client-123".to_string(),
 //!     "tools/list".to_string(),

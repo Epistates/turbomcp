@@ -1,7 +1,33 @@
-//! Enhanced registry with support for MCP protocol handlers
+//! Advanced registry with MCP protocol handler support and observability.
 //!
-//! This module extends the base registry with specialized support for
-//! elicitation, completion, resource templates, and ping handlers.
+//! This registry **extends** the [Registry] base with:
+//! - MCP protocol handlers (elicitation, completion, resource templates, ping)
+//! - Handler call statistics (invocation count, duration, errors)
+//! - Capability tracking per handler
+//! - Thread-safe concurrent access via `DashMap`
+//!
+//! ## When to Use This Registry
+//!
+//! Use `EnhancedRegistry` when you need:
+//! - MCP protocol handler registration (elicitation, completion, etc.)
+//! - Observability into handler usage patterns
+//! - Production-grade monitoring and debugging
+//! - Capability discovery per registered handler
+//!
+//! ## Comparison with Base Registry
+//!
+//! | Feature | [Registry] | `EnhancedRegistry` |
+//! |---------|------------|-------------------|
+//! | Component storage | ✅ | ✅ (via base) |
+//! | MCP handlers | ❌ | ✅ |
+//! | Statistics | ❌ | ✅ |
+//! | Observability | ❌ | ✅ |
+//! | Overhead | Zero | Minimal (atomic counters) |
+//!
+//! ## Related Registries
+//!
+//! - [Registry] - Base registry (used internally by this one)
+//! - `turbomcp_server::registry::HandlerRegistry` - Server-specific DashMap-based registry
 
 use dashmap::DashMap;
 use std::sync::Arc;

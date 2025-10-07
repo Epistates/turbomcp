@@ -3,10 +3,15 @@
 //! This module defines the trait that enables servers to make requests to clients,
 //! supporting sampling, elicitation, and roots listing operations.
 
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use crate::RequestContext;
+use crate::context::RequestContext;
+use crate::error::Error;
+use crate::types::{
+    CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsResult,
+};
 
 /// Trait for server-to-client requests (sampling, elicitation, roots)
 ///
@@ -53,8 +58,8 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     /// # Example
     ///
     /// ```no_run
-    /// use turbomcp_core::context::capabilities::ServerToClientRequests;
-    /// use turbomcp_core::RequestContext;
+    /// use turbomcp_protocol::context::capabilities::ServerToClientRequests;
+    /// use turbomcp_protocol::RequestContext;
     /// # use turbomcp_protocol::types::{CreateMessageRequest, SamplingMessage, Role, Content, TextContent};
     ///
     /// async fn example(capabilities: &dyn ServerToClientRequests) {
@@ -72,7 +77,7 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     ///         system_prompt: None,
     ///         include_context: None,
     ///         temperature: None,
-    ///         max_tokens: Some(100),
+    ///         max_tokens: 100,
     ///         stop_sequences: None,
     ///         _meta: None,
     ///     };
@@ -84,12 +89,9 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     /// ```
     fn create_message(
         &self,
-        request: turbomcp_protocol::types::CreateMessageRequest,
+        request: CreateMessageRequest,
         ctx: RequestContext,
-    ) -> futures::future::BoxFuture<
-        '_,
-        Result<turbomcp_protocol::types::CreateMessageResult, crate::Error>,
-    >;
+    ) -> BoxFuture<'_, Result<CreateMessageResult, Error>>;
 
     /// Send an elicitation request to the client for user input
     ///
@@ -111,12 +113,9 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     /// - The client returns an error response
     fn elicit(
         &self,
-        request: serde_json::Value,
+        request: ElicitRequest,
         ctx: RequestContext,
-    ) -> futures::future::BoxFuture<
-        '_,
-        Result<serde_json::Value, crate::Error>,
-    >;
+    ) -> BoxFuture<'_, Result<ElicitResult, Error>>;
 
     /// List client's root capabilities
     ///
@@ -136,14 +135,12 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     fn list_roots(
         &self,
         ctx: RequestContext,
-    ) -> futures::future::BoxFuture<
-        '_,
-        Result<serde_json::Value, crate::Error>,
-    >;
+    ) -> BoxFuture<'_, Result<ListRootsResult, Error>>;
 }
 
-// Type alias for backward compatibility during transition
-// DEPRECATED: Use ServerToClientRequests instead
+/// Type alias for backward compatibility during transition
+///
+/// DEPRECATED: Use [`ServerToClientRequests`] instead
 #[deprecated(since = "2.0.0", note = "Use ServerToClientRequests instead")]
 pub type ServerCapabilities = dyn ServerToClientRequests;
 
