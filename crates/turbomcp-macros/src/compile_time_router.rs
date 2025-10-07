@@ -941,6 +941,89 @@ pub fn generate_router(
                     Ok(())
                 }
 
+                /// Run WebSocket server with default configuration
+                ///
+                /// This method provides the same simple API as `run_http()`:
+                /// - Default endpoint: `/mcp/ws`
+                /// - Sensible defaults for security, sessions, middleware
+                /// - Full MCP 2025-06-18 compliance
+                /// - Bidirectional communication with elicitation support
+                ///
+                /// # Example
+                ///
+                /// ```no_run
+                /// # #[turbomcp::server(name = "example", version = "1.0.0")]
+                /// # impl MyServer {
+                /// #     #[tool("example")]
+                /// #     async fn example(&self) -> turbomcp::McpResult<String> { Ok("hi".into()) }
+                /// # }
+                /// #[tokio::main]
+                /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+                ///     let server = MyServer;
+                ///     server.run_websocket("127.0.0.1:8080").await?;
+                ///     Ok(())
+                /// }
+                /// ```
+                #[cfg(all(feature = "websocket", feature = "http"))]
+                pub async fn run_websocket<A: ::std::net::ToSocketAddrs>(
+                    self,
+                    addr: A
+                ) -> Result<(), Box<dyn ::std::error::Error>> {
+                    use ::std::sync::Arc;
+                    use ::turbomcp::turbomcp_transport::websocket_server::run_websocket_server;
+
+                    run_websocket_server(
+                        addr.to_socket_addrs()?
+                            .next()
+                            .ok_or("No address resolved")?
+                            .to_string(),
+                        Arc::new(self)
+                    ).await
+                }
+
+                /// Run WebSocket server with custom endpoint path
+                ///
+                /// Allows customization of the WebSocket endpoint path while keeping
+                /// sensible defaults for everything else.
+                ///
+                /// # Example
+                ///
+                /// ```no_run
+                /// # #[turbomcp::server(name = "example", version = "1.0.0")]
+                /// # impl MyServer {
+                /// #     #[tool("example")]
+                /// #     async fn example(&self) -> turbomcp::McpResult<String> { Ok("hi".into()) }
+                /// # }
+                /// #[tokio::main]
+                /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+                ///     let server = MyServer;
+                ///     server.run_websocket_with_path("127.0.0.1:8080", "/custom/ws").await?;
+                ///     Ok(())
+                /// }
+                /// ```
+                #[cfg(all(feature = "websocket", feature = "http"))]
+                pub async fn run_websocket_with_path<A: ::std::net::ToSocketAddrs>(
+                    self,
+                    addr: A,
+                    _path: &str
+                ) -> Result<(), Box<dyn ::std::error::Error>> {
+                    use ::std::sync::Arc;
+                    use ::turbomcp::turbomcp_transport::websocket_server::{run_websocket_server_with_config, WebSocketServerConfig};
+
+                    let socket_addr = addr
+                        .to_socket_addrs()?
+                        .next()
+                        .ok_or("No address resolved")?;
+
+                    let config = WebSocketServerConfig {
+                        bind_addr: socket_addr.to_string(),
+                        endpoint_path: _path.to_string(),
+                        ..Default::default()
+                    };
+
+                    run_websocket_server_with_config(config, Arc::new(self)).await
+                }
+
                 /// Handle a single JSON-RPC request with compile-time dispatch
                 async fn handle_request(
                     self: ::std::sync::Arc<Self>,
