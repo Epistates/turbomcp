@@ -1206,24 +1206,18 @@ pub mod builders {
                             // Validate TurboMCP-specific experimental capabilities
                             match key.as_str() {
                                 "turbomcp_llm_provider" => {
-                                    if !value.is_object() {
-                                        return Err(
-                                            "turbomcp_llm_provider must be an object".to_string()
-                                        );
-                                    }
-                                    let obj = value.as_object().unwrap();
+                                    let obj = value.as_object().ok_or_else(|| {
+                                        "turbomcp_llm_provider must be an object".to_string()
+                                    })?;
                                     if !obj.contains_key("provider") || !obj.contains_key("version")
                                     {
                                         return Err("turbomcp_llm_provider must have 'provider' and 'version' fields".to_string());
                                     }
                                 }
                                 "turbomcp_ui_capabilities" => {
-                                    if !value.is_array() {
-                                        return Err(
-                                            "turbomcp_ui_capabilities must be an array".to_string()
-                                        );
-                                    }
-                                    let arr = value.as_array().unwrap();
+                                    let arr = value.as_array().ok_or_else(|| {
+                                        "turbomcp_ui_capabilities must be an array".to_string()
+                                    })?;
                                     let valid_ui_caps = [
                                         "form",
                                         "dialog",

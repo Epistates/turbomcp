@@ -262,7 +262,9 @@ impl VersionManager {
 
     /// Get the minimum supported version
     pub fn minimum_version(&self) -> &Version {
-        self.supported_versions.last().unwrap() // Last because sorted newest first
+        // SAFETY: Constructor ensures non-empty via Result<T, VersionError::NoSupportedVersions>
+        self.supported_versions.last()
+            .expect("BUG: VersionManager has no versions (constructor should prevent this)")
     }
 
     /// Get the maximum supported version  

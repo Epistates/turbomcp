@@ -138,12 +138,6 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     ) -> BoxFuture<'_, Result<ListRootsResult, Error>>;
 }
 
-/// Type alias for backward compatibility during transition
-///
-/// DEPRECATED: Use [`ServerToClientRequests`] instead
-#[deprecated(since = "2.0.0", note = "Use ServerToClientRequests instead")]
-pub type ServerCapabilities = dyn ServerToClientRequests;
-
 /// Communication direction for bidirectional requests
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommunicationDirection {

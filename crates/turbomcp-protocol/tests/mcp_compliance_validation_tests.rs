@@ -277,7 +277,7 @@ fn test_elicitation_schema_must_be_object() {
     // Invalid: schema type not "object"
     let invalid = ElicitationSchema {
         schema_type: "array".to_string(),
-        properties: None,
+        properties: std::collections::HashMap::new(),
         required: None,
         additional_properties: None,
     };
@@ -309,7 +309,7 @@ fn test_elicitation_schema_object_valid() {
 
     let valid = ElicitationSchema {
         schema_type: "object".to_string(),
-        properties: Some(properties),
+        properties,
         required: Some(vec!["email".to_string()]),
         additional_properties: Some(false),
     };
@@ -325,7 +325,7 @@ fn test_elicitation_schema_additional_properties_warning() {
     // additionalProperties=true should warn (not recommended for flat schemas)
     let schema = ElicitationSchema {
         schema_type: "object".to_string(),
-        properties: Some(std::collections::HashMap::new()),
+        properties: std::collections::HashMap::new(),
         required: None,
         additional_properties: Some(true), // ← Not recommended
     };
@@ -364,7 +364,7 @@ fn test_enum_names_length_match() {
 
     let schema = ElicitationSchema {
         schema_type: "object".to_string(),
-        properties: Some(properties),
+        properties,
         required: None,
         additional_properties: None,
     };
@@ -396,7 +396,7 @@ fn test_enum_names_length_mismatch() {
 
     let schema = ElicitationSchema {
         schema_type: "object".to_string(),
-        properties: Some(properties),
+        properties,
         required: None,
         additional_properties: None,
     };
@@ -497,7 +497,7 @@ fn test_unknown_format_warning() {
 
     let schema = ElicitationSchema {
         schema_type: "object".to_string(),
-        properties: Some(properties),
+        properties,
         required: None,
         additional_properties: None,
     };
@@ -546,7 +546,7 @@ fn test_full_mcp_compliance_scenario() {
 
     let schema = ElicitationSchema {
         schema_type: "object".to_string(),
-        properties: Some(properties),
+        properties,
         required: Some(vec!["email".to_string()]),
         additional_properties: Some(false),
     };

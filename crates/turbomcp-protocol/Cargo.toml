@@ -73,7 +73,7 @@ pretty_assertions = { workspace = true }
 proptest = "1.5"
 
 [features]
-default = ["std", "simd", "lock-free"]
+default = ["std", "simd"]
 std = []
 simd = ["simd-json", "sonic-rs", "simdutf8"]
 zero-copy = ["bytes/serde"]

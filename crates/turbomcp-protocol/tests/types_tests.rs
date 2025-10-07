@@ -1070,7 +1070,7 @@ fn test_sampling_api_comprehensive_workflow() {
         Some(IncludeContext::ThisServer)
     );
     assert_eq!(deserialized.temperature, Some(0.7));
-    assert_eq!(deserialized.max_tokens, Some(1000));
+    assert_eq!(deserialized.max_tokens, 1000);
     assert_eq!(deserialized.stop_sequences.as_ref().unwrap().len(), 2);
 }
 
@@ -1421,4 +1421,22 @@ fn test_tool_default_has_valid_name() {
     let tool = Tool::default();
     assert_eq!(tool.name, "unnamed_tool");
     assert!(!tool.name.trim().is_empty());
+}
+
+#[test]
+fn verify_content_block_type_field_serialization() {
+    use turbomcp_protocol::types::{ContentBlock, TextContent};
+    
+    let text = ContentBlock::Text(TextContent {
+        text: "Hello".to_string(),
+        annotations: None,
+        meta: None,
+    });
+    
+    let json = serde_json::to_string_pretty(&text).unwrap();
+    println!("\n=== TextContent JSON ===\n{}\n", json);
+    
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+    assert!(parsed.get("type").is_some(), "type field must exist in JSON");
+    assert_eq!(parsed["type"], "text", "type must be 'text'");
 }
