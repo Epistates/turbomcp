@@ -7,11 +7,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, oneshot};
 
-use turbomcp_protocol::{RequestContext};
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::context::capabilities::ServerToClientRequests;
-use turbomcp_protocol::types::{
-    ElicitRequest, ElicitResult, ElicitationAction, ElicitationSchema,
-};
+use turbomcp_protocol::types::{ElicitRequest, ElicitResult, ElicitationAction, ElicitationSchema};
 // ElicitationValue removed - using serde_json::Value for MCP compliance
 // Use PrimitiveSchemaDefinition from types to match ElicitationSchema
 use turbomcp_protocol::types::elicitation::PrimitiveSchemaDefinition;
@@ -39,11 +37,7 @@ impl ElicitationBuilder {
     /// and turbomcp_protocol::types::elicitation, this method is temporarily commented out.
     /// Use ElicitationSchema directly from protocol module for now.
     #[allow(dead_code)]
-    pub fn field(
-        mut self,
-        name: impl Into<String>,
-        schema: PrimitiveSchemaDefinition,
-    ) -> Self {
+    pub fn field(mut self, name: impl Into<String>, schema: PrimitiveSchemaDefinition) -> Self {
         // ElicitationSchema.properties is HashMap<String, PrimitiveSchemaDefinition> (required by spec)
         self.schema.properties.insert(name.into(), schema);
         self
@@ -101,9 +95,7 @@ impl ElicitationBuilder {
             turbomcp_protocol::types::ElicitationAction::Decline => {
                 Ok(ElicitationResult::Decline(None))
             }
-            turbomcp_protocol::types::ElicitationAction::Cancel => {
-                Ok(ElicitationResult::Cancel)
-            }
+            turbomcp_protocol::types::ElicitationAction::Cancel => Ok(ElicitationResult::Cancel),
         }
     }
 }
@@ -486,10 +478,7 @@ mod tests {
     fn test_elicitation_result_conversion() {
         // Test accept
         let mut content = HashMap::new();
-        content.insert(
-            "key".to_string(),
-            serde_json::json!("value"),
-        );
+        content.insert("key".to_string(), serde_json::json!("value"));
 
         let protocol_result = ElicitResult {
             action: ElicitationAction::Accept,

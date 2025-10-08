@@ -710,7 +710,6 @@ impl McpServer {
     ///     let config = WebSocketServerConfig {
     ///         bind_addr: "0.0.0.0:8080".to_string(),
     ///         endpoint_path: "/custom/ws".to_string(),
-    ///         ..Default::default()
     ///     };
     ///
     ///     server.run_websocket_with_config("127.0.0.1:8080", config).await?;

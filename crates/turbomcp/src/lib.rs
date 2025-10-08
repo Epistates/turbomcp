@@ -534,24 +534,28 @@ use tokio::sync::RwLock;
 // Re-export core types for convenience (all re-exported at top level of turbomcp_protocol)
 // v2.0: Re-export essential types from turbomcp_protocol root + module-qualified types
 pub use turbomcp_protocol::{
-    // Core types (at protocol root)
-    MessageId, RequestContext,
-    InitializeRequest, InitializeResult,
-    CallToolRequest, CallToolResult,
-    ServerCapabilities, ClientCapabilities,
+    CallToolRequest,
+    CallToolResult,
+    ClientCapabilities,
+    InitializeRequest,
+    InitializeResult,
     // JSON-RPC types
-    JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+    JsonRpcError,
+    JsonRpcNotification,
+    JsonRpcRequest,
+    JsonRpcResponse,
+    // Core types (at protocol root)
+    MessageId,
+    RequestContext,
+    ServerCapabilities,
 };
 
 // Re-export commonly used types from turbomcp_protocol::types
 pub use turbomcp_protocol::types::{
-    CompleteResult, CompletionResponse, Content,
-    CreateMessageRequest, CreateMessageResult,
-    ElicitRequest, ElicitResult, ElicitationAction,
-    GetPromptResult, ImageContent, Implementation,
-    ListRootsResult, PingRequest, PingResult,
-    Resource, SamplingMessage, TextContent,
-    Tool, ToolInputSchema,
+    CompleteResult, CompletionResponse, Content, CreateMessageRequest, CreateMessageResult,
+    ElicitRequest, ElicitResult, ElicitationAction, GetPromptResult, ImageContent, Implementation,
+    ListRootsResult, PingRequest, PingResult, Resource, SamplingMessage, TextContent, Tool,
+    ToolInputSchema,
 };
 pub use turbomcp_server::{
     McpServer, McpServer as Server, ServerBuilder, ServerError, ServerResult, ShutdownHandle,

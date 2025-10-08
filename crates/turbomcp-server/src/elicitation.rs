@@ -10,9 +10,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
-use turbomcp_protocol::types::{
-    ElicitationAction, ElicitRequest, ElicitResult,
-};
+use turbomcp_protocol::types::{ElicitRequest, ElicitResult, ElicitationAction};
 
 use crate::ServerError;
 use turbomcp_protocol::Shareable;

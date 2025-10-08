@@ -39,11 +39,11 @@
 
 use futures::future::BoxFuture;
 use turbomcp_protocol::context::capabilities::ServerToClientRequests;
-use turbomcp_protocol::{Error as McpError, RequestContext};
 use turbomcp_protocol::types::{
     CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsRequest,
     ListRootsResult,
 };
+use turbomcp_protocol::{Error as McpError, RequestContext};
 
 use crate::routing::BidirectionalRouter;
 
@@ -131,10 +131,7 @@ impl ServerToClientRequests for ServerToClientAdapter {
         })
     }
 
-    fn list_roots(
-        &self,
-        ctx: RequestContext,
-    ) -> BoxFuture<'_, Result<ListRootsResult, McpError>> {
+    fn list_roots(&self, ctx: RequestContext) -> BoxFuture<'_, Result<ListRootsResult, McpError>> {
         Box::pin(async move {
             // Create the list roots request (only has optional _meta field)
             let list_roots_request = ListRootsRequest { _meta: None };
