@@ -149,14 +149,19 @@ pub mod types;
 pub mod validation;
 pub mod versioning;
 
+// Test utilities (public to allow downstream crates to use them in tests)
+// Following the pattern from axum and tokio
+pub mod test_helpers;
+
 // Re-export core types
 pub use context::{
     BidirectionalContext, ClientCapabilities as ContextClientCapabilities, ClientId,
     ClientIdExtractor, ClientSession, CommunicationDirection, CommunicationInitiator,
-    CompletionCapabilities, CompletionContext, CompletionOption, CompletionReference as ContextCompletionReference,
-    ConnectionMetrics, ElicitationContext, ElicitationState, PingContext, PingOrigin,
-    RequestContext, RequestContextExt, RequestInfo, ResourceTemplateContext, ResponseContext,
-    ServerToClientRequests, ServerInitiatedContext, ServerInitiatedType, TemplateParameter,
+    CompletionCapabilities, CompletionContext, CompletionOption,
+    CompletionReference as ContextCompletionReference, ConnectionMetrics, ElicitationContext,
+    ElicitationState, PingContext, PingOrigin, RequestContext, RequestContextExt, RequestInfo,
+    ResourceTemplateContext, ResponseContext, ServerInitiatedContext, ServerInitiatedType,
+    ServerToClientRequests, TemplateParameter,
 };
 // Timestamp and ContentType are now in types module
 pub use enhanced_registry::{EnhancedRegistry, HandlerStats};
@@ -177,23 +182,23 @@ pub use state::StateManager;
 // Re-export ONLY essential types at root (v2.0 - world-class DX)
 // Everything else requires module qualification: turbomcp_protocol::types::*
 pub use types::{
-    // Most common request/response pairs (initialization flow)
-    InitializeRequest,
-    InitializeResult,
-
     // Most common tool operations
     CallToolRequest,
     CallToolResult,
 
+    ClientCapabilities,
     // Macro API types (used by generated code - not typically imported by users)
     GetPromptRequest,
     GetPromptResult,
+    // Most common request/response pairs (initialization flow)
+    InitializeRequest,
+    InitializeResult,
+
     ReadResourceRequest,
     ReadResourceResult,
 
     // Capability negotiation (used in every initialize)
     ServerCapabilities,
-    ClientCapabilities,
 };
 
 // Note: types module is already declared as `pub mod types;` above
