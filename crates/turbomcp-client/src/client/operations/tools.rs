@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
-use turbomcp_protocol::{Error, Result};
 use turbomcp_protocol::types::{CallToolRequest, CallToolResult, Content, ListToolsResult, Tool};
+use turbomcp_protocol::{Error, Result};
 
 use crate::with_plugins;
 

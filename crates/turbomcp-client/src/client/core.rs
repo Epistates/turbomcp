@@ -21,12 +21,12 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use turbomcp_protocol::{Error, PROTOCOL_VERSION, Result};
 use turbomcp_protocol::jsonrpc::*;
 use turbomcp_protocol::types::{
     ClientCapabilities as ProtocolClientCapabilities, InitializeResult as ProtocolInitializeResult,
     *,
 };
+use turbomcp_protocol::{Error, PROTOCOL_VERSION, Result};
 use turbomcp_transport::{Transport, TransportMessage};
 
 use super::config::InitializeResult;

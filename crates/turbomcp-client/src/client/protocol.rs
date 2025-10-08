@@ -5,8 +5,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use turbomcp_protocol::{Error, Result};
 use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
+use turbomcp_protocol::{Error, Result};
 use turbomcp_transport::{Transport, TransportMessage};
 
 /// JSON-RPC protocol handler for MCP communication

@@ -5,10 +5,10 @@
 
 use std::sync::atomic::Ordering;
 
-use turbomcp_protocol::{Error, Result};
 use turbomcp_protocol::types::{
     ListResourceTemplatesResult, ListResourcesResult, ReadResourceRequest, ReadResourceResult,
 };
+use turbomcp_protocol::{Error, Result};
 
 impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// List available resources from the MCP server

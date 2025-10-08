@@ -4,11 +4,11 @@
 //! supporting the MCP completion protocol with context and argument validation.
 
 use std::sync::atomic::Ordering;
-use turbomcp_protocol::{Error, Result};
 use turbomcp_protocol::types::{
     ArgumentInfo, CompleteRequestParams, CompleteResult, CompletionContext, CompletionReference,
     CompletionResponse, PromptReferenceData, ResourceTemplateReferenceData,
 };
+use turbomcp_protocol::{Error, Result};
 
 use crate::with_plugins;
 
