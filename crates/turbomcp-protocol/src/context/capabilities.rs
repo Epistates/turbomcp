@@ -132,10 +132,7 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     /// - The client does not support roots
     /// - The transport layer fails
     /// - The client returns an error response
-    fn list_roots(
-        &self,
-        ctx: RequestContext,
-    ) -> BoxFuture<'_, Result<ListRootsResult, Error>>;
+    fn list_roots(&self, ctx: RequestContext) -> BoxFuture<'_, Result<ListRootsResult, Error>>;
 }
 
 /// Communication direction for bidirectional requests

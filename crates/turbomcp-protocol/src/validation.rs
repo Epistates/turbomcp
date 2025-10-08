@@ -408,10 +408,7 @@ impl ProtocolValidator {
     /// Validate elicitation result (content required for 'accept' action)
     ///
     /// Per MCP 2025-06-18 schema (line 634), content is "only present when action is 'accept'".
-    pub fn validate_elicit_result(
-        &self,
-        result: &crate::types::ElicitResult,
-    ) -> ValidationResult {
+    pub fn validate_elicit_result(&self, result: &crate::types::ElicitResult) -> ValidationResult {
         let mut ctx = ValidationContext::new();
 
         use crate::types::ElicitationAction;
@@ -580,9 +577,7 @@ impl ProtocolValidator {
             "date-time" => {
                 // ISO 8601 datetime format: YYYY-MM-DDTHH:MM:SS[.sss][Z|±HH:MM]
                 if !value.contains('T') {
-                    return Err(
-                        "DateTime must contain 'T' separator (ISO 8601 format)".to_string()
-                    );
+                    return Err("DateTime must contain 'T' separator (ISO 8601 format)".to_string());
                 }
                 let parts: Vec<&str> = value.split('T').collect();
                 if parts.len() != 2 {
@@ -1026,138 +1021,10 @@ pub mod utils {
     }
 }
 
+// Comprehensive tests in separate file (tokio/axum pattern)
+// This gives us:
+// - Better organization (tests don't clutter the implementation)
+// - Access to private items (tests are still part of the module)
+// - Easy to find (tests.rs is in the same directory as validation.rs)
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::jsonrpc::JsonRpcVersion;
-    // use serde_json::json;
-
-    #[test]
-    fn test_tool_validation() {
-        let validator = ProtocolValidator::new();
-
-        let tool = Tool {
-            name: "test_tool".to_string(),
-            title: Some("Test Tool".to_string()),
-            description: Some("A test tool".to_string()),
-            input_schema: ToolInputSchema {
-                schema_type: "object".to_string(),
-                properties: None,
-                required: None,
-                additional_properties: None,
-            },
-            output_schema: None,
-            annotations: None,
-            meta: None,
-        };
-
-        let result = validator.validate_tool(&tool);
-        assert!(result.is_valid());
-
-        // Test empty name
-        let invalid_tool = Tool {
-            name: String::new(),
-            title: None,
-            description: None,
-            input_schema: tool.input_schema.clone(),
-            output_schema: None,
-            annotations: None,
-            meta: None,
-        };
-
-        let result = validator.validate_tool(&invalid_tool);
-        assert!(result.is_invalid());
-    }
-
-    #[test]
-    fn test_request_validation() {
-        let validator = ProtocolValidator::new();
-
-        let request = JsonRpcRequest {
-            jsonrpc: JsonRpcVersion,
-            method: "tools/list".to_string(),
-            params: None,
-            id: RequestId::String("test-id".to_string()),
-        };
-
-        let result = validator.validate_request(&request);
-        assert!(result.is_valid());
-
-        // Test invalid method name
-        let invalid_request = JsonRpcRequest {
-            jsonrpc: JsonRpcVersion,
-            method: String::new(),
-            params: None,
-            id: RequestId::String("test-id".to_string()),
-        };
-
-        let result = validator.validate_request(&invalid_request);
-        assert!(result.is_invalid());
-    }
-
-    #[test]
-    fn test_initialize_validation() {
-        let validator = ProtocolValidator::new();
-
-        let request = InitializeRequest {
-            protocol_version: "2025-06-18".to_string(),
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: "test-client".to_string(),
-                title: Some("Test Client".to_string()),
-                version: "1.0.0".to_string(),
-            },
-            _meta: None,
-        };
-
-        let result = validator.validate_initialize_request(&request);
-        assert!(result.is_valid());
-
-        // Test unsupported version (should warn, not error)
-        let request_with_old_version = InitializeRequest {
-            protocol_version: "2023-01-01".to_string(),
-            capabilities: ClientCapabilities::default(),
-            client_info: Implementation {
-                name: "test-client".to_string(),
-                title: Some("Test Client".to_string()),
-                version: "1.0.0".to_string(),
-            },
-            _meta: None,
-        };
-
-        let result = validator.validate_initialize_request(&request_with_old_version);
-        assert!(result.is_valid()); // Valid but with warnings
-        assert!(result.has_warnings());
-    }
-
-    #[test]
-    fn test_validation_result() {
-        let valid = ValidationResult::Valid;
-        assert!(valid.is_valid());
-        assert!(!valid.is_invalid());
-        assert!(!valid.has_warnings());
-
-        let warnings = vec![utils::warning("TEST", "Test warning")];
-        let valid_with_warnings = ValidationResult::ValidWithWarnings(warnings.clone());
-        assert!(valid_with_warnings.is_valid());
-        assert!(valid_with_warnings.has_warnings());
-        assert_eq!(valid_with_warnings.warnings(), &warnings);
-
-        let errors = vec![utils::error("TEST", "Test error")];
-        let invalid = ValidationResult::Invalid(errors.clone());
-        assert!(!invalid.is_valid());
-        assert!(invalid.is_invalid());
-        assert_eq!(invalid.errors(), &errors);
-    }
-
-    #[test]
-    fn test_utils() {
-        assert!(utils::is_valid_uri("file://test.txt"));
-        assert!(utils::is_valid_uri("https://example.com"));
-        assert!(!utils::is_valid_uri("not-a-uri"));
-
-        assert!(utils::is_valid_method_name("tools/list"));
-        assert!(utils::is_valid_method_name("initialize"));
-        assert!(!utils::is_valid_method_name("invalid-method-name!"));
-    }
-}
+mod tests;

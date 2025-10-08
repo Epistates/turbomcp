@@ -400,22 +400,22 @@ impl Error {
     /// Convert to a JSON-RPC error code
     pub const fn jsonrpc_error_code(&self) -> i32 {
         match self.kind {
-            ErrorKind::BadRequest => -32600,                         // Invalid Request
+            ErrorKind::BadRequest => -32600, // Invalid Request
             ErrorKind::Validation | ErrorKind::Serialization => -32602, // Invalid params
-            ErrorKind::Protocol => -32601,                           // Method not found
-            ErrorKind::Internal => -32603,                           // Internal error
-            ErrorKind::NotFound => -32001,                           // Custom: Not found
+            ErrorKind::Protocol => -32601,   // Method not found
+            ErrorKind::Internal => -32603,   // Internal error
+            ErrorKind::NotFound => -32001,   // Custom: Not found
             ErrorKind::Authentication => -32002, // Custom: Authentication failed
             ErrorKind::PermissionDenied => -32003, // Custom: Permission denied
-            ErrorKind::Timeout => -32004,        // Custom: Timeout
-            ErrorKind::Unavailable => -32005,    // Custom: Service unavailable
-            ErrorKind::RateLimited => -32006,    // Custom: Rate limited
-            ErrorKind::Transport => -32007,      // Custom: Transport error
-            ErrorKind::Configuration => -32008,  // Custom: Configuration error
+            ErrorKind::Timeout => -32004,    // Custom: Timeout
+            ErrorKind::Unavailable => -32005, // Custom: Service unavailable
+            ErrorKind::RateLimited => -32006, // Custom: Rate limited
+            ErrorKind::Transport => -32007,  // Custom: Transport error
+            ErrorKind::Configuration => -32008, // Custom: Configuration error
             ErrorKind::ExternalService => -32009, // Custom: External service error
-            ErrorKind::Cancelled => -32010,      // Custom: Operation cancelled
-            ErrorKind::Handler => -32011,        // Custom: Handler error
-            ErrorKind::Security => -32012,       // Custom: Security constraint violation
+            ErrorKind::Cancelled => -32010,  // Custom: Operation cancelled
+            ErrorKind::Handler => -32011,    // Custom: Handler error
+            ErrorKind::Security => -32012,   // Custom: Security constraint violation
         }
     }
 }

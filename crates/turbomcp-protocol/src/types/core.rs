@@ -16,10 +16,10 @@
 //! - [`JsonRpcError`] - JSON-RPC error structure
 //! - [`Timestamp`] - UTC timestamp wrapper
 
+use crate::MessageId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fmt};
-use crate::MessageId;
 
 /// Timestamp wrapper for consistent time handling
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
