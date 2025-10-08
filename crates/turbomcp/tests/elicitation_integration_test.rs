@@ -6,10 +6,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use serde_json::json;
 use turbomcp::elicitation_api::{ElicitationManager, ElicitationResult};
 use turbomcp::prelude::*;
-use turbomcp_protocol::types::{ElicitationAction, ElicitResult};
-use serde_json::json;
+use turbomcp_protocol::types::{ElicitResult, ElicitationAction};
 
 /// Test server with elicitation-enabled tools
 #[derive(Clone)]
@@ -115,10 +115,7 @@ impl TestServer {
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                 let result = ElicitResult {
                     action: ElicitationAction::Accept,
-                    content: Some(HashMap::from([(
-                        "env".to_string(),
-                        json!("production"),
-                    )])),
+                    content: Some(HashMap::from([("env".to_string(), json!("production"))])),
                     _meta: None,
                 };
                 // OK: Test completion handler - errors are expected in some test scenarios

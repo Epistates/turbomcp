@@ -1018,7 +1018,6 @@ pub fn generate_router(
                     let config = WebSocketServerConfig {
                         bind_addr: socket_addr.to_string(),
                         endpoint_path: _path.to_string(),
-                        ..Default::default()
                     };
 
                     run_websocket_server_with_config(config, Arc::new(self)).await

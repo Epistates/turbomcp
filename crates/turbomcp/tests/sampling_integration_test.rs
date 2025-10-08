@@ -237,7 +237,11 @@ async fn test_sampling_stop_reasons() {
     };
 
     // Test different stop reasons
-    for stop_reason in &[StopReason::EndTurn, StopReason::MaxTokens, StopReason::StopSequence] {
+    for stop_reason in &[
+        StopReason::EndTurn,
+        StopReason::MaxTokens,
+        StopReason::StopSequence,
+    ] {
         mock_client.clear_captured_requests().await;
 
         let response = CreateMessageResult {

@@ -3,8 +3,8 @@
 //! These tests verify that mcp_error! macro now generates turbomcp_protocol::Error
 //! and works correctly at the macro layer without creating circular dependencies.
 
-use turbomcp_protocol::{Error as CoreError, ErrorKind};
 use turbomcp_macros::*;
+use turbomcp_protocol::{Error as CoreError, ErrorKind};
 
 #[test]
 fn test_mcp_error_generates_core_error() {

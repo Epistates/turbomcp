@@ -1426,17 +1426,20 @@ fn test_tool_default_has_valid_name() {
 #[test]
 fn verify_content_block_type_field_serialization() {
     use turbomcp_protocol::types::{ContentBlock, TextContent};
-    
+
     let text = ContentBlock::Text(TextContent {
         text: "Hello".to_string(),
         annotations: None,
         meta: None,
     });
-    
+
     let json = serde_json::to_string_pretty(&text).unwrap();
     println!("\n=== TextContent JSON ===\n{}\n", json);
-    
+
     let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-    assert!(parsed.get("type").is_some(), "type field must exist in JSON");
+    assert!(
+        parsed.get("type").is_some(),
+        "type field must exist in JSON"
+    );
     assert_eq!(parsed["type"], "text", "type must be 'text'");
 }

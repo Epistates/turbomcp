@@ -15,10 +15,7 @@ fn test_stop_reason_camel_case_serialization() {
 
     // Test all variants serialize to camelCase (not snake_case)
     assert_eq!(serde_json::to_string(&EndTurn).unwrap(), "\"endTurn\"");
-    assert_eq!(
-        serde_json::to_string(&MaxTokens).unwrap(),
-        "\"maxTokens\""
-    );
+    assert_eq!(serde_json::to_string(&MaxTokens).unwrap(), "\"maxTokens\"");
     assert_eq!(
         serde_json::to_string(&StopSequence).unwrap(),
         "\"stopSequence\""
@@ -135,10 +132,7 @@ fn test_priority_range_validation_out_of_range() {
     };
 
     let result = validator.validate_model_preferences(&invalid_low);
-    assert!(
-        !result.is_valid(),
-        "Priority < 0.0 should fail validation"
-    );
+    assert!(!result.is_valid(), "Priority < 0.0 should fail validation");
     assert_eq!(result.errors().len(), 1);
     assert_eq!(result.errors()[0].code, "PRIORITY_OUT_OF_RANGE");
 
@@ -151,10 +145,7 @@ fn test_priority_range_validation_out_of_range() {
     };
 
     let result = validator.validate_model_preferences(&invalid_high);
-    assert!(
-        !result.is_valid(),
-        "Priority > 1.0 should fail validation"
-    );
+    assert!(!result.is_valid(), "Priority > 1.0 should fail validation");
     assert_eq!(result.errors().len(), 1);
     assert_eq!(result.errors()[0].code, "PRIORITY_OUT_OF_RANGE");
 }
@@ -172,7 +163,10 @@ fn test_priority_range_validation_boundary() {
     };
 
     let result = validator.validate_model_preferences(&boundary);
-    assert!(result.is_valid(), "Boundary values 0.0 and 1.0 should be valid");
+    assert!(
+        result.is_valid(),
+        "Boundary values 0.0 and 1.0 should be valid"
+    );
 }
 
 #[test]
@@ -415,7 +409,9 @@ fn test_enum_names_length_mismatch() {
 fn test_string_format_validation_email() {
     // Valid emails
     assert!(ProtocolValidator::validate_string_format("user@example.com", "email").is_ok());
-    assert!(ProtocolValidator::validate_string_format("test.user@sub.example.co.uk", "email").is_ok());
+    assert!(
+        ProtocolValidator::validate_string_format("test.user@sub.example.co.uk", "email").is_ok()
+    );
 
     // Invalid emails
     assert!(ProtocolValidator::validate_string_format("not-an-email", "email").is_err());
@@ -451,30 +447,21 @@ fn test_string_format_validation_date() {
 #[test]
 fn test_string_format_validation_datetime() {
     // Valid ISO 8601 datetimes
+    assert!(ProtocolValidator::validate_string_format("2025-10-07T15:30:00Z", "date-time").is_ok());
     assert!(
-        ProtocolValidator::validate_string_format("2025-10-07T15:30:00Z", "date-time").is_ok()
-    );
-    assert!(
-        ProtocolValidator::validate_string_format("2025-10-07T15:30:00.123Z", "date-time")
-            .is_ok()
+        ProtocolValidator::validate_string_format("2025-10-07T15:30:00.123Z", "date-time").is_ok()
     );
 
     // Invalid datetimes
     assert!(ProtocolValidator::validate_string_format("2025-10-07", "date-time").is_err());
-    assert!(
-        ProtocolValidator::validate_string_format("2025-10-07 15:30:00", "date-time").is_err()
-    );
-    assert!(
-        ProtocolValidator::validate_string_format("not-a-datetime", "date-time").is_err()
-    );
+    assert!(ProtocolValidator::validate_string_format("2025-10-07 15:30:00", "date-time").is_err());
+    assert!(ProtocolValidator::validate_string_format("not-a-datetime", "date-time").is_err());
 }
 
 #[test]
 fn test_string_format_validation_unknown() {
     // Unknown formats don't fail (forward compatibility)
-    assert!(
-        ProtocolValidator::validate_string_format("anything", "custom-format").is_ok()
-    );
+    assert!(ProtocolValidator::validate_string_format("anything", "custom-format").is_ok());
 }
 
 #[test]
@@ -539,8 +526,16 @@ fn test_full_mcp_compliance_scenario() {
             format: None,
             min_length: None,
             max_length: None,
-            enum_values: Some(vec!["low".to_string(), "medium".to_string(), "high".to_string()]),
-            enum_names: Some(vec!["Low".to_string(), "Medium".to_string(), "High".to_string()]),
+            enum_values: Some(vec![
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string(),
+            ]),
+            enum_names: Some(vec![
+                "Low".to_string(),
+                "Medium".to_string(),
+                "High".to_string(),
+            ]),
         },
     );
 
