@@ -36,7 +36,7 @@ pub fn create_websocket_router<H: turbomcp_protocol::JsonRpcHandler + Clone>(
     config: WebSocketServerConfig,
     handler: Arc<H>,
 ) -> Router {
-    use axum::extract::{WebSocketUpgrade, State, ws::WebSocket};
+    use axum::extract::{State, WebSocketUpgrade, ws::WebSocket};
     use futures::{SinkExt, StreamExt};
 
     #[derive(Clone)]
@@ -60,7 +60,8 @@ pub fn create_websocket_router<H: turbomcp_protocol::JsonRpcHandler + Clone>(
                             let response = handler.handle_request(request).await;
 
                             // Send response
-                            let response_text = serde_json::to_string(&response).unwrap_or_default();
+                            let response_text =
+                                serde_json::to_string(&response).unwrap_or_default();
                             if let Err(e) = sender
                                 .send(axum::extract::ws::Message::Text(response_text.into()))
                                 .await
@@ -95,9 +96,11 @@ pub fn create_websocket_router<H: turbomcp_protocol::JsonRpcHandler + Clone>(
     Router::new()
         .route(
             &endpoint,
-            get(|ws: WebSocketUpgrade, State(state): State<AppState<H>>| async move {
-                ws.on_upgrade(move |socket| handle_websocket(socket, state.handler))
-            }),
+            get(
+                |ws: WebSocketUpgrade, State(state): State<AppState<H>>| async move {
+                    ws.on_upgrade(move |socket| handle_websocket(socket, state.handler))
+                },
+            ),
         )
         .with_state(state)
 }

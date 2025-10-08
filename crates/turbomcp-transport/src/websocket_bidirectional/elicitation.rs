@@ -17,9 +17,7 @@ use uuid::Uuid;
 use super::types::{PendingElicitation, WebSocketBidirectionalTransport};
 use crate::core::{TransportError, TransportMessage, TransportMessageMetadata, TransportResult};
 use turbomcp_protocol::MessageId;
-use turbomcp_protocol::types::{
-    ElicitationAction, ElicitRequest, ElicitResult,
-};
+use turbomcp_protocol::types::{ElicitRequest, ElicitResult, ElicitationAction};
 
 impl WebSocketBidirectionalTransport {
     /// Send an elicitation request

@@ -12,7 +12,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use super::types::WebSocketBidirectionalTransport;
 use crate::core::TransportState;
-use turbomcp_protocol::types::{ElicitationAction, ElicitResult};
+use turbomcp_protocol::types::{ElicitResult, ElicitationAction};
 
 impl WebSocketBidirectionalTransport {
     /// Spawn keep-alive task to send periodic ping messages

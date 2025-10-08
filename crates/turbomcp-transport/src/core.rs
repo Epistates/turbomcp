@@ -854,7 +854,10 @@ mod tests {
     #[test]
     fn test_transport_capabilities_default() {
         let caps = TransportCapabilities::default();
-        assert_eq!(caps.max_message_size, Some(turbomcp_protocol::MAX_MESSAGE_SIZE));
+        assert_eq!(
+            caps.max_message_size,
+            Some(turbomcp_protocol::MAX_MESSAGE_SIZE)
+        );
         assert!(caps.supports_bidirectional);
     }
 

@@ -247,22 +247,22 @@ impl StreamableHttpClientTransport {
             headers.insert("MCP-Protocol-Version", protocol_value);
         }
 
-        if let Some(session_id) = self.session_id.read().await.as_ref() {
-            if let Ok(session_value) = header::HeaderValue::from_str(session_id) {
-                headers.insert("Mcp-Session-Id", session_value);
-            }
+        if let Some(session_id) = self.session_id.read().await.as_ref()
+            && let Ok(session_value) = header::HeaderValue::from_str(session_id)
+        {
+            headers.insert("Mcp-Session-Id", session_value);
         }
 
-        if let Some(last_event_id) = self.last_event_id.read().await.as_ref() {
-            if let Ok(event_value) = header::HeaderValue::from_str(last_event_id) {
-                headers.insert("Last-Event-ID", event_value);
-            }
+        if let Some(last_event_id) = self.last_event_id.read().await.as_ref()
+            && let Ok(event_value) = header::HeaderValue::from_str(last_event_id)
+        {
+            headers.insert("Last-Event-ID", event_value);
         }
 
-        if let Some(token) = &self.config.auth_token {
-            if let Ok(auth_value) = header::HeaderValue::from_str(&format!("Bearer {}", token)) {
-                headers.insert(header::AUTHORIZATION, auth_value);
-            }
+        if let Some(token) = &self.config.auth_token
+            && let Ok(auth_value) = header::HeaderValue::from_str(&format!("Bearer {}", token))
+        {
+            headers.insert(header::AUTHORIZATION, auth_value);
         }
 
         for (key, value) in &self.config.headers {
@@ -347,22 +347,22 @@ impl StreamableHttpClientTransport {
                 headers.insert("MCP-Protocol-Version", protocol_value);
             }
 
-            if let Some(sid) = session_id.read().await.as_ref() {
-                if let Ok(session_value) = header::HeaderValue::from_str(sid) {
-                    headers.insert("Mcp-Session-Id", session_value);
-                }
+            if let Some(sid) = session_id.read().await.as_ref()
+                && let Ok(session_value) = header::HeaderValue::from_str(sid)
+            {
+                headers.insert("Mcp-Session-Id", session_value);
             }
 
-            if let Some(last_id) = last_event_id.read().await.as_ref() {
-                if let Ok(event_value) = header::HeaderValue::from_str(last_id) {
-                    headers.insert("Last-Event-ID", event_value);
-                }
+            if let Some(last_id) = last_event_id.read().await.as_ref()
+                && let Ok(event_value) = header::HeaderValue::from_str(last_id)
+            {
+                headers.insert("Last-Event-ID", event_value);
             }
 
-            if let Some(token) = &config.auth_token {
-                if let Ok(auth_value) = header::HeaderValue::from_str(&format!("Bearer {}", token)) {
-                    headers.insert(header::AUTHORIZATION, auth_value);
-                }
+            if let Some(token) = &config.auth_token
+                && let Ok(auth_value) = header::HeaderValue::from_str(&format!("Bearer {}", token))
+            {
+                headers.insert(header::AUTHORIZATION, auth_value);
             }
 
             // Connect to SSE endpoint
