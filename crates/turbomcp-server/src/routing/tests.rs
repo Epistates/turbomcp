@@ -1,14 +1,14 @@
 //! Simple routing tests for coverage improvement
+use super::*;
 
+use crate::ServerResult;
+use crate::metrics::ServerMetrics;
+use crate::registry::HandlerRegistry;
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{jsonrpc::*, types::*};
-use turbomcp_server::ServerResult;
-use turbomcp_server::metrics::ServerMetrics;
-use turbomcp_server::registry::HandlerRegistry;
-use turbomcp_server::routing::*;
 
 // Simple mock route handler
 #[derive(Debug)]

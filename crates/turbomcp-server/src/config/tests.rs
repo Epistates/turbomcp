@@ -1,10 +1,9 @@
 //! Server configuration tests - comprehensive coverage for normal and edge cases
+use super::*;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
-
-use turbomcp_server::config::*;
 
 // ============================================================================
 // Default Configuration Tests

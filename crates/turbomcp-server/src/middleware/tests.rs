@@ -13,14 +13,14 @@
 
 #![cfg(feature = "middleware")]
 
+use crate::{
+    ServerBuilder,
+    middleware::{MiddlewareStack, TimeoutConfig, ValidationConfig},
+};
 use bytes::Bytes;
 use http::{Request, StatusCode};
 use std::time::Duration;
 use tower::ServiceExt;
-use turbomcp_server::{
-    ServerBuilder,
-    middleware::{MiddlewareStack, TimeoutConfig, ValidationConfig},
-};
 
 /// Test basic middleware stack creation and configuration
 #[test]

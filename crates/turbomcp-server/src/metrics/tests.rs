@@ -1,8 +1,8 @@
 //! Production-grade comprehensive tests for the server metrics module
 
+use crate::metrics::ServerMetrics;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use turbomcp_server::metrics::ServerMetrics;
 
 #[tokio::test]
 async fn test_server_metrics_creation() {

@@ -1,8 +1,8 @@
 //! Comprehensive tests for the handler registry module
 
+use crate::handlers::HandlerMetadata;
+use crate::registry::{HandlerRegistry, RegistryConfig, RegistryEvent};
 use chrono::Utc;
-use turbomcp_server::handlers::HandlerMetadata;
-use turbomcp_server::registry::{HandlerRegistry, RegistryConfig, RegistryEvent};
 
 #[test]
 fn test_handler_registry_creation() {

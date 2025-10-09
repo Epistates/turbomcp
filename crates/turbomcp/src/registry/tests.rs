@@ -1,14 +1,14 @@
 //! Comprehensive tests for the registry module
 
+use crate::registry::{
+    HandlerRegistry, PromptRequest, ResourceRegistration, ResourceRequest, ToolRegistration,
+    ToolRequest,
+};
+use crate::{CallToolResult, McpResult};
 use serde_json::json;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use turbomcp::registry::{
-    HandlerRegistry, PromptRequest, ResourceRegistration, ResourceRequest, ToolRegistration,
-    ToolRequest,
-};
-use turbomcp::{CallToolResult, McpResult};
 use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::types::{
     ContentBlock, GetPromptResult, ReadResourceResult, ResourceContent, TextContent,

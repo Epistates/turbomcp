@@ -1,3 +1,6 @@
+//! Tests
+use super::*;
+
 //! Comprehensive test for TransportMetrics metadata field implementation
 //!
 //! This test validates the new metadata field that allows transport-specific
@@ -5,7 +8,7 @@
 
 use serde_json::json;
 use std::collections::HashMap;
-use turbomcp_transport::core::{AtomicMetrics, TransportMetrics};
+use crate::core::{AtomicMetrics, TransportMetrics};
 
 #[test]
 fn test_transport_metrics_metadata_field() {

@@ -1,8 +1,11 @@
+//! Comprehensive tests
+use super::*;
+
 //! Comprehensive tests for protocol types
 
 use serde_json::json;
 use std::collections::HashMap;
-use turbomcp_protocol::types::*;
+use crate::types::*;
 
 // ============================================================================
 // Type Aliases Tests
@@ -1425,7 +1428,7 @@ fn test_tool_default_has_valid_name() {
 
 #[test]
 fn verify_content_block_type_field_serialization() {
-    use turbomcp_protocol::types::{ContentBlock, TextContent};
+    use crate::types::{ContentBlock, TextContent};
 
     let text = ContentBlock::Text(TextContent {
         text: "Hello".to_string(),

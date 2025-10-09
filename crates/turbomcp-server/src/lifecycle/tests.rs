@@ -1,8 +1,8 @@
 //! Comprehensive tests for the server lifecycle module
 
+use crate::lifecycle::{HealthCheck, HealthStatus, ServerLifecycle, ServerState};
 use std::sync::Arc;
 use tokio::time::{Duration, Instant};
-use turbomcp_server::lifecycle::{HealthCheck, HealthStatus, ServerLifecycle, ServerState};
 
 #[tokio::test]
 async fn test_server_lifecycle_creation() {

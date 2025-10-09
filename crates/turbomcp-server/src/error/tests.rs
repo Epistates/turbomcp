@@ -1,7 +1,7 @@
 //! Tests for server error types and handling
+use super::*;
 
-use turbomcp_server::ServerError;
-use turbomcp_server::error::*;
+use crate::ServerError;
 
 #[test]
 fn test_server_error_display() {
