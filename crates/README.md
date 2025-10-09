@@ -58,29 +58,24 @@ classDiagram
         +MCP Types
         +JSON-RPC
         +Validation
-    }
-    
-    class turbomcp_core {
-        <<Foundation>>
         +Core Types
         +Error Handling
         +Session Management
     }
-    
+
     class turbomcp_cli {
         <<Command Line Tools>>
         +Server Testing
         +Schema Export
         +Debugging Tools
     }
-    
+
     turbomcp --> turbomcp_macros
     turbomcp --> turbomcp_server
     turbomcp --> turbomcp_client
     turbomcp_server --> turbomcp_transport
     turbomcp_client --> turbomcp_transport
     turbomcp_transport --> turbomcp_protocol
-    turbomcp_protocol --> turbomcp_core
     turbomcp_cli --> turbomcp_client
 ```
 
@@ -97,28 +92,20 @@ The main SDK crate providing ergonomic APIs and integration. This is what most u
 - High-level server and client APIs
 - Performance optimizations and SIMD support
 
-### [`turbomcp-core`](./turbomcp-core/) - Foundation
-[![docs.rs](https://docs.rs/turbomcp-core/badge.svg)](https://docs.rs/turbomcp-core)
-
-Foundation crate providing core types, error handling, and utilities used by all other crates.
-
-**Key Features:**
-- SIMD-accelerated JSON processing
-- Zero-copy message handling with `Bytes`
-- Enhanced MessagePack with `msgpacker` integration (v1.1.0)
-- Comprehensive error handling with rich context
-- Session management with LRU eviction
-- Request/response context tracking
-
-### [`turbomcp-protocol`](./turbomcp-protocol/) - Protocol Implementation
+### [`turbomcp-protocol`](./turbomcp-protocol/) - Protocol Implementation & Foundation
 [![docs.rs](https://docs.rs/turbomcp-protocol/badge.svg)](https://docs.rs/turbomcp-protocol)
 
-Complete implementation of the Model Context Protocol specification with JSON-RPC support.
+Complete implementation of the Model Context Protocol specification with JSON-RPC support and foundational types.
+
+**Note:** In v2.0.0, `turbomcp-core` was merged into `turbomcp-protocol` to eliminate circular dependencies and improve cohesion.
 
 **Key Features:**
 - MCP 2025-06-18 specification compliance
 - JSON-RPC 2.0 with batching support
-- Flexible ProgressToken (string/integer support) (v1.1.0)
+- SIMD-accelerated JSON processing and zero-copy message handling
+- Comprehensive error handling with rich context
+- Session management with LRU eviction
+- Request/response context tracking
 - Type-safe capability negotiation
 - Protocol version management
 - Comprehensive validation

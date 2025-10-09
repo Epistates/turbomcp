@@ -25,8 +25,8 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 # Crate publish order (dependencies first)
+# Note: turbomcp-core was merged into turbomcp-protocol in v2.0.0
 CRATES=(
-    "turbomcp-core"
     "turbomcp-protocol"
     "turbomcp-transport"
     "turbomcp-macros"

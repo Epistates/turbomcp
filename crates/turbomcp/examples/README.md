@@ -62,14 +62,50 @@ Learn client usage patterns:
 
 ### 3️⃣ Transport Examples
 
-Learn different transport mechanisms:
+Learn different transport mechanisms with complete server + client pairs:
 
+#### Server Examples
+| Example | Transport | What It Teaches |
+|---------|-----------|----------------|
+| **tcp_server.rs** | TCP | Network server |
+| **websocket_server_simple.rs** | WebSocket | Real-time bidirectional |
+| **http_server.rs** | HTTP/SSE | Web-compatible server |
+| **unix_server_simple.rs** | Unix Socket | Local IPC server |
+
+#### Client Examples
+| Example | Transport | What It Teaches |
+|---------|-----------|----------------|
+| **tcp_client_simple.rs** | TCP | Network client with auto-connect |
+| **websocket_client_simple.rs** | WebSocket | WebSocket client setup |
+| **http_client_simple.rs** | HTTP/SSE | HTTP client with SSE support |
+| **unix_client_simple.rs** | Unix Socket | Unix socket client |
+
+**Running Transport Examples:**
+```bash
+# TCP (Terminal 1: Server, Terminal 2: Client)
+cargo run --example tcp_server --features tcp
+cargo run --example tcp_client_simple --features tcp
+
+# WebSocket (requires both http and websocket features)
+cargo run --example websocket_server_simple --features "http,websocket"
+cargo run --example websocket_client_simple --features "http,websocket"
+
+# HTTP/SSE
+cargo run --example http_server --features http
+cargo run --example http_client_simple --features http
+
+# Unix Socket
+cargo run --example unix_server_simple --features unix
+cargo run --example unix_client_simple --features unix
+```
+
+**Legacy Transport Demos (single-file):**
 | Example | Lines | What It Teaches |
 |---------|-------|----------------|
-| **tcp_transport_demo.rs** | 63 | TCP network communication |
-| **unix_transport_demo.rs** | 78 | Unix socket IPC (local processes) |
+| **tcp_transport_demo.rs** | 63 | TCP network communication (server only) |
+| **unix_transport_demo.rs** | 78 | Unix socket IPC (server only) |
 
-**Total:** 2 examples averaging 71 lines
+**Total:** 12 transport examples (8 new, 2 legacy)
 
 ---
 

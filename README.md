@@ -786,13 +786,14 @@ TurboMCP prioritizes compile-time optimization over runtime flexibility. This cr
 | Crate | Purpose | Key Innovation |
 |-------|---------|----------------|
 | [`turbomcp`](./crates/turbomcp/) | Main SDK | Zero-overhead macro integration |
-| [`turbomcp-core`](./crates/turbomcp-core/) | Foundation | SIMD-accelerated message processing |
-| [`turbomcp-protocol`](./crates/turbomcp-protocol/) | MCP protocol | Compile-time schema generation |
+| [`turbomcp-protocol`](./crates/turbomcp-protocol/) | Protocol & Foundation | SIMD-accelerated processing + compile-time schemas |
 | [`turbomcp-transport`](./crates/turbomcp-transport/) | Transport layer | High throughput with circuit breakers |
 | [`turbomcp-server`](./crates/turbomcp-server/) | Server framework | Enterprise security & middleware |
 | [`turbomcp-client`](./crates/turbomcp-client/) | Client library | Advanced LLM integration |
 | [`turbomcp-macros`](./crates/turbomcp-macros/) | Proc macros | Compile-time optimization engine |
 | [`turbomcp-cli`](./crates/turbomcp-cli/) | CLI tools | Production testing & debugging |
+
+**Note:** In v2.0.0, `turbomcp-core` was merged into `turbomcp-protocol` to eliminate circular dependencies.
 
 ### Performance Characteristics
 

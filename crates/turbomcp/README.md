@@ -94,8 +94,7 @@ TurboMCP is built as a layered architecture with clear separation of concerns:
 ```
 
 **Components:**
-- **[turbomcp-core](../turbomcp-core/)** - Performance-critical types and SIMD acceleration
-- **[turbomcp-protocol](../turbomcp-protocol/)** - MCP specification implementation
+- **[turbomcp-protocol](../turbomcp-protocol/)** - MCP specification implementation, core utilities, and SIMD acceleration
 - **[turbomcp-transport](../turbomcp-transport/)** - Multi-protocol transport with circuit breakers
 - **[turbomcp-server](../turbomcp-server/)** - Server framework with OAuth 2.0
 - **[turbomcp-client](../turbomcp-client/)** - Client implementation with error recovery

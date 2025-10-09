@@ -17,10 +17,10 @@ DRY_RUN=${DRY_RUN:-true}
 VERSION=${VERSION:-"1.1.0"}
 
 # Crate publish order (dependencies first)
+# Note: turbomcp-core was merged into turbomcp-protocol in v2.0.0
 CRATES=(
-    "turbomcp-core"
     "turbomcp-protocol"
-    "turbomcp-transport" 
+    "turbomcp-transport"
     "turbomcp-macros"
     "turbomcp-dpop"
     "turbomcp-server"

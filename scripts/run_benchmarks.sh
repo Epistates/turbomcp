@@ -163,11 +163,8 @@ run_core_benchmarks() {
 
     cd "$PROJECT_DIR"
 
-    # Core library benchmarks
-    if [[ -z "$BENCHMARK_FILTER" || "$BENCHMARK_FILTER" == *"zero_copy"* ]]; then
-        log_info "Running zero-copy benchmarks..."
-        cargo bench --package turbomcp-core --bench zero_copy_bench
-    fi
+    # Note: zero_copy_bench was removed when turbomcp-core was merged into turbomcp-protocol in v2.0.0
+    # Zero-copy functionality is now benchmarked as part of the main performance benchmarks
 
     # Framework benchmarks
     if [[ -z "$BENCHMARK_FILTER" || "$BENCHMARK_FILTER" == *"performance"* ]]; then
