@@ -1,76 +1,79 @@
-//! Tool system types
+//! Types for the MCP tool-calling system.
 //!
-//! This module contains types for the MCP tool calling system, including
-//! tool definitions, schemas, and tool execution requests/responses.
+//! This module defines the data structures for defining tools, their input/output schemas,
+//! and the requests and responses used to list and execute them, as specified by the MCP standard.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{content::ContentBlock, core::Cursor};
 
-/// Tool-specific annotations for additional tool information
+/// Provides additional, optional metadata about a tool.
+///
+/// These annotations offer hints to clients and LLMs about the tool's behavior,
+/// helping them make more informed decisions about when and how to use the tool.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolAnnotations {
-    /// Title for display purposes - takes precedence over name for UI
+    /// A user-friendly title for the tool, which may be used in UIs instead of the programmatic `name`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Audience-specific information
+    /// Specifies the intended audience for the tool (e.g., "developer", "admin").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audience: Option<Vec<String>>,
-    /// Priority for ordering
+    /// A numeric value indicating the tool's priority, useful for sorting or ranking.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<f64>,
-    /// If true, the tool may perform destructive updates to its environment
+    /// If `true`, hints that the tool may perform destructive actions (e.g., deleting data).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "destructiveHint")]
     pub destructive_hint: Option<bool>,
-    /// If true, calling the tool repeatedly with same arguments has no additional effect
+    /// If `true`, hints that calling the tool multiple times with the same arguments will not have additional effects.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "idempotentHint")]
     pub idempotent_hint: Option<bool>,
-    /// If true, this tool may interact with an "open world" of external entities
+    /// If `true`, hints that the tool may interact with external systems or the real world.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "openWorldHint")]
     pub open_world_hint: Option<bool>,
-    /// If true, the tool does not modify its environment
+    /// If `true`, hints that the tool does not modify any state and only reads data.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "readOnlyHint")]
     pub read_only_hint: Option<bool>,
-    /// Additional custom annotations
+    /// A map for any other custom annotations not defined in the specification.
     #[serde(flatten)]
     pub custom: HashMap<String, serde_json::Value>,
 }
 
-/// Tool definition per MCP 2025-06-18 specification
+/// Represents a tool that can be executed by an MCP server, as per the MCP 2025-06-18 specification.
+///
+/// A `Tool` definition includes its programmatic name, a human-readable description,
+/// and JSON schemas for its inputs and outputs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
-    /// Tool name (programmatic identifier)
+    /// The programmatic name of the tool, used to identify it in `CallToolRequest`.
     pub name: String,
 
-    /// Display title for UI contexts (optional, falls back to name if not provided)
+    /// An optional, user-friendly title for the tool. Display name precedence is: `title`, `annotations.title`, then `name`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
 
-    /// Human-readable description of the tool
-    /// This can be used by clients to improve the LLM's understanding of available tools
+    /// A human-readable description of what the tool does, which can be used by clients or LLMs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
-    /// JSON Schema object defining the expected parameters for the tool
+    /// The JSON Schema object defining the parameters the tool accepts.
     #[serde(rename = "inputSchema")]
     pub input_schema: ToolInputSchema,
 
-    /// Optional JSON Schema object defining the structure of the tool's output
-    /// returned in the structuredContent field of a CallToolResult
+    /// An optional JSON Schema object defining the structure of the tool's successful output.
     #[serde(rename = "outputSchema", skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<ToolOutputSchema>,
 
-    /// Optional additional tool information
-    /// Display name precedence order is: title, annotations.title, then name
+    /// Optional, additional metadata providing hints about the tool's behavior.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
 
-    /// General metadata field for extensions and custom data
+    /// A general-purpose metadata field for custom data.
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
@@ -90,10 +93,10 @@ impl Default for Tool {
 }
 
 impl Tool {
-    /// Create a new tool with the given name
+    /// Creates a new `Tool` with a given name.
     ///
     /// # Panics
-    /// Panics if the name is empty or contains only whitespace
+    /// Panics if the name is empty or contains only whitespace.
     pub fn new(name: impl Into<String>) -> Self {
         let name = name.into();
         assert!(!name.trim().is_empty(), "Tool name cannot be empty");
@@ -108,10 +111,10 @@ impl Tool {
         }
     }
 
-    /// Create a new tool with name and description
+    /// Creates a new `Tool` with a name and a description.
     ///
     /// # Panics
-    /// Panics if the name is empty or contains only whitespace
+    /// Panics if the name is empty or contains only whitespace.
     pub fn with_description(name: impl Into<String>, description: impl Into<String>) -> Self {
         let name = name.into();
         assert!(!name.trim().is_empty(), "Tool name cannot be empty");
@@ -126,44 +129,51 @@ impl Tool {
         }
     }
 
-    /// Set the input schema for this tool
+    /// Sets the input schema for this tool.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_protocol::types::{Tool, ToolInputSchema};
+    /// let schema = ToolInputSchema::empty();
+    /// let tool = Tool::new("my_tool").with_input_schema(schema);
+    /// ```
     pub fn with_input_schema(mut self, schema: ToolInputSchema) -> Self {
         self.input_schema = schema;
         self
     }
 
-    /// Set the output schema for this tool
+    /// Sets the output schema for this tool.
     pub fn with_output_schema(mut self, schema: ToolOutputSchema) -> Self {
         self.output_schema = Some(schema);
         self
     }
 
-    /// Set the title for this tool
+    /// Sets the user-friendly title for this tool.
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
         self.title = Some(title.into());
         self
     }
 
-    /// Set annotations for this tool
+    /// Sets the annotations for this tool.
     pub fn with_annotations(mut self, annotations: ToolAnnotations) -> Self {
         self.annotations = Some(annotations);
         self
     }
 }
 
-/// Tool input schema definition
+/// Defines the structure of the arguments a tool accepts, as a JSON Schema object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolInputSchema {
-    /// Must be "object" for tool input schemas
+    /// The type of the schema, which must be "object" for tool inputs.
     #[serde(rename = "type")]
     pub schema_type: String,
-    /// Schema properties defining the tool parameters
+    /// A map defining the properties (parameters) the tool accepts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, serde_json::Value>>,
-    /// List of required property names
+    /// A list of property names that are required.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
-    /// Whether additional properties are allowed
+    /// Whether additional, unspecified properties are allowed.
     #[serde(
         rename = "additionalProperties",
         skip_serializing_if = "Option::is_none"
@@ -172,6 +182,7 @@ pub struct ToolInputSchema {
 }
 
 impl Default for ToolInputSchema {
+    /// Creates a default `ToolInputSchema` that accepts an empty object.
     fn default() -> Self {
         Self {
             schema_type: "object".to_string(),
@@ -183,12 +194,12 @@ impl Default for ToolInputSchema {
 }
 
 impl ToolInputSchema {
-    /// Create a simple input schema with no properties
+    /// Creates a new, empty input schema that accepts no parameters.
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// Create a schema with properties (no required fields)
+    /// Creates a new schema with a given set of properties.
     pub fn with_properties(properties: HashMap<String, serde_json::Value>) -> Self {
         Self {
             schema_type: "object".to_string(),
@@ -198,7 +209,7 @@ impl ToolInputSchema {
         }
     }
 
-    /// Create a schema with required properties
+    /// Creates a new schema with a given set of properties and a list of required properties.
     pub fn with_required_properties(
         properties: HashMap<String, serde_json::Value>,
         required: Vec<String>,
@@ -211,44 +222,52 @@ impl ToolInputSchema {
         }
     }
 
-    /// Add a property to the schema
+    /// Adds a property to the schema using a builder pattern.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_protocol::types::ToolInputSchema;
+    /// # use serde_json::json;
+    /// let schema = ToolInputSchema::empty()
+    ///     .add_property("name".to_string(), json!({ "type": "string" }));
+    /// ```
     pub fn add_property(mut self, name: String, property: serde_json::Value) -> Self {
-        if self.properties.is_none() {
-            self.properties = Some(HashMap::new());
-        }
-        if let Some(ref mut properties) = self.properties {
-            properties.insert(name, property);
-        }
+        self.properties.get_or_insert_with(HashMap::new).insert(name, property);
         self
     }
 
-    /// Mark a property as required
+    /// Marks a property as required using a builder pattern.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_protocol::types::ToolInputSchema;
+    /// # use serde_json::json;
+    /// let schema = ToolInputSchema::empty()
+    ///     .add_property("name".to_string(), json!({ "type": "string" }))
+    ///     .require_property("name".to_string());
+    /// ```
     pub fn require_property(mut self, name: String) -> Self {
-        if self.required.is_none() {
-            self.required = Some(Vec::new());
-        }
-        if let Some(ref mut required) = self.required
-            && !required.contains(&name)
-        {
+        let required = self.required.get_or_insert_with(Vec::new);
+        if !required.contains(&name) {
             required.push(name);
         }
         self
     }
 }
 
-/// Tool output schema definition
+/// Defines the structure of a tool's successful output, as a JSON Schema object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolOutputSchema {
-    /// Must be "object" for tool output schemas
+    /// The type of the schema, which must be "object" for tool outputs.
     #[serde(rename = "type")]
     pub schema_type: String,
-    /// Schema properties defining the tool output structure
+    /// A map defining the properties of the output object.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, serde_json::Value>>,
-    /// List of required property names
+    /// A list of property names in the output that are required.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
-    /// Whether additional properties are allowed
+    /// Whether additional, unspecified properties are allowed in the output.
     #[serde(
         rename = "additionalProperties",
         skip_serializing_if = "Option::is_none"
@@ -256,57 +275,57 @@ pub struct ToolOutputSchema {
     pub additional_properties: Option<bool>,
 }
 
-/// List tools request with optional pagination
+/// A request to list the available tools on a server.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ListToolsRequest {
-    /// Optional cursor for pagination
-    /// An opaque token representing the current pagination position.
-    /// If provided, the server should return results starting after this cursor.
+    /// An optional cursor for pagination. If provided, the server should return
+    /// the next page of results starting after this cursor.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata for the request.
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
 
-/// List tools result
+/// The result of a `ListToolsRequest`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListToolsResult {
-    /// Available tools
+    /// The list of available tools for the current page.
     pub tools: Vec<Tool>,
-    /// Optional continuation token
+    /// An optional continuation token for retrieving the next page of results.
+    /// If `None`, there are no more results.
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata for the result.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
 
-/// Call tool request
+/// A request to execute a specific tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallToolRequest {
-    /// Tool name
+    /// The programmatic name of the tool to call.
     pub name: String,
-    /// Tool arguments
+    /// The arguments to pass to the tool, conforming to its `input_schema`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<HashMap<String, serde_json::Value>>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata for the request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
 
-/// Call tool result
+/// The result of a `CallToolRequest`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallToolResult {
-    /// Result content (required)
+    /// The output of the tool, typically as a series of text or other content blocks. This is required.
     pub content: Vec<ContentBlock>,
-    /// Whether the operation failed
+    /// An optional boolean indicating whether the tool execution resulted in an error.
     #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
-    /// Optional structured result of the tool call per MCP 2025-06-18 specification
+    /// Optional structured output from the tool, conforming to its `output_schema`.
     #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
     pub structured_content: Option<serde_json::Value>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata for the result.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }

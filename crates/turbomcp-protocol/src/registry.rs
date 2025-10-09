@@ -50,7 +50,7 @@ impl From<RegistryError> for Box<crate::error::Error> {
         use crate::error::Error;
         match err {
             RegistryError::NotFound(name) => {
-                Error::not_found(format!("Component '{}' not found in registry", name))
+                Error::internal(format!("Component '{}' not found in registry", name))
                     .with_component("registry")
             }
             RegistryError::AlreadyExists(name) => {

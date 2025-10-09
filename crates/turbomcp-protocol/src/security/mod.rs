@@ -1,6 +1,6 @@
 //! Security utilities for TurboMCP
 //!
-//! This module provides focused security utilities integrated into turbomcp-core
+//! This module provides focused security utilities integrated into turbomcp-protocol
 //! as part of the distributed security model. These utilities follow the principle
 //! of doing one thing well, providing essential security primitives without
 //! over-engineering.

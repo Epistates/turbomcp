@@ -4,10 +4,11 @@
 //! with the validation.rs implementation. This gives tests access to private items
 //! and makes it clear which code is being tested.
 
-use super::*;  // Import validation module items (ProtocolValidator, ValidationResult, etc.)
-use crate::jsonrpc::{JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
-use crate::types::*;
-use serde_json::{json, Value};
+use super::*; // Import validation module items (ProtocolValidator, ValidationResult, etc.)
+use crate::jsonrpc::{
+    JsonRpcError, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcVersion,
+};
+use serde_json::{Value, json};
 
 // ========== ProtocolValidator Constructor Tests ==========
 

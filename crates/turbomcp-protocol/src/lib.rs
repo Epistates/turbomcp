@@ -123,34 +123,55 @@
     clippy::wildcard_imports  // Used in test modules
 )]
 
-// Core abstractions (from turbomcp-core)
+// Core abstractions (merged from turbomcp-core in v2.0.0)
+/// Configuration for protocol components.
 pub mod config;
+/// Request/response context, including server-to-client capabilities.
 pub mod context;
+/// An advanced handler registry with metrics and enhanced features.
 pub mod enhanced_registry;
+/// Error types and handling for the protocol.
 pub mod error;
+/// Utilities for creating and working with protocol errors.
 pub mod error_utils;
+/// Traits and types for handling different MCP requests (tools, prompts, etc.).
 pub mod handlers;
+/// Lock-free data structures for high-performance concurrent scenarios.
 #[cfg(feature = "lock-free")]
 pub mod lock_free;
+/// Core message types and serialization logic.
 pub mod message;
+/// Basic handler registration and lookup.
 pub mod registry;
+/// Security-related utilities, such as path validation.
 pub mod security;
+/// Session management for client connections.
 pub mod session;
+/// Utilities for shared, concurrent state management.
 pub mod shared;
+/// State management for the protocol.
 pub mod state;
+/// General utility functions.
 pub mod utils;
+/// Zero-copy data handling utilities for performance-critical operations.
 pub mod zero_copy;
 
 // Protocol-specific modules
+/// Capability negotiation and management.
 pub mod capabilities;
 // Old elicitation module removed - use types::elicitation instead (MCP 2025-06-18 compliant)
+/// JSON-RPC 2.0 protocol implementation.
 pub mod jsonrpc;
+/// All MCP protocol types (requests, responses, and data structures).
 pub mod types;
+/// Schema validation for protocol messages.
 pub mod validation;
+/// Protocol version management and compatibility checking.
 pub mod versioning;
 
 // Test utilities (public to allow downstream crates to use them in tests)
 // Following the pattern from axum and tokio
+/// Public test utilities for use in downstream crates.
 pub mod test_helpers;
 
 // Re-export core types

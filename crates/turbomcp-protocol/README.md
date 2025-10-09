@@ -439,9 +439,10 @@ cargo test test_message_validation
 ## Related Crates
 
 - **[turbomcp](../turbomcp/)** - Main framework (uses this crate)
-- **[turbomcp-core](../turbomcp-core/)** - Core types and utilities
 - **[turbomcp-transport](../turbomcp-transport/)** - Transport layer
 - **[turbomcp-server](../turbomcp-server/)** - Server framework
+
+**Note:** In v2.0.0, `turbomcp-core` was merged into this crate to eliminate circular dependencies and improve cohesion.
 
 ## External Resources
 

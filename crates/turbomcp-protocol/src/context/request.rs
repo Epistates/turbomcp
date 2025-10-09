@@ -16,39 +16,43 @@ use uuid::Uuid;
 use super::capabilities::ServerToClientRequests;
 use crate::types::Timestamp;
 
-/// Context information for request processing
+/// Context information for a single MCP request, carried through its entire lifecycle.
+///
+/// This struct contains essential metadata for processing, logging, and tracing a request,
+/// including unique identifiers, authentication information, and mechanisms for
+/// cancellation and server-initiated communication.
 #[derive(Clone)]
 pub struct RequestContext {
-    /// Unique request identifier
+    /// A unique identifier for the request, typically a UUID.
     pub request_id: String,
 
-    /// User identifier (if authenticated)
+    /// The identifier for the user making the request, if authenticated.
     pub user_id: Option<String>,
 
-    /// Session identifier
+    /// The identifier for the session to which this request belongs.
     pub session_id: Option<String>,
 
-    /// Client identifier
+    /// The identifier for the client application making the request.
     pub client_id: Option<String>,
 
-    /// Request timestamp
+    /// The timestamp when the request was received.
     pub timestamp: Timestamp,
 
-    /// Request start time for performance tracking
+    /// The `Instant` when request processing started, used for performance tracking.
     pub start_time: Instant,
 
-    /// Custom metadata
+    /// A collection of custom metadata for application-specific use cases.
     pub metadata: Arc<HashMap<String, serde_json::Value>>,
 
-    /// Tracing span context
+    /// The tracing span associated with this request for observability.
     #[cfg(feature = "tracing")]
     pub span: Option<tracing::Span>,
 
-    /// Cancellation token
+    /// A token that can be used to signal cancellation of the request.
     pub cancellation_token: Option<Arc<CancellationToken>>,
 
-    /// Server-to-client requests interface for server-initiated requests
-    /// This is used by turbomcp-server to provide access to sampling, elicitation, and roots
+    /// An interface for making server-initiated requests back to the client (e.g., sampling, elicitation).
+    /// This is hidden from public docs as it's an internal detail injected by the server.
     #[doc(hidden)]
     pub(crate) server_to_client: Option<Arc<dyn ServerToClientRequests>>,
 }
@@ -67,68 +71,68 @@ impl fmt::Debug for RequestContext {
     }
 }
 
-/// Context information for response processing
+/// Context information generated after processing a request, containing response details.
 #[derive(Debug, Clone)]
 pub struct ResponseContext {
-    /// Original request ID
+    /// The ID of the original request this response is for.
     pub request_id: String,
 
-    /// Response timestamp
+    /// The timestamp when the response was generated.
     pub timestamp: Timestamp,
 
-    /// Processing duration
+    /// The total time taken to process the request.
     pub duration: std::time::Duration,
 
-    /// Response status
+    /// The status of the response (e.g., Success, Error).
     pub status: ResponseStatus,
 
-    /// Custom metadata
+    /// A collection of custom metadata for the response.
     pub metadata: Arc<HashMap<String, serde_json::Value>>,
 }
 
-/// Response status information
+/// Represents the status of an MCP response.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResponseStatus {
-    /// Successful response
+    /// The request was processed successfully.
     Success,
-    /// Error response
+    /// An error occurred during request processing.
     Error {
-        /// Error code
+        /// A numeric code indicating the error type.
         code: i32,
-        /// Error message
+        /// A human-readable message describing the error.
         message: String,
     },
-    /// Partial response (streaming)
+    /// The response is partial, indicating more data will follow (for streaming).
     Partial,
-    /// Cancelled response
+    /// The request was cancelled before completion.
     Cancelled,
 }
 
-/// Request analytics information for monitoring and debugging
+/// Contains analytics information for a single request, used for monitoring and debugging.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestInfo {
-    /// Request timestamp
+    /// The timestamp when the request was received.
     pub timestamp: DateTime<Utc>,
-    /// Client identifier
+    /// The identifier of the client that made the request.
     pub client_id: String,
-    /// Tool or method name
+    /// The name of the tool or method that was called.
     pub method_name: String,
-    /// Request parameters (sanitized for privacy)
+    /// The parameters provided in the request, potentially sanitized for privacy.
     pub parameters: serde_json::Value,
-    /// Response time in milliseconds
+    /// The total time taken to generate a response, in milliseconds.
     pub response_time_ms: Option<u64>,
-    /// Success status
+    /// A boolean indicating whether the request was successful.
     pub success: bool,
-    /// Error message if failed
+    /// The error message, if the request failed.
     pub error_message: Option<String>,
-    /// HTTP status code (if applicable)
+    /// The HTTP status code, if the request was handled over HTTP.
     pub status_code: Option<u16>,
-    /// Additional metadata
+    /// Additional custom metadata for analytics.
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
 impl RequestContext {
-    /// Create a new request context
+    /// Creates a new `RequestContext` with a generated UUIDv4 as the request ID.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -146,7 +150,7 @@ impl RequestContext {
         }
     }
 
-    /// Create a request context with specific ID
+    /// Creates a new `RequestContext` with a specific request ID.
     pub fn with_id(id: impl Into<String>) -> Self {
         Self {
             request_id: id.into(),
@@ -154,28 +158,43 @@ impl RequestContext {
         }
     }
 
-    /// Set the user ID
+    /// Sets the user ID for this context, returning the modified context.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_protocol::context::RequestContext;
+    /// let ctx = RequestContext::new().with_user_id("user-123");
+    /// assert_eq!(ctx.user_id, Some("user-123".to_string()));
+    /// ```
     #[must_use]
     pub fn with_user_id(mut self, user_id: impl Into<String>) -> Self {
         self.user_id = Some(user_id.into());
         self
     }
 
-    /// Set the session ID
+    /// Sets the session ID for this context, returning the modified context.
     #[must_use]
     pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = Some(session_id.into());
         self
     }
 
-    /// Set the client ID
+    /// Sets the client ID for this context, returning the modified context.
     #[must_use]
     pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
         self.client_id = Some(client_id.into());
         self
     }
 
-    /// Add metadata
+    /// Adds a key-value pair to the metadata, returning the modified context.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_protocol::context::RequestContext;
+    /// # use serde_json::json;
+    /// let ctx = RequestContext::new().with_metadata("tenant", json!("acme-corp"));
+    /// assert_eq!(ctx.get_metadata("tenant"), Some(&json!("acme-corp")));
+    /// ```
     #[must_use]
     pub fn with_metadata(
         mut self,
@@ -186,19 +205,19 @@ impl RequestContext {
         self
     }
 
-    /// Get metadata value
+    /// Retrieves a value from the metadata by key.
     #[must_use]
     pub fn get_metadata(&self, key: &str) -> Option<&serde_json::Value> {
         self.metadata.get(key)
     }
 
-    /// Get elapsed time since request started
+    /// Returns the elapsed time since the request processing started.
     #[must_use]
     pub fn elapsed(&self) -> std::time::Duration {
         self.start_time.elapsed()
     }
 
-    /// Check if request is cancelled
+    /// Checks if the request has been marked for cancellation.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.cancellation_token
@@ -206,34 +225,33 @@ impl RequestContext {
             .is_some_and(|token| token.is_cancelled())
     }
 
-    /// Set server capabilities for server-initiated requests
-    /// This is used by turbomcp-server to inject its capabilities
-    #[must_use]
-    /// Set the server-to-client requests interface for this context
+    /// Sets the server-to-client requests interface for this context.
     ///
     /// This enables tools to make server-initiated requests (sampling, elicitation, roots)
-    /// with full context propagation for tracing and attribution.
+    /// with full context propagation for tracing and attribution. This is typically called
+    /// by the server implementation.
+    #[must_use]
     pub fn with_server_to_client(mut self, capabilities: Arc<dyn ServerToClientRequests>) -> Self {
         self.server_to_client = Some(capabilities);
         self
     }
 
-    /// Set cancellation token for cooperative cancellation
-    /// This is used by turbomcp-server for request cancellation
+    /// Sets the cancellation token for cooperative cancellation.
+    /// This is typically called by the server implementation.
     #[must_use]
     pub fn with_cancellation_token(mut self, token: Arc<CancellationToken>) -> Self {
         self.cancellation_token = Some(token);
         self
     }
 
-    /// Get user ID from request context
+    /// Returns the user ID from the request context, if available.
     #[must_use]
     pub fn user(&self) -> Option<&str> {
         self.user_id.as_deref()
     }
 
-    /// Check if request is authenticated
-    /// This checks if the client ID represents an authenticated client
+    /// Checks if the request is from an authenticated client.
+    /// This is determined by metadata set during the authentication process.
     #[must_use]
     pub fn is_authenticated(&self) -> bool {
         self.get_metadata("client_authenticated")
@@ -241,7 +259,8 @@ impl RequestContext {
             .unwrap_or(false)
     }
 
-    /// Get user roles from request context
+    /// Returns the user roles from the request context, if available.
+    /// Roles are typically populated from an authentication token.
     #[must_use]
     pub fn roles(&self) -> Vec<String> {
         self.get_metadata("auth")
@@ -256,7 +275,8 @@ impl RequestContext {
             .unwrap_or_default()
     }
 
-    /// Check if user has any of the required roles
+    /// Checks if the user has any of the specified roles.
+    /// Returns `true` if the required roles list is empty or if the user has at least one of the roles.
     pub fn has_any_role<S: AsRef<str>>(&self, required: &[S]) -> bool {
         if required.is_empty() {
             return true; // Empty requirement always passes
@@ -268,11 +288,11 @@ impl RequestContext {
             .any(|required_role| user_roles.contains(&required_role.as_ref().to_string()))
     }
 
-    /// Get the server capabilities if present
-    #[doc(hidden)]
-    /// Get the server-to-client requests interface
+    /// Gets the server-to-client requests interface.
     ///
-    /// Returns `None` if not configured (e.g., for unidirectional transports)
+    /// Returns `None` if not configured (e.g., for unidirectional transports).
+    /// This is hidden from public docs as it's an internal detail for use by server tools.
+    #[doc(hidden)]
     pub fn server_to_client(&self) -> Option<&Arc<dyn ServerToClientRequests>> {
         self.server_to_client.as_ref()
     }
@@ -285,7 +305,7 @@ impl Default for RequestContext {
 }
 
 impl ResponseContext {
-    /// Create a successful response context
+    /// Creates a new `ResponseContext` for a successful operation.
     pub fn success(request_id: impl Into<String>, duration: std::time::Duration) -> Self {
         Self {
             request_id: request_id.into(),
@@ -296,7 +316,7 @@ impl ResponseContext {
         }
     }
 
-    /// Create an error response context
+    /// Creates a new `ResponseContext` for a failed operation.
     pub fn error(
         request_id: impl Into<String>,
         duration: std::time::Duration,
@@ -317,7 +337,7 @@ impl ResponseContext {
 }
 
 impl RequestInfo {
-    /// Create a new request info
+    /// Creates a new `RequestInfo` for analytics.
     #[must_use]
     pub fn new(client_id: String, method_name: String, parameters: serde_json::Value) -> Self {
         Self {
@@ -333,7 +353,7 @@ impl RequestInfo {
         }
     }
 
-    /// Mark the request as completed successfully
+    /// Marks the request as completed successfully and records the response time.
     #[must_use]
     pub const fn complete_success(mut self, response_time_ms: u64) -> Self {
         self.response_time_ms = Some(response_time_ms);
@@ -342,7 +362,7 @@ impl RequestInfo {
         self
     }
 
-    /// Mark the request as failed
+    /// Marks the request as failed and records the response time and error message.
     #[must_use]
     pub fn complete_error(mut self, response_time_ms: u64, error: String) -> Self {
         self.response_time_ms = Some(response_time_ms);
@@ -352,14 +372,14 @@ impl RequestInfo {
         self
     }
 
-    /// Set HTTP status code
+    /// Sets the HTTP status code for this request.
     #[must_use]
     pub const fn with_status_code(mut self, code: u16) -> Self {
         self.status_code = Some(code);
         self
     }
 
-    /// Add metadata
+    /// Adds a key-value pair to the analytics metadata.
     #[must_use]
     pub fn with_metadata(mut self, key: String, value: serde_json::Value) -> Self {
         self.metadata.insert(key, value);
@@ -367,13 +387,13 @@ impl RequestInfo {
     }
 }
 
-/// Extension trait for `RequestContext` with enhanced client ID handling
+/// An extension trait for `RequestContext` providing enhanced client ID handling.
 pub trait RequestContextExt {
-    /// Set client ID using `ClientId` enum
+    /// Sets the client ID using the structured `ClientId` enum, which includes the method of identification.
     #[must_use]
     fn with_enhanced_client_id(self, client_id: super::client::ClientId) -> Self;
 
-    /// Extract and set client ID from headers and query params
+    /// Extracts a client ID from headers or query parameters and sets it on the context.
     #[must_use]
     fn extract_client_id(
         self,
@@ -382,7 +402,7 @@ pub trait RequestContextExt {
         query_params: Option<&HashMap<String, String>>,
     ) -> Self;
 
-    /// Get the enhanced client ID
+    /// Gets the structured `ClientId` enum from the context, if available.
     fn get_enhanced_client_id(&self) -> Option<super::client::ClientId>;
 }
 
