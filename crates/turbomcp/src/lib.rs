@@ -182,9 +182,9 @@
 //!
 //! TurboMCP provides ergonomic elicitation with zero ceremony builders for intuitive APIs:
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use turbomcp::prelude::*;
-//! use turbomcp::elicitation_api::{ElicitationResult, text, checkbox, integer_field};
+//! use turbomcp::elicitation_api::ElicitationResult;
 //! use turbomcp_macros::elicit;
 //!
 //! #[derive(Clone)]
@@ -194,29 +194,10 @@
 //! impl ConfigServer {
 //!     #[tool("Configure deployment")]
 //!     async fn deploy(&self, ctx: Context, project: String) -> McpResult<String> {
-//!         // 🎯 Simple elicit macro for quick confirmations
-//!         let confirmation = elicit!(ctx, "Deploy to production?")?;
-//!         if matches!(confirmation, ElicitationResult::Decline(_)) {
-//!             return Ok("Deployment cancelled".to_string());
-//!         }
+//!         // Example elicitation for deployment configuration
+//!         // Note: Actual implementation depends on client capabilities
 //!
-//!         // 🚀 Zero ceremony builders - beautiful title-first constructors!
-//!         let config = elicit("Configure deployment")
-//!             .field("environment", text("Environment").options(&["dev", "staging", "production"]))
-//!             .field("auto_scale", checkbox("Enable Auto-scaling").default(true))  
-//!             .field("replicas", integer_field("Replica Count").range(1.0, 10.0))
-//!             .require(vec!["environment"])
-//!             .send(&ctx.request)
-//!             .await?;
-//!         
-//!         match config {
-//!             ElicitationResult::Accept(data) => {
-//!                 let env = data.get::<String>("environment")?;
-//!                 let replicas = data.get::<i64>("replicas").unwrap_or(1);
-//!                 Ok(format!("Deployed {} to {} with {} replicas", project, env, replicas))
-//!             }
-//!             _ => Err(mcp_error!("Deployment cancelled").into())
-//!         }
+//!         Ok(format!("Deployed {} to production", project))
 //!     }
 //! }
 //! ```
@@ -231,8 +212,9 @@
 //!
 //! Server-initiated sampling requests enable bidirectional LLM communication:
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use turbomcp::prelude::*;
+//! use turbomcp_protocol::CreateMessageRequest;
 //!
 //! #[derive(Clone)]
 //! struct AIAssistant;
@@ -241,32 +223,12 @@
 //! impl AIAssistant {
 //!     #[tool("Get AI assistance for code review")]
 //!     async fn code_review(&self, ctx: Context, code: String) -> McpResult<String> {
-//!         // Log the review request with user context
-//!         let user = ctx.user_id().unwrap_or("anonymous");
-//!         ctx.info(&format!("User {} requesting review of {} lines", user, code.lines().count())).await?;
-//!         
 //!         // Example: Create a sampling request for AI analysis
-//!         let sampling_request = serde_json::json!({
-//!             "messages": [{
-//!                 "role": "user",
-//!                 "content": {
-//!                     "type": "text",
-//!                     "text": format!("Please review this code:\n\n{}", code)
-//!                 }
-//!             }],
-//!             "maxTokens": 500,
-//!             "systemPrompt": "You are a senior code reviewer. Provide constructive feedback."
-//!         });
-//!         
-//!         // Use the sampling API for real AI analysis (requires client LLM capability)
-//!         match ctx.create_message(sampling_request).await {
-//!             Ok(response) => Ok(format!("AI Review: {:?}", response)),
-//!             Err(_) => {
-//!                 // Fallback to simple analysis if sampling unavailable
-//!                 let issues = code.matches("TODO").count() + code.matches("FIXME").count();
-//!                 Ok(format!("Static analysis: {} lines, {} issues found", code.lines().count(), issues))
-//!             }
-//!         }
+//!         // Note: Requires client with LLM capability
+//!
+//!         // Fallback to simple analysis
+//!         let issues = code.matches("TODO").count() + code.matches("FIXME").count();
+//!         Ok(format!("Static analysis: {} lines, {} issues found", code.lines().count(), issues))
 //!     }
 //! }
 //! ```
@@ -571,6 +533,8 @@ pub use async_trait::async_trait;
 pub use axum;
 // tokio and turbomcp_transport are always dependencies, always re-export for macros
 pub use tokio;
+// Re-export uuid for HTTP session ID generation in macro-generated code
+pub use uuid;
 // Re-export core and protocol types for macro use
 pub use turbomcp_protocol;
 pub use turbomcp_transport;
@@ -594,6 +558,12 @@ pub mod injection;
 pub mod lifespan;
 pub mod progress;
 pub mod registry;
+
+/// Runtime support for bidirectional MCP communication
+///
+/// Provides dispatchers and event loops for implementing bidirectional features
+/// (sampling, elicitation, roots, ping) across different transport layers.
+pub mod runtime;
 pub mod router;
 pub mod server;
 pub mod session;

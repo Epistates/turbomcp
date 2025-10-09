@@ -60,6 +60,7 @@ sonic-rs = { workspace = true, optional = true }
 
 # HTTP dependencies (optional - only needed for http/sse features)
 http = { version = "1.0", optional = true }
+async-stream = { version = "0.3", optional = true }
 
 # Internal dependencies (always required)
 # CRITICAL: Use default-features = false to prevent feature leakage
@@ -208,6 +209,7 @@ http = [
     "dep:tower-http",
     "dep:reqwest",
     "dep:http",
+    "dep:async-stream",
 ]  # HTTP/SSE for web apps
 websocket = ["turbomcp-transport/websocket", "turbomcp-server/websocket"] # WebSocket bidirectional
 tcp = ["turbomcp-transport/tcp", "turbomcp-server/tcp", "turbomcp-macros/tcp"]  # Raw TCP sockets

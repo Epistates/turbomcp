@@ -1,0 +1,55 @@
+# TurboMCP Server Configuration (YAML)
+# This is an example configuration file showing all available options.
+#
+# Usage:
+#   let config = ServerConfig::from_file("server.yaml")?;
+#
+# Environment variables with TURBOMCP_ prefix will override these settings:
+#   TURBOMCP_PORT=9000 TURBOMCP_BIND_ADDRESS=0.0.0.0 ./my-server
+
+# Basic server identification
+name: production-mcp-server
+version: 1.0.0
+description: Production MCP server with full configuration
+
+# Network configuration
+bind_address: 127.0.0.1
+port: 8080
+enable_tls: false
+
+# TLS configuration (optional - only used if enable_tls = true)
+# tls:
+#   cert_file: /path/to/cert.pem
+#   key_file: /path/to/key.pem
+
+# Timeout configuration
+timeouts:
+  request_timeout: 30s            # Maximum time for a single request
+  connection_timeout: 10s          # Maximum time to establish a connection
+  keep_alive_timeout: 60s          # Keep-alive timeout for idle connections
+  tool_execution_timeout: 60s      # Default timeout for tool execution
+
+  # Per-tool timeout overrides (in seconds)
+  tool_timeouts:
+    expensive_operation: 300        # 5 minutes for expensive tools
+    quick_check: 5                  # 5 seconds for quick tools
+
+# Rate limiting configuration
+rate_limiting:
+  enabled: true
+  requests_per_second: 100          # Maximum requests per second
+  burst_capacity: 200               # Burst capacity for sudden spikes
+
+# Logging configuration
+logging:
+  level: info                       # Log level: trace, debug, info, warn, error
+  structured: true                  # Enable structured JSON logging
+  # file: /var/log/turbomcp/server.log  # Optional log file path
+
+# Additional custom configuration
+# Use this for application-specific settings
+additional:
+  max_connections: 1000
+  enable_cors: true
+  cors_origins:
+    - https://example.com

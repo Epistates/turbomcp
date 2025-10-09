@@ -160,3 +160,6 @@ impl Default for HandlerRegistry {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests;

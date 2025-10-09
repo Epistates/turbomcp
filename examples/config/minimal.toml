@@ -1,0 +1,8 @@
+# Minimal TurboMCP Server Configuration
+# Shows the bare minimum configuration needed.
+# All other settings will use defaults.
+
+name = "my-mcp-server"
+version = "1.0.0"
+bind_address = "127.0.0.1"
+port = 8080

@@ -4,17 +4,33 @@
 //! MCP servers and clients communicating bidirectionally over all transports.
 //! NO MOCKS OR STUBS - only production transport implementations with full MCP protocol.
 
+#[cfg(any(feature = "tcp", feature = "unix"))]
 use serde_json::{Value, json};
+
+#[cfg(any(feature = "tcp", feature = "unix"))]
 use std::time::Duration;
+
+#[cfg(any(feature = "tcp", feature = "unix"))]
 use tokio::time::{sleep, timeout};
+
+#[cfg(any(feature = "tcp", feature = "unix"))]
 use turbomcp::prelude::*;
+
+#[cfg(any(feature = "tcp", feature = "unix"))]
 use turbomcp_protocol::MessageId;
-use turbomcp_transport::{
-    Transport, TransportMessage, TransportState, tcp::TcpTransport, unix::UnixTransport,
-};
+
+#[cfg(any(feature = "tcp", feature = "unix"))]
+use turbomcp_transport::{Transport, TransportMessage, TransportState};
+
+#[cfg(feature = "tcp")]
+use turbomcp_transport::tcp::TcpTransport;
+
+#[cfg(feature = "unix")]
+use turbomcp_transport::unix::UnixTransport;
 
 /// Test TCP transport with real MCP server and client - FULL BIDIRECTIONAL
 #[tokio::test]
+#[cfg(feature = "tcp")]
 async fn test_real_tcp_bidirectional_mcp() {
     // Create a simple test service using macros
     #[derive(Clone)]
@@ -271,6 +287,7 @@ async fn test_real_tcp_bidirectional_mcp() {
 
 /// Test Unix Socket transport with real MCP server and client - FULL BIDIRECTIONAL
 #[tokio::test]
+#[cfg(feature = "unix")]
 async fn test_real_unix_bidirectional_mcp() {
     use std::path::PathBuf;
 
@@ -530,6 +547,7 @@ async fn test_real_unix_bidirectional_mcp() {
 
 /// Test transport capabilities with real transports
 #[tokio::test]
+#[cfg(all(feature = "tcp", feature = "unix"))]
 async fn test_real_transport_capabilities() {
     // Test TCP transport capabilities
     let tcp_transport = TcpTransport::new_server("127.0.0.1:7776".parse().unwrap());
@@ -570,6 +588,7 @@ async fn test_real_transport_capabilities() {
 
 /// Test transport state management with real connections
 #[tokio::test]
+#[cfg(feature = "tcp")]
 async fn test_real_transport_state_management() {
     // Test TCP transport state
     let tcp_transport = TcpTransport::new_server("127.0.0.1:7778".parse().unwrap());
