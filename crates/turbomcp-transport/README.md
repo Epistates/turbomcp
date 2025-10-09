@@ -539,8 +539,7 @@ For comprehensive security information, see:
 ## Related Crates
 
 - **[turbomcp](../turbomcp/)** - Main framework (uses this crate)
-- **[turbomcp-core](../turbomcp-core/)** - Core types and utilities
-- **[turbomcp-protocol](../turbomcp-protocol/)** - MCP protocol implementation
+- **[turbomcp-protocol](../turbomcp-protocol/)** - Protocol implementation and core utilities
 - **[turbomcp-server](../turbomcp-server/)** - Server framework
 
 ## External Resources

@@ -100,6 +100,7 @@ pub mod bidirectional;
 pub mod config;
 pub mod connection;
 pub mod elicitation;
+pub mod mcp_methods;
 pub mod tasks;
 pub mod transport;
 pub mod types;

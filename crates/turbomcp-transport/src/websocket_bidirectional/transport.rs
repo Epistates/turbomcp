@@ -239,13 +239,15 @@ impl WebSocketBidirectionalTransport {
         }
     }
 
-    /// Send a ping message manually
-    pub async fn send_ping(&mut self, data: Vec<u8>) -> TransportResult<()> {
+    /// Send a WebSocket ping frame manually (low-level keep-alive)
+    ///
+    /// Note: This is different from MCP protocol `ping` (see `send_ping` in mcp_methods.rs)
+    pub async fn send_ws_ping(&mut self, data: Vec<u8>) -> TransportResult<()> {
         self.send_raw_message(Message::Ping(data.into())).await
     }
 
-    /// Send a pong message manually
-    pub async fn send_pong(&mut self, data: Vec<u8>) -> TransportResult<()> {
+    /// Send a WebSocket pong frame manually (low-level keep-alive)
+    pub async fn send_ws_pong(&mut self, data: Vec<u8>) -> TransportResult<()> {
         self.send_raw_message(Message::Pong(data.into())).await
     }
 

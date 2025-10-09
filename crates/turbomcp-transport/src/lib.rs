@@ -131,54 +131,74 @@
     clippy::default_trait_access  // Default::default() is sometimes clearer
 )]
 
+/// Bidirectional transport wrappers and utilities.
 pub mod bidirectional;
+/// Core transport traits, types, and errors.
 pub mod core;
 
 // MCP 2025-06-18 Compliant Streamable HTTP Transport (Recommended)
+/// A streamable HTTP transport implementation compliant with the MCP 2025-06-18 specification.
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub mod streamable_http_v2;
 
+/// A streamable HTTP client transport implementation.
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub mod streamable_http_client;
 
+/// Standard I/O (stdio) transport for command-line applications.
 #[cfg(feature = "stdio")]
 pub mod stdio;
 
 // Tower service integration
+/// Integration with the Tower service abstraction.
 pub mod tower;
 
+/// Integration with the Axum web framework.
 #[cfg(feature = "http")]
 pub mod axum;
 
+/// WebSocket transport implementation.
 #[cfg(feature = "websocket")]
 pub mod websocket;
 
+/// Bidirectional WebSocket transport for full-duplex communication.
 #[cfg(feature = "websocket")]
 pub mod websocket_bidirectional;
 
+/// WebSocket server implementation.
 #[cfg(all(feature = "websocket", feature = "http"))]
 pub mod websocket_server;
 
+/// TCP socket transport for network communication.
 #[cfg(feature = "tcp")]
 pub mod tcp;
 
+/// Unix domain socket transport for inter-process communication.
 #[cfg(feature = "unix")]
 pub mod unix;
 
+/// Transport for managing child processes.
 pub mod child_process;
 
 // Server-specific transport functionality
+/// Server-side transport management and dispatch.
 pub mod server;
 
+/// Message compression utilities.
 #[cfg(feature = "compression")]
 pub mod compression;
 
+/// Transport configuration builders and types.
 pub mod config;
+/// Metrics and performance monitoring for transports.
 pub mod metrics;
+/// Resilience patterns like circuit breakers and retries.
 pub mod resilience;
+/// Security features for transports, including authentication and rate limiting.
 pub mod security;
+/// Utilities for shared transport instances.
 pub mod shared;
 
 // Re-export bidirectional transport functionality

@@ -32,13 +32,25 @@ use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{RwLock, Mutex, mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::security::{
     SecurityConfigBuilder, SecurityHeaders, SecurityValidator, SessionSecurityConfig,
     SessionSecurityManager,
 };
+
+// Bidirectional MCP support
+use turbomcp_protocol::jsonrpc::JsonRpcResponse;
+
+/// Type alias for pending server-initiated requests map (bidirectional MCP)
+///
+/// Maps request ID (String) to oneshot sender for the response.
+/// Used to correlate HTTP POST responses with server-initiated requests sent via SSE.
+pub type PendingRequestsMap = Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse>>>>;
+
+/// Type alias for sessions map (useful for bidirectional dispatchers)
+pub type SessionsMap = Arc<RwLock<HashMap<String, Session>>>;
 
 /// Maximum events to buffer for replay (per session)
 const MAX_REPLAY_BUFFER: usize = 1000;
@@ -240,20 +252,20 @@ impl StreamableHttpConfigBuilder {
 
 /// SSE event with metadata for replay
 #[derive(Clone, Debug)]
-struct StoredEvent {
-    id: String,
-    event_type: String,
-    data: String,
+pub struct StoredEvent {
+    pub id: String,
+    pub event_type: String,
+    pub data: String,
 }
 
 /// Session state with message replay buffer
-struct Session {
-    event_buffer: VecDeque<StoredEvent>,
-    sse_senders: Vec<mpsc::UnboundedSender<StoredEvent>>,
+pub struct Session {
+    pub event_buffer: VecDeque<StoredEvent>,
+    pub sse_senders: Vec<mpsc::UnboundedSender<StoredEvent>>,
 }
 
 impl Session {
-    fn new(buffer_size: usize) -> Self {
+    pub fn new(buffer_size: usize) -> Self {
         Self {
             event_buffer: VecDeque::with_capacity(buffer_size),
             sse_senders: Vec::new(),
@@ -261,7 +273,7 @@ impl Session {
     }
 
     /// Add event to buffer and broadcast to all connected streams
-    fn broadcast_event(&mut self, event: StoredEvent) {
+    pub fn broadcast_event(&mut self, event: StoredEvent) {
         // Add to replay buffer
         if self.event_buffer.len() >= self.event_buffer.capacity() {
             self.event_buffer.pop_front();
@@ -274,7 +286,7 @@ impl Session {
     }
 
     /// Get events after a specific event ID for replay
-    fn replay_from(&self, last_event_id: &str) -> Vec<StoredEvent> {
+    pub fn replay_from(&self, last_event_id: &str) -> Vec<StoredEvent> {
         let mut found = false;
         self.event_buffer
             .iter()
@@ -300,6 +312,12 @@ struct AppState<H: turbomcp_protocol::JsonRpcHandler> {
     session_manager: Arc<SessionSecurityManager>,
     config: StreamableHttpConfig,
     handler: Arc<H>,
+    /// Optional bidirectional MCP support - pending server-initiated requests
+    ///
+    /// When `Some`, enables bidirectional MCP where the server can initiate
+    /// requests to the client (sampling, elicitation, roots, ping) via SSE,
+    /// and receive responses via HTTP POST.
+    pending_requests: Option<PendingRequestsMap>,
 }
 
 impl<H: turbomcp_protocol::JsonRpcHandler> Clone for AppState<H> {
@@ -310,6 +328,7 @@ impl<H: turbomcp_protocol::JsonRpcHandler> Clone for AppState<H> {
             session_manager: self.session_manager.clone(),
             config: self.config.clone(),
             handler: self.handler.clone(),
+            pending_requests: self.pending_requests.clone(),
         }
     }
 }
@@ -332,12 +351,67 @@ pub fn create_router<H: turbomcp_protocol::JsonRpcHandler>(
     config: StreamableHttpConfig,
     handler: Arc<H>,
 ) -> Router {
+    create_router_internal(config, handler, None)
+}
+
+/// Create MCP-compliant router with bidirectional MCP support
+///
+/// This enables server-initiated requests (sampling, elicitation, roots, ping)
+/// by providing a pending requests map that correlates SSE requests with HTTP POST responses.
+///
+/// # Type Parameters
+///
+/// * `H` - JSON-RPC handler implementation (typically macro-generated)
+///
+/// # Arguments
+///
+/// * `config` - Transport configuration
+/// * `handler` - JSON-RPC request handler
+/// * `pending_requests` - Shared map for correlating server requests with client responses
+///
+/// # Returns
+///
+/// Axum router with bidirectional MCP support enabled
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use std::sync::Arc;
+/// use std::collections::HashMap;
+/// use tokio::sync::Mutex;
+/// use turbomcp_transport::streamable_http_v2::{
+///     StreamableHttpConfig, create_bidirectional_router, PendingRequestsMap
+/// };
+///
+/// # async fn example<H: turbomcp_protocol::JsonRpcHandler>(handler: Arc<H>) {
+/// let config = StreamableHttpConfig::default();
+/// let pending_requests: PendingRequestsMap = Arc::new(Mutex::new(HashMap::new()));
+///
+/// let router = create_bidirectional_router(config, handler, pending_requests.clone());
+/// // Use pending_requests to create HttpDispatcher instances
+/// # }
+/// ```
+pub fn create_bidirectional_router<H: turbomcp_protocol::JsonRpcHandler>(
+    config: StreamableHttpConfig,
+    handler: Arc<H>,
+    pending_requests: PendingRequestsMap,
+) -> Router {
+    create_router_internal(config, handler, Some(pending_requests))
+}
+
+/// Internal router creation with optional bidirectional support
+fn create_router_internal<H: turbomcp_protocol::JsonRpcHandler>(
+    config: StreamableHttpConfig,
+    handler: Arc<H>,
+    pending_requests: Option<PendingRequestsMap>,
+) -> Router {
     let state = AppState {
         sessions: Arc::new(RwLock::new(HashMap::new())),
         security_validator: config.security_validator.clone(),
         session_manager: config.session_manager.clone(),
         config: config.clone(),
         handler,
+        pending_requests,
     };
 
     Router::new()
@@ -540,7 +614,56 @@ async fn mcp_post_handler<H: turbomcp_protocol::JsonRpcHandler>(
             response_headers.insert("MCP-Protocol-Version", protocol_value);
         }
 
-        // Broadcast to session's SSE streams
+        // Bidirectional MCP: Check if this response matches a server-initiated request
+        if is_response {
+            if let Some(ref pending_requests) = state.pending_requests {
+                // Extract response ID
+                if let Some(id_value) = request.get("id") {
+                    let id_str = match id_value {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        _ => String::new(),
+                    };
+
+                    if !id_str.is_empty() {
+                        // Check if this matches a pending request
+                        if let Some(sender) = pending_requests.lock().await.remove(&id_str) {
+                            // Parse response into JsonRpcResponse
+                            let json_rpc_response = serde_json::from_value::<JsonRpcResponse>(request.clone())
+                                .unwrap_or_else(|_| {
+                                    // Fallback: construct response manually
+                                    use turbomcp_protocol::jsonrpc::{JsonRpcVersion, JsonRpcResponsePayload, ResponseId};
+                                    use turbomcp_protocol::MessageId;
+
+                                    JsonRpcResponse {
+                                        jsonrpc: JsonRpcVersion,
+                                        payload: if let Some(result) = request.get("result") {
+                                            JsonRpcResponsePayload::Success { result: result.clone() }
+                                        } else {
+                                            // Fallback to null result if no result or error field
+                                            JsonRpcResponsePayload::Success { result: serde_json::json!(null) }
+                                        },
+                                        id: ResponseId(Some(MessageId::String(id_str))),
+                                    }
+                                });
+
+                            // Complete the awaiting Future
+                            let _ = sender.send(json_rpc_response);
+
+                            // Return 202 Accepted immediately (don't broadcast)
+                            return (
+                                StatusCode::ACCEPTED,
+                                response_headers,
+                                Json(serde_json::json!({})),
+                            )
+                                .into_response();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Default behavior: Broadcast to session's SSE streams
         broadcast_to_session(&state, &secure_session.id, request).await;
 
         return (
