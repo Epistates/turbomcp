@@ -613,9 +613,8 @@ cargo run --example sampling_client
 ## Related Crates
 
 - **[turbomcp](../turbomcp/)** - Main framework with server macros
-- **[turbomcp-core](../turbomcp-core/)** - Core types and utilities
+- **[turbomcp-protocol](../turbomcp-protocol/)** - Protocol types and core utilities
 - **[turbomcp-transport](../turbomcp-transport/)** - Transport implementations
-- **[turbomcp-protocol](../turbomcp-protocol/)** - MCP protocol types
 
 ## Resources
 

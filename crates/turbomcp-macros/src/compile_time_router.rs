@@ -2,11 +2,17 @@
 //!
 //! This module generates static dispatch routers at compile time,
 //! eliminating all lifetime issues and providing maximum performance.
+//!
+//! **Bidirectional Support**: This module now generates servers with full
+//! bidirectional MCP communication support (sampling, elicitation, roots, ping)
+//! by creating a wrapper struct with server-to-client capabilities.
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
-// Removed unused import: use crate::uri_template::UriTemplate;
+
+use crate::bidirectional_wrapper;
+use crate::context_aware_dispatch;
 
 /// Generate compile-time router for HTTP transport
 pub fn generate_router(
@@ -268,6 +274,32 @@ pub fn generate_router(
             }
         })
         .collect();
+
+    // ===================================================================
+    // Bidirectional Wrapper Generation - Enables Server-to-Client Requests
+    // ===================================================================
+
+    // Generate the bidirectional wrapper struct
+    let wrapper_code = bidirectional_wrapper::generate_bidirectional_wrapper(
+        struct_name,
+        server_name,
+        server_version,
+    );
+
+    // Generate context-aware request handler (replaces empty RequestContext::new())
+    let context_handler = context_aware_dispatch::generate_handle_request_with_context(
+        struct_name,
+        tool_methods,
+        prompt_methods,
+        resource_methods,
+        server_name,
+        server_version,
+    );
+
+    // Generate bidirectional transport methods (run_stdio, run_http, run_websocket)
+    let bidirectional_transports = bidirectional_wrapper::generate_bidirectional_transport_methods(
+        struct_name,
+    );
 
     quote! {
             // Helper function for URI template matching - generated at compile time for maximum performance
@@ -626,402 +658,12 @@ pub fn generate_router(
                     create_router(config, self)
                 }
 
-                /// Run server with stdio transport (MCP spec compliant)
-                /// Server reads JSON-RPC from stdin, writes to stdout
-                pub async fn run_stdio(self) -> Result<(), Box<dyn ::std::error::Error>> {
-                    use ::turbomcp::tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-                    use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
-
-                    let server = ::std::sync::Arc::new(self);
-                    let stdin = tokio::io::stdin();
-                    let mut stdout = tokio::io::stdout();
-                    let mut reader = BufReader::new(stdin);
-                    let mut line = String::new();
-
-                    // STDIO transport must be completely silent per MCP specification
-                    // stdout is reserved exclusively for JSON-RPC messages
-
-                    loop {
-                        line.clear();
-                        match reader.read_line(&mut line).await {
-                            Ok(0) => break, // EOF
-                            Ok(_) => {
-                                if line.trim().is_empty() {
-                                    continue;
-                                }
-
-                                // Parse JSON-RPC request
-                                let request: JsonRpcRequest = match serde_json::from_str(&line) {
-                                    Ok(req) => req,
-                                    Err(_e) => {
-                                        // Silent error handling for STDIO MCP compliance
-                                        continue;
-                                    }
-                                };
-
-                                // Process request using compile-time dispatch
-                                let response = server.clone().handle_request(request).await;
-
-                                // Write response
-                                let response_str = serde_json::to_string(&response)?;
-                                stdout.write_all(response_str.as_bytes()).await?;
-                                stdout.write_all(b"\n").await?;
-                                stdout.flush().await?;
-                            }
-                            Err(_e) => {
-                                // Silent error handling for STDIO MCP compliance
-                                break;
-                            }
-                        }
-                    }
-
-                    Ok(())
-                }
-
-                /// Run server with TCP transport
-                #[cfg(feature = "tcp")]
-                pub async fn run_tcp<A: ::std::net::ToSocketAddrs>(
-                    self,
-                    addr: A
-                ) -> Result<(), Box<dyn ::std::error::Error>> {
-                    use ::turbomcp::turbomcp_transport::tcp::TcpTransport;
-                    use ::turbomcp::tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-                    use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
-
-                    // Resolve address
-                    let socket_addr = addr
-                        .to_socket_addrs()?
-                        .next()
-                        .ok_or("No address resolved")?;
-
-                    // Create TCP listener
-                    let listener = ::tokio::net::TcpListener::bind(socket_addr).await?;
-    ::turbomcp::tracing::info!("TCP server listening on {}", socket_addr);
-
-                    loop {
-                        let (stream, _) = listener.accept().await?;
-                        let server = ::std::sync::Arc::new(self.clone());
-
-                        tokio::spawn(async move {
-                            let (reader, mut writer) = stream.into_split();
-                            let mut reader = BufReader::new(reader);
-                            let mut line = String::new();
-
-                            loop {
-                                line.clear();
-                                match reader.read_line(&mut line).await {
-                                    Ok(0) => break,
-                                    Ok(_) => {
-                                        if line.trim().is_empty() {
-                                            continue;
-                                        }
-
-                                        let request: JsonRpcRequest = match serde_json::from_str(&line) {
-                                            Ok(req) => req,
-                                            Err(_) => continue,
-                                        };
-
-                                        let response = server.clone().handle_request(request).await;
-                                        let response_str = match serde_json::to_string(&response) {
-                                            Ok(s) => s,
-                                            Err(_) => continue, // Skip this response if serialization fails
-                                        };
-                                        let _ = writer.write_all(response_str.as_bytes()).await;
-                                        let _ = writer.write_all(b"\n").await;
-                                        let _ = writer.flush().await;
-                                    }
-                                    Err(_) => break,
-                                }
-                            }
-                        });
-                    }
-                }
-
-                /// Run server with Unix domain socket
-                #[cfg(feature = "unix")]
-                pub async fn run_unix<P: AsRef<::std::path::Path>>(
-                    self,
-                    path: P
-                ) -> Result<(), Box<dyn ::std::error::Error>> {
-                    use ::turbomcp::tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-                    use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
-
-                    let path = path.as_ref();
-
-                    // Ensure parent directory exists
-                    if let Some(parent) = path.parent() {
-                        if !parent.exists() {
-                            return Err(format!("Parent directory does not exist: {:?}", parent).into());
-                        }
-                    }
-
-                    // Remove existing socket file if it exists
-                    if path.exists() {
-                        ::std::fs::remove_file(path)?;
-                    }
-
-                    // Create Unix listener
-                    let listener = ::tokio::net::UnixListener::bind(path)?;
-    ::turbomcp::tracing::info!("Unix socket server listening on {:?}", path);
-
-                    loop {
-                        let (stream, _) = listener.accept().await?;
-                        let server = ::std::sync::Arc::new(self.clone());
-
-                        tokio::spawn(async move {
-                            let (reader, mut writer) = stream.into_split();
-                            let mut reader = BufReader::new(reader);
-                            let mut line = String::new();
-
-                            loop {
-                                line.clear();
-                                match reader.read_line(&mut line).await {
-                                    Ok(0) => break,
-                                    Ok(_) => {
-                                        if line.trim().is_empty() {
-                                            continue;
-                                        }
-
-                                        let request: JsonRpcRequest = match serde_json::from_str(&line) {
-                                            Ok(req) => req,
-                                            Err(_) => continue,
-                                        };
-
-                                        let response = server.clone().handle_request(request).await;
-                                        let response_str = match serde_json::to_string(&response) {
-                                            Ok(s) => s,
-                                            Err(_) => continue, // Skip this response if serialization fails
-                                        };
-                                        let _ = writer.write_all(response_str.as_bytes()).await;
-                                        let _ = writer.write_all(b"\n").await;
-                                        let _ = writer.flush().await;
-                                    }
-                                    Err(_) => break,
-                                }
-                            }
-                        });
-                    }
-                }
-
-                /// Run server with HTTP transport (compile-time routing, zero lifetime issues!)
-                /// Run HTTP server with default "/mcp" endpoint
-                #[cfg(feature = "http")]
-                pub async fn run_http<A: ::std::net::ToSocketAddrs>(
-                    self,
-                    addr: A
-                ) -> Result<(), Box<dyn ::std::error::Error>> {
-                    self.run_http_with_path(addr, "/mcp").await
-                }
-
-                /// Run HTTP server with configurable endpoint path
-                ///
-                /// This method uses the MCP 2025-06-18 compliant Streamable HTTP transport with:
-                /// - ✅ GET support for SSE streams
-                /// - ✅ POST support for JSON-RPC messages
-                /// - ✅ DELETE support for session cleanup
-                /// - ✅ Full session management
-                /// - ✅ Message replay support
-                /// - ✅ Origin validation and security
-                #[cfg(feature = "http")]
-                pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs>(
-                    self,
-                    addr: A,
-                    path: &str
-                ) -> Result<(), Box<dyn ::std::error::Error>> {
-                    use ::std::sync::Arc;
-                    use ::turbomcp::turbomcp_transport::streamable_http_v2::{run_server, StreamableHttpConfig};
-
-                    // Resolve address to string
-                    let socket_addr = addr
-                        .to_socket_addrs()?
-                        .next()
-                        .ok_or("No address resolved")?;
-
-                    // Create MCP 2025-06-18 compliant transport configuration
-                    // Default security config with smart localhost handling:
-                    // - Validates Origin headers when present
-                    // - Allows localhost→localhost without Origin (Claude Code compatibility)
-                    // - Blocks remote clients without valid Origin (DNS rebinding protection)
-                    let config = StreamableHttpConfig {
-                        bind_addr: socket_addr.to_string(),
-                        endpoint_path: path.to_string(),
-                        ..Default::default()
-                    };
-
-                    // Run server with full MCP compliance (GET/POST/DELETE)
-                    run_server(config, Arc::new(self)).await?;
-                    Ok(())
-                }
-
-                /// Run HTTP server with custom configuration
-                ///
-                /// This method allows complete control over security, rate limiting, and transport settings:
-                ///
-                /// # Examples
-                ///
-                /// ```no_run
-                /// use turbomcp::prelude::*;
-                /// use std::time::Duration;
-                ///
-                /// #[derive(Clone)]
-                /// struct MyServer;
-                ///
-                /// #[server(name = "my-server", version = "1.0.0")]
-                /// impl MyServer {
-                ///     #[tool("Test tool")]
-                ///     async fn test(&self) -> McpResult<String> {
-                ///         Ok("test".into())
-                ///     }
-                /// }
-                ///
-                /// #[tokio::main]
-                /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-                ///     // Custom configuration for benchmarking (no rate limit)
-                ///     let config = StreamableHttpConfigBuilder::new()
-                ///         .without_rate_limit()
-                ///         .with_endpoint_path("/api/mcp")
-                ///         .build();
-                ///
-                ///     let server = MyServer;
-                ///     server.run_http_with_config("127.0.0.1:3000", config).await?;
-                ///     Ok(())
-                /// }
-                /// ```
-                ///
-                /// # Common Configurations
-                ///
-                /// **Development (no limits):**
-                /// ```no_run
-                /// # use turbomcp::prelude::*;
-                /// let config = StreamableHttpConfigBuilder::new()
-                ///     .without_rate_limit()
-                ///     .allow_any_origin(true)
-                ///     .build();
-                /// ```
-                ///
-                /// **Production (secure):**
-                /// ```no_run
-                /// # use turbomcp::prelude::*;
-                /// # use std::time::Duration;
-                /// let config = StreamableHttpConfigBuilder::new()
-                ///     .with_rate_limit(1000, Duration::from_secs(60))
-                ///     .require_authentication(true)
-                ///     .build();
-                /// ```
-                ///
-                /// **Benchmarking (high throughput):**
-                /// ```no_run
-                /// # use turbomcp::prelude::*;
-                /// # use std::time::Duration;
-                /// let config = StreamableHttpConfigBuilder::new()
-                ///     .with_rate_limit(100_000, Duration::from_secs(60))
-                ///     .build();
-                /// ```
-                #[cfg(feature = "http")]
-                pub async fn run_http_with_config<A: ::std::net::ToSocketAddrs>(
-                    self,
-                    addr: A,
-                    config: ::turbomcp::turbomcp_transport::streamable_http_v2::StreamableHttpConfig
-                ) -> Result<(), Box<dyn ::std::error::Error>> {
-                    use ::std::sync::Arc;
-                    use ::turbomcp::turbomcp_transport::streamable_http_v2::run_server;
-
-                    // Resolve address to string
-                    let socket_addr = addr
-                        .to_socket_addrs()?
-                        .next()
-                        .ok_or("No address resolved")?;
-
-                    // Use provided config but override bind_addr with resolved address
-                    let mut final_config = config;
-                    final_config.bind_addr = socket_addr.to_string();
-
-                    // Run server with full MCP compliance (GET/POST/DELETE)
-                    run_server(final_config, Arc::new(self)).await?;
-                    Ok(())
-                }
-
-                /// Run WebSocket server with default configuration
-                ///
-                /// This method provides the same simple API as `run_http()`:
-                /// - Default endpoint: `/mcp/ws`
-                /// - Sensible defaults for security, sessions, middleware
-                /// - Full MCP 2025-06-18 compliance
-                /// - Bidirectional communication with elicitation support
-                ///
-                /// # Example
-                ///
-                /// ```no_run
-                /// # #[turbomcp::server(name = "example", version = "1.0.0")]
-                /// # impl MyServer {
-                /// #     #[tool("example")]
-                /// #     async fn example(&self) -> turbomcp::McpResult<String> { Ok("hi".into()) }
-                /// # }
-                /// #[tokio::main]
-                /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-                ///     let server = MyServer;
-                ///     server.run_websocket("127.0.0.1:8080").await?;
-                ///     Ok(())
-                /// }
-                /// ```
-                #[cfg(all(feature = "websocket", feature = "http"))]
-                pub async fn run_websocket<A: ::std::net::ToSocketAddrs>(
-                    self,
-                    addr: A
-                ) -> Result<(), Box<dyn ::std::error::Error>> {
-                    use ::std::sync::Arc;
-                    use ::turbomcp::turbomcp_transport::websocket_server::run_websocket_server;
-
-                    run_websocket_server(
-                        addr.to_socket_addrs()?
-                            .next()
-                            .ok_or("No address resolved")?
-                            .to_string(),
-                        Arc::new(self)
-                    ).await
-                }
-
-                /// Run WebSocket server with custom endpoint path
-                ///
-                /// Allows customization of the WebSocket endpoint path while keeping
-                /// sensible defaults for everything else.
-                ///
-                /// # Example
-                ///
-                /// ```no_run
-                /// # #[turbomcp::server(name = "example", version = "1.0.0")]
-                /// # impl MyServer {
-                /// #     #[tool("example")]
-                /// #     async fn example(&self) -> turbomcp::McpResult<String> { Ok("hi".into()) }
-                /// # }
-                /// #[tokio::main]
-                /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-                ///     let server = MyServer;
-                ///     server.run_websocket_with_path("127.0.0.1:8080", "/custom/ws").await?;
-                ///     Ok(())
-                /// }
-                /// ```
-                #[cfg(all(feature = "websocket", feature = "http"))]
-                pub async fn run_websocket_with_path<A: ::std::net::ToSocketAddrs>(
-                    self,
-                    addr: A,
-                    _path: &str
-                ) -> Result<(), Box<dyn ::std::error::Error>> {
-                    use ::std::sync::Arc;
-                    use ::turbomcp::turbomcp_transport::websocket_server::{run_websocket_server_with_config, WebSocketServerConfig};
-
-                    let socket_addr = addr
-                        .to_socket_addrs()?
-                        .next()
-                        .ok_or("No address resolved")?;
-
-                    let config = WebSocketServerConfig {
-                        bind_addr: socket_addr.to_string(),
-                        endpoint_path: _path.to_string(),
-                    };
-
-                    run_websocket_server_with_config(config, Arc::new(self)).await
-                }
+                // ===================================================================
+                // NOTE: Transport methods (run_stdio, run_http, run_websocket) are now
+                // generated by bidirectional_wrapper module to support server-to-client
+                // requests (sampling, elicitation, roots, ping).
+                // See bidirectional_transports code generation below.
+                // ===================================================================
 
                 /// Handle a single JSON-RPC request with compile-time dispatch
                 async fn handle_request(
@@ -1160,5 +802,28 @@ pub fn generate_router(
                     }
                 }
             }
+
+            // ===================================================================
+            // Context-Aware Request Handler - Enables Bidirectional MCP
+            // ===================================================================
+
+            impl #struct_name
+            where
+                Self: Clone + Send + Sync + 'static,
+            {
+                #context_handler
+            }
+
+            // ===================================================================
+            // Bidirectional Wrapper - Server-to-Client Capabilities
+            // ===================================================================
+
+            #wrapper_code
+
+            // ===================================================================
+            // Bidirectional Transport Methods - run_stdio(), run_http(), etc.
+            // ===================================================================
+
+            #bidirectional_transports
         }
 }

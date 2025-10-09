@@ -2,6 +2,10 @@
 //!
 //! These tests verify that mcp_error! macro now generates turbomcp_protocol::Error
 //! and works correctly at the macro layer without creating circular dependencies.
+//!
+//! Note: These tests use deprecated error types to verify backwards compatibility.
+
+#![allow(deprecated)]
 
 use turbomcp_macros::*;
 use turbomcp_protocol::{Error as CoreError, ErrorKind};
@@ -55,7 +59,8 @@ fn test_error_properties_preserved() {
     assert_eq!(error.http_status_code(), 500); // Handler errors map to 500
 
     // Test JSON-RPC error code mapping
-    assert_eq!(error.jsonrpc_error_code(), -32011); // Handler error code
+    // Note: Handler is deprecated, now maps to -32019 (was -32011 before v2.1.0)
+    assert_eq!(error.jsonrpc_error_code(), -32019); // Deprecated Handler error code
 }
 
 #[test]

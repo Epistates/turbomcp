@@ -107,8 +107,10 @@
 use proc_macro::TokenStream;
 
 mod attrs;
+mod bidirectional_wrapper;
 mod compile_time_router;
 mod completion;
+mod context_aware_dispatch;
 mod elicitation;
 mod helpers;
 mod ping;

@@ -1,5 +1,7 @@
 //! Real tests for helper macros - validates actual behavior, not compilation
 
+#![allow(deprecated)] // Testing backwards-compatible macros
+
 use turbomcp_macros::*;
 use turbomcp_protocol::types::ContentBlock;
 

@@ -631,9 +631,8 @@ RUST_LOG=debug cargo build
 ## Related Crates
 
 - **[turbomcp](../turbomcp/)** - Main framework (uses these macros)
-- **[turbomcp-core](../turbomcp-core/)** - Core types and utilities
+- **[turbomcp-protocol](../turbomcp-protocol/)** - Protocol types and core utilities
 - **[turbomcp-server](../turbomcp-server/)** - Server framework
-- **[turbomcp-protocol](../turbomcp-protocol/)** - MCP protocol implementation
 
 ## External Resources
 
