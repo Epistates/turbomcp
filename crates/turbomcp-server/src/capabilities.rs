@@ -1,7 +1,7 @@
 //! Server-to-client request adapter for bidirectional MCP communication.
 //!
 //! This module provides the adapter that bridges the `ServerToClientRequests` trait
-//! (defined in turbomcp-core) to the concrete `BidirectionalRouter` implementation,
+//! (defined in turbomcp-protocol) to the concrete `BidirectionalRouter` implementation,
 //! enabling tools to make server-initiated requests to clients.
 //!
 //! ## Architecture
@@ -9,7 +9,7 @@
 //! ```text
 //! Tool Handler (ctx.create_message)
 //!     ↓
-//! ServerToClientRequests trait (turbomcp-core) ← TYPE-SAFE INTERFACE
+//! ServerToClientRequests trait (turbomcp-protocol) ← TYPE-SAFE INTERFACE
 //!     ↓
 //! ServerToClientAdapter (this module) ← THE BRIDGE
 //!     ↓
@@ -50,7 +50,7 @@ use crate::routing::BidirectionalRouter;
 /// Adapter that implements the `ServerToClientRequests` trait by delegating to `BidirectionalRouter`.
 ///
 /// This adapter bridges the gap between the generic `ServerToClientRequests` trait (defined in
-/// turbomcp-core) and the concrete `BidirectionalRouter` implementation (in turbomcp-server).
+/// turbomcp-protocol) and the concrete `BidirectionalRouter` implementation (in turbomcp-server).
 ///
 /// ## Thread Safety
 ///
@@ -112,7 +112,7 @@ impl ServerToClientRequests for ServerToClientAdapter {
             self.bidirectional
                 .send_create_message_to_client(request, ctx)
                 .await
-                .map_err(|e| *McpError::handler(format!("Sampling request failed: {}", e)))
+                .map_err(|e| *McpError::internal(format!("Sampling request failed: {}", e)))
         })
     }
 
@@ -127,7 +127,7 @@ impl ServerToClientRequests for ServerToClientAdapter {
             self.bidirectional
                 .send_elicitation_to_client(request, ctx)
                 .await
-                .map_err(|e| *McpError::handler(format!("Elicitation request failed: {}", e)))
+                .map_err(|e| *McpError::internal(format!("Elicitation request failed: {}", e)))
         })
     }
 
@@ -141,7 +141,7 @@ impl ServerToClientRequests for ServerToClientAdapter {
             self.bidirectional
                 .send_list_roots_to_client(list_roots_request, ctx)
                 .await
-                .map_err(|e| *McpError::handler(format!("Roots listing request failed: {}", e)))
+                .map_err(|e| *McpError::internal(format!("Roots listing request failed: {}", e)))
         })
     }
 }

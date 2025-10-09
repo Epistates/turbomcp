@@ -170,3 +170,7 @@ impl MiddlewareStack {
         self.rate_limit_config.clone().map(RateLimitLayer::new)
     }
 }
+
+// Comprehensive tests in separate file (tokio/axum pattern)
+#[cfg(test)]
+mod tests;

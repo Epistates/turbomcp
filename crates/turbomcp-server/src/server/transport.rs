@@ -64,6 +64,13 @@ impl McpServer {
         // Extract response bytes from HTTP response
         let response_bytes = http_response.into_body();
 
+        // JSON-RPC 2.0: Notifications must not receive responses
+        // If the service returned empty body (204 No Content), don't send anything back
+        if response_bytes.is_empty() {
+            tracing::debug!("No response to send (notification or empty response)");
+            return Ok(());
+        }
+
         // Wrap in TransportMessage and send back
         let reply = TransportMessage::with_metadata(
             message.id,
@@ -123,6 +130,15 @@ impl McpServer {
 
         // Extract response bytes from HTTP response
         let response_bytes = http_response.into_body();
+
+        // JSON-RPC 2.0: Notifications must not receive responses
+        // If the service returned empty body (204 No Content), don't send anything back
+        if response_bytes.is_empty() {
+            if should_log_for_stdio() {
+                tracing::debug!("No response to send (notification or empty response)");
+            }
+            return Ok(());
+        }
 
         // Wrap in TransportMessage and send back
         let reply = TransportMessage::with_metadata(

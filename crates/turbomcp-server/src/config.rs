@@ -96,6 +96,152 @@ impl Default for ServerConfig {
     }
 }
 
+/// Configuration error types
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    /// Config file not found
+    #[error("Configuration file not found: {0}")]
+    FileNotFound(PathBuf),
+
+    /// Unsupported file format
+    #[error("Unsupported configuration file format. Use .toml, .yaml, .yml, or .json")]
+    UnsupportedFormat,
+
+    /// Configuration parsing error
+    #[error("Failed to parse configuration: {0}")]
+    ParseError(#[from] config::ConfigError),
+
+    /// IO error
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
+}
+
+impl ServerConfig {
+    /// Load configuration from a file (TOML, YAML, or JSON)
+    ///
+    /// The file format is auto-detected from the file extension:
+    /// - `.toml` → TOML format
+    /// - `.yaml` or `.yml` → YAML format
+    /// - `.json` → JSON format
+    ///
+    /// Environment variables with the `TURBOMCP_` prefix will override file settings.
+    /// For example, `TURBOMCP_PORT=9000` will override the `port` setting.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_server::ServerConfig;
+    ///
+    /// let config = ServerConfig::from_file("config.toml").expect("Failed to load config");
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The file doesn't exist
+    /// - The file format is unsupported
+    /// - The file contains invalid configuration
+    pub fn from_file(path: impl AsRef<std::path::Path>) -> Result<Self, ConfigError> {
+        use config::{Config, File, FileFormat};
+
+        let path = path.as_ref();
+
+        // Check if file exists
+        if !path.exists() {
+            return Err(ConfigError::FileNotFound(path.to_path_buf()));
+        }
+
+        // Determine file format from extension
+        let format = match path.extension().and_then(|s| s.to_str()) {
+            Some("toml") => FileFormat::Toml,
+            Some("yaml") | Some("yml") => FileFormat::Yaml,
+            Some("json") => FileFormat::Json,
+            _ => return Err(ConfigError::UnsupportedFormat),
+        };
+
+        // Build configuration with file + environment variables
+        let config = Config::builder()
+            .add_source(File::new(
+                path.to_str()
+                    .ok_or_else(|| ConfigError::UnsupportedFormat)?,
+                format,
+            ))
+            // Environment variables override file settings (12-factor app pattern)
+            .add_source(
+                config::Environment::with_prefix("TURBOMCP")
+                    .separator("__") // Use __ for nested config (e.g., TURBOMCP_TIMEOUTS__REQUEST_TIMEOUT)
+                    .try_parsing(true),
+            )
+            .build()?;
+
+        Ok(config.try_deserialize()?)
+    }
+
+    /// Load configuration from a file with custom environment prefix
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_server::ServerConfig;
+    ///
+    /// // Use MYAPP_PORT instead of TURBOMCP_PORT
+    /// let config = ServerConfig::from_file_with_prefix("config.toml", "MYAPP")
+    ///     .expect("Failed to load config");
+    /// ```
+    pub fn from_file_with_prefix(
+        path: impl AsRef<std::path::Path>,
+        env_prefix: &str,
+    ) -> Result<Self, ConfigError> {
+        use config::{Config, File, FileFormat};
+
+        let path = path.as_ref();
+
+        if !path.exists() {
+            return Err(ConfigError::FileNotFound(path.to_path_buf()));
+        }
+
+        let format = match path.extension().and_then(|s| s.to_str()) {
+            Some("toml") => FileFormat::Toml,
+            Some("yaml") | Some("yml") => FileFormat::Yaml,
+            Some("json") => FileFormat::Json,
+            _ => return Err(ConfigError::UnsupportedFormat),
+        };
+
+        let config = Config::builder()
+            .add_source(File::new(
+                path.to_str()
+                    .ok_or_else(|| ConfigError::UnsupportedFormat)?,
+                format,
+            ))
+            .add_source(
+                config::Environment::with_prefix(env_prefix)
+                    .separator("__")
+                    .try_parsing(true),
+            )
+            .build()?;
+
+        Ok(config.try_deserialize()?)
+    }
+
+    /// Create a configuration builder
+    ///
+    /// Use this for programmatic configuration without files.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_server::ServerConfig;
+    ///
+    /// let config = ServerConfig::builder()
+    ///     .name("my-server")
+    ///     .port(9000)
+    ///     .build();
+    /// ```
+    pub fn builder() -> ConfigurationBuilder {
+        ConfigurationBuilder::new()
+    }
+}
+
 impl Default for TimeoutConfig {
     fn default() -> Self {
         Self {
@@ -224,7 +370,7 @@ impl Default for ConfigurationBuilder {
 /// Configuration alias for convenience
 pub type Configuration = ServerConfig;
 #[cfg(test)]
-mod tests {
+mod inline_tests {
     use super::*;
 
     #[test]
@@ -293,3 +439,7 @@ mod tests {
         }
     }
 }
+
+// Additional comprehensive tests in separate file
+#[cfg(test)]
+mod tests;

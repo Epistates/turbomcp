@@ -45,12 +45,12 @@ impl McpService {
         }
     }
 
-    /// Process a JSON-RPC message and return a response
+    /// Process a JSON-RPC message and return a response (None for notifications)
     async fn process_jsonrpc(
         &self,
         message: JsonRpcMessage,
         ctx: RequestContext,
-    ) -> JsonRpcResponse {
+    ) -> Option<JsonRpcResponse> {
         match message {
             JsonRpcMessage::Request(req) => {
                 info!(
@@ -88,25 +88,20 @@ impl McpService {
                     }
                 }
 
-                response
+                Some(response)
             }
             JsonRpcMessage::Notification(notif) => {
-                warn!(method = %notif.method, "Received notification (not supported)");
-                JsonRpcResponse {
-                    jsonrpc: JsonRpcVersion,
-                    payload: JsonRpcResponsePayload::Error {
-                        error: JsonRpcError {
-                            code: -32601,
-                            message: "Notifications are not supported".to_string(),
-                            data: None,
-                        },
-                    },
-                    id: ResponseId::null(),
-                }
+                // JSON-RPC 2.0 spec: "The Server MUST NOT reply to a Notification"
+                // Notifications are fire-and-forget. We log them but don't respond.
+                info!(method = %notif.method, "Received notification (fire-and-forget)");
+
+                // For MCP protocol, notifications/initialized is expected and valid
+                // We acknowledge it but send no response per JSON-RPC spec
+                None
             }
             JsonRpcMessage::Response(_) => {
                 warn!("Received JSON-RPC response (unexpected)");
-                JsonRpcResponse {
+                Some(JsonRpcResponse {
                     jsonrpc: JsonRpcVersion,
                     payload: JsonRpcResponsePayload::Error {
                         error: JsonRpcError {
@@ -116,11 +111,11 @@ impl McpService {
                         },
                     },
                     id: ResponseId::null(),
-                }
+                })
             }
             JsonRpcMessage::RequestBatch(_) => {
                 warn!("Received JSON-RPC request batch (not yet supported)");
-                JsonRpcResponse {
+                Some(JsonRpcResponse {
                     jsonrpc: JsonRpcVersion,
                     payload: JsonRpcResponsePayload::Error {
                         error: JsonRpcError {
@@ -130,11 +125,11 @@ impl McpService {
                         },
                     },
                     id: ResponseId::null(),
-                }
+                })
             }
             JsonRpcMessage::ResponseBatch(_) => {
                 warn!("Received JSON-RPC response batch (unexpected)");
-                JsonRpcResponse {
+                Some(JsonRpcResponse {
                     jsonrpc: JsonRpcVersion,
                     payload: JsonRpcResponsePayload::Error {
                         error: JsonRpcError {
@@ -144,11 +139,11 @@ impl McpService {
                         },
                     },
                     id: ResponseId::null(),
-                }
+                })
             }
             JsonRpcMessage::MessageBatch(_) => {
                 warn!("Received JSON-RPC message batch (not yet supported)");
-                JsonRpcResponse {
+                Some(JsonRpcResponse {
                     jsonrpc: JsonRpcVersion,
                     payload: JsonRpcResponsePayload::Error {
                         error: JsonRpcError {
@@ -158,7 +153,7 @@ impl McpService {
                         },
                     },
                     id: ResponseId::null(),
-                }
+                })
             }
         }
     }
@@ -209,7 +204,7 @@ impl Service<Request<Bytes>> for McpService {
 
             // Parse JSON-RPC message
             let parsed = serde_json::from_str::<JsonRpcMessage>(json_str);
-            let response = match parsed {
+            let response_opt = match parsed {
                 Ok(message) => {
                     let ctx = RequestContext::new().with_metadata("transport", "http");
 
@@ -218,7 +213,7 @@ impl Service<Request<Bytes>> for McpService {
                 }
                 Err(e) => {
                     error!("Failed to parse JSON-RPC: {}", e);
-                    JsonRpcResponse {
+                    Some(JsonRpcResponse {
                         jsonrpc: JsonRpcVersion,
                         payload: JsonRpcResponsePayload::Error {
                             error: JsonRpcError {
@@ -228,8 +223,16 @@ impl Service<Request<Bytes>> for McpService {
                             },
                         },
                         id: ResponseId::null(),
-                    }
+                    })
                 }
+            };
+
+            // If no response (notification), return 204 No Content
+            let Some(response) = response_opt else {
+                return Ok(Response::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body(Bytes::new())
+                    .unwrap());
             };
 
             // Serialize response

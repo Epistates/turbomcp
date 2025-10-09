@@ -172,3 +172,7 @@ impl HealthCheck {
         }
     }
 }
+
+// Comprehensive tests in separate file (tokio/axum pattern)
+#[cfg(test)]
+mod tests;

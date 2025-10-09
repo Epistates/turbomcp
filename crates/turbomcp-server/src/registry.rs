@@ -798,3 +798,7 @@ impl Default for RegistryBuilder {
 
 /// Main registry interface (alias for `HandlerRegistry`)
 pub type Registry = HandlerRegistry;
+
+// Comprehensive tests in separate file (tokio/axum pattern)
+#[cfg(test)]
+mod tests;

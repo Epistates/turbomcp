@@ -433,3 +433,7 @@ impl turbomcp_protocol::JsonRpcHandler for RequestRouter {
         }
     }
 }
+
+// Comprehensive tests in separate file (tokio/axum pattern)
+#[cfg(test)]
+mod tests;

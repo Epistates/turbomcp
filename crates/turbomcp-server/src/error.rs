@@ -378,10 +378,46 @@ impl From<Box<turbomcp_protocol::Error>> for ServerError {
         use turbomcp_protocol::ErrorKind;
 
         match core_error.kind {
+            // MCP-specific errors
+            ErrorKind::ToolNotFound | ErrorKind::PromptNotFound | ErrorKind::ResourceNotFound => {
+                Self::NotFound {
+                    resource: core_error.message,
+                }
+            }
+            ErrorKind::ToolExecutionFailed => Self::Handler {
+                message: core_error.message,
+                context: core_error.context.operation,
+            },
+            ErrorKind::ResourceAccessDenied => Self::Authorization {
+                message: core_error.message,
+                resource: core_error.context.component,
+            },
+            ErrorKind::CapabilityNotSupported => Self::Handler {
+                message: format!("Capability not supported: {}", core_error.message),
+                context: None,
+            },
+            ErrorKind::ProtocolVersionMismatch => Self::Configuration {
+                message: core_error.message,
+                key: Some("protocol_version".to_string()),
+            },
+            ErrorKind::ServerOverloaded => Self::ResourceExhausted {
+                resource: "server_capacity".to_string(),
+                current: None,
+                max: None,
+            },
+
+            // Deprecated (backwards compatibility)
+            #[allow(deprecated)]
             ErrorKind::Handler => Self::Handler {
                 message: core_error.message,
                 context: core_error.context.operation,
             },
+            #[allow(deprecated)]
+            ErrorKind::NotFound => Self::NotFound {
+                resource: core_error.message,
+            },
+
+            // General errors
             ErrorKind::Authentication => Self::Authentication {
                 message: core_error.message,
                 method: None,
@@ -389,9 +425,6 @@ impl From<Box<turbomcp_protocol::Error>> for ServerError {
             ErrorKind::PermissionDenied => Self::Authorization {
                 message: core_error.message,
                 resource: None,
-            },
-            ErrorKind::NotFound => Self::NotFound {
-                resource: core_error.message,
             },
             ErrorKind::BadRequest | ErrorKind::Validation => Self::Handler {
                 message: format!("Validation error: {}", core_error.message),
@@ -443,3 +476,7 @@ impl From<Box<turbomcp_protocol::Error>> for ServerError {
 
 // Note: McpError conversion is handled by the turbomcp crate
 // since McpError wraps ServerError, not the other way around
+
+// Comprehensive tests in separate file (tokio/axum pattern)
+#[cfg(test)]
+mod tests;

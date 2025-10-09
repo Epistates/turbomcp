@@ -707,9 +707,10 @@ RUST_LOG=debug cargo run --example production_server
 ## Related Crates
 
 - **[turbomcp](../turbomcp/)** - Main framework (uses this crate)
-- **[turbomcp-core](../turbomcp-core/)** - Core types and utilities
+- **[turbomcp-protocol](../turbomcp-protocol/)** - Protocol implementation and core utilities
 - **[turbomcp-transport](../turbomcp-transport/)** - Transport layer
-- **[turbomcp-protocol](../turbomcp-protocol/)** - MCP protocol implementation
+
+**Note:** In v2.0.0, `turbomcp-core` was merged into `turbomcp-protocol` to eliminate circular dependencies.
 
 ## External Resources
 
