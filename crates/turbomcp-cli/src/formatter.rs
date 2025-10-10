@@ -1,6 +1,6 @@
 //! Rich output formatting for CLI
 
-use crate::cli_new::OutputFormat;
+use crate::cli::OutputFormat;
 use crate::error::{CliError, CliResult};
 use comfy_table::{Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 use owo_colors::OwoColorize;

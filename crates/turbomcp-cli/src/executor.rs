@@ -1,6 +1,6 @@
 //! Command execution using turbomcp-client
 
-use crate::cli_new::*;
+use crate::cli::*;
 use crate::error::{CliError, CliResult};
 use crate::formatter::Formatter;
 use crate::transport::{ClientType, create_client};

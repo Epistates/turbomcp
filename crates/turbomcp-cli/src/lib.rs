@@ -42,124 +42,55 @@
 //!
 //! All MCP operations are delegated to `turbomcp-client` for reliability.
 
-// New architecture modules
-pub mod cli_new;
+// Core modules
+pub mod cli;
 pub mod error;
 pub mod executor;
 pub mod formatter;
+pub mod prelude;
 pub mod transport;
 
-// Legacy modules (for backward compatibility)
-pub mod cli;
-pub mod commands;
-pub mod output;
-pub mod transports;
+// Legacy modules removed in 2.0 - all functionality is now in the new architecture
+// If you were using the legacy API (tools-list, tools-call, schema-export):
+// - Use the new hierarchical commands: tools list, tools call, tools schema
+// - Use `#[tokio::main]` instead of `run_cli()`
+// - Import from `cli` module instead of `cli_new`
 
 use clap::Parser;
-use tokio::runtime::Runtime;
 
-// Re-export new architecture types (primary API)
-pub use cli_new::{
-    Cli as CliNew, Commands as CommandsNew, Connection as ConnectionNew, OutputFormat,
-    TransportKind as TransportKindNew,
+// Clean re-exports (no more "New" suffixes!)
+pub use cli::{
+    Cli, Commands, Connection, OutputFormat, TransportKind,
+    ToolCommands, ResourceCommands, PromptCommands, CompletionCommands,
+    ServerCommands, SamplingCommands, RefType, LogLevel,
 };
 pub use error::{CliError, CliResult, ErrorCategory};
 pub use executor::CommandExecutor;
 pub use formatter::Formatter;
 
-// Re-export legacy types for backward compatibility
-pub use cli::{Cli, Commands, Connection, TransportKind};
-pub use commands::{
-    schema_export as cmd_schema_export, tools_call as cmd_tools_call, tools_list as cmd_tools_list,
-};
-pub use output::display as output;
-
 /// Run the CLI application
-pub fn run_cli() {
-    let cli = cli::Cli::parse();
-    let rt = match Runtime::new() {
-        Ok(runtime) => runtime,
-        Err(e) => {
-            eprintln!("Failed to initialize async runtime: {e}");
-            std::process::exit(1);
-        }
-    };
-    rt.block_on(async move {
-        match cli.command {
-            cli::Commands::ToolsList(conn) => {
-                if let Err(e) = commands::tools_list(conn).await {
-                    eprintln!("error: {e}");
-                    std::process::exit(1);
-                }
-            }
-            cli::Commands::ToolsCall {
-                conn,
-                name,
-                arguments,
-            } => {
-                if let Err(e) = commands::tools_call(conn, name, arguments).await {
-                    eprintln!("error: {e}");
-                    std::process::exit(1);
-                }
-            }
-            cli::Commands::SchemaExport { conn, output } => {
-                if let Err(e) = commands::schema_export(conn, output).await {
-                    eprintln!("error: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-    });
-}
-
-/// Run the CLI application with new architecture
 ///
-/// This is the new, comprehensive implementation that leverages turbomcp-client
-/// and provides complete MCP protocol coverage with rich output formatting.
+/// This is the main entry point for the TurboMCP CLI library. It provides complete
+/// MCP protocol coverage with rich output formatting and comprehensive error handling.
+///
+/// Returns a `CliResult` that the caller can handle appropriately. This allows
+/// the caller to control error formatting, exit codes, and runtime configuration.
 ///
 /// # Example
 ///
 /// ```rust,no_run
-/// use turbomcp_cli::run_cli_new;
+/// use turbomcp_cli::prelude::*;
 ///
 /// #[tokio::main]
 /// async fn main() {
-///     if let Err(e) = run_cli_new().await {
-///         eprintln!("Error: {e}");
+///     if let Err(e) = turbomcp_cli::run().await {
+///         eprintln!("Error: {}", e);
 ///         std::process::exit(1);
 ///     }
 /// }
 /// ```
-pub async fn run_cli_new() -> CliResult<()> {
-    let cli = cli_new::Cli::parse();
-
+pub async fn run() -> CliResult<()> {
+    let cli = Cli::parse();
     let executor = CommandExecutor::new(cli.format.clone(), !cli.no_color, cli.verbose);
-
-    if let Err(e) = executor.execute(cli.command).await {
-        executor.display_error(&e);
-        std::process::exit(1);
-    }
-
-    Ok(())
-}
-
-/// Run the new CLI in blocking mode (for use in non-async main)
-///
-/// This is a convenience wrapper around `run_cli_new` that creates
-/// a tokio runtime and blocks on the async function.
-pub fn run_cli_new_blocking() {
-    let rt = match Runtime::new() {
-        Ok(runtime) => runtime,
-        Err(e) => {
-            eprintln!("Failed to initialize async runtime: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    rt.block_on(async move {
-        if let Err(e) = run_cli_new().await {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        }
-    });
+    executor.execute(cli.command).await
 }

@@ -1,6 +1,6 @@
 //! Transport factory and auto-detection
 
-use crate::cli_new::{Connection, TransportKind};
+use crate::cli::{Connection, TransportKind};
 use crate::error::{CliError, CliResult};
 use std::time::Duration;
 use turbomcp_client::Client;
