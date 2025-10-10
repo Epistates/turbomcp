@@ -32,7 +32,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{RwLock, Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::security::{
@@ -253,18 +253,25 @@ impl StreamableHttpConfigBuilder {
 /// SSE event with metadata for replay
 #[derive(Clone, Debug)]
 pub struct StoredEvent {
+    /// Unique event identifier for replay tracking
     pub id: String,
+    /// Event type (e.g., "message", "error", "endpoint")
     pub event_type: String,
+    /// Event data payload (JSON-encoded)
     pub data: String,
 }
 
 /// Session state with message replay buffer
+#[derive(Debug)]
 pub struct Session {
+    /// Ring buffer of recent events for replay on reconnection
     pub event_buffer: VecDeque<StoredEvent>,
+    /// Active SSE stream senders for broadcasting
     pub sse_senders: Vec<mpsc::UnboundedSender<StoredEvent>>,
 }
 
 impl Session {
+    /// Create a new session with the specified replay buffer size
     pub fn new(buffer_size: usize) -> Self {
         Self {
             event_buffer: VecDeque::with_capacity(buffer_size),
@@ -615,49 +622,54 @@ async fn mcp_post_handler<H: turbomcp_protocol::JsonRpcHandler>(
         }
 
         // Bidirectional MCP: Check if this response matches a server-initiated request
-        if is_response {
-            if let Some(ref pending_requests) = state.pending_requests {
-                // Extract response ID
-                if let Some(id_value) = request.get("id") {
-                    let id_str = match id_value {
-                        serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Number(n) => n.to_string(),
-                        _ => String::new(),
-                    };
+        if is_response && let Some(ref pending_requests) = state.pending_requests {
+            // Extract response ID
+            if let Some(id_value) = request.get("id") {
+                let id_str = match id_value {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    _ => String::new(),
+                };
 
-                    if !id_str.is_empty() {
-                        // Check if this matches a pending request
-                        if let Some(sender) = pending_requests.lock().await.remove(&id_str) {
-                            // Parse response into JsonRpcResponse
-                            let json_rpc_response = serde_json::from_value::<JsonRpcResponse>(request.clone())
+                if !id_str.is_empty() {
+                    // Check if this matches a pending request
+                    if let Some(sender) = pending_requests.lock().await.remove(&id_str) {
+                        // Parse response into JsonRpcResponse
+                        let json_rpc_response =
+                            serde_json::from_value::<JsonRpcResponse>(request.clone())
                                 .unwrap_or_else(|_| {
                                     // Fallback: construct response manually
-                                    use turbomcp_protocol::jsonrpc::{JsonRpcVersion, JsonRpcResponsePayload, ResponseId};
                                     use turbomcp_protocol::MessageId;
+                                    use turbomcp_protocol::jsonrpc::{
+                                        JsonRpcResponsePayload, JsonRpcVersion, ResponseId,
+                                    };
 
                                     JsonRpcResponse {
                                         jsonrpc: JsonRpcVersion,
                                         payload: if let Some(result) = request.get("result") {
-                                            JsonRpcResponsePayload::Success { result: result.clone() }
+                                            JsonRpcResponsePayload::Success {
+                                                result: result.clone(),
+                                            }
                                         } else {
                                             // Fallback to null result if no result or error field
-                                            JsonRpcResponsePayload::Success { result: serde_json::json!(null) }
+                                            JsonRpcResponsePayload::Success {
+                                                result: serde_json::json!(null),
+                                            }
                                         },
                                         id: ResponseId(Some(MessageId::String(id_str))),
                                     }
                                 });
 
-                            // Complete the awaiting Future
-                            let _ = sender.send(json_rpc_response);
+                        // Complete the awaiting Future
+                        let _ = sender.send(json_rpc_response);
 
-                            // Return 202 Accepted immediately (don't broadcast)
-                            return (
-                                StatusCode::ACCEPTED,
-                                response_headers,
-                                Json(serde_json::json!({})),
-                            )
-                                .into_response();
-                        }
+                        // Return 202 Accepted immediately (don't broadcast)
+                        return (
+                            StatusCode::ACCEPTED,
+                            response_headers,
+                            Json(serde_json::json!({})),
+                        )
+                            .into_response();
                     }
                 }
             }

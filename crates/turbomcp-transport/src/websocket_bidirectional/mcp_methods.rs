@@ -45,12 +45,17 @@ use turbomcp_protocol::types::{
 };
 
 /// Pending MCP request (generic for ping, sampling, roots)
+///
+/// NOTE: This struct is reserved for future correlation map implementation.
+/// Currently unused but kept for forward compatibility.
+#[allow(dead_code)]
 struct PendingMcpRequest<T> {
     request_id: String,
     response_tx: oneshot::Sender<T>,
     deadline: tokio::time::Instant,
 }
 
+#[allow(dead_code)]
 impl<T> PendingMcpRequest<T> {
     fn new(response_tx: oneshot::Sender<T>, timeout: Duration) -> Self {
         Self {
@@ -101,7 +106,7 @@ impl WebSocketBidirectionalTransport {
         timeout_duration: Option<Duration>,
     ) -> TransportResult<PingResult> {
         let request_id = Uuid::new_v4().to_string();
-        let (response_tx, response_rx) = oneshot::channel();
+        let (_response_tx, response_rx) = oneshot::channel();
 
         let timeout_duration = timeout_duration.unwrap_or(Duration::from_secs(60));
 
@@ -135,9 +140,8 @@ impl WebSocketBidirectionalTransport {
         // Update metrics
         self.metrics.write().await.messages_sent += 1;
 
-        // Store pending request in correlations for response matching
-        // Using a temporary structure since ping responses are processed inline
-        let pending = PendingMcpRequest::new(response_tx, timeout_duration);
+        // TODO: Store pending request in correlations map for response matching
+        // For now, responses are expected to be matched via a different mechanism
 
         // Wait for response with timeout
         match timeout(timeout_duration, response_rx).await {
@@ -158,7 +162,10 @@ impl WebSocketBidirectionalTransport {
                 ))
             }
             Err(_) => {
-                warn!("Ping {} timed out in session {}", request_id, self.session_id);
+                warn!(
+                    "Ping {} timed out in session {}",
+                    request_id, self.session_id
+                );
                 Err(TransportError::Timeout)
             }
         }
@@ -198,7 +205,7 @@ impl WebSocketBidirectionalTransport {
         timeout_duration: Option<Duration>,
     ) -> TransportResult<CreateMessageResult> {
         let request_id = Uuid::new_v4().to_string();
-        let (response_tx, response_rx) = oneshot::channel();
+        let (_response_tx, response_rx) = oneshot::channel();
 
         let timeout_duration = timeout_duration.unwrap_or(Duration::from_secs(60));
 
@@ -289,7 +296,7 @@ impl WebSocketBidirectionalTransport {
         timeout_duration: Option<Duration>,
     ) -> TransportResult<ListRootsResult> {
         let request_id = Uuid::new_v4().to_string();
-        let (response_tx, response_rx) = oneshot::channel();
+        let (_response_tx, response_rx) = oneshot::channel();
 
         let timeout_duration = timeout_duration.unwrap_or(Duration::from_secs(60));
 
@@ -363,15 +370,17 @@ mod tests {
         let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
         let request = PingRequest {
-            params: turbomcp_protocol::types::PingParams { data: None }
+            params: turbomcp_protocol::types::PingParams { data: None },
         };
         let result = transport.send_ping(request, None).await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("WebSocket not connected"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("WebSocket not connected")
+        );
     }
 
     #[tokio::test]
@@ -392,10 +401,12 @@ mod tests {
         let result = transport.send_sampling(request, None).await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("WebSocket not connected"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("WebSocket not connected")
+        );
     }
 
     #[tokio::test]
@@ -407,9 +418,11 @@ mod tests {
         let result = transport.send_list_roots(request, None).await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("WebSocket not connected"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("WebSocket not connected")
+        );
     }
 }
