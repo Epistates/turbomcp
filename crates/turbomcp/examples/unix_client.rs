@@ -13,6 +13,7 @@
 //! ```
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use turbomcp_client::Client;
 use turbomcp_transport::unix::UnixTransport;
 
@@ -25,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("🔌 Connecting to Unix socket server...");
 
-    let socket_path = "/tmp/turbomcp-demo.sock";
+    let socket_path = PathBuf::from("/tmp/turbomcp-demo.sock");
 
     // Create Unix socket client transport
     let transport = UnixTransport::new_client(socket_path);
@@ -39,12 +40,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tools = client.list_tools().await?;
     tracing::info!("🛠️  Found {} tools:", tools.len());
     for tool in &tools {
-        tracing::info!("  - {}: {}", tool.name, tool.description.as_deref().unwrap_or(""));
+        tracing::info!(
+            "  - {}: {}",
+            tool.name,
+            tool.description.as_deref().unwrap_or("")
+        );
     }
 
     // Call echo tool
     let mut args = HashMap::new();
-    args.insert("message".to_string(), serde_json::json!("Hello Unix Socket!"));
+    args.insert(
+        "message".to_string(),
+        serde_json::json!("Hello Unix Socket!"),
+    );
     let result = client.call_tool("echo", Some(args)).await?;
     tracing::info!("📝 Echo result: {:?}", result);
 
@@ -58,9 +66,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // List and read resources
     let resources = client.list_resources().await?;
     tracing::info!("📦 Found {} resources:", resources.len());
-    for resource in &resources {
-        tracing::info!("  - {}", resource.uri);
-        let content = client.read_resource(&resource.uri).await?;
+    for resource_uri in &resources {
+        tracing::info!("  - {}", resource_uri);
+        let content = client.read_resource(resource_uri).await?;
         tracing::info!("    Content: {:?}", content);
     }
 

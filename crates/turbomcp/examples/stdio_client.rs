@@ -34,20 +34,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tools = client.list_tools().await?;
     tracing::info!("🛠️  Found {} tools:", tools.len());
     for tool in &tools {
-        tracing::info!("  - {}: {}", tool.name, tool.description.as_deref().unwrap_or(""));
+        tracing::info!(
+            "  - {}: {}",
+            tool.name,
+            tool.description.as_deref().unwrap_or("")
+        );
     }
 
     // Call echo tool
     let mut args = HashMap::new();
     args.insert("message".to_string(), serde_json::json!("Hello Stdio!"));
     let result = client.call_tool("echo", Some(args)).await?;
-    tracing::info!("📝 Echo result: {:?}", result.content);
+    tracing::info!("📝 Echo result: {:?}", result);
 
     // Call reverse tool
     let mut args = HashMap::new();
     args.insert("text".to_string(), serde_json::json!("TurboMCP"));
     let result = client.call_tool("reverse", Some(args)).await?;
-    tracing::info!("🔄 Reverse result: {:?}", result.content);
+    tracing::info!("🔄 Reverse result: {:?}", result);
 
     tracing::info!("✅ Demo complete");
     Ok(())

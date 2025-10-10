@@ -38,20 +38,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize (auto-connects)
     let init = client.initialize().await?;
-    eprintln!("[2/4] ✅ Connected: {} v{}", init.server_info.name, init.server_info.version);
+    eprintln!(
+        "[2/4] ✅ Connected: {} v{}",
+        init.server_info.name, init.server_info.version
+    );
 
     // List and call tools
     eprintln!("\n[3/4] 🛠️  Listing tools...");
     let tools = client.list_tools().await?;
     for tool in &tools {
-        eprintln!("  • {}: {}", tool.name, tool.description.as_deref().unwrap_or(""));
+        eprintln!(
+            "  • {}: {}",
+            tool.name,
+            tool.description.as_deref().unwrap_or("")
+        );
     }
 
     eprintln!("\n[4/4] 📞 Calling tools...");
 
     // Call echo tool
     let mut args = HashMap::new();
-    args.insert("message".to_string(), serde_json::json!("Hello Unix Socket!"));
+    args.insert(
+        "message".to_string(),
+        serde_json::json!("Hello Unix Socket!"),
+    );
     let result = client.call_tool("echo", Some(args)).await?;
     eprintln!("  → echo: {}", result);
 

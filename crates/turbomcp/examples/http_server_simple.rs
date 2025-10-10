@@ -12,11 +12,15 @@
 //! cargo run --example http_client --features http
 //! ```
 
+#[cfg(feature = "http")]
+#[cfg(feature = "http")]
 use turbomcp::prelude::*;
 
+#[cfg(feature = "http")]
 #[derive(Clone)]
 struct HttpServer;
 
+#[cfg(feature = "http")]
 #[turbomcp::server(name = "http-demo", version = "1.0.0")]
 impl HttpServer {
     #[tool("Echo a message")]
@@ -36,6 +40,7 @@ impl HttpServer {
 }
 
 #[tokio::main]
+#[cfg(feature = "http")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
@@ -47,4 +52,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     HttpServer.run_http("127.0.0.1:3000").await?;
 
     Ok(())
+}
+
+#[cfg(not(feature = "http"))]
+fn main() {
+    eprintln!("This example requires the 'http' feature. Run with: cargo run --example http_server_simple --features http");
 }

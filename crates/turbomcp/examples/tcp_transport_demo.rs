@@ -16,11 +16,15 @@
 //! **Or use the basic_client example:**
 //! First start this server, then in another terminal run the client configured for TCP.
 
+
+#[cfg(feature = "tcp")]
 use turbomcp::prelude::*;
 
 #[derive(Clone)]
+#[cfg(feature = "tcp")]
 struct TcpDemoServer;
 
+#[cfg(feature = "tcp")]
 #[turbomcp::server(name = "tcp-demo", version = "1.0.0")]
 impl TcpDemoServer {
     #[tool("Get server information")]

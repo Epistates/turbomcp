@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("╚══════════════════════════════════════╝\n");
 
     // Create TCP transport
-    let bind_addr = "127.0.0.1:0".parse()?;  // 0 = OS assigns port
+    let bind_addr = "127.0.0.1:0".parse()?; // 0 = OS assigns port
     let server_addr = "127.0.0.1:8765".parse()?;
     let transport = TcpTransport::new_client(bind_addr, server_addr);
 
@@ -37,13 +37,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize (auto-connects)
     let init = client.initialize().await?;
-    eprintln!("[2/4] ✅ Connected: {} v{}", init.server_info.name, init.server_info.version);
+    eprintln!(
+        "[2/4] ✅ Connected: {} v{}",
+        init.server_info.name, init.server_info.version
+    );
 
     // List and call tools
     eprintln!("\n[3/4] 🛠️  Listing tools...");
     let tools = client.list_tools().await?;
     for tool in &tools {
-        eprintln!("  • {}: {}", tool.name, tool.description.as_deref().unwrap_or(""));
+        eprintln!(
+            "  • {}: {}",
+            tool.name,
+            tool.description.as_deref().unwrap_or("")
+        );
     }
 
     eprintln!("\n[4/4] 📞 Calling tools...");

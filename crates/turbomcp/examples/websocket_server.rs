@@ -12,11 +12,15 @@
 //! cargo run --example websocket_client --features "http,websocket"
 //! ```
 
+
+#[cfg(all(feature = "http", feature = "websocket"))]
 use turbomcp::prelude::*;
 
 #[derive(Clone)]
+#[cfg(all(feature = "http", feature = "websocket"))]
 struct WebSocketServer;
 
+#[cfg(all(feature = "http", feature = "websocket"))]
 #[turbomcp::server(name = "websocket-demo", version = "1.0.0")]
 impl WebSocketServer {
     #[tool("Echo a message")]
@@ -41,6 +45,7 @@ impl WebSocketServer {
 }
 
 #[tokio::main]
+#[cfg(all(feature = "http", feature = "websocket"))]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
@@ -52,4 +57,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     WebSocketServer.run_websocket("127.0.0.1:8080").await?;
 
     Ok(())
+}
+
+#[cfg(not(all(feature = "http", feature = "websocket")))]
+fn main() {
+    eprintln!("This example requires 'http' and 'websocket' features. Run with: cargo run --example websocket_server --features \"http,websocket\"");
 }

@@ -12,11 +12,15 @@
 //! cargo run --example tcp_client --features tcp
 //! ```
 
+
+#[cfg(feature = "tcp")]
 use turbomcp::prelude::*;
 
 #[derive(Clone)]
+#[cfg(feature = "tcp")]
 struct TcpServer;
 
+#[cfg(feature = "tcp")]
 #[turbomcp::server(name = "tcp-demo", version = "1.0.0")]
 impl TcpServer {
     #[tool("Echo a message")]
@@ -31,6 +35,7 @@ impl TcpServer {
 }
 
 #[tokio::main]
+#[cfg(feature = "tcp")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
@@ -42,4 +47,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     TcpServer.run_tcp("127.0.0.1:8765").await?;
 
     Ok(())
+}
+
+#[cfg(not(feature = "tcp"))]
+fn main() {
+    eprintln!("This example requires the 'tcp' feature. Run with: cargo run --example tcp_server --features tcp");
 }

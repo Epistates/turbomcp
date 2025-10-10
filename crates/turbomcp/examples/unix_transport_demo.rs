@@ -15,11 +15,15 @@
 //! echo '{"jsonrpc":"2.0","method":"tools/list","id":1}' | socat - UNIX-CONNECT:/tmp/turbomcp-demo.sock
 //! ```
 
+
+#[cfg(feature = "unix")]
 use turbomcp::prelude::*;
 
 #[derive(Clone)]
+#[cfg(feature = "unix")]
 struct UnixDemoServer;
 
+#[cfg(feature = "unix")]
 #[turbomcp::server(name = "unix-demo", version = "1.0.0")]
 impl UnixDemoServer {
     #[tool("Get server information")]

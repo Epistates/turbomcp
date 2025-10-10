@@ -12,11 +12,15 @@
 //! cargo run --example unix_client_simple --features unix
 //! ```
 
+
+#[cfg(feature = "unix")]
 use turbomcp::prelude::*;
 
 #[derive(Clone)]
+#[cfg(feature = "unix")]
 struct UnixServer;
 
+#[cfg(feature = "unix")]
 #[turbomcp::server(name = "unix-demo", version = "1.0.0")]
 impl UnixServer {
     #[tool("Echo a message")]
@@ -31,6 +35,7 @@ impl UnixServer {
 }
 
 #[tokio::main]
+#[cfg(feature = "unix")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
@@ -47,4 +52,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     UnixServer.run_unix(socket_path).await?;
 
     Ok(())
+}
+
+#[cfg(not(feature = "unix"))]
+fn main() {
+    eprintln!("This example requires the 'unix' feature. Run with: cargo run --example unix_server_simple --features unix");
 }

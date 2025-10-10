@@ -39,7 +39,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tools = client.list_tools().await?;
     tracing::info!("🛠️  Found {} tools:", tools.len());
     for tool in &tools {
-        tracing::info!("  - {}: {}", tool.name, tool.description.as_deref().unwrap_or(""));
+        tracing::info!(
+            "  - {}: {}",
+            tool.name,
+            tool.description.as_deref().unwrap_or("")
+        );
     }
 
     // Call echo tool
