@@ -51,7 +51,7 @@ Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and 
 │            TurboMCP Protocol                │
 ├─────────────────────────────────────────────┤
 │ MCP Message Types                          │
-│ ├── InitializeRequest/Response             │
+│ ├── InitializeRequest/InitializeResult     │
 │ ├── Tool/Resource/Prompt messages          │
 │ ├── Capability negotiation               │
 │ └── Notification handling                 │
@@ -76,13 +76,13 @@ Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and 
 
 ```rust
 use turbomcp_protocol::{
-    InitializeRequest, InitializeResponse,
-    ToolsListRequest, ToolsListResponse,
-    ToolsCallRequest, ToolsCallResponse,
-    ResourcesListRequest, ResourcesListResponse,
-    ResourcesReadRequest, ResourcesReadResponse,
-    PromptsListRequest, PromptsListResponse,
-    PromptsGetRequest, PromptsGetResponse,
+    InitializeRequest, InitializeResult,
+    ListToolsRequest, ListToolsResult,
+    CallToolRequest, CallToolResult,
+    ListResourcesRequest, ListResourcesResult,
+    ReadResourceRequest, ReadResourceResult,
+    ListPromptsRequest, ListPromptsResult,
+    GetPromptRequest, GetPromptResult,
 };
 ```
 
@@ -94,12 +94,11 @@ use turbomcp_protocol::{
     ElicitRequest, ElicitResult, ElicitationAction, ElicitationSchema,
     
     // Completion - Intelligent autocompletion
-    CompleteRequest, CompleteRequestParams, CompletionResponse,
-    CompletionReference, CompletionValue,
+    CompleteRequestParams, CompletionResponse, CompletionReference,
     
     // Resource Templates - Dynamic resources
     ListResourceTemplatesRequest, ListResourceTemplatesResult,
-    ResourceTemplate, ResourceTemplateParameter,
+    ResourceTemplate,
     
     // Ping - Bidirectional health monitoring
     PingRequest, PingParams, PingResult,
@@ -114,7 +113,7 @@ use turbomcp_protocol::{
 ```rust
 use turbomcp_protocol::{
     JsonRpcRequest, JsonRpcResponse, JsonRpcNotification,
-    JsonRpcError, ErrorCode, RequestId,
+    JsonRpcError, JsonRpcErrorCode, RequestId,
 };
 ```
 
@@ -124,8 +123,8 @@ use turbomcp_protocol::{
 
 ```rust
 use turbomcp_protocol::{
-    JsonRpcRequest, JsonRpcResponse, InitializeRequest, 
-    ToolsListRequest, McpError
+    JsonRpcRequest, JsonRpcResponse, InitializeRequest,
+    ListToolsRequest, Error as McpError
 };
 
 // Parse incoming JSON-RPC request
@@ -149,7 +148,7 @@ match request.method.as_str() {
         // Process initialization
     },
     "tools/list" => {
-        let tools_req: ToolsListRequest = serde_json::from_value(request.params)?;
+        let tools_req: ListToolsRequest = serde_json::from_value(request.params)?;
         // Process tools list request
     },
     _ => {
@@ -158,32 +157,37 @@ match request.method.as_str() {
 }
 ```
 
-### Schema Validation
+### Message Validation
 
 ```rust
-use turbomcp_protocol::{validate_tool_call, ToolCallParams, ValidationResult};
+use turbomcp_protocol::{
+    JsonRpcRequest,
+    validation::{ProtocolValidator, ValidationResult}
+};
 
-// Define tool parameters with schema validation
-#[derive(serde::Serialize, serde::Deserialize)]
-struct AddParams {
-    a: f64,
-    b: f64,
-}
+// Create a validator with default rules
+let validator = ProtocolValidator::default();
 
-// Validate tool call parameters
-let params = serde_json::json!({"a": 5.0, "b": 3.0});
-let result: ValidationResult = validate_tool_call("add", &params)?;
+// Parse and validate a JSON-RPC request
+let json_data = r#"{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {"name": "add", "arguments": {"a": 5, "b": 3}}
+}"#;
+
+let request: JsonRpcRequest = serde_json::from_str(json_data)?;
+let result = validator.validate_request(&request);
 
 match result {
     ValidationResult::Valid => {
-        // Parameters are valid, proceed with tool call
-        let add_params: AddParams = serde_json::from_value(params)?;
+        println!("Request is valid");
+    },
+    ValidationResult::ValidWithWarnings(warnings) => {
+        println!("Request valid with {} warnings", warnings.len());
     },
     ValidationResult::Invalid(errors) => {
-        // Handle validation errors
-        for error in errors {
-            eprintln!("Validation error: {}", error);
-        }
+        eprintln!("Request invalid: {} errors", errors.len());
     }
 }
 ```
@@ -223,50 +227,53 @@ let sampling_client = ClientCapabilitiesBuilder::sampling_focused().build();
 
 ```rust
 use turbomcp_protocol::{
-    ServerCapabilities, ClientCapabilities, CapabilitySet,
-    ToolCapability, ResourceCapability, PromptCapability
+    ServerCapabilities, ClientCapabilities,
+    types::{ToolsCapabilities, ResourcesCapabilities, PromptsCapabilities, RootsCapabilities}
 };
 
 // Traditional approach (still supported)
 let server_caps = ServerCapabilities {
-    tools: Some(ToolCapability {}),
-    resources: Some(ResourceCapability {
-        subscribe: true,
-        list_changed: true
+    tools: Some(ToolsCapabilities {
+        list_changed: Some(true),
     }),
-    prompts: Some(PromptCapability {}),
+    resources: Some(ResourcesCapabilities {
+        subscribe: Some(true),
+        list_changed: Some(true),
+    }),
+    prompts: Some(PromptsCapabilities {
+        list_changed: Some(false),
+    }),
     experimental: None,
+    ..Default::default()
 };
 
 // Define client capabilities
 let client_caps = ClientCapabilities {
     sampling: None,
-    roots: Some(RootCapability {
-        list_changed: true
+    roots: Some(RootsCapabilities {
+        list_changed: Some(true),
     }),
     experimental: None,
+    ..Default::default()
 };
-
-// Negotiate capabilities
-let negotiated = negotiate_capabilities(&server_caps, &client_caps)?;
 ```
 
 ### Error Handling
 
 ```rust
-use turbomcp_protocol::{JsonRpcError, ErrorCode, McpError};
+use turbomcp_protocol::{JsonRpcError, JsonRpcErrorCode, Error};
 
 // Create protocol-specific errors
 fn handle_tool_error(error: &str) -> JsonRpcError {
     JsonRpcError {
-        code: ErrorCode::InvalidParams,
+        code: JsonRpcErrorCode::InvalidParams,
         message: format!("Tool validation failed: {}", error),
         data: None,
     }
 }
 
-// Convert to MCP error
-let mcp_error = McpError::Protocol(handle_tool_error("Missing parameter 'name'"));
+// Create MCP error from JSON-RPC error
+let error = Error::tool_execution_failed("Missing parameter 'name'");
 ```
 
 ### Custom Message Types
@@ -379,7 +386,7 @@ impl MyServer {
 For custom implementations or integrations:
 
 ```rust
-use turbomcp_protocol::{McpServer, JsonRpcRequest, JsonRpcResponse};
+use turbomcp_protocol::{JsonRpcRequest, JsonRpcResponse};
 
 struct CustomProtocolHandler;
 

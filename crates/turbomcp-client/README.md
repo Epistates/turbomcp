@@ -37,7 +37,7 @@ use turbomcp_client::Client;
 use turbomcp_transport::stdio::StdioTransport;
 
 #[tokio::main]
-async fn main() -> turbomcp_core::Result<()> {
+async fn main() -> turbomcp_protocol::Result<()> {
     // Create client with STDIO transport
     let transport = StdioTransport::new();
     let client = Client::new(transport);
@@ -73,7 +73,7 @@ async fn main() -> turbomcp_core::Result<()> {
 use turbomcp_client::Client;
 
 #[tokio::main]
-async fn main() -> turbomcp_core::Result<()> {
+async fn main() -> turbomcp_protocol::Result<()> {
     // Beautiful one-liner - connects and initializes automatically!
     let client = Client::connect_http("http://localhost:8080").await?;
 
@@ -513,7 +513,7 @@ let tools = client.list_tools().await?;
 ## Error Handling
 
 ```rust
-use turbomcp_core::Error;
+use turbomcp_protocol::Error;
 
 match client.call_tool("my_tool", None).await {
     Ok(result) => println!("Success: {}", result),

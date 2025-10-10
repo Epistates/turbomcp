@@ -172,133 +172,119 @@ let transport = UnixTransport::bind(config).await?;
 
 ## Security Configuration
 
-### Production Security Setup
+### Security Validator Setup
 
 ```rust
-use turbomcp_transport::{SecurityConfig, TlsConfig, AuthConfig};
+use turbomcp_transport::{SecurityConfigBuilder, AuthMethod, RateLimitConfig};
+use std::time::Duration;
 
-let security = SecurityConfig::production()
-    .with_tls(TlsConfig::new()
-        .cert_path("/etc/ssl/certs/server.pem")
-        .key_path("/etc/ssl/private/server.key")
-        .verify_client_certs(true))
-    .with_cors(CorsConfig::new()
-        .allowed_origins(["https://app.example.com"])
-        .allowed_methods(["GET", "POST"])
-        .max_age(Duration::from_secs(86400)))
-    .with_auth(AuthConfig::new()
-        .jwt_secret("your-secret-key")
-        .jwt_issuer("your-app")
-        .api_key_header("X-API-Key"))
-    .with_rate_limiting(RateLimitConfig::new()
-        .requests_per_minute(120)
-        .burst_capacity(20));
+// Build a security validator with authentication and rate limiting
+let validator = SecurityConfigBuilder::new()
+    .add_allowed_origin("https://app.example.com".to_string())
+    .allow_localhost(true)
+    .require_authentication(true)
+    .with_auth_method(AuthMethod::ApiKey)
+    .add_api_key("your-api-key-here".to_string())
+    .with_rate_limit(100, Duration::from_secs(60)) // 100 requests per minute
+    .build();
 ```
 
-### Security Headers
+### Enhanced Security with Session Management
 
 ```rust
-use turbomcp_transport::security::{SecurityHeaders, ContentSecurityPolicy};
+use turbomcp_transport::EnhancedSecurityConfigBuilder;
 
-let headers = SecurityHeaders::strict()
-    .with_csp(ContentSecurityPolicy::new()
-        .default_src(["'self'"])
-        .connect_src(["'self'", "wss:"])
-        .script_src(["'self'", "'unsafe-inline'"])
-        .style_src(["'self'", "'unsafe-inline'"]))
-    .with_hsts(Duration::from_secs(31536000)) // 1 year
-    .with_frame_options(FrameOptions::Deny)
-    .with_content_type_options(true);
+// Build enhanced security with session tracking
+let enhanced_security = EnhancedSecurityConfigBuilder::new()
+    .add_allowed_origin("https://app.example.com".to_string())
+    .require_authentication(true)
+    .add_api_key("your-api-key".to_string())
+    .with_rate_limit(120, Duration::from_secs(60))
+    .with_session_timeout(Duration::from_secs(3600)) // 1 hour
+    .with_max_sessions_per_client(5)
+    .build();
+
+## Reliability Features
+
+### Circuit Breaker Configuration
+
+```rust
+use turbomcp_transport::CircuitBreakerConfig;
+use std::time::Duration;
+
+// Configure circuit breaker for fault tolerance
+let circuit_config = CircuitBreakerConfig {
+    failure_threshold: 5,           // Open circuit after 5 failures
+    success_threshold: 3,            // Close circuit after 3 successes
+    timeout: Duration::from_secs(60), // Wait 60s before trying again
+    rolling_window_size: 100,        // Track last 100 operations
+    minimum_requests: 10,            // Need 10 requests before opening
+};
 ```
 
-## Circuit Breaker Configuration
-
-### Production Circuit Breaker
+### Retry Configuration
 
 ```rust
-use turbomcp_transport::circuit_breaker::{
-    CircuitBreakerConfig, FailureThreshold, RecoveryStrategy
+use turbomcp_transport::RetryConfig;
+use std::time::Duration;
+
+// Configure retry behavior with exponential backoff
+let retry_config = RetryConfig {
+    max_attempts: 3,
+    initial_delay: Duration::from_millis(100),
+    max_delay: Duration::from_secs(10),
+    backoff_multiplier: 2.0,
+};
+```
+
+## Compression Support
+
+### Message Compression
+
+```rust
+use turbomcp_transport::compression::{MessageCompressor, CompressionType};
+use serde_json::json;
+
+// Create a compressor with LZ4 compression
+let compressor = MessageCompressor::new(CompressionType::Lz4);
+
+// Compress a message
+let message = json!({"tool": "add", "args": {"a": 5, "b": 3}});
+let compressed = compressor.compress(&message)?;
+
+// Decompress back to JSON
+let decompressed = compressor.decompress(&compressed)?;
+assert_eq!(message, decompressed);
+
+// Available compression types:
+// - CompressionType::None
+// - CompressionType::Gzip (with "flate2" feature)
+// - CompressionType::Brotli (with "brotli" feature)
+// - CompressionType::Lz4 (with "lz4_flex" feature)
+```
+
+## Health Monitoring
+
+### Health Check Configuration
+
+```rust
+use turbomcp_transport::{HealthCheckConfig, HealthStatus};
+use std::time::Duration;
+
+// Configure health checking
+let health_config = HealthCheckConfig {
+    interval: Duration::from_secs(30),
+    timeout: Duration::from_secs(5),
+    failure_threshold: 3,      // Unhealthy after 3 failures
+    success_threshold: 2,      // Healthy after 2 successes
+    custom_check: None,
 };
 
-let config = CircuitBreakerConfig::production()
-    .failure_threshold(FailureThreshold::Consecutive(5))
-    .recovery_timeout(Duration::from_secs(60))
-    .half_open_max_calls(3)
-    .recovery_strategy(RecoveryStrategy::LinearBackoff {
-        initial_delay: Duration::from_secs(1),
-        max_delay: Duration::from_secs(60),
-        multiplier: 2.0,
-    });
-```
-
-### Custom Retry Policies
-
-```rust
-use turbomcp_transport::retry::{RetryPolicy, RetryConfig, BackoffStrategy};
-
-let retry_policy = RetryPolicy::custom(RetryConfig::new()
-    .max_attempts(5)
-    .strategy(BackoffStrategy::ExponentialWithJitter {
-        base_delay: Duration::from_millis(100),
-        max_delay: Duration::from_secs(30),
-        multiplier: 2.0,
-        jitter_factor: 0.1,
-    })
-    .retryable_errors([
-        ErrorKind::ConnectionTimeout,
-        ErrorKind::ConnectionReset,
-        ErrorKind::TemporaryFailure,
-    ]));
-```
-
-## Compression Configuration
-
-### Adaptive Compression
-
-```rust
-use turbomcp_transport::compression::{CompressionConfig, Algorithm};
-
-let compression = CompressionConfig::adaptive()
-    .algorithms([Algorithm::Brotli, Algorithm::Gzip, Algorithm::Lz4])
-    .min_size(1024) // Only compress messages > 1KB
-    .quality_level(6) // Balance between speed and compression ratio
-    .streaming_threshold(64 * 1024); // Stream messages > 64KB
-```
-
-## Observability & Monitoring
-
-### Metrics Collection
-
-```rust
-use turbomcp_transport::metrics::{TransportMetrics, MetricsConfig};
-
-let metrics = TransportMetrics::new(MetricsConfig::new()
-    .request_duration_buckets([0.001, 0.01, 0.1, 1.0, 10.0])
-    .connection_pool_size_histogram(true)
-    .compression_ratio_tracking(true));
-
-// Metrics are automatically collected
-let stats = metrics.snapshot();
-println!("Average request duration: {:?}", stats.avg_request_duration);
-println!("Active connections: {}", stats.active_connections);
-```
-
-### Health Monitoring
-
-```rust
-use turbomcp_transport::health::{HealthChecker, HealthConfig};
-
-let health = HealthChecker::new(HealthConfig::new()
-    .check_interval(Duration::from_secs(30))
-    .connection_timeout(Duration::from_secs(5))
-    .max_consecutive_failures(3));
-
-let health_status = health.check_transport(&transport).await?;
-match health_status {
-    HealthStatus::Healthy => println!("Transport is healthy"),
-    HealthStatus::Degraded(issues) => println!("Transport issues: {:?}", issues),
-    HealthStatus::Unhealthy(error) => println!("Transport failed: {}", error),
-}
+// Health status can be:
+// - HealthStatus::Healthy
+// - HealthStatus::Unhealthy
+// - HealthStatus::Unknown
+// - HealthStatus::Checking
 ```
 
 ## Integration Examples

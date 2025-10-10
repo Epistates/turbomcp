@@ -97,8 +97,8 @@ Start minimal (STDIO only), add features as needed:
 - ServerCapabilitiesBuilder with compile-time validation
 - ClientCapabilitiesBuilder for capability negotiation
 - Type-safe capability dependencies (e.g., tool_list_changed only when tools enabled)
-- Shared wrappers: SharedClient, SharedTransport
-- Clone pattern for McpServer (Axum/Tower standard - cheap Arc increments)
+- SharedTransport for concurrent transport access (Client is directly cloneable)
+- Clone pattern for McpServer and Client (Axum/Tower standard - cheap Arc increments)
 
 **Protocol Features**
 - Full MCP 2025-06-18 specification compliance
@@ -509,18 +509,17 @@ async fn process_order(
 
 ## Additional Features
 
-### Shared Concurrency Wrappers
-Thread-safe async operations:
+### Client Cloning & Shared Transport
+Thread-safe async operations with Arc-wrapped internals:
 
 ```rust
-// Concurrent client access across multiple tasks
-let shared_client = SharedClient::new(client);
-shared_client.initialize().await?;
+// Client is directly cloneable (Arc-wrapped internally - no wrapper needed!)
+let client = Client::connect_http("http://localhost:8080").await?;
 
-// Clone for concurrent usage (Arc/Mutex hidden)
-let c1 = shared_client.clone();
-let c2 = shared_client.clone();
-let c3 = shared_client.clone();
+// Clone for concurrent usage (cheap Arc increments)
+let c1 = client.clone();
+let c2 = client.clone();
+let c3 = client.clone();
 
 // All tasks can access concurrently
 let results = tokio::try_join!(
@@ -529,8 +528,9 @@ let results = tokio::try_join!(
     async move { c3.list_resources().await },
 )?;
 
-// Transport sharing across multiple connections
-let shared_transport = SharedTransport::new(TcpTransport::connect("server:8080").await?);
+// For transport sharing across multiple connections, use SharedTransport
+let transport = TcpTransport::connect("server:8080").await?;
+let shared_transport = SharedTransport::new(transport);
 shared_transport.connect().await?;
 
 // Multiple clients sharing the same transport

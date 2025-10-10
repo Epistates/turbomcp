@@ -104,343 +104,293 @@ let server = ServerBuilder::new()
 server.run_stdio().await?;
 ```
 
-### Production Server Configuration
+### Production Server with Handlers
 
 ```rust
-use turbomcp_server::{
-    ServerBuilder, 
-    middleware::{AuthenticationMiddleware, SecurityHeadersMiddleware, RateLimitMiddleware},
-    health::HealthCheckConfig,
-    metrics::MetricsConfig,
-};
+use turbomcp_server::ServerBuilder;
+use turbomcp_protocol::types::Root;
 
 let server = ServerBuilder::new()
     .name("ProductionMCPServer")
     .version("2.1.0")
-    .description("Enterprise MCP server with full security")
-    
-    // Authentication middleware
-    .middleware(AuthenticationMiddleware::oauth2(oauth_config)
-        .with_jwt_validation(jwt_config)
-        .with_api_key_auth("X-API-Key"))
-    
-    // Security middleware
-    .middleware(SecurityHeadersMiddleware::strict()
-        .with_csp("default-src 'self'; connect-src 'self' wss:")
-        .with_hsts(Duration::from_secs(31536000)))
-    
-    // Rate limiting
-    .middleware(RateLimitMiddleware::new()
-        .requests_per_minute(120)
-        .burst_capacity(20))
-    
-    // Health and metrics
-    .with_health_checks(HealthCheckConfig::new()
-        .readiness_endpoint("/health/ready")
-        .liveness_endpoint("/health/live")
-        .custom_checks(vec![database_health, cache_health]))
-    
-    .with_metrics(MetricsConfig::new()
-        .prometheus_endpoint("/metrics")
-        .custom_metrics(true)
-        .histogram_buckets([0.001, 0.01, 0.1, 1.0, 10.0]))
-    
-    // Graceful shutdown
-    .with_graceful_shutdown(Duration::from_secs(30))
-    
+    .description("Enterprise MCP server with comprehensive tooling")
+
+    // Register filesystem roots
+    .root("file:///workspace", Some("Workspace".to_string()))
+    .root("file:///tmp", Some("Temp".to_string()))
+
+    // Register tool handlers (traits implement ToolHandler)
+    .tool("calculate", calculate_tool)?
+    .tool("search", search_tool)?
+
+    // Register resource handlers
+    .resource("config://settings", config_resource)?
+    .resource("db://users/*", user_resource)?
+
+    // Register prompt handlers
+    .prompt("code_review", code_review_prompt)?
+
     .build();
+
+// Middleware, auth, and observability are configured separately
+// via the MiddlewareStack (see Middleware System section)
 ```
 
 ## Handler Registry
 
-### Manual Handler Registration
+### Handler Traits
+
+Handlers implement trait interfaces for type-safe registration:
 
 ```rust
-use turbomcp_server::{HandlerRegistry, ToolHandler, ResourceHandler};
+use turbomcp_server::{ServerBuilder, ToolHandler, ResourceHandler, PromptHandler};
+use turbomcp_protocol::{RequestContext, types::CallToolResult};
+use async_trait::async_trait;
 
-let mut registry = HandlerRegistry::new();
+// Example tool handler
+struct CalculateTool;
 
-// Register tool handlers
-registry.register_tool("calculate", ToolHandler::new(|params| async move {
-    let a: f64 = params.get("a")?;
-    let b: f64 = params.get("b")?;
-    Ok(serde_json::json!({"result": a + b}))
-})).await?;
+#[async_trait]
+impl ToolHandler for CalculateTool {
+    async fn execute(&self, ctx: RequestContext) -> Result<CallToolResult, Box<dyn std::error::Error>> {
+        let params = ctx.params()?;
+        let a: f64 = params.get("a")?.as_f64().unwrap();
+        let b: f64 = params.get("b")?.as_f64().unwrap();
 
-// Register resource handlers  
-registry.register_resource("file://*", ResourceHandler::new(|uri| async move {
-    let path = uri.strip_prefix("file://").unwrap();
-    let content = tokio::fs::read_to_string(path).await?;
-    Ok(content)
-})).await?;
+        Ok(CallToolResult {
+            content: vec![],
+            isError: Some(false),
+            _meta: None,
+        })
+    }
+}
 
-// Attach to server
+// Register via builder
 let server = ServerBuilder::new()
-    .with_registry(registry)
+    .tool("calculate", CalculateTool)?
     .build();
 ```
 
-### Schema Validation
+## Authentication with turbomcp-auth
+
+The server integrates with the `turbomcp-auth` crate for comprehensive authentication:
+
+### OAuth 2.1 Setup
 
 ```rust
-use turbomcp_server::schema::{SchemaValidator, ValidationConfig};
+use turbomcp_auth::{AuthManager, AuthConfig, OAuth2Config, AuthProviderType};
 
-let validator = SchemaValidator::new(ValidationConfig::strict()
-    .validate_tool_params(true)
-    .validate_responses(true)
-    .custom_formats(["email", "uuid"]));
-
-let server = ServerBuilder::new()
-    .with_schema_validation(validator)
-    .build();
-```
-
-## OAuth 2.1 MCP Authentication
-
-### Google OAuth Setup
-
-```rust
-use turbomcp_server::auth::{OAuth2Provider, OAuth2Config, ProviderType};
-
-let google_config = OAuth2Config {
+// Configure OAuth 2.1
+let oauth_config = OAuth2Config {
     client_id: std::env::var("GOOGLE_CLIENT_ID")?,
     client_secret: std::env::var("GOOGLE_CLIENT_SECRET")?,
     auth_url: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
     token_url: "https://www.googleapis.com/oauth2/v4/token".to_string(),
-    scopes: vec!["openid".to_string(), "profile".to_string(), "email".to_string()],
     redirect_uri: "https://myapp.com/auth/callback".to_string(),
-    pkce_enabled: true,
+    scopes: vec!["openid".to_string(), "profile".to_string(), "email".to_string()],
+    flow_type: OAuth2FlowType::AuthorizationCode,
+    additional_params: HashMap::new(),
+    security_level: SecurityLevel::Standard,
+    #[cfg(feature = "dpop")]
+    dpop_config: None,
+    mcp_resource_uri: Some("https://myapp.com/mcp".to_string()),
+    auto_resource_indicators: true,
 };
 
-let google_provider = OAuth2Provider::new(
-    "google",
-    google_config,
-    ProviderType::Google,
-).await?;
-```
-
-### GitHub OAuth Setup
-
-```rust
-let github_config = OAuth2Config {
-    client_id: std::env::var("GITHUB_CLIENT_ID")?,
-    client_secret: std::env::var("GITHUB_CLIENT_SECRET")?,
-    auth_url: "https://github.com/login/oauth/authorize".to_string(),
-    token_url: "https://github.com/login/oauth/access_token".to_string(),
-    scopes: vec!["user:email".to_string()],
-    redirect_uri: "https://myapp.com/auth/github/callback".to_string(),
-    pkce_enabled: true,
+// Create auth manager
+let auth_config = AuthConfig {
+    enabled: true,
+    providers: vec![AuthProviderConfig {
+        name: "google".to_string(),
+        provider_type: AuthProviderType::OAuth2,
+        settings: serde_json::to_value(&oauth_config)?,
+        enabled: true,
+        priority: 1,
+    }],
+    session: SessionConfig::default(),
+    authorization: AuthorizationConfig::default(),
 };
 
-let github_provider = OAuth2Provider::new(
-    "github",
-    github_config,
-    ProviderType::GitHub,
-).await?;
+let auth_manager = AuthManager::new(auth_config);
+
+// Add to your server implementation
+// (integration varies based on transport type)
 ```
 
-### Multi-Provider Authentication
+### JWT Authentication via Middleware
+
+For JWT-only authentication, use the server's built-in middleware:
 
 ```rust
-use turbomcp_server::auth::AuthenticationManager;
+use turbomcp_server::{ServerBuilder, AuthConfig};
 
-let auth_manager = AuthenticationManager::new()
-    .add_provider("google", google_provider)
-    .add_provider("github", github_provider)
-    .add_provider("microsoft", microsoft_provider)
-    .with_session_store(session_store)
-    .with_token_validation(true);
-
-let server = ServerBuilder::new()
-    .with_authentication(auth_manager)
-    .build();
+// JWT authentication is available via middleware (feature: auth)
+#[cfg(feature = "auth")]
+let auth_config = AuthConfig {
+    jwt_secret: std::env::var("JWT_SECRET")?.into_bytes(),
+    issuer: Some("your-issuer".to_string()),
+    audience: Some("your-audience".to_string()),
+};
 ```
 
 ## Middleware System
 
-### Custom Middleware
+The server uses a Tower-based middleware stack for cross-cutting concerns:
 
 ```rust
-use turbomcp_server::{
-    Middleware, Request, Response, Next, 
-    middleware::{MiddlewareResult, MiddlewareError}
+use turbomcp_server::middleware::{
+    MiddlewareStack, SecurityConfig, ValidationConfig,
+    AuthConfig, RateLimitConfig, AuditConfig, TimeoutConfig
 };
-use async_trait::async_trait;
+use std::time::Duration;
 
-struct CustomLoggingMiddleware;
-
-#[async_trait]
-impl Middleware for CustomLoggingMiddleware {
-    async fn process(
-        &self, 
-        request: Request, 
-        next: Next
-    ) -> MiddlewareResult<Response> {
-        let start = std::time::Instant::now();
-        let method = request.method().clone();
-        
-        tracing::info!("Processing request: {}", method);
-        
-        let response = next.run(request).await?;
-        
-        let duration = start.elapsed();
-        tracing::info!("Request {} completed in {:?}", method, duration);
-        
-        Ok(response)
-    }
-}
-
-// Register middleware
-let server = ServerBuilder::new()
-    .middleware(CustomLoggingMiddleware)
-    .build();
-```
-
-### Error Handling Middleware
-
-```rust
-use turbomcp_server::middleware::ErrorHandlerMiddleware;
-
-let error_handler = ErrorHandlerMiddleware::new()
-    .handle_authentication_error(|err| async move {
-        tracing::warn!("Authentication failed: {}", err);
-        Response::unauthorized("Authentication required")
+// Build a comprehensive middleware stack
+let middleware = MiddlewareStack::new()
+    .with_security(SecurityConfig {
+        allowed_origins: vec!["https://app.example.com".to_string()],
+        allowed_methods: vec!["GET".to_string(), "POST".to_string()],
+        max_age: Some(Duration::from_secs(86400)),
+        ..Default::default()
     })
-    .handle_validation_error(|err| async move {
-        tracing::debug!("Validation failed: {}", err);
-        Response::bad_request(&format!("Invalid input: {}", err))
+    .with_validation(ValidationConfig {
+        validate_requests: true,
+        validate_responses: false,
+        strict_mode: true,
     })
-    .handle_internal_error(|err| async move {
-        tracing::error!("Internal error: {}", err);
-        Response::internal_server_error("Server error")
+    .with_timeout(TimeoutConfig {
+        request_timeout: Duration::from_secs(30),
+        tool_timeout: Some(Duration::from_secs(60)),
+    })
+    .with_audit(AuditConfig {
+        log_requests: true,
+        log_responses: false,
+        include_payloads: false,
     });
 
-let server = ServerBuilder::new()
-    .middleware(error_handler)
-    .build();
+// With auth feature enabled:
+#[cfg(feature = "auth")]
+let middleware = middleware.with_auth(AuthConfig {
+    jwt_secret: b"your-secret".to_vec(),
+    issuer: Some("your-app".to_string()),
+    audience: Some("your-api".to_string()),
+});
+
+// With rate-limiting feature enabled:
+#[cfg(feature = "rate-limiting")]
+let middleware = middleware.with_rate_limit(RateLimitConfig {
+    requests_per_second: 100,
+    burst_size: 20,
+});
+
+// The middleware stack is automatically applied by the server
 ```
 
-## Session Management
+## Session Management with turbomcp
 
-### Session Configuration
+Session management is provided by the main `turbomcp` crate:
 
 ```rust
-use turbomcp_server::session::{SessionManager, SessionConfig, SessionStore};
+use turbomcp::{SessionManager, SessionConfig};
+use std::time::Duration;
 
-let session_config = SessionConfig::new()
-    .ttl(Duration::from_secs(3600)) // 1 hour
-    .max_sessions(10000)
-    .cleanup_interval(Duration::from_secs(300)) // 5 minutes
-    .secure_cookies(true)
-    .same_site_strict(true);
+// Configure session management
+let session_config = SessionConfig {
+    timeout: Duration::from_secs(3600), // 1 hour
+    enable_analytics: true,
+    max_sessions_per_client: Some(10),
+    max_total_sessions: Some(1000),
+    cleanup_interval: Duration::from_secs(300), // 5 minutes
+    track_activity: true,
+    max_session_data_size: Some(1024 * 1024), // 1MB
+};
 
-let session_store = SessionStore::redis("redis://localhost:6379").await?;
-// or
-let session_store = SessionStore::memory_with_persistence("/var/lib/sessions").await?;
+// Or use preset configurations
+let session_config = SessionConfig::high_performance();
 
-let session_manager = SessionManager::new(session_config, session_store);
+// Create session manager
+let session_manager = SessionManager::new(session_config);
 
-let server = ServerBuilder::new()
-    .with_session_management(session_manager)
-    .build();
+// Session manager handles:
+// - Session lifecycle (create, update, expire)
+// - Per-client session limits with LRU eviction
+// - Automatic cleanup of expired sessions
+// - Session analytics and activity tracking
 ```
 
-## Health Checks
+## Health & Lifecycle
 
-### Built-in Health Checks
+The server provides built-in health status and graceful shutdown:
 
 ```rust
-use turbomcp_server::health::{HealthChecker, HealthCheck, HealthStatus};
-
-let health_checker = HealthChecker::new()
-    .add_check("database", HealthCheck::database(database_pool))
-    .add_check("redis", HealthCheck::redis(redis_client))
-    .add_check("external_api", HealthCheck::http("https://api.example.com/health"))
-    .add_check("disk_space", HealthCheck::disk_space("/var/lib/myapp", 1024 * 1024 * 1024)); // 1GB minimum
+use turbomcp_server::{ServerBuilder, HealthStatus};
 
 let server = ServerBuilder::new()
-    .with_health_checks(health_checker)
+    .name("MyServer")
+    .version("2.0.0")
     .build();
-```
 
-### Custom Health Checks
-
-```rust
-use turbomcp_server::health::{HealthCheck, HealthStatus};
-use async_trait::async_trait;
-
-struct CustomServiceHealth {
-    service_client: ServiceClient,
+// Get health status
+let health = server.health().await;
+match health {
+    HealthStatus::Healthy => println!("Server is healthy"),
+    HealthStatus::Unhealthy => println!("Server is unhealthy"),
+    _ => println!("Unknown health status"),
 }
 
-#[async_trait]
-impl HealthCheck for CustomServiceHealth {
-    async fn check(&self) -> HealthStatus {
-        match self.service_client.ping().await {
-            Ok(_) => HealthStatus::Healthy,
-            Err(e) if e.is_temporary() => HealthStatus::Degraded(vec![e.to_string()]),
-            Err(e) => HealthStatus::Unhealthy(e.to_string()),
-        }
-    }
-}
+// Graceful shutdown
+let shutdown_handle = server.shutdown_handle();
+tokio::spawn(async move {
+    tokio::signal::ctrl_c().await.ok();
+    shutdown_handle.shutdown().await;
+});
 
-let server = ServerBuilder::new()
-    .with_health_check("custom_service", CustomServiceHealth { service_client })
-    .build();
+server.run_stdio().await?;
 ```
 
 ## Metrics & Observability
 
-### Prometheus Metrics
+The server provides built-in production-grade metrics collection with lock-free atomic operations:
 
 ```rust
-use turbomcp_server::metrics::{MetricsCollector, PrometheusConfig};
-
-let metrics = MetricsCollector::prometheus(PrometheusConfig::new()
-    .namespace("turbomcp")
-    .subsystem("server")
-    .endpoint("/metrics")
-    .basic_auth("metrics", "secret"));
+use turbomcp_server::{ServerBuilder, ServerMetrics};
 
 let server = ServerBuilder::new()
-    .with_metrics(metrics)
+    .name("MyServer")
+    .version("2.0.0")
     .build();
+
+// Access server metrics
+let metrics = server.metrics();
 
 // Metrics are automatically collected:
-// - turbomcp_server_requests_total{method, status}
-// - turbomcp_server_request_duration_seconds{method}
-// - turbomcp_server_active_connections
-// - turbomcp_server_errors_total{error_type}
-```
+println!("Total requests: {}", metrics.requests_total.load(Ordering::Relaxed));
+println!("Successful: {}", metrics.requests_successful.load(Ordering::Relaxed));
+println!("Failed: {}", metrics.requests_failed.load(Ordering::Relaxed));
+println!("In flight: {}", metrics.requests_in_flight.load(Ordering::Relaxed));
 
-### Custom Metrics
+// Error metrics
+println!("Total errors: {}", metrics.errors_total.load(Ordering::Relaxed));
+println!("Validation errors: {}", metrics.errors_validation.load(Ordering::Relaxed));
+println!("Auth errors: {}", metrics.errors_auth.load(Ordering::Relaxed));
 
-```rust
-use turbomcp_server::metrics::{Counter, Histogram, Gauge};
+// Tool execution metrics
+println!("Tool calls: {}", metrics.tool_calls_total.load(Ordering::Relaxed));
+println!("Tool timeouts: {}", metrics.tool_timeouts_total.load(Ordering::Relaxed));
 
-struct CustomMetrics {
-    business_operations: Counter,
-    processing_time: Histogram,  
-    active_users: Gauge,
+// Connection metrics
+println!("Active connections: {}", metrics.connections_active.load(Ordering::Relaxed));
+println!("Total connections: {}", metrics.connections_total.load(Ordering::Relaxed));
+
+// Response time statistics
+let avg_response_time_us = metrics.total_response_time_us.load(Ordering::Relaxed)
+    / metrics.requests_total.load(Ordering::Relaxed).max(1);
+println!("Avg response time: {}μs", avg_response_time_us);
+
+// Custom metrics (use the RwLock-protected HashMap)
+{
+    let mut custom = metrics.custom.write();
+    custom.insert("my_metric".to_string(), 42.0);
 }
-
-impl CustomMetrics {
-    fn new() -> Self {
-        Self {
-            business_operations: Counter::new("business_operations_total", "Total business operations"),
-            processing_time: Histogram::new("processing_seconds", "Processing time"),
-            active_users: Gauge::new("active_users", "Current active users"),
-        }
-    }
-    
-    fn record_operation(&self, operation: &str) {
-        self.business_operations.with_label("operation", operation).inc();
-    }
-}
-
-let server = ServerBuilder::new()
-    .with_custom_metrics(CustomMetrics::new())
-    .build();
 ```
 
 ## Integration Examples

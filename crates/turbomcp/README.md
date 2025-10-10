@@ -70,7 +70,7 @@ All transport protocols provide MCP protocol compliance with bidirectional commu
 - **Graceful degradation** - Fallback mechanisms
 
 ### 🔄 **Sharing Patterns for Async Concurrency**
-- **SharedClient** - Thread-safe client access with clean APIs
+- **Client Clone Pattern** - Directly cloneable (Arc-wrapped internally, no wrapper needed)
 - **SharedTransport** - Concurrent transport sharing across async tasks
 - **McpServer Clone Pattern** - Axum/Tower standard (cheap Arc increments, no wrappers)
 - **Generic Shareable Pattern** - Shared<T> and ConsumableShared<T> abstractions
@@ -573,35 +573,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Shared Wrappers for Async Concurrency
+## Cloning & Concurrency Patterns
 
-TurboMCP introduces comprehensive shared wrapper system that eliminates Arc/Mutex complexity from public APIs:
+TurboMCP provides clean concurrency patterns with Arc-wrapped internals:
 
-### SharedClient - Thread-Safe Client Access
+### Client Clone Pattern - Direct Cloning (No Wrapper Needed)
 
 ```rust
-use turbomcp_client::{Client, SharedClient};
-use turbomcp_transport::StdioTransport;
+use turbomcp_client::Client;
 
-// Create shared client for concurrent access
-let transport = StdioTransport::new();
-let client = Client::new(transport);
-let shared = SharedClient::new(client);
+// Client is directly cloneable (Arc-wrapped internally)
+let client = Client::connect_http("http://localhost:8080").await?;
 
-// Initialize once
-shared.initialize().await?;
-
-// Clone for concurrent usage
-let shared1 = shared.clone();
-let shared2 = shared.clone();
+// Clone for concurrent usage (cheap Arc increments)
+let client1 = client.clone();
+let client2 = client.clone();
 
 // Both tasks can access the client concurrently
 let handle1 = tokio::spawn(async move {
-    shared1.list_tools().await
+    client1.list_tools().await
 });
 
 let handle2 = tokio::spawn(async move {
-    shared2.list_prompts().await
+    client2.list_prompts().await
 });
 
 let (tools, prompts) = tokio::join!(handle1, handle2);
@@ -612,7 +606,7 @@ let (tools, prompts) = tokio::join!(handle1, handle2);
 ```rust
 use turbomcp_transport::{StdioTransport, SharedTransport};
 
-// Wrap any transport for sharing
+// Wrap any transport for sharing across multiple clients
 let transport = StdioTransport::new();
 let shared = SharedTransport::new(transport);
 
@@ -635,7 +629,7 @@ let handle2 = tokio::spawn(async move {
 ### Generic Shareable Pattern
 
 ```rust
-use turbomcp_core::shared::{Shared, ConsumableShared};
+use turbomcp_protocol::shared::{Shared, ConsumableShared};
 
 // Any type can be made shareable
 let counter = MyCounter::new();
@@ -786,7 +780,7 @@ turbomcp = { version = "2.0.0", features = ["simd"] }
 Configure performance settings:
 
 ```rust
-use turbomcp_core::{SessionManager, SessionConfig};
+use turbomcp_protocol::{SessionManager, SessionConfig};
 
 let config = SessionConfig::high_performance()
     .with_simd_acceleration(true)

@@ -29,6 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BENEFIT**: Eliminated `casbin` dependency and `instant` unmaintained warning
 - **SECURITY**: Reduced attack surface, removed unmaintained runtime dependency
 
+#### SharedClient Removal - Architectural Improvement
+- **REMOVED**: `SharedClient` wrapper (superseded by directly cloneable `Client<T>`)
+- **RATIONALE**: `Client<T>` is now Arc-wrapped internally, making SharedClient redundant
+- **IMPACT**: Simpler API with no wrapper needed for concurrent access
+- **MIGRATION**: Replace `SharedClient::new(client)` with direct `client.clone()`
+- **BENEFIT**: Reduced API surface, cleaner concurrent patterns following Axum/Tower standard
+- **NOTE**: `SharedTransport` remains available for sharing transports across multiple clients
+
 #### Default Feature Changes
 - **BREAKING**: Default features changed to `["stdio"]` (minimal by default)
 - **RATIONALE**: Progressive enhancement - users opt-in to features they need
