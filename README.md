@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 **That's it.** Save as `main.rs`, run `cargo run`, and connect from Claude Desktop.
 
-→ **[Full Tutorial](docs/TUTORIAL.md)** | **[Examples (46+)](crates/turbomcp/examples/)** | **[API Docs](https://docs.rs/turbomcp)**
+→ **[Full Tutorial](docs/TUTORIAL.md)** | **[Examples (38+)](crates/turbomcp/examples/)** | **[API Docs](https://docs.rs/turbomcp)**
 
 ---
 
@@ -75,7 +75,7 @@ Start minimal (STDIO only), add features as needed:
 - Context injection for dependencies
 - Interactive elicitation forms
 - Automatic logging and tracing
-- 46+ working examples
+- 38+ working examples
 - Extensive documentation
 
 ---
@@ -180,6 +180,77 @@ Test with CLI:
 cargo install turbomcp-cli
 turbomcp-cli tools-call --command "./your-server" --name hello --args '{"name": "World"}'
 ```
+
+---
+
+## Client Connections (v2.0)
+
+TurboMCP v2.0 provides beautiful one-liner client connections with automatic initialization:
+
+### HTTP Client
+```rust
+use turbomcp_client::Client;
+
+// One-liner connection (auto-connects & initializes)
+let client = Client::connect_http("http://localhost:8080").await?;
+
+// Now use it immediately
+let tools = client.list_tools().await?;
+let result = client.call_tool("my_tool", Some(args)).await?;
+```
+
+### TCP Client
+```rust
+// Connect to TCP server
+let client = Client::connect_tcp("127.0.0.1:8765").await?;
+let tools = client.list_tools().await?;
+```
+
+### Unix Socket Client
+```rust
+// Connect to Unix socket server
+let client = Client::connect_unix("/tmp/mcp.sock").await?;
+let prompts = client.list_prompts().await?;
+```
+
+### Custom Configuration
+```rust
+use std::time::Duration;
+
+// HTTP with custom config
+let client = Client::connect_http_with("http://localhost:8080", |config| {
+    config.timeout = Duration::from_secs(60);
+    config.endpoint_path = "/api/mcp".to_string();
+}).await?;
+
+// WebSocket with custom config
+let client = Client::connect_websocket_with("ws://localhost:8080/ws", |config| {
+    config.reconnect_attempts = 5;
+    config.ping_interval = Duration::from_secs(30);
+}).await?;
+```
+
+### Manual Connection (Advanced)
+For full control over initialization:
+
+```rust
+use turbomcp_transport::tcp::TcpTransport;
+
+let transport = TcpTransport::new_client(bind_addr, server_addr);
+let client = Client::new(transport);
+
+// Auto-connects transport during initialize
+client.initialize().await?;
+
+// Use client
+let tools = client.list_tools().await?;
+```
+
+### Benefits of v2.0 Client API
+- **One-liner connections**: `connect_http()`, `connect_tcp()`, `connect_unix()`
+- **Auto-initialization**: No need to call `.connect()` or `.initialize()` manually
+- **Type-safe configuration**: Custom config functions with full IntelliSense
+- **Consistent API**: Same pattern across all transports
 
 ---
 
@@ -312,11 +383,11 @@ let config = ctx.elicit("Deployment Configuration")
 ```rust
 // Transport selection
 match deployment_env {
-    "cluster" => server.run_tcp_clustered("0.0.0.0:8080").await?,
-    "container" => server.run_unix_secured("/var/run/mcp.sock").await?,
-    "web" => server.run_http_with_security("0.0.0.0:8080").await?,
+    "cluster" => server.run_tcp("0.0.0.0:8080").await?,
+    "container" => server.run_unix("/var/run/mcp.sock").await?,
+    "web" => server.run_http("0.0.0.0:8080").await?,
     "desktop" => server.run_stdio().await?,
-    _ => server.run_auto_transport().await?, // Intelligent selection
+    _ => server.run_stdio().await?, // Default to stdio
 }
 ```
 
@@ -664,7 +735,7 @@ turbomcp-cli benchmark --command "./target/debug/your-server" \
 | [05_stateful_patterns](./crates/turbomcp/examples/05_stateful_patterns.rs) | State management | Intermediate |
 | [06_architecture_patterns](./crates/turbomcp/examples/06_architecture_patterns.rs) | API comparison | Intermediate |
 | [07_transport_showcase](./crates/turbomcp/examples/07_transport_showcase.rs) | All transports | Intermediate |
-| [08_elicitation_complete](./crates/turbomcp/examples/08_elicitation_complete.rs) | Interactive forms | Advanced |
+| [elicitation_interactive_client](./crates/turbomcp/examples/elicitation_interactive_client.rs) | Interactive forms | Advanced |
 | [09_bidirectional_communication](./crates/turbomcp/examples/09_bidirectional_communication.rs) | Full protocol | Advanced |
 | [10_protocol_mastery](./crates/turbomcp/examples/10_protocol_mastery.rs) | Complete coverage | Advanced |
 | [11_production_deployment](./crates/turbomcp/examples/11_production_deployment.rs) | Enterprise features | Expert |
@@ -673,7 +744,7 @@ turbomcp-cli benchmark --command "./target/debug/your-server" \
 **Run examples:**
 ```bash
 cargo run --example 01_hello_world
-cargo run --example 08_elicitation_complete
+cargo run --example elicitation_interactive_client
 cargo run --example 11_production_deployment
 ```
 
@@ -764,8 +835,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Production deployment with automatic transport selection
     match std::env::var("TRANSPORT").as_deref() {
-        Ok("http") => server.run_http_with_security("0.0.0.0:8080").await?,
-        Ok("tcp") => server.run_tcp_clustered("0.0.0.0:8080").await?,
+        Ok("http") => server.run_http("0.0.0.0:8080").await?,
+        Ok("tcp") => server.run_tcp("0.0.0.0:8080").await?,
         _ => server.run_stdio().await?, // Claude Desktop integration
     }
 

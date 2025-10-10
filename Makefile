@@ -114,7 +114,7 @@ test: ## Run comprehensive test suite (tests + clippy + fmt)
 	@echo "${BLUE}📋 Step 3/4: Checking cargo fmt...${RESET}"
 	@$(CARGO) fmt --all --check
 	@echo "${BLUE}📋 Step 4/4: Running example compilation checks...${RESET}"
-	@$(CARGO) check --examples
+	@$(CARGO) check --examples --features full
 	@echo "${GREEN}✅ All tests, linting, and formatting checks passed!${RESET}"
 
 test-integration: ## Run comprehensive integration tests only
