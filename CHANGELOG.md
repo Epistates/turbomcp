@@ -5,7 +5,7 @@ All notable changes to TurboMCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] - 2025-10-05
+## [2.0.0-rc] - 2025-10-09
 
 ### 🌟 **RELEASE HIGHLIGHTS**
 
@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Default Feature Changes
 - **BREAKING**: Default features changed to `["stdio"]` (minimal by default)
 - **RATIONALE**: Progressive enhancement - users opt-in to features they need
-- **MIGRATION**: Enable features explicitly: `turbomcp = { version = "2.0", features = ["full"] }`
+- **MIGRATION**: Enable features explicitly: `turbomcp = { version = "2.0.0-rc", features = ["full"] }`
 
 ### 🏗️ **MAJOR REFACTORING: Clean Minimal Core**
 
@@ -125,7 +125,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 If you were using the RBAC feature:
 ```toml
 # OLD (no longer works)
-turbomcp-server = { version = "2.0", features = ["rbac"] }
+turbomcp-server = { version = "2.0.0-rc", features = ["rbac"] }
 
 # NEW (implement in your application)
 # See RBAC-REMOVAL-SUMMARY.md for migration patterns
@@ -140,7 +140,7 @@ turbomcp-server = { version = "2.0", features = ["rbac"] }
 turbomcp = "1.x"  # Had all features by default
 
 # NEW (2.0 - minimal by default)
-turbomcp = { version = "2.0", features = ["full"] }  # Opt-in to features
+turbomcp = { version = "2.0.0-rc", features = ["full"] }  # Opt-in to features
 ```
 
 #### Crate Consolidation

@@ -26,7 +26,7 @@ turbomcp = "1.x"
 
 # After (2.0)
 [dependencies]
-turbomcp = { version = "2.0", features = ["full"] }
+turbomcp = { version = "2.0.0-rc", features = ["full"] }
 ```
 
 The `full` feature set restores 1.x behavior with all transports enabled.
@@ -37,10 +37,10 @@ For new projects or to embrace the minimal-by-default philosophy:
 
 ```toml
 # Start minimal
-turbomcp = { version = "2.0", features = ["stdio"] }  # or just "2.0" (stdio is default)
+turbomcp = { version = "2.0.0-rc", features = ["stdio"] }  # or just "2.0" (stdio is default)
 
 # Add features as needed
-turbomcp = { version = "2.0", features = ["stdio", "http", "tcp"] }
+turbomcp = { version = "2.0.0-rc", features = ["stdio", "http", "tcp"] }
 ```
 
 ## 💥 Breaking Changes Summary
@@ -109,10 +109,10 @@ default = ["stdio"]  # Minimal by default
 
 ```toml
 # If you need all features (1.x behavior)
-turbomcp = { version = "2.0", features = ["full"] }
+turbomcp = { version = "2.0.0-rc", features = ["full"] }
 
 # Or selectively enable features
-turbomcp = { version = "2.0", features = ["stdio", "http", "tcp"] }
+turbomcp = { version = "2.0.0-rc", features = ["stdio", "http", "tcp"] }
 ```
 
 ### 3. New Crate Architecture
@@ -136,7 +136,7 @@ turbomcp = { version = "1.x", features = ["auth", "dpop"] }
 
 # After (2.0) - Automatically included via features
 [dependencies]
-turbomcp = { version = "2.0", features = ["auth", "dpop"] }
+turbomcp = { version = "2.0.0-rc", features = ["auth", "dpop"] }
 
 # Or use crates directly
 turbomcp-auth = "2.0"
@@ -172,7 +172,7 @@ dpop-test-utils → test-utils
 turbomcp = { version = "1.x", features = ["dpop-redis"] }
 
 # After
-turbomcp = { version = "2.0", features = ["dpop", "redis-storage"] }
+turbomcp = { version = "2.0.0-rc", features = ["dpop", "redis-storage"] }
 # Note: "dpop" feature now required for DPoP features
 ```
 
@@ -331,10 +331,10 @@ turbomcp-cli tools call NAME --arguments ARGS
 **Migration:**
 ```toml
 # Restore 1.x behavior
-turbomcp = { version = "2.0", features = ["full"] }
+turbomcp = { version = "2.0.0-rc", features = ["full"] }
 
 # Or be selective
-turbomcp = { version = "2.0", features = ["stdio", "http", "auth"] }
+turbomcp = { version = "2.0.0-rc", features = ["stdio", "http", "auth"] }
 ```
 
 ### turbomcp-auth (NEW)
@@ -344,7 +344,7 @@ turbomcp = { version = "2.0", features = ["stdio", "http", "auth"] }
 **Usage:**
 ```toml
 # Via main crate (recommended)
-turbomcp = { version = "2.0", features = ["auth"] }
+turbomcp = { version = "2.0.0-rc", features = ["auth"] }
 
 # Or directly
 turbomcp-auth = "2.0"
@@ -364,7 +364,7 @@ use turbomcp_auth::{
 **Usage:**
 ```toml
 # Via main crate (recommended)
-turbomcp = { version = "2.0", features = ["dpop"] }
+turbomcp = { version = "2.0.0-rc", features = ["dpop"] }
 
 # Or directly
 turbomcp-dpop = "2.0"
@@ -383,16 +383,16 @@ use turbomcp_dpop::{
 
 ```toml
 # Minimal (default) - Basic tool servers
-turbomcp = { version = "2.0", features = ["stdio"] }
+turbomcp = { version = "2.0.0-rc", features = ["stdio"] }
 
 # Full (1.x behavior) - All features
-turbomcp = { version = "2.0", features = ["full"] }
+turbomcp = { version = "2.0.0-rc", features = ["full"] }
 
 # Network - STDIO + TCP
-turbomcp = { version = "2.0", features = ["network"] }
+turbomcp = { version = "2.0.0-rc", features = ["network"] }
 
 # Server-only - TCP + Unix (no STDIO)
-turbomcp = { version = "2.0", features = ["server-only"] }
+turbomcp = { version = "2.0.0-rc", features = ["server-only"] }
 ```
 
 ### Individual Features
@@ -458,7 +458,7 @@ async fn main() -> McpResult<()> {
 turbomcp = "1.x"
 
 # After (2.0) - Enable HTTP explicitly
-turbomcp = { version = "2.0", features = ["http"] }
+turbomcp = { version = "2.0.0-rc", features = ["http"] }
 ```
 
 ```rust
@@ -476,7 +476,7 @@ async fn main() -> McpResult<()> {
 turbomcp = { version = "1.x", features = ["auth"] }
 
 # After (2.0) - Same feature name
-turbomcp = { version = "2.0", features = ["auth"] }
+turbomcp = { version = "2.0.0-rc", features = ["auth"] }
 ```
 
 ```rust
@@ -496,7 +496,7 @@ use turbomcp::auth::*;
 turbomcp = { version = "1.x", features = ["dpop", "dpop-redis"] }
 
 # After (2.0)
-turbomcp = { version = "2.0", features = ["dpop", "redis-storage"] }
+turbomcp = { version = "2.0.0-rc", features = ["dpop", "redis-storage"] }
 ```
 
 ```rust
@@ -543,21 +543,21 @@ builder
 # See: RBAC-REMOVAL-SUMMARY.md
 
 # Remove rbac feature
-turbomcp = { version = "2.0", features = ["auth"] }  # not "rbac"
+turbomcp = { version = "2.0.0-rc", features = ["auth"] }  # not "rbac"
 ```
 
 ### Issue: "HTTP server not working"
 
 ```toml
 # Solution: Enable HTTP feature (not default in 2.0)
-turbomcp = { version = "2.0", features = ["http"] }
+turbomcp = { version = "2.0.0-rc", features = ["http"] }
 ```
 
 ### Issue: "module 'dpop' not found"
 
 ```toml
 # Solution: Enable dpop feature
-turbomcp = { version = "2.0", features = ["dpop"] }
+turbomcp = { version = "2.0.0-rc", features = ["dpop"] }
 
 # Or use crate directly
 [dependencies]
@@ -568,7 +568,7 @@ turbomcp-dpop = "2.0"
 
 ```toml
 # Solution: Renamed to redis-storage
-turbomcp = { version = "2.0", features = ["dpop", "redis-storage"] }
+turbomcp = { version = "2.0.0-rc", features = ["dpop", "redis-storage"] }
 ```
 
 ### Issue: Import errors after upgrade
@@ -590,7 +590,7 @@ use turbomcp_dpop::*;  // was: turbomcp::dpop::*
 // Solution: Update feature flags in dev-dependencies
 
 [dev-dependencies]
-turbomcp = { version = "2.0", features = ["full", "test-utils"] }
+turbomcp = { version = "2.0.0-rc", features = ["full", "test-utils"] }
 ```
 
 ### Issue: Larger binary size than expected
@@ -600,10 +600,10 @@ turbomcp = { version = "2.0", features = ["full", "test-utils"] }
 # Remove unused features to reduce binary size
 
 # Instead of:
-turbomcp = { version = "2.0", features = ["full"] }
+turbomcp = { version = "2.0.0-rc", features = ["full"] }
 
 # Use only what you need:
-turbomcp = { version = "2.0", features = ["stdio", "tcp"] }
+turbomcp = { version = "2.0.0-rc", features = ["stdio", "tcp"] }
 ```
 
 ## 📚 Additional Resources
