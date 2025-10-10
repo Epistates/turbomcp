@@ -102,9 +102,9 @@ use turbomcp_protocol::{
     
     // Ping - Bidirectional health monitoring
     PingRequest, PingParams, PingResult,
-    
-    // Bidirectional communication support
-    ServerRequest, ClientRequest,
+
+    // Bidirectional communication support (trait)
+    ServerToClientRequests,
 };
 ```
 

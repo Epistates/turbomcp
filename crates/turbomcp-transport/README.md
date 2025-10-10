@@ -128,15 +128,16 @@ let mut transport = StreamableHttpClientTransport::new(config);
 For real-time communication:
 
 ```rust
-use turbomcp_transport::websocket::{WebSocketTransport, WsConfig};
+use turbomcp_transport::websocket::WebSocketTransport;
 
-let config = WsConfig::new()
-    .url("wss://api.example.com/mcp")
-    .ping_interval(Duration::from_secs(30))
-    .max_frame_size(16 * 1024 * 1024) // 16MB
-    .compression_enabled(true);
+// Connect to WebSocket server
+let transport = WebSocketTransport::new("wss://api.example.com/mcp").await?;
 
-let transport = WebSocketTransport::connect(config).await?;
+// Transport capabilities are predefined:
+// - Max message size: 16MB
+// - Compression: supported
+// - Streaming: supported
+// - Bidirectional: supported
 ```
 
 ### TCP Transport
@@ -144,15 +145,16 @@ let transport = WebSocketTransport::connect(config).await?;
 For network socket communication:
 
 ```rust
-use turbomcp_transport::tcp::{TcpTransport, TcpConfig};
+use turbomcp_transport::tcp::TcpTransportBuilder;
+use std::net::SocketAddr;
 
-let config = TcpConfig::new()
-    .bind_address("127.0.0.1:8080")
-    .nodelay(true)
-    .keep_alive(Duration::from_secs(60))
-    .buffer_size(64 * 1024); // 64KB
+let bind_addr: SocketAddr = "127.0.0.1:8080".parse()?;
 
-let transport = TcpTransport::bind(config).await?;
+let transport = TcpTransportBuilder::new()
+    .bind_addr(bind_addr)
+    .keep_alive(true)
+    .buffer_size(64 * 1024) // 64KB
+    .build();
 ```
 
 ### Unix Socket Transport
@@ -161,13 +163,16 @@ For local inter-process communication:
 
 ```rust
 use turbomcp_transport::unix::{UnixTransport, UnixConfig};
+use std::path::PathBuf;
 
-let config = UnixConfig::new()
-    .path("/tmp/mcp.sock")
-    .permissions(0o660)
-    .cleanup_on_drop(true);
+let config = UnixConfig {
+    socket_path: PathBuf::from("/tmp/mcp.sock"),
+    permissions: Some(0o660),
+    buffer_size: 8192,
+    cleanup_on_disconnect: true,
+};
 
-let transport = UnixTransport::bind(config).await?;
+let transport = UnixTransport::new(config);
 ```
 
 ## Security Configuration
@@ -209,7 +214,7 @@ let enhanced_security = EnhancedSecurityConfigBuilder::new()
 ### Circuit Breaker Configuration
 
 ```rust
-use turbomcp_transport::CircuitBreakerConfig;
+use turbomcp_transport::resilience::circuit_breaker::CircuitBreakerConfig;
 use std::time::Duration;
 
 // Configure circuit breaker for fault tolerance
@@ -225,15 +230,19 @@ let circuit_config = CircuitBreakerConfig {
 ### Retry Configuration
 
 ```rust
-use turbomcp_transport::RetryConfig;
+use turbomcp_transport::resilience::retry::RetryConfig;
 use std::time::Duration;
 
 // Configure retry behavior with exponential backoff
 let retry_config = RetryConfig {
     max_attempts: 3,
-    initial_delay: Duration::from_millis(100),
+    base_delay: Duration::from_millis(100),
     max_delay: Duration::from_secs(10),
     backoff_multiplier: 2.0,
+    jitter_factor: 0.1,
+    retry_on_connection_error: true,
+    retry_on_timeout: true,
+    custom_retry_condition: None,
 };
 ```
 
@@ -268,7 +277,7 @@ assert_eq!(message, decompressed);
 ### Health Check Configuration
 
 ```rust
-use turbomcp_transport::{HealthCheckConfig, HealthStatus};
+use turbomcp_transport::resilience::health::{HealthCheckConfig, HealthStatus};
 use std::time::Duration;
 
 // Configure health checking

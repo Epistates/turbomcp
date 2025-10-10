@@ -143,25 +143,51 @@ let server = ServerBuilder::new()
 Handlers implement trait interfaces for type-safe registration:
 
 ```rust
-use turbomcp_server::{ServerBuilder, ToolHandler, ResourceHandler, PromptHandler};
-use turbomcp_protocol::{RequestContext, types::CallToolResult};
+use turbomcp_server::{ServerBuilder, ToolHandler, ServerResult};
+use turbomcp_protocol::{RequestContext, types::{CallToolRequest, CallToolResult, Tool, ContentBlock, TextContent}};
 use async_trait::async_trait;
+use serde_json::json;
 
 // Example tool handler
 struct CalculateTool;
 
 #[async_trait]
 impl ToolHandler for CalculateTool {
-    async fn execute(&self, ctx: RequestContext) -> Result<CallToolResult, Box<dyn std::error::Error>> {
-        let params = ctx.params()?;
-        let a: f64 = params.get("a")?.as_f64().unwrap();
-        let b: f64 = params.get("b")?.as_f64().unwrap();
+    async fn handle(
+        &self,
+        request: CallToolRequest,
+        _ctx: RequestContext,
+    ) -> ServerResult<CallToolResult> {
+        let a: f64 = request.arguments.get("a")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| turbomcp_server::ServerError::InvalidToolInput("Missing 'a' parameter".into()))?;
+        let b: f64 = request.arguments.get("b")
+            .and_then(|v| v.as_f64())
+            .ok_or_else(|| turbomcp_server::ServerError::InvalidToolInput("Missing 'b' parameter".into()))?;
+
+        let result = a + b;
 
         Ok(CallToolResult {
-            content: vec![],
-            isError: Some(false),
+            content: vec![ContentBlock::Text(TextContent {
+                text: format!("Result: {}", result),
+                annotations: None,
+            })],
+            is_error: Some(false),
+            structured_content: None,
             _meta: None,
         })
+    }
+
+    fn tool_definition(&self) -> Tool {
+        Tool::new("calculate")
+            .with_description("Add two numbers")
+            .with_input_schema(
+                turbomcp_protocol::types::ToolInputSchema::empty()
+                    .add_property("a".to_string(), json!({"type": "number"}))
+                    .add_property("b".to_string(), json!({"type": "number"}))
+                    .require_property("a".to_string())
+                    .require_property("b".to_string())
+            )
     }
 }
 
@@ -198,12 +224,20 @@ let oauth_config = OAuth2Config {
 };
 
 // Create auth manager
+let mut settings_map = HashMap::new();
+// Serialize OAuth config to Value, then extract as object
+if let serde_json::Value::Object(map) = serde_json::to_value(&oauth_config)? {
+    for (key, value) in map {
+        settings_map.insert(key, value);
+    }
+}
+
 let auth_config = AuthConfig {
     enabled: true,
     providers: vec![AuthProviderConfig {
         name: "google".to_string(),
         provider_type: AuthProviderType::OAuth2,
-        settings: serde_json::to_value(&oauth_config)?,
+        settings: settings_map,
         enabled: true,
         priority: 1,
     }],
@@ -222,14 +256,20 @@ let auth_manager = AuthManager::new(auth_config);
 For JWT-only authentication, use the server's built-in middleware:
 
 ```rust
-use turbomcp_server::{ServerBuilder, AuthConfig};
+use turbomcp_server::middleware::AuthConfig;
+use secrecy::Secret;
+use jsonwebtoken::Algorithm;
 
 // JWT authentication is available via middleware (feature: auth)
 #[cfg(feature = "auth")]
 let auth_config = AuthConfig {
-    jwt_secret: std::env::var("JWT_SECRET")?.into_bytes(),
+    secret: Secret::new(std::env::var("JWT_SECRET")?),
+    algorithm: Algorithm::HS256,
     issuer: Some("your-issuer".to_string()),
     audience: Some("your-audience".to_string()),
+    leeway: 60,
+    validate_exp: true,
+    validate_nbf: true,
 };
 ```
 
@@ -239,48 +279,76 @@ The server uses a Tower-based middleware stack for cross-cutting concerns:
 
 ```rust
 use turbomcp_server::middleware::{
-    MiddlewareStack, SecurityConfig, ValidationConfig,
-    AuthConfig, RateLimitConfig, AuditConfig, TimeoutConfig
+    MiddlewareStack, SecurityConfig, CorsConfig, CorsOrigins, ValidationConfig,
+    AuthConfig, RateLimitConfig, RateLimitStrategy, RateLimits,
+    AuditConfig, AuditLogLevel, TimeoutConfig
 };
+use http::Method;
 use std::time::Duration;
 
 // Build a comprehensive middleware stack
 let middleware = MiddlewareStack::new()
     .with_security(SecurityConfig {
-        allowed_origins: vec!["https://app.example.com".to_string()],
-        allowed_methods: vec!["GET".to_string(), "POST".to_string()],
-        max_age: Some(Duration::from_secs(86400)),
+        cors: CorsConfig {
+            allowed_origins: CorsOrigins::List(vec![
+                "https://app.example.com".to_string()
+            ]),
+            allowed_methods: vec![Method::GET, Method::POST],
+            max_age: Some(Duration::from_secs(86400)),
+            ..Default::default()
+        },
         ..Default::default()
     })
     .with_validation(ValidationConfig {
+        schemas: Default::default(),
         validate_requests: true,
         validate_responses: false,
         strict_mode: true,
     })
     .with_timeout(TimeoutConfig {
         request_timeout: Duration::from_secs(30),
-        tool_timeout: Some(Duration::from_secs(60)),
+        enabled: true,
     })
     .with_audit(AuditConfig {
-        log_requests: true,
-        log_responses: false,
-        include_payloads: false,
+        log_success: true,
+        log_failures: true,
+        log_auth_events: true,
+        log_authz_events: true,
+        log_level: AuditLogLevel::Info,
     });
 
 // With auth feature enabled:
 #[cfg(feature = "auth")]
-let middleware = middleware.with_auth(AuthConfig {
-    jwt_secret: b"your-secret".to_vec(),
-    issuer: Some("your-app".to_string()),
-    audience: Some("your-api".to_string()),
-});
+{
+    use secrecy::Secret;
+    use jsonwebtoken::Algorithm;
+
+    let middleware = middleware.with_auth(AuthConfig {
+        secret: Secret::new("your-secret-key".to_string()),
+        algorithm: Algorithm::HS256,
+        issuer: Some("your-app".to_string()),
+        audience: Some("your-api".to_string()),
+        leeway: 60,
+        validate_exp: true,
+        validate_nbf: true,
+    });
+}
 
 // With rate-limiting feature enabled:
 #[cfg(feature = "rate-limiting")]
-let middleware = middleware.with_rate_limit(RateLimitConfig {
-    requests_per_second: 100,
-    burst_size: 20,
-});
+{
+    use std::num::NonZeroU32;
+
+    let middleware = middleware.with_rate_limit(RateLimitConfig {
+        strategy: RateLimitStrategy::PerIp,
+        limits: RateLimits {
+            requests_per_period: NonZeroU32::new(100).unwrap(),
+            period: Duration::from_secs(60), // 100 requests per minute
+            burst_size: Some(NonZeroU32::new(20).unwrap()),
+        },
+        enabled: true,
+    });
+}
 
 // The middleware stack is automatically applied by the server
 ```
@@ -322,7 +390,7 @@ let session_manager = SessionManager::new(session_config);
 The server provides built-in health status and graceful shutdown:
 
 ```rust
-use turbomcp_server::{ServerBuilder, HealthStatus};
+use turbomcp_server::ServerBuilder;
 
 let server = ServerBuilder::new()
     .name("MyServer")
@@ -331,10 +399,13 @@ let server = ServerBuilder::new()
 
 // Get health status
 let health = server.health().await;
-match health {
-    HealthStatus::Healthy => println!("Server is healthy"),
-    HealthStatus::Unhealthy => println!("Server is unhealthy"),
-    _ => println!("Unknown health status"),
+if health.healthy {
+    println!("Server is healthy (checked at {:?})", health.timestamp);
+    for check in &health.details {
+        println!("  - {}: {}", check.name, if check.healthy { "OK" } else { "FAILED" });
+    }
+} else {
+    eprintln!("Server is unhealthy!");
 }
 
 // Graceful shutdown
@@ -537,7 +608,8 @@ let health_task = tokio::spawn(async move {
 let metrics_task = tokio::spawn(async move {
     loop {
         let metrics = monitor2.metrics();
-        println!("Server metrics: request_count={}", metrics.request_count());
+        println!("Server metrics: request_count={}",
+            metrics.requests_total.load(std::sync::atomic::Ordering::Relaxed));
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
 });
@@ -561,18 +633,21 @@ let monitor = server.clone();
 let notify = shutdown_notify.clone();
 let health_task = tokio::spawn(async move {
     loop {
-        match monitor.health().await {
-            HealthStatus::Healthy => {
-                println!("✅ Server healthy");
+        let health_status = monitor.health().await;
+        if health_status.healthy {
+            println!("✅ Server healthy ({} checks passed)", health_status.details.len());
+        } else {
+            println!("❌ Server unhealthy");
+            for check in &health_status.details {
+                if !check.healthy {
+                    println!("  Failed: {}", check.name);
+                    if let Some(msg) = &check.message {
+                        println!("    Reason: {}", msg);
+                    }
+                }
             }
-            HealthStatus::Degraded(reason) => {
-                println!("⚠️ Server degraded: {}", reason);
-            }
-            HealthStatus::Unhealthy(reason) => {
-                println!("❌ Server unhealthy: {}", reason);
-                notify.notify_one();
-                break;
-            }
+            notify.notify_one();
+            break;
         }
         tokio::time::sleep(Duration::from_secs(30)).await;
     }

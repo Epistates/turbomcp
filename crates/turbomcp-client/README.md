@@ -247,7 +247,11 @@ let client = ClientBuilder::new()
 ### Custom Robustness Configuration
 
 ```rust
-use turbomcp_transport::robustness::{RetryConfig, CircuitBreakerConfig, HealthCheckConfig};
+use turbomcp_transport::resilience::{
+    retry::RetryConfig,
+    circuit_breaker::CircuitBreakerConfig,
+    health::HealthCheckConfig,
+};
 use std::time::Duration;
 
 let client = ClientBuilder::new()
@@ -259,7 +263,7 @@ let client = ClientBuilder::new()
         jitter_factor: 0.1,
         retry_on_connection_error: true,
         retry_on_timeout: true,
-        custom_retry_conditions: Vec::new(),
+        custom_retry_condition: None,
     })
     .with_circuit_breaker_config(CircuitBreakerConfig {
         failure_threshold: 5,
