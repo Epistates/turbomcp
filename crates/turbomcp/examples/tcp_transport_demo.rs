@@ -16,7 +16,6 @@
 //! **Or use the basic_client example:**
 //! First start this server, then in another terminal run the client configured for TCP.
 
-
 #[cfg(feature = "tcp")]
 use turbomcp::prelude::*;
 

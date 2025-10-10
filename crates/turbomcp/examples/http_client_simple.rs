@@ -12,7 +12,6 @@
 //! cargo run --example http_client_simple --features http
 //! ```
 
-
 #[cfg(feature = "http")]
 use std::collections::HashMap;
 #[cfg(feature = "http")]
@@ -84,5 +83,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(not(feature = "http"))]
 fn main() {
-    eprintln!("This example requires the 'http' feature. Run with: cargo run --example http_client_simple --features http");
+    eprintln!(
+        "This example requires the 'http' feature. Run with: cargo run --example http_client_simple --features http"
+    );
 }

@@ -12,7 +12,6 @@
 //! cargo run --example unix_client_simple --features unix
 //! ```
 
-
 #[cfg(feature = "unix")]
 use turbomcp::prelude::*;
 
@@ -56,5 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(not(feature = "unix"))]
 fn main() {
-    eprintln!("This example requires the 'unix' feature. Run with: cargo run --example unix_server_simple --features unix");
+    eprintln!(
+        "This example requires the 'unix' feature. Run with: cargo run --example unix_server_simple --features unix"
+    );
 }

@@ -7,7 +7,6 @@
 //!   -H "Content-Type: application/json" \
 //!   -d '{"jsonrpc":"2.0","method":"tools/list","id":1}'
 
-
 #[cfg(feature = "http")]
 use turbomcp::prelude::*;
 

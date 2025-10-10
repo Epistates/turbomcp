@@ -15,7 +15,6 @@
 //! echo '{"jsonrpc":"2.0","method":"tools/list","id":1}' | socat - UNIX-CONNECT:/tmp/turbomcp-demo.sock
 //! ```
 
-
 #[cfg(feature = "unix")]
 use turbomcp::prelude::*;
 

@@ -12,7 +12,6 @@
 //! cargo run --example tcp_client --features tcp
 //! ```
 
-
 #[cfg(feature = "tcp")]
 use turbomcp::prelude::*;
 
@@ -51,5 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(not(feature = "tcp"))]
 fn main() {
-    eprintln!("This example requires the 'tcp' feature. Run with: cargo run --example tcp_server --features tcp");
+    eprintln!(
+        "This example requires the 'tcp' feature. Run with: cargo run --example tcp_server --features tcp"
+    );
 }

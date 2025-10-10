@@ -13,7 +13,6 @@
 //! ```
 
 #[cfg(feature = "http")]
-#[cfg(feature = "http")]
 use turbomcp::prelude::*;
 
 #[cfg(feature = "http")]
@@ -56,5 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(not(feature = "http"))]
 fn main() {
-    eprintln!("This example requires the 'http' feature. Run with: cargo run --example http_server_simple --features http");
+    eprintln!(
+        "This example requires the 'http' feature. Run with: cargo run --example http_server_simple --features http"
+    );
 }

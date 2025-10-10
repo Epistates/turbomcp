@@ -12,7 +12,6 @@
 //! cargo run --example websocket_client_simple --features "http,websocket"
 //! ```
 
-
 #[cfg(all(feature = "http", feature = "websocket"))]
 use turbomcp::prelude::*;
 
@@ -57,5 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(not(all(feature = "http", feature = "websocket")))]
 fn main() {
-    eprintln!("This example requires 'http' and 'websocket' features. Run with: cargo run --example websocket_server_simple --features \"http,websocket\"");
+    eprintln!(
+        "This example requires 'http' and 'websocket' features. Run with: cargo run --example websocket_server_simple --features \"http,websocket\""
+    );
 }
