@@ -45,13 +45,13 @@
 //! In v2.0.0, `turbomcp-core` was merged into `turbomcp-protocol` to eliminate circular
 //! dependencies and enable fully-typed bidirectional communication.
 //!
-//! ```rust
+//! ```rust,ignore
 //! // v1.x
 //! use turbomcp_protocol::{RequestContext, Error};
-//! use turbomcp_protocol::{CreateMessageRequest};
+//! use turbomcp_protocol::types::CreateMessageRequest;
 //!
 //! // v2.0.0
-//! use turbomcp_protocol::{RequestContext, Error, CreateMessageRequest};
+//! use turbomcp_protocol::{RequestContext, Error, types::CreateMessageRequest};
 //! ```
 //!
 //! All functionality is preserved, just the import path changed!
@@ -77,16 +77,21 @@
 //! to clients, supporting bidirectional communication patterns like sampling and elicitation:
 //!
 //! ```rust,no_run
-//! use turbomcp_protocol::{RequestContext, CreateMessageRequest, ServerToClientRequests};
+//! use turbomcp_protocol::{RequestContext, types::CreateMessageRequest, ServerToClientRequests};
 //!
 //! // Tools can access server capabilities through the context
 //! async fn my_tool(ctx: RequestContext) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-//!     if let Some(capabilities) = ctx.server_to_client() {
+//!     if let Some(capabilities) = ctx.clone().server_to_client() {
 //!         // Make a fully-typed sampling request to the client
 //!         let request = CreateMessageRequest {
 //!             messages: vec![/* ... */],
 //!             max_tokens: 100,
-//!             ..Default::default()
+//!             model_preferences: None,
+//!             system_prompt: None,
+//!             include_context: None,
+//!             temperature: None,
+//!             stop_sequences: None,
+//!             _meta: None,
 //!         };
 //!         let response = capabilities.create_message(request, ctx).await?;
 //!     }

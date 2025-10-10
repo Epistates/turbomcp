@@ -685,8 +685,14 @@ impl<T: Transport> Client<T> {
         // This provides consistent DX across all transports (Stdio, TCP, HTTP, WebSocket, Unix)
         let transport = self.inner.protocol.transport();
         let transport_state = transport.state().await;
-        if !matches!(transport_state, turbomcp_transport::TransportState::Connected) {
-            tracing::debug!("Auto-connecting transport (current state: {:?})", transport_state);
+        if !matches!(
+            transport_state,
+            turbomcp_transport::TransportState::Connected
+        ) {
+            tracing::debug!(
+                "Auto-connecting transport (current state: {:?})",
+                transport_state
+            );
             transport
                 .connect()
                 .await

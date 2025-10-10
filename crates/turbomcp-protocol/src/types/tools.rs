@@ -232,7 +232,9 @@ impl ToolInputSchema {
     ///     .add_property("name".to_string(), json!({ "type": "string" }));
     /// ```
     pub fn add_property(mut self, name: String, property: serde_json::Value) -> Self {
-        self.properties.get_or_insert_with(HashMap::new).insert(name, property);
+        self.properties
+            .get_or_insert_with(HashMap::new)
+            .insert(name, property);
         self
     }
 
