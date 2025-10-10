@@ -26,12 +26,12 @@ use std::error::Error as StdError;
 use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
 use turbomcp_protocol::types::{
-    CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult,
-    ListRootsRequest, ListRootsResult, PingRequest, PingResult,
+    CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsRequest,
+    ListRootsResult, PingRequest, PingResult,
 };
 use turbomcp_protocol::{JsonRpcHandler, RequestContext};
 use turbomcp_server::routing::ServerRequestDispatcher;
@@ -66,7 +66,7 @@ pub enum StdioMessage {
     /// Server request to be sent to client
     ServerRequest {
         /// The JSON-RPC request (MCP 2025-06-18 compliant)
-        request: JsonRpcRequest
+        request: JsonRpcRequest,
     },
     /// Shutdown signal
     Shutdown,
@@ -108,7 +108,10 @@ impl StdioDispatcher {
         };
 
         // Register pending request
-        self.pending_requests.lock().await.insert(request_id.clone(), response_tx);
+        self.pending_requests
+            .lock()
+            .await
+            .insert(request_id.clone(), response_tx);
 
         // Send to stdout writer
         self.request_tx
@@ -119,10 +122,7 @@ impl StdioDispatcher {
             })?;
 
         // Wait for response with timeout (60 seconds per MCP recommendation)
-        match tokio::time::timeout(
-            tokio::time::Duration::from_secs(60),
-            response_rx
-        ).await {
+        match tokio::time::timeout(tokio::time::Duration::from_secs(60), response_rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err(ServerError::Handler {
                 message: "Response channel closed".to_string(),
@@ -172,10 +172,12 @@ impl ServerRequestDispatcher for StdioDispatcher {
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "elicitation/create".to_string(),
-            params: Some(serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                message: format!("Failed to serialize elicitation request: {}", e),
-                context: Some("MCP compliance".to_string()),
-            })?),
+            params: Some(
+                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
+                    message: format!("Failed to serialize elicitation request: {}", e),
+                    context: Some("MCP compliance".to_string()),
+                })?,
+            ),
             id: Self::generate_request_id(),
         };
 
@@ -275,10 +277,12 @@ impl ServerRequestDispatcher for StdioDispatcher {
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "sampling/createMessage".to_string(),
-            params: Some(serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                message: format!("Failed to serialize sampling request: {}", e),
-                context: Some("MCP compliance".to_string()),
-            })?),
+            params: Some(
+                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
+                    message: format!("Failed to serialize sampling request: {}", e),
+                    context: Some("MCP compliance".to_string()),
+                })?,
+            ),
             id: Self::generate_request_id(),
         };
 
@@ -438,13 +442,11 @@ where
                 if let Ok(response) = serde_json::from_str::<JsonRpcResponse>(&line) {
                     // This is a response to a server-initiated request
                     let request_id = match &response.id {
-                        turbomcp_protocol::jsonrpc::ResponseId(Some(id)) => {
-                            match id {
-                                MessageId::String(s) => s.clone(),
-                                MessageId::Number(n) => n.to_string(),
-                                MessageId::Uuid(u) => u.to_string(),
-                            }
-                        }
+                        turbomcp_protocol::jsonrpc::ResponseId(Some(id)) => match id {
+                            MessageId::String(s) => s.clone(),
+                            MessageId::Number(n) => n.to_string(),
+                            MessageId::Uuid(u) => u.to_string(),
+                        },
                         _ => continue,
                     };
 
@@ -466,9 +468,9 @@ where
                         let _ctx = RequestContext::new();
 
                         // Handle via bidirectional wrapper
-                        let response_value = handler.handle_request(
-                            serde_json::to_value(&request).unwrap_or_default()
-                        ).await;
+                        let response_value = handler
+                            .handle_request(serde_json::to_value(&request).unwrap_or_default())
+                            .await;
 
                         // Write response to stdout
                         if let Ok(json) = serde_json::to_string(&response_value) {

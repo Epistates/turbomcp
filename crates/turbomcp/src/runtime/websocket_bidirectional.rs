@@ -62,11 +62,11 @@
 
 use std::sync::Arc;
 
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::types::{
     CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsRequest,
     ListRootsResult, PingRequest, PingResult,
 };
-use turbomcp_protocol::RequestContext;
 use turbomcp_server::routing::ServerRequestDispatcher;
 use turbomcp_transport::websocket_bidirectional::WebSocketBidirectionalTransport;
 
@@ -293,15 +293,17 @@ mod tests {
         let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
         let dispatcher = WebSocketDispatcher::new(Arc::new(transport));
 
-        let request = PingRequest { _meta: None };
-        let result = dispatcher
-            .send_ping(request, RequestContext::new())
-            .await;
+        let request = PingRequest {
+            params: Default::default(),
+        };
+        let result = dispatcher.send_ping(request, RequestContext::new()).await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("WebSocket not connected"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("WebSocket not connected")
+        );
     }
 }

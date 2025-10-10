@@ -75,30 +75,38 @@
 //! }
 //! ```
 
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use axum::{
-    extract::{ws::{WebSocket, Message as WsMessage}, ConnectInfo, State, WebSocketUpgrade},
+    Router,
+    extract::{
+        ConnectInfo, State, WebSocketUpgrade,
+        ws::{Message as WsMessage, WebSocket},
+    },
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use futures::{SinkExt, StreamExt, stream::SplitSink, stream::SplitStream};
-use tokio::sync::{mpsc, oneshot, Mutex};
-use uuid::Uuid;
 use serde_json::Value;
+use tokio::sync::{Mutex, mpsc, oneshot};
+use uuid::Uuid;
 
-use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion, ResponseId, JsonRpcResponsePayload, JsonRpcMessage};
-use turbomcp_protocol::types::{
-    CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult,
-    ListRootsRequest, ListRootsResult, PingRequest, PingResult,
-};
-use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::JsonRpcHandler;
+use turbomcp_protocol::RequestContext;
+use turbomcp_protocol::jsonrpc::{
+    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, JsonRpcResponsePayload, JsonRpcVersion,
+    ResponseId,
+};
+use turbomcp_protocol::types::{
+    CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsRequest,
+    ListRootsResult, PingRequest, PingResult,
+};
 use turbomcp_server::routing::ServerRequestDispatcher;
-use turbomcp_transport::security::{SecurityValidator, SecurityError, OriginConfig, AuthConfig, RateLimitConfig};
+use turbomcp_transport::security::{
+    AuthConfig, OriginConfig, RateLimitConfig, SecurityError, SecurityValidator,
+};
 
 use crate::{MessageId, ServerError, ServerResult};
 
@@ -162,11 +170,7 @@ impl WebSocketServerDispatcher {
     /// - Sends JSON-RPC 2.0 formatted request
     /// - Registers pending request for correlation
     /// - Awaits response with 60-second timeout
-    async fn send_request<Req, Res>(
-        &self,
-        method: &str,
-        params: Req,
-    ) -> ServerResult<Res>
+    async fn send_request<Req, Res>(&self, method: &str, params: Req) -> ServerResult<Res>
     where
         Req: serde::Serialize,
         Res: serde::de::DeserializeOwned,
@@ -179,17 +183,22 @@ impl WebSocketServerDispatcher {
             jsonrpc: JsonRpcVersion,
             id: MessageId::String(request_id.clone()),
             method: method.to_string(),
-            params: Some(serde_json::to_value(params).map_err(|e| ServerError::Handler {
-                message: format!("Failed to serialize request params: {}", e),
-                context: Some("WebSocket request serialization".to_string()),
-            })?),
+            params: Some(
+                serde_json::to_value(params).map_err(|e| ServerError::Handler {
+                    message: format!("Failed to serialize request params: {}", e),
+                    context: Some("WebSocket request serialization".to_string()),
+                })?,
+            ),
         };
 
         // Create oneshot channel for response
         let (response_tx, response_rx) = oneshot::channel();
 
         // Register pending request
-        self.pending_requests.lock().await.insert(request_id.clone(), response_tx);
+        self.pending_requests
+            .lock()
+            .await
+            .insert(request_id.clone(), response_tx);
 
         // Serialize and send request
         let request_json = serde_json::to_string(&request).map_err(|e| ServerError::Handler {
@@ -197,16 +206,15 @@ impl WebSocketServerDispatcher {
             context: Some("WebSocket request".to_string()),
         })?;
 
-        self.sender.send(WsMessage::Text(request_json.into())).map_err(|e| ServerError::Handler {
-            message: format!("Failed to send WebSocket message: {}", e),
-            context: Some("WebSocket closed".to_string()),
-        })?;
+        self.sender
+            .send(WsMessage::Text(request_json.into()))
+            .map_err(|e| ServerError::Handler {
+                message: format!("Failed to send WebSocket message: {}", e),
+                context: Some("WebSocket closed".to_string()),
+            })?;
 
         // Await response with timeout
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(60),
-            response_rx
-        )
+        let response = tokio::time::timeout(std::time::Duration::from_secs(60), response_rx)
             .await
             .map_err(|_| ServerError::Handler {
                 message: "Request timeout (60s)".to_string(),
@@ -227,7 +235,10 @@ impl WebSocketServerDispatcher {
             }
             JsonRpcResponsePayload::Error { error } => Err(ServerError::Handler {
                 message: format!("Request failed: {}", error.message),
-                context: Some(format!("MCP error code: {}, method: {}", error.code, method)),
+                context: Some(format!(
+                    "MCP error code: {}, method: {}",
+                    error.code, method
+                )),
             }),
         }
     }
@@ -498,13 +509,13 @@ async fn handle_client_request<H>(
     H: JsonRpcHandler,
 {
     // Check if this is a notification (JSON-RPC 2.0 spec: no response for notifications)
-    if let Ok(message) = serde_json::from_value::<JsonRpcMessage>(request.clone()) {
-        if matches!(message, JsonRpcMessage::Notification(_)) {
-            // Process the notification but don't send a response
-            let _ = handler.handle_request(request).await;
-            tracing::debug!("Processed notification (no response sent per JSON-RPC 2.0 spec)");
-            return;
-        }
+    if let Ok(message) = serde_json::from_value::<JsonRpcMessage>(request.clone())
+        && matches!(message, JsonRpcMessage::Notification(_))
+    {
+        // Process the notification but don't send a response
+        let _ = handler.handle_request(request).await;
+        tracing::debug!("Processed notification (no response sent per JSON-RPC 2.0 spec)");
+        return;
     }
 
     // Process through handler
@@ -545,7 +556,8 @@ where
     let wrapper_factory = Arc::clone(&state.wrapper_factory);
 
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_websocket(socket, base_handler, |h, d| (wrapper_factory)(h, d)).await {
+        if let Err(e) = handle_websocket(socket, base_handler, |h, d| (wrapper_factory)(h, d)).await
+        {
             tracing::error!("WebSocket handler error: {}", e);
         }
     }))

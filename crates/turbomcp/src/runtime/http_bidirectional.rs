@@ -40,12 +40,12 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion, JsonRpcMessage};
-use turbomcp_protocol::types::{
-    CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult,
-    ListRootsRequest, ListRootsResult, PingRequest, PingResult,
-};
 use turbomcp_protocol::RequestContext;
+use turbomcp_protocol::jsonrpc::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
+use turbomcp_protocol::types::{
+    CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsRequest,
+    ListRootsResult, PingRequest, PingResult,
+};
 use turbomcp_server::routing::ServerRequestDispatcher;
 
 // Re-export types from transport for convenience
@@ -59,21 +59,22 @@ use crate::{MessageId, ServerError, ServerResult};
 
 // Additional imports for HTTP server implementation
 use axum::{
-    extract::{ConnectInfo, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
-    response::{sse::{Event, KeepAlive, Sse}, IntoResponse},
-    routing::post,
     Json, Router,
+    extract::{ConnectInfo, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::{
+        IntoResponse,
+        sse::{Event, KeepAlive, Sse},
+    },
+    routing::post,
 };
-use tokio::sync::mpsc;
-use std::net::SocketAddr;
-use turbomcp_protocol::jsonrpc::ResponseId;
-use turbomcp_protocol::JsonRpcHandler;
-use turbomcp_transport::streamable_http_v2::{
-    StreamableHttpConfig, StreamableHttpConfigBuilder,
-};
-use turbomcp_transport::security::{SecurityValidator, SessionSecurityManager, SecurityError};
 use serde_json::Value;
+use std::net::SocketAddr;
+use tokio::sync::mpsc;
+use turbomcp_protocol::JsonRpcHandler;
+use turbomcp_protocol::jsonrpc::ResponseId;
+use turbomcp_transport::security::{SecurityError, SecurityValidator, SessionSecurityManager};
+use turbomcp_transport::streamable_http_v2::{StreamableHttpConfig, StreamableHttpConfigBuilder};
 
 /// HTTP dispatcher for server-initiated requests
 ///
@@ -251,10 +252,12 @@ impl ServerRequestDispatcher for HttpDispatcher {
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "elicitation/create".to_string(),
-            params: Some(serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                message: format!("Failed to serialize elicitation request: {}", e),
-                context: Some("MCP 2025-06-18 compliance".to_string()),
-            })?),
+            params: Some(
+                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
+                    message: format!("Failed to serialize elicitation request: {}", e),
+                    context: Some("MCP 2025-06-18 compliance".to_string()),
+                })?,
+            ),
             id: Self::generate_request_id(),
         };
 
@@ -322,10 +325,12 @@ impl ServerRequestDispatcher for HttpDispatcher {
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "sampling/createMessage".to_string(),
-            params: Some(serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                message: format!("Failed to serialize sampling request: {}", e),
-                context: Some("MCP 2025-06-18 compliance".to_string()),
-            })?),
+            params: Some(
+                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
+                    message: format!("Failed to serialize sampling request: {}", e),
+                    context: Some("MCP 2025-06-18 compliance".to_string()),
+                })?,
+            ),
             id: Self::generate_request_id(),
         };
 
@@ -360,10 +365,12 @@ impl ServerRequestDispatcher for HttpDispatcher {
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "roots/list".to_string(),
-            params: Some(serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                message: format!("Failed to serialize roots request: {}", e),
-                context: Some("MCP 2025-06-18 compliance".to_string()),
-            })?),
+            params: Some(
+                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
+                    message: format!("Failed to serialize roots request: {}", e),
+                    context: Some("MCP 2025-06-18 compliance".to_string()),
+                })?,
+            ),
             id: Self::generate_request_id(),
         };
 
@@ -541,7 +548,7 @@ where
     let config = StreamableHttpConfigBuilder::new()
         .with_bind_address(addr.clone())
         .with_endpoint_path(path.clone())
-        .allow_localhost(true)  // Required for MCP
+        .allow_localhost(true) // Required for MCP
         .build();
 
     // Create application state
@@ -609,40 +616,37 @@ where
         .map(String::from);
 
     // Check if this is a response to a server-initiated request
-    if let Some(ref _session_id) = session_id {
-        if let Ok(response) = serde_json::from_value::<JsonRpcResponse>(request.clone()) {
-            // Extract response ID
-            let response_id = match &response.id {
-                ResponseId(Some(id)) => match id {
-                    MessageId::String(s) => s.clone(),
-                    MessageId::Number(n) => n.to_string(),
-                    MessageId::Uuid(u) => u.to_string(),
-                },
-                _ => return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({})))),
-            };
+    if let Some(ref _session_id) = session_id
+        && let Ok(response) = serde_json::from_value::<JsonRpcResponse>(request.clone())
+    {
+        // Extract response ID
+        let response_id = match &response.id {
+            ResponseId(Some(id)) => match id {
+                MessageId::String(s) => s.clone(),
+                MessageId::Number(n) => n.to_string(),
+                MessageId::Uuid(u) => u.to_string(),
+            },
+            _ => return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({})))),
+        };
 
-            // Check if this matches a pending server-initiated request
-            if let Some(tx) = state.pending_requests.lock().await.remove(&response_id) {
-                // Complete the pending request
-                let _ = tx.send(response);
-                return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({}))));
-            }
+        // Check if this matches a pending server-initiated request
+        if let Some(tx) = state.pending_requests.lock().await.remove(&response_id) {
+            // Complete the pending request
+            let _ = tx.send(response);
+            return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({}))));
         }
     }
 
     // Check if this is a notification (JSON-RPC 2.0 spec: no response for notifications)
-    if let Ok(message) = serde_json::from_value::<JsonRpcMessage>(request.clone()) {
-        if matches!(message, JsonRpcMessage::Notification(_)) {
-            // Process the notification but don't send a response
-            let handler = (state.handler_factory)(session_id.clone());
-            let _ = handler.handle_request(request).await;
+    if let Ok(message) = serde_json::from_value::<JsonRpcMessage>(request.clone())
+        && matches!(message, JsonRpcMessage::Notification(_))
+    {
+        // Process the notification but don't send a response
+        let handler = (state.handler_factory)(session_id.clone());
+        let _ = handler.handle_request(request).await;
 
-            // Return 204 No Content per JSON-RPC 2.0 spec
-            return Ok((
-                StatusCode::NO_CONTENT,
-                Json(serde_json::json!({})),
-            ));
-        }
+        // Return 204 No Content per JSON-RPC 2.0 spec
+        return Ok((StatusCode::NO_CONTENT, Json(serde_json::json!({}))));
     }
 
     // This is a regular client request - create handler with session context
@@ -652,10 +656,7 @@ where
     let response_value = handler.handle_request(request).await;
 
     // Return JSON response
-    Ok((
-        StatusCode::OK,
-        Json(response_value),
-    ))
+    Ok((StatusCode::OK, Json(response_value)))
 }
 
 /// GET handler - Opens SSE stream for server-initiated messages
@@ -693,9 +694,7 @@ where
         .ok_or(StatusCode::BAD_REQUEST)?;
 
     // Check for resumability (Last-Event-ID)
-    let last_event_id = headers
-        .get("Last-Event-ID")
-        .and_then(|v| v.to_str().ok());
+    let last_event_id = headers.get("Last-Event-ID").and_then(|v| v.to_str().ok());
 
     // Create SSE channel
     let (tx, mut rx) = mpsc::unbounded_channel::<StoredEvent>();
@@ -748,8 +747,7 @@ where
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         "Mcp-Session-Id",
-        HeaderValue::from_str(session_id)
-            .unwrap_or_else(|_| HeaderValue::from_static("invalid")),
+        HeaderValue::from_str(session_id).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
     );
     response_headers.insert(
         "MCP-Protocol-Version",
@@ -835,13 +833,16 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+    use tokio::sync::{Mutex, RwLock};
 
     #[tokio::test]
     async fn test_http_dispatcher_creation() {
         let sessions: SessionsMap = Arc::new(RwLock::new(HashMap::new()));
         let pending_requests: PendingRequestsMap = Arc::new(Mutex::new(HashMap::new()));
 
-        let dispatcher = HttpDispatcher::new("test-session".to_string(), sessions, pending_requests);
+        let dispatcher =
+            HttpDispatcher::new("test-session".to_string(), sessions, pending_requests);
 
         assert!(dispatcher.supports_bidirectional());
     }

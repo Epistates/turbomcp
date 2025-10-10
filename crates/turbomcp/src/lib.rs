@@ -559,12 +559,12 @@ pub mod lifespan;
 pub mod progress;
 pub mod registry;
 
+pub mod router;
 /// Runtime support for bidirectional MCP communication
 ///
 /// Provides dispatchers and event loops for implementing bidirectional features
 /// (sampling, elicitation, roots, ping) across different transport layers.
 pub mod runtime;
-pub mod router;
 pub mod server;
 pub mod session;
 pub mod simd;

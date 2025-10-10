@@ -16,7 +16,7 @@
 #[cfg(all(feature = "http", feature = "websocket"))]
 use futures::{SinkExt, StreamExt};
 #[cfg(all(feature = "http", feature = "websocket"))]
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 #[cfg(all(feature = "http", feature = "websocket"))]
 use std::time::Duration;
 #[cfg(all(feature = "http", feature = "websocket"))]
@@ -103,7 +103,10 @@ async fn test_websocket_basic_connection_and_tool_call() {
         let json: Value = serde_json::from_str(&text).expect("Invalid JSON");
         assert_eq!(json["id"], "init-1");
         assert!(json["result"].is_object());
-        assert_eq!(json["result"]["serverInfo"]["name"], "WebSocket Test Server");
+        assert_eq!(
+            json["result"]["serverInfo"]["name"],
+            "WebSocket Test Server"
+        );
     } else {
         panic!("Expected text message");
     }
@@ -259,8 +262,17 @@ async fn test_websocket_concurrent_connections() {
                 }
             });
 
-            write.send(Message::Text(init.to_string().into())).await.ok();
-            let _ = timeout(Duration::from_secs(2), read.next()).await;
+            write
+                .send(Message::Text(init.to_string().into()))
+                .await
+                .expect("Failed to send init message");
+            // Wait for init response
+            let init_response = timeout(Duration::from_secs(2), read.next())
+                .await
+                .expect("Timeout waiting for init response")
+                .expect("Stream ended unexpectedly")
+                .expect("Failed to read message");
+            assert!(init_response.is_text(), "Init response should be text");
 
             // Call tool
             let call = json!({
@@ -273,7 +285,10 @@ async fn test_websocket_concurrent_connections() {
                 }
             });
 
-            write.send(Message::Text(call.to_string().into())).await.ok();
+            write
+                .send(Message::Text(call.to_string().into()))
+                .await
+                .ok();
 
             let response = timeout(Duration::from_secs(5), read.next())
                 .await
@@ -282,10 +297,12 @@ async fn test_websocket_concurrent_connections() {
             if let Some(Ok(Message::Text(text))) = response {
                 let json: Value = serde_json::from_str(&text).expect("Invalid JSON");
                 assert_eq!(json["id"], format!("call-{}", i));
-                assert!(json["result"]["content"][0]["text"]
-                    .as_str()
-                    .unwrap()
-                    .contains(&format!("client-{}", i)));
+                assert!(
+                    json["result"]["content"][0]["text"]
+                        .as_str()
+                        .unwrap()
+                        .contains(&format!("client-{}", i))
+                );
             }
 
             write.send(Message::Close(None)).await.ok();
@@ -356,7 +373,10 @@ async fn test_websocket_invalid_json_handling() {
         }
     });
 
-    write.send(Message::Text(init.to_string().into())).await.ok();
+    write
+        .send(Message::Text(init.to_string().into()))
+        .await
+        .ok();
 
     let response = timeout(Duration::from_secs(5), read.next())
         .await
@@ -404,7 +424,10 @@ async fn test_websocket_ping_pong_keepalive() {
     let (mut write, mut read) = ws_stream.split();
 
     // Send WebSocket ping frame
-    write.send(Message::Ping(vec![1, 2, 3, 4].into())).await.ok();
+    write
+        .send(Message::Ping(vec![1, 2, 3, 4].into()))
+        .await
+        .ok();
 
     // Expect pong response
     let response = timeout(Duration::from_secs(5), read.next())
@@ -473,7 +496,10 @@ async fn test_websocket_custom_path() {
         }
     });
 
-    write.send(Message::Text(init.to_string().into())).await.ok();
+    write
+        .send(Message::Text(init.to_string().into()))
+        .await
+        .ok();
 
     let response = timeout(Duration::from_secs(5), read.next())
         .await
