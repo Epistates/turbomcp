@@ -142,6 +142,7 @@
 pub mod client;
 pub mod handlers;
 pub mod plugins;
+pub mod prelude;
 pub mod sampling;
 
 // Re-export key types for convenience
@@ -149,10 +150,83 @@ pub use client::{ConnectionInfo, ConnectionState, ManagerConfig, ServerGroup, Se
 
 use std::sync::Arc;
 
-use turbomcp_protocol::{Error, Result};
 use turbomcp_transport::Transport;
 
-// Note: Handler types are now used only in client/operations modules
+// ============================================================================
+// TOP-LEVEL RE-EXPORTS FOR ERGONOMIC IMPORTS
+// ============================================================================
+
+// Result/Error types - re-export from protocol for consistency
+pub use turbomcp_protocol::{Result, Error};
+
+// Handler types (most commonly used)
+pub use handlers::{
+    // Elicitation
+    ElicitationHandler,
+    ElicitationRequest,
+    ElicitationResponse,
+    ElicitationAction,
+    // Progress
+    ProgressHandler,
+    ProgressNotification,
+    // Logging
+    LogHandler,
+    LogMessage,
+    // Resource updates
+    ResourceUpdateHandler,
+    ResourceUpdateNotification,
+    ResourceChangeType,
+    // Roots
+    RootsHandler,
+    // Error handling
+    HandlerError,
+    HandlerResult,
+};
+
+// Sampling types
+pub use sampling::{SamplingHandler, ServerInfo, UserInteractionHandler};
+
+// Plugin system
+pub use plugins::{
+    ClientPlugin,
+    PluginConfig,
+    PluginContext,
+    PluginResult,
+    PluginError,
+    MetricsPlugin,
+    RetryPlugin,
+    CachePlugin,
+};
+
+// Common protocol types
+pub use turbomcp_protocol::types::{
+    Tool,
+    Prompt,
+    Resource,
+    ResourceContents,
+    LogLevel,
+    Content,
+    Role,
+};
+
+// Transport re-exports (with feature gates)
+#[cfg(feature = "stdio")]
+pub use turbomcp_transport::stdio::StdioTransport;
+
+#[cfg(feature = "http")]
+pub use turbomcp_transport::http::{HttpTransport, HttpClientConfig};
+
+#[cfg(feature = "tcp")]
+pub use turbomcp_transport::tcp::{TcpTransport, TcpTransportBuilder};
+
+#[cfg(feature = "unix")]
+pub use turbomcp_transport::unix::{UnixTransport, UnixTransportBuilder};
+
+#[cfg(feature = "websocket")]
+pub use turbomcp_transport::websocket_bidirectional::{
+    WebSocketBidirectionalTransport,
+    WebSocketBidirectionalConfig,
+};
 
 /// Client capability configuration
 ///
@@ -185,6 +259,147 @@ pub struct ClientCapabilities {
 
     /// Whether the client supports sampling
     pub sampling: bool,
+}
+
+impl ClientCapabilities {
+    /// All capabilities enabled (tools, prompts, resources, sampling)
+    ///
+    /// This is the most comprehensive configuration, enabling full MCP protocol support.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_client::ClientCapabilities;
+    ///
+    /// let capabilities = ClientCapabilities::all();
+    /// assert!(capabilities.tools);
+    /// assert!(capabilities.prompts);
+    /// assert!(capabilities.resources);
+    /// assert!(capabilities.sampling);
+    /// ```
+    pub fn all() -> Self {
+        Self {
+            tools: true,
+            prompts: true,
+            resources: true,
+            sampling: true,
+        }
+    }
+
+    /// Core capabilities without sampling (tools, prompts, resources)
+    ///
+    /// This is the recommended default for most applications. It enables
+    /// all standard MCP features except server-initiated sampling requests.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_client::ClientCapabilities;
+    ///
+    /// let capabilities = ClientCapabilities::core();
+    /// assert!(capabilities.tools);
+    /// assert!(capabilities.prompts);
+    /// assert!(capabilities.resources);
+    /// assert!(!capabilities.sampling);
+    /// ```
+    pub fn core() -> Self {
+        Self {
+            tools: true,
+            prompts: true,
+            resources: true,
+            sampling: false,
+        }
+    }
+
+    /// Minimal capabilities (tools only)
+    ///
+    /// Use this for simple tool-calling clients that don't need prompts,
+    /// resources, or sampling support.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_client::ClientCapabilities;
+    ///
+    /// let capabilities = ClientCapabilities::minimal();
+    /// assert!(capabilities.tools);
+    /// assert!(!capabilities.prompts);
+    /// assert!(!capabilities.resources);
+    /// assert!(!capabilities.sampling);
+    /// ```
+    pub fn minimal() -> Self {
+        Self {
+            tools: true,
+            prompts: false,
+            resources: false,
+            sampling: false,
+        }
+    }
+
+    /// Only tools enabled
+    ///
+    /// Same as `minimal()`, provided for clarity.
+    pub fn only_tools() -> Self {
+        Self::minimal()
+    }
+
+    /// Only resources enabled
+    ///
+    /// Use this for resource-focused clients that don't need tools or prompts.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_client::ClientCapabilities;
+    ///
+    /// let capabilities = ClientCapabilities::only_resources();
+    /// assert!(!capabilities.tools);
+    /// assert!(!capabilities.prompts);
+    /// assert!(capabilities.resources);
+    /// ```
+    pub fn only_resources() -> Self {
+        Self {
+            tools: false,
+            prompts: false,
+            resources: true,
+            sampling: false,
+        }
+    }
+
+    /// Only prompts enabled
+    ///
+    /// Use this for prompt-focused clients that don't need tools or resources.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_client::ClientCapabilities;
+    ///
+    /// let capabilities = ClientCapabilities::only_prompts();
+    /// assert!(!capabilities.tools);
+    /// assert!(capabilities.prompts);
+    /// assert!(!capabilities.resources);
+    /// ```
+    pub fn only_prompts() -> Self {
+        Self {
+            tools: false,
+            prompts: true,
+            resources: false,
+            sampling: false,
+        }
+    }
+
+    /// Only sampling enabled
+    ///
+    /// Use this for clients that exclusively handle server-initiated sampling requests.
+    pub fn only_sampling() -> Self {
+        Self {
+            tools: false,
+            prompts: false,
+            resources: false,
+            sampling: true,
+        }
+    }
 }
 
 /// JSON-RPC protocol handler for MCP communication
@@ -726,16 +941,16 @@ impl ClientBuilder {
 
         // Register handlers
         if let Some(handler) = self.elicitation_handler {
-            client.on_elicitation(handler);
+            client.set_elicitation_handler(handler);
         }
         if let Some(handler) = self.progress_handler {
-            client.on_progress(handler);
+            client.set_progress_handler(handler);
         }
         if let Some(handler) = self.log_handler {
-            client.on_log(handler);
+            client.set_log_handler(handler);
         }
         if let Some(handler) = self.resource_update_handler {
-            client.on_resource_update(handler);
+            client.set_resource_update_handler(handler);
         }
 
         // Apply connection configuration (store for future use in actual connections)
@@ -745,16 +960,12 @@ impl ClientBuilder {
         // Register plugins with the client
         let has_plugins = !self.plugins.is_empty();
         for plugin in self.plugins {
-            client.register_plugin(plugin).await.map_err(|e| {
-                Error::bad_request(format!("Failed to register plugin during build: {}", e))
-            })?;
+            client.register_plugin(plugin).await?;
         }
 
         // Initialize plugins after registration
         if has_plugins {
-            client.initialize_plugins().await.map_err(|e| {
-                Error::bad_request(format!("Failed to initialize plugins during build: {}", e))
-            })?;
+            client.initialize_plugins().await?;
         }
 
         Ok(client)
@@ -835,30 +1046,26 @@ impl ClientBuilder {
 
         // Register handlers
         if let Some(handler) = self.elicitation_handler {
-            client.on_elicitation(handler);
+            client.set_elicitation_handler(handler);
         }
         if let Some(handler) = self.progress_handler {
-            client.on_progress(handler);
+            client.set_progress_handler(handler);
         }
         if let Some(handler) = self.log_handler {
-            client.on_log(handler);
+            client.set_log_handler(handler);
         }
         if let Some(handler) = self.resource_update_handler {
-            client.on_resource_update(handler);
+            client.set_resource_update_handler(handler);
         }
 
         // Register plugins
         let has_plugins = !self.plugins.is_empty();
         for plugin in self.plugins {
-            client.register_plugin(plugin).await.map_err(|e| {
-                Error::bad_request(format!("Failed to register plugin during build: {}", e))
-            })?;
+            client.register_plugin(plugin).await?;
         }
 
         if has_plugins {
-            client.initialize_plugins().await.map_err(|e| {
-                Error::bad_request(format!("Failed to initialize plugins during build: {}", e))
-            })?;
+            client.initialize_plugins().await?;
         }
 
         Ok(client)
@@ -892,16 +1099,16 @@ impl ClientBuilder {
 
         // Register synchronous handlers only
         if let Some(handler) = self.elicitation_handler {
-            client.on_elicitation(handler);
+            client.set_elicitation_handler(handler);
         }
         if let Some(handler) = self.progress_handler {
-            client.on_progress(handler);
+            client.set_progress_handler(handler);
         }
         if let Some(handler) = self.log_handler {
-            client.on_log(handler);
+            client.set_log_handler(handler);
         }
         if let Some(handler) = self.resource_update_handler {
-            client.on_resource_update(handler);
+            client.set_resource_update_handler(handler);
         }
 
         client

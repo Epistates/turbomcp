@@ -47,11 +47,11 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// }
     ///
     /// let mut client = Client::new(StdioTransport::new());
-    /// client.on_roots(Arc::new(MyRootsHandler {
+    /// client.set_roots_handler(Arc::new(MyRootsHandler {
     ///     project_dir: "/home/user/projects/myproject".to_string(),
     /// }));
     /// ```
-    pub fn on_roots(&self, handler: Arc<dyn RootsHandler>) {
+    pub fn set_roots_handler(&self, handler: Arc<dyn RootsHandler>) {
         self.inner
             .handlers
             .lock()
@@ -96,9 +96,9 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// }
     ///
     /// let mut client = Client::new(StdioTransport::new());
-    /// client.on_elicitation(Arc::new(MyElicitationHandler));
+    /// client.set_elicitation_handler(Arc::new(MyElicitationHandler));
     /// ```
-    pub fn on_elicitation(&self, handler: Arc<dyn ElicitationHandler>) {
+    pub fn set_elicitation_handler(&self, handler: Arc<dyn ElicitationHandler>) {
         self.inner
             .handlers
             .lock()
@@ -137,9 +137,9 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// }
     ///
     /// let mut client = Client::new(StdioTransport::new());
-    /// client.on_progress(Arc::new(MyProgressHandler));
+    /// client.set_progress_handler(Arc::new(MyProgressHandler));
     /// ```
-    pub fn on_progress(&self, handler: Arc<dyn ProgressHandler>) {
+    pub fn set_progress_handler(&self, handler: Arc<dyn ProgressHandler>) {
         self.inner
             .handlers
             .lock()
@@ -178,9 +178,9 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// }
     ///
     /// let mut client = Client::new(StdioTransport::new());
-    /// client.on_log(Arc::new(MyLogHandler));
+    /// client.set_log_handler(Arc::new(MyLogHandler));
     /// ```
-    pub fn on_log(&self, handler: Arc<dyn LogHandler>) {
+    pub fn set_log_handler(&self, handler: Arc<dyn LogHandler>) {
         self.inner
             .handlers
             .lock()
@@ -222,9 +222,9 @@ impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
     /// }
     ///
     /// let mut client = Client::new(StdioTransport::new());
-    /// client.on_resource_update(Arc::new(MyResourceUpdateHandler));
+    /// client.set_resource_update_handler(Arc::new(MyResourceUpdateHandler));
     /// ```
-    pub fn on_resource_update(&self, handler: Arc<dyn ResourceUpdateHandler>) {
+    pub fn set_resource_update_handler(&self, handler: Arc<dyn ResourceUpdateHandler>) {
         self.inner
             .handlers
             .lock()
