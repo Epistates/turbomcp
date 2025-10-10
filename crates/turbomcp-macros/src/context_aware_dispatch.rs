@@ -289,7 +289,8 @@ pub fn generate_handle_request_with_context(
     // Generate context-aware dispatch cases
     let tool_dispatch_cases = generate_context_aware_tool_dispatch(tool_methods);
     let prompt_dispatch_cases = generate_context_aware_prompt_dispatch(prompt_methods);
-    let resource_dispatch_cases = generate_context_aware_resource_dispatch(resource_methods, &uri_match_fn_name);
+    let resource_dispatch_cases =
+        generate_context_aware_resource_dispatch(resource_methods, &uri_match_fn_name);
 
     quote! {
         /// Handle a JSON-RPC request with full RequestContext

@@ -196,9 +196,7 @@ pub fn generate_bidirectional_wrapper(
 ///
 /// These methods automatically wire up the internal wrapper to enable
 /// complete MCP functionality including server-to-client capabilities.
-pub fn generate_bidirectional_transport_methods(
-    struct_name: &Ident,
-) -> TokenStream {
+pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStream {
     let wrapper_name = format_ident!("{}Bidirectional", struct_name);
 
     quote! {
