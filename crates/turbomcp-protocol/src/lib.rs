@@ -113,7 +113,6 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(
     clippy::module_name_repetitions,
-    clippy::missing_errors_doc,  // Error documentation in progress
     clippy::cast_possible_truncation,  // Intentional in metrics/performance code
     clippy::cast_possible_wrap,  // Intentional in metrics/performance code
     clippy::cast_precision_loss,  // Intentional for f64 metrics

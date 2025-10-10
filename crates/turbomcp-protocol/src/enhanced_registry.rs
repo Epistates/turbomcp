@@ -1,6 +1,6 @@
 //! Advanced registry with MCP protocol handler support and observability.
 //!
-//! This registry **extends** the [Registry] base with:
+//! This registry **extends** the [`crate::registry::Registry`] base with:
 //! - MCP protocol handlers (elicitation, completion, resource templates, ping)
 //! - Handler call statistics (invocation count, duration, errors)
 //! - Capability tracking per handler
@@ -16,7 +16,7 @@
 //!
 //! ## Comparison with Base Registry
 //!
-//! | Feature | [Registry] | `EnhancedRegistry` |
+//! | Feature | [`crate::registry::Registry`] | `EnhancedRegistry` |
 //! |---------|------------|-------------------|
 //! | Component storage | ✅ | ✅ (via base) |
 //! | MCP handlers | ❌ | ✅ |
@@ -26,7 +26,7 @@
 //!
 //! ## Related Registries
 //!
-//! - [Registry] - Base registry (used internally by this one)
+//! - [`crate::registry::Registry`] - Base registry (used internally by this one)
 //! - `turbomcp_server::registry::HandlerRegistry` - Server-specific DashMap-based registry
 
 use dashmap::DashMap;

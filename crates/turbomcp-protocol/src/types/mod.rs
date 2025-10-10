@@ -5,21 +5,21 @@
 //!
 //! # Module Organization
 //!
-//! - [`core`] - Core protocol types and utilities
-//! - [`domain`] - Validated domain types (Uri, MimeType, Base64String)
-//! - [`capabilities`] - Client/server capability negotiation
-//! - [`content`] - Message content types (text, image, audio, resources)
-//! - [`requests`] - Request/response/notification enums
-//! - [`initialization`] - Connection handshake types
-//! - [`tools`] - Tool calling and execution
-//! - [`prompts`] - Prompt templates
-//! - [`resources`] - Resource access and templates
-//! - [`logging`] - Logging and progress tracking
-//! - [`sampling`] - LLM sampling (MCP 2025-06-18)
-//! - [`elicitation`] - User input elicitation (MCP 2025-06-18)
-//! - [`roots`] - Filesystem boundaries (MCP 2025-06-18)
-//! - [`completion`] - Argument autocompletion
-//! - [`ping`] - Connection testing
+//! - [`crate::types::core`] - Core protocol types and utilities
+//! - [`crate::types::domain`] - Validated domain types (Uri, MimeType, Base64String)
+//! - [`crate::types::capabilities`] - Client/server capability negotiation
+//! - [`crate::types::content`] - Message content types (text, image, audio, resources)
+//! - [`crate::types::requests`] - Request/response/notification enums
+//! - [`crate::types::initialization`] - Connection handshake types
+//! - [`crate::types::tools`] - Tool calling and execution
+//! - [`crate::types::prompts`] - Prompt templates
+//! - [`crate::types::resources`] - Resource access and templates
+//! - [`crate::types::logging`] - Logging and progress tracking
+//! - [`crate::types::sampling`] - LLM sampling (MCP 2025-06-18)
+//! - [`crate::types::elicitation`] - User input elicitation (MCP 2025-06-18)
+//! - [`crate::types::roots`] - Filesystem boundaries (MCP 2025-06-18)
+//! - [`crate::types::completion`] - Argument autocompletion
+//! - [`crate::types::ping`] - Connection testing
 
 pub mod capabilities;
 pub mod completion;
