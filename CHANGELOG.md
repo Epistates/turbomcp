@@ -5,6 +5,54 @@ All notable changes to TurboMCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-rc.1] - 2025-10-11
+
+### 🐛 **BUG FIXES**
+
+#### TransportDispatcher Clone Implementation (Critical)
+- **FIXED**: Manual `Clone` implementation for `TransportDispatcher<T>` removing unnecessary `T: Clone` bound
+- **IMPACT**: TCP and Unix Socket transports now compile correctly
+- **ROOT CAUSE**: `#[derive(Clone)]` incorrectly required `T: Clone` when only `Arc<T>` needed cloning
+- **SOLUTION**: Manual implementation clones `Arc<T>` without requiring `T: Clone`
+- **LOCATION**: `crates/turbomcp-server/src/runtime.rs:395-406`
+
+#### SSE Test Conditional Compilation
+- **FIXED**: SSE test functions now correctly handle `#[cfg(feature = "auth")]` conditional compilation
+- **IMPACT**: Tests compile with and without `auth` feature enabled
+- **LOCATION**: `crates/turbomcp/src/sse_server.rs:615,631,656`
+
+#### TCP Client Example Error Handling
+- **FIXED**: Address parsing in TCP client example using `.expect()` instead of `?`
+- **IMPACT**: Example compiles without custom error type conversions
+- **LOCATION**: `crates/turbomcp/examples/tcp_client.rs:28-29`
+
+### 📚 **DOCUMENTATION IMPROVEMENTS**
+
+#### Transport Protocol Clarification
+- **UPDATED**: Main README to distinguish MCP standard transports from custom extensions
+- **CLARIFIED**: STDIO and HTTP/SSE are MCP 2025-06-18 standard transports
+- **CLARIFIED**: TCP, Unix Socket, and WebSocket are MCP-compliant custom extensions
+- **UPDATED**: Transport README with protocol compliance section
+- **UPDATED**: Architecture diagram showing transport categorization
+
+### ✅ **QUALITY ASSURANCE**
+
+**Build Verification**:
+- ✅ All features build successfully (`--all-features`)
+- ✅ TCP transport builds successfully (`--features tcp`)
+- ✅ Unix Socket transport builds successfully (`--features unix`)
+- ✅ All examples compile cleanly
+
+**Test Results**:
+- ✅ 153 tests passed, 0 failed
+- ✅ Zero clippy warnings with `-D warnings`
+- ✅ All code formatted correctly
+
+**MCP Compliance**:
+- ✅ Full MCP 2025-06-18 specification compliance verified
+- ✅ All standard transports (stdio, HTTP/SSE) compliant
+- ✅ Custom transports preserve JSON-RPC and lifecycle requirements
+
 ## [2.0.0-rc] - 2025-10-09
 
 ### 🌟 **RELEASE HIGHLIGHTS**
