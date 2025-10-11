@@ -36,9 +36,10 @@ impl RouteHandler for SimpleRouteHandler {
     }
 }
 
-// Helper to create request context using API
-fn create_test_context() -> RequestContext {
-    RequestContext::new()
+// Helper to create request context using router factory
+// This ensures contexts have server-to-client capabilities configured
+fn create_test_context(router: &RequestRouter) -> RequestContext {
+    router.create_context()
 }
 
 // ============================================================================
@@ -193,7 +194,7 @@ async fn test_route_method_not_found() {
         params: None,
     };
 
-    let ctx = create_test_context();
+    let ctx = create_test_context(&router);
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     assert!(response.error().is_some());
@@ -227,7 +228,7 @@ async fn test_route_initialize_request() {
         })),
     };
 
-    let ctx = create_test_context();
+    let ctx = create_test_context(&router);
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     // Initialize should return a response (either success or error)
@@ -247,7 +248,7 @@ async fn test_route_tools_list_request() {
         params: None,
     };
 
-    let ctx = create_test_context();
+    let ctx = create_test_context(&router);
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     assert!(response.result().is_some() || response.error().is_some());
@@ -275,7 +276,7 @@ async fn test_route_with_validation_disabled() {
         params: Some(json!({"invalid": "structure"})),
     };
 
-    let ctx = create_test_context();
+    let ctx = create_test_context(&router);
     let response = router.route(request, ctx).await;
     // Should not fail on validation since it's disabled
     assert_eq!(response.jsonrpc, JsonRpcVersion);
@@ -358,7 +359,7 @@ async fn test_route_empty_method() {
         params: None,
     };
 
-    let ctx = create_test_context();
+    let ctx = create_test_context(&router);
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     assert!(response.error().is_some()); // Should return method not found
@@ -378,7 +379,7 @@ async fn test_route_very_long_method() {
         params: None,
     };
 
-    let ctx = create_test_context();
+    let ctx = create_test_context(&router);
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     assert!(response.error().is_some()); // Should return method not found
@@ -416,7 +417,7 @@ async fn test_custom_route_integration() {
         params: Some(json!({"test": "data"})),
     };
 
-    let ctx = create_test_context();
+    let ctx = create_test_context(&router);
     let response = router.route(request, ctx).await;
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     // Custom route should either succeed or fail gracefully
@@ -468,7 +469,7 @@ async fn test_router_different_configurations() {
             params: None,
         };
 
-        let ctx = RequestContext::new();
+        let ctx = router.create_context();
 
         let response = router.route(request, ctx).await;
         assert_eq!(response.jsonrpc, JsonRpcVersion);

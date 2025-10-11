@@ -464,9 +464,6 @@ where
                     let stdout = Arc::clone(&stdout);
 
                     tokio::spawn(async move {
-                        // Create request context
-                        let _ctx = RequestContext::new();
-
                         // Handle via bidirectional wrapper
                         let response_value = handler
                             .handle_request(serde_json::to_value(&request).unwrap_or_default())

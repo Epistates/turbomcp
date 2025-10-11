@@ -206,7 +206,8 @@ impl Service<Request<Bytes>> for McpService {
             let parsed = serde_json::from_str::<JsonRpcMessage>(json_str);
             let response_opt = match parsed {
                 Ok(message) => {
-                    let ctx = RequestContext::new().with_metadata("transport", "http");
+                    // Create properly configured context with server-to-client capabilities
+                    let ctx = router.create_context().with_metadata("transport", "http");
 
                     let service = McpService::new(registry, router, metrics);
                     service.process_jsonrpc(message, ctx).await

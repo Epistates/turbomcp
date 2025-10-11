@@ -23,7 +23,7 @@ use bytes::Bytes;
 use http::{Request, Response};
 use tokio::time::{Duration, sleep};
 use turbomcp_transport::core::TransportError;
-use turbomcp_transport::{StdioTransport, Transport};
+use turbomcp_transport::Transport;
 
 use super::shutdown::ShutdownHandle;
 
@@ -416,7 +416,7 @@ impl McpServer {
         service_name = %self.config.name,
         service_version = %self.config.version
     ))]
-    pub async fn run_stdio(self) -> ServerResult<()> {
+    pub async fn run_stdio(mut self) -> ServerResult<()> {
         // For STDIO transport, disable logging unless explicitly overridden
         // STDIO stdout must be reserved exclusively for JSON-RPC messages per MCP protocol
         if should_log_for_stdio() {
@@ -429,20 +429,29 @@ impl McpServer {
 
         self.lifecycle.start().await;
 
-        // Initialize STDIO transport
-        let transport = StdioTransport::new();
-        if let Err(e) = transport.connect().await {
-            if should_log_for_stdio() {
-                tracing::error!(error = %e, "Failed to connect stdio transport");
-            } else {
-                // Critical errors can go to stderr for debugging
-                eprintln!("TurboMCP STDIO transport failed to connect: {}", e);
-            }
-            self.lifecycle.shutdown().await;
-            return Err(e.into());
-        }
+        // BIDIRECTIONAL STDIO SETUP
+        // Create STDIO dispatcher for server-initiated requests (sampling, elicitation, roots, ping)
+        let (request_tx, request_rx) = tokio::sync::mpsc::unbounded_channel();
 
-        self.run_with_transport_stdio_aware(transport).await
+        // Use fully-qualified path to avoid ambiguity with the turbomcp crate's runtime module
+        let dispatcher = crate::runtime::StdioDispatcher::new(request_tx);
+
+        // Configure router's bidirectional support with the STDIO dispatcher
+        // SAFETY: We have &mut self, so we can safely get mutable access to the Arc'd router
+        // This is the CRITICAL STEP that was missing - without this, all server→client requests fail
+        let router = Arc::make_mut(&mut self.router);
+        router.set_server_request_dispatcher(dispatcher.clone());
+
+        // Run STDIO with full bidirectional support (MCP 2025-06-18 compliant)
+        // This uses the bidirectional-aware runtime that handles both:
+        // - Client→Server requests (tools, resources, prompts)
+        // - Server→Client requests (sampling, elicitation, roots, ping)
+        crate::runtime::run_stdio_bidirectional(self.router.clone(), dispatcher, request_rx)
+            .await
+            .map_err(|e| crate::ServerError::Handler {
+                message: format!("STDIO bidirectional runtime failed: {}", e),
+                context: Some("run_stdio".to_string()),
+            })
     }
 
     /// Get health status
@@ -767,7 +776,7 @@ impl McpServer {
         addr = ?addr
     ))]
     pub async fn run_tcp<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
-        self,
+        mut self,
         addr: A,
     ) -> ServerResult<()> {
         use turbomcp_transport::TcpTransport;
@@ -804,7 +813,25 @@ impl McpServer {
             return Err(e.into());
         }
 
-        self.run_with_transport(transport).await
+        // BIDIRECTIONAL TCP SETUP
+        // Create generic transport dispatcher for server-initiated requests
+        let dispatcher = crate::runtime::TransportDispatcher::new(transport);
+
+        // Configure router's bidirectional support with the TCP dispatcher
+        // This enables ctx.elicit(), ctx.create_message(), ctx.list_roots(), etc.
+        let router = Arc::make_mut(&mut self.router);
+        router.set_server_request_dispatcher(dispatcher.clone());
+
+        // Run TCP with full bidirectional support (MCP 2025-06-18 compliant)
+        // This uses the generic bidirectional runtime that handles both:
+        // - Client→Server requests (tools, resources, prompts)
+        // - Server→Client requests (sampling, elicitation, roots, ping)
+        crate::runtime::run_transport_bidirectional(self.router.clone(), dispatcher)
+            .await
+            .map_err(|e| crate::ServerError::Handler {
+                message: format!("TCP bidirectional runtime failed: {}", e),
+                context: Some("run_tcp".to_string()),
+            })
     }
 
     /// Run server with Unix socket transport (progressive enhancement - runtime configuration)
@@ -815,7 +842,7 @@ impl McpServer {
         service_version = %self.config.version,
         path = ?path.as_ref()
     ))]
-    pub async fn run_unix<P: AsRef<std::path::Path>>(self, path: P) -> ServerResult<()> {
+    pub async fn run_unix<P: AsRef<std::path::Path>>(mut self, path: P) -> ServerResult<()> {
         use std::path::PathBuf;
         use turbomcp_transport::UnixTransport;
 
@@ -833,7 +860,25 @@ impl McpServer {
             return Err(e.into());
         }
 
-        self.run_with_transport(transport).await
+        // BIDIRECTIONAL UNIX SOCKET SETUP
+        // Create generic transport dispatcher for server-initiated requests
+        let dispatcher = crate::runtime::TransportDispatcher::new(transport);
+
+        // Configure router's bidirectional support with the Unix socket dispatcher
+        // This enables ctx.elicit(), ctx.create_message(), ctx.list_roots(), etc.
+        let router = Arc::make_mut(&mut self.router);
+        router.set_server_request_dispatcher(dispatcher.clone());
+
+        // Run Unix Socket with full bidirectional support (MCP 2025-06-18 compliant)
+        // This uses the generic bidirectional runtime that handles both:
+        // - Client→Server requests (tools, resources, prompts)
+        // - Server→Client requests (sampling, elicitation, roots, ping)
+        crate::runtime::run_transport_bidirectional(self.router.clone(), dispatcher)
+            .await
+            .map_err(|e| crate::ServerError::Handler {
+                message: format!("Unix socket bidirectional runtime failed: {}", e),
+                context: Some("run_unix".to_string()),
+            })
     }
 
     /// Generic transport runner (DRY principle)
@@ -916,112 +961,6 @@ impl McpServer {
         }
 
         tracing::info!("Server shutdown complete");
-        Ok(())
-    }
-
-    /// STDIO-aware transport runner that respects MCP protocol logging requirements
-    #[tracing::instrument(skip(self, transport), fields(
-        service_name = %self.config.name,
-        service_version = %self.config.version,
-        transport = "stdio"
-    ))]
-    async fn run_with_transport_stdio_aware<T: Transport>(
-        &self,
-        mut transport: T,
-    ) -> ServerResult<()> {
-        // Install signal handlers for graceful shutdown (Ctrl+C / SIGTERM)
-        let lifecycle_for_sigint = self.lifecycle.clone();
-        tokio::spawn(async move {
-            if let Err(e) = tokio::signal::ctrl_c().await {
-                if should_log_for_stdio() {
-                    tracing::warn!(error = %e, "Failed to install Ctrl+C handler");
-                }
-                return;
-            }
-            if should_log_for_stdio() {
-                tracing::info!("Ctrl+C received, initiating shutdown");
-            }
-            lifecycle_for_sigint.shutdown().await;
-        });
-
-        #[cfg(unix)]
-        {
-            let lifecycle_for_sigterm = self.lifecycle.clone();
-            tokio::spawn(async move {
-                use tokio::signal::unix::{SignalKind, signal};
-                match signal(SignalKind::terminate()) {
-                    Ok(mut sigterm) => {
-                        sigterm.recv().await;
-                        if should_log_for_stdio() {
-                            tracing::info!("SIGTERM received, initiating shutdown");
-                        }
-                        lifecycle_for_sigterm.shutdown().await;
-                    }
-                    Err(e) => {
-                        if should_log_for_stdio() {
-                            tracing::warn!(error = %e, "Failed to install SIGTERM handler");
-                        }
-                    }
-                }
-            });
-        }
-
-        // Shutdown signal
-        let mut shutdown = self.lifecycle.shutdown_signal();
-
-        // Main message processing loop
-        loop {
-            tokio::select! {
-                _ = shutdown.recv() => {
-                    if should_log_for_stdio() {
-                        tracing::info!("Shutdown signal received");
-                    }
-                    break;
-                }
-                res = transport.receive() => {
-                    match res {
-                        Ok(Some(message)) => {
-                            if let Err(e) = self.handle_transport_message_stdio_aware(&mut transport, message).await
-                                && should_log_for_stdio() {
-                                    tracing::warn!(error = %e, "Failed to handle transport message");
-                                }
-                        }
-                        Ok(None) => {
-                            // No message available; sleep briefly to avoid busy loop
-                            sleep(Duration::from_millis(5)).await;
-                        }
-                        Err(e) => {
-                            match e {
-                                TransportError::ReceiveFailed(msg) if msg.contains("disconnected") => {
-                                    if should_log_for_stdio() {
-                                        tracing::info!("Transport receive channel disconnected; shutting down");
-                                    }
-                                    break;
-                                }
-                                _ => {
-                                    if should_log_for_stdio() {
-                                        tracing::error!(error = %e, "Transport receive failed");
-                                    }
-                                    // Backoff on errors
-                                    sleep(Duration::from_millis(50)).await;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Disconnect transport
-        if let Err(e) = transport.disconnect().await
-            && should_log_for_stdio()
-        {
-            tracing::warn!(error = %e, "Error while disconnecting transport");
-        }
-
-        if should_log_for_stdio() {
-            tracing::info!("Server shutdown complete");
-        }
         Ok(())
     }
 }

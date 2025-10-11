@@ -127,11 +127,21 @@ impl RequestRouter {
     // Timeout configuration now handled by middleware - no longer needed
 
     /// Set the server request dispatcher for bidirectional communication
+    ///
+    /// CRITICAL: This also refreshes the server_to_client adapter so it sees the new dispatcher.
+    /// Without this refresh, the adapter would still point to the old (empty) bidirectional router.
     pub fn set_server_request_dispatcher<D>(&mut self, dispatcher: D)
     where
         D: ServerRequestDispatcher + 'static,
     {
         self.bidirectional.set_dispatcher(dispatcher);
+
+        // CRITICAL FIX: Recreate the adapter so it sees the new dispatcher
+        // The adapter was created with a clone of bidirectional BEFORE the dispatcher was set.
+        // Since BidirectionalRouter::set_dispatcher() replaces the Option rather than mutating
+        // through it, the adapter's clone still has dispatcher: None.
+        // By recreating it here, we ensure it gets a fresh clone that includes the dispatcher.
+        self.server_to_client = Arc::new(ServerToClientAdapter::new(self.bidirectional.clone()));
     }
 
     /// Get the server request dispatcher
@@ -170,11 +180,42 @@ impl RequestRouter {
         Ok(())
     }
 
+    /// Create a properly configured RequestContext for this router
+    ///
+    /// This factory method creates a RequestContext with all necessary capabilities
+    /// pre-configured, including server-to-client communication for bidirectional
+    /// features (sampling, elicitation, roots).
+    ///
+    /// **Design Pattern**: Explicit Factory
+    /// - Context is valid from creation (no broken intermediate state)
+    /// - Router provides factory but doesn't modify contexts
+    /// - Follows Single Responsibility Principle
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let ctx = router.create_context();
+    /// let response = router.route(request, ctx).await;
+    /// ```
+    #[must_use]
+    pub fn create_context(&self) -> RequestContext {
+        RequestContext::new()
+            .with_server_to_client(Arc::clone(&self.server_to_client))
+    }
+
     /// Route a JSON-RPC request to the appropriate handler
+    ///
+    /// **IMPORTANT**: The context should be created using `create_context()` to ensure
+    /// it has all necessary capabilities configured. This method does NOT modify the
+    /// context - it only routes the request.
+    ///
+    /// # Design Pattern
+    /// This follows the Single Responsibility Principle:
+    /// - `create_context()`: Creates properly configured contexts
+    /// - `route()`: Routes requests to handlers
+    ///
+    /// Previously, `route()` was modifying the context (adding server_to_client),
+    /// which violated SRP and created invalid intermediate states.
     pub async fn route(&self, request: JsonRpcRequest, ctx: RequestContext) -> JsonRpcResponse {
-        // Inject server-to-client capabilities into context for tool-initiated requests
-        // Enables type-safe sampling, elicitation, and roots listing with full context propagation
-        let ctx = ctx.with_server_to_client(Arc::clone(&self.server_to_client));
 
         // Validate request if enabled
         if self.config.validate_requests
@@ -410,9 +451,9 @@ impl turbomcp_protocol::JsonRpcHandler for RequestRouter {
             }
         };
 
-        // Create default context for HTTP requests
-        // Note: For authenticated HTTP requests, middleware should inject auth info
-        let ctx = RequestContext::default();
+        // Create properly configured context with server-to-client capabilities
+        // Note: For authenticated HTTP requests, middleware should add auth info via with_* methods
+        let ctx = self.create_context();
 
         // Route the request through the standard routing system
         let response = self.route(req, ctx).await;

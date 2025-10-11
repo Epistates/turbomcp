@@ -142,6 +142,7 @@ pub mod middleware;
 pub mod observability;
 pub mod registry;
 pub mod routing;
+pub mod runtime;
 pub mod sampling;
 pub mod server;
 pub mod service;
