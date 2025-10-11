@@ -22,8 +22,8 @@ use crate::middleware::MiddlewareStack;
 use bytes::Bytes;
 use http::{Request, Response};
 use tokio::time::{Duration, sleep};
-use turbomcp_transport::core::TransportError;
 use turbomcp_transport::Transport;
+use turbomcp_transport::core::TransportError;
 
 use super::shutdown::ShutdownHandle;
 

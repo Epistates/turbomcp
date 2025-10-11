@@ -198,8 +198,7 @@ impl RequestRouter {
     /// ```
     #[must_use]
     pub fn create_context(&self) -> RequestContext {
-        RequestContext::new()
-            .with_server_to_client(Arc::clone(&self.server_to_client))
+        RequestContext::new().with_server_to_client(Arc::clone(&self.server_to_client))
     }
 
     /// Route a JSON-RPC request to the appropriate handler
@@ -216,7 +215,6 @@ impl RequestRouter {
     /// Previously, `route()` was modifying the context (adding server_to_client),
     /// which violated SRP and created invalid intermediate states.
     pub async fn route(&self, request: JsonRpcRequest, ctx: RequestContext) -> JsonRpcResponse {
-
         // Validate request if enabled
         if self.config.validate_requests
             && let Err(e) = validate_request(&request)

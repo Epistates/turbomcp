@@ -307,7 +307,7 @@ async fn test_route_resource_methods() {
             params: Some(json!({})),
         };
 
-        let ctx = create_test_context();
+        let ctx = create_test_context(&router);
         let response = router.route(request, ctx).await;
         assert_eq!(response.jsonrpc, JsonRpcVersion);
         // Should handle all resource methods
@@ -335,7 +335,7 @@ async fn test_route_logging_and_sampling() {
             params: Some(json!({})),
         };
 
-        let ctx = create_test_context();
+        let ctx = create_test_context(&router);
         let response = router.route(request, ctx).await;
         assert_eq!(response.jsonrpc, JsonRpcVersion);
         assert!(response.result().is_some() || response.error().is_some());
@@ -500,6 +500,10 @@ fn test_simple_route_handler() {
 async fn test_simple_route_handler_handle() {
     let handler = SimpleRouteHandler;
 
+    let registry = Arc::new(HandlerRegistry::new());
+    let metrics = Arc::new(ServerMetrics::new());
+    let router = RequestRouter::new(registry, metrics);
+
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,
         id: RequestId::String("test-123".to_string()),
@@ -507,7 +511,7 @@ async fn test_simple_route_handler_handle() {
         params: None,
     };
 
-    let ctx = create_test_context();
+    let ctx = create_test_context(&router);
     let response = handler.handle(request, ctx).await.unwrap();
     assert_eq!(response.jsonrpc, JsonRpcVersion);
     assert!(response.result().is_some());

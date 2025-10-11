@@ -23,12 +23,12 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
+use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
 use turbomcp_protocol::types::{
     CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsRequest,
     ListRootsResult, PingRequest, PingResult,
 };
-use turbomcp_protocol::RequestContext;
 
 use crate::routing::{RequestRouter, ServerRequestDispatcher};
 use crate::{ServerError, ServerResult};
@@ -165,7 +165,11 @@ impl ServerRequestDispatcher for StdioDispatcher {
         }
     }
 
-    async fn send_ping(&self, _request: PingRequest, _ctx: RequestContext) -> ServerResult<PingResult> {
+    async fn send_ping(
+        &self,
+        _request: PingRequest,
+        _ctx: RequestContext,
+    ) -> ServerResult<PingResult> {
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "ping".to_string(),
@@ -378,15 +382,33 @@ pub async fn run_stdio_bidirectional(
 /// let transport = TcpTransport::new_server(addr);
 /// let dispatcher = TransportDispatcher::new(transport);
 /// ```
-#[derive(Clone)]
-pub struct TransportDispatcher<T> where T: turbomcp_transport::Transport {
+pub struct TransportDispatcher<T>
+where
+    T: turbomcp_transport::Transport,
+{
     /// The underlying transport
     transport: Arc<T>,
     /// Pending server-initiated requests awaiting responses
     pending_requests: Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse>>>>,
 }
 
-impl<T> std::fmt::Debug for TransportDispatcher<T> where T: turbomcp_transport::Transport {
+// Manual Clone implementation: Arc cloning doesn't require T: Clone
+impl<T> Clone for TransportDispatcher<T>
+where
+    T: turbomcp_transport::Transport,
+{
+    fn clone(&self) -> Self {
+        Self {
+            transport: Arc::clone(&self.transport),
+            pending_requests: Arc::clone(&self.pending_requests),
+        }
+    }
+}
+
+impl<T> std::fmt::Debug for TransportDispatcher<T>
+where
+    T: turbomcp_transport::Transport,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TransportDispatcher")
             .field("transport_type", &self.transport.transport_type())
@@ -395,7 +417,10 @@ impl<T> std::fmt::Debug for TransportDispatcher<T> where T: turbomcp_transport::
     }
 }
 
-impl<T> TransportDispatcher<T> where T: turbomcp_transport::Transport {
+impl<T> TransportDispatcher<T>
+where
+    T: turbomcp_transport::Transport,
+{
     /// Create a new transport dispatcher
     pub fn new(transport: T) -> Self {
         Self {
@@ -436,10 +461,13 @@ impl<T> TransportDispatcher<T> where T: turbomcp_transport::Transport {
             TransportMessageMetadata::with_content_type("application/json"),
         );
 
-        self.transport.send(transport_msg).await.map_err(|e| ServerError::Handler {
-            message: format!("Failed to send request via transport: {}", e),
-            context: Some("transport_dispatcher".to_string()),
-        })?;
+        self.transport
+            .send(transport_msg)
+            .await
+            .map_err(|e| ServerError::Handler {
+                message: format!("Failed to send request via transport: {}", e),
+                context: Some("transport_dispatcher".to_string()),
+            })?;
 
         // Wait for response with timeout (60 seconds per MCP recommendation)
         match tokio::time::timeout(tokio::time::Duration::from_secs(60), response_rx).await {
@@ -465,7 +493,9 @@ impl<T> TransportDispatcher<T> where T: turbomcp_transport::Transport {
     }
 
     /// Get access to pending requests for response correlation
-    pub fn pending_requests(&self) -> Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse>>>> {
+    pub fn pending_requests(
+        &self,
+    ) -> Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse>>>> {
         Arc::clone(&self.pending_requests)
     }
 
@@ -517,7 +547,11 @@ where
         }
     }
 
-    async fn send_ping(&self, _request: PingRequest, _ctx: RequestContext) -> ServerResult<PingResult> {
+    async fn send_ping(
+        &self,
+        _request: PingRequest,
+        _ctx: RequestContext,
+    ) -> ServerResult<PingResult> {
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "ping".to_string(),
@@ -684,7 +718,9 @@ where
 
                         // Send response back via transport
                         if let Ok(json) = serde_json::to_vec(&response) {
-                            use turbomcp_transport::{TransportMessage, core::TransportMessageMetadata};
+                            use turbomcp_transport::{
+                                TransportMessage, core::TransportMessageMetadata,
+                            };
                             let transport_msg = TransportMessage::with_metadata(
                                 MessageId::Uuid(uuid::Uuid::new_v4()),
                                 bytes::Bytes::from(json),
