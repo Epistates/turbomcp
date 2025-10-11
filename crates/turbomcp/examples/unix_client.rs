@@ -14,7 +14,8 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use turbomcp_client::prelude::*;
+use turbomcp_client::{Client, Result};
+use turbomcp_transport::UnixTransport;
 
 #[tokio::main]
 async fn main() -> Result<()> {

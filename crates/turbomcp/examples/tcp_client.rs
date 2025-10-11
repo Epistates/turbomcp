@@ -13,7 +13,8 @@
 //! ```
 
 use std::collections::HashMap;
-use turbomcp_client::prelude::*;
+use turbomcp_client::{Client, Result};
+use turbomcp_transport::TcpTransport;
 
 #[tokio::main]
 async fn main() -> Result<()> {

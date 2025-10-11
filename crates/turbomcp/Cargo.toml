@@ -153,6 +153,24 @@ required-features = ["http"]
 name = "openai_integration"
 required-features = ["http"]
 
+# TCP transport examples
+[[example]]
+name = "tcp_client"
+required-features = ["tcp"]
+
+[[example]]
+name = "tcp_server"
+required-features = ["tcp"]
+
+# Unix socket transport examples
+[[example]]
+name = "unix_client"
+required-features = ["unix"]
+
+[[example]]
+name = "unix_server"
+required-features = ["unix"]
+
 [features]
 default = ["stdio"]  # 2.0.0 BREAKING: Minimal by default. Use features = ["full"] for 1.x behavior
 
