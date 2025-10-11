@@ -377,8 +377,11 @@ pub async fn run_stdio_bidirectional(
 /// stdin/stdout, this uses the Transport trait's `send()` and `receive()` methods.
 ///
 /// **Usage**:
-/// ```rust,no_run
+/// ```rust,ignore
 /// use turbomcp_transport::TcpTransport;
+/// use turbomcp_server::runtime::TransportDispatcher;
+///
+/// let addr = "127.0.0.1:8080".parse().unwrap();
 /// let transport = TcpTransport::new_server(addr);
 /// let dispatcher = TransportDispatcher::new(transport);
 /// ```
@@ -668,10 +671,18 @@ where
 /// - Correlation: matches responses to pending requests
 ///
 /// **Usage**:
-/// ```rust,no_run
+/// ```rust,ignore
+/// use std::sync::Arc;
 /// use turbomcp_transport::TcpTransport;
+/// use turbomcp_server::runtime::{TransportDispatcher, run_transport_bidirectional};
+/// use turbomcp_server::routing::RequestRouter;
+///
+/// let addr = "127.0.0.1:8080".parse().unwrap();
 /// let transport = TcpTransport::new_server(addr);
-/// let dispatcher = TransportDispatcher::new(transport.clone());
+/// let dispatcher = TransportDispatcher::new(transport);
+/// let router = Arc::new(RequestRouter::new());
+///
+/// // In async context:
 /// run_transport_bidirectional(router, dispatcher).await?;
 /// ```
 pub async fn run_transport_bidirectional<T>(
