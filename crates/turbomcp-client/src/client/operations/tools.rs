@@ -11,7 +11,7 @@ use turbomcp_protocol::{Error, Result};
 
 use crate::with_plugins;
 
-impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
+impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// List all available tools from the MCP server
     ///
     /// Returns complete tool definitions with schemas that can be used

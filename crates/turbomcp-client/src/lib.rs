@@ -935,7 +935,7 @@ impl ClientBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn build<T: Transport>(self, transport: T) -> Result<Client<T>> {
+    pub async fn build<T: Transport + 'static>(self, transport: T) -> Result<Client<T>> {
         // Create base client with capabilities
         let client = Client::with_capabilities(transport, self.capabilities);
 
@@ -1094,7 +1094,7 @@ impl ClientBuilder {
     ///     .with_tools(true)
     ///     .build_sync(StdioTransport::new());
     /// ```
-    pub fn build_sync<T: Transport>(self, transport: T) -> Client<T> {
+    pub fn build_sync<T: Transport + 'static>(self, transport: T) -> Client<T> {
         let client = Client::with_capabilities(transport, self.capabilities);
 
         // Register synchronous handlers only

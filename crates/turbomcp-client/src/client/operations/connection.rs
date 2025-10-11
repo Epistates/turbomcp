@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 use turbomcp_protocol::types::{LogLevel, PingResult, SetLevelRequest, SetLevelResult};
 use turbomcp_protocol::{Error, Result};
 
-impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
+impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// Send a ping request to check server health and connectivity
     ///
     /// Sends a ping request to the server to verify the connection is active

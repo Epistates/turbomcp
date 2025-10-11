@@ -8,7 +8,7 @@ use crate::handlers::{
 };
 use std::sync::Arc;
 
-impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
+impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// Register a roots handler for responding to server filesystem root requests
     ///
     /// Roots handlers respond to `roots/list` requests from servers (SERVER->CLIENT).

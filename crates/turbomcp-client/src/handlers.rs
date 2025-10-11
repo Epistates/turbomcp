@@ -618,6 +618,21 @@ impl HandlerRegistry {
         self.resource_update.is_some()
     }
 
+    /// Get the progress handler if registered
+    pub fn get_progress_handler(&self) -> Option<Arc<dyn ProgressHandler>> {
+        self.progress.clone()
+    }
+
+    /// Get the log handler if registered
+    pub fn get_log_handler(&self) -> Option<Arc<dyn LogHandler>> {
+        self.log.clone()
+    }
+
+    /// Get the resource update handler if registered
+    pub fn get_resource_update_handler(&self) -> Option<Arc<dyn ResourceUpdateHandler>> {
+        self.resource_update.clone()
+    }
+
     /// Handle a roots/list request from the server
     pub async fn handle_roots_request(&self) -> HandlerResult<Vec<turbomcp_protocol::types::Root>> {
         match &self.roots {

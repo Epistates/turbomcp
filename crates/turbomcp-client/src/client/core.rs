@@ -37,7 +37,7 @@ use crate::{ClientCapabilities, handlers::HandlerRegistry, sampling::SamplingHan
 ///
 /// This structure contains the actual client state and is wrapped in Arc<...>
 /// to enable cheap cloning (same pattern as reqwest and AWS SDK).
-pub(super) struct ClientInner<T: Transport> {
+pub(super) struct ClientInner<T: Transport + 'static> {
     /// Protocol client for low-level communication
     pub(super) protocol: ProtocolClient<T>,
 
@@ -119,7 +119,7 @@ pub(super) struct ClientInner<T: Transport> {
 /// # Ok(())
 /// # }
 /// ```
-pub struct Client<T: Transport> {
+pub struct Client<T: Transport + 'static> {
     pub(super) inner: Arc<ClientInner<T>>,
 }
 
@@ -127,7 +127,7 @@ pub struct Client<T: Transport> {
 ///
 /// Cloning a Client is cheap (just an Arc clone) and all clones share
 /// the same underlying connection and state.
-impl<T: Transport> Clone for Client<T> {
+impl<T: Transport + 'static> Clone for Client<T> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -135,7 +135,16 @@ impl<T: Transport> Clone for Client<T> {
     }
 }
 
-impl<T: Transport> Client<T> {
+impl<T: Transport + 'static> Drop for ClientInner<T> {
+    fn drop(&mut self) {
+        // Shutdown the dispatcher's background task when the LAST Client reference is dropped
+        // This prevents the background task from running forever after all clients are dropped
+        tracing::debug!("Last Client reference dropped - shutting down message dispatcher");
+        self.protocol.dispatcher().shutdown();
+    }
+}
+
+impl<T: Transport + 'static> Client<T> {
     /// Create a new client with the specified transport
     ///
     /// Creates a new MCP client instance with default capabilities.
@@ -155,7 +164,7 @@ impl<T: Transport> Client<T> {
     /// let client = Client::new(transport);
     /// ```
     pub fn new(transport: T) -> Self {
-        Self {
+        let client = Self {
             inner: Arc::new(ClientInner {
                 protocol: ProtocolClient::new(transport),
                 capabilities: ClientCapabilities::default(),
@@ -166,7 +175,12 @@ impl<T: Transport> Client<T> {
                     crate::plugins::PluginRegistry::new(),
                 )),
             }),
-        }
+        };
+
+        // Register dispatcher handlers for bidirectional communication
+        client.register_dispatcher_handlers();
+
+        client
     }
 
     /// Create a new client with custom capabilities
@@ -193,7 +207,7 @@ impl<T: Transport> Client<T> {
     /// let client = Client::with_capabilities(transport, capabilities);
     /// ```
     pub fn with_capabilities(transport: T, capabilities: ClientCapabilities) -> Self {
-        Self {
+        let client = Self {
             inner: Arc::new(ClientInner {
                 protocol: ProtocolClient::new(transport),
                 capabilities,
@@ -204,7 +218,12 @@ impl<T: Transport> Client<T> {
                     crate::plugins::PluginRegistry::new(),
                 )),
             }),
-        }
+        };
+
+        // Register dispatcher handlers for bidirectional communication
+        client.register_dispatcher_handlers();
+
+        client
     }
 }
 
@@ -430,74 +449,62 @@ impl Client<turbomcp_transport::unix::UnixTransport> {
     }
 }
 
-impl<T: Transport> Client<T> {
-    /// Process incoming messages from the server
+impl<T: Transport + 'static> Client<T> {
+    /// Register message handlers with the dispatcher
     ///
-    /// This method should be called in a loop to handle server-initiated requests
-    /// like sampling. It processes one message at a time.
+    /// This method sets up the callbacks that handle server-initiated requests
+    /// and notifications. The dispatcher's background task routes incoming
+    /// messages to these handlers.
     ///
-    /// # Returns
+    /// This is called automatically during Client construction (in `new()` and
+    /// `with_capabilities()`), so you don't need to call it manually.
     ///
-    /// Returns `Ok(true)` if a message was processed, `Ok(false)` if no message was available.
+    /// ## How It Works
     ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use turbomcp_client::Client;
-    /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # async fn example() -> turbomcp_protocol::Result<()> {
-    /// let mut client = Client::new(StdioTransport::new());
-    ///
-    /// // Process messages in background
-    /// tokio::spawn(async move {
-    ///     loop {
-    ///         if let Err(e) = client.process_message().await {
-    ///             eprintln!("Error processing message: {}", e);
-    ///         }
-    ///     }
-    /// });
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn process_message(&self) -> Result<bool> {
-        // Try to receive a message without blocking
-        let message = match self.inner.protocol.transport().receive().await {
-            Ok(Some(msg)) => msg,
-            Ok(None) => return Ok(false),
-            Err(e) => {
-                return Err(Error::transport(format!(
-                    "Failed to receive message: {}",
-                    e
-                )));
-            }
-        };
+    /// The handlers are synchronous closures that spawn async tasks to do the
+    /// actual work. This allows the dispatcher to continue routing messages
+    /// without blocking on handler execution.
+    fn register_dispatcher_handlers(&self) {
+        let dispatcher = self.inner.protocol.dispatcher();
+        let client_for_requests = self.clone();
+        let client_for_notifications = self.clone();
 
-        // Parse as JSON-RPC message
-        let json_msg: JsonRpcMessage = serde_json::from_slice(&message.payload)
-            .map_err(|e| Error::protocol(format!("Invalid JSON-RPC message: {}", e)))?;
+        // Request handler (elicitation, sampling, etc.)
+        let request_handler = Arc::new(move |request: JsonRpcRequest| {
+            let client = client_for_requests.clone();
+            // Spawn async task to handle the request
+            tokio::spawn(async move {
+                if let Err(e) = client.handle_request(request).await {
+                    tracing::error!("Error handling server request: {}", e);
+                }
+            });
+            Ok(())
+        });
 
-        match json_msg {
-            JsonRpcMessage::Request(request) => {
-                self.handle_request(request).await?;
-                Ok(true)
-            }
-            JsonRpcMessage::Response(_) => {
-                // Responses are handled by the protocol client during request/response flow
-                Ok(true)
-            }
-            JsonRpcMessage::Notification(notification) => {
-                self.handle_notification(notification).await?;
-                Ok(true)
-            }
-            JsonRpcMessage::RequestBatch(_)
-            | JsonRpcMessage::ResponseBatch(_)
-            | JsonRpcMessage::MessageBatch(_) => {
-                // Batch operations not yet supported
-                Ok(true)
-            }
-        }
+        // Notification handler
+        let notification_handler = Arc::new(move |notification: JsonRpcNotification| {
+            let client = client_for_notifications.clone();
+            // Spawn async task to handle the notification
+            tokio::spawn(async move {
+                if let Err(e) = client.handle_notification(notification).await {
+                    tracing::error!("Error handling server notification: {}", e);
+                }
+            });
+            Ok(())
+        });
+
+        // Register handlers synchronously - no race condition!
+        // The set_* methods are now synchronous with std::sync::Mutex
+        dispatcher.set_request_handler(request_handler);
+        dispatcher.set_notification_handler(notification_handler);
+        tracing::debug!("Dispatcher handlers registered successfully");
     }
 
+    /// Handle server-initiated requests (elicitation, sampling, roots)
+    ///
+    /// This method is called by the MessageDispatcher when it receives a request
+    /// from the server. It routes the request to the appropriate handler based on
+    /// the method name.
     async fn handle_request(&self, request: JsonRpcRequest) -> Result<()> {
         match request.method.as_str() {
             "sampling/createMessage" => {
@@ -543,6 +550,47 @@ impl<T: Transport> Client<T> {
                     self.send_response(response).await?;
                 }
             }
+            "roots/list" => {
+                // Handle roots/list request from server
+                // Clone the handler Arc to avoid holding mutex across await
+                let handler_opt = self
+                    .inner
+                    .handlers
+                    .lock()
+                    .expect("handlers mutex poisoned")
+                    .roots
+                    .clone();
+
+                let roots_result = if let Some(handler) = handler_opt {
+                    handler.handle_roots_request().await
+                } else {
+                    // No handler - return empty list per MCP spec
+                    Ok(Vec::new())
+                };
+
+                match roots_result {
+                    Ok(roots) => {
+                        let result_value = serde_json::to_value(turbomcp_protocol::types::ListRootsResult {
+                            roots,
+                            _meta: None,
+                        })
+                        .map_err(|e| {
+                            Error::protocol(format!("Failed to serialize roots response: {}", e))
+                        })?;
+                        let response = JsonRpcResponse::success(result_value, request.id);
+                        self.send_response(response).await?;
+                    }
+                    Err(e) => {
+                        let error = turbomcp_protocol::jsonrpc::JsonRpcError {
+                            code: -32603,
+                            message: format!("Roots handler error: {}", e),
+                            data: None,
+                        };
+                        let response = JsonRpcResponse::error_response(error, request.id);
+                        self.send_response(response).await?;
+                    }
+                }
+            }
             "elicitation/create" => {
                 // Clone handler Arc before await to avoid holding mutex across await
                 let handler_opt = self
@@ -553,15 +601,28 @@ impl<T: Transport> Client<T> {
                     .elicitation
                     .clone();
                 if let Some(handler) = handler_opt {
-                    // Parse elicitation request params
-                    let params: crate::handlers::ElicitationRequest =
+                    // Parse elicitation request params as MCP protocol type
+                    let mcp_request: turbomcp_protocol::types::ElicitRequest =
                         serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
                             .map_err(|e| {
                             Error::protocol(format!("Invalid elicitation params: {}", e))
                         })?;
 
+                    // Convert MCP protocol type to handler type
+                    // The id comes from the JSON-RPC envelope, not the params
+                    let handler_request = crate::handlers::ElicitationRequest {
+                        id: request.id.to_string(),
+                        prompt: mcp_request.params.message,
+                        schema: serde_json::to_value(&mcp_request.params.schema)
+                            .map_err(|e| {
+                                Error::protocol(format!("Failed to serialize schema: {}", e))
+                            })?,
+                        timeout: mcp_request.params.timeout_ms.map(|ms| (ms / 1000) as u64),
+                        metadata: std::collections::HashMap::new(),
+                    };
+
                     // Call the registered elicitation handler
-                    match handler.handle_elicitation(params).await {
+                    match handler.handle_elicitation(handler_request).await {
                         Ok(elicit_response) => {
                             let result_value =
                                 serde_json::to_value(elicit_response).map_err(|e| {
@@ -625,9 +686,107 @@ impl<T: Transport> Client<T> {
         Ok(())
     }
 
-    async fn handle_notification(&self, _notification: JsonRpcNotification) -> Result<()> {
-        // Handle notifications if needed
-        // Currently MCP doesn't define client-side notifications
+    /// Handle server-initiated notifications
+    ///
+    /// Routes notifications to appropriate handlers based on method name.
+    /// MCP defines several notification types that servers can send to clients:
+    ///
+    /// - `notifications/progress` - Progress updates for long-running operations
+    /// - `notifications/message` - Log messages from server
+    /// - `notifications/resources/updated` - Resource content changed
+    /// - `notifications/resources/list_changed` - Resource list changed
+    async fn handle_notification(&self, notification: JsonRpcNotification) -> Result<()> {
+        match notification.method.as_str() {
+            "notifications/progress" => {
+                // Route to progress handler
+                let handler_opt = self
+                    .inner
+                    .handlers
+                    .lock()
+                    .expect("handlers mutex poisoned")
+                    .get_progress_handler();
+
+                if let Some(handler) = handler_opt {
+                    // Parse progress notification
+                    let progress: crate::handlers::ProgressNotification =
+                        serde_json::from_value(notification.params.unwrap_or(serde_json::Value::Null))
+                            .map_err(|e| {
+                                Error::protocol(format!("Invalid progress notification: {}", e))
+                            })?;
+
+                    // Call handler (errors are logged but don't fail the flow)
+                    if let Err(e) = handler.handle_progress(progress).await {
+                        tracing::error!("Progress handler error: {}", e);
+                    }
+                } else {
+                    tracing::debug!("Received progress notification but no handler registered");
+                }
+            }
+
+            "notifications/message" => {
+                // Route to log handler
+                let handler_opt = self
+                    .inner
+                    .handlers
+                    .lock()
+                    .expect("handlers mutex poisoned")
+                    .get_log_handler();
+
+                if let Some(handler) = handler_opt {
+                    // Parse log message
+                    let log: crate::handlers::LogMessage =
+                        serde_json::from_value(notification.params.unwrap_or(serde_json::Value::Null))
+                            .map_err(|e| {
+                                Error::protocol(format!("Invalid log notification: {}", e))
+                            })?;
+
+                    // Call handler
+                    if let Err(e) = handler.handle_log(log).await {
+                        tracing::error!("Log handler error: {}", e);
+                    }
+                } else {
+                    tracing::debug!("Received log notification but no handler registered");
+                }
+            }
+
+            "notifications/resources/updated" => {
+                // Route to resource update handler
+                let handler_opt = self
+                    .inner
+                    .handlers
+                    .lock()
+                    .expect("handlers mutex poisoned")
+                    .get_resource_update_handler();
+
+                if let Some(handler) = handler_opt {
+                    // Parse resource update notification
+                    let update: crate::handlers::ResourceUpdateNotification =
+                        serde_json::from_value(notification.params.unwrap_or(serde_json::Value::Null))
+                            .map_err(|e| {
+                                Error::protocol(format!("Invalid resource update notification: {}", e))
+                            })?;
+
+                    // Call handler
+                    if let Err(e) = handler.handle_resource_update(update).await {
+                        tracing::error!("Resource update handler error: {}", e);
+                    }
+                } else {
+                    tracing::debug!("Received resource update notification but no handler registered");
+                }
+            }
+
+            "notifications/resources/list_changed" => {
+                // Resource list changed notification
+                // Currently no specific handler for this, but log it
+                tracing::debug!("Resource list changed notification received");
+            }
+
+            _ => {
+                // Unknown notification type
+                tracing::debug!("Received unknown notification: {}", notification.method);
+            }
+        }
+
         Ok(())
     }
 

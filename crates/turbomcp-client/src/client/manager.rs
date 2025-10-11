@@ -116,7 +116,7 @@ impl ManagerConfig {
 }
 
 /// Managed connection wrapper
-struct ManagedConnection<T: Transport> {
+struct ManagedConnection<T: Transport + 'static> {
     client: Client<T>,
     info: ConnectionInfo,
     /// Number of reconnection attempts (reserved for future reconnection logic)

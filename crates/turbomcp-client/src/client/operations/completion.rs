@@ -12,7 +12,7 @@ use turbomcp_protocol::{Error, Result};
 
 use crate::with_plugins;
 
-impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
+impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// Internal helper for completion operations - DRYed up common logic
     async fn complete_internal(
         &self,

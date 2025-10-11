@@ -486,31 +486,14 @@ println!("Server responded: {:?}", ping_result);
 use turbomcp_client::Client;
 use turbomcp_transport::stdio::StdioTransport;
 
+// Create and initialize client
 let client = Client::new(StdioTransport::new());
 client.initialize().await?;
 
-// Spawn background task to process server messages
-let client_clone = client.clone();  // Cheap Arc clone
-tokio::spawn(async move {
-    loop {
-        match client_clone.process_message().await {
-            Ok(processed) => {
-                if processed {
-                    // Message was processed
-                } else {
-                    // No message available, sleep briefly
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-            }
-            Err(e) => {
-                eprintln!("Error processing message: {}", e);
-                break;
-            }
-        }
-    }
-});
+// Message processing is automatic! The MessageDispatcher runs in the background.
+// No need for manual message loops - just use the client directly.
 
-// Main thread continues with normal operations
+// Perform operations - bidirectional communication works automatically
 let tools = client.list_tools().await?;
 ```
 

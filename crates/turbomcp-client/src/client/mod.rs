@@ -5,6 +5,7 @@
 //!
 //! - `core`: Main `Client<T>` implementation and connection management
 //! - `protocol`: ProtocolClient for JSON-RPC communication
+//! - `dispatcher`: Message routing for bidirectional communication
 //! - `config`: Configuration types and utilities
 //! - `builder`: ClientBuilder pattern for construction
 //! - `operations`: MCP operations (tools, resources, prompts, etc.)
@@ -15,6 +16,7 @@
 // Core modules
 pub mod config;
 pub mod core;
+pub mod dispatcher;
 pub mod manager;
 pub mod operations;
 pub mod protocol;

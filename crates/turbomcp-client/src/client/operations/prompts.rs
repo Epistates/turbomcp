@@ -10,7 +10,7 @@ use turbomcp_protocol::types::{
 };
 use turbomcp_protocol::{Error, Result};
 
-impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
+impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// List available prompt templates from the server
     ///
     /// Retrieves the complete list of prompt templates that the server provides,

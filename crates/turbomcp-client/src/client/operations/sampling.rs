@@ -13,7 +13,7 @@ use crate::sampling::SamplingHandler;
 use std::sync::Arc;
 use turbomcp_protocol::types::SamplingCapabilities;
 
-impl<T: turbomcp_transport::Transport> super::super::core::Client<T> {
+impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// Set the sampling handler for processing server-initiated sampling requests
     ///
     /// Registers a handler that can process LLM sampling requests from the server.
