@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **IMPACT**: Example compiles without custom error type conversions
 - **LOCATION**: `crates/turbomcp/examples/tcp_client.rs:28-29`
 
+#### TCP/Unix Client Example Imports and Feature Gates
+- **FIXED**: Import transport types directly from `turbomcp_transport`
+- **FIXED**: Added `required-features` declarations for TCP/Unix examples
+- **ROOT CAUSE**: Examples compiled without features, `turbomcp::prelude` guards exports with `#[cfg(feature)]`
+- **SOLUTION 1**: Import directly from `turbomcp_transport` (always available)
+- **SOLUTION 2**: Add `required-features` to skip examples when features disabled
+- **IMPACT**: Examples only compile when features enabled, preventing feature mismatch errors
+- **LOCATION**: `crates/turbomcp/examples/{tcp_client.rs:16-17, unix_client.rs:17-18}`, `Cargo.toml:157-172`
+
 ### 📚 **DOCUMENTATION IMPROVEMENTS**
 
 #### Transport Protocol Clarification
@@ -132,16 +141,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ENHANCED**: Session management with improved analytics and cleanup
 - **REFINED**: Error handling with comprehensive context preservation
 
-### 📚 **DOCUMENTATION**
-- **NEW**: `2.0.0-RELEASE-READY.md` - Complete release readiness report
-- **NEW**: `SECURITY-AUDIT-2.0.0.md` - Security audit findings and mitigations
-- **NEW**: `SECURITY-DEPENDENCY-ANALYSIS.md` - Deep dependency analysis
-- **NEW**: `RBAC-REMOVAL-SUMMARY.md` - RBAC migration guide with examples
-- **NEW**: `2.0.0-CLEAN-ARCHITECTURE.md` - Architecture overview
-- **UPDATED**: All crate READMEs with 2.0.0 examples and features
-- **ENHANCED**: Module-level documentation across decomposed modules
-- **IMPROVED**: Inline documentation with comprehensive examples
-- **ADDED**: Zero-copy message processing documentation and usage guidelines
 
 ### 🔧 **INTERNAL IMPROVEMENTS**
 - **CLEANED**: Removed obsolete tests and legacy code
@@ -274,7 +273,7 @@ See `MIGRATION.md` for complete upgrade guide.
 - **ENHANCED**: API documentation with advanced usage patterns
 - **IMPROVED**: WebSocket transport examples with real-world patterns
 
-## [1.0.13] - 2024-12-23
+## [1.0.13] - Never released
 
 ### 🔒 **SECURITY HARDENING - ZERO VULNERABILITIES ACHIEVED**
 - **ELIMINATED**: RSA Marvin Attack vulnerability (`RUSTSEC-2023-0071`) through strategic `sqlx` removal
