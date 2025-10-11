@@ -4,7 +4,8 @@
 //! that process server-initiated operations and notifications.
 
 use crate::handlers::{
-    ElicitationHandler, LogHandler, ProgressHandler, ResourceUpdateHandler, RootsHandler,
+    CancellationHandler, ElicitationHandler, LogHandler, ProgressHandler, PromptListChangedHandler,
+    ResourceListChangedHandler, ResourceUpdateHandler, RootsHandler, ToolListChangedHandler,
 };
 use std::sync::Arc;
 
@@ -88,10 +89,9 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     ///         &self,
     ///         request: ElicitationRequest,
     ///     ) -> HandlerResult<ElicitationResponse> {
-    ///         Ok(ElicitationResponse {
-    ///             action: ElicitationAction::Accept,
-    ///             content: Some(json!({"user_input": "example"})),
-    ///         })
+    ///         let mut content = std::collections::HashMap::new();
+    ///         content.insert("user_input".to_string(), json!("example"));
+    ///         Ok(ElicitationResponse::accept(content))
     ///     }
     /// }
     ///
@@ -161,7 +161,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     ///
     /// ```rust,no_run
     /// use turbomcp_client::Client;
-    /// use turbomcp_client::handlers::{LogHandler, LogMessage, HandlerResult};
+    /// use turbomcp_client::handlers::{LogHandler, LoggingNotification, HandlerResult};
     /// use turbomcp_transport::stdio::StdioTransport;
     /// use async_trait::async_trait;
     /// use std::sync::Arc;
@@ -171,8 +171,8 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     ///
     /// #[async_trait]
     /// impl LogHandler for MyLogHandler {
-    ///     async fn handle_log(&self, log: LogMessage) -> HandlerResult<()> {
-    ///         println!("Server log: {}", log.message);
+    ///     async fn handle_log(&self, log: LoggingNotification) -> HandlerResult<()> {
+    ///         println!("Server log: {}", log.data);
     ///         Ok(())
     ///     }
     /// }
@@ -202,7 +202,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     ///
     /// ```rust,no_run
     /// use turbomcp_client::Client;
-    /// use turbomcp_client::handlers::{ResourceUpdateHandler, ResourceUpdateNotification, HandlerResult};
+    /// use turbomcp_client::handlers::{ResourceUpdateHandler, ResourceUpdatedNotification, HandlerResult};
     /// use turbomcp_transport::stdio::StdioTransport;
     /// use async_trait::async_trait;
     /// use std::sync::Arc;
@@ -214,7 +214,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// impl ResourceUpdateHandler for MyResourceUpdateHandler {
     ///     async fn handle_resource_update(
     ///         &self,
-    ///         notification: ResourceUpdateNotification,
+    ///         notification: ResourceUpdatedNotification,
     ///     ) -> HandlerResult<()> {
     ///         println!("Resource updated: {}", notification.uri);
     ///         Ok(())
@@ -230,6 +230,67 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             .lock()
             .expect("handlers mutex poisoned")
             .set_resource_update_handler(handler);
+    }
+
+    /// Register a cancellation handler for processing cancellation notifications
+    ///
+    /// Per MCP 2025-06-18 specification, cancellation notifications can be sent
+    /// by the server to indicate that a previously-issued request is being cancelled.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The cancellation handler implementation
+    pub fn set_cancellation_handler(&self, handler: Arc<dyn CancellationHandler>) {
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .set_cancellation_handler(handler);
+    }
+
+    /// Register a resource list changed handler
+    ///
+    /// This handler is called when the server's available resource list changes.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The resource list changed handler implementation
+    pub fn set_resource_list_changed_handler(&self, handler: Arc<dyn ResourceListChangedHandler>) {
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .set_resource_list_changed_handler(handler);
+    }
+
+    /// Register a prompt list changed handler
+    ///
+    /// This handler is called when the server's available prompt list changes.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The prompt list changed handler implementation
+    pub fn set_prompt_list_changed_handler(&self, handler: Arc<dyn PromptListChangedHandler>) {
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .set_prompt_list_changed_handler(handler);
+    }
+
+    /// Register a tool list changed handler
+    ///
+    /// This handler is called when the server's available tool list changes.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The tool list changed handler implementation
+    pub fn set_tool_list_changed_handler(&self, handler: Arc<dyn ToolListChangedHandler>) {
+        self.inner
+            .handlers
+            .lock()
+            .expect("handlers mutex poisoned")
+            .set_tool_list_changed_handler(handler);
     }
 
     /// Check if a roots handler is registered

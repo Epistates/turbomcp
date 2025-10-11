@@ -570,13 +570,17 @@ impl<T: Transport + 'static> Client<T> {
 
                 match roots_result {
                     Ok(roots) => {
-                        let result_value = serde_json::to_value(turbomcp_protocol::types::ListRootsResult {
-                            roots,
-                            _meta: None,
-                        })
-                        .map_err(|e| {
-                            Error::protocol(format!("Failed to serialize roots response: {}", e))
-                        })?;
+                        let result_value =
+                            serde_json::to_value(turbomcp_protocol::types::ListRootsResult {
+                                roots,
+                                _meta: None,
+                            })
+                            .map_err(|e| {
+                                Error::protocol(format!(
+                                    "Failed to serialize roots response: {}",
+                                    e
+                                ))
+                            })?;
                         let response = JsonRpcResponse::success(result_value, request.id);
                         self.send_response(response).await?;
                     }
@@ -602,62 +606,34 @@ impl<T: Transport + 'static> Client<T> {
                     .clone();
                 if let Some(handler) = handler_opt {
                     // Parse elicitation request params as MCP protocol type
-                    let mcp_request: turbomcp_protocol::types::ElicitRequest =
+                    let proto_request: turbomcp_protocol::types::ElicitRequest =
                         serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
                             .map_err(|e| {
                             Error::protocol(format!("Invalid elicitation params: {}", e))
                         })?;
 
-                    // Convert MCP protocol type to handler type
-                    // The id comes from the JSON-RPC envelope, not the params
-                    let handler_request = crate::handlers::ElicitationRequest {
-                        id: request.id.to_string(),
-                        prompt: mcp_request.params.message,
-                        schema: serde_json::to_value(&mcp_request.params.schema)
-                            .map_err(|e| {
-                                Error::protocol(format!("Failed to serialize schema: {}", e))
-                            })?,
-                        timeout: mcp_request.params.timeout_ms.map(|ms| (ms / 1000) as u64),
-                        metadata: std::collections::HashMap::new(),
-                    };
+                    // Wrap protocol request with ID for handler (preserves type safety!)
+                    let handler_request =
+                        crate::handlers::ElicitationRequest::new(request.id.clone(), proto_request);
 
                     // Call the registered elicitation handler
                     match handler.handle_elicitation(handler_request).await {
                         Ok(elicit_response) => {
-                            let result_value =
-                                serde_json::to_value(elicit_response).map_err(|e| {
-                                    Error::protocol(format!(
-                                        "Failed to serialize elicitation response: {}",
-                                        e
-                                    ))
-                                })?;
+                            // Convert handler response back to protocol type
+                            let proto_result = elicit_response.into_protocol();
+                            let result_value = serde_json::to_value(proto_result).map_err(|e| {
+                                Error::protocol(format!(
+                                    "Failed to serialize elicitation response: {}",
+                                    e
+                                ))
+                            })?;
                             let response = JsonRpcResponse::success(result_value, request.id);
                             self.send_response(response).await?;
                         }
                         Err(e) => {
-                            // Map handler errors to JSON-RPC errors
-                            let (code, message) = match e {
-                                crate::handlers::HandlerError::UserCancelled => {
-                                    (-32800, "User cancelled elicitation request".to_string())
-                                }
-                                crate::handlers::HandlerError::Timeout { timeout_seconds } => (
-                                    -32801,
-                                    format!(
-                                        "Elicitation request timed out after {} seconds",
-                                        timeout_seconds
-                                    ),
-                                ),
-                                crate::handlers::HandlerError::InvalidInput { details } => {
-                                    (-32602, format!("Invalid user input: {}", details))
-                                }
-                                _ => (-32603, format!("Elicitation handler error: {}", e)),
-                            };
-                            let error = turbomcp_protocol::jsonrpc::JsonRpcError {
-                                code,
-                                message,
-                                data: None,
-                            };
-                            let response = JsonRpcResponse::error_response(error, request.id);
+                            // Convert handler error to JSON-RPC error using centralized mapping
+                            let response =
+                                JsonRpcResponse::error_response(e.into_jsonrpc_error(), request.id);
                             self.send_response(response).await?;
                         }
                     }
@@ -708,11 +684,12 @@ impl<T: Transport + 'static> Client<T> {
 
                 if let Some(handler) = handler_opt {
                     // Parse progress notification
-                    let progress: crate::handlers::ProgressNotification =
-                        serde_json::from_value(notification.params.unwrap_or(serde_json::Value::Null))
-                            .map_err(|e| {
-                                Error::protocol(format!("Invalid progress notification: {}", e))
-                            })?;
+                    let progress: crate::handlers::ProgressNotification = serde_json::from_value(
+                        notification.params.unwrap_or(serde_json::Value::Null),
+                    )
+                    .map_err(|e| {
+                        Error::protocol(format!("Invalid progress notification: {}", e))
+                    })?;
 
                     // Call handler (errors are logged but don't fail the flow)
                     if let Err(e) = handler.handle_progress(progress).await {
@@ -734,11 +711,10 @@ impl<T: Transport + 'static> Client<T> {
 
                 if let Some(handler) = handler_opt {
                     // Parse log message
-                    let log: crate::handlers::LogMessage =
-                        serde_json::from_value(notification.params.unwrap_or(serde_json::Value::Null))
-                            .map_err(|e| {
-                                Error::protocol(format!("Invalid log notification: {}", e))
-                            })?;
+                    let log: crate::handlers::LoggingNotification = serde_json::from_value(
+                        notification.params.unwrap_or(serde_json::Value::Null),
+                    )
+                    .map_err(|e| Error::protocol(format!("Invalid log notification: {}", e)))?;
 
                     // Call handler
                     if let Err(e) = handler.handle_log(log).await {
@@ -760,25 +736,111 @@ impl<T: Transport + 'static> Client<T> {
 
                 if let Some(handler) = handler_opt {
                     // Parse resource update notification
-                    let update: crate::handlers::ResourceUpdateNotification =
-                        serde_json::from_value(notification.params.unwrap_or(serde_json::Value::Null))
-                            .map_err(|e| {
-                                Error::protocol(format!("Invalid resource update notification: {}", e))
-                            })?;
+                    let update: crate::handlers::ResourceUpdatedNotification =
+                        serde_json::from_value(
+                            notification.params.unwrap_or(serde_json::Value::Null),
+                        )
+                        .map_err(|e| {
+                            Error::protocol(format!("Invalid resource update notification: {}", e))
+                        })?;
 
                     // Call handler
                     if let Err(e) = handler.handle_resource_update(update).await {
                         tracing::error!("Resource update handler error: {}", e);
                     }
                 } else {
-                    tracing::debug!("Received resource update notification but no handler registered");
+                    tracing::debug!(
+                        "Received resource update notification but no handler registered"
+                    );
                 }
             }
 
             "notifications/resources/list_changed" => {
-                // Resource list changed notification
-                // Currently no specific handler for this, but log it
-                tracing::debug!("Resource list changed notification received");
+                // Route to resource list changed handler
+                let handler_opt = self
+                    .inner
+                    .handlers
+                    .lock()
+                    .expect("handlers mutex poisoned")
+                    .get_resource_list_changed_handler();
+
+                if let Some(handler) = handler_opt {
+                    if let Err(e) = handler.handle_resource_list_changed().await {
+                        tracing::error!("Resource list changed handler error: {}", e);
+                    }
+                } else {
+                    tracing::debug!(
+                        "Resource list changed notification received (no handler registered)"
+                    );
+                }
+            }
+
+            "notifications/prompts/list_changed" => {
+                // Route to prompt list changed handler
+                let handler_opt = self
+                    .inner
+                    .handlers
+                    .lock()
+                    .expect("handlers mutex poisoned")
+                    .get_prompt_list_changed_handler();
+
+                if let Some(handler) = handler_opt {
+                    if let Err(e) = handler.handle_prompt_list_changed().await {
+                        tracing::error!("Prompt list changed handler error: {}", e);
+                    }
+                } else {
+                    tracing::debug!(
+                        "Prompt list changed notification received (no handler registered)"
+                    );
+                }
+            }
+
+            "notifications/tools/list_changed" => {
+                // Route to tool list changed handler
+                let handler_opt = self
+                    .inner
+                    .handlers
+                    .lock()
+                    .expect("handlers mutex poisoned")
+                    .get_tool_list_changed_handler();
+
+                if let Some(handler) = handler_opt {
+                    if let Err(e) = handler.handle_tool_list_changed().await {
+                        tracing::error!("Tool list changed handler error: {}", e);
+                    }
+                } else {
+                    tracing::debug!(
+                        "Tool list changed notification received (no handler registered)"
+                    );
+                }
+            }
+
+            "notifications/cancelled" => {
+                // Route to cancellation handler
+                let handler_opt = self
+                    .inner
+                    .handlers
+                    .lock()
+                    .expect("handlers mutex poisoned")
+                    .get_cancellation_handler();
+
+                if let Some(handler) = handler_opt {
+                    // Parse cancellation notification
+                    let cancellation: crate::handlers::CancelledNotification =
+                        serde_json::from_value(
+                            notification.params.unwrap_or(serde_json::Value::Null),
+                        )
+                        .map_err(|e| {
+                            Error::protocol(format!("Invalid cancellation notification: {}", e))
+                        })?;
+
+                    // Call handler
+                    if let Err(e) = handler.handle_cancellation(cancellation).await {
+                        tracing::error!("Cancellation handler error: {}", e);
+                    }
+                } else {
+                    tracing::debug!("Cancellation notification received (no handler registered)");
+                }
             }
 
             _ => {

@@ -157,30 +157,36 @@ use turbomcp_transport::Transport;
 // ============================================================================
 
 // Result/Error types - re-export from protocol for consistency
-pub use turbomcp_protocol::{Result, Error};
+pub use turbomcp_protocol::{Error, Result};
 
 // Handler types (most commonly used)
 pub use handlers::{
+    // Cancellation (MCP 2025-06-18 spec compliant)
+    CancellationHandler,
+    CancelledNotification,
+    ElicitationAction,
     // Elicitation
     ElicitationHandler,
     ElicitationRequest,
     ElicitationResponse,
-    ElicitationAction,
-    // Progress
-    ProgressHandler,
-    ProgressNotification,
-    // Logging
-    LogHandler,
-    LogMessage,
-    // Resource updates
-    ResourceUpdateHandler,
-    ResourceUpdateNotification,
-    ResourceChangeType,
-    // Roots
-    RootsHandler,
     // Error handling
     HandlerError,
     HandlerResult,
+    // Logging (MCP 2025-06-18 spec compliant)
+    LogHandler,
+    LoggingNotification,
+    // Progress (MCP 2025-06-18 spec compliant)
+    ProgressHandler,
+    ProgressNotification,
+    PromptListChangedHandler,
+    // List changed handlers (MCP 2025-06-18 spec compliant)
+    ResourceListChangedHandler,
+    // Resource updates (MCP 2025-06-18 spec compliant)
+    ResourceUpdateHandler,
+    ResourceUpdatedNotification,
+    // Roots
+    RootsHandler,
+    ToolListChangedHandler,
 };
 
 // Sampling types
@@ -188,33 +194,22 @@ pub use sampling::{SamplingHandler, ServerInfo, UserInteractionHandler};
 
 // Plugin system
 pub use plugins::{
-    ClientPlugin,
-    PluginConfig,
-    PluginContext,
-    PluginResult,
-    PluginError,
-    MetricsPlugin,
-    RetryPlugin,
-    CachePlugin,
+    CachePlugin, ClientPlugin, MetricsPlugin, PluginConfig, PluginContext, PluginError,
+    PluginResult, RetryPlugin,
 };
 
 // Common protocol types
 pub use turbomcp_protocol::types::{
-    Tool,
-    Prompt,
-    Resource,
-    ResourceContents,
-    LogLevel,
-    Content,
-    Role,
+    Content, LogLevel, Prompt, Resource, ResourceContents, Role, Tool,
 };
 
 // Transport re-exports (with feature gates)
 #[cfg(feature = "stdio")]
 pub use turbomcp_transport::stdio::StdioTransport;
 
-#[cfg(feature = "http")]
-pub use turbomcp_transport::http::{HttpTransport, HttpClientConfig};
+// Note: HTTP transport removed - use streamable_http_v2 instead
+// #[cfg(feature = "http")]
+// pub use turbomcp_transport::http::{HttpTransport, HttpClientConfig};
 
 #[cfg(feature = "tcp")]
 pub use turbomcp_transport::tcp::{TcpTransport, TcpTransportBuilder};
@@ -224,8 +219,7 @@ pub use turbomcp_transport::unix::{UnixTransport, UnixTransportBuilder};
 
 #[cfg(feature = "websocket")]
 pub use turbomcp_transport::websocket_bidirectional::{
-    WebSocketBidirectionalTransport,
-    WebSocketBidirectionalConfig,
+    WebSocketBidirectionalConfig, WebSocketBidirectionalTransport,
 };
 
 /// Client capability configuration

@@ -32,8 +32,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex}; // Use std::sync::Mutex for simpler synchronous access
 
-use tokio::sync::{oneshot, Notify};
-use turbomcp_protocol::jsonrpc::{JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
+use tokio::sync::{Notify, oneshot};
+use turbomcp_protocol::jsonrpc::{
+    JsonRpcMessage, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+};
 use turbomcp_protocol::{Error, MessageId, Result};
 use turbomcp_transport::{Transport, TransportMessage};
 
@@ -167,7 +169,10 @@ impl MessageDispatcher {
     ///
     /// * `handler` - Function to handle incoming notifications
     pub fn set_notification_handler(&self, handler: NotificationHandler) {
-        *self.notification_handler.lock().expect("handler mutex poisoned") = Some(handler);
+        *self
+            .notification_handler
+            .lock()
+            .expect("handler mutex poisoned") = Some(handler);
         tracing::debug!("Notification handler registered with dispatcher");
     }
 
@@ -198,7 +203,10 @@ impl MessageDispatcher {
     /// ```
     pub fn wait_for_response(&self, id: MessageId) -> oneshot::Receiver<JsonRpcResponse> {
         let (tx, rx) = oneshot::channel();
-        self.response_waiters.lock().expect("response_waiters mutex poisoned").insert(id.clone(), tx);
+        self.response_waiters
+            .lock()
+            .expect("response_waiters mutex poisoned")
+            .insert(id.clone(), tx);
         tracing::trace!("Registered response waiter for request ID: {:?}", id);
         rx
     }
@@ -225,10 +233,7 @@ impl MessageDispatcher {
     ///
     /// * `dispatcher` - Arc reference to the dispatcher
     /// * `transport` - Arc reference to the transport
-    fn spawn_routing_task<T: Transport + 'static>(
-        dispatcher: Arc<Self>,
-        transport: Arc<T>,
-    ) {
+    fn spawn_routing_task<T: Transport + 'static>(dispatcher: Arc<Self>, transport: Arc<T>) {
         let response_waiters = dispatcher.response_waiters.clone();
         let request_handler = dispatcher.request_handler.clone();
         let notification_handler = dispatcher.notification_handler.clone();
@@ -305,16 +310,16 @@ impl MessageDispatcher {
         notification_handler: &Arc<Mutex<Option<NotificationHandler>>>,
     ) -> Result<()> {
         // Parse as JSON-RPC message
-        let json_msg: JsonRpcMessage = serde_json::from_slice(&msg.payload).map_err(|e| {
-            Error::protocol(format!("Invalid JSON-RPC message: {}", e))
-        })?;
+        let json_msg: JsonRpcMessage = serde_json::from_slice(&msg.payload)
+            .map_err(|e| Error::protocol(format!("Invalid JSON-RPC message: {}", e)))?;
 
         match json_msg {
             JsonRpcMessage::Response(response) => {
                 // Route to waiting request() call
                 // ResponseId is Option<RequestId> where RequestId = MessageId
                 if let Some(request_id) = &response.id.0 {
-                    if let Some(tx) = response_waiters.lock()
+                    if let Some(tx) = response_waiters
+                        .lock()
                         .expect("response_waiters mutex poisoned")
                         .remove(request_id)
                     {
@@ -341,7 +346,8 @@ impl MessageDispatcher {
                     request.id
                 );
 
-                if let Some(handler) = request_handler.lock()
+                if let Some(handler) = request_handler
+                    .lock()
                     .expect("request_handler mutex poisoned")
                     .as_ref()
                 {
@@ -364,7 +370,8 @@ impl MessageDispatcher {
                     notification.method
                 );
 
-                if let Some(handler) = notification_handler.lock()
+                if let Some(handler) = notification_handler
+                    .lock()
                     .expect("notification_handler mutex poisoned")
                     .as_ref()
                 {
@@ -404,8 +411,6 @@ impl std::fmt::Debug for MessageDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use turbomcp_transport::core::TransportMessage;
 
     // Note: Full integration tests with mock transport will be added
     // in tests/bidirectional_integration.rs

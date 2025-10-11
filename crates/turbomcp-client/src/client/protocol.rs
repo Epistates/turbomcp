@@ -27,8 +27,8 @@
 //! This ensures there's only ONE consumer of transport.receive(),
 //! eliminating the race condition.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcVersion};
 use turbomcp_protocol::{Error, Result};

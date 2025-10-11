@@ -22,55 +22,59 @@
 //! ```
 
 pub use crate::{
+    CachePlugin,
+    CancellationHandler,
+    CancelledNotification,
     // Core client types
     Client,
     ClientBuilder,
     ClientCapabilities,
+    // Plugin system
+    ClientPlugin,
     ConnectionConfig,
-    InitializeResult,
-
-    // Result/Error (most commonly used) - re-exported from turbomcp_protocol
-    Result,  // Note: This is Result<T, Box<Error>> from protocol
-    Error,
-
+    ElicitationAction,
     // Handlers (bidirectional communication)
     ElicitationHandler,
     ElicitationRequest,
     ElicitationResponse,
-    ElicitationAction,
-    ProgressHandler,
-    ProgressNotification,
-    LogHandler,
-    LogMessage,
-    ResourceUpdateHandler,
-    ResourceUpdateNotification,
-    ResourceChangeType,
-    RootsHandler,
+    Error,
+
     HandlerError,
     HandlerResult,
 
+    InitializeResult,
+
+    LogHandler,
+    LoggingNotification,
+    MetricsPlugin,
+    PluginConfig,
+    PluginContext,
+    PluginError,
+    PluginResult,
+    ProgressHandler,
+    ProgressNotification,
+    PromptListChangedHandler,
+    ResourceListChangedHandler,
+    ResourceUpdateHandler,
+    ResourceUpdatedNotification,
+    // Result/Error (most commonly used) - re-exported from turbomcp_protocol
+    Result, // Note: This is Result<T, Box<Error>> from protocol
+    RetryPlugin,
+    RootsHandler,
     // Sampling
     SamplingHandler,
     ServerInfo,
+    ToolListChangedHandler,
     UserInteractionHandler,
-
-    // Plugin system
-    ClientPlugin,
-    PluginConfig,
-    PluginContext,
-    PluginResult,
-    PluginError,
-    MetricsPlugin,
-    RetryPlugin,
-    CachePlugin,
 };
 
 // Transport re-exports (with feature gates - must be separate items)
 #[cfg(feature = "stdio")]
 pub use crate::StdioTransport;
 
-#[cfg(feature = "http")]
-pub use crate::HttpTransport;
+// Note: HTTP transport removed - use streamable_http_v2 from turbomcp-transport directly
+// #[cfg(feature = "http")]
+// pub use crate::HttpTransport;
 
 #[cfg(feature = "tcp")]
 pub use crate::TcpTransport;
@@ -83,22 +87,16 @@ pub use crate::WebSocketBidirectionalTransport;
 
 // Re-export commonly used protocol types
 pub use turbomcp_protocol::types::{
-    // Core types
-    Tool,
-    Prompt,
-    Resource,
-    ResourceContents,
+    CompleteResult,
 
+    // Completion
+    CompletionContext,
+    Content,
     // Messaging
     CreateMessageRequest,
     CreateMessageResult,
-    Content,
-    TextContent,
-    ImageContent,
     EmbeddedResource,
-    Role,
-    StopReason,
-
+    ImageContent,
     // Logging
     LogLevel,
 
@@ -106,12 +104,18 @@ pub use turbomcp_protocol::types::{
     ProgressNotification as ProtocolProgressNotification,
     ProgressToken,
 
-    // Completion
-    CompletionContext,
-    CompleteResult,
+    Prompt,
+    Resource,
+    ResourceContents,
 
+    Role,
     // Roots
     Root,
+    StopReason,
+
+    TextContent,
+    // Core types
+    Tool,
 };
 
 // Re-export async-trait for handler implementations
