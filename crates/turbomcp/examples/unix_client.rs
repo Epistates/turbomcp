@@ -14,11 +14,10 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use turbomcp_client::Client;
-use turbomcp_transport::unix::UnixTransport;
+use turbomcp_client::prelude::*;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
         .with_writer(std::io::stderr)

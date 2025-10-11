@@ -13,11 +13,10 @@
 //! ```
 
 use std::collections::HashMap;
-use turbomcp_client::Client;
-use turbomcp_transport::tcp::TcpTransport;
+use turbomcp_client::prelude::*;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
         .with_writer(std::io::stderr)
@@ -26,8 +25,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("🔌 Connecting to TCP server...");
 
     // Create TCP client transport
-    let bind_addr = "127.0.0.1:0".parse()?;
-    let server_addr = "127.0.0.1:8765".parse()?;
+    let bind_addr = "127.0.0.1:0".parse().expect("Valid bind address");
+    let server_addr = "127.0.0.1:8765".parse().expect("Valid server address");
     let transport = TcpTransport::new_client(bind_addr, server_addr);
     let client = Client::new(transport);
 

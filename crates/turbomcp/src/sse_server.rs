@@ -612,7 +612,12 @@ mod tests {
         let session_config = SessionConfig::default();
         let session_manager = Arc::new(SessionManager::new(session_config));
 
-        let state = SseServerState::new(config, session_manager, None);
+        let state = SseServerState::new(
+            config,
+            session_manager,
+            #[cfg(feature = "auth")]
+            None,
+        );
         assert_eq!(state.config.port, 3000);
         assert_eq!(state.config.sse_path, "/sse");
     }
@@ -623,7 +628,12 @@ mod tests {
         let session_config = SessionConfig::default();
         let session_manager = Arc::new(SessionManager::new(session_config));
 
-        let state = SseServerState::new(config, session_manager, None);
+        let state = SseServerState::new(
+            config,
+            session_manager,
+            #[cfg(feature = "auth")]
+            None,
+        );
 
         let message = SseMessage {
             id: "test-123".to_string(),
@@ -643,7 +653,12 @@ mod tests {
         let session_config = SessionConfig::default();
         let session_manager = Arc::new(SessionManager::new(session_config));
 
-        let state = SseServerState::new(config, session_manager, None);
+        let state = SseServerState::new(
+            config,
+            session_manager,
+            #[cfg(feature = "auth")]
+            None,
+        );
 
         // Add a connection that's already inactive
         let connection = SseConnection {

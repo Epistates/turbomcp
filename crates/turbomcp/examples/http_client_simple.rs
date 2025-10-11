@@ -17,7 +17,7 @@ use std::collections::HashMap;
 #[cfg(feature = "http")]
 use std::time::Duration;
 #[cfg(feature = "http")]
-use turbomcp_client::Client;
+use turbomcp_client::prelude::*;
 #[cfg(feature = "http")]
 use turbomcp_transport::streamable_http_client::{
     StreamableHttpClientConfig, StreamableHttpClientTransport,
@@ -25,7 +25,7 @@ use turbomcp_transport::streamable_http_client::{
 
 #[tokio::main]
 #[cfg(feature = "http")]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
         .with_writer(std::io::stderr)

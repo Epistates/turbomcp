@@ -15,7 +15,7 @@
 #[cfg(all(feature = "http", feature = "websocket"))]
 use std::collections::HashMap;
 #[cfg(all(feature = "http", feature = "websocket"))]
-use turbomcp_client::Client;
+use turbomcp_client::prelude::*;
 #[cfg(all(feature = "http", feature = "websocket"))]
 use turbomcp_transport::websocket_bidirectional::{
     WebSocketBidirectionalConfig, WebSocketBidirectionalTransport,
@@ -23,7 +23,7 @@ use turbomcp_transport::websocket_bidirectional::{
 
 #[tokio::main]
 #[cfg(all(feature = "http", feature = "websocket"))]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
         .with_writer(std::io::stderr)
