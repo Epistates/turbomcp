@@ -109,7 +109,8 @@ Start minimal (STDIO only), add features as needed:
 - Resource templates with RFC 6570 URI patterns
 
 **Transport & Performance**
-- 5 transport protocols: STDIO, HTTP/SSE, WebSocket, TCP, Unix Socket
+- **MCP Standard Transports**: STDIO, HTTP/SSE (full 2025-06-18 spec compliance)
+- **Custom Extensions**: WebSocket, TCP, Unix Socket (MCP-compliant bidirectional transports)
 - SIMD-accelerated JSON processing (simd-json, sonic-rs)
 - Zero-copy message handling with Bytes
 - Circuit breakers, connection pooling, and graceful degradation

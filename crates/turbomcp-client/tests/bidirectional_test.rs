@@ -85,9 +85,9 @@ mod bidirectional_tests {
     /// - The `id` field comes from JSON-RPC envelope, not params
     #[tokio::test]
     async fn test_elicitation_type_conversion() {
-        use turbomcp_protocol::types::{ElicitRequest, ElicitRequestParams, ElicitationSchema};
-        use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcVersion};
         use turbomcp_protocol::MessageId;
+        use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcVersion};
+        use turbomcp_protocol::types::{ElicitRequest, ElicitRequestParams, ElicitationSchema};
 
         // Simulate what the server sends (MCP protocol format)
         let mcp_request = ElicitRequest {
@@ -126,37 +126,58 @@ mod bidirectional_tests {
         // Now simulate what the client does: convert MCP type to handler type
 
         // 1. Parse as MCP protocol type
-        let parsed_mcp: ElicitRequest = serde_json::from_value(
-            jsonrpc_request.params.clone().unwrap()
-        ).expect("Should parse as MCP protocol type");
+        let parsed_mcp: ElicitRequest =
+            serde_json::from_value(jsonrpc_request.params.clone().unwrap())
+                .expect("Should parse as MCP protocol type");
 
-        // 2. Convert to handler type
-        let handler_request = turbomcp_client::handlers::ElicitationRequest {
-            id: jsonrpc_request.id.to_string(),
-            prompt: parsed_mcp.params.message.clone(),
-            schema: serde_json::to_value(&parsed_mcp.params.schema).unwrap(),
-            timeout: parsed_mcp.params.timeout_ms.map(|ms| (ms / 1000) as u64),
-            metadata: std::collections::HashMap::new(),
-        };
+        // 2. Wrap in handler request (preserves type safety!)
+        let handler_request = turbomcp_client::handlers::ElicitationRequest::new(
+            jsonrpc_request.id.clone(),
+            parsed_mcp.clone(),
+        );
 
-        // 3. Validate conversion
-        assert_eq!(handler_request.id, "elicit-123", "ID should come from JSON-RPC envelope");
-        assert_eq!(handler_request.prompt, "Please enter your configuration", "Prompt should map from message");
-        assert_eq!(handler_request.timeout, Some(30), "Timeout should convert from ms to seconds");
+        // 3. Validate wrapper provides ergonomic access
+        assert_eq!(
+            handler_request.id().to_string(),
+            "elicit-123",
+            "ID should come from JSON-RPC envelope"
+        );
+        assert_eq!(
+            handler_request.message(),
+            "Please enter your configuration",
+            "Message accessible via getter"
+        );
+        assert_eq!(
+            handler_request.timeout(),
+            Some(std::time::Duration::from_millis(30000)),
+            "Timeout should be available as Duration"
+        );
 
-        // Validate schema structure
-        let schema_obj = handler_request.schema.as_object().unwrap();
-        assert_eq!(schema_obj.get("type").unwrap(), "object");
-        let properties = schema_obj.get("properties").unwrap().as_object().unwrap();
-        assert!(properties.contains_key("username"), "Schema should contain username property");
-        assert!(properties.contains_key("age"), "Schema should contain age property");
+        // Validate schema is TYPED (not serde_json::Value!)
+        let schema = handler_request.schema();
+        assert_eq!(
+            schema.schema_type, "object",
+            "Schema type should be 'object'"
+        );
+        assert!(
+            schema.properties.contains_key("username"),
+            "Schema should contain username property"
+        );
+        assert!(
+            schema.properties.contains_key("age"),
+            "Schema should contain age property"
+        );
 
-        println!("✅ Type conversion validated successfully!");
-        println!("   - ID extracted from JSON-RPC envelope: {}", handler_request.id);
-        println!("   - Message mapped to prompt: {}", handler_request.prompt);
-        println!("   - Timeout converted: {}ms → {}s",
-                 parsed_mcp.params.timeout_ms.unwrap(),
-                 handler_request.timeout.unwrap());
-        println!("   - Schema preserved with {} properties", properties.len());
+        println!("✅ Wrapper preserves type safety!");
+        println!(
+            "   - ID extracted from JSON-RPC envelope: {:?}",
+            handler_request.id()
+        );
+        println!("   - Message accessible: {}", handler_request.message());
+        println!("   - Timeout as Duration: {:?}", handler_request.timeout());
+        println!(
+            "   - Schema is TYPED (ElicitationSchema) with {} properties",
+            schema.properties.len()
+        );
     }
 }

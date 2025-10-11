@@ -12,11 +12,11 @@
 //! - Protocol format compliance
 
 use serde_json::json;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use turbomcp_client::handlers::{
-    HandlerResult, ResourceChangeType, ResourceUpdateHandler, ResourceUpdateNotification,
+    HandlerResult, ResourceUpdateHandler, ResourceUpdatedNotification,
 };
 use turbomcp_protocol::types::*;
 
@@ -129,12 +129,8 @@ async fn test_resource_unsubscribe_protocol_compliance() {
 #[tokio::test]
 async fn test_resource_updated_notification_format_compliance() {
     // Validate notification structure per MCP spec
-    let notification = ResourceUpdateNotification {
+    let notification = ResourceUpdatedNotification {
         uri: "test://example/resource".to_string(),
-        change_type: ResourceChangeType::Modified,
-        content: None,
-        timestamp: "2025-10-09T12:00:00Z".to_string(),
-        metadata: HashMap::new(),
     };
 
     let json_notification = serde_json::to_value(&notification).unwrap();
@@ -142,7 +138,6 @@ async fn test_resource_updated_notification_format_compliance() {
     // MCP spec: notifications/resources/updated must have uri param
     assert!(json_notification.get("uri").is_some());
     assert_eq!(json_notification["uri"], "test://example/resource");
-    assert_eq!(json_notification["change_type"], "modified");
 }
 
 /// Test notification format for resources/list_changed
@@ -365,9 +360,12 @@ async fn test_resource_update_handler() {
     impl ResourceUpdateHandler for TestHandler {
         async fn handle_resource_update(
             &self,
-            notification: ResourceUpdateNotification,
+            notification: ResourceUpdatedNotification,
         ) -> HandlerResult<()> {
-            self.received.lock().await.push(notification.uri);
+            self.received
+                .lock()
+                .await
+                .push(notification.uri.to_string());
             Ok(())
         }
     }
@@ -378,23 +376,15 @@ async fn test_resource_update_handler() {
 
     // Send notifications
     handler
-        .handle_resource_update(ResourceUpdateNotification {
+        .handle_resource_update(ResourceUpdatedNotification {
             uri: "test://resource1".to_string(),
-            change_type: ResourceChangeType::Created,
-            content: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            metadata: HashMap::new(),
         })
         .await
         .unwrap();
 
     handler
-        .handle_resource_update(ResourceUpdateNotification {
+        .handle_resource_update(ResourceUpdatedNotification {
             uri: "test://resource2".to_string(),
-            change_type: ResourceChangeType::Modified,
-            content: None,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            metadata: HashMap::new(),
         })
         .await
         .unwrap();
