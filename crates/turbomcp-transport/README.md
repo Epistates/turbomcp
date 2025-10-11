@@ -13,11 +13,17 @@ Transport layer implementation for the Model Context Protocol (MCP) with support
 ## Key Features
 
 ### Multi-Protocol Support
-- STDIO - Standard input/output for command-line MCP integration
-- HTTP/SSE - HTTP with Server-Sent Events for streaming communication
+
+**MCP Standard Transports** (MCP 2025-06-18 Specification):
+- STDIO - Standard input/output for subprocess communication
+- HTTP/SSE - Streamable HTTP with Server-Sent Events for web integration
+
+**MCP-Compliant Custom Extensions**:
 - WebSocket - Real-time bidirectional communication
 - TCP - Direct TCP connections with connection pooling
 - Unix Sockets - Inter-process communication on Unix systems
+
+All transports preserve JSON-RPC message format and MCP lifecycle requirements.
 
 ### Security Features
 - TLS 1.3 Support - Modern encryption with `rustls`
@@ -51,12 +57,14 @@ Transport layer implementation for the Model Context Protocol (MCP) with support
 ┌─────────────────────────────────────────────┐
 │            TurboMCP Transport               │
 ├─────────────────────────────────────────────┤
-│ Protocol Implementations                   │
-│ ├── STDIO (process pipes)                  │
-│ ├── HTTP/SSE (web servers)                 │
-│ ├── WebSocket (realtime)                   │
-│ ├── TCP (network sockets)                  │
-│ └── Unix Sockets (IPC)                     │
+│ MCP Standard Transports (2025-06-18)      │
+│ ├── STDIO (subprocess communication)       │
+│ └── HTTP/SSE (streamable HTTP)             │
+├─────────────────────────────────────────────┤
+│ MCP-Compliant Custom Extensions            │
+│ ├── WebSocket (bidirectional streaming)   │
+│ ├── TCP (network services)                 │
+│ └── Unix Sockets (local IPC)               │
 ├─────────────────────────────────────────────┤
 │ Security & Authentication                  │
 │ ├── TLS 1.3 encryption                    │

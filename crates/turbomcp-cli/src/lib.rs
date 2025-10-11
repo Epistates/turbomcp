@@ -60,9 +60,8 @@ use clap::Parser;
 
 // Clean re-exports (no more "New" suffixes!)
 pub use cli::{
-    Cli, Commands, Connection, OutputFormat, TransportKind,
-    ToolCommands, ResourceCommands, PromptCommands, CompletionCommands,
-    ServerCommands, SamplingCommands, RefType, LogLevel,
+    Cli, Commands, CompletionCommands, Connection, LogLevel, OutputFormat, PromptCommands, RefType,
+    ResourceCommands, SamplingCommands, ServerCommands, ToolCommands, TransportKind,
 };
 pub use error::{CliError, CliResult, ErrorCategory};
 pub use executor::CommandExecutor;

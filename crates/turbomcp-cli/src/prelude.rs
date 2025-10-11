@@ -23,31 +23,31 @@
 pub use crate::{
     // Core CLI types
     Cli,
-    Commands,
-    Connection,
-    OutputFormat,
-    TransportKind,
-
-    // Subcommands
-    ToolCommands,
-    ResourceCommands,
-    PromptCommands,
-    CompletionCommands,
-    ServerCommands,
-    SamplingCommands,
-
-    // Supporting types
-    RefType,
-    LogLevel,
-
     // Error handling
     CliError,
     CliResult,
-    ErrorCategory,
-
     // Execution
     CommandExecutor,
+    Commands,
+    CompletionCommands,
+    Connection,
+    ErrorCategory,
+
     Formatter,
+
+    LogLevel,
+
+    OutputFormat,
+    PromptCommands,
+    // Supporting types
+    RefType,
+    ResourceCommands,
+    SamplingCommands,
+
+    ServerCommands,
+    // Subcommands
+    ToolCommands,
+    TransportKind,
 
     // Entry point
     run,

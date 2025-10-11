@@ -119,12 +119,21 @@ required-features = ["stdio"]
 name = "comprehensive"
 required-features = ["stdio"]
 
+# Advanced features
 [[example]]
-name = "elicitation_interactive_client"
+name = "sampling_server"
 required-features = ["stdio"]
 
 [[example]]
-name = "sampling_client"
+name = "elicitation_server"
+required-features = ["stdio"]
+
+[[example]]
+name = "elicitation_client"
+required-features = ["stdio"]
+
+[[example]]
+name = "validation"
 required-features = ["stdio"]
 
 # Complete apps
@@ -143,15 +152,6 @@ required-features = ["http"]
 [[example]]
 name = "openai_integration"
 required-features = ["http"]
-
-# Transport examples
-[[example]]
-name = "tcp_transport_demo"
-required-features = ["tcp"]
-
-[[example]]
-name = "unix_transport_demo"
-required-features = ["unix"]
 
 [features]
 default = ["stdio"]  # 2.0.0 BREAKING: Minimal by default. Use features = ["full"] for 1.x behavior
