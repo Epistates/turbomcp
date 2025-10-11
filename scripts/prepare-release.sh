@@ -19,14 +19,15 @@ VERSION=${VERSION:-"1.1.0"}
 # Crate publish order (dependencies first)
 # Note: turbomcp-core was merged into turbomcp-protocol in v2.0.0
 CRATES=(
-    "turbomcp-protocol"
-    "turbomcp-transport"
-    "turbomcp-macros"
-    "turbomcp-dpop"
-    "turbomcp-server"
-    "turbomcp-client"
-    "turbomcp-cli"
-    "turbomcp"
+    "turbomcp-protocol"   # No internal deps
+    "turbomcp-dpop"       # No internal deps
+    "turbomcp-macros"     # Depends on protocol
+    "turbomcp-auth"       # Depends on protocol, dpop
+    "turbomcp-transport"  # Depends on protocol
+    "turbomcp-server"     # Depends on protocol, macros, transport
+    "turbomcp-client"     # Depends on protocol, transport
+    "turbomcp-cli"        # Depends on client, transport, protocol
+    "turbomcp"            # Main SDK - depends on all
 )
 
 echo -e "${BLUE}🚀 TurboMCP Release Preparation${NC}"
