@@ -463,4 +463,4 @@ Licensed under the [MIT License](../../LICENSE).
 
 ---
 
-*Part of the [TurboMCP](../../) high-performance Rust SDK for the Model Context Protocol.*
+*Part of the [TurboMCP](../../) Rust SDK for the Model Context Protocol.*

@@ -148,11 +148,10 @@ assert!(result.mean() < baseline * 1.05, "Performance regression detected");
 - **Memory**: Peak and average allocation (lower is better)
 - **CPU**: Utilization during sustained load (efficient is better)
 
-### Performance Classes
-- **🚀 Excellent**: Top 10% of comparable frameworks
-- **✅ Good**: Within 20% of well-established
-- **⚠️ Acceptable**: Meets functional requirements
-- **❌ Poor**: Requires optimization attention
+### Performance Indicators
+- **Fast**: Meets or exceeds performance targets
+- **Acceptable**: Within functional requirements
+- **Needs attention**: Below performance targets
 
 ### Benchmark Quality Indicators
 - **Precision**: Low coefficient of variation (< 5%)

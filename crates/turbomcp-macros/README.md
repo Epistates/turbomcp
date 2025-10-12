@@ -4,11 +4,11 @@
 [![Documentation](https://docs.rs/turbomcp-macros/badge.svg)](https://docs.rs/turbomcp-macros)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Zero-boilerplate procedural macros for ergonomic MCP server development with automatic schema generation and compile-time validation.**
+**Procedural macros for MCP server development with automatic schema generation and compile-time validation.**
 
 ## Overview
 
-`turbomcp-macros` provides the procedural macros that make TurboMCP development effortless. These macros eliminate boilerplate code while providing compile-time validation, automatic schema generation, and type-safe parameter handling.
+`turbomcp-macros` provides the procedural macros for TurboMCP development. These macros reduce boilerplate code while providing compile-time validation, automatic schema generation, and type-safe parameter handling.
 
 ## Key Features
 
@@ -646,4 +646,4 @@ Licensed under the [MIT License](../../LICENSE).
 
 ---
 
-*Part of the [TurboMCP](../../) high-performance Rust SDK for the Model Context Protocol.*
+*Part of the [TurboMCP](../../) Rust SDK for the Model Context Protocol.*

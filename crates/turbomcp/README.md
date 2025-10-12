@@ -932,60 +932,32 @@ cargo test --workspace
 4. Run the full test suite: `make test`
 5. Submit a pull request
 
-## Performance & Architectural Excellence
+## Performance Architecture
 
-### 🚀 **Leapfrog Architecture Advantage**
+### Compile-Time Optimization
 
-TurboMCP's **compile-time first** design philosophy delivers measurable performance advantages over traditional MCP implementations:
+TurboMCP uses a compile-time first approach with these characteristics:
 
-#### **Compile-Time Optimization Strategy**
-- **Macro-driven efficiency** - `#[server]`, `#[tool]`, and `#[resource]` macros pre-compute all metadata at build time
-- **Zero runtime reflection** - Tool schemas, parameter validation, and handler dispatch tables generated statically
-- **Type-system leveraged** - Rust's ownership model eliminates common performance pitfalls (no GC, predictable memory)
-- **Intelligent feature gating** - Comprehensive codebase with surgical binary optimization through compile-time feature selection
+**Build-Time Features:**
+- Macro-driven code generation pre-computes metadata at build time
+- Tool schemas, parameter validation, and handler dispatch tables generated statically
+- Rust's type system provides compile-time safety and optimization opportunities
+- Feature flags allow selective compilation for lean binaries
 
-#### **Runtime Performance Benefits**
-- **JSON Processing**: 2-3x faster than `serde_json` with SIMD acceleration
-- **Memory Efficiency**: 40% reduction through zero-copy processing and pre-allocated buffers
-- **Cold Start Performance**: Faster initialization due to pre-computed schemas and handler registration
-- **Request Latency**: Sub-millisecond tool dispatch with O(1) handler lookup
-- **Concurrent Scaling**: Linear performance scaling with Tokio's async runtime
-- **Predictable Performance**: No garbage collection pauses or dynamic allocation surprises
+**Runtime Characteristics:**
+- Static schema generation eliminates per-request computation
+- Direct function dispatch without hash table lookups
+- Zero-copy message handling where possible
+- Async runtime scaling with Tokio
 
-#### **Architectural Superiority**
-
-**Compile-Time vs Runtime Trade-offs:**
+**Implementation Approach:**
 ```rust
-// Other frameworks: Runtime overhead
-fn handle_tool(name: &str, args: Value) {
-    let schema = generate_schema(name);        // Runtime cost
-    let handler = lookup_handler(name);        // HashMap lookup
-    validate_parameters(args, schema);         // Runtime validation
-    // ...
-}
-
-// TurboMCP: Compile-time optimization
-#[tool("Add numbers")]                         // Pre-computed at build
+// Compile-time schema generation
+#[tool("Add numbers")]
 async fn add(&self, a: i32, b: i32) -> McpResult<i32> {
-    Ok(a + b)  // Direct dispatch, no lookup
+    Ok(a + b)  // Schema and dispatch code generated at build time
 }
 ```
-
-**Key Differentiators:**
-- **Direct Dispatch**: Tool calls resolve to function pointers, not string lookups
-- **Pre-computed Schemas**: JSON schemas generated once at compile time, not per request
-- **Zero Reflection Overhead**: All type information resolved statically
-- **Optimized Binary Size**: Feature flags eliminate unused transport and protocol code
-
-#### **Why Compile-Time Architecture Matters**
-
-While runtime-based frameworks offer flexibility, TurboMCP's compile-time approach provides:
-- **Guaranteed Performance**: No performance degradation as tool count increases
-- **Resource Predictability**: Memory usage determined at compile time
-- **Production Reliability**: Errors caught at build time, not in production
-- **Developer Experience**: Rich IDE support with full type checking and autocompletion
-
-**The TurboMCP Philosophy**: *"Handle complexity at compile time so runtime can be fast."*
 
 ### Benchmarks
 
@@ -1020,4 +992,4 @@ Licensed under the [MIT License](../../LICENSE).
 
 ---
 
-*Built with ❤️ by the TurboMCP team. Ready for production, optimized for performance, designed for developers.*
+*Built with ❤️ by the TurboMCP team*

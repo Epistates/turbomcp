@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/turbomcp-client/badge.svg)](https://docs.rs/turbomcp-client)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Production-ready MCP client with complete MCP 2025-06-18 specification support and plugin middleware system.
+MCP client with complete MCP 2025-06-18 specification support and plugin middleware system.
 
 ## Overview
 
@@ -26,7 +26,7 @@ Production-ready MCP client with complete MCP 2025-06-18 specification support a
 | **Unix** | ✅ Full | `unix` | Fast local IPC |
 | **WebSocket** | ✅ Full | `websocket` | Real-time bidirectional |
 
-> **New in 2.0**: HTTP/SSE client transport with beautiful `Client::connect_http()` convenience API!
+> **New in 2.0**: HTTP/SSE client transport with `Client::connect_http()` convenience API!
 
 ## Quick Start
 
@@ -67,14 +67,14 @@ async fn main() -> turbomcp_protocol::Result<()> {
 }
 ```
 
-### HTTP Client (Beautiful One-Liner)
+### HTTP Client (One-Liner)
 
 ```rust
 use turbomcp_client::Client;
 
 #[tokio::main]
 async fn main() -> turbomcp_protocol::Result<()> {
-    // Beautiful one-liner - connects and initializes automatically!
+    // One-liner - connects and initializes automatically
     let client = Client::connect_http("http://localhost:8080").await?;
 
     // Ready to use immediately
@@ -85,7 +85,7 @@ async fn main() -> turbomcp_protocol::Result<()> {
 }
 ```
 
-### TCP/Unix Clients (Equally Beautiful)
+### TCP/Unix Clients
 
 ```rust
 // TCP
@@ -154,7 +154,7 @@ let mut client = Client::new(transport);
 ```rust
 use turbomcp_client::Client;
 
-// Beautiful one-liner - connects and initializes automatically
+// One-liner - connects and initializes automatically
 let client = Client::connect_http("http://localhost:8080").await?;
 ```
 
@@ -175,7 +175,7 @@ let client = Client::connect_http_with("http://localhost:8080", |config| {
 ```rust
 use turbomcp_client::Client;
 
-// Beautiful one-liner - connects and initializes automatically
+// One-liner - connects and initializes automatically
 let client = Client::connect_tcp("127.0.0.1:8765").await?;
 ```
 
@@ -197,7 +197,7 @@ client.initialize().await?;
 ```rust
 use turbomcp_client::Client;
 
-// Beautiful one-liner - connects and initializes automatically
+// One-liner - connects and initializes automatically
 let client = Client::connect_unix("/tmp/mcp.sock").await?;
 ```
 
@@ -631,4 +631,4 @@ Licensed under the [MIT License](../../LICENSE).
 
 ---
 
-*Part of the [TurboMCP](../../) high-performance Rust SDK for the Model Context Protocol.*
+*Part of the [TurboMCP](../../) Rust SDK for the Model Context Protocol.*

@@ -4,11 +4,11 @@
 [![Documentation](https://docs.rs/turbomcp-cli/badge.svg)](https://docs.rs/turbomcp-cli)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Comprehensive CLI for MCP servers - complete protocol support with enterprise-grade UX**
+**CLI for MCP servers with complete protocol support**
 
 ## Overview
 
-`turbomcp-cli` is a comprehensive command-line interface for the Model Context Protocol, built on the production-ready `turbomcp-client` library. It provides complete MCP protocol coverage with rich, multi-format output and smart transport auto-detection.
+`turbomcp-cli` is a command-line interface for the Model Context Protocol, built on the `turbomcp-client` library. It provides complete MCP protocol coverage with rich, multi-format output and smart transport auto-detection.
 
 ## Features
 
@@ -19,8 +19,8 @@
 - **🌐 Multi-Transport** - STDIO (child process), TCP, Unix sockets (HTTP/WS coming soon)
 - **🚀 Smart Auto-Detection** - Automatically detects transport from URL format
 - **🎨 Rich Output** - Human, JSON, YAML, and table formats with colored output
-- **🛡️ Production Ready** - Built on `turbomcp-client` and `turbomcp-transport`
-- **⚡ Enterprise Grade** - Comprehensive error handling with actionable suggestions
+- **🛡️ Built on Core Libraries** - Uses `turbomcp-client` and `turbomcp-transport`
+- **⚡ Error Handling** - Comprehensive error handling with actionable suggestions
 
 ## Installation
 
@@ -261,4 +261,4 @@ Licensed under the [MIT License](../../LICENSE).
 
 ---
 
-*Part of the [TurboMCP](../../) high-performance Rust SDK for the Model Context Protocol.*
+*Part of the [TurboMCP](../../) Rust SDK for the Model Context Protocol.*
