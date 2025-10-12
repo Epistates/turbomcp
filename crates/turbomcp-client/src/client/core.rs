@@ -31,7 +31,11 @@ use turbomcp_transport::{Transport, TransportMessage};
 
 use super::config::InitializeResult;
 use super::protocol::ProtocolClient;
-use crate::{ClientCapabilities, handlers::HandlerRegistry, sampling::SamplingHandler};
+use crate::{
+    ClientCapabilities,
+    handlers::{HandlerError, HandlerRegistry},
+    sampling::SamplingHandler,
+};
 
 /// Inner client state with interior mutability
 ///
@@ -530,9 +534,26 @@ impl<T: Transport + 'static> Client<T> {
                             self.send_response(response).await?;
                         }
                         Err(e) => {
+                            // Preserve error semantics by checking actual error type
+                            // This allows proper error code propagation for retry logic
+                            let (code, message) =
+                                if let Some(handler_err) = e.downcast_ref::<HandlerError>() {
+                                    // HandlerError has explicit JSON-RPC code mapping
+                                    let json_err = handler_err.into_jsonrpc_error();
+                                    (json_err.code, json_err.message)
+                                } else if let Some(proto_err) =
+                                    e.downcast_ref::<turbomcp_protocol::Error>()
+                                {
+                                    // Protocol errors have ErrorKind-based mapping
+                                    (proto_err.jsonrpc_error_code(), proto_err.to_string())
+                                } else {
+                                    // Generic errors default to Internal (-32603)
+                                    (-32603, format!("Sampling handler error: {}", e))
+                                };
+
                             let error = turbomcp_protocol::jsonrpc::JsonRpcError {
-                                code: -32603,
-                                message: format!("Sampling handler error: {}", e),
+                                code,
+                                message,
                                 data: None,
                             };
                             let response = JsonRpcResponse::error_response(error, request.id);

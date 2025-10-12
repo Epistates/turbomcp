@@ -139,6 +139,20 @@
 //! # }
 //! ```
 
+/// TurboMCP Client version from Cargo.toml
+///
+/// This constant provides easy programmatic access to the current version.
+///
+/// # Example
+///
+/// ```rust
+/// println!("TurboMCP Client version: {}", turbomcp_client::VERSION);
+/// ```
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// TurboMCP Client crate name
+pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
+
 pub mod client;
 pub mod handlers;
 pub mod plugins;
@@ -207,9 +221,10 @@ pub use turbomcp_protocol::types::{
 #[cfg(feature = "stdio")]
 pub use turbomcp_transport::stdio::StdioTransport;
 
-// Note: HTTP transport removed - use streamable_http_v2 instead
-// #[cfg(feature = "http")]
-// pub use turbomcp_transport::http::{HttpTransport, HttpClientConfig};
+#[cfg(feature = "http")]
+pub use turbomcp_transport::streamable_http_client::{
+    RetryPolicy, StreamableHttpClientConfig, StreamableHttpClientTransport,
+};
 
 #[cfg(feature = "tcp")]
 pub use turbomcp_transport::tcp::{TcpTransport, TcpTransportBuilder};

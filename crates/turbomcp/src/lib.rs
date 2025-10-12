@@ -493,6 +493,20 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+/// TurboMCP version from Cargo.toml
+///
+/// This constant provides easy programmatic access to the current version.
+///
+/// # Example
+///
+/// ```rust
+/// println!("TurboMCP version: {}", turbomcp::VERSION);
+/// ```
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// TurboMCP crate name
+pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
+
 // Re-export core types for convenience (all re-exported at top level of turbomcp_protocol)
 // v2.0: Re-export essential types from turbomcp_protocol root + module-qualified types
 pub use turbomcp_protocol::{
@@ -667,6 +681,9 @@ pub mod prelude {
         template, tool, tool_result,
     };
 
+    // Version information
+    pub use super::{CRATE_NAME, VERSION};
+
     // Core types (always available)
     pub use super::{
         CallToolRequest, CallToolResult, Context, ElicitationManager, HandlerMetadata,
@@ -769,12 +786,12 @@ pub mod prelude {
     /// TCP transport
     #[cfg(feature = "tcp")]
     #[cfg_attr(docsrs, doc(cfg(feature = "tcp")))]
-    pub use turbomcp_transport::tcp::TcpTransport;
+    pub use turbomcp_transport::tcp::{TcpTransport, TcpTransportBuilder};
 
     /// Unix domain socket transport
     #[cfg(all(unix, feature = "unix"))]
     #[cfg_attr(docsrs, doc(cfg(all(unix, feature = "unix"))))]
-    pub use turbomcp_transport::unix::UnixTransport;
+    pub use turbomcp_transport::unix::{UnixTransport, UnixTransportBuilder};
 }
 
 /// `TurboMCP` result type

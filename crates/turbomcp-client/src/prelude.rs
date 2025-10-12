@@ -21,6 +21,9 @@
 //! }
 //! ```
 
+// Version information
+pub use crate::{CRATE_NAME, VERSION};
+
 pub use crate::{
     CachePlugin,
     CancellationHandler,
@@ -72,18 +75,17 @@ pub use crate::{
 #[cfg(feature = "stdio")]
 pub use crate::StdioTransport;
 
-// Note: HTTP transport removed - use streamable_http_v2 from turbomcp-transport directly
-// #[cfg(feature = "http")]
-// pub use crate::HttpTransport;
+#[cfg(feature = "http")]
+pub use crate::{RetryPolicy, StreamableHttpClientConfig, StreamableHttpClientTransport};
 
 #[cfg(feature = "tcp")]
-pub use crate::TcpTransport;
+pub use crate::{TcpTransport, TcpTransportBuilder};
 
 #[cfg(feature = "unix")]
-pub use crate::UnixTransport;
+pub use crate::{UnixTransport, UnixTransportBuilder};
 
 #[cfg(feature = "websocket")]
-pub use crate::WebSocketBidirectionalTransport;
+pub use crate::{WebSocketBidirectionalConfig, WebSocketBidirectionalTransport};
 
 // Re-export commonly used protocol types
 pub use turbomcp_protocol::types::{
