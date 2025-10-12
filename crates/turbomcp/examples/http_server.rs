@@ -30,7 +30,7 @@ impl HttpServer {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
-        .with_writer(std::io::stderr)
+        .with_writer(std::io::stdout)
         .init();
 
     tracing::info!("🌐 Starting HTTP/SSE server");

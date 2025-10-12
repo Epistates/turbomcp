@@ -14,13 +14,13 @@
 
 use std::collections::HashMap;
 use turbomcp_client::{Client, Result};
-use turbomcp_transport::TcpTransport;
+use turbomcp_transport::tcp::TcpTransport;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
-        .with_writer(std::io::stderr)
+        .with_writer(std::io::stdout)
         .init();
 
     tracing::info!("🔌 Connecting to TCP server...");

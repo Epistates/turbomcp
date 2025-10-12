@@ -17,7 +17,7 @@ use std::collections::HashMap;
 #[cfg(feature = "http")]
 use std::time::Duration;
 #[cfg(feature = "http")]
-use turbomcp_client::prelude::*;
+use turbomcp_client::{Client, Result};
 #[cfg(feature = "http")]
 use turbomcp_transport::streamable_http_client::{
     StreamableHttpClientConfig, StreamableHttpClientTransport,
@@ -28,12 +28,12 @@ use turbomcp_transport::streamable_http_client::{
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
-        .with_writer(std::io::stderr)
+        .with_writer(std::io::stdout)
         .init();
 
-    eprintln!("\n╔══════════════════════════════════════╗");
-    eprintln!("║   HTTP/SSE Transport Client Demo    ║");
-    eprintln!("╚══════════════════════════════════════╝\n");
+    println!("\n╔══════════════════════════════════════╗");
+    println!("║   HTTP/SSE Transport Client Demo    ║");
+    println!("╚══════════════════════════════════════╝\n");
 
     // Create HTTP transport
     let config = StreamableHttpClientConfig {
@@ -44,40 +44,40 @@ async fn main() -> Result<()> {
     };
     let transport = StreamableHttpClientTransport::new(config);
 
-    eprintln!("[1/4] 🔌 Connecting to http://localhost:3000/mcp...");
+    println!("[1/4] 🔌 Connecting to http://localhost:3000/mcp...");
     let client = Client::new(transport);
 
     // Initialize
     let init = client.initialize().await?;
-    eprintln!(
+    println!(
         "[2/4] ✅ Connected: {} v{}",
         init.server_info.name, init.server_info.version
     );
 
     // List and call tools
-    eprintln!("\n[3/4] 🛠️  Listing tools...");
+    println!("\n[3/4] 🛠️  Listing tools...");
     let tools = client.list_tools().await?;
     for tool in &tools {
-        eprintln!(
+        println!(
             "  • {}: {}",
             tool.name,
             tool.description.as_deref().unwrap_or("")
         );
     }
 
-    eprintln!("\n[4/4] 📞 Calling tools...");
+    println!("\n[4/4] 📞 Calling tools...");
 
     // Call echo tool
     let mut args = HashMap::new();
     args.insert("message".to_string(), serde_json::json!("Hello HTTP!"));
     let result = client.call_tool("echo", Some(args)).await?;
-    eprintln!("  → echo: {}", result);
+    println!("  → echo: {}", result);
 
     // Call info tool
     let result = client.call_tool("info", None).await?;
-    eprintln!("  → info: {}", result);
+    println!("  → info: {}", result);
 
-    eprintln!("\n✅ Demo complete!\n");
+    println!("\n✅ Demo complete!\n");
     Ok(())
 }
 

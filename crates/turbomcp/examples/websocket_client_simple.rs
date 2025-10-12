@@ -15,7 +15,7 @@
 #[cfg(all(feature = "http", feature = "websocket"))]
 use std::collections::HashMap;
 #[cfg(all(feature = "http", feature = "websocket"))]
-use turbomcp_client::prelude::*;
+use turbomcp_client::Client;
 #[cfg(all(feature = "http", feature = "websocket"))]
 use turbomcp_transport::websocket_bidirectional::{
     WebSocketBidirectionalConfig, WebSocketBidirectionalTransport,
@@ -26,12 +26,12 @@ use turbomcp_transport::websocket_bidirectional::{
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
-        .with_writer(std::io::stderr)
+        .with_writer(std::io::stdout)
         .init();
 
-    eprintln!("\n╔══════════════════════════════════════╗");
-    eprintln!("║   WebSocket Transport Client Demo   ║");
-    eprintln!("╚══════════════════════════════════════╝\n");
+    println!("\n╔══════════════════════════════════════╗");
+    println!("║   WebSocket Transport Client Demo   ║");
+    println!("╚══════════════════════════════════════╝\n");
 
     // Create WebSocket transport
     let config = WebSocketBidirectionalConfig {
@@ -40,35 +40,35 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     };
     let transport = WebSocketBidirectionalTransport::new(config).await?;
 
-    eprintln!("[1/4] 🔌 Connecting to ws://127.0.0.1:8080/ws...");
+    println!("[1/4] 🔌 Connecting to ws://127.0.0.1:8080/ws...");
     let client = Client::new(transport);
 
     // Initialize (auto-connects)
     let init = client.initialize().await?;
-    eprintln!(
+    println!(
         "[2/4] ✅ Connected: {} v{}",
         init.server_info.name, init.server_info.version
     );
 
     // List and call tools
-    eprintln!("\n[3/4] 🛠️  Listing tools...");
+    println!("\n[3/4] 🛠️  Listing tools...");
     let tools = client.list_tools().await?;
     for tool in &tools {
-        eprintln!(
+        println!(
             "  • {}: {}",
             tool.name,
             tool.description.as_deref().unwrap_or("")
         );
     }
 
-    eprintln!("\n[4/4] 📞 Calling tools...");
+    println!("\n[4/4] 📞 Calling tools...");
 
     // Call echo tool if available
     if tools.iter().any(|t| t.name == "echo") {
         let mut args = HashMap::new();
         args.insert("message".to_string(), serde_json::json!("Hello WebSocket!"));
         let result = client.call_tool("echo", Some(args)).await?;
-        eprintln!("  → echo: {}", result);
+        println!("  → echo: {}", result);
     }
 
     // Call add tool if available
@@ -77,10 +77,10 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         args.insert("a".to_string(), serde_json::json!(15));
         args.insert("b".to_string(), serde_json::json!(27));
         let result = client.call_tool("add", Some(args)).await?;
-        eprintln!("  → add: {}", result);
+        println!("  → add: {}", result);
     }
 
-    eprintln!("\n✅ Demo complete!\n");
+    println!("\n✅ Demo complete!\n");
     Ok(())
 }
 

@@ -43,7 +43,7 @@ impl UnixServer {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
-        .with_writer(std::io::stderr)
+        .with_writer(std::io::stdout)
         .init();
 
     let socket_path = "/tmp/turbomcp-demo.sock";

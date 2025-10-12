@@ -15,13 +15,13 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use turbomcp_client::{Client, Result};
-use turbomcp_transport::UnixTransport;
+use turbomcp_transport::unix::UnixTransport;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
-        .with_writer(std::io::stderr)
+        .with_writer(std::io::stdout)
         .init();
 
     tracing::info!("🔌 Connecting to Unix socket server...");

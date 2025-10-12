@@ -48,7 +48,7 @@ impl WebSocketServer {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter("info")
-        .with_writer(std::io::stderr)
+        .with_writer(std::io::stdout)
         .init();
 
     tracing::info!("🚀 WebSocket Server listening on ws://127.0.0.1:8080");
