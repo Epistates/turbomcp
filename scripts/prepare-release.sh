@@ -1,7 +1,17 @@
 #!/bin/bash
 
 # TurboMCP Release Preparation Script
-# This script prepares all crates for publishing to crates.io
+# Validates that the workspace is ready for release
+#
+# This script:
+# - Verifies compilation and tests
+# - Checks version consistency
+# - Validates crate metadata
+# - Generates documentation
+# - Packages crates for verification
+#
+# Usage:
+#   VERSION=2.0.0-rc.1 ./scripts/prepare-release.sh
 
 set -euo pipefail
 
@@ -13,11 +23,9 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-DRY_RUN=${DRY_RUN:-true}
-VERSION=${VERSION:-"1.1.0"}
+VERSION=${VERSION:-""}
 
 # Crate publish order (dependencies first)
-# Note: turbomcp-core was merged into turbomcp-protocol in v2.0.0
 CRATES=(
     "turbomcp-protocol"   # No internal deps
     "turbomcp-dpop"       # No internal deps
@@ -30,36 +38,26 @@ CRATES=(
     "turbomcp"            # Main SDK - depends on all
 )
 
-echo -e "${BLUE}🚀 TurboMCP Release Preparation${NC}"
-echo -e "${BLUE}================================${NC}"
-echo ""
-
-if [ "$DRY_RUN" = "true" ]; then
-    echo -e "${YELLOW}⚠️  DRY RUN MODE - No actual publishing will occur${NC}"
-    echo -e "${YELLOW}   Set DRY_RUN=false to perform actual release${NC}"
-    echo ""
-fi
-
-# Function to print section headers
 print_section() {
     echo -e "${BLUE}📋 $1${NC}"
     echo "----------------------------------------"
 }
 
-# Function to print status
 print_status() {
     echo -e "${GREEN}✅ $1${NC}"
 }
 
-# Function to print warnings
 print_warning() {
     echo -e "${YELLOW}⚠️  $1${NC}"
 }
 
-# Function to print errors
 print_error() {
     echo -e "${RED}❌ $1${NC}"
 }
+
+echo -e "${BLUE}🚀 TurboMCP Release Preparation${NC}"
+echo -e "${BLUE}================================${NC}"
+echo ""
 
 # Pre-flight checks
 print_section "Pre-flight Checks"
@@ -76,20 +74,55 @@ if ! command -v cargo &> /dev/null; then
     exit 1
 fi
 
-# Check if we're logged into crates.io
-if [ "$DRY_RUN" = "false" ]; then
-    if [ ! -f ~/.cargo/credentials.toml ]; then
-        print_error "Not logged into crates.io. Run 'cargo login' first"
-        exit 1
-    fi
+print_status "Environment checks passed"
+echo ""
+
+# Auto-detect version if not set
+if [ -z "$VERSION" ]; then
+    VERSION=$(grep '^version = ' "crates/turbomcp-protocol/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
+    print_warning "Auto-detected version: $VERSION"
 fi
 
-print_status "Environment checks passed"
+echo "Target version: $VERSION"
+echo ""
+
+# Run version consistency check
+print_section "Version Consistency Check"
+if ./scripts/check-versions.sh; then
+    print_status "Version consistency check passed"
+else
+    print_error "Version consistency check failed"
+    echo ""
+    echo "Run this to fix versions:"
+    echo "  VERSION=$VERSION ./scripts/update-versions.sh"
+    exit 1
+fi
+echo ""
+
+# Check for uncommitted changes
+print_section "Git Status Check"
+if [ -n "$(git status --porcelain)" ]; then
+    print_warning "Uncommitted changes detected:"
+    git status --short
+    echo ""
+    print_warning "Strongly recommend committing changes before release"
+    echo ""
+    read -p "Continue anyway? (yes/no): " -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+        print_error "Stopped by user"
+        exit 1
+    fi
+else
+    print_status "Working directory is clean"
+fi
+echo ""
 
 # Clean workspace
 print_section "Cleaning Workspace"
 cargo clean
 print_status "Workspace cleaned"
+echo ""
 
 # Check compilation
 print_section "Compilation Check"
@@ -99,23 +132,28 @@ else
     print_error "Compilation failed"
     exit 1
 fi
+echo ""
 
 # Run tests
 print_section "Running Tests"
-if cargo test --workspace --lib; then
-    print_status "All tests pass"
+echo "Running library tests..."
+if cargo test --workspace --lib --quiet; then
+    print_status "All library tests pass"
 else
     print_error "Tests failed"
     exit 1
 fi
+echo ""
 
 # Run clippy
 print_section "Linting with Clippy"
 if cargo clippy --workspace --all-targets -- -D warnings; then
     print_status "Clippy checks passed"
 else
-    print_warning "Clippy warnings found - review before publishing"
+    print_error "Clippy warnings found - must fix before publishing"
+    exit 1
 fi
+echo ""
 
 # Check formatting
 print_section "Format Check"
@@ -125,161 +163,111 @@ else
     print_error "Code formatting issues found. Run 'cargo fmt --all'"
     exit 1
 fi
-
-# Version consistency check
-print_section "Version Consistency Check"
-version_issues=0
-
-for crate in "${CRATES[@]}"; do
-    crate_version=$(grep '^version = ' "crates/$crate/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
-    # CLI is at 1.0.5, which is fine for 1.0.4 release
-    if [ "$crate" = "turbomcp-cli" ] && [ "$crate_version" = "1.0.5" ] && [ "$VERSION" = "1.0.4" ]; then
-        print_status "$crate has version $crate_version (ahead, OK)"
-    elif [ "$crate_version" != "$VERSION" ]; then
-        print_error "$crate has version $crate_version, expected $VERSION"
-        version_issues=$((version_issues + 1))
-    fi
-done
-
-if [ $version_issues -eq 0 ]; then
-    print_status "All crates have consistent version $VERSION"
-else
-    print_error "Version inconsistencies found"
-    exit 1
-fi
-
-# Check for uncommitted changes
-print_section "Git Status Check"
-if [ -n "$(git status --porcelain)" ]; then
-    print_warning "Uncommitted changes detected:"
-    git status --short
-    echo ""
-    print_warning "Consider committing changes before release"
-else
-    print_status "Working directory is clean"
-fi
+echo ""
 
 # Generate documentation
 print_section "Documentation Generation"
-if cargo doc --workspace --no-deps; then
+if cargo doc --workspace --no-deps --quiet; then
     print_status "Documentation generated successfully"
 else
-    print_warning "Documentation generation had issues"
+    print_error "Documentation generation failed"
+    exit 1
 fi
+echo ""
 
-# Check crate readiness
-print_section "Crate Readiness Check"
+# Check crate metadata
+print_section "Crate Metadata Check"
+
+metadata_issues=0
 
 for crate in "${CRATES[@]}"; do
-    echo "Checking $crate..."
-    
-    # Check required fields in Cargo.toml
     crate_dir="crates/$crate"
     cargo_toml="$crate_dir/Cargo.toml"
-    
+
     if [ ! -f "$cargo_toml" ]; then
-        print_error "$cargo_toml not found"
-        exit 1
+        print_error "$crate: Cargo.toml not found"
+        metadata_issues=$((metadata_issues + 1))
+        continue
     fi
-    
-    # Check for required metadata
-    required_fields=("description" "license" "repository" "homepage")
+
+    # Check for required metadata fields
+    required_fields=("description" "license" "repository" "homepage" "keywords" "categories")
     missing_fields=()
-    
+
     for field in "${required_fields[@]}"; do
-        if ! grep -q "^$field = " "$cargo_toml"; then
+        if ! grep -q "^$field = " "$cargo_toml" && ! grep -q "^$field = \[" "$cargo_toml"; then
             missing_fields+=("$field")
         fi
     done
-    
+
     if [ ${#missing_fields[@]} -ne 0 ]; then
-        print_error "$crate missing required fields: ${missing_fields[*]}"
-        exit 1
+        print_error "$crate: Missing fields: ${missing_fields[*]}"
+        metadata_issues=$((metadata_issues + 1))
     fi
-    
+
     # Check if README exists
     if [ ! -f "$crate_dir/README.md" ]; then
-        print_warning "$crate missing README.md"
+        print_warning "$crate: Missing README.md (optional but recommended)"
     fi
-    
-    print_status "$crate is ready for publishing"
 done
 
-# Dry run package for each crate
+if [ $metadata_issues -eq 0 ]; then
+    print_status "All crates have required metadata"
+else
+    print_error "Found $metadata_issues metadata issues"
+    exit 1
+fi
+echo ""
+
+# Package verification
 print_section "Package Verification"
 
-if [ "$DRY_RUN" = "true" ]; then
-    for crate in "${CRATES[@]}"; do
-        echo "Packaging $crate..."
-        if cargo package --manifest-path "crates/$crate/Cargo.toml" --no-verify; then
-            print_status "$crate packaged successfully"
-        else
-            print_error "Failed to package $crate"
-            exit 1
-        fi
-    done
+packaging_issues=0
+
+for crate in "${CRATES[@]}"; do
+    echo "Packaging $crate..."
+
+    # Package without verifying (verification requires dependencies to be published)
+    if cargo package --manifest-path "crates/$crate/Cargo.toml" --no-verify --quiet 2>&1 | grep -v "warning:"; then
+        # Get package size
+        pkg_size=$(ls -lh "target/package/$crate-$VERSION.crate" 2>/dev/null | awk '{print $5}' || echo "unknown")
+        echo "  ✓ $crate packaged successfully ($pkg_size)"
+    else
+        print_error "  ✗ Failed to package $crate"
+        packaging_issues=$((packaging_issues + 1))
+    fi
+done
+
+if [ $packaging_issues -eq 0 ]; then
+    print_status "All crates packaged successfully"
 else
-    print_status "Skipping package verification for production release (cargo publish will handle packaging)"
+    print_error "Found $packaging_issues packaging issues"
+    exit 1
 fi
+echo ""
 
-# Publishing section
-print_section "Publishing Crates"
-
-if [ "$DRY_RUN" = "true" ]; then
-    echo "DRY RUN: Would publish crates in the following order:"
-    for i in "${!CRATES[@]}"; do
-        echo "$((i+1)). ${CRATES[$i]}"
-    done
-    echo ""
-    echo "To perform actual publishing, run:"
-    echo "DRY_RUN=false $0"
-else
-    echo "Publishing crates to crates.io..."
-    
-    for i in "${!CRATES[@]}"; do
-        crate="${CRATES[$i]}"
-        echo ""
-        echo "Publishing $((i+1))/${#CRATES[@]}: $crate"
-        
-        # Publish with timeout
-        if timeout 300 cargo publish --manifest-path "crates/$crate/Cargo.toml"; then
-            print_status "$crate published successfully"
-        else
-            print_error "Failed to publish $crate"
-            exit 1
-        fi
-        
-        # Wait between publishes to allow crates.io to process
-        if [ $i -lt $((${#CRATES[@]} - 1)) ]; then
-            echo "Waiting 30 seconds for crates.io to process..."
-            sleep 30
-        fi
-    done
-    
-    print_status "All crates published successfully!"
-fi
-
-# Summary
-print_section "Release Summary"
+# Final summary
+print_section "Release Readiness Summary"
 echo "Version: $VERSION"
 echo "Crates: ${#CRATES[@]}"
-echo "Publish order: ${CRATES[*]}"
+echo "✅ Compilation: passed"
+echo "✅ Tests: passed"
+echo "✅ Clippy: passed"
+echo "✅ Formatting: passed"
+echo "✅ Documentation: passed"
+echo "✅ Metadata: passed"
+echo "✅ Packaging: passed"
+echo ""
 
-if [ "$DRY_RUN" = "true" ]; then
-    echo ""
-    echo -e "${YELLOW}Next steps:${NC}"
-    echo "1. Review any warnings above"
-    echo "2. Commit any final changes"
-    echo "3. Create a git tag: git tag v$VERSION"
-    echo "4. Run: DRY_RUN=false $0"
-    echo "5. Push tag: git push origin v$VERSION"
-else
-    echo ""
-    echo -e "${GREEN}🎉 Release completed successfully!${NC}"
-    echo ""
-    echo "Next steps:"
-    echo "1. Create and push git tag: git tag v$VERSION && git push origin v$VERSION"
-    echo "2. Create GitHub release with changelog"
-    echo "3. Update social media and blog posts"
-    echo "4. Monitor crates.io for successful indexing"
-fi
+print_status "🎉 All checks passed! Ready for release."
+echo ""
+echo -e "${GREEN}Next steps:${NC}"
+echo "1. Review any warnings above"
+echo "2. Commit any final changes: git add -A && git commit -m 'chore: prepare release $VERSION'"
+echo "3. Create git tag: git tag v$VERSION"
+echo "4. Publish to crates.io: DRY_RUN=false ./scripts/publish.sh"
+echo "5. Push changes and tag: git push && git push origin v$VERSION"
+echo "6. Create GitHub release"
+echo ""
+echo "Or run publish in dry-run mode first:"
+echo "  ./scripts/publish.sh"

@@ -185,7 +185,8 @@ debug = 2
 # Run with: ./scripts/run_benchmarks.sh
 
 # [patch.crates-io]
-# # Replace unmaintained paste crate with pastey (drop-in replacement)
-# paste = { git = "https://github.com/AS1100K/pastey" }
+# Note: paste (RUSTSEC-2024-0436) is unmaintained but compile-time only (zero runtime risk)
+# Cannot patch to pastey due to package name mismatch in Cargo's patch mechanism
+# Tracked upstream: https://github.com/parallaxsecond/rust-cryptoki/issues/279
 
 

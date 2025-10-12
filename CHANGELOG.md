@@ -220,8 +220,8 @@ See `MIGRATION.md` for complete upgrade guide.
 **Security Posture**:
 - 🔒 Known vulnerabilities: **1 (mitigated)**
   - RSA timing sidechannel: Use P-256 instead (recommended in docs)
-- ⚠️ Unmaintained dependencies: **1 (zero runtime risk)**
-  - paste v1.0.15: Compile-time proc macro only, HSM feature only
+- ⚠️ Unmaintained dependencies: **1 (informational only)**
+  - paste v1.0.15: Compile-time proc macro only, zero runtime risk, HSM feature only
 - ✅ Security improvements: Removed `instant` unmaintained runtime dependency
 
 **Dependency Management**:
