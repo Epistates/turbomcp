@@ -907,9 +907,10 @@ impl From<turbomcp_transport::core::TransportError> for McpError {
 
 impl From<Box<turbomcp_protocol::Error>> for McpError {
     fn from(core_error: Box<turbomcp_protocol::Error>) -> Self {
-        // Convert core error to server error first, then to McpError
-        let server_error: turbomcp_server::ServerError = core_error.into();
-        Self::Server(server_error)
+        // Preserve protocol error codes by wrapping as Protocol variant
+        // Don't use .into() which would lose error code context through
+        // From<Box<Error>> for ServerError conversion
+        Self::Server(turbomcp_server::ServerError::Protocol(core_error))
     }
 }
 
@@ -1356,7 +1357,7 @@ impl Context {
             capabilities
                 .create_message(request, self.request.clone())
                 .await
-                .map_err(|e| McpError::Context(format!("Sampling failed: {}", e)))
+                .map_err(|e| McpError::from(Box::new(e)))
         } else {
             Err(McpError::Context(
                 "Server capabilities not available for sampling".to_string(),

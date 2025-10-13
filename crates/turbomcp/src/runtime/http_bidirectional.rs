@@ -273,10 +273,11 @@ impl ServerRequestDispatcher for HttpDispatcher {
                     context: Some("MCP 2025-06-18 compliance".to_string()),
                 })
             }
-            JsonRpcResponsePayload::Error { error } => Err(ServerError::Handler {
-                message: format!("Elicitation failed: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            }),
+            JsonRpcResponsePayload::Error { error } => {
+                // FIXED: Preserve error code by creating Protocol error, not Handler error
+                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
+                Err(ServerError::Protocol(protocol_err))
+            }
         }
     }
 
@@ -306,10 +307,11 @@ impl ServerRequestDispatcher for HttpDispatcher {
                 _meta: None,
                 data: None,
             }),
-            JsonRpcResponsePayload::Error { error } => Err(ServerError::Handler {
-                message: format!("Ping failed: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            }),
+            JsonRpcResponsePayload::Error { error } => {
+                // FIXED: Preserve error code by creating Protocol error, not Handler error
+                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
+                Err(ServerError::Protocol(protocol_err))
+            }
         }
     }
 
@@ -346,10 +348,11 @@ impl ServerRequestDispatcher for HttpDispatcher {
                     context: Some("MCP 2025-06-18 compliance".to_string()),
                 })
             }
-            JsonRpcResponsePayload::Error { error } => Err(ServerError::Handler {
-                message: format!("Sampling failed: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            }),
+            JsonRpcResponsePayload::Error { error } => {
+                // FIXED: Preserve error code by creating Protocol error, not Handler error
+                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
+                Err(ServerError::Protocol(protocol_err))
+            }
         }
     }
 
@@ -386,10 +389,11 @@ impl ServerRequestDispatcher for HttpDispatcher {
                     context: Some("MCP 2025-06-18 compliance".to_string()),
                 })
             }
-            JsonRpcResponsePayload::Error { error } => Err(ServerError::Handler {
-                message: format!("Roots list failed: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            }),
+            JsonRpcResponsePayload::Error { error } => {
+                // FIXED: Preserve error code by creating Protocol error, not Handler error
+                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
+                Err(ServerError::Protocol(protocol_err))
+            }
         }
     }
 

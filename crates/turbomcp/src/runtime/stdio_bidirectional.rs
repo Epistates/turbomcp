@@ -191,10 +191,9 @@ impl ServerRequestDispatcher for StdioDispatcher {
                 context: Some("MCP compliance".to_string()),
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Elicitation error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // FIXED: Preserve error code by creating Protocol error, not Handler error
+            let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
+            Err(ServerError::Protocol(protocol_err))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid elicitation response: missing result and error".to_string(),
@@ -238,10 +237,9 @@ impl ServerRequestDispatcher for StdioDispatcher {
                 _meta: None,
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Ping error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // FIXED: Preserve error code by creating Protocol error, not Handler error
+            let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
+            Err(ServerError::Protocol(protocol_err))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid ping response".to_string(),
@@ -296,10 +294,10 @@ impl ServerRequestDispatcher for StdioDispatcher {
                 context: Some("MCP compliance".to_string()),
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Sampling error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // FIXED: Preserve error code by creating Protocol error, not Handler error
+            // This ensures user rejection (code -1) is not wrapped as -32002
+            let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
+            Err(ServerError::Protocol(protocol_err))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid sampling response: missing result and error".to_string(),
@@ -343,10 +341,9 @@ impl ServerRequestDispatcher for StdioDispatcher {
                 context: Some("MCP compliance".to_string()),
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Roots error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // FIXED: Preserve error code by creating Protocol error, not Handler error
+            let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
+            Err(ServerError::Protocol(protocol_err))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid roots response: missing result and error".to_string(),
