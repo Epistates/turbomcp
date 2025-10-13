@@ -153,10 +153,11 @@ impl ServerRequestDispatcher for StdioDispatcher {
                 context: Some("MCP compliance".to_string()),
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Elicitation error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // Preserve client error code by wrapping as Protocol error
+            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+                error.code,
+                &error.message,
+            )))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid elicitation response: missing result and error".to_string(),
@@ -185,10 +186,11 @@ impl ServerRequestDispatcher for StdioDispatcher {
                 _meta: None,
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Ping error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // Preserve client error code by wrapping as Protocol error
+            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+                error.code,
+                &error.message,
+            )))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid ping response".to_string(),
@@ -222,10 +224,11 @@ impl ServerRequestDispatcher for StdioDispatcher {
                 context: Some("MCP compliance".to_string()),
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Sampling error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // Preserve client error code by wrapping as Protocol error
+            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+                error.code,
+                &error.message,
+            )))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid sampling response: missing result and error".to_string(),
@@ -254,10 +257,11 @@ impl ServerRequestDispatcher for StdioDispatcher {
                 context: Some("MCP compliance".to_string()),
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Roots error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // Preserve client error code by wrapping as Protocol error
+            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+                error.code,
+                &error.message,
+            )))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid roots response: missing result and error".to_string(),
@@ -538,10 +542,11 @@ where
                 context: Some("MCP compliance".to_string()),
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Elicitation error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // Preserve client error code by wrapping as Protocol error
+            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+                error.code,
+                &error.message,
+            )))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid elicitation response: missing result and error".to_string(),
@@ -570,10 +575,11 @@ where
                 _meta: None,
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Ping error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // Preserve client error code by wrapping as Protocol error
+            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+                error.code,
+                &error.message,
+            )))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid ping response".to_string(),
@@ -607,10 +613,11 @@ where
                 context: Some("MCP compliance".to_string()),
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Sampling error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // Preserve client error code by wrapping as Protocol error
+            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+                error.code,
+                &error.message,
+            )))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid sampling response: missing result and error".to_string(),
@@ -639,10 +646,11 @@ where
                 context: Some("MCP compliance".to_string()),
             })
         } else if let Some(error) = response.error() {
-            Err(ServerError::Handler {
-                message: format!("Roots error: {}", error.message),
-                context: Some(format!("MCP error code: {}", error.code)),
-            })
+            // Preserve client error code by wrapping as Protocol error
+            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+                error.code,
+                &error.message,
+            )))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid roots response: missing result and error".to_string(),

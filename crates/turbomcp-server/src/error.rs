@@ -7,6 +7,18 @@ pub type ServerResult<T> = Result<T, ServerError>;
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ServerError {
+    /// Protocol-level error from client or protocol layer
+    ///
+    /// This variant preserves the original protocol error, including error codes
+    /// like `-1` for user rejection. This ensures transparency when forwarding
+    /// client errors (e.g., sampling/elicitation rejections) back through the
+    /// server to calling clients.
+    ///
+    /// When converting to `turbomcp_protocol::Error`, this variant is unwrapped
+    /// directly to preserve error semantics and codes.
+    #[error("Protocol error: {0}")]
+    Protocol(Box<turbomcp_protocol::Error>),
+
     /// Core errors
     #[error("Core error: {0}")]
     Core(#[from] turbomcp_protocol::registry::RegistryError),
@@ -298,8 +310,20 @@ impl ServerError {
 
     /// Get error code for JSON-RPC responses
     #[must_use]
-    pub const fn error_code(&self) -> i32 {
-        match self {
+    pub fn error_code(&self) -> i32 {
+        let code = match self {
+            // Preserve protocol error codes directly
+            Self::Protocol(protocol_err) => {
+                let extracted_code = protocol_err.jsonrpc_error_code();
+                tracing::info!(
+                    "🔍 [ServerError::error_code] Protocol variant - extracted code: {}, kind: {:?}",
+                    extracted_code,
+                    protocol_err.kind
+                );
+                extracted_code
+            }
+
+            // Map server errors to JSON-RPC codes
             Self::Core(_) => -32603,
             Self::NotFound { .. } => -32004,
             Self::Authentication { .. } => -32008,
@@ -308,8 +332,23 @@ impl ServerError {
             Self::ResourceExhausted { .. } => -32010,
             Self::Timeout { .. } => -32603,
             Self::Handler { .. } => -32002,
-            _ => -32603,
-        }
+            Self::Transport(_) => -32603,
+            Self::Configuration { .. } => -32015,
+            Self::Lifecycle(_) => -32603,
+            Self::Shutdown(_) => -32603,
+            Self::Middleware { .. } => -32603,
+            Self::Registry(_) => -32603,
+            Self::Routing { .. } => -32603,
+            Self::Internal(_) => -32603,
+            Self::Io(_) => -32603,
+            Self::Serialization(_) => -32602,
+        };
+        tracing::info!(
+            "🔍 [ServerError::error_code] Returning code: {} for variant: {:?}",
+            code,
+            std::mem::discriminant(self)
+        );
+        code
     }
 }
 
@@ -379,6 +418,10 @@ impl From<Box<turbomcp_protocol::Error>> for ServerError {
 
         match core_error.kind {
             // MCP-specific errors
+            ErrorKind::UserRejected => Self::Handler {
+                message: core_error.message,
+                context: core_error.context.operation,
+            },
             ErrorKind::ToolNotFound | ErrorKind::PromptNotFound | ErrorKind::ResourceNotFound => {
                 Self::NotFound {
                     resource: core_error.message,
@@ -474,8 +517,95 @@ impl From<Box<turbomcp_protocol::Error>> for ServerError {
     }
 }
 
-// Note: McpError conversion is handled by the turbomcp crate
-// since McpError wraps ServerError, not the other way around
+// Conversion from server errors to protocol errors
+///
+/// This conversion preserves protocol errors directly when they come from clients
+/// (ServerError::Protocol variant), ensuring error codes like `-1` for user rejection
+/// are maintained through the server layer.
+///
+/// # Error Code Preservation
+///
+/// When a client returns an error (e.g., user rejects sampling with code `-1`),
+/// the server receives it as `ServerError::Protocol(Error{ kind: UserRejected })`.
+/// This conversion unwraps it directly, preserving the original error code when
+/// the error is sent back to calling clients.
+impl From<ServerError> for Box<turbomcp_protocol::Error> {
+    fn from(server_error: ServerError) -> Self {
+        match server_error {
+            // Unwrap protocol errors directly to preserve error codes
+            ServerError::Protocol(protocol_err) => protocol_err,
+
+            // Map other server errors to appropriate protocol errors
+            ServerError::Transport(transport_err) => {
+                turbomcp_protocol::Error::transport(format!("Transport error: {}", transport_err))
+            }
+            ServerError::Handler { message, context } => {
+                turbomcp_protocol::Error::internal(format!(
+                    "Handler error{}: {}",
+                    context
+                        .as_ref()
+                        .map(|c| format!(" ({})", c))
+                        .unwrap_or_default(),
+                    message
+                ))
+            }
+            ServerError::Core(err) => {
+                turbomcp_protocol::Error::internal(format!("Core error: {}", err))
+            }
+            ServerError::Configuration { message, .. } => {
+                turbomcp_protocol::Error::configuration(message)
+            }
+            ServerError::Authentication { message, .. } => {
+                turbomcp_protocol::Error::new(turbomcp_protocol::ErrorKind::Authentication, message)
+            }
+            ServerError::Authorization { message, .. } => turbomcp_protocol::Error::new(
+                turbomcp_protocol::ErrorKind::PermissionDenied,
+                message,
+            ),
+            ServerError::RateLimit { message, .. } => {
+                turbomcp_protocol::Error::rate_limited(message)
+            }
+            ServerError::Timeout {
+                operation,
+                timeout_ms,
+            } => turbomcp_protocol::Error::timeout(format!(
+                "Operation '{}' timed out after {}ms",
+                operation, timeout_ms
+            )),
+            ServerError::NotFound { resource } => turbomcp_protocol::Error::new(
+                turbomcp_protocol::ErrorKind::ResourceNotFound,
+                format!("Resource not found: {}", resource),
+            ),
+            ServerError::ResourceExhausted { resource, .. } => turbomcp_protocol::Error::new(
+                turbomcp_protocol::ErrorKind::Unavailable,
+                format!("Resource exhausted: {}", resource),
+            ),
+            ServerError::Internal(message) => turbomcp_protocol::Error::internal(message),
+            ServerError::Lifecycle(message) => {
+                turbomcp_protocol::Error::internal(format!("Lifecycle error: {}", message))
+            }
+            ServerError::Shutdown(message) => {
+                turbomcp_protocol::Error::internal(format!("Shutdown error: {}", message))
+            }
+            ServerError::Middleware { name, message } => turbomcp_protocol::Error::internal(
+                format!("Middleware error ({}): {}", name, message),
+            ),
+            ServerError::Registry(message) => {
+                turbomcp_protocol::Error::internal(format!("Registry error: {}", message))
+            }
+            ServerError::Routing { message, .. } => {
+                turbomcp_protocol::Error::internal(format!("Routing error: {}", message))
+            }
+            ServerError::Io(err) => {
+                turbomcp_protocol::Error::internal(format!("IO error: {}", err))
+            }
+            ServerError::Serialization(err) => turbomcp_protocol::Error::new(
+                turbomcp_protocol::ErrorKind::Serialization,
+                format!("Serialization error: {}", err),
+            ),
+        }
+    }
+}
 
 // Comprehensive tests in separate file (tokio/axum pattern)
 #[cfg(test)]

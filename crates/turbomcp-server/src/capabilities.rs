@@ -109,10 +109,11 @@ impl ServerToClientRequests for ServerToClientAdapter {
         Box::pin(async move {
             // Delegate directly to the bidirectional router with full context propagation
             // No serialization needed - types flow through directly (zero-cost abstraction)
+            // Error conversion preserves protocol errors (e.g., -1 for user rejection)
             self.bidirectional
                 .send_create_message_to_client(request, ctx)
                 .await
-                .map_err(|e| *McpError::internal(format!("Sampling request failed: {}", e)))
+                .map_err(|e| *Box::<turbomcp_protocol::Error>::from(e))
         })
     }
 
@@ -124,10 +125,11 @@ impl ServerToClientRequests for ServerToClientAdapter {
         Box::pin(async move {
             // Delegate directly to the bidirectional router with full context propagation
             // No serialization needed - types flow through directly (zero-cost abstraction)
+            // Error conversion preserves protocol errors (e.g., -1 for user rejection)
             self.bidirectional
                 .send_elicitation_to_client(request, ctx)
                 .await
-                .map_err(|e| *McpError::internal(format!("Elicitation request failed: {}", e)))
+                .map_err(|e| *Box::<turbomcp_protocol::Error>::from(e))
         })
     }
 
@@ -138,10 +140,11 @@ impl ServerToClientRequests for ServerToClientAdapter {
 
             // Delegate directly to the bidirectional router with full context propagation
             // No serialization needed - types flow through directly (zero-cost abstraction)
+            // Error conversion preserves protocol errors
             self.bidirectional
                 .send_list_roots_to_client(list_roots_request, ctx)
                 .await
-                .map_err(|e| *McpError::internal(format!("Roots listing request failed: {}", e)))
+                .map_err(|e| *Box::<turbomcp_protocol::Error>::from(e))
         })
     }
 }
