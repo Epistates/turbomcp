@@ -276,7 +276,7 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
                             ::turbomcp_protocol::Error::handler(format!("Failed to serialize elicitation: {}", e))
                         )?)
                         .await
-                        .map_err(|e| ::turbomcp_protocol::Error::handler(format!("Elicitation failed: {}", e)))
+                        // FIXED: Don't wrap elicit() error - preserve error code from server response
                         .and_then(|response| {
                             serde_json::from_value::<::turbomcp_protocol::types::ElicitResult>(response)
                                 .map_err(|e| ::turbomcp_protocol::Error::handler(format!("Failed to parse response: {}", e)))
@@ -314,7 +314,7 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
                             ::turbomcp_protocol::Error::handler(format!("Failed to serialize elicitation: {}", e))
                         )?)
                         .await
-                        .map_err(|e| ::turbomcp_protocol::Error::handler(format!("Elicitation failed: {}", e)))
+                        // FIXED: Don't wrap elicit() error - preserve error code from server response
                         .and_then(|response| {
                             serde_json::from_value::<::turbomcp_protocol::types::ElicitResult>(response)
                                 .map_err(|e| ::turbomcp_protocol::Error::handler(format!("Failed to parse response: {}", e)))

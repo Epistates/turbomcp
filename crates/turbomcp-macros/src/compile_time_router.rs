@@ -113,10 +113,11 @@ pub fn generate_router(
                                 req.id.clone()
                             )
                         }
+                        // FIXED: Extract actual error code from ServerError
                         Err(e) => {
                             ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
                                 ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
-                                    code: -32603,
+                                    code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
                                 },
@@ -186,10 +187,11 @@ pub fn generate_router(
                                 )
                             }
                         }
+                        // FIXED: Extract actual error code from ServerError
                         Err(e) => {
                             ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
                                 ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
-                                    code: -32603,
+                                    code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
                                 },
@@ -259,10 +261,11 @@ pub fn generate_router(
                                 )
                             }
                         }
+                        // FIXED: Extract actual error code from ServerError
                         Err(e) => {
                             ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
                                 ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
-                                    code: -32603,
+                                    code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
                                 },
@@ -607,6 +610,7 @@ pub fn generate_router(
             /// ```
             ///
             /// For standalone servers, use `run_http()` instead.
+            #[cfg(feature = "http")]
             pub fn into_mcp_router(self: ::std::sync::Arc<Self>) -> ::turbomcp::axum::Router {
                 self.into_mcp_router_with_path("/mcp")
             }
@@ -650,6 +654,7 @@ pub fn generate_router(
             /// ```
             ///
             /// For standalone servers, use `run_http_with_path()` instead.
+            #[cfg(feature = "http")]
             pub fn into_mcp_router_with_path(self: ::std::sync::Arc<Self>, path: &str) -> ::turbomcp::axum::Router {
                 use ::std::sync::Arc;
                 use ::turbomcp::turbomcp_transport::streamable_http_v2::{create_router, StreamableHttpConfig};

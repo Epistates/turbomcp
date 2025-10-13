@@ -112,7 +112,22 @@ pub fn generate_completion_impl(args: TokenStream, input: TokenStream) -> TokenS
 
                 // Call the actual method and convert result to CompleteResult
                 let result = self.#fn_name(#call_args).await
-                    .map_err(|e| turbomcp::ServerError::handler(format!("Completion failed: {}", e)))?;
+                    .map_err(|e| match e {
+                        turbomcp::McpError::Server(server_err) => server_err,
+                        turbomcp::McpError::Tool(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Resource(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Prompt(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Protocol(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Context(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Unauthorized(msg) => turbomcp::ServerError::authorization(msg),
+                        turbomcp::McpError::Network(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::InvalidInput(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Schema(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Transport(msg) => turbomcp::ServerError::handler(msg),
+                        turbomcp::McpError::Serialization(e) => turbomcp::ServerError::from(e),
+                        turbomcp::McpError::Internal(msg) => turbomcp::ServerError::Internal(msg),
+                        turbomcp::McpError::InvalidRequest(msg) => turbomcp::ServerError::handler(msg),
+                    })?;
 
                 // Convert result to CompleteResult - handle different result types
                 let completion_values = match ::serde_json::to_value(&result) {

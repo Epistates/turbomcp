@@ -238,13 +238,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             }
 
             /// Run server with HTTP transport (MCP 2025-06-18 compliant)
-            ///
-            /// **Requires**: Enable the `http` feature in your `turbomcp` dependency:
-            ///
-            /// ```toml
-            /// [dependencies]
-            /// turbomcp = { version = "2.0", features = ["http"] }
-            /// ```
+            #[cfg(feature = "http")]
             pub async fn run_http<A: ::std::net::ToSocketAddrs>(
                 self,
                 addr: A
@@ -253,13 +247,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             }
 
             /// Run HTTP server with custom endpoint path (MCP 2025-06-18 compliant)
-            ///
-            /// **Requires**: Enable the `http` feature in your `turbomcp` dependency:
-            ///
-            /// ```toml
-            /// [dependencies]
-            /// turbomcp = { version = "2.0", features = ["http"] }
-            /// ```
+            #[cfg(feature = "http")]
             pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs>(
                 self,
                 addr: A,
@@ -309,13 +297,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             }
 
             /// Run server with WebSocket transport (MCP 2025-06-18 compliant)
-            ///
-            /// **Requires**: Enable the `websocket` feature in your `turbomcp` dependency:
-            ///
-            /// ```toml
-            /// [dependencies]
-            /// turbomcp = { version = "2.0", features = ["websocket"] }
-            /// ```
+            #[cfg(feature = "websocket")]
             pub async fn run_websocket<A: ::std::net::ToSocketAddrs>(
                 self,
                 addr: A
@@ -324,13 +306,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             }
 
             /// Run WebSocket server with custom endpoint path (MCP 2025-06-18 compliant)
-            ///
-            /// **Requires**: Enable the `websocket` feature in your `turbomcp` dependency:
-            ///
-            /// ```toml
-            /// [dependencies]
-            /// turbomcp = { version = "2.0", features = ["websocket"] }
-            /// ```
+            #[cfg(feature = "websocket")]
             pub async fn run_websocket_with_path<A: ::std::net::ToSocketAddrs>(
                 self,
                 addr: A,
@@ -360,13 +336,6 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             /// This method provides TCP socket transport for network communication.
             /// TCP is useful for local network communication or when stdio/HTTP aren't suitable.
             ///
-            /// **Requires**: Enable the `tcp` feature in your `turbomcp` dependency:
-            ///
-            /// ```toml
-            /// [dependencies]
-            /// turbomcp = { version = "2.0", features = ["tcp"] }
-            /// ```
-            ///
             /// # Example
             ///
             /// ```no_run
@@ -375,6 +344,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             ///     MyServer.run_tcp("127.0.0.1:8765").await
             /// }
             /// ```
+            #[cfg(feature = "tcp")]
             pub async fn run_tcp<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A
@@ -389,15 +359,6 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             /// This method provides Unix socket transport for local IPC.
             /// Unix sockets are ideal for same-machine communication with lower overhead than TCP.
             ///
-            /// **Requires**: Enable the `unix` feature in your `turbomcp` dependency:
-            ///
-            /// ```toml
-            /// [dependencies]
-            /// turbomcp = { version = "2.0", features = ["unix"] }
-            /// ```
-            ///
-            /// **Platform**: Unix-like systems only (Linux, macOS, BSD). Not available on Windows.
-            ///
             /// # Example
             ///
             /// ```no_run
@@ -406,7 +367,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             ///     MyServer.run_unix("/tmp/mcp.sock").await
             /// }
             /// ```
-            #[cfg(unix)]  // Platform check only - feature gating handled by library
+            #[cfg(all(feature = "unix", unix))]
             pub async fn run_unix<P: AsRef<::std::path::Path> + Send + ::std::fmt::Debug>(
                 self,
                 path: P

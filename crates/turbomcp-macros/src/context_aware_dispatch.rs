@@ -49,10 +49,11 @@ pub fn generate_context_aware_tool_dispatch(
                                 req.id.clone()
                             )
                         }
+                        // FIXED: Extract actual error code from ServerError
                         Err(e) => {
                             ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
                                 ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
-                                    code: -32603,
+                                    code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
                                 },
@@ -127,10 +128,11 @@ pub fn generate_context_aware_prompt_dispatch(
                                 )
                             }
                         }
+                        // FIXED: Extract actual error code from ServerError
                         Err(e) => {
                             ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
                                 ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
-                                    code: -32603,
+                                    code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
                                 },
@@ -199,10 +201,11 @@ pub fn generate_context_aware_resource_dispatch(
                                 )
                             }
                         }
+                        // FIXED: Extract actual error code from ServerError
                         Err(e) => {
                             ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
                                 ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
-                                    code: -32603,
+                                    code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
                                 },
