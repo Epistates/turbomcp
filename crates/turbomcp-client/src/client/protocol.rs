@@ -157,7 +157,18 @@ impl<T: Transport + 'static> ProtocolClient<T> {
 
         // Handle JSON-RPC errors
         if let Some(error) = response.error() {
-            return Err(Error::rpc(error.code, &error.message));
+            tracing::info!(
+                "🔍 [protocol.rs] Received JSON-RPC error - code: {}, message: {}",
+                error.code,
+                error.message
+            );
+            let err = Error::rpc(error.code, &error.message);
+            tracing::info!(
+                "🔍 [protocol.rs] Created Error - kind: {:?}, jsonrpc_code: {}",
+                err.kind,
+                err.jsonrpc_error_code()
+            );
+            return Err(err);
         }
 
         // Deserialize result

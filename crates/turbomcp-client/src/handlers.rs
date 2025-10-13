@@ -129,7 +129,7 @@ impl HandlerError {
     ///
     /// # Error Code Mapping
     ///
-    /// - **-32800**: User cancelled the operation
+    /// - **-1**: User rejected sampling request (MCP 2025-06-18 spec)
     /// - **-32801**: Handler operation timed out
     /// - **-32602**: Invalid input (bad request)
     /// - **-32601**: Handler configuration error (method not found)
@@ -142,12 +142,12 @@ impl HandlerError {
     ///
     /// let error = HandlerError::UserCancelled;
     /// let jsonrpc_error = error.into_jsonrpc_error();
-    /// assert_eq!(jsonrpc_error.code, -32800);
-    /// assert!(jsonrpc_error.message.contains("User cancelled"));
+    /// assert_eq!(jsonrpc_error.code, -1);
+    /// assert!(jsonrpc_error.message.contains("User rejected"));
     /// ```
     pub fn into_jsonrpc_error(&self) -> JsonRpcError {
         let (code, message) = match self {
-            HandlerError::UserCancelled => (-32800, "User cancelled the operation".to_string()),
+            HandlerError::UserCancelled => (-1, "User rejected sampling request".to_string()),
             HandlerError::Timeout { timeout_seconds } => (
                 -32801,
                 format!(
@@ -1382,10 +1382,10 @@ mod tests {
         let jsonrpc_error = error.into_jsonrpc_error();
 
         assert_eq!(
-            jsonrpc_error.code, -32800,
-            "User cancelled should map to -32800"
+            jsonrpc_error.code, -1,
+            "User cancelled should map to -1 per MCP 2025-06-18 spec"
         );
-        assert!(jsonrpc_error.message.contains("User cancelled"));
+        assert!(jsonrpc_error.message.contains("User rejected"));
         assert!(jsonrpc_error.data.is_none());
     }
 

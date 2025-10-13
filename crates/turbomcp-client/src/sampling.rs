@@ -97,7 +97,9 @@ impl SamplingHandler for DelegatingSamplingHandler {
     ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>> {
         // 1. Human-in-the-loop: Get user approval
         if !self.user_handler.approve_request(&request).await? {
-            return Err("User rejected sampling request".into());
+            // FIXED: Return HandlerError::UserCancelled (code -1) instead of string error
+            // This ensures the error code is preserved when sent back to the server
+            return Err(Box::new(crate::handlers::HandlerError::UserCancelled));
         }
 
         // 2. Select appropriate LLM server based on model preferences
@@ -139,7 +141,11 @@ impl DelegatingSamplingHandler {
         if let Some(first_client) = self.llm_clients.first() {
             Ok(first_client.clone())
         } else {
-            Err("No LLM servers configured".into())
+            // FIXED: Return HandlerError::Configuration instead of string error
+            // This ensures proper error code mapping (-32601)
+            Err(Box::new(crate::handlers::HandlerError::Configuration {
+                message: "No LLM servers configured".to_string(),
+            }))
         }
     }
 }

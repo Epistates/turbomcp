@@ -536,20 +536,26 @@ impl<T: Transport + 'static> Client<T> {
                         Err(e) => {
                             // Preserve error semantics by checking actual error type
                             // This allows proper error code propagation for retry logic
-                            let (code, message) =
-                                if let Some(handler_err) = e.downcast_ref::<HandlerError>() {
-                                    // HandlerError has explicit JSON-RPC code mapping
-                                    let json_err = handler_err.into_jsonrpc_error();
-                                    (json_err.code, json_err.message)
-                                } else if let Some(proto_err) =
-                                    e.downcast_ref::<turbomcp_protocol::Error>()
-                                {
-                                    // Protocol errors have ErrorKind-based mapping
-                                    (proto_err.jsonrpc_error_code(), proto_err.to_string())
-                                } else {
-                                    // Generic errors default to Internal (-32603)
-                                    (-32603, format!("Sampling handler error: {}", e))
-                                };
+                            let (code, message) = if let Some(handler_err) =
+                                e.downcast_ref::<HandlerError>()
+                            {
+                                // HandlerError has explicit JSON-RPC code mapping
+                                let json_err = handler_err.into_jsonrpc_error();
+                                (json_err.code, json_err.message)
+                            } else if let Some(proto_err) =
+                                e.downcast_ref::<turbomcp_protocol::Error>()
+                            {
+                                // Protocol errors have ErrorKind-based mapping
+                                (proto_err.jsonrpc_error_code(), proto_err.to_string())
+                            } else {
+                                // Generic errors default to Internal (-32603)
+                                // Log the error type for debugging (should rarely hit this path)
+                                tracing::warn!(
+                                    "Sampling handler returned unknown error type (not HandlerError or Protocol error): {}",
+                                    std::any::type_name_of_val(&*e)
+                                );
+                                (-32603, format!("Sampling handler error: {}", e))
+                            };
 
                             let error = turbomcp_protocol::jsonrpc::JsonRpcError {
                                 code,
@@ -606,12 +612,10 @@ impl<T: Transport + 'static> Client<T> {
                         self.send_response(response).await?;
                     }
                     Err(e) => {
-                        let error = turbomcp_protocol::jsonrpc::JsonRpcError {
-                            code: -32603,
-                            message: format!("Roots handler error: {}", e),
-                            data: None,
-                        };
-                        let response = JsonRpcResponse::error_response(error, request.id);
+                        // FIXED: Extract error code from HandlerError instead of hardcoding -32603
+                        // Roots handler returns HandlerResult<Vec<Root>>, so error is HandlerError
+                        let json_err = e.into_jsonrpc_error();
+                        let response = JsonRpcResponse::error_response(json_err, request.id);
                         self.send_response(response).await?;
                     }
                 }

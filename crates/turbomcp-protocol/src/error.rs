@@ -109,6 +109,13 @@ pub enum ErrorKind {
     /// Protocol version mismatch (MCP error code -32007)
     ProtocolVersionMismatch,
 
+    /// User rejected the request (MCP error code -1)
+    ///
+    /// Per MCP 2025-06-18 specification, this indicates a user explicitly
+    /// rejected a sampling request or similar operation. This is a permanent
+    /// failure that should not be retried.
+    UserRejected,
+
     // ============================================================================
     // JSON-RPC Standard Errors
     // ============================================================================
@@ -315,9 +322,32 @@ impl Error {
     }
 
     /// Create a JSON-RPC error
+    ///
+    /// Maps JSON-RPC error codes to appropriate ErrorKind variants to preserve
+    /// semantic meaning. Special handling for MCP-specific codes like -1 (user rejection).
     #[must_use]
     pub fn rpc(code: i32, message: &str) -> Box<Self> {
-        Self::new(ErrorKind::Protocol, format!("RPC error {code}: {message}"))
+        // Map specific error codes to appropriate ErrorKind to preserve semantics
+        let kind = match code {
+            -1 => ErrorKind::UserRejected,            // MCP: User rejected request
+            -32001 => ErrorKind::ToolNotFound,        // MCP: Tool not found
+            -32002 => ErrorKind::ToolExecutionFailed, // MCP: Tool execution failed
+            -32003 => ErrorKind::PromptNotFound,      // MCP: Prompt not found
+            -32004 => ErrorKind::ResourceNotFound,    // MCP: Resource not found
+            -32005 => ErrorKind::ResourceAccessDenied, // MCP: Resource access denied
+            -32006 => ErrorKind::CapabilityNotSupported, // MCP: Capability not supported
+            -32007 => ErrorKind::ProtocolVersionMismatch, // MCP: Protocol version mismatch
+            -32008 => ErrorKind::Authentication,      // MCP: Authentication required
+            -32009 => ErrorKind::RateLimited,         // MCP: Rate limited
+            -32010 => ErrorKind::ServerOverloaded,    // MCP: Server overloaded
+            -32600 => ErrorKind::BadRequest,          // JSON-RPC: Invalid Request
+            -32601 => ErrorKind::Protocol,            // JSON-RPC: Method not found
+            -32602 => ErrorKind::Validation,          // JSON-RPC: Invalid params
+            -32603 => ErrorKind::Internal,            // JSON-RPC: Internal error
+            _ => ErrorKind::Protocol,                 // Default to Protocol for unknown codes
+        };
+
+        Self::new(kind, format!("RPC error {code}: {message}"))
     }
 
     /// Create a timeout error
@@ -348,6 +378,15 @@ impl Error {
     /// Create a cancelled error
     pub fn cancelled(message: impl Into<String>) -> Box<Self> {
         Self::new(ErrorKind::Cancelled, message)
+    }
+
+    /// Create a user rejected error
+    ///
+    /// Per MCP 2025-06-18 specification, this indicates a user explicitly
+    /// rejected a request (e.g., declined a sampling request). This is a
+    /// permanent failure that should not be retried.
+    pub fn user_rejected(message: impl Into<String>) -> Box<Self> {
+        Self::new(ErrorKind::UserRejected, message)
     }
 
     /// Create a handler error - for compatibility with macro-generated code
@@ -603,7 +642,7 @@ impl Error {
     pub const fn http_status_code(&self) -> u16 {
         match self.kind {
             // Client errors (4xx)
-            ErrorKind::Validation | ErrorKind::BadRequest => 400,
+            ErrorKind::Validation | ErrorKind::BadRequest | ErrorKind::UserRejected => 400,
             ErrorKind::Authentication => 401,
             ErrorKind::PermissionDenied | ErrorKind::Security | ErrorKind::ResourceAccessDenied => {
                 403
@@ -647,6 +686,7 @@ impl Error {
             ErrorKind::Internal => -32603,   // Internal error
 
             // MCP-specific error codes (2025-06-18 specification)
+            ErrorKind::UserRejected => -1, // User rejected request (sampling spec)
             ErrorKind::ToolNotFound => -32001, // Tool not found
             ErrorKind::ToolExecutionFailed => -32002, // Tool execution error
             ErrorKind::PromptNotFound => -32003, // Prompt not found
@@ -655,7 +695,7 @@ impl Error {
             ErrorKind::CapabilityNotSupported => -32006, // Capability not supported
             ErrorKind::ProtocolVersionMismatch => -32007, // Protocol version mismatch
             ErrorKind::Authentication => -32008, // Authentication required
-            ErrorKind::RateLimited => -32009,  // Rate limited
+            ErrorKind::RateLimited => -32009, // Rate limited
             ErrorKind::ServerOverloaded => -32010, // Server overloaded
 
             // General application errors (application-defined codes)
@@ -712,6 +752,7 @@ impl ErrorKind {
     pub const fn description(self) -> &'static str {
         match self {
             // MCP-specific errors
+            Self::UserRejected => "User rejected request",
             Self::ToolNotFound => "Tool not found",
             Self::ToolExecutionFailed => "Tool execution failed",
             Self::PromptNotFound => "Prompt not found",
