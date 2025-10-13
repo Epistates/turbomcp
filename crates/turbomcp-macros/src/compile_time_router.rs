@@ -599,8 +599,14 @@ pub fn generate_router(
             ///     .route("/health", get(health_check));
             /// ```
             ///
+            /// **Requires**: Enable the `http` feature in your `turbomcp` dependency:
+            ///
+            /// ```toml
+            /// [dependencies]
+            /// turbomcp = { version = "2.0", features = ["http"] }
+            /// ```
+            ///
             /// For standalone servers, use `run_http()` instead.
-            #[cfg(feature = "http")]
             pub fn into_mcp_router(self: ::std::sync::Arc<Self>) -> ::turbomcp::axum::Router {
                 self.into_mcp_router_with_path("/mcp")
             }
@@ -636,8 +642,14 @@ pub fn generate_router(
             ///     .route("/api/health", get(health_check));
             /// ```
             ///
+            /// **Requires**: Enable the `http` feature in your `turbomcp` dependency:
+            ///
+            /// ```toml
+            /// [dependencies]
+            /// turbomcp = { version = "2.0", features = ["http"] }
+            /// ```
+            ///
             /// For standalone servers, use `run_http_with_path()` instead.
-            #[cfg(feature = "http")]
             pub fn into_mcp_router_with_path(self: ::std::sync::Arc<Self>, path: &str) -> ::turbomcp::axum::Router {
                 use ::std::sync::Arc;
                 use ::turbomcp::turbomcp_transport::streamable_http_v2::{create_router, StreamableHttpConfig};

@@ -5,6 +5,27 @@ All notable changes to TurboMCP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Macro feature gating**: Removed `#[cfg(feature = "...")]` from macro-generated transport methods
+  - Feature gating now happens solely at the library level, eliminating spurious "unexpected cfg condition value" warnings
+  - Users no longer need to declare transport features in their own `[features]` section
+  - Clear "method not found" errors when calling transport methods without enabling features
+  - **Impact**: Backward compatible - no API changes required
+  - **Files modified**:
+    - `crates/turbomcp-macros/src/bidirectional_wrapper.rs`: Removed 6 feature gates, changed Unix gate to platform-only
+    - `crates/turbomcp-macros/src/compile_time_router.rs`: Removed 2 feature gates
+  - **Documentation**: Added feature requirements to all transport method docs
+
+### Improved
+
+- **Error messages**: Calling a transport method without its feature now gives clear compile errors instead of confusing cfg warnings
+  - Before: `warning: unexpected cfg condition value: tcp`
+  - After: `error[E0599]: no method named 'run_tcp' found` with help message to enable the feature
+- **Documentation**: Clarified that features should be enabled on the `turbomcp` dependency, not in user's `[features]` section
+
 ## [2.0.0-rc.1] - 2025-10-11
 
 ### 🐛 **BUG FIXES**
