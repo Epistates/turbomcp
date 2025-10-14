@@ -7,24 +7,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Full HTTP/SSE Bidirectional Support in ServerBuilder**: HTTP transport now has complete bidirectional support through `ServerBuilder`
+  - ✅ **Elicitation**: Server can request user input during tool execution
+  - ✅ **Sampling**: Server can request LLM completions from client
+  - ✅ **Roots**: Server can query client workspace roots
+  - ✅ **Ping**: Server can check client connectivity
+  - **Impact**: HTTP transport now fully MCP 2025-06-18 compliant via ServerBuilder
+  - **Implementation**: Factory pattern creates session-specific routers with bidirectional dispatchers
+  - **Files modified**:
+    - `crates/turbomcp-server/src/server/core.rs:646-692`: Factory pattern implementation
+    - `crates/turbomcp-server/src/runtime/http.rs:371-439`: Added `run_http()` function (~437 lines)
+    - `crates/turbomcp-server/Cargo.toml`: Added axum + async-stream dependencies (feature-gated)
+  - **Documentation**: Added `HTTP_BIDIRECTIONAL_ANALYSIS.md` with complete architecture analysis
+
+- **Full WebSocket Bidirectional Support in ServerBuilder**: WebSocket transport now has complete bidirectional support through `ServerBuilder`
+  - ✅ **Elicitation**: Server can request user input during tool execution
+  - ✅ **Sampling**: Server can request LLM completions from client
+  - ✅ **Roots**: Server can query client workspace roots
+  - ✅ **Ping**: Server can check client connectivity
+  - **Impact**: ✅ **ALL transports (STDIO/TCP/Unix/HTTP/WebSocket) now fully MCP 2025-06-18 compliant via ServerBuilder**
+  - **Implementation**: Wrapper factory pattern creates per-connection routers with bidirectional dispatchers
+  - **Files modified**:
+    - `crates/turbomcp-server/src/server/core.rs:779-845`: Wrapper factory implementation
+    - `crates/turbomcp-server/src/runtime/websocket.rs`: Added complete WebSocket bidirectional support (~560 lines)
+    - `crates/turbomcp-server/Cargo.toml`: futures dependency (already present, no changes needed)
+  - **Documentation**: Added `MCP_COMPLIANCE_MATRIX.md` with comprehensive compliance status across all transports
+
+### Changed
+
+- **HTTP Bidirectional Architecture Improvement**: Moved `HttpDispatcher` and `run_http` to `turbomcp-server` for clean dependency graph
+  - **Breaking**: None - `turbomcp` crate re-exports from new location (SDK layer design)
+  - **Benefit**: Eliminates circular dependency, enables ServerBuilder HTTP bidirectional
+  - **Impact**:
+    - ✅ `turbomcp-server` is now self-contained for HTTP bidirectional
+    - ✅ `turbomcp` remains the SDK/convenience layer (re-exports)
+    - ✅ Clean architectural layering: protocol → server → SDK
+  - **Files moved**:
+    - `HttpDispatcher`: `turbomcp/src/runtime/http_bidirectional.rs` → `turbomcp-server/src/runtime/http.rs` (~330 lines)
+    - `run_http`: `turbomcp/src/runtime/http_bidirectional.rs` → `turbomcp-server/src/runtime/http.rs` (~437 lines total)
+    - New module: `turbomcp-server/src/runtime/http.rs` with full MCP 2025-06-18 implementation
+    - Re-export: `turbomcp` now imports and re-exports from `turbomcp-server`
+
+- **WebSocket Bidirectional Architecture Implementation**: Created complete WebSocket bidirectional support in `turbomcp-server` following HTTP pattern
+  - **Breaking**: None - consistent with existing macro pattern, now also available via ServerBuilder
+  - **Benefit**: Enables ServerBuilder WebSocket bidirectional, maintains architectural consistency
+  - **Impact**:
+    - ✅ `turbomcp-server` now has self-contained WebSocket bidirectional support
+    - ✅ Same wrapper factory pattern as turbomcp macro implementation
+    - ✅ Native full-duplex WebSocket communication for optimal bidirectional performance
+  - **Files created**:
+    - `WebSocketServerDispatcher`: `turbomcp-server/src/runtime/websocket.rs` (~560 lines)
+    - `run_websocket`: Factory-based WebSocket server with bidirectional support
+    - Wrapper factory pattern: Configures router with per-connection dispatcher
+  - **Feature**: WebSocket feature already depends on http (inherits axum), futures dependency already present
+
 ### Fixed
 
-- **Macro feature gating**: Removed `#[cfg(feature = "...")]` from macro-generated transport methods
-  - Feature gating now happens solely at the library level, eliminating spurious "unexpected cfg condition value" warnings
-  - Users no longer need to declare transport features in their own `[features]` section
-  - Clear "method not found" errors when calling transport methods without enabling features
-  - **Impact**: Backward compatible - no API changes required
+- **WebSocketServerDispatcher Debug Implementation**: Added missing `Debug` derive to `WebSocketServerDispatcher` struct
+  - Fixed compilation error due to `-D missing-debug-implementations` lint
+  - Maintains consistency with project's strict quality standards
+  - Location: `crates/turbomcp-server/src/runtime/websocket.rs:82`
+  - Impact: WebSocket bidirectional runtime now compiles cleanly
+
+- **Bidirectional MCP Support Now Universal**: ✅ **ALL transports support server→client requests (sampling, elicitation, roots, ping) via ServerBuilder**
+  - **STDIO/TCP/Unix**: ✅ Full bidirectional support via `ServerBuilder`
+    - Single-connection dispatcher pattern (one dispatcher per server)
+    - Example: `examples/sampling_server.rs` uses `run_stdio()`
+  - **HTTP/SSE**: ✅ Full bidirectional support via `ServerBuilder` AND `#[turbomcp::server]` macro
+    - Factory pattern creates per-session wrappers (session-specific dispatchers)
+    - Example: `examples/http_server.rs` uses macro pattern (both approaches now work!)
+  - **WebSocket**: ✅ Full bidirectional support via `ServerBuilder` AND `#[turbomcp::server]` macro
+    - Wrapper factory pattern creates per-connection dispatchers
+    - Example: Both ServerBuilder and macro patterns fully supported!
+  - **Architecture**: Clean separation of concerns
+    - Dispatchers in `turbomcp-server` (runtime layer)
+    - Full HTTP/WebSocket runtime in `turbomcp-server` (runtime layer)
+    - SDK re-exports in `turbomcp` (SDK layer)
+    - No circular dependencies
+  - **Documentation**: Added `BIDIRECTIONAL_ARCHITECTURE_DEEP_DIVE.md`, `HTTP_BIDIRECTIONAL_ANALYSIS.md`, and `MCP_COMPLIANCE_MATRIX.md` with complete MCP spec compliance analysis
+
+- **Error Code Preservation**: Protocol errors now properly preserved through server layer
+  - Error codes like `-1` (user rejection) maintained instead of converting to `-32603` (internal error)
+  - Added `ServerError::Protocol` variant to preserve client/protocol errors
+  - Enhanced `error_code()` method to extract actual codes from protocol errors
+  - Proper error propagation: client → server → calling client
+  - **Impact**: Backward compatible - transparent improvement to error handling
   - **Files modified**:
-    - `crates/turbomcp-macros/src/bidirectional_wrapper.rs`: Removed 6 feature gates, changed Unix gate to platform-only
-    - `crates/turbomcp-macros/src/compile_time_router.rs`: Removed 2 feature gates
-  - **Documentation**: Added feature requirements to all transport method docs
+    - `crates/turbomcp-macros/src/compile_time_router.rs`: Use `e.error_code()` instead of hardcoded `-32603`
+    - `crates/turbomcp-server/src/error.rs`: Add Protocol variant, enhance error_code() (+142 lines)
+    - `crates/turbomcp-protocol/src/error.rs`: Add error code extraction utilities (+47 lines)
+
+- **Feature Compatibility**: Various Cargo.toml and module updates for better feature gate isolation
+  - Updated feature dependencies across all crates
+  - Improved runtime module feature handling
+  - Better server capabilities and error handling with features
+
+### Added
+
+- **Release Management Infrastructure**: Comprehensive release tooling
+  - `scripts/check-versions.sh`: Validates version consistency across workspace (224 lines)
+  - `scripts/update-versions.sh`: Safe version updates with confirmation (181 lines)
+  - `scripts/publish.sh`: Dependency-ordered publishing to crates.io (203 lines)
+  - Enhanced `scripts/prepare-release.sh`: Improved validation workflow
+  - `scripts/README.md`: Complete release workflow documentation (308 lines)
+
+- **Feature Combination Testing**: Automated testing for feature gates
+  - `scripts/test-feature-combinations.sh`: Tests 10 critical feature combinations
+  - Prevents feature gate leakage and compatibility issues
+  - Validates default, minimal, full, and individual feature sets
+
+- **HTTP Transport Support**: Re-enabled HTTP client exports
+  - Added `VERSION` and `CRATE_NAME` constants to turbomcp-client
+  - Re-exported `StreamableHttpClientTransport`, `RetryPolicy`, `StreamableHttpClientConfig`
+  - Updated prelude with HTTP transport types
 
 ### Improved
 
-- **Error messages**: Calling a transport method without its feature now gives clear compile errors instead of confusing cfg warnings
-  - Before: `warning: unexpected cfg condition value: tcp`
-  - After: `error[E0599]: no method named 'run_tcp' found` with help message to enable the feature
-- **Documentation**: Clarified that features should be enabled on the `turbomcp` dependency, not in user's `[features]` section
+- **Error Messages**: JSON-RPC error codes now semantically correct in all scenarios
+  - User rejection: `-1` (not `-32603`)
+  - Not found: `-32004` (not `-32603`)
+  - Authentication: `-32008` (not `-32603`)
+  - Proper code preservation throughout error propagation chain
+
+- **Documentation**: Enhanced across all crates
+  - Added feature requirement docs to generated transport methods
+  - Simplified main README with focused architecture section
+  - Improved benchmark and demo documentation
+  - Standardized crate-level documentation
+  - Better example code with consistent patterns
 
 ## [2.0.0-rc.1] - 2025-10-11
 
