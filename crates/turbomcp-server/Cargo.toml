@@ -42,12 +42,13 @@ tower_governor = { version = "0.7", optional = true }
 jsonwebtoken = { version = "9.2", optional = true }
 secrecy = { version = "0.8", features = ["serde"], optional = true }
 http = { version = "1.0" }  # Core HTTP types for Service abstraction (lightweight)
+axum = { version = "0.8.4", optional = true, features = ["ws", "json"] }
+async-stream = { version = "0.3", optional = true }
 
 # Observability dependencies
 once_cell = "1.19"
 
 [dev-dependencies]
-futures = "0.3"
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 proptest = "1.5"
 
@@ -68,7 +69,7 @@ graceful-shutdown = []
 observability = []
 # Transport features (progressive enhancement)
 stdio = ["dep:turbomcp-transport", "turbomcp-transport/stdio"]
-http = ["dep:turbomcp-transport", "turbomcp-transport/http", "middleware"]
+http = ["dep:turbomcp-transport", "turbomcp-transport/http", "middleware", "dep:axum", "dep:async-stream"]
 websocket = ["dep:turbomcp-transport", "turbomcp-transport/websocket", "http"]
 tcp = ["dep:turbomcp-transport", "turbomcp-transport/tcp"]
 unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]

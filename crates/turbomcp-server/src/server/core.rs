@@ -609,7 +609,8 @@ impl McpServer {
         addr: A,
         config: turbomcp_transport::streamable_http_v2::StreamableHttpConfig,
     ) -> ServerResult<()> {
-        use turbomcp_transport::streamable_http_v2::run_server;
+        use std::collections::HashMap;
+        use tokio::sync::{Mutex, RwLock};
 
         info!("Starting MCP server with HTTP transport");
         info!(
@@ -628,24 +629,67 @@ impl McpServer {
 
         info!("Resolved address: {}", socket_addr);
 
-        // Use provided config but override bind_addr with resolved address
-        let mut final_config = config;
-        final_config.bind_addr = socket_addr.to_string();
+        // BIDIRECTIONAL HTTP SETUP
+        // Create shared state for session management and bidirectional MCP
+        let sessions = Arc::new(RwLock::new(HashMap::new()));
+        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
+
+        // Share router across all sessions (routing logic and handler registry)
+        let router = self.router.clone();
+
+        // Capture server identity for MCP protocol compliance
+        let server_info = turbomcp_protocol::ServerInfo {
+            name: self.config.name.clone(),
+            version: self.config.version.clone(),
+        };
+
+        // Factory pattern: create session-specific router for each HTTP request
+        // This is the clean architecture that HTTP requires - each session gets its own
+        // bidirectional dispatcher while sharing the routing logic
+        let sessions_for_factory = Arc::clone(&sessions);
+        let pending_for_factory = Arc::clone(&pending_requests);
+        let router_for_factory = Arc::clone(&router);
+
+        let handler_factory = move |session_id: Option<String>| {
+            let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+            // Create session-specific HTTP dispatcher (now local to turbomcp-server!)
+            let dispatcher = crate::runtime::http::HttpDispatcher::new(
+                session_id,
+                Arc::clone(&sessions_for_factory),
+                Arc::clone(&pending_for_factory),
+            );
+
+            // Clone the base router and configure with session-specific dispatcher
+            // CRITICAL: set_server_request_dispatcher also recreates server_to_client adapter
+            let mut session_router = (*router_for_factory).clone();
+            session_router.set_server_request_dispatcher(dispatcher);
+
+            session_router
+        };
 
         info!(
-            bind_addr = %final_config.bind_addr,
-            endpoint_path = %final_config.endpoint_path,
-            "HTTP server configuration finalized"
+            server_name = %server_info.name,
+            server_version = %server_info.version,
+            bind_addr = %socket_addr,
+            endpoint_path = %config.endpoint_path,
+            "HTTP server starting with full bidirectional support (elicitation, sampling, roots, ping)"
         );
 
-        // Run HTTP server with the router
-        // The router implements the required handler trait for HTTP transport
-        run_server(final_config, self.router.clone())
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "HTTP server failed");
-                crate::ServerError::handler(e.to_string())
-            })?;
+        // Use factory-based HTTP server with full bidirectional support
+        use crate::runtime::http::run_http;
+        run_http(
+            handler_factory,
+            sessions,
+            pending_requests,
+            socket_addr.to_string(),
+            config.endpoint_path.clone(),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "HTTP server failed");
+            crate::ServerError::handler(e.to_string())
+        })?;
 
         info!("HTTP server shutdown complete");
         Ok(())
@@ -737,10 +781,10 @@ impl McpServer {
         addr: A,
         config: turbomcp_transport::websocket_server::WebSocketServerConfig,
     ) -> ServerResult<()> {
-        use turbomcp_transport::websocket_server::run_websocket_server_with_config;
-
         info!("Starting MCP server with WebSocket transport");
         info!(config = ?config, "WebSocket configuration");
+
+        self.lifecycle.start().await;
 
         // Resolve address to string
         let socket_addr = addr
@@ -751,17 +795,48 @@ impl McpServer {
 
         info!("Resolved address: {}", socket_addr);
 
-        // Use provided config but override bind_addr with resolved address
-        let mut final_config = config;
-        final_config.bind_addr = socket_addr.to_string();
+        // Capture server identity for MCP protocol compliance
+        let server_info = turbomcp_protocol::ServerInfo {
+            name: self.config.name.clone(),
+            version: self.config.version.clone(),
+        };
 
-        // Run WebSocket server with the router
-        run_websocket_server_with_config(final_config, self.router.clone())
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "WebSocket server failed");
-                crate::ServerError::handler(e.to_string())
-            })?;
+        // Router for this server (shared across all connections)
+        let router = (*self.router).clone();
+
+        // Wrapper factory: configure router with per-connection dispatcher
+        // This is the same clean architecture as HTTP - each connection gets its own
+        // bidirectional dispatcher while sharing the routing logic
+        let wrapper_factory =
+            move |mut base_router: crate::routing::RequestRouter,
+                  dispatcher: crate::runtime::websocket::WebSocketServerDispatcher| {
+                // Clone the router for this connection and configure with dispatcher
+                // CRITICAL: set_server_request_dispatcher also recreates server_to_client adapter
+                base_router.set_server_request_dispatcher(dispatcher);
+                base_router
+            };
+
+        info!(
+            server_name = %server_info.name,
+            server_version = %server_info.version,
+            bind_addr = %socket_addr,
+            endpoint_path = %config.endpoint_path,
+            "WebSocket server starting with full bidirectional support (elicitation, sampling, roots, ping)"
+        );
+
+        // Use factory-based WebSocket server with full bidirectional support
+        use crate::runtime::websocket::run_websocket;
+        run_websocket(
+            router,
+            wrapper_factory,
+            socket_addr.to_string(),
+            config.endpoint_path.clone(),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "WebSocket server failed");
+            crate::ServerError::handler(e.to_string())
+        })?;
 
         info!("WebSocket server shutdown complete");
         Ok(())
