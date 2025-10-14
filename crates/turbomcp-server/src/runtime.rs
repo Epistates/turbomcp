@@ -1,7 +1,7 @@
 //! Runtime components for bidirectional transport
 //!
 //! This module provides unified bidirectional communication support for all
-//! duplex transports (STDIO, TCP, Unix Socket) with full MCP 2025-06-18 compliance.
+//! duplex transports (STDIO, TCP, Unix Socket, HTTP, WebSocket) with full MCP 2025-06-18 compliance.
 //!
 //! ## Architecture
 //!
@@ -14,8 +14,18 @@
 //! - `StdioDispatcher`: Optimized for stdin/stdout (line-delimited JSON)
 //! - `TransportDispatcher<TcpTransport>`: For TCP sockets
 //! - `TransportDispatcher<UnixTransport>`: For Unix domain sockets
+//! - `http::HttpDispatcher`: For HTTP + SSE sessions (feature-gated)
+//! - `websocket::WebSocketDispatcher`: For WebSocket connections (feature-gated)
 //!
 //! All share the same request correlation and error handling logic.
+
+// HTTP bidirectional support (feature-gated)
+#[cfg(feature = "http")]
+pub mod http;
+
+// WebSocket bidirectional support (feature-gated)
+#[cfg(feature = "websocket")]
+pub mod websocket;
 
 use std::collections::HashMap;
 use std::sync::Arc;
