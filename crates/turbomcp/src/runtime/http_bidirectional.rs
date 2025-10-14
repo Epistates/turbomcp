@@ -36,26 +36,20 @@
 //! ```
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use tokio::sync::oneshot;
-use uuid::Uuid;
+use turbomcp_protocol::JsonRpcHandler;
+use turbomcp_protocol::jsonrpc::{JsonRpcMessage, JsonRpcResponse, ResponseId};
 
-use turbomcp_protocol::RequestContext;
-use turbomcp_protocol::jsonrpc::{JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
-use turbomcp_protocol::types::{
-    CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsRequest,
-    ListRootsResult, PingRequest, PingResult,
-};
-use turbomcp_server::routing::ServerRequestDispatcher;
+// Re-export HttpDispatcher from turbomcp-server (moved there for architectural clarity)
+pub use turbomcp_server::runtime::http::HttpDispatcher;
 
 // Re-export types from transport for convenience
 pub use turbomcp_transport::streamable_http_v2::{
     PendingRequestsMap, Session, SessionsMap, StoredEvent,
 };
 
-use std::time::Duration;
-
-use crate::{MessageId, ServerError, ServerResult};
+use crate::MessageId;
 
 // Additional imports for HTTP server implementation
 use axum::{
@@ -71,346 +65,8 @@ use axum::{
 use serde_json::Value;
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
-use turbomcp_protocol::JsonRpcHandler;
-use turbomcp_protocol::jsonrpc::ResponseId;
 use turbomcp_transport::security::{SecurityError, SecurityValidator, SessionSecurityManager};
 use turbomcp_transport::streamable_http_v2::{StreamableHttpConfig, StreamableHttpConfigBuilder};
-
-/// HTTP dispatcher for server-initiated requests
-///
-/// This dispatcher integrates directly with streamable_http_v2's session management
-/// to enable complete MCP 2025-06-18 support over HTTP + SSE.
-///
-/// ## MCP Compliance
-///
-/// - Sends JSON-RPC 2.0 formatted requests via SSE
-/// - Generates unique request IDs for correlation
-/// - Handles responses via HTTP POST (integrated into transport)
-/// - Supports: sampling/createMessage, elicitation/create, roots/list, ping
-///
-/// ## Usage
-///
-/// ```rust,no_run
-/// use std::sync::Arc;
-/// use tokio::sync::{Mutex, RwLock};
-/// use std::collections::HashMap;
-/// use turbomcp::runtime::http_bidirectional::HttpDispatcher;
-/// use turbomcp_transport::streamable_http_v2::{PendingRequestsMap, SessionsMap};
-///
-/// # async fn example(sessions: SessionsMap, pending_requests: PendingRequestsMap) {
-/// let dispatcher = HttpDispatcher::new(
-///     "session-123".to_string(),
-///     sessions,
-///     pending_requests,
-/// );
-/// # }
-/// ```
-#[derive(Clone)]
-pub struct HttpDispatcher {
-    /// Session ID for this dispatcher
-    session_id: String,
-    /// Direct access to sessions for broadcasting
-    sessions: SessionsMap,
-    /// Pending server-initiated requests awaiting responses
-    pending_requests: PendingRequestsMap,
-}
-
-impl HttpDispatcher {
-    /// Create a new HTTP dispatcher
-    ///
-    /// # Arguments
-    ///
-    /// * `session_id` - MCP session ID
-    /// * `sessions` - Shared sessions map from streamable_http_v2
-    /// * `pending_requests` - Shared pending requests map
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// use turbomcp::runtime::http_bidirectional::HttpDispatcher;
-    /// use std::sync::Arc;
-    /// use std::collections::HashMap;
-    /// use tokio::sync::{Mutex, RwLock};
-    ///
-    /// # async fn example() {
-    /// let sessions = Arc::new(RwLock::new(HashMap::new()));
-    /// let pending_requests = Arc::new(Mutex::new(HashMap::new()));
-    ///
-    /// let dispatcher = HttpDispatcher::new(
-    ///     "my-session".to_string(),
-    ///     sessions,
-    ///     pending_requests,
-    /// );
-    /// # }
-    /// ```
-    pub fn new(
-        session_id: String,
-        sessions: SessionsMap,
-        pending_requests: PendingRequestsMap,
-    ) -> Self {
-        Self {
-            session_id,
-            sessions,
-            pending_requests,
-        }
-    }
-
-    /// Send a JSON-RPC request via SSE and wait for HTTP POST response
-    ///
-    /// This is the core method that:
-    /// 1. Registers the request as pending
-    /// 2. Broadcasts to client via direct session access
-    /// 3. Waits for correlated response from HTTP POST
-    ///
-    /// ## MCP 2025-06-18 Compliance
-    ///
-    /// - Uses JSON-RPC 2.0 format
-    /// - Generates unique request IDs (UUID v4)
-    /// - Handles errors per MCP error codes
-    /// - 60-second timeout per MCP recommendation
-    async fn send_request(&self, request: JsonRpcRequest) -> ServerResult<JsonRpcResponse> {
-        let (response_tx, response_rx) = oneshot::channel();
-
-        // Extract request ID for correlation
-        let request_id = match &request.id {
-            MessageId::String(s) => s.clone(),
-            MessageId::Number(n) => n.to_string(),
-            MessageId::Uuid(u) => u.to_string(),
-        };
-
-        // Register pending request
-        self.pending_requests
-            .lock()
-            .await
-            .insert(request_id.clone(), response_tx);
-
-        // Broadcast via SSE by directly accessing session
-        {
-            let mut sessions = self.sessions.write().await;
-            if let Some(session) = sessions.get_mut(&self.session_id) {
-                let request_value =
-                    serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                        message: format!("Failed to serialize request: {}", e),
-                        context: Some("http_dispatcher".to_string()),
-                    })?;
-
-                let event = StoredEvent {
-                    id: Uuid::new_v4().to_string(),
-                    event_type: "message".to_string(),
-                    data: serde_json::to_string(&request_value).map_err(|e| {
-                        ServerError::Handler {
-                            message: format!("Failed to serialize event: {}", e),
-                            context: Some("http_dispatcher".to_string()),
-                        }
-                    })?,
-                };
-
-                session.broadcast_event(event); // ✅ Synchronous!
-            } else {
-                return Err(ServerError::Handler {
-                    message: format!("Session not found: {}", self.session_id),
-                    context: Some("http_dispatcher".to_string()),
-                });
-            }
-        } // Release lock immediately
-
-        // Wait for response with 60-second timeout
-        match tokio::time::timeout(tokio::time::Duration::from_secs(60), response_rx).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(ServerError::Handler {
-                message: "Response channel closed".to_string(),
-                context: Some("http_dispatcher".to_string()),
-            }),
-            Err(_) => {
-                // Timeout - cleanup
-                self.pending_requests.lock().await.remove(&request_id);
-                Err(ServerError::Handler {
-                    message: "Request timeout (60s)".to_string(),
-                    context: Some("http_dispatcher".to_string()),
-                })
-            }
-        }
-    }
-
-    /// Create a unique request ID (UUID v4 per MCP best practices)
-    fn generate_request_id() -> MessageId {
-        MessageId::String(Uuid::new_v4().to_string())
-    }
-}
-
-#[async_trait::async_trait]
-impl ServerRequestDispatcher for HttpDispatcher {
-    /// Send an elicitation request to the client
-    ///
-    /// Per MCP 2025-06-18 spec, method name is "elicitation/create"
-    async fn send_elicitation(
-        &self,
-        request: ElicitRequest,
-        _ctx: RequestContext,
-    ) -> ServerResult<ElicitResult> {
-        // Create JSON-RPC request per MCP 2025-06-18
-        let json_rpc_request = JsonRpcRequest {
-            jsonrpc: JsonRpcVersion,
-            method: "elicitation/create".to_string(),
-            params: Some(
-                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to serialize elicitation request: {}", e),
-                    context: Some("MCP 2025-06-18 compliance".to_string()),
-                })?,
-            ),
-            id: Self::generate_request_id(),
-        };
-
-        // Send request and wait for response
-        let response = self.send_request(json_rpc_request).await?;
-
-        // Extract result from response
-        use turbomcp_protocol::jsonrpc::JsonRpcResponsePayload;
-        match response.payload {
-            JsonRpcResponsePayload::Success { result } => {
-                serde_json::from_value(result).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to deserialize elicitation result: {}", e),
-                    context: Some("MCP 2025-06-18 compliance".to_string()),
-                })
-            }
-            JsonRpcResponsePayload::Error { error } => {
-                // FIXED: Preserve error code by creating Protocol error, not Handler error
-                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(protocol_err))
-            }
-        }
-    }
-
-    /// Send a ping request to the client
-    ///
-    /// Per MCP 2025-06-18 spec, method name is "ping"
-    async fn send_ping(
-        &self,
-        _request: PingRequest,
-        _ctx: RequestContext,
-    ) -> ServerResult<PingResult> {
-        // Create JSON-RPC request per MCP 2025-06-18
-        let json_rpc_request = JsonRpcRequest {
-            jsonrpc: JsonRpcVersion,
-            method: "ping".to_string(),
-            params: None, // Ping has no parameters
-            id: Self::generate_request_id(),
-        };
-
-        // Send request and wait for response
-        let response = self.send_request(json_rpc_request).await?;
-
-        // Extract result from response
-        use turbomcp_protocol::jsonrpc::JsonRpcResponsePayload;
-        match response.payload {
-            JsonRpcResponsePayload::Success { .. } => Ok(PingResult {
-                _meta: None,
-                data: None,
-            }),
-            JsonRpcResponsePayload::Error { error } => {
-                // FIXED: Preserve error code by creating Protocol error, not Handler error
-                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(protocol_err))
-            }
-        }
-    }
-
-    /// Send a sampling create message request to the client
-    ///
-    /// Per MCP 2025-06-18 spec, method name is "sampling/createMessage"
-    async fn send_create_message(
-        &self,
-        request: CreateMessageRequest,
-        _ctx: RequestContext,
-    ) -> ServerResult<CreateMessageResult> {
-        // Create JSON-RPC request per MCP 2025-06-18
-        let json_rpc_request = JsonRpcRequest {
-            jsonrpc: JsonRpcVersion,
-            method: "sampling/createMessage".to_string(),
-            params: Some(
-                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to serialize sampling request: {}", e),
-                    context: Some("MCP 2025-06-18 compliance".to_string()),
-                })?,
-            ),
-            id: Self::generate_request_id(),
-        };
-
-        // Send request and wait for response
-        let response = self.send_request(json_rpc_request).await?;
-
-        // Extract result from response
-        use turbomcp_protocol::jsonrpc::JsonRpcResponsePayload;
-        match response.payload {
-            JsonRpcResponsePayload::Success { result } => {
-                serde_json::from_value(result).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to deserialize sampling result: {}", e),
-                    context: Some("MCP 2025-06-18 compliance".to_string()),
-                })
-            }
-            JsonRpcResponsePayload::Error { error } => {
-                // FIXED: Preserve error code by creating Protocol error, not Handler error
-                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(protocol_err))
-            }
-        }
-    }
-
-    /// Send a roots list request to the client
-    ///
-    /// Per MCP 2025-06-18 spec, method name is "roots/list"
-    async fn send_list_roots(
-        &self,
-        request: ListRootsRequest,
-        _ctx: RequestContext,
-    ) -> ServerResult<ListRootsResult> {
-        // Create JSON-RPC request per MCP 2025-06-18
-        let json_rpc_request = JsonRpcRequest {
-            jsonrpc: JsonRpcVersion,
-            method: "roots/list".to_string(),
-            params: Some(
-                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to serialize roots request: {}", e),
-                    context: Some("MCP 2025-06-18 compliance".to_string()),
-                })?,
-            ),
-            id: Self::generate_request_id(),
-        };
-
-        // Send request and wait for response
-        let response = self.send_request(json_rpc_request).await?;
-
-        // Extract result from response
-        use turbomcp_protocol::jsonrpc::JsonRpcResponsePayload;
-        match response.payload {
-            JsonRpcResponsePayload::Success { result } => {
-                serde_json::from_value(result).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to deserialize roots result: {}", e),
-                    context: Some("MCP 2025-06-18 compliance".to_string()),
-                })
-            }
-            JsonRpcResponsePayload::Error { error } => {
-                // FIXED: Preserve error code by creating Protocol error, not Handler error
-                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(protocol_err))
-            }
-        }
-    }
-
-    /// Check if server→client requests are supported
-    ///
-    /// For HTTP transport, server→client requests are always supported via SSE
-    fn supports_bidirectional(&self) -> bool {
-        true
-    }
-
-    /// Get client capabilities
-    ///
-    /// HTTP transport doesn't store client capabilities separately
-    async fn get_client_capabilities(&self) -> ServerResult<Option<serde_json::Value>> {
-        Ok(None)
-    }
-}
 
 /// Application state for the HTTP server with bidirectional support
 struct HttpAppState<F, H>
@@ -839,6 +495,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use tokio::sync::{Mutex, RwLock};
+    use turbomcp_server::routing::ServerRequestDispatcher;
 
     #[tokio::test]
     async fn test_http_dispatcher_creation() {
@@ -848,20 +505,20 @@ mod tests {
         let dispatcher =
             HttpDispatcher::new("test-session".to_string(), sessions, pending_requests);
 
+        // Test that dispatcher supports bidirectional (requires trait import)
         assert!(dispatcher.supports_bidirectional());
     }
 
     #[tokio::test]
-    async fn test_generate_request_id() {
-        let id1 = HttpDispatcher::generate_request_id();
-        let id2 = HttpDispatcher::generate_request_id();
+    async fn test_http_dispatcher_re_export() {
+        // Verify that HttpDispatcher is properly re-exported from turbomcp-server
+        let sessions: SessionsMap = Arc::new(RwLock::new(HashMap::new()));
+        let pending_requests: PendingRequestsMap = Arc::new(Mutex::new(HashMap::new()));
 
-        // IDs should be unique
-        match (&id1, &id2) {
-            (MessageId::String(s1), MessageId::String(s2)) => {
-                assert_ne!(s1, s2);
-            }
-            _ => panic!("Expected String IDs"),
-        }
+        let dispatcher =
+            HttpDispatcher::new("test-session".to_string(), sessions, pending_requests);
+
+        // Verify the re-export works by checking it can be cloned (Clone is required for dispatchers)
+        let _clone = dispatcher.clone();
     }
 }
