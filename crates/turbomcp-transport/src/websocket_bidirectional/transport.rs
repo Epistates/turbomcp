@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures::{SinkExt, StreamExt as _};
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{error, trace};
+use tracing::{debug, error, info, trace};
 use uuid::Uuid;
 
 use super::types::WebSocketBidirectionalTransport;
@@ -45,15 +45,43 @@ impl Transport for WebSocketBidirectionalTransport {
             let text = String::from_utf8(message.payload.to_vec())
                 .map_err(|e| TransportError::SendFailed(format!("Failed to serialize: {}", e)))?;
 
-            writer
-                .send(Message::Text(text.into()))
-                .await
-                .map_err(|e| TransportError::SendFailed(format!("WebSocket send failed: {}", e)))?;
+            info!("🚀 [CLIENT SEND] Attempting to send message");
+            info!("   Session: {}", self.session_id);
+            info!("   Payload length: {} bytes", text.len());
+            debug!(
+                "   Payload preview: {}",
+                if text.len() > 200 {
+                    format!("{}...", &text[..200])
+                } else {
+                    text.clone()
+                }
+            );
 
+            // Step 1: Send message to buffer
+            writer.send(Message::Text(text.into())).await.map_err(|e| {
+                error!("❌ [CLIENT SEND] WebSocket send() failed: {}", e);
+                TransportError::SendFailed(format!("WebSocket send failed: {}", e))
+            })?;
+
+            debug!("✅ [CLIENT SEND] Message buffered successfully");
+
+            // Step 2: Flush buffer to TCP socket
+            // CRITICAL: Without flush(), messages sit in buffer and never reach the network!
+            // This is required by the futures::Sink trait semantics.
+            writer.flush().await.map_err(|e| {
+                error!("❌ [CLIENT SEND] WebSocket flush() failed: {}", e);
+                TransportError::SendFailed(format!("WebSocket flush failed: {}", e))
+            })?;
+
+            info!("✅ [CLIENT SEND] Message flushed to TCP socket successfully");
             self.metrics.write().await.messages_sent += 1;
-            trace!("Sent message {} in session {}", message.id, self.session_id);
+            trace!(
+                "Sent and flushed message {} in session {}",
+                message.id, self.session_id
+            );
             Ok(())
         } else {
+            error!("❌ [CLIENT SEND] Writer is None - WebSocket not connected");
             Err(TransportError::SendFailed(
                 "WebSocket not connected".to_string(),
             ))
@@ -101,10 +129,17 @@ impl Transport for WebSocketBidirectionalTransport {
                     ))
                 }
                 Some(Ok(Message::Ping(data))) => {
-                    // Auto-reply with pong
+                    // Auto-reply with pong (required by WebSocket protocol)
                     if let Some(ref mut writer) = *self.writer.lock().await {
-                        let _ = writer.send(Message::Pong(data)).await;
-                        trace!("Replied to ping with pong in session {}", self.session_id);
+                        // Send pong to buffer
+                        if let Ok(()) = writer.send(Message::Pong(data)).await {
+                            // Flush to TCP socket to ensure immediate response
+                            let _ = writer.flush().await;
+                            trace!(
+                                "Replied to ping with pong and flushed in session {}",
+                                self.session_id
+                            );
+                        }
                     }
                     Ok(None)
                 }
@@ -223,14 +258,26 @@ impl Transport for WebSocketBidirectionalTransport {
 
 impl WebSocketBidirectionalTransport {
     /// Send a raw WebSocket message (for advanced use cases)
+    ///
+    /// This method sends control frames (ping, pong, close) and other raw messages.
+    /// It properly flushes the buffer to ensure immediate delivery to the TCP socket.
     pub async fn send_raw_message(&mut self, message: Message) -> TransportResult<()> {
         if let Some(ref mut writer) = *self.writer.lock().await {
+            // Send to buffer
             writer
                 .send(message)
                 .await
                 .map_err(|e| TransportError::SendFailed(format!("WebSocket send failed: {}", e)))?;
 
-            trace!("Sent raw WebSocket message in session {}", self.session_id);
+            // Flush to TCP socket (CRITICAL for immediate delivery)
+            writer.flush().await.map_err(|e| {
+                TransportError::SendFailed(format!("WebSocket flush failed: {}", e))
+            })?;
+
+            trace!(
+                "Sent and flushed raw WebSocket message in session {}",
+                self.session_id
+            );
             Ok(())
         } else {
             Err(TransportError::SendFailed(

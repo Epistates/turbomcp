@@ -4,6 +4,7 @@
 //! implementation, including stream type aliases and pending request structures.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -12,7 +13,7 @@ use dashmap::DashMap;
 use futures::{stream::SplitSink, stream::SplitStream};
 use serde_json::json;
 use tokio::net::TcpStream;
-use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
+use tokio::sync::{Mutex, RwLock, broadcast, oneshot};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::Message};
 use turbomcp_protocol::types::{ElicitRequest, ElicitResult};
 use uuid::Uuid;
@@ -114,14 +115,42 @@ pub struct WebSocketBidirectionalTransport {
     /// Pending elicitation requests
     pub elicitations: Arc<DashMap<String, PendingElicitation>>,
 
+    /// Pending sampling requests
+    pub pending_samplings:
+        Arc<DashMap<String, oneshot::Sender<turbomcp_protocol::types::CreateMessageResult>>>,
+
+    /// Pending ping requests
+    pub pending_pings: Arc<DashMap<String, oneshot::Sender<turbomcp_protocol::types::PingResult>>>,
+
+    /// Pending roots list requests
+    pub pending_roots:
+        Arc<DashMap<String, oneshot::Sender<turbomcp_protocol::types::ListRootsResult>>>,
+
     /// Connection state
     pub connection_state: Arc<RwLock<ConnectionState>>,
 
     /// Background task handles
     pub task_handles: Arc<RwLock<Vec<tokio::task::JoinHandle<()>>>>,
 
-    /// Shutdown signal (tokio mutex - held across await)
-    pub shutdown_tx: Arc<tokio::sync::Mutex<Option<mpsc::Sender<()>>>>,
+    /// Shutdown signal broadcaster (allows multiple receivers via subscribe())
+    ///
+    /// This broadcast channel enables all background tasks to receive shutdown signals.
+    /// Each task calls `shutdown_tx.subscribe()` to get its own receiver, then uses
+    /// `tokio::select!` to listen for the shutdown signal alongside its main logic.
+    ///
+    /// When `disconnect()` is called, it sends a shutdown signal that wakes all tasks,
+    /// allowing them to perform graceful cleanup before exiting.
+    pub shutdown_tx: Arc<broadcast::Sender<()>>,
+
+    /// Controls whether automatic reconnection is allowed
+    ///
+    /// This flag is set based on the initial config.reconnect.enabled value,
+    /// but can be permanently disabled by calling disconnect().
+    ///
+    /// Defense-in-depth: Even if shutdown signals are missed or state transitions
+    /// are delayed, this atomic flag ensures reconnection tasks will stop when
+    /// user explicitly calls disconnect().
+    pub reconnect_allowed: Arc<AtomicBool>,
 
     /// Session ID for this connection
     pub session_id: String,

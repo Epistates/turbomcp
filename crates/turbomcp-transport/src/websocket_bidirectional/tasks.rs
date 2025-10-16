@@ -16,6 +16,8 @@ use turbomcp_protocol::types::{ElicitResult, ElicitationAction};
 
 impl WebSocketBidirectionalTransport {
     /// Spawn keep-alive task to send periodic ping messages
+    ///
+    /// This task now listens for shutdown signals and terminates gracefully.
     pub fn spawn_keep_alive_task(&self) -> tokio::task::JoinHandle<()> {
         let writer = self.writer.clone();
         let interval = self
@@ -25,6 +27,9 @@ impl WebSocketBidirectionalTransport {
             .keep_alive_interval;
         let state = self.state.clone();
         let session_id = self.session_id.clone();
+
+        // ✅ Subscribe to shutdown signal
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(interval);
@@ -36,46 +41,66 @@ impl WebSocketBidirectionalTransport {
             );
 
             loop {
-                ticker.tick().await;
+                tokio::select! {
+                    // ✅ Listen for shutdown signal
+                    _ = shutdown_rx.recv() => {
+                        debug!("Keep-alive task received shutdown signal for session {}", session_id);
+                        break;
+                    }
 
-                // Only send pings when connected
-                if *state.read().await != TransportState::Connected {
-                    continue;
-                }
+                    // Existing ticker logic
+                    _ = ticker.tick() => {
 
-                if let Some(ref mut w) = *writer.lock().await {
-                    ping_count += 1;
-                    let ping_data = format!("ping-{}-{}", session_id, ping_count);
+                        // Only send pings when connected
+                        if *state.read().await != TransportState::Connected {
+                            continue;
+                        }
 
-                    match w
-                        .send(Message::Ping(ping_data.as_bytes().to_vec().into()))
-                        .await
-                    {
-                        Ok(()) => {
+                        if let Some(ref mut w) = *writer.lock().await {
+                            ping_count += 1;
+                            let ping_data = format!("ping-{}-{}", session_id, ping_count);
+
+                            match w
+                                .send(Message::Ping(ping_data.as_bytes().to_vec().into()))
+                                .await
+                            {
+                                Ok(()) => {
+                                    trace!(
+                                        "Keep-alive ping {} sent for session {}",
+                                        ping_count, session_id
+                                    );
+                                }
+                                Err(e) => {
+                                    warn!("Keep-alive ping failed for session {}: {}", session_id, e);
+                                    // Connection might be broken, the reconnection task will handle it
+                                }
+                            }
+                        } else {
                             trace!(
-                                "Keep-alive ping {} sent for session {}",
-                                ping_count, session_id
+                                "Writer not available for keep-alive ping in session {}",
+                                session_id
                             );
                         }
-                        Err(e) => {
-                            warn!("Keep-alive ping failed for session {}: {}", session_id, e);
-                            // Connection might be broken, the reconnection task will handle it
-                        }
                     }
-                } else {
-                    trace!(
-                        "Writer not available for keep-alive ping in session {}",
-                        session_id
-                    );
                 }
             }
+
+            debug!(
+                "✅ Keep-alive task gracefully terminated for session {}",
+                session_id
+            );
         })
     }
 
     /// Spawn elicitation timeout monitor task
+    ///
+    /// This task now listens for shutdown signals and terminates gracefully.
     pub fn spawn_timeout_monitor(&self) -> tokio::task::JoinHandle<()> {
         let elicitations = self.elicitations.clone();
         let session_id = self.session_id.clone();
+
+        // ✅ Subscribe to shutdown signal
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(1));
@@ -86,54 +111,77 @@ impl WebSocketBidirectionalTransport {
             );
 
             loop {
-                ticker.tick().await;
-
-                let now = tokio::time::Instant::now();
-                let mut expired = Vec::new();
-
-                // Find expired elicitations
-                for entry in elicitations.iter() {
-                    if entry.deadline <= now {
-                        expired.push(entry.key().clone());
+                tokio::select! {
+                    // ✅ Listen for shutdown signal
+                    _ = shutdown_rx.recv() => {
+                        debug!("Timeout monitor received shutdown signal for session {}", session_id);
+                        break;
                     }
-                }
 
-                // Handle expired elicitations
-                for request_id in expired {
-                    if let Some((_, pending)) = elicitations.remove(&request_id) {
-                        warn!(
-                            "Elicitation {} timed out in session {} after {} retries",
-                            request_id, session_id, pending.retry_count
-                        );
+                    // Existing ticker logic
+                    _ = ticker.tick() => {
 
-                        let result = ElicitResult {
-                            action: ElicitationAction::Cancel,
-                            content: None,
-                            _meta: None,
-                        };
+                        let now = tokio::time::Instant::now();
+                        let mut expired = Vec::new();
 
-                        // Send timeout result to waiting caller
-                        let _ = pending.response_tx.send(result);
+                        // Find expired elicitations
+                        for entry in elicitations.iter() {
+                            if entry.deadline <= now {
+                                expired.push(entry.key().clone());
+                            }
+                        }
+
+                        // Handle expired elicitations
+                        for request_id in expired {
+                            if let Some((_, pending)) = elicitations.remove(&request_id) {
+                                warn!(
+                                    "Elicitation {} timed out in session {} after {} retries",
+                                    request_id, session_id, pending.retry_count
+                                );
+
+                                let result = ElicitResult {
+                                    action: ElicitationAction::Cancel,
+                                    content: None,
+                                    _meta: None,
+                                };
+
+                                // Send timeout result to waiting caller
+                                let _ = pending.response_tx.send(result);
+                            }
+                        }
+
+                        // Log elicitation status periodically
+                        let active_count = elicitations.len();
+                        if active_count > 0 {
+                            trace!(
+                                "Session {} has {} active elicitations",
+                                session_id, active_count
+                            );
+                        }
                     }
-                }
-
-                // Log elicitation status periodically
-                let active_count = elicitations.len();
-                if active_count > 0 {
-                    trace!(
-                        "Session {} has {} active elicitations",
-                        session_id, active_count
-                    );
                 }
             }
+
+            debug!(
+                "✅ Timeout monitor gracefully terminated for session {}",
+                session_id
+            );
         })
     }
 
     /// Spawn reconnection task for automatic reconnection
+    ///
+    /// **CRITICAL**: This task now listens for shutdown signals via `tokio::select!`.
+    /// When `disconnect()` is called, the shutdown signal is broadcast and this task
+    /// terminates gracefully, preventing unwanted reconnection attempts.
     pub fn spawn_reconnection_task(&self) -> tokio::task::JoinHandle<()> {
         let state = self.state.clone();
         let config = self.config.lock().expect("config mutex poisoned").clone();
         let session_id = self.session_id.clone();
+        let reconnect_allowed = self.reconnect_allowed.clone();
+
+        // ✅ CRITICAL FIX: Subscribe to shutdown broadcast channel
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
             let mut retry_count = 0;
@@ -148,101 +196,143 @@ impl WebSocketBidirectionalTransport {
             let mut status_ticker = tokio::time::interval(Duration::from_secs(5));
 
             loop {
-                status_ticker.tick().await;
+                tokio::select! {
+                    // ✅ CRITICAL FIX: Listen for shutdown signal
+                    _ = shutdown_rx.recv() => {
+                        info!("🛑 Reconnection task received shutdown signal for session {}", session_id);
+                        break;  // Graceful exit - no more reconnection attempts!
+                    }
 
-                let current_state = state.read().await.clone();
+                    // Existing tick logic
+                    _ = status_ticker.tick() => {
+                        // ✅ DEFENSE-IN-DEPTH #1: Check reconnect_allowed flag FIRST
+                        //    This atomic flag is set to false permanently when user calls disconnect().
+                        //    Even if shutdown signal is missed or state transitions are delayed,
+                        //    this check ensures we NEVER reconnect after explicit user disconnect.
+                        if !reconnect_allowed.load(std::sync::atomic::Ordering::SeqCst) {
+                            info!("🛑 Reconnection disabled (user disconnect) - stopping task for session {}", session_id);
+                            break;
+                        }
 
-                // Reset retry count and delay when connected
-                if current_state == TransportState::Connected {
+                        let current_state = state.read().await.clone();
+
+                        // ✅ DEFENSE-IN-DEPTH #2: Also check for Disconnecting state (user-initiated)
+                        //    This provides additional protection: even if flag check somehow failed,
+                        //    we still stop reconnection on explicit user disconnect
+                        if matches!(current_state, TransportState::Disconnecting) {
+                            info!("🛑 User-initiated disconnect detected - stopping reconnection for session {}", session_id);
+                            break;
+                        }
+
+                        // Reset retry count and delay when connected
+                        if current_state == TransportState::Connected {
                     if retry_count > 0 {
                         info!(
                             "Connection restored for session {}, resetting retry count",
                             session_id
                         );
-                        retry_count = 0;
-                        delay = config.reconnect.initial_delay;
-                    }
-                    continue;
-                }
-
-                // Only attempt reconnection if disconnected (not connecting/disconnecting)
-                if current_state != TransportState::Disconnected {
-                    continue;
-                }
-
-                // Check if we've exceeded max retries
-                if retry_count >= config.reconnect.max_retries {
-                    error!(
-                        "Maximum reconnection attempts ({}) reached for session {}",
-                        config.reconnect.max_retries, session_id
-                    );
-                    break;
-                }
-
-                // Attempt reconnection
-                if let Some(ref url) = config.url {
-                    info!(
-                        "Attempting reconnection {} of {} for session {} (delay: {:?})",
-                        retry_count + 1,
-                        config.reconnect.max_retries,
-                        session_id,
-                        delay
-                    );
-
-                    // Wait before attempting reconnection
-                    if retry_count > 0 {
-                        sleep(delay).await;
-                    }
-
-                    match connect_async(url).await {
-                        Ok((_stream, _)) => {
-                            info!("Reconnection successful for session {}", session_id);
-                            // Note: In a full implementation, we would need to call setup_stream here
-                            // but that requires mutable access to self, which isn't available in this task
-                            // The reconnection logic would need to be refactored to work with channels
-                            // or other communication mechanisms with the main transport instance
                             retry_count = 0;
                             delay = config.reconnect.initial_delay;
                         }
-                        Err(e) => {
-                            warn!(
-                                "Reconnection attempt {} failed for session {}: {}",
-                                retry_count + 1,
-                                session_id,
-                                e
-                            );
-                            retry_count += 1;
-
-                            // Exponential backoff with jitter
-                            let jitter = fastrand::f64() * 0.1; // 10% jitter
-                            let backoff_multiplier =
-                                config.reconnect.backoff_factor * (1.0 + jitter);
-
-                            delay = Duration::from_secs_f64(
-                                (delay.as_secs_f64() * backoff_multiplier)
-                                    .min(config.reconnect.max_delay.as_secs_f64()),
-                            );
-                        }
+                        continue;
                     }
-                } else {
-                    warn!(
-                        "No URL configured for reconnection in session {}",
-                        session_id
-                    );
-                    break;
-                }
-            }
 
-            warn!("Reconnection task terminated for session {}", session_id);
+                    // Only attempt reconnection if disconnected (not connecting/disconnecting)
+                    if current_state != TransportState::Disconnected {
+                        continue;
+                    }
+
+                    // Check if we've exceeded max retries
+                    if retry_count >= config.reconnect.max_retries {
+                        error!(
+                            "Maximum reconnection attempts ({}) reached for session {}",
+                            config.reconnect.max_retries, session_id
+                        );
+                        break;
+                    }
+
+                    // Attempt reconnection
+                    if let Some(ref url) = config.url {
+                        info!(
+                            "Attempting reconnection {} of {} for session {} (delay: {:?})",
+                            retry_count + 1,
+                            config.reconnect.max_retries,
+                            session_id,
+                            delay
+                        );
+
+                        // Wait before attempting reconnection (interruptible by shutdown)
+                        if retry_count > 0 {
+                            tokio::select! {
+                                _ = shutdown_rx.recv() => {
+                                    info!("🛑 Reconnection task received shutdown during backoff delay for session {}", session_id);
+                                    break;
+                                }
+                                _ = sleep(delay) => {
+                                    // Backoff complete, proceed with reconnection attempt
+                                }
+                            }
+                        }
+
+                        match connect_async(url).await {
+                            Ok((_stream, _)) => {
+                                info!("Reconnection successful for session {}", session_id);
+                                // Note: In a full implementation, we would need to call setup_stream here
+                                // but that requires mutable access to self, which isn't available in this task
+                                // The reconnection logic would need to be refactored to work with channels
+                                // or other communication mechanisms with the main transport instance
+                                retry_count = 0;
+                                delay = config.reconnect.initial_delay;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    "Reconnection attempt {} failed for session {}: {}",
+                                    retry_count + 1,
+                                    session_id,
+                                    e
+                                );
+                                retry_count += 1;
+
+                                // Exponential backoff with jitter
+                                let jitter = fastrand::f64() * 0.1; // 10% jitter
+                                let backoff_multiplier =
+                                    config.reconnect.backoff_factor * (1.0 + jitter);
+
+                                delay = Duration::from_secs_f64(
+                                    (delay.as_secs_f64() * backoff_multiplier)
+                                        .min(config.reconnect.max_delay.as_secs_f64()),
+                                );
+                            }
+                        }
+                    } else {
+                        warn!(
+                            "No URL configured for reconnection in session {}",
+                            session_id
+                        );
+                        break;
+                    }
+                    }  // End of tokio::select! _ = status_ticker.tick() branch
+                } // End of tokio::select!
+            } // End of loop
+
+            info!(
+                "✅ Reconnection task gracefully terminated for session {}",
+                session_id
+            );
         })
     }
 
     /// Spawn connection health monitor task
+    ///
+    /// This task now listens for shutdown signals and terminates gracefully.
     pub fn spawn_connection_health_monitor(&self) -> tokio::task::JoinHandle<()> {
         let state = self.state.clone();
         let writer = self.writer.clone();
         let reader = self.reader.clone();
         let session_id = self.session_id.clone();
+
+        // ✅ Subscribe to shutdown signal
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(30));
@@ -253,39 +343,59 @@ impl WebSocketBidirectionalTransport {
             );
 
             loop {
-                ticker.tick().await;
+                tokio::select! {
+                    // ✅ Listen for shutdown signal
+                    _ = shutdown_rx.recv() => {
+                        debug!("Health monitor received shutdown signal for session {}", session_id);
+                        break;
+                    }
 
-                let current_state = state.read().await.clone();
-                let writer_connected = writer.lock().await.is_some();
-                let reader_connected = reader.lock().await.is_some();
+                    // Existing ticker logic
+                    _ = ticker.tick() => {
 
-                // Check for inconsistent state
-                if current_state == TransportState::Connected
-                    && (!writer_connected || !reader_connected)
-                {
-                    warn!(
-                        "Inconsistent connection state detected for session {}: state={:?}, writer={}, reader={}",
-                        session_id, current_state, writer_connected, reader_connected
-                    );
+                        let current_state = state.read().await.clone();
+                        let writer_connected = writer.lock().await.is_some();
+                        let reader_connected = reader.lock().await.is_some();
 
-                    // Update state to reflect reality
-                    *state.write().await = TransportState::Disconnected;
+                        // Check for inconsistent state
+                        if current_state == TransportState::Connected
+                            && (!writer_connected || !reader_connected)
+                        {
+                            warn!(
+                                "Inconsistent connection state detected for session {}: state={:?}, writer={}, reader={}",
+                                session_id, current_state, writer_connected, reader_connected
+                            );
+
+                            // Update state to reflect reality
+                            *state.write().await = TransportState::Disconnected;
+                        }
+
+                        trace!(
+                            "Health check for session {}: state={:?}, writer={}, reader={}",
+                            session_id, current_state, writer_connected, reader_connected
+                        );
+                    }
                 }
-
-                trace!(
-                    "Health check for session {}: state={:?}, writer={}, reader={}",
-                    session_id, current_state, writer_connected, reader_connected
-                );
             }
+
+            debug!(
+                "✅ Health monitor gracefully terminated for session {}",
+                session_id
+            );
         })
     }
 
     /// Spawn metrics collection task
+    ///
+    /// This task now listens for shutdown signals and terminates gracefully.
     pub fn spawn_metrics_collection_task(&self) -> tokio::task::JoinHandle<()> {
         let metrics = self.metrics.clone();
         let correlations = self.correlations.clone();
         let elicitations = self.elicitations.clone();
         let session_id = self.session_id.clone();
+
+        // ✅ Subscribe to shutdown signal
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(60));
@@ -293,36 +403,51 @@ impl WebSocketBidirectionalTransport {
             debug!("Metrics collection task started for session {}", session_id);
 
             loop {
-                ticker.tick().await;
+                tokio::select! {
+                    // ✅ Listen for shutdown signal
+                    _ = shutdown_rx.recv() => {
+                        debug!("Metrics collection received shutdown signal for session {}", session_id);
+                        break;
+                    }
 
-                // Collect current metrics
-                let correlation_count = correlations.len();
-                let elicitation_count = elicitations.len();
+                    // Existing ticker logic
+                    _ = ticker.tick() => {
 
-                {
-                    let mut metrics_guard = metrics.write().await;
-                    metrics_guard.active_connections = if correlation_count > 0 { 1 } else { 0 };
+                        // Collect current metrics
+                        let correlation_count = correlations.len();
+                        let elicitation_count = elicitations.len();
 
-                    // Store WebSocket-specific metrics in metadata
-                    metrics_guard.metadata.insert(
-                        "active_correlations".to_string(),
-                        serde_json::json!(correlation_count),
-                    );
-                    metrics_guard.metadata.insert(
-                        "active_elicitations".to_string(),
-                        serde_json::json!(elicitation_count),
-                    );
-                    metrics_guard.metadata.insert(
-                        "session_id".to_string(),
-                        serde_json::json!(session_id.to_string()),
-                    );
+                        {
+                            let mut metrics_guard = metrics.write().await;
+                            metrics_guard.active_connections = if correlation_count > 0 { 1 } else { 0 };
+
+                            // Store WebSocket-specific metrics in metadata
+                            metrics_guard.metadata.insert(
+                                "active_correlations".to_string(),
+                                serde_json::json!(correlation_count),
+                            );
+                            metrics_guard.metadata.insert(
+                                "active_elicitations".to_string(),
+                                serde_json::json!(elicitation_count),
+                            );
+                            metrics_guard.metadata.insert(
+                                "session_id".to_string(),
+                                serde_json::json!(session_id.to_string()),
+                            );
+                        }
+
+                        trace!(
+                            "Metrics collected for session {}: correlations={}, elicitations={}",
+                            session_id, correlation_count, elicitation_count
+                        );
+                    }
                 }
-
-                trace!(
-                    "Metrics collected for session {}: correlations={}, elicitations={}",
-                    session_id, correlation_count, elicitation_count
-                );
             }
+
+            debug!(
+                "✅ Metrics collection gracefully terminated for session {}",
+                session_id
+            );
         })
     }
 

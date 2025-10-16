@@ -106,7 +106,7 @@ impl WebSocketBidirectionalTransport {
         timeout_duration: Option<Duration>,
     ) -> TransportResult<PingResult> {
         let request_id = Uuid::new_v4().to_string();
-        let (_response_tx, response_rx) = oneshot::channel();
+        let (response_tx, response_rx) = oneshot::channel();
 
         let timeout_duration = timeout_duration.unwrap_or(Duration::from_secs(60));
 
@@ -117,21 +117,30 @@ impl WebSocketBidirectionalTransport {
             "id": request_id
         });
 
+        // Store pending request for response matching
+        self.pending_pings.insert(request_id.clone(), response_tx);
+
         // Send via WebSocket
-        let message_text = serde_json::to_string(&json_request)
-            .map_err(|e| TransportError::SendFailed(format!("Failed to serialize: {}", e)))?;
+        let message_text = serde_json::to_string(&json_request).map_err(|e| {
+            self.pending_pings.remove(&request_id);
+            TransportError::SendFailed(format!("Failed to serialize: {}", e))
+        })?;
 
         if let Some(ref mut writer) = *self.writer.lock().await {
             writer
                 .send(Message::Text(message_text.into()))
                 .await
-                .map_err(|e| TransportError::SendFailed(format!("WebSocket send failed: {}", e)))?;
+                .map_err(|e| {
+                    self.pending_pings.remove(&request_id);
+                    TransportError::SendFailed(format!("WebSocket send failed: {}", e))
+                })?;
 
             debug!(
                 "Sent ping request {} for session {}",
                 request_id, self.session_id
             );
         } else {
+            self.pending_pings.remove(&request_id);
             return Err(TransportError::SendFailed(
                 "WebSocket not connected".to_string(),
             ));
@@ -139,9 +148,6 @@ impl WebSocketBidirectionalTransport {
 
         // Update metrics
         self.metrics.write().await.messages_sent += 1;
-
-        // TODO: Store pending request in correlations map for response matching
-        // For now, responses are expected to be matched via a different mechanism
 
         // Wait for response with timeout
         match timeout(timeout_duration, response_rx).await {
@@ -153,6 +159,7 @@ impl WebSocketBidirectionalTransport {
                 Ok(result)
             }
             Ok(Err(_)) => {
+                self.pending_pings.remove(&request_id);
                 warn!(
                     "Ping response channel closed for {} in session {}",
                     request_id, self.session_id
@@ -162,6 +169,7 @@ impl WebSocketBidirectionalTransport {
                 ))
             }
             Err(_) => {
+                self.pending_pings.remove(&request_id);
                 warn!(
                     "Ping {} timed out in session {}",
                     request_id, self.session_id
@@ -205,7 +213,7 @@ impl WebSocketBidirectionalTransport {
         timeout_duration: Option<Duration>,
     ) -> TransportResult<CreateMessageResult> {
         let request_id = Uuid::new_v4().to_string();
-        let (_response_tx, response_rx) = oneshot::channel();
+        let (response_tx, response_rx) = oneshot::channel();
 
         let timeout_duration = timeout_duration.unwrap_or(Duration::from_secs(60));
 
@@ -217,21 +225,31 @@ impl WebSocketBidirectionalTransport {
             "id": request_id
         });
 
+        // Store pending request for response matching
+        self.pending_samplings
+            .insert(request_id.clone(), response_tx);
+
         // Send via WebSocket
-        let message_text = serde_json::to_string(&json_request)
-            .map_err(|e| TransportError::SendFailed(format!("Failed to serialize: {}", e)))?;
+        let message_text = serde_json::to_string(&json_request).map_err(|e| {
+            self.pending_samplings.remove(&request_id);
+            TransportError::SendFailed(format!("Failed to serialize: {}", e))
+        })?;
 
         if let Some(ref mut writer) = *self.writer.lock().await {
             writer
                 .send(Message::Text(message_text.into()))
                 .await
-                .map_err(|e| TransportError::SendFailed(format!("WebSocket send failed: {}", e)))?;
+                .map_err(|e| {
+                    self.pending_samplings.remove(&request_id);
+                    TransportError::SendFailed(format!("WebSocket send failed: {}", e))
+                })?;
 
             debug!(
                 "Sent sampling request {} for session {}",
                 request_id, self.session_id
             );
         } else {
+            self.pending_samplings.remove(&request_id);
             return Err(TransportError::SendFailed(
                 "WebSocket not connected".to_string(),
             ));
@@ -250,6 +268,7 @@ impl WebSocketBidirectionalTransport {
                 Ok(result)
             }
             Ok(Err(_)) => {
+                self.pending_samplings.remove(&request_id);
                 warn!(
                     "Sampling response channel closed for {} in session {}",
                     request_id, self.session_id
@@ -259,6 +278,7 @@ impl WebSocketBidirectionalTransport {
                 ))
             }
             Err(_) => {
+                self.pending_samplings.remove(&request_id);
                 warn!(
                     "Sampling {} timed out in session {}",
                     request_id, self.session_id
@@ -296,7 +316,7 @@ impl WebSocketBidirectionalTransport {
         timeout_duration: Option<Duration>,
     ) -> TransportResult<ListRootsResult> {
         let request_id = Uuid::new_v4().to_string();
-        let (_response_tx, response_rx) = oneshot::channel();
+        let (response_tx, response_rx) = oneshot::channel();
 
         let timeout_duration = timeout_duration.unwrap_or(Duration::from_secs(60));
 
@@ -307,21 +327,30 @@ impl WebSocketBidirectionalTransport {
             "id": request_id
         });
 
+        // Store pending request for response matching
+        self.pending_roots.insert(request_id.clone(), response_tx);
+
         // Send via WebSocket
-        let message_text = serde_json::to_string(&json_request)
-            .map_err(|e| TransportError::SendFailed(format!("Failed to serialize: {}", e)))?;
+        let message_text = serde_json::to_string(&json_request).map_err(|e| {
+            self.pending_roots.remove(&request_id);
+            TransportError::SendFailed(format!("Failed to serialize: {}", e))
+        })?;
 
         if let Some(ref mut writer) = *self.writer.lock().await {
             writer
                 .send(Message::Text(message_text.into()))
                 .await
-                .map_err(|e| TransportError::SendFailed(format!("WebSocket send failed: {}", e)))?;
+                .map_err(|e| {
+                    self.pending_roots.remove(&request_id);
+                    TransportError::SendFailed(format!("WebSocket send failed: {}", e))
+                })?;
 
             debug!(
                 "Sent roots/list request {} for session {}",
                 request_id, self.session_id
             );
         } else {
+            self.pending_roots.remove(&request_id);
             return Err(TransportError::SendFailed(
                 "WebSocket not connected".to_string(),
             ));
@@ -340,6 +369,7 @@ impl WebSocketBidirectionalTransport {
                 Ok(result)
             }
             Ok(Err(_)) => {
+                self.pending_roots.remove(&request_id);
                 warn!(
                     "Roots/list response channel closed for {} in session {}",
                     request_id, self.session_id
@@ -349,6 +379,7 @@ impl WebSocketBidirectionalTransport {
                 ))
             }
             Err(_) => {
+                self.pending_roots.remove(&request_id);
                 warn!(
                     "Roots/list {} timed out in session {}",
                     request_id, self.session_id

@@ -8,9 +8,9 @@ use std::sync::Arc;
 use futures::{SinkExt, StreamExt as _};
 use serde_json::json;
 use tokio::net::TcpStream;
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
-use tracing::{info, warn};
+use tracing::{debug, info, trace, warn};
 use uuid::Uuid;
 
 use super::types::{WebSocketBidirectionalTransport, WebSocketConnectionStats};
@@ -20,10 +20,15 @@ use crate::core::{TransportError, TransportEvent, TransportResult, TransportStat
 impl WebSocketBidirectionalTransport {
     /// Create a new WebSocket bidirectional transport
     pub async fn new(config: super::config::WebSocketBidirectionalConfig) -> TransportResult<Self> {
-        let (_shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        // Create broadcast channel for shutdown coordination
+        // Buffer size of 1 is sufficient since we only broadcast one shutdown signal
+        let (shutdown_tx, _) = tokio::sync::broadcast::channel(1);
         let (event_emitter, _) = crate::core::TransportEventEmitter::new();
 
         let capabilities = Self::create_capabilities(&config);
+
+        // Capture reconnect setting before moving config
+        let reconnect_enabled = config.reconnect.enabled;
 
         Ok(Self {
             state: Arc::new(RwLock::new(TransportState::Disconnected)),
@@ -35,9 +40,13 @@ impl WebSocketBidirectionalTransport {
             reader: Arc::new(Mutex::new(None)),
             correlations: Arc::new(dashmap::DashMap::new()),
             elicitations: Arc::new(dashmap::DashMap::new()),
+            pending_samplings: Arc::new(dashmap::DashMap::new()),
+            pending_pings: Arc::new(dashmap::DashMap::new()),
+            pending_roots: Arc::new(dashmap::DashMap::new()),
             connection_state: Arc::new(RwLock::new(ConnectionState::default())),
             task_handles: Arc::new(RwLock::new(Vec::new())),
-            shutdown_tx: Arc::new(tokio::sync::Mutex::new(Some(_shutdown_tx))),
+            shutdown_tx: Arc::new(shutdown_tx),
+            reconnect_allowed: Arc::new(std::sync::atomic::AtomicBool::new(reconnect_enabled)),
             session_id: Uuid::new_v4().to_string(),
         })
     }
@@ -111,16 +120,31 @@ impl WebSocketBidirectionalTransport {
     }
 
     /// Start background tasks for message processing
+    ///
+    /// Starts all essential background tasks:
+    /// - Keep-alive (ping/pong)
+    /// - Elicitation timeout monitor
+    /// - Connection health monitor
+    /// - Metrics collection
+    /// - Reconnection (if enabled)
     async fn start_background_tasks(&self) {
         let mut handles = self.task_handles.write().await;
 
-        // Keep-alive task
+        // Keep-alive task (ping/pong)
         let keep_alive_handle = self.spawn_keep_alive_task();
         handles.push(keep_alive_handle);
 
         // Elicitation timeout monitor
         let timeout_handle = self.spawn_timeout_monitor();
         handles.push(timeout_handle);
+
+        // Connection health monitor
+        let health_handle = self.spawn_connection_health_monitor();
+        handles.push(health_handle);
+
+        // Metrics collection
+        let metrics_handle = self.spawn_metrics_collection_task();
+        handles.push(metrics_handle);
 
         // Reconnection task (if enabled)
         if self
@@ -134,7 +158,11 @@ impl WebSocketBidirectionalTransport {
             handles.push(reconnect_handle);
         }
 
-        info!("Started {} background tasks", handles.len());
+        info!(
+            "Started {} background tasks for session {}",
+            handles.len(),
+            self.session_id
+        );
     }
 
     /// Connect using the configured URL
@@ -164,35 +192,117 @@ impl WebSocketBidirectionalTransport {
     }
 
     /// Disconnect from the WebSocket
+    ///
+    /// This method performs a **graceful shutdown** of the WebSocket connection:
+    /// 1. Sets state to Disconnecting (prevents reconnection)
+    /// 2. Broadcasts shutdown signal to all background tasks
+    /// 3. Sends WebSocket close frame with code 1000 (normal closure)
+    /// 4. Waits for background tasks to terminate gracefully (with timeout)
+    /// 5. Cleans up resources and pending operations
     pub async fn disconnect(&self) -> TransportResult<()> {
-        info!("Disconnecting WebSocket transport");
+        info!(
+            "🛑 Disconnecting WebSocket transport session {}",
+            self.session_id
+        );
 
+        // 1. FIRST: Permanently disable reconnection (defense-in-depth)
+        //    This atomic flag prevents ANY reconnection attempts, even if shutdown signals
+        //    are missed or state transitions are delayed. Once set to false, reconnection
+        //    is disabled for the lifetime of this transport instance.
+        self.reconnect_allowed
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        debug!(
+            "Reconnection permanently disabled for session {}",
+            self.session_id
+        );
+
+        // 2. Set state to Disconnecting
+        //    This is CRITICAL - reconnection task checks this state and stops trying to reconnect
         *self.state.write().await = TransportState::Disconnecting;
 
-        // Send shutdown signal
-        if let Some(tx) = self.shutdown_tx.lock().await.take() {
-            let _ = tx.send(()).await;
-        }
+        // 3. Broadcast shutdown signal to all background tasks
+        //    All tasks listen via tokio::select! and will begin graceful shutdown
+        let _ = self.shutdown_tx.send(()); // broadcast::send doesn't fail if no receivers
+        debug!("Shutdown signal broadcast to all background tasks");
 
-        // Close WebSocket
+        // 4. Send WebSocket close frame with code 1000 (normal closure)
+        //    This is the proper WebSocket protocol-compliant way to close
         if let Some(ref mut writer) = *self.writer.lock().await {
-            let _ = writer
-                .send(tokio_tungstenite::tungstenite::Message::Close(None))
-                .await;
+            use tokio_tungstenite::tungstenite::protocol::{CloseFrame, frame::coding::CloseCode};
+
+            let close_frame = CloseFrame {
+                code: CloseCode::Normal, // 1000 - normal closure
+                reason: "Client shutdown".into(),
+            };
+
+            // Send close frame to buffer
+            if let Err(e) = writer
+                .send(tokio_tungstenite::tungstenite::Message::Close(Some(
+                    close_frame,
+                )))
+                .await
+            {
+                warn!(
+                    "Failed to send close frame: {} (connection may already be closed)",
+                    e
+                );
+                // Not fatal - connection might already be closed
+            } else {
+                // Flush to TCP socket to ensure immediate delivery
+                if let Err(e) = writer.flush().await {
+                    warn!(
+                        "Failed to flush close frame: {} (connection may already be closed)",
+                        e
+                    );
+                } else {
+                    debug!("WebSocket close frame sent and flushed (code 1000)");
+                }
+            }
         }
 
-        // Cancel background tasks
+        // 5. Wait for background tasks to terminate gracefully (with timeout)
+        const SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
         let handles = self
             .task_handles
             .write()
             .await
             .drain(..)
             .collect::<Vec<_>>();
-        for handle in handles {
-            handle.abort();
+
+        let shutdown_deadline = tokio::time::Instant::now() + SHUTDOWN_TIMEOUT;
+        let mut graceful_count = 0;
+        let mut aborted_count = 0;
+
+        for mut handle in handles {
+            let remaining =
+                shutdown_deadline.saturating_duration_since(tokio::time::Instant::now());
+
+            // Try to await the task with timeout
+            match tokio::time::timeout(remaining, &mut handle).await {
+                Ok(Ok(())) => {
+                    graceful_count += 1;
+                    trace!("Background task terminated gracefully");
+                }
+                Ok(Err(e)) => {
+                    warn!("Background task panicked during shutdown: {:?}", e);
+                    aborted_count += 1;
+                }
+                Err(_timeout) => {
+                    // ✅ CRITICAL FIX: Actually abort non-responsive tasks
+                    warn!("Background task did not respond to shutdown signal - force aborting");
+                    handle.abort();
+                    aborted_count += 1;
+                }
+            }
         }
 
-        // Clear state
+        info!(
+            "Background tasks shutdown: {} graceful, {} force aborted",
+            graceful_count, aborted_count
+        );
+
+        // 6. Clear state and pending operations
         self.correlations.clear();
         self.elicitations.clear();
 
@@ -200,7 +310,7 @@ impl WebSocketBidirectionalTransport {
         *self.reader.lock().await = None;
         *self.state.write().await = TransportState::Disconnected;
 
-        // Update connection state
+        // Update connection state metadata
         {
             let mut conn_state = self.connection_state.write().await;
             conn_state.server_initiated_enabled = false;
@@ -212,11 +322,14 @@ impl WebSocketBidirectionalTransport {
         // Emit disconnected event
         self.event_emitter.emit(TransportEvent::Disconnected {
             transport_type: TransportType::WebSocket,
-            endpoint: "websocket".to_string(),
-            reason: Some("Disconnected by user".to_string()),
+            endpoint: self.session_id.clone(),
+            reason: Some("User-initiated disconnect".to_string()),
         });
 
-        info!("WebSocket transport disconnected successfully");
+        info!(
+            "✅ WebSocket transport disconnected successfully (session {})",
+            self.session_id
+        );
         Ok(())
     }
 

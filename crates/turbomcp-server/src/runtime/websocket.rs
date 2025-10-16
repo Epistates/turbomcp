@@ -69,6 +69,27 @@ use turbomcp_transport::security::{
 /// Pending server-initiated requests (for response correlation)
 type PendingRequests = Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse>>>>;
 
+/// Configuration for WebSocket server
+///
+/// Used by ServerBuilder to configure the WebSocket transport endpoint.
+#[derive(Clone, Debug)]
+pub struct WebSocketServerConfig {
+    /// Bind address (e.g. "127.0.0.1:8080")
+    pub bind_addr: String,
+
+    /// WebSocket endpoint path (default: "/ws")
+    pub endpoint_path: String,
+}
+
+impl Default for WebSocketServerConfig {
+    fn default() -> Self {
+        Self {
+            bind_addr: "127.0.0.1:8080".to_string(),
+            endpoint_path: "/ws".to_string(),
+        }
+    }
+}
+
 /// WebSocket server dispatcher for server-initiated requests
 ///
 /// This dispatcher handles server→client requests over the WebSocket connection,
@@ -137,30 +158,82 @@ impl WebSocketServerDispatcher {
             .await
             .insert(request_id.clone(), response_tx);
 
+        tracing::debug!(
+            "🔑 Registered pending request: id='{}' (len={})",
+            request_id,
+            request_id.len()
+        );
+
         // Serialize and send request
         let request_json = serde_json::to_string(&request).map_err(|e| ServerError::Handler {
             message: format!("Failed to serialize JSON-RPC request: {}", e),
             context: Some("WebSocket request".to_string()),
         })?;
 
-        self.sender
-            .send(WsMessage::Text(request_json.into()))
-            .map_err(|e| ServerError::Handler {
-                message: format!("Failed to send WebSocket message: {}", e),
-                context: Some("WebSocket closed".to_string()),
-            })?;
+        tracing::debug!(
+            "📤 Sending server-initiated request: method={}, id={}",
+            method,
+            request_id
+        );
+        tracing::debug!("📤 FULL REQUEST JSON: {}", request_json);
+        tracing::trace!("Request payload: {}", request_json);
+
+        match self.sender.send(WsMessage::Text(request_json.into())) {
+            Ok(_) => {
+                tracing::debug!("✅ WebSocket send successful for request id={}", request_id);
+            }
+            Err(e) => {
+                tracing::error!(
+                    "❌ WebSocket send FAILED for request id={}: {}",
+                    request_id,
+                    e
+                );
+                // Clean up pending request since send failed
+                self.pending_requests.lock().await.remove(&request_id);
+                return Err(ServerError::Handler {
+                    message: format!("Failed to send WebSocket message: {}", e),
+                    context: Some("WebSocket closed".to_string()),
+                });
+            }
+        }
+
+        tracing::debug!(
+            "⏳ Awaiting response for request id={} (60s timeout)",
+            request_id
+        );
 
         // Await response with timeout
         let response = tokio::time::timeout(std::time::Duration::from_secs(60), response_rx)
             .await
-            .map_err(|_| ServerError::Handler {
-                message: "Request timeout (60s)".to_string(),
-                context: Some(format!("method: {}", method)),
+            .map_err(|_| {
+                tracing::error!(
+                    "⏱️  TIMEOUT after 60s waiting for response to request id='{}' (len={})",
+                    request_id,
+                    request_id.len()
+                );
+                // Clean up pending request on timeout
+                tracing::error!(
+                    "🧹 Timeout cleanup: attempting to remove pending request id='{}'",
+                    request_id
+                );
+                ServerError::Handler {
+                    message: "Request timeout (60s)".to_string(),
+                    context: Some(format!("method: {}, request_id: {}", method, request_id)),
+                }
             })?
-            .map_err(|_| ServerError::Handler {
-                message: "Response channel closed".to_string(),
-                context: Some(format!("method: {}", method)),
+            .map_err(|_| {
+                tracing::error!(
+                    "📪 Response channel closed for request id='{}' (len={})",
+                    request_id,
+                    request_id.len()
+                );
+                ServerError::Handler {
+                    message: "Response channel closed".to_string(),
+                    context: Some(format!("method: {}, request_id: {}", method, request_id)),
+                }
             })?;
+
+        tracing::debug!("✅ Received response for request id={}", request_id);
 
         // Parse response
         match response.payload {
@@ -260,7 +333,7 @@ async fn handle_websocket<H, W>(
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     H: JsonRpcHandler + Send + Sync + Clone + 'static,
-    W: JsonRpcHandler + Send + Sync + 'static,
+    W: JsonRpcHandler + Send + Sync + Clone + 'static,
 {
     let (ws_sender, ws_receiver) = socket.split();
 
@@ -304,8 +377,17 @@ async fn send_loop(
     mut outbound_rx: mpsc::UnboundedReceiver<WsMessage>,
 ) {
     while let Some(message) = outbound_rx.recv().await {
+        // Step 1: Send message to buffer
         if let Err(e) = sender.send(message).await {
             tracing::error!("Failed to send WebSocket message: {}", e);
+            break;
+        }
+
+        // Step 2: Flush buffer to TCP socket (CRITICAL!)
+        // Without flush(), messages sit in the SplitSink buffer and never reach the network.
+        // This is required by the futures::Sink trait semantics.
+        if let Err(e) = sender.flush().await {
+            tracing::error!("Failed to flush WebSocket message: {}", e);
             break;
         }
     }
@@ -318,19 +400,52 @@ async fn receive_loop<H>(
     outbound_tx: mpsc::UnboundedSender<WsMessage>,
     pending_requests: PendingRequests,
 ) where
-    H: JsonRpcHandler + Send + Sync + 'static,
+    H: JsonRpcHandler + Send + Sync + Clone + 'static,
 {
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(WsMessage::Text(text)) => {
+                tracing::debug!("📥 Received WebSocket message: {} bytes", text.len());
+                tracing::debug!("📥 FULL RESPONSE JSON: {}", text);
+                tracing::trace!("WebSocket message content: {}", text);
+
                 // Parse JSON
                 let value: Value = match serde_json::from_str(&text) {
                     Ok(v) => v,
                     Err(e) => {
                         tracing::error!("Failed to parse JSON: {}", e);
+                        tracing::debug!("Invalid JSON text: {}", text);
                         continue;
                     }
                 };
+
+                // Log message type for debugging
+                if value.get("method").is_some() {
+                    if value.get("id").is_some() {
+                        tracing::debug!(
+                            "📨 Message type: REQUEST (method={}, id={:?})",
+                            value
+                                .get("method")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("unknown"),
+                            value.get("id")
+                        );
+                    } else {
+                        tracing::debug!(
+                            "📢 Message type: NOTIFICATION (method={})",
+                            value
+                                .get("method")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("unknown")
+                        );
+                    }
+                } else if value.get("result").is_some() || value.get("error").is_some() {
+                    tracing::debug!(
+                        "📬 Message type: RESPONSE (id={:?}, has_error={})",
+                        value.get("id"),
+                        value.get("error").is_some()
+                    );
+                }
 
                 // Check if this is a response to server-initiated request
                 if let Ok(response) = serde_json::from_value::<JsonRpcResponse>(value.clone()) {
@@ -341,22 +456,63 @@ async fn receive_loop<H>(
                             MessageId::Uuid(u) => u.to_string(),
                         },
                         _ => {
-                            // Not a valid response ID, treat as request
-                            handle_client_request(&handler, &outbound_tx, value).await;
+                            // Response with null ID - this shouldn't happen for valid responses
+                            // Log and skip (don't process as request)
+                            tracing::warn!("Received JSON-RPC response with null ID, ignoring");
                             continue;
                         }
                     };
 
+                    tracing::debug!(
+                        "🔍 Checking response: id='{}' (len={})",
+                        response_id,
+                        response_id.len()
+                    );
+
+                    // Log current pending requests for debugging
+                    let pending_count = pending_requests.lock().await.len();
+                    tracing::debug!("📋 Current pending requests: {}", pending_count);
+
                     // Check if we have a pending request with this ID
                     if let Some(tx) = pending_requests.lock().await.remove(&response_id) {
                         // This is a response to our server-initiated request
+                        tracing::debug!(
+                            "✅ Matched and removed pending request: id={}",
+                            response_id
+                        );
                         let _ = tx.send(response);
+                        continue;
+                    } else {
+                        // We got a response but don't have a pending request for it
+                        // This could be a late response after timeout, or an unsolicited response
+                        tracing::warn!(
+                            "❌ Received response for unknown/expired request: id='{}' (len={})",
+                            response_id,
+                            response_id.len()
+                        );
+
+                        // Log all pending request IDs for debugging
+                        let pending_ids: Vec<String> =
+                            pending_requests.lock().await.keys().cloned().collect();
+                        if !pending_ids.is_empty() {
+                            tracing::warn!("   Pending IDs: {:?}", pending_ids);
+                        }
                         continue;
                     }
                 }
 
                 // Otherwise, treat as client→server request
-                handle_client_request(&handler, &outbound_tx, value).await;
+                // CRITICAL: Spawn in a separate task to avoid blocking receive_loop!
+                // If we await here, bidirectional requests will deadlock:
+                // - receive_loop waits for handler
+                // - handler waits for sampling/elicitation response
+                // - response waits for receive_loop to process it
+                // Result: 60-second timeout as receive_loop can't process responses!
+                let handler = handler.clone();
+                let outbound_tx = outbound_tx.clone();
+                tokio::spawn(async move {
+                    handle_client_request(&handler, &outbound_tx, value).await;
+                });
             }
             Ok(WsMessage::Close(_)) => {
                 tracing::debug!("WebSocket connection closed by client");
@@ -388,6 +544,19 @@ async fn handle_client_request<H>(
 ) where
     H: JsonRpcHandler,
 {
+    let method = request
+        .get("method")
+        .and_then(|m| m.as_str())
+        .unwrap_or("unknown")
+        .to_string(); // Clone the string so we don't borrow request
+    let request_id = request.get("id").map(|id| id.to_string());
+
+    tracing::debug!(
+        "Handling WebSocket request: method={}, id={:?}",
+        method,
+        request_id
+    );
+
     // Check if this is a notification (JSON-RPC 2.0 spec: no response for notifications)
     if let Ok(message) = serde_json::from_value::<JsonRpcMessage>(request.clone())
         && matches!(message, JsonRpcMessage::Notification(_))
@@ -399,7 +568,9 @@ async fn handle_client_request<H>(
     }
 
     // Process through handler
+    tracing::debug!("Calling handler for method: {}", method);
     let response = handler.handle_request(request).await;
+    tracing::debug!("Handler returned response for method: {}", method);
 
     // Send response
     let response_json = match serde_json::to_string(&response) {
@@ -410,8 +581,17 @@ async fn handle_client_request<H>(
         }
     };
 
+    tracing::debug!(
+        "Sending WebSocket response: {} bytes for method: {}",
+        response_json.len(),
+        method
+    );
+    tracing::trace!("Response content: {}", response_json);
+
     if let Err(e) = outbound_tx.send(WsMessage::Text(response_json.into())) {
         tracing::error!("Failed to queue response: {}", e);
+    } else {
+        tracing::debug!("Response queued successfully for method: {}", method);
     }
 }
 
@@ -424,7 +604,7 @@ async fn websocket_handler<H, W>(
 ) -> Result<impl IntoResponse, StatusCode>
 where
     H: JsonRpcHandler + Send + Sync + Clone + 'static,
-    W: JsonRpcHandler + Send + Sync + 'static,
+    W: JsonRpcHandler + Send + Sync + Clone + 'static,
 {
     // Security validation
     validate_websocket_security(&state, &headers, addr.ip())?;
@@ -504,7 +684,7 @@ pub async fn run_websocket<H, W, F>(
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     H: JsonRpcHandler + Send + Sync + Clone + 'static,
-    W: JsonRpcHandler + Send + Sync + 'static,
+    W: JsonRpcHandler + Send + Sync + Clone + 'static,
     F: Fn(H, WebSocketServerDispatcher) -> W + Send + Sync + 'static,
 {
     // Create security infrastructure

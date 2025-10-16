@@ -170,8 +170,11 @@ impl WebSocketBidirectionalTransport {
         let json_value: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| TransportError::ReceiveFailed(format!("Invalid JSON: {}", e)))?;
 
-        // Check if it's an elicitation response by looking for id field
-        if let Some(id) = json_value.get("id").and_then(|v| v.as_str())
+        // Extract the request ID if present
+        let request_id = json_value.get("id").and_then(|v| v.as_str());
+
+        // Check if it's an elicitation response
+        if let Some(id) = request_id
             && let Some((_, pending)) = self.elicitations.remove(id)
         {
             debug!(
@@ -215,6 +218,98 @@ impl WebSocketBidirectionalTransport {
                 _meta: None,
             };
             let _ = pending.response_tx.send(cancel_result);
+            return Ok(());
+        }
+
+        // Check if it's a sampling response
+        if let Some(id) = request_id
+            && let Some((_, response_tx)) = self.pending_samplings.remove(id)
+        {
+            debug!(
+                "Processing sampling response for {} in session {}",
+                id, self.session_id
+            );
+
+            if let Some(result) = json_value.get("result") {
+                match serde_json::from_value::<turbomcp_protocol::types::CreateMessageResult>(
+                    result.clone(),
+                ) {
+                    Ok(sampling_result) => {
+                        let _ = response_tx.send(sampling_result);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse sampling result for {} in session {}: {}",
+                            id, self.session_id, e
+                        );
+                    }
+                }
+            }
+
+            // If we reach here, there was an error or malformed response
+            // The channel will be dropped, causing a receive error on the waiting side
+            return Ok(());
+        }
+
+        // Check if it's a ping response
+        if let Some(id) = request_id
+            && let Some((_, response_tx)) = self.pending_pings.remove(id)
+        {
+            debug!(
+                "Processing ping response for {} in session {}",
+                id, self.session_id
+            );
+
+            if let Some(result) = json_value.get("result") {
+                match serde_json::from_value::<turbomcp_protocol::types::PingResult>(result.clone())
+                {
+                    Ok(ping_result) => {
+                        let _ = response_tx.send(ping_result);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse ping result for {} in session {}: {}",
+                            id, self.session_id, e
+                        );
+                    }
+                }
+            }
+
+            // If we reach here, there was an error or malformed response
+            // The channel will be dropped, causing a receive error on the waiting side
+            return Ok(());
+        }
+
+        // Check if it's a roots list response
+        if let Some(id) = request_id
+            && let Some((_, response_tx)) = self.pending_roots.remove(id)
+        {
+            debug!(
+                "Processing roots/list response for {} in session {}",
+                id, self.session_id
+            );
+
+            if let Some(result) = json_value.get("result") {
+                match serde_json::from_value::<turbomcp_protocol::types::ListRootsResult>(
+                    result.clone(),
+                ) {
+                    Ok(roots_result) => {
+                        let _ = response_tx.send(roots_result);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse roots/list result for {} in session {}: {}",
+                            id, self.session_id, e
+                        );
+                    }
+                }
+            }
+
+            // If we reach here, there was an error or malformed response
+            // The channel will be dropped, causing a receive error on the waiting side
             return Ok(());
         }
 
