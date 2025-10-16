@@ -55,7 +55,11 @@ where
     pub fn new(server: T) -> Self {
         let registry = Arc::new(HandlerRegistry::new());
         let metrics = Arc::new(turbomcp_server::metrics::ServerMetrics::new());
-        let router = Arc::new(RequestRouter::new(registry.clone(), metrics));
+        let router = Arc::new(RequestRouter::new(
+            registry.clone(),
+            metrics,
+            turbomcp_server::config::ServerConfig::default(),
+        ));
 
         Self {
             server: Arc::new(server),
@@ -203,7 +207,11 @@ where
         // Create combined registry by merging all router registries
         let combined_registry = Arc::new(HandlerRegistry::new());
         let metrics = Arc::new(turbomcp_server::metrics::ServerMetrics::new());
-        let combined_router = Arc::new(RequestRouter::new(combined_registry.clone(), metrics));
+        let combined_router = Arc::new(RequestRouter::new(
+            combined_registry.clone(),
+            metrics,
+            turbomcp_server::config::ServerConfig::default(),
+        ));
 
         // Get the first router's server instance to use as the combined server
         let first_server = routers[0].server.clone();

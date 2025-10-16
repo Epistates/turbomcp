@@ -16,8 +16,9 @@ use crate::McpResult;
 #[cfg(feature = "http")]
 pub use turbomcp_transport::{AxumMcpExt, McpAppState, McpServerConfig, McpService};
 
+// Note: Use WebSocketBidirectionalTransport for MCP 2025-06-18 compliant WebSocket support
 #[cfg(feature = "websocket")]
-pub use turbomcp_transport::WebSocketTransport;
+pub use turbomcp_transport::WebSocketBidirectionalTransport;
 
 /// Ergonomic transport factory for quick setup
 pub struct TransportFactory;
@@ -35,14 +36,19 @@ impl TransportFactory {
         "HTTP server functionality available via AxumMcpExt trait - see axum_integration module"
     }
 
-    /// Create WebSocket transport with ergonomic defaults  
+    /// Create WebSocket bidirectional transport with ergonomic defaults
     #[cfg(feature = "websocket")]
-    pub fn websocket(endpoint: impl Into<String>) -> McpResult<WebSocketTransport> {
+    pub fn websocket(endpoint: impl Into<String>) -> McpResult<WebSocketBidirectionalTransport> {
         let ep: String = endpoint.into();
         // Synchronous wrapper over async constructor for DX in non-async contexts
         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
-        let transport =
-            rt.block_on(async { turbomcp_transport::WebSocketTransport::new(&ep).await })?;
+        let config = turbomcp_transport::WebSocketBidirectionalConfig {
+            url: Some(ep),
+            ..Default::default()
+        };
+        let transport = rt.block_on(async {
+            turbomcp_transport::WebSocketBidirectionalTransport::new(config).await
+        })?;
         Ok(transport)
     }
 }
@@ -102,7 +108,7 @@ macro_rules! transport {
         $crate::transport::TransportFactory::stdio()
     };
 
-    // Note: HTTP server functionality available via AxumMcpExt
+    // Note: Use WebSocketBidirectionalTransport for full MCP 2025-06-18 support
     (websocket, $endpoint:expr) => {
         $crate::transport::TransportFactory::websocket($endpoint)?
     };

@@ -80,7 +80,7 @@ jsonschema = { version = "0.17.1", default-features = false, features = ["resolv
 rustc-hash = "2.1.1"
 walkdir = { workspace = true }
 turbomcp-client = { version = "2.0.0-rc.2", path = "../turbomcp-client" }
-tokio-tungstenite = "0.27.0"
+tokio-tungstenite = "0.28.0"
 proptest = "1.5"
 oauth2 = "4.4.2"  # Required for oauth_integration_tests.rs
 
