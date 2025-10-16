@@ -18,14 +18,15 @@ use crate::registry::HandlerRegistry;
 use std::sync::Arc;
 
 /// Handler context passed to all protocol handlers
-/// Contains only registry access for pure business logic
+/// Contains registry and server config for protocol responses
 pub struct HandlerContext {
     pub registry: Arc<HandlerRegistry>,
+    pub config: crate::config::ServerConfig,
 }
 
 impl HandlerContext {
-    pub fn new(registry: Arc<HandlerRegistry>) -> Self {
-        Self { registry }
+    pub fn new(registry: Arc<HandlerRegistry>, config: crate::config::ServerConfig) -> Self {
+        Self { registry, config }
     }
 }
 

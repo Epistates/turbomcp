@@ -145,7 +145,7 @@ fn test_route_metadata_clone() {
 fn test_request_router_new() {
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::new(registry, metrics);
+    let router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let debug_str = format!("{router:?}");
     assert!(debug_str.contains("RequestRouter"));
@@ -159,7 +159,12 @@ fn test_request_router_with_config() {
         ..RouterConfig::default()
     };
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::with_config(registry, config, metrics);
+    let router = RequestRouter::with_config(
+        registry,
+        config,
+        metrics,
+        crate::config::ServerConfig::default(),
+    );
 
     let debug_str = format!("{router:?}");
     assert!(debug_str.contains("RequestRouter"));
@@ -169,7 +174,7 @@ fn test_request_router_with_config() {
 fn test_request_router_debug() {
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::new(registry, metrics);
+    let router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let debug_str = format!("{router:?}");
     assert!(debug_str.contains("RequestRouter"));
@@ -185,7 +190,7 @@ fn test_request_router_debug() {
 async fn test_route_method_not_found() {
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::new(registry, metrics);
+    let router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,
@@ -208,7 +213,7 @@ async fn test_route_method_not_found() {
 async fn test_route_initialize_request() {
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::new(registry, metrics);
+    let router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,
@@ -239,7 +244,7 @@ async fn test_route_initialize_request() {
 async fn test_route_tools_list_request() {
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::new(registry, metrics);
+    let router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,
@@ -267,7 +272,12 @@ async fn test_route_with_validation_disabled() {
         ..RouterConfig::default()
     };
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::with_config(registry, config, metrics);
+    let router = RequestRouter::with_config(
+        registry,
+        config,
+        metrics,
+        crate::config::ServerConfig::default(),
+    );
 
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,
@@ -290,7 +300,7 @@ async fn test_route_with_validation_disabled() {
 async fn test_route_resource_methods() {
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::new(registry, metrics);
+    let router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let methods = vec![
         "resources/list",
@@ -323,7 +333,7 @@ async fn test_route_resource_methods() {
 async fn test_route_logging_and_sampling() {
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::new(registry, metrics);
+    let router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let methods = vec!["logging/setLevel", "sampling/createMessage"];
 
@@ -350,7 +360,7 @@ async fn test_route_logging_and_sampling() {
 async fn test_route_empty_method() {
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::new(registry, metrics);
+    let router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,
@@ -369,7 +379,7 @@ async fn test_route_empty_method() {
 async fn test_route_very_long_method() {
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::new(registry, metrics);
+    let router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let very_long_method = "a".repeat(1000);
     let request = JsonRpcRequest {
@@ -393,7 +403,7 @@ async fn test_route_very_long_method() {
 fn test_router_add_route() {
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let mut router = RequestRouter::new(registry, metrics);
+    let mut router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let handler = SimpleRouteHandler;
     let result = router.add_route(handler);
@@ -405,7 +415,7 @@ fn test_router_add_route() {
 async fn test_custom_route_integration() {
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let mut router = RequestRouter::new(registry, metrics);
+    let mut router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let custom_handler = SimpleRouteHandler;
     router.add_route(custom_handler).unwrap();
@@ -460,7 +470,12 @@ async fn test_router_different_configurations() {
     for (i, config) in configs.into_iter().enumerate() {
         let registry = Arc::new(HandlerRegistry::new());
         let metrics = Arc::new(ServerMetrics::new());
-        let router = RequestRouter::with_config(registry, config, metrics);
+        let router = RequestRouter::with_config(
+            registry,
+            config,
+            metrics,
+            crate::config::ServerConfig::default(),
+        );
 
         let request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
@@ -502,7 +517,7 @@ async fn test_simple_route_handler_handle() {
 
     let registry = Arc::new(HandlerRegistry::new());
     let metrics = Arc::new(ServerMetrics::new());
-    let router = RequestRouter::new(registry, metrics);
+    let router = RequestRouter::new(registry, metrics, crate::config::ServerConfig::default());
 
     let request = JsonRpcRequest {
         jsonrpc: JsonRpcVersion,

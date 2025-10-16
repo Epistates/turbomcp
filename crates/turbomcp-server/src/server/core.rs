@@ -214,6 +214,7 @@ impl McpServer {
         let router = Arc::new(RequestRouter::new(
             Arc::clone(&registry),
             Arc::clone(&metrics),
+            config.clone(),
         ));
         // Build middleware stack configuration
         #[cfg(feature = "middleware")]
@@ -651,7 +652,16 @@ impl McpServer {
         let router_for_factory = Arc::clone(&router);
 
         let handler_factory = move |session_id: Option<String>| {
-            let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let session_id = session_id.unwrap_or_else(|| {
+                let new_id = uuid::Uuid::new_v4().to_string();
+                tracing::warn!(
+                    "⚠️ Factory generating random session ID (no session ID provided): {}",
+                    new_id
+                );
+                new_id
+            });
+
+            tracing::debug!("Factory creating handler for session: {}", session_id);
 
             // Create session-specific HTTP dispatcher (now local to turbomcp-server!)
             let dispatcher = crate::runtime::http::HttpDispatcher::new(
@@ -733,7 +743,7 @@ impl McpServer {
         self,
         addr: A,
     ) -> ServerResult<()> {
-        use turbomcp_transport::websocket_server::WebSocketServerConfig;
+        use crate::runtime::websocket::WebSocketServerConfig;
 
         // Build default configuration
         let config = WebSocketServerConfig::default();
@@ -750,8 +760,7 @@ impl McpServer {
     /// # Example
     ///
     /// ```no_run
-    /// use turbomcp_server::ServerBuilder;
-    /// use turbomcp_transport::websocket_server::WebSocketServerConfig;
+    /// use turbomcp_server::{ServerBuilder, WebSocketServerConfig};
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -779,7 +788,7 @@ impl McpServer {
     pub async fn run_websocket_with_config<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
         self,
         addr: A,
-        config: turbomcp_transport::websocket_server::WebSocketServerConfig,
+        config: crate::runtime::websocket::WebSocketServerConfig,
     ) -> ServerResult<()> {
         info!("Starting MCP server with WebSocket transport");
         info!(config = ?config, "WebSocket configuration");

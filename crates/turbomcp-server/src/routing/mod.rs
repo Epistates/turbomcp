@@ -45,6 +45,8 @@ pub struct RequestRouter {
     registry: Arc<HandlerRegistry>,
     /// Route configuration
     config: RouterConfig,
+    /// Server configuration (for protocol responses)
+    server_config: crate::config::ServerConfig,
     /// Custom route handlers
     custom_routes: HashMap<String, Arc<dyn RouteHandler>>,
     /// Resource subscription counters by URI (reserved for future functionality)
@@ -71,11 +73,15 @@ impl std::fmt::Debug for RequestRouter {
 impl RequestRouter {
     /// Create a new request router
     #[must_use]
-    pub fn new(registry: Arc<HandlerRegistry>, _metrics: Arc<ServerMetrics>) -> Self {
+    pub fn new(
+        registry: Arc<HandlerRegistry>,
+        _metrics: Arc<ServerMetrics>,
+        server_config: crate::config::ServerConfig,
+    ) -> Self {
         // Timeout management is now handled by middleware
         let config = RouterConfig::default();
 
-        let handler_context = HandlerContext::new(Arc::clone(&registry));
+        let handler_context = HandlerContext::new(Arc::clone(&registry), server_config.clone());
 
         let bidirectional = BidirectionalRouter::new();
 
@@ -87,6 +93,7 @@ impl RequestRouter {
         Self {
             registry,
             config,
+            server_config,
             custom_routes: HashMap::new(),
             resource_subscriptions: DashMap::new(),
             bidirectional,
@@ -101,10 +108,11 @@ impl RequestRouter {
         registry: Arc<HandlerRegistry>,
         config: RouterConfig,
         _metrics: Arc<ServerMetrics>,
+        server_config: crate::config::ServerConfig,
     ) -> Self {
         // Timeout management is now handled by middleware
 
-        let handler_context = HandlerContext::new(Arc::clone(&registry));
+        let handler_context = HandlerContext::new(Arc::clone(&registry), server_config.clone());
 
         let bidirectional = BidirectionalRouter::new();
 
@@ -116,6 +124,7 @@ impl RequestRouter {
         Self {
             registry,
             config,
+            server_config,
             custom_routes: HashMap::new(),
             resource_subscriptions: DashMap::new(),
             bidirectional,
@@ -382,10 +391,14 @@ impl Clone for RequestRouter {
         Self {
             registry: Arc::clone(&self.registry),
             config: self.config.clone(),
+            server_config: self.server_config.clone(),
             custom_routes: self.custom_routes.clone(),
             resource_subscriptions: DashMap::new(),
             bidirectional: self.bidirectional.clone(),
-            handlers: ProtocolHandlers::new(HandlerContext::new(Arc::clone(&self.registry))),
+            handlers: ProtocolHandlers::new(HandlerContext::new(
+                Arc::clone(&self.registry),
+                self.server_config.clone(),
+            )),
             server_to_client: Arc::clone(&self.server_to_client),
         }
     }

@@ -193,6 +193,10 @@ pub use turbomcp_protocol::{MessageId, RequestContext};
 // Elicitation support
 pub use elicitation::{ElicitationCoordinator, ElicitationTransport, SharedElicitationCoordinator};
 
+// Transport configuration (for ergonomic access)
+#[cfg(feature = "websocket")]
+pub use runtime::websocket::WebSocketServerConfig;
+
 /// Default server configuration
 #[must_use]
 pub fn default_config() -> ServerConfig {

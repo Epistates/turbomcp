@@ -23,9 +23,9 @@ pub async fn handle(
             let result = InitializeResult {
                 protocol_version: turbomcp_protocol::PROTOCOL_VERSION.to_string(),
                 server_info: Implementation {
-                    name: crate::SERVER_NAME.to_string(),
-                    title: Some("TurboMCP Server".to_string()),
-                    version: crate::SERVER_VERSION.to_string(),
+                    name: context.config.name.clone(),
+                    title: context.config.description.clone(),
+                    version: context.config.version.clone(),
                 },
                 capabilities: get_server_capabilities(context),
                 instructions: None,
