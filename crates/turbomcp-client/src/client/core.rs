@@ -141,10 +141,32 @@ impl<T: Transport + 'static> Clone for Client<T> {
 
 impl<T: Transport + 'static> Drop for ClientInner<T> {
     fn drop(&mut self) {
-        // Shutdown the dispatcher's background task when the LAST Client reference is dropped
-        // This prevents the background task from running forever after all clients are dropped
-        tracing::debug!("Last Client reference dropped - shutting down message dispatcher");
+        // Best-effort cleanup if shutdown() wasn't called
+        // This is a safety net, but applications SHOULD call shutdown() explicitly
+
+        // Single warning to catch attention
+        tracing::warn!(
+            "MCP Client dropped without explicit shutdown() - call client.shutdown().await for clean resource cleanup"
+        );
+
+        // Details at debug level to avoid noise in production
+        tracing::debug!("   📘 RECOMMENDATION: Call client.shutdown().await before dropping");
+        tracing::debug!(
+            "   🐛 IMPACT: Background tasks (especially WebSocket reconnection) may continue running"
+        );
+        tracing::debug!("   💡 See client shutdown documentation for best practices");
+
+        // We can shutdown the dispatcher (it's synchronous)
         self.protocol.dispatcher().shutdown();
+        tracing::debug!("   ✅ Message dispatcher stopped");
+
+        // ⚠️  LIMITATION: Cannot call transport.disconnect() from Drop because it's async
+        //    This means:
+        //    - WebSocket: Close frame not sent, reconnection tasks keep running
+        //    - HTTP: Connections may not close cleanly
+        //    - All transports: Background tasks may be orphaned
+        tracing::debug!("   ❌ Transport NOT disconnected (Drop cannot call async methods)");
+        tracing::debug!("   ⚠️  WebSocket reconnection and other background tasks may continue");
     }
 }
 
@@ -228,6 +250,65 @@ impl<T: Transport + 'static> Client<T> {
         client.register_dispatcher_handlers();
 
         client
+    }
+
+    /// Shutdown the client and clean up all resources
+    ///
+    /// This method performs a **graceful shutdown** of the MCP client by:
+    /// 1. Stopping the message dispatcher background task
+    /// 2. Disconnecting the transport (closes connection, stops background tasks)
+    ///
+    /// **CRITICAL**: After calling `shutdown()`, the client can no longer be used.
+    ///
+    /// # Why This Method Exists
+    ///
+    /// The `Drop` implementation cannot call async methods like `transport.disconnect()`,
+    /// which is required for proper cleanup of WebSocket connections and background tasks.
+    /// Without calling `shutdown()`, WebSocket reconnection tasks will continue running.
+    ///
+    /// # Best Practices
+    ///
+    /// - **Always call `shutdown()` before dropping** for clean resource cleanup
+    /// - For applications: call in signal handlers (`SIGINT`, `SIGTERM`)
+    /// - For tests: call in cleanup/teardown
+    /// - If forgotten, Drop will log warnings and do best-effort cleanup
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
+    /// let client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// // Use client...
+    /// let _tools = client.list_tools().await?;
+    ///
+    /// // ✅ Clean shutdown
+    /// client.shutdown().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn shutdown(&self) -> Result<()> {
+        tracing::info!("🛑 Shutting down MCP client");
+
+        // 1. Shutdown message dispatcher
+        self.inner.protocol.dispatcher().shutdown();
+        tracing::debug!("✅ Message dispatcher stopped");
+
+        // 2. Disconnect transport (WebSocket: stops reconnection, HTTP: closes connections)
+        match self.inner.protocol.transport().disconnect().await {
+            Ok(()) => {
+                tracing::info!("✅ Transport disconnected successfully");
+            }
+            Err(e) => {
+                tracing::warn!("Transport disconnect error (may already be closed): {}", e);
+            }
+        }
+
+        tracing::info!("✅ MCP client shutdown complete");
+        Ok(())
     }
 }
 
@@ -476,10 +557,29 @@ impl<T: Transport + 'static> Client<T> {
         // Request handler (elicitation, sampling, etc.)
         let request_handler = Arc::new(move |request: JsonRpcRequest| {
             let client = client_for_requests.clone();
+            let method = request.method.clone();
+            let req_id = request.id.clone();
             // Spawn async task to handle the request
             tokio::spawn(async move {
+                tracing::debug!(
+                    "🔄 [request_handler] Handling server-initiated request: method={}, id={:?}",
+                    method,
+                    req_id
+                );
                 if let Err(e) = client.handle_request(request).await {
-                    tracing::error!("Error handling server request: {}", e);
+                    tracing::error!(
+                        "❌ [request_handler] Error handling server request '{}': {}",
+                        method,
+                        e
+                    );
+                    tracing::error!("   Request ID: {:?}", req_id);
+                    tracing::error!("   Error kind: {:?}", e.kind);
+                } else {
+                    tracing::debug!(
+                        "✅ [request_handler] Successfully handled server request: method={}, id={:?}",
+                        method,
+                        req_id
+                    );
                 }
             });
             Ok(())
@@ -519,13 +619,20 @@ impl<T: Transport + 'static> Client<T> {
                     .expect("sampling_handler mutex poisoned")
                     .clone();
                 if let Some(handler) = handler_opt {
+                    // Extract request ID for proper correlation
+                    let request_id = match &request.id {
+                        turbomcp_protocol::MessageId::String(s) => s.clone(),
+                        turbomcp_protocol::MessageId::Number(n) => n.to_string(),
+                        turbomcp_protocol::MessageId::Uuid(u) => u.to_string(),
+                    };
+
                     let params: CreateMessageRequest =
                         serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
                             .map_err(|e| {
                             Error::protocol(format!("Invalid createMessage params: {}", e))
                         })?;
 
-                    match handler.handle_create_message(params).await {
+                    match handler.handle_create_message(request_id, params).await {
                         Ok(result) => {
                             let result_value = serde_json::to_value(result).map_err(|e| {
                                 Error::protocol(format!("Failed to serialize response: {}", e))
@@ -534,6 +641,11 @@ impl<T: Transport + 'static> Client<T> {
                             self.send_response(response).await?;
                         }
                         Err(e) => {
+                            tracing::warn!(
+                                "⚠️  [handle_request] Sampling handler returned error: {}",
+                                e
+                            );
+
                             // Preserve error semantics by checking actual error type
                             // This allows proper error code propagation for retry logic
                             let (code, message) = if let Some(handler_err) =
@@ -541,17 +653,25 @@ impl<T: Transport + 'static> Client<T> {
                             {
                                 // HandlerError has explicit JSON-RPC code mapping
                                 let json_err = handler_err.into_jsonrpc_error();
+                                tracing::info!(
+                                    "📋 [handle_request] HandlerError mapped to JSON-RPC code: {}",
+                                    json_err.code
+                                );
                                 (json_err.code, json_err.message)
                             } else if let Some(proto_err) =
                                 e.downcast_ref::<turbomcp_protocol::Error>()
                             {
                                 // Protocol errors have ErrorKind-based mapping
+                                tracing::info!(
+                                    "📋 [handle_request] Protocol error mapped to code: {}",
+                                    proto_err.jsonrpc_error_code()
+                                );
                                 (proto_err.jsonrpc_error_code(), proto_err.to_string())
                             } else {
                                 // Generic errors default to Internal (-32603)
                                 // Log the error type for debugging (should rarely hit this path)
                                 tracing::warn!(
-                                    "Sampling handler returned unknown error type (not HandlerError or Protocol error): {}",
+                                    "📋 [handle_request] Sampling handler returned unknown error type (not HandlerError or Protocol error): {}",
                                     std::any::type_name_of_val(&*e)
                                 );
                                 (-32603, format!("Sampling handler error: {}", e))
@@ -562,8 +682,18 @@ impl<T: Transport + 'static> Client<T> {
                                 message,
                                 data: None,
                             };
-                            let response = JsonRpcResponse::error_response(error, request.id);
+                            let response =
+                                JsonRpcResponse::error_response(error, request.id.clone());
+
+                            tracing::info!(
+                                "🔄 [handle_request] Attempting to send error response for request: {:?}",
+                                request.id
+                            );
                             self.send_response(response).await?;
+                            tracing::info!(
+                                "✅ [handle_request] Error response sent successfully for request: {:?}",
+                                request.id
+                            );
                         }
                     }
                 } else {
@@ -878,8 +1008,24 @@ impl<T: Transport + 'static> Client<T> {
     }
 
     async fn send_response(&self, response: JsonRpcResponse) -> Result<()> {
-        let payload = serde_json::to_vec(&response)
-            .map_err(|e| Error::protocol(format!("Failed to serialize response: {}", e)))?;
+        tracing::info!(
+            "📤 [send_response] Sending JSON-RPC response: id={:?}",
+            response.id
+        );
+
+        let payload = serde_json::to_vec(&response).map_err(|e| {
+            tracing::error!("❌ [send_response] Failed to serialize response: {}", e);
+            Error::protocol(format!("Failed to serialize response: {}", e))
+        })?;
+
+        tracing::debug!(
+            "📤 [send_response] Response payload: {} bytes",
+            payload.len()
+        );
+        tracing::debug!(
+            "📤 [send_response] Response JSON: {}",
+            String::from_utf8_lossy(&payload)
+        );
 
         let message = TransportMessage::new(
             turbomcp_protocol::MessageId::from("response".to_string()),
@@ -891,8 +1037,15 @@ impl<T: Transport + 'static> Client<T> {
             .transport()
             .send(message)
             .await
-            .map_err(|e| Error::transport(format!("Failed to send response: {}", e)))?;
+            .map_err(|e| {
+                tracing::error!("❌ [send_response] Transport send failed: {}", e);
+                Error::transport(format!("Failed to send response: {}", e))
+            })?;
 
+        tracing::info!(
+            "✅ [send_response] Response sent successfully: id={:?}",
+            response.id
+        );
         Ok(())
     }
 

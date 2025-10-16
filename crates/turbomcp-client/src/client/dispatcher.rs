@@ -242,6 +242,9 @@ impl MessageDispatcher {
         tokio::spawn(async move {
             tracing::info!("Message dispatcher routing task started");
 
+            let mut consecutive_errors = 0u32;
+            let max_consecutive_errors = 20; // After 20 consecutive errors, back off significantly
+
             loop {
                 tokio::select! {
                     // Graceful shutdown
@@ -254,6 +257,9 @@ impl MessageDispatcher {
                     result = transport.receive() => {
                         match result {
                             Ok(Some(msg)) => {
+                                // Successfully received message - reset error counter
+                                consecutive_errors = 0;
+
                                 // Route the message
                                 if let Err(e) = Self::route_message(
                                     msg,
@@ -270,9 +276,43 @@ impl MessageDispatcher {
                                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                             }
                             Err(e) => {
-                                tracing::error!("Transport receive error: {}", e);
-                                // Brief delay before retry to avoid tight error loop
-                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                consecutive_errors += 1;
+
+                                // Check transport state to determine error severity
+                                let state = transport.state().await;
+                                let is_fatal = matches!(state, turbomcp_transport::TransportState::Disconnected
+                                                             | turbomcp_transport::TransportState::Failed { .. });
+
+                                if consecutive_errors == 1 {
+                                    // First error - log at error level
+                                    tracing::error!("Transport receive error: {}", e);
+                                } else if consecutive_errors <= max_consecutive_errors {
+                                    // Subsequent errors - log at warn to reduce noise
+                                    tracing::warn!("Transport receive error (attempt {}): {}", consecutive_errors, e);
+                                } else {
+                                    // Too many errors - log once and suppress further logs
+                                    if consecutive_errors == max_consecutive_errors + 1 {
+                                        tracing::error!(
+                                            "Transport in failed state ({}), suppressing further error logs. Waiting for recovery...",
+                                            state
+                                        );
+                                    }
+                                }
+
+                                // Exponential backoff based on error count and transport state
+                                let delay_ms = if is_fatal {
+                                    // Fatal error - wait longer to avoid spam
+                                    if consecutive_errors > max_consecutive_errors {
+                                        5000 // 5 seconds when transport is dead
+                                    } else {
+                                        1000 // 1 second initially
+                                    }
+                                } else {
+                                    // Transient error - shorter backoff
+                                    100u64.saturating_mul(2u64.saturating_pow(consecutive_errors.min(5)))
+                                };
+
+                                tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
                             }
                         }
                     }

@@ -32,8 +32,14 @@ pub trait SamplingHandler: Send + Sync + std::fmt::Debug {
     /// 2. Delegate to an external LLM service (could be another MCP server)
     /// 3. Present the result to the user for review
     /// 4. Return the approved result
+    ///
+    /// # Arguments
+    ///
+    /// * `request_id` - The JSON-RPC request ID from the server for proper response correlation
+    /// * `request` - The sampling request parameters
     async fn handle_create_message(
         &self,
+        request_id: String,
         request: CreateMessageRequest,
     ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>>;
 }
@@ -93,6 +99,7 @@ pub struct ServerInfo {
 impl SamplingHandler for DelegatingSamplingHandler {
     async fn handle_create_message(
         &self,
+        _request_id: String,
         request: CreateMessageRequest,
     ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>> {
         // 1. Human-in-the-loop: Get user approval

@@ -40,9 +40,10 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// impl SamplingHandler for ExampleHandler {
     ///     async fn handle_create_message(
     ///         &self,
+    ///         _request_id: String,
     ///         _request: CreateMessageRequest,
     ///     ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>> {
-    ///         // Handle sampling request
+    ///         // Handle sampling request (use request_id for tracking/correlation)
     ///         todo!("Implement sampling logic")
     ///     }
     /// }

@@ -100,9 +100,11 @@
 //! impl SamplingHandler for MySamplingHandler {
 //!     async fn handle_create_message(
 //!         &self,
+//!         request_id: String,
 //!         request: CreateMessageRequest
 //!     ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>> {
 //!         // Forward to your LLM provider (OpenAI, Anthropic, etc.)
+//!         // Use request_id for correlation tracking
 //!         // Allows the server to request LLM sampling through the client
 //!         
 //!         Ok(CreateMessageResult {
