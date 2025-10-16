@@ -601,11 +601,18 @@ where
         return Err(StatusCode::NOT_ACCEPTABLE);
     }
 
-    // Extract session ID (required for GET)
+    // Extract or generate session ID
+    // Per MCP 2025-06-18 spec: Server generates session ID and sends to client
+    // Client may provide session ID for reconnection/resumption
     let session_id = headers
         .get("Mcp-Session-Id")
         .and_then(|v| v.to_str().ok())
-        .ok_or(StatusCode::BAD_REQUEST)?;
+        .map(String::from)
+        .unwrap_or_else(|| {
+            let new_id = uuid::Uuid::new_v4().to_string();
+            tracing::info!("Generated new session ID for SSE connection: {}", new_id);
+            new_id
+        });
 
     // Check for resumability (Last-Event-ID)
     let last_event_id = headers.get("Last-Event-ID").and_then(|v| v.to_str().ok());
@@ -640,10 +647,11 @@ where
     // Create SSE response stream
     let stream = async_stream::stream! {
         // First event MUST be endpoint info per MCP spec
+        // CRITICAL: URI includes scheme via base_url (constructed by builder)
         let endpoint_event = Event::default()
             .event("endpoint")
             .data(serde_json::json!({
-                "uri": format!("{}{}", state.config.bind_addr, state.config.endpoint_path)
+                "uri": format!("{}{}", state.config.base_url, state.config.endpoint_path)
             }).to_string());
 
         yield Ok::<Event, axum::Error>(endpoint_event);
@@ -661,7 +669,7 @@ where
     let mut response_headers = HeaderMap::new();
     response_headers.insert(
         "Mcp-Session-Id",
-        HeaderValue::from_str(session_id).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
+        HeaderValue::from_str(&session_id).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
     );
     response_headers.insert(
         "MCP-Protocol-Version",

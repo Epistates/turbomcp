@@ -477,12 +477,44 @@ impl StreamableHttpClientTransport {
         // Handle different event types
         match event_type.as_deref() {
             Some("endpoint") => {
-                // CRITICAL: This is the endpoint discovery event
-                info!("Discovered message endpoint: {}", data_str);
-                *message_endpoint.write().await = Some(data_str.clone());
+                // CRITICAL: This is the endpoint discovery event per MCP 2025-06-18 spec
+                // The event data may be either:
+                // 1. A JSON object: {"uri":"http://..."}
+                // 2. A plain string: "http://..."
+                let endpoint_uri = if data_str.trim().starts_with('{') {
+                    // Parse JSON object and extract uri field
+                    let endpoint_json: serde_json::Value = serde_json::from_str(&data_str)
+                        .map_err(|e| {
+                            TransportError::SerializationFailed(format!(
+                                "Invalid endpoint JSON: {}",
+                                e
+                            ))
+                        })?;
+                    endpoint_json["uri"]
+                        .as_str()
+                        .ok_or_else(|| {
+                            TransportError::SerializationFailed(
+                                "Endpoint event missing 'uri' field".to_string(),
+                            )
+                        })?
+                        .to_string()
+                } else {
+                    // Plain string format
+                    data_str.clone()
+                };
+
+                info!("Discovered message endpoint: {}", endpoint_uri);
+                *message_endpoint.write().await = Some(endpoint_uri);
                 Ok(())
             }
             Some("message") | None => {
+                // Skip empty or whitespace-only events (keep-alive, malformed events)
+                // This is defensive against server sending empty data events
+                if data_str.trim().is_empty() {
+                    debug!("Skipping empty SSE event");
+                    return Ok(());
+                }
+
                 // Parse as JSON-RPC message
                 let json_value: serde_json::Value =
                     serde_json::from_str(&data_str).map_err(|e| {
@@ -860,5 +892,75 @@ mod tests {
         assert_eq!(client.transport_type(), TransportType::Http);
         assert!(client.capabilities().supports_streaming);
         assert!(client.capabilities().supports_bidirectional);
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_event_json_parsing() {
+        // REGRESSION TEST: Verify client correctly parses JSON endpoint event
+        // Bug: Client was storing entire JSON string {"uri":"..."} instead of extracting URI
+
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+
+        let message_endpoint = Arc::new(RwLock::new(None::<String>));
+
+        // Simulate endpoint event with JSON format (MCP 2025-06-18 spec)
+        let event_data = [r#"{"uri":"http://127.0.0.1:8080/mcp"}"#.to_string()];
+        let data_str = event_data.join("\n");
+
+        // Parse JSON and extract URI (mimics the fix)
+        let endpoint_uri = if data_str.trim().starts_with('{') {
+            let endpoint_json: serde_json::Value =
+                serde_json::from_str(&data_str).expect("Failed to parse endpoint JSON");
+            endpoint_json["uri"]
+                .as_str()
+                .expect("Missing uri field")
+                .to_string()
+        } else {
+            data_str.clone()
+        };
+
+        *message_endpoint.write().await = Some(endpoint_uri.clone());
+
+        // Verify URI was extracted correctly
+        let stored = message_endpoint.read().await;
+        assert_eq!(stored.as_ref().unwrap(), "http://127.0.0.1:8080/mcp");
+        assert!(stored.as_ref().unwrap().starts_with("http://"));
+
+        // Verify it's a valid URL
+        assert!(stored.as_ref().unwrap().parse::<url::Url>().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_event_plain_string_parsing() {
+        // Test backward compatibility with plain string endpoint events
+
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+
+        let message_endpoint = Arc::new(RwLock::new(None::<String>));
+
+        // Simulate endpoint event with plain string format
+        let event_data = ["http://127.0.0.1:8080/mcp".to_string()];
+        let data_str = event_data.join("\n");
+
+        // Parse (should detect it's not JSON and use as-is)
+        let endpoint_uri = if data_str.trim().starts_with('{') {
+            let endpoint_json: serde_json::Value =
+                serde_json::from_str(&data_str).expect("Failed to parse endpoint JSON");
+            endpoint_json["uri"]
+                .as_str()
+                .expect("Missing uri field")
+                .to_string()
+        } else {
+            data_str.clone()
+        };
+
+        *message_endpoint.write().await = Some(endpoint_uri.clone());
+
+        // Verify plain string was stored correctly
+        let stored = message_endpoint.read().await;
+        assert_eq!(stored.as_ref().unwrap(), "http://127.0.0.1:8080/mcp");
+        assert!(stored.as_ref().unwrap().starts_with("http://"));
     }
 }

@@ -61,6 +61,12 @@ pub struct StreamableHttpConfig {
     /// Bind address (default: 127.0.0.1:8080 for security)
     pub bind_addr: String,
 
+    /// Base URL including scheme (e.g., "http://127.0.0.1:8080")
+    ///
+    /// Constructed by builder from bind_addr and TLS config.
+    /// Used for MCP endpoint discovery to ensure protocol compliance.
+    pub base_url: String,
+
     /// Base path for MCP endpoint (default: "/mcp")
     pub endpoint_path: String,
 
@@ -239,8 +245,13 @@ impl StreamableHttpConfigBuilder {
         let session_manager =
             Arc::new(SessionSecurityManager::new(SessionSecurityConfig::default()));
 
+        // Construct base URL with scheme
+        // Future: Support https:// based on TLS configuration
+        let base_url = format!("http://{}", self.bind_addr);
+
         StreamableHttpConfig {
             bind_addr: self.bind_addr,
+            base_url,
             endpoint_path: self.endpoint_path,
             keep_alive: self.keep_alive,
             replay_buffer_size: self.replay_buffer_size,
@@ -497,9 +508,11 @@ async fn mcp_get_handler<H: turbomcp_protocol::JsonRpcHandler>(
     drop(sessions);
 
     // Create SSE stream
+    let base_url = state.config.base_url.clone();
     let stream = async_stream::stream! {
         // CRITICAL: First event MUST be "endpoint" per MCP 2025-06-18 spec
-        let endpoint_url = format!("{}?sessionId={}", endpoint_path, session_id_for_stream);
+        // URI includes scheme via base_url (constructed by builder)
+        let endpoint_url = format!("{}{}?sessionId={}", base_url, endpoint_path, session_id_for_stream);
         let endpoint_event = Event::default()
             .event("endpoint")
             .data(endpoint_url)
@@ -1031,5 +1044,39 @@ mod tests {
         assert_eq!(session.event_buffer.len(), 5);
         assert_eq!(session.event_buffer[0].id, "event-5");
         assert_eq!(session.event_buffer[4].id, "event-9");
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_url_includes_http_scheme() {
+        // REGRESSION TEST: Verify endpoint URL includes http:// scheme
+        // Bug: TurboMCP 2.0.0-rc.2 was sending "127.0.0.1:8080/mcp" instead of "http://127.0.0.1:8080/mcp"
+        // This caused MCP client failures as URIs without schemes are invalid
+
+        let config = StreamableHttpConfig::default();
+        let base_url = config.base_url.clone();
+        let endpoint_path = config.endpoint_path.clone();
+        let session_id = "test-session-id";
+
+        // Simulate the endpoint URL construction from the SSE handler
+        let endpoint_url = format!("{}{}?sessionId={}", base_url, endpoint_path, session_id);
+
+        // CRITICAL: Verify URL includes http:// scheme
+        assert!(
+            endpoint_url.starts_with("http://"),
+            "Endpoint URL must include http:// scheme for MCP 2025-06-18 compliance. Got: {}",
+            endpoint_url
+        );
+
+        // Verify full format
+        assert_eq!(
+            endpoint_url,
+            "http://127.0.0.1:8080/mcp?sessionId=test-session-id"
+        );
+
+        // Verify it's a valid HTTP URL
+        assert!(
+            endpoint_url.parse::<url::Url>().is_ok(),
+            "Endpoint URL must be a valid HTTP URL"
+        );
     }
 }
