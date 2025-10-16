@@ -379,27 +379,19 @@ fn generate_es256_key_pair() -> Result<(DpopPrivateKey, DpopPublicKey)> {
 
     // Extract public key coordinates
     let public_point = verifying_key.to_encoded_point(false); // Uncompressed format
-    let x_bytes: [u8; 32] = public_point
+    let x_coord = public_point
         .x()
         .ok_or_else(|| DpopError::CryptographicError {
             reason: "Failed to extract X coordinate from P-256 key".to_string(),
-        })?
-        .as_slice()
-        .try_into()
-        .map_err(|_| DpopError::CryptographicError {
-            reason: "Invalid X coordinate length".to_string(),
         })?;
+    let x_bytes: [u8; 32] = (*x_coord).into();
 
-    let y_bytes: [u8; 32] = public_point
+    let y_coord = public_point
         .y()
         .ok_or_else(|| DpopError::CryptographicError {
             reason: "Failed to extract Y coordinate from P-256 key".to_string(),
-        })?
-        .as_slice()
-        .try_into()
-        .map_err(|_| DpopError::CryptographicError {
-            reason: "Invalid Y coordinate length".to_string(),
         })?;
+    let y_bytes: [u8; 32] = (*y_coord).into();
 
     let public_key = DpopPublicKey::EcdsaP256 {
         x: x_bytes,

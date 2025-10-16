@@ -313,10 +313,11 @@ struct MySamplingHandler {
 
 #[async_trait]
 impl SamplingHandler for MySamplingHandler {
-    async fn handle_create_message(&self, request: CreateMessageRequest)
+    async fn handle_create_message(&self, request_id: String, request: CreateMessageRequest)
         -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>>
     {
         // Forward to your LLM service
+        // Use request_id for correlation/tracking
         // Return the generated response
         Ok(CreateMessageResult {
             role: Role::Assistant,

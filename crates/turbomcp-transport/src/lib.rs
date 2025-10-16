@@ -159,17 +159,9 @@ pub mod tower;
 #[cfg(feature = "http")]
 pub mod axum;
 
-/// WebSocket transport implementation.
-#[cfg(feature = "websocket")]
-pub mod websocket;
-
-/// Bidirectional WebSocket transport for full-duplex communication.
+/// WebSocket bidirectional transport for full-duplex communication with MCP 2025-06-18 compliance.
 #[cfg(feature = "websocket")]
 pub mod websocket_bidirectional;
-
-/// WebSocket server implementation.
-#[cfg(all(feature = "websocket", feature = "http"))]
-pub mod websocket_server;
 
 /// TCP socket transport for network communication.
 #[cfg(feature = "tcp")]
@@ -231,9 +223,6 @@ pub use tower::{SessionInfo, SessionManager, TowerTransportAdapter};
 // Re-export Axum integration
 #[cfg(feature = "http")]
 pub use axum::{AxumMcpExt, McpAppState, McpServerConfig, McpService};
-
-#[cfg(feature = "websocket")]
-pub use websocket::WebSocketTransport;
 
 #[cfg(feature = "websocket")]
 pub use websocket_bidirectional::{

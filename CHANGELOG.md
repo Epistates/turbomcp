@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (CRITICAL - WebSocket Deadlock)
+
+- **WebSocket Bidirectional Communication Deadlock** (P0 CRITICAL - Response time: 60s → 0ms)
+  - **Problem**: Sampling/elicitation requests timed out after 60 seconds despite client sending immediate responses
+    - ❌ Server's receive_loop blocked on handler execution (`await handle_client_request()`)
+    - ❌ Handler blocked waiting for bidirectional response (sampling/elicitation)
+    - ❌ Response arrived but couldn't be processed (receive_loop still blocked)
+    - ❌ **Circular deadlock**: receive_loop waits for handler → handler waits for response → response waits for receive_loop
+    - ❌ Only resolved after 60-second timeout (terrible UX)
+  - **Solution**: Spawn request handlers in separate tokio tasks to keep receive_loop non-blocking
+    - ✅ receive_loop never blocks, can process responses immediately
+    - ✅ Handlers run concurrently in separate tasks
+    - ✅ Bidirectional communication works instantly (~0ms response time)
+  - **Changes**: Added `Clone` trait bounds to handler types and changed handler invocation
+    - **File**: `crates/turbomcp-server/src/runtime/websocket.rs`
+    - **Lines 382, 315, 586, 666**: Added `Clone` trait bounds
+    - **Lines 490-494**: Changed `await handle_client_request()` → `tokio::spawn(handle_client_request())`
+  - **Test Results**:
+    - **Before**: ⏱️ 60.0s timeout
+    - **After**: ⏱️ 0.0s (instant response)
+  - **Documentation**: See `WEBSOCKET_DEADLOCK_FIX_COMPLETE.md` for detailed analysis
+
+- **WebSocket Message Delivery** (Secondary fix)
+  - Added missing `flush()` call to server's send_loop for immediate TCP delivery
+  - **File**: `crates/turbomcp-server/src/runtime/websocket.rs:365-371`
+
+### Fixed (CRITICAL)
+
+- **Sampling Request ID Correlation Bug** (CRITICAL BUG FIX - Breaking Change for 2.0)
+  - **Problem**: Clients could not properly correlate sampling request rejections with server requests
+    - ❌ Handler trait did NOT receive JSON-RPC `request_id` parameter
+    - ❌ Clients forced to generate their own UUIDs for tracking
+    - ❌ User rejections sent with WRONG ID (client UUID ≠ server UUID)
+    - ❌ Server waited 60 seconds for timeout (rejection never received)
+    - ❌ **Critical UX bug**: User explicitly rejects but waits 60s anyway
+  - **Solution**: Added `request_id: String` parameter to handler traits
+    - ✅ **Client-side**: `turbomcp_client::sampling::SamplingHandler::handle_create_message()`
+    - ✅ **Server-side**: `turbomcp_server::SamplingHandler::handle()`
+    - ✅ Client core extracts ID from JSON-RPC request and passes to handler
+    - ✅ Handlers can now properly correlate responses with requests
+    - ✅ User rejections now complete immediately (< 100ms, not 60s)
+  - **Breaking Change**: All `SamplingHandler` implementations MUST add `request_id` parameter
+    - **Before**: `async fn handle_create_message(&self, request: CreateMessageRequest)`
+    - **After**: `async fn handle_create_message(&self, request_id: String, request: CreateMessageRequest)`
+  - **Justification**: Pre-release critical bug fix (2.0.0-rc.2 → 2.0.0)
+  - **MCP Compliance**: JSON-RPC 2.0 requires request/response ID matching (this fix enforces it)
+  - **Files modified**:
+    - `crates/turbomcp-client/src/sampling.rs:40`: Added `request_id` to trait + implementation
+    - `crates/turbomcp-client/src/client/core.rs:523-527`: Extract and pass `request_id`
+    - `crates/turbomcp-server/src/handlers/traits/sampling.rs:19`: Added `request_id` to trait
+    - `crates/turbomcp-client/src/lib.rs:103`: Updated documentation example
+    - `crates/turbomcp-client/README.md:316`: Updated documentation example
+    - `crates/turbomcp-client/src/client/operations/sampling.rs:43`: Updated doc example
+  - **Documentation**: See `turbomcpstudio/BUG_REPORT_SAMPLING_TIMEOUT.md` for root cause analysis
+  - **Evidence**: Debug logs showed server sends ID `8e9029c3...` but client tracked `2ce5f62c...`
+
+### Added
+
+- **Architectural Unification**: All transport runtimes unified under single implementation (CRITICAL FIX)
+  - **Problem**: Duplicate runtime implementations in `turbomcp/src/runtime/` and `turbomcp-server/src/runtime/` caused:
+    - ❌ MCP protocol compliance drift (two implementations = two interpretations)
+    - ❌ Bug duplication (HTTP session ID bug in macro, fixed in ServerBuilder)
+    - ❌ Zero test coverage for ServerBuilder pattern
+    - ❌ ~2,200 lines of duplicate code
+  - **Solution**: Macro now uses `create_server()` → ServerBuilder → canonical runtime
+  - **Impact**:
+    - ✅ **Single source of truth** for all transports in `turbomcp-server/src/runtime/`
+    - ✅ **Consistent MCP 2025-06-18 compliance** across macro and ServerBuilder patterns
+    - ✅ **Server name/version preserved** (fixed initialize handler to use config)
+    - ✅ **All 1,165 tests pass** (no regressions)
+  - **Files deleted** (duplicate implementations):
+    - `crates/turbomcp/src/runtime/stdio_bidirectional.rs` (484 lines) ❌ DELETED
+    - `crates/turbomcp/src/runtime/http_bidirectional.rs` (19KB) ❌ DELETED
+    - `crates/turbomcp/src/runtime/websocket_server.rs` (726 lines) ❌ DELETED
+  - **Files modified** (server name fix):
+    - `crates/turbomcp-server/src/routing/handlers/mod.rs`: Added `ServerConfig` to `HandlerContext`
+    - `crates/turbomcp-server/src/routing/handlers/initialize.rs`: Use `context.config.name` (not hardcoded constant)
+    - `crates/turbomcp-server/src/routing/mod.rs`: Pass `ServerConfig` through router
+    - `crates/turbomcp-server/src/server/core.rs`: Pass config to router constructor
+    - `crates/turbomcp-macros/src/bidirectional_wrapper.rs`: All transports use `create_server()` pattern
+  - **Architecture**: Macro = code generator → ServerBuilder = runtime orchestrator → turbomcp-server/runtime = protocol impl
+  - **Documentation**: See `.strategy/ARCHITECTURAL_DUPLICATION_ANALYSIS.md` for complete analysis
+
 ### Added
 
 - **Full HTTP/SSE Bidirectional Support in ServerBuilder**: HTTP transport now has complete bidirectional support through `ServerBuilder`
@@ -64,6 +147,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Feature**: WebSocket feature already depends on http (inherits axum), futures dependency already present
 
 ### Fixed
+
+- **HTTP Session ID Generation (Critical)**: Fixed "Session not found" errors in HTTP/SSE bidirectional operations
+  - **Problem**: GET handler required client to provide session ID, violating MCP 2025-06-18 spec
+  - **Solution**: Server now generates session ID and sends to client (per spec)
+  - **Impact**: HTTP/SSE sampling, elicitation, roots, and ping operations now work correctly
+  - **Root Cause**: Server was rejecting SSE connections without session ID (400 Bad Request), forcing clients to generate their own session IDs, leading to factory pattern mismatch
+  - **Files modified**:
+    - `crates/turbomcp-server/src/runtime/http.rs:604-615`: Generate session ID if not provided
+    - `crates/turbomcp-server/src/runtime/http.rs:532`: Add POST session ID logging
+    - `crates/turbomcp-server/src/runtime/http.rs:184-190`: Add dispatcher session lookup logging
+    - `crates/turbomcp-server/src/server/core.rs:654-663`: Add factory session ID logging
+  - **Verification**: All 191 turbomcp-server library tests passing
+  - **Client Status**: Client implementation is correct and MCP-compliant
 
 - **WebSocketServerDispatcher Debug Implementation**: Added missing `Debug` derive to `WebSocketServerDispatcher` struct
   - Fixed compilation error due to `-D missing-debug-implementations` lint

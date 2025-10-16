@@ -136,16 +136,23 @@ let mut transport = StreamableHttpClientTransport::new(config);
 For real-time communication:
 
 ```rust
-use turbomcp_transport::websocket::WebSocketTransport;
+use turbomcp_transport::websocket_bidirectional::{
+    WebSocketBidirectionalTransport, WebSocketBidirectionalConfig
+};
 
-// Connect to WebSocket server
-let transport = WebSocketTransport::new("wss://api.example.com/mcp").await?;
+// Connect to WebSocket server with full MCP 2025-06-18 support
+let config = WebSocketBidirectionalConfig {
+    url: Some("wss://api.example.com/mcp".to_string()),
+    ..Default::default()
+};
+let transport = WebSocketBidirectionalTransport::new(config).await?;
 
-// Transport capabilities are predefined:
-// - Max message size: 16MB
-// - Compression: supported
-// - Streaming: supported
-// - Bidirectional: supported
+// Full MCP 2025-06-18 features:
+// - Bidirectional request-response correlation
+// - Server-initiated elicitation support
+// - Automatic reconnection with exponential backoff
+// - Keep-alive ping/pong
+// - Optional TLS and compression
 ```
 
 ### TCP Transport

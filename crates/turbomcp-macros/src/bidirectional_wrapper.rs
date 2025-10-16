@@ -194,11 +194,9 @@ pub fn generate_bidirectional_wrapper(
 
 /// Generate transport methods that provide full MCP 2025-06-18 support
 ///
-/// These methods automatically wire up the internal wrapper to enable
-/// complete MCP functionality including server-to-client capabilities.
+/// These methods delegate to ServerBuilder's canonical implementations,
+/// ensuring consistent MCP protocol compliance across all patterns.
 pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStream {
-    let wrapper_name = format_ident!("{}Bidirectional", struct_name);
-
     quote! {
         // ===================================================================
         // MCP Transport Methods - Full MCP 2025-06-18 Support
@@ -223,23 +221,17 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             /// }
             /// ```
             pub async fn run_stdio(self) -> Result<(), Box<dyn ::std::error::Error>> {
-                // Import runtime helpers
-                use ::turbomcp::runtime::stdio_bidirectional;
+                // Create server instance using ServerBuilder pattern
+                let server = self.create_server()?;
 
-                // Create STDIO dispatcher
-                let (request_tx, request_rx) = ::turbomcp::tokio::sync::mpsc::unbounded_channel();
-                let dispatcher = stdio_bidirectional::StdioDispatcher::new(request_tx);
-
-                // Create bidirectional wrapper
-                let wrapper = #wrapper_name::with_dispatcher(self, dispatcher.clone());
-
-                // Run STDIO MCP server
-                stdio_bidirectional::run_stdio(wrapper, dispatcher, request_rx).await
+                // Use ServerBuilder's canonical STDIO implementation
+                server.run_stdio().await
+                    .map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
             }
 
             /// Run server with HTTP transport (MCP 2025-06-18 compliant)
             #[cfg(feature = "http")]
-            pub async fn run_http<A: ::std::net::ToSocketAddrs>(
+            pub async fn run_http<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A
             ) -> Result<(), Box<dyn ::std::error::Error>> {
@@ -248,57 +240,29 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
 
             /// Run HTTP server with custom endpoint path (MCP 2025-06-18 compliant)
             #[cfg(feature = "http")]
-            pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs>(
+            pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A,
                 path: &str
             ) -> Result<(), Box<dyn ::std::error::Error>> {
-                use ::turbomcp::runtime::http_bidirectional;
-                use ::std::collections::HashMap;
+                // Create server instance using ServerBuilder pattern
+                let server = self.create_server()?;
 
-                // Resolve address
-                let socket_addr = addr
-                    .to_socket_addrs()?
-                    .next()
-                    .ok_or("No address resolved")?;
+                // Configure HTTP with custom endpoint path
+                use ::turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
 
-                // Create shared state for HTTP transport
-                let sessions = ::std::sync::Arc::new(::turbomcp::tokio::sync::RwLock::new(HashMap::new()));
-                let pending_requests = ::std::sync::Arc::new(::turbomcp::tokio::sync::Mutex::new(HashMap::new()));
+                let config = StreamableHttpConfigBuilder::new()
+                    .with_endpoint_path(path)
+                    .build();
 
-                // Wrap server in Arc for factory
-                let server = ::std::sync::Arc::new(self);
-
-                // Clone Arcs BEFORE creating closure to prevent borrow checker confusion
-                let sessions_for_factory = ::std::sync::Arc::clone(&sessions);
-                let pending_requests_for_factory = ::std::sync::Arc::clone(&pending_requests);
-                let server_for_factory = ::std::sync::Arc::clone(&server);
-
-                // Create factory that generates session-specific handlers
-                let handler_factory = move |session_id: Option<String>| {
-                    // Clone inside closure
-                    let dispatcher = http_bidirectional::HttpDispatcher::new(
-                        session_id.unwrap_or_else(|| ::turbomcp::uuid::Uuid::new_v4().to_string()),
-                        ::std::sync::Arc::clone(&sessions_for_factory),
-                        ::std::sync::Arc::clone(&pending_requests_for_factory),
-                    );
-
-                    #wrapper_name::with_dispatcher((*server_for_factory).clone(), dispatcher)
-                };
-
-                // Run HTTP server with factory pattern
-                http_bidirectional::run_http(
-                    handler_factory,
-                    sessions,
-                    pending_requests,
-                    socket_addr.to_string(),
-                    path.to_string()
-                ).await
+                // Use ServerBuilder's canonical HTTP implementation
+                server.run_http_with_config(addr, config).await
+                    .map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
             }
 
             /// Run server with WebSocket transport (MCP 2025-06-18 compliant)
             #[cfg(feature = "websocket")]
-            pub async fn run_websocket<A: ::std::net::ToSocketAddrs>(
+            pub async fn run_websocket<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A
             ) -> Result<(), Box<dyn ::std::error::Error>> {
@@ -307,28 +271,29 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
 
             /// Run WebSocket server with custom endpoint path (MCP 2025-06-18 compliant)
             #[cfg(feature = "websocket")]
-            pub async fn run_websocket_with_path<A: ::std::net::ToSocketAddrs>(
+            pub async fn run_websocket_with_path<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A,
                 path: &str
             ) -> Result<(), Box<dyn ::std::error::Error>> {
-                use ::turbomcp::runtime::websocket_server;
+                // Create server instance using ServerBuilder pattern
+                let server = self.create_server()?;
 
-                // Resolve address
+                // Configure WebSocket with custom endpoint path
+                use ::turbomcp_server::WebSocketServerConfig;
                 let socket_addr = addr
                     .to_socket_addrs()?
                     .next()
                     .ok_or("No address resolved")?;
 
-                // WebSocket wrapper factory - simple pattern (no state to capture)
-                websocket_server::run_websocket(
-                    self,
-                    |base_server, dispatcher| {
-                        #wrapper_name::with_dispatcher(base_server, dispatcher)
-                    },
-                    socket_addr.to_string(),
-                    path.to_string()
-                ).await
+                let config = WebSocketServerConfig {
+                    bind_addr: socket_addr.to_string(),
+                    endpoint_path: path.to_string(),
+                };
+
+                // Use ServerBuilder's canonical WebSocket implementation
+                server.run_websocket_with_config(addr, config).await
+                    .map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
             }
 
             /// Run server with TCP transport (MCP compliant)
