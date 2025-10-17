@@ -9,7 +9,7 @@
 
 **Production-ready Rust SDK for the Model Context Protocol (MCP) with zero-boilerplate development and progressive enhancement.**
 
-Build MCP servers in minutes with automatic schema generation, type-safe handlers, and multiple transport protocols.
+Build MCP servers in seconds with automatic schema generation, type-safe handlers, and multiple transport protocols. **Note: v2.0.0-rc.2 (Release Candidate - not stable)**
 
 ---
 
@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 **That's it.** Save as `main.rs`, run `cargo run`, and connect from Claude Desktop.
 
-→ **[Full Tutorial](docs/TUTORIAL.md)** | **[Examples (38+)](crates/turbomcp/examples/)** | **[API Docs](https://docs.rs/turbomcp)**
+→ **[Examples (26)](crates/turbomcp/examples/)** | **[API Docs](https://docs.rs/turbomcp)** | **[Transport Patterns](crates/turbomcp/examples/TRANSPORT_EXAMPLES_README.md)**
 
 ---
 
@@ -75,8 +75,8 @@ Start minimal (STDIO only), add features as needed:
 - Context injection for dependencies
 - Interactive elicitation forms
 - Automatic logging and tracing
-- 38+ working examples
-- Extensive documentation
+- 26 focused examples covering all patterns
+- Comprehensive documentation
 
 ---
 
@@ -136,7 +136,7 @@ Start minimal (STDIO only), add features as needed:
 
 ```toml
 [dependencies]
-turbomcp = "2.0.0"
+turbomcp = "2.0.0-rc.2"
 tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -149,7 +149,7 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct HelloServer;
 
-#[server(name = "hello-server", version = "2.0.0")]
+#[server(name = "hello-server", version = "1.0.0")]
 impl HelloServer {
     #[tool("Say hello to someone")]
     async fn hello(&self, name: String) -> McpResult<String> {
@@ -397,34 +397,27 @@ match deployment_env {
 ## Security Features
 
 ### Security Architecture
-TurboMCP includes security features:
+TurboMCP includes security features for production deployment:
+
+- **CORS Protection**: Configurable origin policies with production-safe defaults
+- **Security Headers**: Standard HTTP security headers (X-Frame-Options, CSP, HSTS)
+- **Session Management**: Secure session handling with timeout enforcement
+- **TLS Support**: Optional TLS for transport protocols
+- **OAuth 2.1**: Via optional `auth` feature (API key, Bearer token authentication)
+- **DPoP Support**: RFC 9449 Demonstration of Proof-of-Possession (via `dpop` feature)
+- **Rate Limiting**: Request throttling configuration
+- **Type-Safe Errors**: Structured error handling with context
 
 ```rust
-// Security configuration
-let security_config = SecurityConfig::enterprise()
-    .with_oauth_providers(vec![
-        OAuth2Provider::google("client-id", "client-secret"),
-        OAuth2Provider::github("client-id", "client-secret"),
-        OAuth2Provider::microsoft("client-id", "client-secret"),
-    ])
-    .with_cors_policy(CorsPolicy::strict()
-        .allow_origins(vec!["https://app.company.com"])
-        .allow_credentials(true))
-    .with_rate_limiting(RateLimit::adaptive()
-        .requests_per_minute(1000)
-        .burst_capacity(50)
-        .per_ip_tracking(true))
-    .with_security_headers(SecurityHeaders::strict()
-        .csp("default-src 'self'; script-src 'self' 'unsafe-inline'")
-        .hsts(true)
-        .x_frame_options("DENY"))
-    .with_jwt_validation("HS256", "your-secret-key")
-    .enable_audit_logging(true);
+// Example: Enable OAuth 2.1 authentication
+#[cfg(feature = "auth")]
+use turbomcp::auth::*;
 
-let server = McpServer::new(config)
-    .with_security(security_config)
-    .with_middleware(AuthenticationMiddleware::required())
-    .with_monitoring(PrometheusMetrics::enabled());
+// Configure with CORS security
+let security = SecurityConfig::production()
+    .with_origins(vec!["https://app.example.com".to_string()]);
+
+// See crates/turbomcp-transport/SECURITY_FEATURES.md for complete security documentation
 ```
 
 ### Monitoring & Observability
@@ -544,7 +537,7 @@ let client3 = Client::new(shared_transport.clone());
 ```rust
 #[server(
     name = "secure-file-server",
-    version = "2.0.0",
+    version = "1.0.0",
     root = "file:///workspace:Project Files",
     root = "file:///uploads:User Uploads",
     root = "file:///tmp:Temporary Files"
@@ -628,7 +621,7 @@ spec:
     spec:
       containers:
       - name: server
-        image: your-registry/turbomcp-server:v2.0.0
+        image: your-registry/turbomcp-server:v1.0.0
         ports:
         - containerPort: 8080
         env:
@@ -727,26 +720,37 @@ turbomcp-cli benchmark --command "./target/debug/your-server" \
 
 ### Examples
 
-| Example | Topic | Difficulty |
-|---------|-------|------------|
-| [01_hello_world](./crates/turbomcp/examples/01_hello_world.rs) | Basic server setup | Beginner |
-| [02_clean_server](./crates/turbomcp/examples/02_clean_server.rs) | Using macros | Beginner |
-| [03_basic_tools](./crates/turbomcp/examples/03_basic_tools.rs) | Tool parameters | Beginner |
-| [04_resources_and_prompts](./crates/turbomcp/examples/04_resources_and_prompts.rs) | Resources & prompts | Intermediate |
-| [05_stateful_patterns](./crates/turbomcp/examples/05_stateful_patterns.rs) | State management | Intermediate |
-| [06_architecture_patterns](./crates/turbomcp/examples/06_architecture_patterns.rs) | API comparison | Intermediate |
-| [07_transport_showcase](./crates/turbomcp/examples/07_transport_showcase.rs) | All transports | Intermediate |
-| [elicitation_interactive_client](./crates/turbomcp/examples/elicitation_interactive_client.rs) | Interactive forms | Advanced |
-| [09_bidirectional_communication](./crates/turbomcp/examples/09_bidirectional_communication.rs) | Full protocol | Advanced |
-| [10_protocol_mastery](./crates/turbomcp/examples/10_protocol_mastery.rs) | Complete coverage | Advanced |
-| [11_production_deployment](./crates/turbomcp/examples/11_production_deployment.rs) | Enterprise features | Expert |
-| [06b_architecture_client](./crates/turbomcp/examples/06b_architecture_client.rs) | Client integration | Expert |
+**Server Examples:**
+| Example | Lines | Topic |
+|---------|-------|-------|
+| [hello_world.rs](./crates/turbomcp/examples/hello_world.rs) | 24 | Simplest server - one tool |
+| [macro_server.rs](./crates/turbomcp/examples/macro_server.rs) | 58 | Using `#[server]` macro |
+| [tools.rs](./crates/turbomcp/examples/tools.rs) | 77 | Parameter types & validation |
+| [resources.rs](./crates/turbomcp/examples/resources.rs) | 59 | Resource handlers with URIs |
+| [stateful.rs](./crates/turbomcp/examples/stateful.rs) | 59 | Arc<RwLock<T>> state pattern |
+| [http_server.rs](./crates/turbomcp/examples/http_server.rs) | 38 | HTTP/SSE transport |
+
+**Client Examples:**
+| Example | Lines | Topic |
+|---------|-------|-------|
+| [basic_client.rs](./crates/turbomcp/examples/basic_client.rs) | 45 | Connect, list, call |
+| [comprehensive.rs](./crates/turbomcp/examples/comprehensive.rs) | 76 | All MCP features |
+| [elicitation_client.rs](./crates/turbomcp/examples/elicitation_client.rs) | 237 | Interactive forms |
+| [sampling_server.rs](./crates/turbomcp/examples/sampling_server.rs) | 277 | LLM sampling |
+
+**Transport Examples:**
+| Server | Client | Transport |
+|--------|--------|-----------|
+| [tcp_server.rs](./crates/turbomcp/examples/tcp_server.rs) | [tcp_client.rs](./crates/turbomcp/examples/tcp_client.rs) | TCP network |
+| [http_server.rs](./crates/turbomcp/examples/http_server.rs) | [http_client_simple.rs](./crates/turbomcp/examples/http_client_simple.rs) | HTTP/SSE |
+| [unix_server.rs](./crates/turbomcp/examples/unix_server.rs) | [unix_client.rs](./crates/turbomcp/examples/unix_client.rs) | Unix socket |
+| [websocket_server.rs](./crates/turbomcp/examples/websocket_server.rs) | [websocket_client_simple.rs](./crates/turbomcp/examples/websocket_client_simple.rs) | WebSocket |
 
 **Run examples:**
 ```bash
-cargo run --example 01_hello_world
-cargo run --example elicitation_interactive_client
-cargo run --example 11_production_deployment
+cargo run --example hello_world
+cargo run --example elicitation_client
+cargo run --example http_app
 ```
 
 ---
@@ -766,7 +770,7 @@ struct ProductionServer {
 
 #[server(
     name = "enterprise-server",
-    version = "2.0.0",
+    version = "1.0.0",
     description = "Production server with advanced features",
     capabilities = ServerCapabilities::builder()
         .enable_tools()
@@ -884,8 +888,10 @@ TurboMCP prioritizes compile-time optimization over runtime flexibility. This cr
 - **[Benchmarking Guide](./benches/README.md)** - Performance testing and optimization
 - **[Security Documentation](./crates/turbomcp-transport/SECURITY_FEATURES.md)** - Enterprise security features
 - **[Architecture Guide](./ARCHITECTURE.md)** - System design and component interaction
-- **[Examples Guide](./crates/turbomcp/examples/EXAMPLES_GUIDE.md)** - Progressive learning path
+- **[Examples Guide](./crates/turbomcp/examples/README.md)** - 26 focused examples with learning path
+- **[Transport Patterns](./crates/turbomcp/examples/TRANSPORT_EXAMPLES_README.md)** - TCP, HTTP, WebSocket, Unix socket patterns
 - **[MCP Specification](https://modelcontextprotocol.io)** - Official protocol documentation
+- **[Migration Guide](./MIGRATION.md)** - v1.x to v2.0 changes
 
 ---
 
@@ -918,16 +924,16 @@ Licensed under the [MIT License](./LICENSE) - Enterprise-friendly open source.
 
 ## Status
 
-TurboMCP provides:
+TurboMCP v2.0.0-rc.2 provides:
 
 - Zero known security vulnerabilities with continuous monitoring
 - Performance focus with automated regression detection
-- Full MCP 2025-06-18 compliance
+- Full MCP 2025-06-18 specification compliance
 - Production deployment patterns with container & Kubernetes support
-- Documentation with progressive learning examples
+- 26 focused examples covering all usage patterns
 - Active development with regular security updates and performance improvements
 
-Ready for production deployment.
+**Note:** This is a Release Candidate (RC). While code is production-ready, the API may have minor changes before stable v2.0.0 release. For stability, pin to exact version: `turbomcp = "=2.0.0-rc.2"`
 
 ---
 
