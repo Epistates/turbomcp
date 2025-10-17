@@ -145,14 +145,6 @@ required-features = ["stdio"]
 name = "http_app"
 required-features = ["http"]
 
-[[example]]
-name = "anthropic_integration"
-required-features = ["http"]
-
-[[example]]
-name = "openai_integration"
-required-features = ["http"]
-
 # TCP transport examples
 [[example]]
 name = "tcp_client"

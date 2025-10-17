@@ -228,18 +228,16 @@ let server_caps = ServerCapabilitiesBuilder::new()
     .enable_resources_list_changed()   // ✅ Only available when resources enabled
     .build();
 
-// Compile-time validated client capabilities
+// Opt-out client capabilities (all enabled by default)
 let client_caps = ClientCapabilitiesBuilder::new()
-    .enable_roots()                    // Enable filesystem roots
-    .enable_sampling()                 // Enable LLM sampling
-    .enable_elicitation()              // Enable interactive forms
-    .enable_roots_list_changed()       // ✅ Only available when roots enabled
-    .build();
+    .enable_roots_list_changed()       // Configure sub-capabilities
+    .build();                          // All capabilities enabled!
 
-// Convenience builders for common patterns
-let full_server = ServerCapabilitiesBuilder::full_featured().build();
-let minimal_server = ServerCapabilitiesBuilder::minimal().build();
-let sampling_client = ClientCapabilitiesBuilder::sampling_focused().build();
+// Opt-in pattern for restrictive clients
+let minimal_client = ClientCapabilitiesBuilder::minimal()
+    .enable_sampling()                 // Only enable what you need
+    .enable_roots()
+    .build();
 ```
 
 ### Traditional Capability Negotiation

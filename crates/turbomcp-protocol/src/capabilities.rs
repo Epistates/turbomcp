@@ -1058,38 +1058,6 @@ pub mod builders {
         }
     }
 
-    /// Convenience methods for common capability combinations
-    impl ServerCapabilitiesBuilder {
-        /// TurboMCP Extension: Create a full-featured server configuration
-        ///
-        /// Enables all standard capabilities with TurboMCP optimizations.
-        pub fn full_featured() -> ServerCapabilitiesBuilder<
-            ServerCapabilitiesBuilderState<true, true, true, true, true, true>,
-        > {
-            Self::new()
-                .enable_experimental()
-                .enable_logging()
-                .enable_completions()
-                .enable_prompts()
-                .enable_resources()
-                .enable_tools()
-                .enable_tool_list_changed()
-                .enable_prompts_list_changed()
-                .enable_resources_list_changed()
-                .enable_resources_subscribe()
-                .with_simd_optimization("avx2")
-                .with_enterprise_security(true)
-        }
-
-        /// Create a minimal server configuration
-        ///
-        /// Only enables tools capability for basic MCP compliance.
-        pub fn minimal() -> ServerCapabilitiesBuilder<
-            ServerCapabilitiesBuilderState<false, false, false, false, false, true>,
-        > {
-            Self::new().enable_tools()
-        }
-    }
 
     // ========================================================================
     // CLIENT CAPABILITIES BUILDER - TYPE-STATE SYSTEM
@@ -1134,20 +1102,57 @@ pub mod builders {
         ///
         /// Returns a builder that ensures capabilities are configured correctly
         /// at compile time, preventing runtime configuration errors.
-        pub fn builder() -> ClientCapabilitiesBuilder {
+        ///
+        /// By default, all capabilities are enabled (opt-out model).
+        pub fn builder(
+        ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, true, true, true>> {
             ClientCapabilitiesBuilder::new()
         }
     }
 
-    impl Default for ClientCapabilitiesBuilder {
+    impl Default for ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, true, true, true>> {
         fn default() -> Self {
             Self::new()
         }
     }
 
-    impl ClientCapabilitiesBuilder {
-        /// Create a new ClientCapabilities builder
+    impl ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, true, true, true>> {
+        /// Create a new ClientCapabilities builder with all capabilities enabled (opt-out model)
+        ///
+        /// By default, all capabilities are enabled. Use `.without_*()` methods to disable
+        /// specific capabilities if needed.
+        ///
+        /// This design provides forward compatibility - when new MCP capabilities are added,
+        /// existing clients automatically support them without code changes.
+        ///
+        /// For clients that need explicit opt-in behavior, use `ClientCapabilitiesBuilder::minimal()`.
         pub fn new() -> Self {
+            Self {
+                experimental: Some(HashMap::new()),
+                roots: Some(RootsCapabilities::default()),
+                sampling: Some(SamplingCapabilities::default()),
+                elicitation: Some(ElicitationCapabilities::default()),
+                negotiator: None,
+                strict_validation: false,
+                _state: PhantomData,
+            }
+        }
+    }
+
+    impl ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<false, false, false, false>> {
+        /// Create a minimal ClientCapabilities builder with no capabilities enabled (opt-in model)
+        ///
+        /// Starts with all capabilities disabled. Use `.enable_*()` methods to opt-in
+        /// to specific capabilities.
+        ///
+        /// Most users should use `ClientCapabilitiesBuilder::new()` instead, which provides
+        /// an opt-out model with all capabilities enabled by default.
+        ///
+        /// Use this constructor when:
+        /// - You need explicit control over which capabilities are enabled
+        /// - You're building a restricted client (embedded, CLI-only, etc.)
+        /// - You want to minimize the attack surface
+        pub fn minimal() -> Self {
             Self {
                 experimental: None,
                 roots: None,
@@ -1201,50 +1206,12 @@ pub mod builders {
             if self.strict_validation {
                 // Validate experimental capabilities if present
                 if let Some(ref experimental) = self.experimental {
-                    for (key, value) in experimental {
+                    for (key, _value) in experimental {
                         if key.starts_with("turbomcp_") {
-                            // Validate TurboMCP-specific experimental capabilities
-                            match key.as_str() {
-                                "turbomcp_llm_provider" => {
-                                    let obj = value.as_object().ok_or_else(|| {
-                                        "turbomcp_llm_provider must be an object".to_string()
-                                    })?;
-                                    if !obj.contains_key("provider") || !obj.contains_key("version")
-                                    {
-                                        return Err("turbomcp_llm_provider must have 'provider' and 'version' fields".to_string());
-                                    }
-                                }
-                                "turbomcp_ui_capabilities" => {
-                                    let arr = value.as_array().ok_or_else(|| {
-                                        "turbomcp_ui_capabilities must be an array".to_string()
-                                    })?;
-                                    let valid_ui_caps = [
-                                        "form",
-                                        "dialog",
-                                        "notification",
-                                        "toast",
-                                        "modal",
-                                        "sidebar",
-                                    ];
-                                    for cap in arr {
-                                        if let Some(cap_str) = cap.as_str() {
-                                            if !valid_ui_caps.contains(&cap_str) {
-                                                return Err(format!(
-                                                    "Invalid UI capability: {}",
-                                                    cap_str
-                                                ));
-                                            }
-                                        } else {
-                                            return Err(
-                                                "UI capabilities must be strings".to_string()
-                                            );
-                                        }
-                                    }
-                                }
-                                _ => {
-                                    // Allow other TurboMCP experimental features
-                                }
-                            }
+                            // Allow all TurboMCP experimental features
+                            // Removed validation for deprecated methods:
+                            // - turbomcp_llm_provider (removed)
+                            // - turbomcp_ui_capabilities (removed)
                         }
                     }
                 }
@@ -1416,6 +1383,102 @@ pub mod builders {
         }
     }
 
+    // ========================================================================
+    // CLIENT CAPABILITY DISABLEMENT METHODS (OPT-OUT API)
+    // ========================================================================
+
+    // Disable Experimental Capabilities
+    impl<const R: bool, const S: bool, const E: bool>
+        ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, R, S, E>>
+    {
+        /// Disable experimental capabilities (opt-out)
+        ///
+        /// Transitions the builder to a state where experimental capability methods
+        /// are no longer available at compile time.
+        pub fn without_experimental(
+            self,
+        ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<false, R, S, E>> {
+            ClientCapabilitiesBuilder {
+                experimental: None,
+                roots: self.roots,
+                sampling: self.sampling,
+                elicitation: self.elicitation,
+                negotiator: self.negotiator,
+                strict_validation: self.strict_validation,
+                _state: PhantomData,
+            }
+        }
+    }
+
+    // Disable Roots Capabilities
+    impl<const X: bool, const S: bool, const E: bool>
+        ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, true, S, E>>
+    {
+        /// Disable roots capabilities (opt-out)
+        ///
+        /// Transitions the builder to a state where roots capability methods
+        /// are no longer available at compile time.
+        pub fn without_roots(
+            self,
+        ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, false, S, E>> {
+            ClientCapabilitiesBuilder {
+                experimental: self.experimental,
+                roots: None,
+                sampling: self.sampling,
+                elicitation: self.elicitation,
+                negotiator: self.negotiator,
+                strict_validation: self.strict_validation,
+                _state: PhantomData,
+            }
+        }
+    }
+
+    // Disable Sampling Capabilities
+    impl<const X: bool, const R: bool, const E: bool>
+        ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, true, E>>
+    {
+        /// Disable sampling capabilities (opt-out)
+        ///
+        /// Transitions the builder to a state where sampling capability methods
+        /// are no longer available at compile time.
+        pub fn without_sampling(
+            self,
+        ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, false, E>> {
+            ClientCapabilitiesBuilder {
+                experimental: self.experimental,
+                roots: self.roots,
+                sampling: None,
+                elicitation: self.elicitation,
+                negotiator: self.negotiator,
+                strict_validation: self.strict_validation,
+                _state: PhantomData,
+            }
+        }
+    }
+
+    // Disable Elicitation Capabilities
+    impl<const X: bool, const R: bool, const S: bool>
+        ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, S, true>>
+    {
+        /// Disable elicitation capabilities (opt-out)
+        ///
+        /// Transitions the builder to a state where elicitation capability methods
+        /// are no longer available at compile time.
+        pub fn without_elicitation(
+            self,
+        ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, S, false>> {
+            ClientCapabilitiesBuilder {
+                experimental: self.experimental,
+                roots: self.roots,
+                sampling: self.sampling,
+                elicitation: None,
+                negotiator: self.negotiator,
+                strict_validation: self.strict_validation,
+                _state: PhantomData,
+            }
+        }
+    }
+
     // Experimental sub-capabilities (only available when EXPERIMENTAL = true)
     impl<const R: bool, const S: bool, const E: bool>
         ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, R, S, E>>
@@ -1433,81 +1496,8 @@ pub mod builders {
             }
             self
         }
-
-        /// TurboMCP Extension: Add LLM provider metadata
-        ///
-        /// Unique to TurboMCP - metadata about supported LLM providers for sampling.
-        pub fn with_llm_provider(mut self, provider: &str, version: &str) -> Self {
-            if let Some(ref mut experimental) = self.experimental {
-                experimental.insert(
-                    "turbomcp_llm_provider".to_string(),
-                    serde_json::json!({
-                        "provider": provider,
-                        "version": version
-                    }),
-                );
-            }
-            self
-        }
-
-        /// TurboMCP Extension: Add UI capabilities metadata
-        ///
-        /// Unique to TurboMCP - metadata about UI capabilities for elicitation.
-        pub fn with_ui_capabilities(mut self, capabilities: Vec<&str>) -> Self {
-            if let Some(ref mut experimental) = self.experimental {
-                experimental.insert(
-                    "turbomcp_ui_capabilities".to_string(),
-                    serde_json::Value::Array(
-                        capabilities
-                            .into_iter()
-                            .map(|s| serde_json::Value::String(s.to_string()))
-                            .collect(),
-                    ),
-                );
-            }
-            self
-        }
     }
 
-    /// Convenience methods for common client capability combinations
-    impl ClientCapabilitiesBuilder {
-        /// TurboMCP Extension: Create a full-featured client configuration
-        ///
-        /// Enables all standard capabilities with TurboMCP optimizations.
-        pub fn full_featured()
-        -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, true, true, true>>
-        {
-            Self::new()
-                .enable_experimental()
-                .enable_roots()
-                .enable_sampling()
-                .enable_elicitation()
-                .enable_roots_list_changed()
-                .with_llm_provider("openai", "gpt-4")
-                .with_ui_capabilities(vec!["form", "dialog", "notification"])
-        }
-
-        /// Create a minimal client configuration
-        ///
-        /// Only enables sampling capability for basic MCP compliance.
-        pub fn minimal()
-        -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<false, false, true, false>>
-        {
-            Self::new().enable_sampling()
-        }
-
-        /// Create a sampling-focused client configuration
-        ///
-        /// Optimized for clients that primarily handle sampling requests.
-        pub fn sampling_focused()
-        -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, false, true, false>>
-        {
-            Self::new()
-                .enable_experimental()
-                .enable_sampling()
-                .with_llm_provider("anthropic", "claude-3")
-        }
-    }
 
     #[cfg(test)]
     mod type_state_tests {
@@ -1525,8 +1515,19 @@ pub mod builders {
             // This should compile - enable_tool_list_changed is available when tools are enabled
             let _final_builder = builder_with_tools.enable_tool_list_changed();
 
-            // Test the full_featured builder
-            let full_capabilities = ServerCapabilitiesBuilder::full_featured().build();
+            // Test building a server with multiple capabilities
+            let full_capabilities = ServerCapabilitiesBuilder::new()
+                .enable_experimental()
+                .enable_logging()
+                .enable_completions()
+                .enable_prompts()
+                .enable_resources()
+                .enable_tools()
+                .enable_tool_list_changed()
+                .enable_prompts_list_changed()
+                .enable_resources_list_changed()
+                .enable_resources_subscribe()
+                .build();
 
             assert!(full_capabilities.experimental.is_some());
             assert!(full_capabilities.logging.is_some());
@@ -1548,18 +1549,23 @@ pub mod builders {
 
         #[test]
         fn test_client_capabilities_builder_type_state() {
-            // Test basic builder construction
+            // Test basic builder construction - now returns all-enabled state
             let builder = ClientCapabilities::builder();
             assert!(format!("{:?}", builder).contains("ClientCapabilitiesBuilder"));
 
-            // Test enabling capabilities changes the type
-            let builder_with_roots = builder.enable_roots();
+            // Test opt-out: disabling capabilities changes the type
+            let builder_without_roots = builder.without_roots();
+
+            // After disabling roots, we can re-enable it
+            let builder_with_roots = builder_without_roots.enable_roots();
 
             // This should compile - enable_roots_list_changed is available when roots are enabled
             let _final_builder = builder_with_roots.enable_roots_list_changed();
 
-            // Test the full_featured builder
-            let full_capabilities = ClientCapabilitiesBuilder::full_featured().build();
+            // Test the opt-out default (new() has everything enabled)
+            let full_capabilities = ClientCapabilitiesBuilder::new()
+                .enable_roots_list_changed()
+                .build();
 
             assert!(full_capabilities.experimental.is_some());
             assert!(full_capabilities.roots.is_some());
@@ -1573,8 +1579,73 @@ pub mod builders {
         }
 
         #[test]
+        fn test_opt_out_model() {
+            // Default builder has everything enabled
+            let caps = ClientCapabilitiesBuilder::new().build();
+            assert!(caps.experimental.is_some());
+            assert!(caps.roots.is_some());
+            assert!(caps.sampling.is_some());
+            assert!(caps.elicitation.is_some());
+
+            // Can selectively disable capabilities
+            let caps_without_elicitation = ClientCapabilitiesBuilder::new()
+                .without_elicitation()
+                .build();
+
+            assert!(caps_without_elicitation.experimental.is_some());
+            assert!(caps_without_elicitation.roots.is_some());
+            assert!(caps_without_elicitation.sampling.is_some());
+            assert!(caps_without_elicitation.elicitation.is_none());
+
+            // Can disable multiple capabilities
+            let minimal_caps = ClientCapabilitiesBuilder::new()
+                .without_experimental()
+                .without_roots()
+                .without_elicitation()
+                .build();
+
+            assert!(minimal_caps.experimental.is_none());
+            assert!(minimal_caps.roots.is_none());
+            assert!(minimal_caps.sampling.is_some());
+            assert!(minimal_caps.elicitation.is_none());
+        }
+
+        #[test]
+        fn test_opt_in_with_minimal() {
+            // Minimal builder starts with nothing enabled
+            let caps = ClientCapabilitiesBuilder::minimal().build();
+            assert!(caps.experimental.is_none());
+            assert!(caps.roots.is_none());
+            assert!(caps.sampling.is_none());
+            assert!(caps.elicitation.is_none());
+
+            // Can selectively enable capabilities
+            let caps_with_sampling = ClientCapabilitiesBuilder::minimal()
+                .enable_sampling()
+                .build();
+
+            assert!(caps_with_sampling.experimental.is_none());
+            assert!(caps_with_sampling.roots.is_none());
+            assert!(caps_with_sampling.sampling.is_some());
+            assert!(caps_with_sampling.elicitation.is_none());
+
+            // Can enable multiple capabilities
+            let full_caps = ClientCapabilitiesBuilder::minimal()
+                .enable_experimental()
+                .enable_roots()
+                .enable_sampling()
+                .enable_elicitation()
+                .build();
+
+            assert!(full_caps.experimental.is_some());
+            assert!(full_caps.roots.is_some());
+            assert!(full_caps.sampling.is_some());
+            assert!(full_caps.elicitation.is_some());
+        }
+
+        #[test]
         fn test_turbomcp_extensions() {
-            // Test TurboMCP-specific server extensions
+            // Test TurboMCP-specific server extensions (still use enable for servers)
             let server_caps = ServerCapabilities::builder()
                 .enable_experimental()
                 .with_simd_optimization("avx2")
@@ -1599,48 +1670,61 @@ pub mod builders {
                 panic!("Expected experimental capabilities to be set");
             }
 
-            // Test TurboMCP-specific client extensions
+            // Test client experimental capabilities using add_experimental_capability
             let client_caps = ClientCapabilities::builder()
-                .enable_experimental()
-                .with_llm_provider("openai", "gpt-4")
-                .with_ui_capabilities(vec!["form", "dialog"])
+                .add_experimental_capability("custom_feature", true)
                 .build();
 
             if let Some(ref experimental) = client_caps.experimental {
-                assert!(experimental.contains_key("turbomcp_llm_provider"));
-                assert!(experimental.contains_key("turbomcp_ui_capabilities"));
+                assert!(experimental.contains_key("custom_feature"));
             } else {
                 panic!("Expected experimental capabilities to be set");
             }
         }
 
         #[test]
-        fn test_convenience_builders() {
-            // Test server convenience builders
-            let minimal_server = ServerCapabilitiesBuilder::minimal().build();
-            assert!(minimal_server.tools.is_some());
-            assert!(minimal_server.prompts.is_none());
+        fn test_minimal_constructor() {
+            // Test client minimal() constructor - starts with nothing enabled
+            let minimal_client_caps = ClientCapabilitiesBuilder::minimal().build();
+            assert!(minimal_client_caps.experimental.is_none());
+            assert!(minimal_client_caps.roots.is_none());
+            assert!(minimal_client_caps.sampling.is_none());
+            assert!(minimal_client_caps.elicitation.is_none());
 
-            // Test client convenience builders
-            let minimal_client = ClientCapabilitiesBuilder::minimal().build();
-            assert!(minimal_client.sampling.is_some());
-            assert!(minimal_client.roots.is_none());
+            // Test that we can selectively enable from minimal
+            let sampling_only = ClientCapabilitiesBuilder::minimal()
+                .enable_sampling()
+                .build();
+            assert!(sampling_only.experimental.is_none());
+            assert!(sampling_only.roots.is_none());
+            assert!(sampling_only.sampling.is_some());
+            assert!(sampling_only.elicitation.is_none());
 
-            let sampling_focused_client = ClientCapabilitiesBuilder::sampling_focused().build();
+            // Test enabling multiple capabilities from minimal
+            let sampling_focused_client = ClientCapabilitiesBuilder::minimal()
+                .enable_experimental()
+                .enable_sampling()
+                .build();
             assert!(sampling_focused_client.experimental.is_some());
+            assert!(sampling_focused_client.roots.is_none());
             assert!(sampling_focused_client.sampling.is_some());
+            assert!(sampling_focused_client.elicitation.is_none());
         }
 
         #[test]
         fn test_builder_default_implementations() {
-            // Test that default implementations work
+            // Test that default implementations work - now defaults to all-enabled
             let default_server_builder = ServerCapabilitiesBuilder::default();
             let server_caps = default_server_builder.build();
-            assert!(server_caps.tools.is_none());
+            assert!(server_caps.tools.is_none()); // Server builder still opts in
 
             let default_client_builder = ClientCapabilitiesBuilder::default();
             let client_caps = default_client_builder.build();
-            assert!(client_caps.sampling.is_none());
+            // Client default now has everything enabled
+            assert!(client_caps.experimental.is_some());
+            assert!(client_caps.roots.is_some());
+            assert!(client_caps.sampling.is_some());
+            assert!(client_caps.elicitation.is_some());
         }
 
         #[test]
@@ -1703,12 +1787,9 @@ pub mod builders {
             assert!(summary.contains("experimental"));
             assert!(summary.contains("tools"));
 
-            // Test client builder validation
+            // Test client builder validation - now uses new() which starts all-enabled
             let client_builder = ClientCapabilities::builder()
-                .enable_experimental()
-                .enable_sampling()
-                .with_llm_provider("openai", "gpt-4")
-                .with_ui_capabilities(vec!["form", "dialog"])
+                .add_experimental_capability("custom_feature", true)
                 .with_strict_validation();
 
             // Validation should pass for well-configured builder
@@ -1743,16 +1824,12 @@ pub mod builders {
             let error = invalid_server_builder.validate().unwrap_err();
             assert!(error.contains("Invalid SIMD level"));
 
-            // Test client validation errors
-            let invalid_client_builder = ClientCapabilities::builder()
-                .enable_experimental()
-                .enable_sampling()
-                .add_experimental_capability("turbomcp_ui_capabilities", vec!["invalid_capability"])
+            // Client validation should always pass now (removed strict validation for UI/LLM)
+            let client_builder = ClientCapabilities::builder()
+                .add_experimental_capability("custom_feature", true)
                 .with_strict_validation();
 
-            assert!(invalid_client_builder.validate().is_err());
-            let error = invalid_client_builder.validate().unwrap_err();
-            assert!(error.contains("Invalid UI capability"));
+            assert!(client_builder.validate().is_ok());
         }
 
         #[test]
@@ -1774,16 +1851,24 @@ pub mod builders {
                 cloned_caps.prompts.is_some()
             );
 
-            // Test client builder clone
+            // Test client builder clone - use without_*() since default is all-enabled
             let original_client_builder = ClientCapabilities::builder()
-                .enable_sampling()
-                .enable_elicitation();
+                .without_experimental()
+                .without_roots();
 
             let cloned_client_builder = original_client_builder.clone();
 
             let original_caps = original_client_builder.build();
             let cloned_caps = cloned_client_builder.build();
 
+            assert_eq!(
+                original_caps.experimental.is_some(),
+                cloned_caps.experimental.is_some()
+            );
+            assert_eq!(
+                original_caps.roots.is_some(),
+                cloned_caps.roots.is_some()
+            );
             assert_eq!(
                 original_caps.sampling.is_some(),
                 cloned_caps.sampling.is_some()

@@ -37,55 +37,77 @@ fn main() {
     println!("   📚 Resources enabled: {}", server_caps.resources.is_some());
     println!("   🧪 Experimental features: {}", server_caps.experimental.as_ref().map_or(0, |e| e.len()));
 
-    // Example 2: Client capabilities with type safety
-    println!("\n2. Client Capabilities with Type-State Validation");
-    println!("   ----------------------------------------------");
+    // Example 2: Client capabilities with opt-out model (TurboMCP 2.0)
+    println!("\n2. Opt-Out Capability Model (Forward Compatible!)");
+    println!("   -----------------------------------------------");
 
+    // By default, ALL capabilities are enabled!
     let client_caps = ClientCapabilitiesBuilder::new()
-        .enable_experimental()  // Enables experimental capability state
-        .enable_roots()         // Enables roots capability state
-        .enable_sampling()      // Enables sampling capability state
-        .enable_elicitation()   // Enables elicitation capability state
-        // Sub-capability only available when roots are enabled!
-        .enable_roots_list_changed()  // ✅ Only available when roots enabled
-        // TurboMCP exclusive features!
+        .enable_roots_list_changed()  // Configure sub-capabilities
         .build();
 
-    println!("   ✅ Client capabilities configured with compile-time validation");
+    println!("   ✅ All capabilities enabled by default (opt-out model)");
     println!("   🗂️  Roots enabled: {}", client_caps.roots.is_some());
     println!("   🎯 Sampling enabled: {}", client_caps.sampling.is_some());
     println!("   🤝 Elicitation enabled: {}", client_caps.elicitation.is_some());
+    println!("   🧪 Experimental enabled: {}", client_caps.experimental.is_some());
 
-    // Example 3: Convenience builders for common patterns
-    println!("\n3. Convenience Builders for Common Patterns");
-    println!("   ----------------------------------------");
+    // Example 2b: Selective disable (opt-out pattern)
+    println!("\n2b. Selectively Disable Capabilities");
+    println!("    ----------------------------------");
 
-    // Full-featured server (all capabilities enabled)
-    let full_server = ServerCapabilitiesBuilder::full_featured().build();
+    let restricted_client = ClientCapabilitiesBuilder::new()
+        .without_elicitation()  // Disable user prompts
+        .without_experimental() // Disable experimental features
+        .build();
+
+    println!("   ✅ Disabled elicitation and experimental");
+    println!("   🗂️  Roots enabled: {}", restricted_client.roots.is_some());
+    println!("   🎯 Sampling enabled: {}", restricted_client.sampling.is_some());
+    println!("   🤝 Elicitation disabled: {}", restricted_client.elicitation.is_none());
+    println!("   🧪 Experimental disabled: {}", restricted_client.experimental.is_none());
+
+    // Example 3: Building servers with explicit capability selection
+    println!("\n3. Building Servers with Explicit Capabilities");
+    println!("   -------------------------------------------");
+
+    // Full-featured server - explicitly enable everything you need
+    let full_server = ServerCapabilitiesBuilder::new()
+        .enable_experimental()
+        .enable_logging()
+        .enable_completions()
+        .enable_prompts()
+        .enable_resources()
+        .enable_tools()
+        .enable_tool_list_changed()
+        .enable_prompts_list_changed()
+        .enable_resources_list_changed()
+        .enable_resources_subscribe()
+        .build();
     println!("   🚀 Full-featured server: {} capabilities enabled",
         count_server_capabilities(&full_server));
 
-    // Minimal server (only tools)
-    let minimal_server = ServerCapabilitiesBuilder::minimal().build();
+    // Minimal server - just enable what you need
+    let minimal_server = ServerCapabilitiesBuilder::new()
+        .enable_tools()
+        .build();
     println!("   ⚡ Minimal server: {} capabilities enabled",
         count_server_capabilities(&minimal_server));
 
-    // Sampling-focused client
-    let sampling_client = ClientCapabilitiesBuilder::sampling_focused().build();
-    println!("   🎯 Sampling-focused client: {} capabilities enabled",
-        count_client_capabilities(&sampling_client));
+    // Example 4: Opt-in pattern with minimal()
+    println!("\n4. Opt-In Pattern (For Restrictive Clients)");
+    println!("   -----------------------------------------");
 
-    // Example 4: Demonstrate compile-time safety
-    println!("\n4. Compile-Time Safety Demonstration");
-    println!("   ---------------------------------");
-    println!("   ✅ The following code would NOT compile:");
-    println!("
-   ServerCapabilitiesBuilder::new()
-       // .enable_tools()  // ← This line commented out
-       .enable_tool_list_changed()  // ← This would cause compile error!
-       .build();
-   ");
-    println!("   🛡️  Compile-time validation prevents impossible configurations!");
+    let minimal_client = ClientCapabilitiesBuilder::minimal()
+        .enable_sampling()      // Only enable what we need
+        .enable_roots()
+        .build();
+
+    println!("   ✅ Minimal client starts with nothing enabled");
+    println!("   🗂️  Roots enabled: {}", minimal_client.roots.is_some());
+    println!("   🎯 Sampling enabled: {}", minimal_client.sampling.is_some());
+    println!("   🤝 Elicitation disabled: {}", minimal_client.elicitation.is_none());
+    println!("   🧪 Experimental disabled: {}", minimal_client.experimental.is_none());
 
     println!("\n5. TurboMCP Exclusive Features");
     println!("   ----------------------------");
@@ -109,13 +131,13 @@ fn main() {
         }
     }
 
-    println!("\n🎉 Demo Complete! TurboMCP type-state builders provide:");
+    println!("\n🎉 Demo Complete! TurboMCP 2.0 capability builders provide:");
+    println!("   ✅ Opt-out model (forward compatible!)");
     println!("   ✅ Compile-time capability validation");
     println!("   ✅ Advanced MCP capability support");
-    println!("   ✅ Performance and security optimizations");
-    println!("   ✅ Full backwards compatibility");
+    println!("   ✅ Opt-in pattern via minimal()");
     println!("   ✅ Zero-cost abstractions");
-    println!("\n🏆 TurboMCP provides comprehensive MCP capability management!");
+    println!("\n🏆 TurboMCP: Future-proof capability negotiation!");
 }
 
 /// Count enabled server capabilities
