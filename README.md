@@ -11,6 +11,33 @@
 
 Build MCP servers in seconds with automatic schema generation, type-safe handlers, and multiple transport protocols. **Note: v2.0.0-rc.2 (Release Candidate - not stable)**
 
+## Table of Contents
+
+- [60-Second Quick Start](#60-second-quick-start)
+- [Why TurboMCP?](#why-turbomcp)
+- [Key Features](#key-features)
+- [Quick Start](#quick-start)
+- [Client Connections](#client-connections-v20)
+- [Type-State Capability Builders](#type-state-capability-builders)
+- [Additional Features](#additional-features)
+  - [AudioContent Support](#audiocontent-support)
+  - [LLM Integration](#llm-integration)
+  - [Interactive Forms](#interactive-forms)
+  - [Transport Protocols](#transport-protocols)
+  - [Client Cloning & Shared Transport](#client-cloning--shared-transport)
+  - [Filesystem Security](#filesystem-security)
+  - [Resource Templates & Dynamic Content](#resource-templates--dynamic-content)
+- [Security Features](#security-features)
+- [Performance](#performance)
+- [Deployment & Operations](#deployment--operations)
+- [Development & Testing](#development--testing)
+- [Example: Production Server](#example-production-server)
+- [Architecture & Design Philosophy](#architecture--design-philosophy)
+- [Documentation & Resources](#documentation--resources)
+- [Contributing](#contributing)
+- [License](#license)
+- [Status](#status)
+
 ---
 
 ## 60-Second Quick Start

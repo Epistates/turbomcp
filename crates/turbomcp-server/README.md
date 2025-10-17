@@ -6,6 +6,18 @@
 
 MCP server framework with OAuth 2.1 MCP compliance, middleware pipeline, and lifecycle management.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
+- [Server Builder](#server-builder)
+- [Handler Registry](#handler-registry)
+- [Authentication & Session](#authentication-with-turbomcp-auth)
+- [Middleware System](#middleware-system)
+- [Advanced Features](#advanced-features)
+- [Integration](#integration)
+
 ## Overview
 
 `turbomcp-server` provides a comprehensive server framework for Model Context Protocol implementations. It handles all server-side concerns including request routing, authentication, middleware processing, session management, and production lifecycle operations.
@@ -97,7 +109,7 @@ use turbomcp_server::{ServerBuilder, McpServer};
 // Simple server creation
 let server = ServerBuilder::new()
     .name("MyMCPServer")
-    .version("2.0.0")
+    .version("1.0.0")
     .build();
 
 // Run with STDIO transport
@@ -112,7 +124,7 @@ use turbomcp_protocol::types::Root;
 
 let server = ServerBuilder::new()
     .name("ProductionMCPServer")
-    .version("2.1.0")
+    .version("1.0.0")
     .description("Enterprise MCP server with comprehensive tooling")
 
     // Register filesystem roots

@@ -6,6 +6,18 @@
 
 **CLI for MCP servers with complete protocol support**
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Usage](#usage)
+- [Commands](#commands)
+- [Transport Support](#transport-support)
+- [Examples](#examples)
+- [Related Tools](#related-tools)
+
 ## Overview
 
 `turbomcp-cli` is a command-line interface for the Model Context Protocol, built on the `turbomcp-client` library. It provides complete MCP protocol coverage with rich, multi-format output and smart transport auto-detection.
@@ -31,7 +43,7 @@
 cargo install turbomcp-cli
 
 # Install specific version
-cargo install turbomcp-cli --version 2.0.0
+cargo install turbomcp-cli --version 2.0.0-rc.2
 ```
 
 ### From Source
@@ -51,8 +63,8 @@ turbomcp-cli tools list --command "./my-mcp-server"
 # Call a tool with arguments
 turbomcp-cli tools call calculate --arguments '{"a": 5, "b": 3}'
 
-# Get server information (table format)
-turbomcp-cli server info --format table
+# Get server information
+turbomcp-cli server info
 
 # List resources
 turbomcp-cli resources list --url tcp://localhost:8080
@@ -97,19 +109,19 @@ All commands support these connection options:
 
 ## Commands
 
-### `tools-list` - List Available Tools
+### `tools list` - List Available Tools
 
 List all tools available from an MCP server.
 
 ```bash
 # List tools from HTTP server
-turbomcp-cli tools-list --url http://localhost:8080/mcp
+turbomcp-cli tools list --url http://localhost:8080/mcp
 
-# List tools from WebSocket server  
-turbomcp-cli tools-list --url ws://localhost:8080/mcp
+# List tools from WebSocket server
+turbomcp-cli tools list --url ws://localhost:8080/mcp
 
 # List tools from STDIO server
-turbomcp-cli tools-list --command "./target/debug/my-server"
+turbomcp-cli tools list --command "./target/debug/my-server"
 ```
 
 **Example Output:**
@@ -122,27 +134,24 @@ Available Tools:
 Total: 3 tools
 ```
 
-### `tools-call` - Call a Tool
+### `tools call` - Call a Tool
 
 Execute a specific tool on the MCP server.
 
 ```bash
 # Call a tool with JSON parameters (HTTP)
-turbomcp-cli tools-call \
+turbomcp-cli tools call calculator_add \
     --url http://localhost:8080/mcp \
-    --name calculator_add \
     --arguments '{"a": 5, "b": 3}'
 
 # Call a tool via WebSocket
-turbomcp-cli tools-call \
+turbomcp-cli tools call file_read \
     --url ws://localhost:8080/mcp \
-    --name file_read \
     --arguments '{"path": "/etc/hosts"}'
 
 # Call a tool via STDIO
-turbomcp-cli tools-call \
+turbomcp-cli tools call calculator_add \
     --command "./target/debug/my-server" \
-    --name calculator_add \
     --arguments '{"a": 5, "b": 3}'
 ```
 
@@ -154,21 +163,21 @@ turbomcp-cli tools-call \
 }
 ```
 
-### `schema-export` - Export Tool Schemas
+### `tools schema` - Export Tool Schemas
 
 Export JSON schemas for all tools from an MCP server.
 
 ```bash
 # Export schemas to stdout (HTTP)
-turbomcp-cli schema-export --url http://localhost:8080/mcp
+turbomcp-cli tools schema --url http://localhost:8080/mcp
 
 # Export schemas to file (HTTP)
-turbomcp-cli schema-export \
+turbomcp-cli tools schema \
     --url http://localhost:8080/mcp \
     --output schemas.json
 
 # Export schemas from STDIO server
-turbomcp-cli schema-export \
+turbomcp-cli tools schema \
     --command "./target/debug/my-server" \
     --output schemas.json
 ```
@@ -228,21 +237,20 @@ turbomcp-cli tools-list --url "./my-server"
 
 ```bash
 # List tools from HTTP server
-turbomcp-cli tools-list --url http://localhost:8080/mcp
+turbomcp-cli tools list --url http://localhost:8080/mcp
 
 # Call calculator tool via STDIO
-turbomcp-cli tools-call \
+turbomcp-cli tools call calculator_add \
   --command "./target/debug/calculator-server" \
-  --name calculator_add \
   --arguments '{"a": 10, "b": 5}'
 
 # Export all schemas to file via WebSocket
-turbomcp-cli schema-export \
+turbomcp-cli tools schema \
   --url ws://localhost:8080/mcp \
   --output my-server-schemas.json
 
 # Test STDIO server with authentication
-turbomcp-cli tools-list \
+turbomcp-cli tools list \
   --command "python my-server.py" \
   --auth "bearer-token-here" \
   --json

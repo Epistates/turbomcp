@@ -6,6 +6,19 @@
 
 Transport layer implementation for the Model Context Protocol (MCP) with support for multiple transport protocols and connection patterns.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
+- [Transport Protocols](#transport-protocols)
+- [Security Configuration](#security-configuration)
+- [Reliability Features](#reliability-features)
+- [Compression Support](#compression-support)
+- [Health Monitoring](#health-monitoring)
+- [Performance Optimization](#performance-optimization)
+- [Integration](#integration)
+
 ## Overview
 
 `turbomcp-transport` provides transport layer implementations for the Model Context Protocol. It supports multiple transport protocols including STDIO, HTTP/SSE, WebSocket, TCP, and Unix sockets with features for security, reliability, and concurrent usage.
@@ -213,6 +226,7 @@ let validator = SecurityConfigBuilder::new()
 
 ```rust
 use turbomcp_transport::EnhancedSecurityConfigBuilder;
+use std::time::Duration;
 
 // Build enhanced security with session tracking
 let enhanced_security = EnhancedSecurityConfigBuilder::new()
@@ -220,9 +234,11 @@ let enhanced_security = EnhancedSecurityConfigBuilder::new()
     .require_authentication(true)
     .add_api_key("your-api-key".to_string())
     .with_rate_limit(120, Duration::from_secs(60))
-    .with_session_timeout(Duration::from_secs(3600)) // 1 hour
-    .with_max_sessions_per_client(5)
+    .with_session_max_lifetime(Duration::from_secs(3600)) // 1 hour max session lifetime
+    .with_session_idle_timeout(Duration::from_secs(1800)) // 30 min inactivity timeout
+    .with_max_sessions_per_ip(5) // Max 5 sessions per IP address
     .build();
+```
 
 ## Reliability Features
 

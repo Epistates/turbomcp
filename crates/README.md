@@ -2,7 +2,23 @@
 
 This directory contains the individual crates that make up the TurboMCP framework. Each crate is designed with a specific responsibility and can be used independently or as part of the complete framework.
 
-## 🎯 v2.0.0 Architecture & Performance Highlights
+## Table of Contents
+
+- [v2.0.0-rc.2 Architecture & Performance Highlights](#-v200-rc2-architecture--performance-highlights)
+- [Architecture Overview](#architecture-overview)
+- [Crates](#crates)
+  - [turbomcp (Main SDK)](#turbomcp---main-sdk)
+  - [turbomcp-protocol (Protocol Implementation)](#turbomcp-protocol---protocol-implementation--foundation)
+  - [turbomcp-transport (Transport Layer)](#turbomcp-transport---transport-layer)
+  - [turbomcp-server (Server Framework)](#turbomcp-server---server-framework)
+  - [turbomcp-client (Client Implementation)](#turbomcp-client---client-implementation)
+  - [turbomcp-macros (Procedural Macros)](#turbomcp-macros---procedural-macros)
+  - [turbomcp-cli (Command Line Tools)](#turbomcp-cli---command-line-tools)
+- [Usage Patterns](#usage-patterns)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+
+## 🎯 v2.0.0-rc.2 Architecture & Performance Highlights
 
 **Major improvements in 2.0.0:**
 - **Modular Architecture** - Core and protocol modules decomposed for better maintainability
@@ -97,7 +113,7 @@ The main SDK crate providing ergonomic APIs and integration. This is what most u
 
 Complete implementation of the Model Context Protocol specification with JSON-RPC support and foundational types.
 
-**Note:** In v2.0.0, `turbomcp-core` was merged into `turbomcp-protocol` to eliminate circular dependencies and improve cohesion.
+**Note:** In v2.0.0-rc.2, `turbomcp-core` was merged into `turbomcp-protocol` to eliminate circular dependencies and improve cohesion.
 
 **Key Features:**
 - MCP 2025-06-18 specification compliance
@@ -178,23 +194,22 @@ Command-line interface for interacting with MCP servers, testing, and debugging.
 ### Complete Framework (Recommended)
 ```toml
 [dependencies]
-turbomcp = "2.0.0"
+turbomcp = "2.0.0-rc.2"
 ```
 
 ### Specific Layers Only
 ```toml
 [dependencies]
 # For building custom servers
-turbomcp-server = "2.0.0"
-turbomcp-transport = "2.0.0"
+turbomcp-server = "2.0.0-rc.2"
+turbomcp-transport = "2.0.0-rc.2"
 
 # For building custom clients
-turbomcp-client = "2.0.0"
-turbomcp-protocol = "2.0.0"
+turbomcp-client = "2.0.0-rc.2"
+turbomcp-protocol = "2.0.0-rc.2"
 
 # For low-level protocol work
-turbomcp-protocol = "2.0.0"
-turbomcp-core = "2.0.0"
+turbomcp-protocol = "2.0.0-rc.2"
 ```
 
 ### Development Tools
@@ -203,10 +218,10 @@ turbomcp-core = "2.0.0"
 cargo install --path turbomcp-cli
 
 # Use for testing HTTP servers
-turbomcp-cli tools-list --url http://localhost:8080/mcp
+turbomcp-cli tools list --url http://localhost:8080/mcp
 
 # Use for testing STDIO servers
-turbomcp-cli tools-list --command "./my-server"
+turbomcp-cli tools list --command "./my-server"
 ```
 
 ## Documentation

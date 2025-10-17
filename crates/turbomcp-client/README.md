@@ -6,6 +6,19 @@
 
 MCP client with complete MCP 2025-06-18 specification support and plugin middleware system.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Supported Transports](#supported-transports)
+- [Quick Start](#quick-start)
+- [Transport Configuration](#transport-configuration)
+- [Advanced Features](#advanced-features)
+- [Plugin Middleware](#plugin-middleware)
+- [Sampling Handler Integration](#sampling-handler-integration)
+- [Handler Registration](#handler-registration)
+- [Error Handling](#error-handling)
+- [Production Deployment](#production-deployment)
+
 ## Overview
 
 `turbomcp-client` provides a comprehensive MCP client implementation with:
@@ -237,49 +250,34 @@ let mut client = Client::new(transport);
 use turbomcp_client::ClientBuilder;
 use turbomcp_transport::stdio::StdioTransport;
 
-// Use high-reliability preset
+// Configure retry and health checking
 let client = ClientBuilder::new()
-    .with_high_reliability()  // Configures retry, circuit breaker, health checks
-    .build_robust(StdioTransport::new())
+    .with_max_retries(3)      // Configure retry attempts
+    .with_retry_delay(100)    // Retry delay in milliseconds
+    .with_keepalive(30_000)   // Keepalive interval
+    .build(StdioTransport::new())
     .await?;
 ```
 
-### Custom Robustness Configuration
+### Additional Configuration Options
 
 ```rust
-use turbomcp_transport::resilience::{
-    retry::RetryConfig,
-    circuit_breaker::CircuitBreakerConfig,
-    health::HealthCheckConfig,
-};
+use turbomcp_client::ClientBuilder;
+use turbomcp_transport::stdio::StdioTransport;
 use std::time::Duration;
 
 let client = ClientBuilder::new()
-    .with_retry_config(RetryConfig {
-        max_attempts: 5,
-        base_delay: Duration::from_millis(100),
-        max_delay: Duration::from_secs(30),
-        backoff_multiplier: 2.0,
-        jitter_factor: 0.1,
-        retry_on_connection_error: true,
-        retry_on_timeout: true,
-        custom_retry_condition: None,
-    })
-    .with_circuit_breaker_config(CircuitBreakerConfig {
-        failure_threshold: 5,
-        success_threshold: 2,
-        timeout: Duration::from_secs(60),
-        rolling_window_size: 100,
-        minimum_requests: 10,
-    })
-    .with_health_check_config(HealthCheckConfig {
-        interval: Duration::from_secs(30),
-        timeout: Duration::from_secs(5),
-        failure_threshold: 3,
-        success_threshold: 1,
-        custom_check: None,
-    })
-    .build_robust(StdioTransport::new())
+    // Configure capabilities needed from the server
+    .with_tools(true)
+    .with_prompts(true)
+    .with_resources(true)
+    // Configure timeouts and retries
+    .with_timeout(30_000)          // 30 second timeout
+    .with_max_retries(3)           // Retry up to 3 times
+    .with_retry_delay(100)         // 100ms delay between retries
+    .with_keepalive(30_000)        // 30 second keepalive
+    // Build the client
+    .build(StdioTransport::new())
     .await?;
 ```
 

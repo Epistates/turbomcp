@@ -6,6 +6,20 @@
 
 **Procedural macros for MCP server development with automatic schema generation and compile-time validation.**
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
+- [Core Macros](#core-macros)
+  - [MCP 2025-06-18 Enhanced Macros](#mcp-2025-06-18-enhanced-macros)
+  - [#[server] - Server Implementation](#server---server-implementation)
+  - [#[tool] - Tool Registration](#tool---tool-registration)
+  - [#[resource] - Resource Registration](#resource---resource-registration)
+  - [#[prompt] - Prompt Template Registration](#prompt---prompt-template-registration)
+- [Advanced Features](#advanced-features)
+- [Production Recipes](#production-recipes)
+
 ## Overview
 
 `turbomcp-macros` provides the procedural macros for TurboMCP development. These macros reduce boilerplate code while providing compile-time validation, automatic schema generation, and type-safe parameter handling.
@@ -78,17 +92,17 @@ New macros for the latest MCP protocol features:
 #### `elicit!` - Elegant User Input (NEW)
 ```rust
 use turbomcp::prelude::*;
-use turbomcp_protocol::elicitation::ElicitationSchema;
+use turbomcp_protocol::types::ElicitationSchema;
 
 #[tool("Configure user preferences")]
 async fn configure_preferences(&self, ctx: Context) -> McpResult<String> {
     let schema = ElicitationSchema::new()
         .add_string_property("theme", Some("Color theme preference"))
         .add_boolean_property("notifications", Some("Enable notifications"));
-    
+
     // Simple macro handles all protocol complexity
     let result = elicit!(ctx, "Please configure your preferences", schema).await?;
-    
+
     if let Some(data) = result.content {
         let theme = data.get("theme").and_then(|v| v.as_str()).unwrap_or("default");
         Ok(format!("Configured with {} theme", theme))

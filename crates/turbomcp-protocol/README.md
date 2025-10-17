@@ -6,6 +6,18 @@
 
 Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and runtime schema validation.
 
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Architecture](#architecture)
+- [MCP Message Types](#mcp-message-types)
+- [Usage](#usage)
+- [Message Flow](#message-flow)
+- [Feature Flags](#feature-flags)
+- [Supported MCP Methods](#supported-mcp-methods)
+- [Integration](#integration)
+
 ## Overview
 
 `turbomcp-protocol` provides a specification-compliant implementation of the Model Context Protocol (MCP). This crate handles protocol-level concerns including message formatting, capability negotiation, and runtime validation.
@@ -76,13 +88,19 @@ Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and 
 
 ```rust
 use turbomcp_protocol::{
+    // Re-exported for convenience (most common types)
     InitializeRequest, InitializeResult,
-    ListToolsRequest, ListToolsResult,
     CallToolRequest, CallToolResult,
-    ListResourcesRequest, ListResourcesResult,
     ReadResourceRequest, ReadResourceResult,
-    ListPromptsRequest, ListPromptsResult,
     GetPromptRequest, GetPromptResult,
+    // List types available via types module
+};
+
+use turbomcp_protocol::types::{
+    ListToolsRequest, ListToolsResult,
+    ListResourcesRequest, ListResourcesResult,
+    ListPromptsRequest, ListPromptsResult,
+    Tool, Resource, Prompt,
 };
 ```
 
@@ -90,21 +108,22 @@ use turbomcp_protocol::{
 
 ```rust
 use turbomcp_protocol::{
-    // Elicitation - Server requests user input
-    ElicitRequest, ElicitResult, ElicitationAction, ElicitationSchema,
-    
-    // Completion - Intelligent autocompletion
-    CompleteRequestParams, CompletionResponse, CompletionReference,
-    
-    // Resource Templates - Dynamic resources
-    ListResourceTemplatesRequest, ListResourceTemplatesResult,
-    ResourceTemplate,
-    
-    // Ping - Bidirectional health monitoring
-    PingRequest, PingParams, PingResult,
-
     // Bidirectional communication support (trait)
     ServerToClientRequests,
+};
+
+use turbomcp_protocol::types::{
+    // Elicitation - Server requests user input
+    ElicitRequest, ElicitResult,
+
+    // Completion - Intelligent autocompletion
+    CompleteRequest, CompletionResponse,
+
+    // Resource Templates - Dynamic resources
+    ListResourceTemplatesRequest, ListResourceTemplatesResult,
+
+    // Ping - Bidirectional health monitoring
+    PingRequest, PingResult,
 };
 ```
 
@@ -330,10 +349,16 @@ sequenceDiagram
 
 | Feature | Description | Default |
 |---------|-------------|---------|
-| `validation` | Enable runtime schema validation | ✅ |
-| `extensions` | Enable MCP extension message types | ❌ |
-| `batch` | Enable JSON-RPC batch processing | ✅ |
-| `async-validation` | Enable async schema validation | ❌ |
+| `simd` | SIMD-accelerated JSON parsing (simd-json, sonic-rs) | ✅ |
+| `std` | Standard library support (always enabled with no-std support via wasm feature) | ✅ |
+| `zero-copy` | Zero-copy message handling with serde serialization | ❌ |
+| `messagepack` | MessagePack serialization support | ❌ |
+| `tracing` | OpenTelemetry tracing integration | ❌ |
+| `metrics` | Prometheus metrics collection | ❌ |
+| `mmap` | Memory-mapped file support | ❌ |
+| `lock-free` | Lock-free data structures (experimental, requires unsafe) | ❌ |
+| `fancy-errors` | Rich error reporting with miette | ❌ |
+| `wasm` | WebAssembly support (no_std compatible) | ❌ |
 
 ## Supported MCP Methods
 
@@ -449,7 +474,7 @@ cargo test test_message_validation
 - **[turbomcp-transport](../turbomcp-transport/)** - Transport layer
 - **[turbomcp-server](../turbomcp-server/)** - Server framework
 
-**Note:** In v2.0.0, `turbomcp-core` was merged into this crate to eliminate circular dependencies and improve cohesion.
+**Note:** In v2.0.0-rc.2, `turbomcp-core` was merged into this crate to eliminate circular dependencies and improve cohesion.
 
 ## External Resources
 

@@ -7,6 +7,11 @@
 
 Rust SDK for the Model Context Protocol (MCP) with comprehensive specification support and performance optimizations.
 
+## Quick Navigation
+
+**Jump to section:**
+[Overview](#overview) | [Quick Start](#quick-start) | [Core Concepts](#core-concepts) | [Advanced Features](#mcp-2025-06-18-enhanced-features) | [Security](#security-features) | [Performance](#performance) | [Deployment](#deployment--operations) | [Examples](#examples)
+
 ## Overview
 
 `turbomcp` is a Rust framework for implementing the Model Context Protocol. It provides tools, servers, clients, and transport layers with MCP specification compliance, security features, and performance optimizations.
@@ -109,7 +114,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "2.0.0"
+turbomcp = "2.0.0-rc.2"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -179,7 +184,7 @@ let server_caps = ServerCapabilitiesBuilder::new()
 // Usage in server macro
 #[server(
     name = "my-server",
-    version = "2.0.0",
+    version = "1.0.0",
     capabilities = ServerCapabilities::builder()
         .enable_tools()
         .enable_tool_list_changed()
@@ -303,7 +308,7 @@ async fn code_review_prompt(
 ```rust
 #[server(
     name = "filesystem-server",
-    version = "2.0.0",
+    version = "1.0.0",
     root = "file:///workspace:Project Workspace",
     root = "file:///tmp:Temporary Files"
 )]
@@ -321,7 +326,7 @@ impl FileSystemServer {
 
 ```rust
 use turbomcp::prelude::*;
-use turbomcp_protocol::elicitation::ElicitationSchema;
+use turbomcp_protocol::types::ElicitationSchema;
 
 #[tool("Configure application settings")]
 async fn configure_app(&self, ctx: Context) -> McpResult<String> {
@@ -774,22 +779,23 @@ Enable SIMD acceleration for maximum performance:
 
 ```toml
 [dependencies]
-turbomcp = { version = "2.0.0", features = ["simd"] }
+turbomcp = { version = "2.0.0-rc.2", features = ["simd"] }
 ```
 
 Configure performance settings:
 
 ```rust
-use turbomcp_protocol::{SessionManager, SessionConfig};
+use turbomcp::prelude::*;
 
-let config = SessionConfig::high_performance()
-    .with_simd_acceleration(true)
-    .with_connection_pooling(true)
-    .with_circuit_breakers(true);
+// Use pre-configured performance profiles
+let config = SessionConfig::high_performance();
+// Other available profiles:
+// SessionConfig::memory_optimized() - For resource-constrained environments
+// SessionConfig::development() - For development with verbose logging
 
-let server = MyServer::new()
-    .with_session_config(config)
-    .with_compression(true);
+// Create server and run with selected config
+let server = Calculator; // Your server implementation
+server.run_stdio().await?;
 ```
 
 ## Testing
