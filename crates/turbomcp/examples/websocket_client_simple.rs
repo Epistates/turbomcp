@@ -1,19 +1,24 @@
-//! WebSocket Transport Client - Minimal Example
+//! # WebSocket Transport Client - Minimal Example
 //!
-//! Connects to WebSocket server and demonstrates basic MCP operations.
+//! Demonstrates connecting to a WebSocket server and performing basic MCP operations:
+//! - Initialize connection with server
+//! - List available tools
+//! - Call tools with arguments
 //!
-//! **Run server first:**
+//! ## Quick Start
+//!
+//! **Terminal 1: Start the server**
 //! ```bash
-//! cargo run --example websocket_server_simple --features "http,websocket"
+//! cargo run --example websocket_server --features "http,websocket"
 //! ```
 //!
-//! **Then run client:**
+//! **Terminal 2: Run the client**
 //! ```bash
 //! cargo run --example websocket_client_simple --features "http,websocket"
 //! ```
 
-#[cfg(all(feature = "http", feature = "websocket"))]
 use std::collections::HashMap;
+
 #[cfg(all(feature = "http", feature = "websocket"))]
 use turbomcp_client::Client;
 #[cfg(all(feature = "http", feature = "websocket"))]

@@ -1,21 +1,25 @@
-//! HTTP/SSE Transport Client - Minimal Example
+//! # HTTP/SSE Transport Client - Minimal Example
 //!
-//! Connects to HTTP/SSE server and demonstrates basic MCP operations.
+//! Demonstrates connecting to an HTTP/SSE server and performing basic MCP operations:
+//! - Initialize connection with server
+//! - List available tools
+//! - Call tools with arguments
 //!
-//! **Run server first:**
+//! ## Quick Start
+//!
+//! **Terminal 1: Start the server**
 //! ```bash
 //! cargo run --example http_server --features http
 //! ```
 //!
-//! **Then run client:**
+//! **Terminal 2: Run the client**
 //! ```bash
 //! cargo run --example http_client_simple --features http
 //! ```
 
-#[cfg(feature = "http")]
 use std::collections::HashMap;
-#[cfg(feature = "http")]
 use std::time::Duration;
+
 #[cfg(feature = "http")]
 use turbomcp_client::{Client, Result};
 #[cfg(feature = "http")]

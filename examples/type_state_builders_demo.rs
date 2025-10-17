@@ -49,8 +49,6 @@ fn main() {
         // Sub-capability only available when roots are enabled!
         .enable_roots_list_changed()  // ✅ Only available when roots enabled
         // TurboMCP exclusive features!
-        .with_llm_provider("openai", "gpt-4")                  // 🚀 TurboMCP exclusive
-        .with_ui_capabilities(vec!["form", "dialog", "toast"]) // 🚀 TurboMCP exclusive
         .build();
 
     println!("   ✅ Client capabilities configured with compile-time validation");
