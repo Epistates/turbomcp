@@ -25,9 +25,9 @@ VERSION=${VERSION:-""}       # Will be auto-detected if not set
 CRATES=(
     "turbomcp-protocol"   # No internal deps
     "turbomcp-dpop"       # No internal deps
-    "turbomcp-macros"     # Depends on protocol
-    "turbomcp-auth"       # Depends on protocol, dpop
     "turbomcp-transport"  # Depends on protocol
+    "turbomcp-macros"     # Depends on protocol, transport
+    "turbomcp-auth"       # Depends on protocol, dpop
     "turbomcp-server"     # Depends on protocol, macros, transport
     "turbomcp-client"     # Depends on protocol, transport
     "turbomcp-cli"        # Depends on client, transport, protocol
