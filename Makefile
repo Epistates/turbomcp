@@ -106,15 +106,17 @@ build-all-features: ## Build with all features enabled
 # Testing Targets
 test: ## Run comprehensive test suite (tests + clippy + fmt)
 	@echo "${BOLD}${CYAN}🧪 Running comprehensive test suite...${RESET}"
-	@echo "${BLUE}📋 Step 1/4: Running cargo test (excluding Unix socket tests)...${RESET}"
+	@echo "${BLUE}📋 Step 1/5: Running unit and integration tests...${RESET}"
 	@$(CARGO) test --workspace --lib --tests --exclude turbomcp-transport
 	@$(CARGO) test -p turbomcp-transport --lib --tests --features stdio,tcp
-	@echo "${BLUE}📋 Step 2/4: Running cargo clippy...${RESET}"
+	@echo "${BLUE}📋 Step 2/5: Running clippy linter on all crates and binaries...${RESET}"
 	@$(CARGO) clippy $(WORKSPACE_FLAGS) --all-targets --all-features -- -D warnings
-	@echo "${BLUE}📋 Step 3/4: Checking cargo fmt...${RESET}"
-	@$(CARGO) fmt --all --check
-	@echo "${BLUE}📋 Step 4/4: Running example compilation checks...${RESET}"
-	@$(CARGO) check --examples --features full
+	@echo "${BLUE}📋 Step 3/5: Running clippy linter on all examples...${RESET}"
+	@$(CARGO) clippy --examples --all-features -- -D warnings
+	@echo "${BLUE}📋 Step 4/5: Checking formatting on all code (crates, binaries, examples)...${RESET}"
+	@$(CARGO) fmt --all -- --check
+	@echo "${BLUE}📋 Step 5/5: Verifying all examples compile...${RESET}"
+	@$(CARGO) check --examples --all-features
 	@echo "${GREEN}✅ All tests, linting, and formatting checks passed!${RESET}"
 
 test-integration: ## Run comprehensive integration tests only
