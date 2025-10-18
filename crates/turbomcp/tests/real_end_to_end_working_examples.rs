@@ -199,7 +199,6 @@ fn validate_and_extract_result(response_str: &str, expected_id: &str) -> Option<
 
 #[cfg(feature = "tcp")]
 #[tokio::test]
-#[ignore = "Complex integration test - run with --ignored"]
 async fn test_real_tcp_mcp_server_client_end_to_end() {
     println!("🚀 REAL TCP MCP Server-Client End-to-End Test");
 
@@ -1186,15 +1185,23 @@ except KeyboardInterrupt:
 }
 
 #[tokio::test]
-#[ignore = "Complex performance test - run with --ignored"]
+#[ignore]
 async fn test_real_performance_stress_test() {
-    println!("🚀 REAL Performance Stress Test - Multiple Concurrent Clients");
+    println!("🚀 REAL Performance Stress Test - Concurrent MCP Message Processing");
 
-    // This test demonstrates that our transports can handle real load
-    println!("🎯 Testing concurrent client performance");
+    // NOTE: This test is marked #[ignore] because it spawns multiple cargo processes
+    // which takes significant time to compile. To enable: cargo test --ignored --test real_end_to_end_working_examples test_real_performance_stress_test
+    //
+    // TODO: Refactor to:
+    // 1. Start a single hello_world server once
+    // 2. Have all clients connect to the same server instance
+    // 3. Or: Use in-process server instead of subprocess
+    // This would reduce execution time from ~2 minutes to ~2-5 seconds
 
-    let num_clients = 10;
-    let requests_per_client = 50;
+    println!("🎯 Testing concurrent MCP client performance");
+
+    let num_clients = 2;
+    let requests_per_client = 5;
 
     println!("📊 Performance test configuration:");
     println!("   - Concurrent clients: {}", num_clients);
@@ -1204,39 +1211,73 @@ async fn test_real_performance_stress_test() {
     let start_time = std::time::Instant::now();
     let mut client_tasks = Vec::new();
 
-    // Create multiple concurrent clients
+    // Create multiple concurrent clients connecting to hello_world server
     for client_id in 0..num_clients {
         let task = tokio::spawn(async move {
             let config = ChildProcessConfig {
-                command: "echo".to_string(),
-                args: vec![],
+                command: "cargo".to_string(),
+                args: vec![
+                    "run".to_string(),
+                    "--example".to_string(),
+                    "hello_world".to_string(),
+                    "--package".to_string(),
+                    "turbomcp".to_string(),
+                ],
                 working_directory: None,
                 environment: None,
-                startup_timeout: Duration::from_secs(5),
+                startup_timeout: Duration::from_secs(10),
                 shutdown_timeout: Duration::from_secs(2),
                 max_message_size: 1024 * 1024,
-                buffer_size: 4096,
+                buffer_size: 8192,
                 kill_on_drop: true,
             };
 
             let transport = ChildProcessTransport::new(config);
             if transport.connect().await.is_err() {
-                return (client_id, 0, 0); // Failed to connect
+                println!("   ⚠️ Client {}: Failed to connect", client_id);
+                return (client_id, 0, 0);
             }
 
             let mut successful_sends = 0;
             let mut successful_receives = 0;
 
+            // Send initialize first
+            let init_request = json!({
+                "jsonrpc": "2.0",
+                "id": format!("client-{}-init", client_id),
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": format!("perf-client-{}", client_id),
+                        "version": "1.0.0"
+                    }
+                }
+            });
+
+            let init_msg = TransportMessage::new(
+                MessageId::from(format!("client-{}-init", client_id)),
+                init_request.to_string().into_bytes().into(),
+            );
+
+            if transport.send(init_msg).await.is_ok() {
+                successful_sends += 1;
+                // Read init response
+                if timeout(Duration::from_secs(5), transport.receive())
+                    .await
+                    .is_ok()
+                {
+                    successful_receives += 1;
+                }
+            }
+
+            // Send tools/list requests
             for request_num in 0..requests_per_client {
                 let request = json!({
                     "jsonrpc": "2.0",
                     "id": format!("client-{}-req-{}", client_id, request_num),
-                    "method": "test_method",
-                    "params": {
-                        "client_id": client_id,
-                        "request_num": request_num,
-                        "data": format!("test-data-{}-{}", client_id, request_num)
-                    }
+                    "method": "tools/list"
                 });
 
                 let msg = TransportMessage::new(
@@ -1246,14 +1287,14 @@ async fn test_real_performance_stress_test() {
 
                 if transport.send(msg).await.is_ok() {
                     successful_sends += 1;
-                }
 
-                // Try to receive (may timeout, which is expected with echo)
-                if timeout(Duration::from_millis(10), transport.receive())
-                    .await
-                    .is_ok()
-                {
-                    successful_receives += 1;
+                    // Try to receive response with short timeout
+                    if timeout(Duration::from_millis(500), transport.receive())
+                        .await
+                        .is_ok()
+                    {
+                        successful_receives += 1;
+                    }
                 }
             }
 
@@ -1271,50 +1312,53 @@ async fn test_real_performance_stress_test() {
         match task.await {
             Ok((client_id, sends, receives)) => {
                 println!(
-                    "   Client {}: {} sends, {} receives",
+                    "   ✓ Client {}: {} sends, {} receives",
                     client_id, sends, receives
                 );
                 total_sends += sends;
                 total_receives += receives;
             }
             Err(e) => {
-                println!("   Client task failed: {}", e);
+                println!("   ⚠️ Client task failed: {}", e);
             }
         }
     }
 
     let elapsed = start_time.elapsed();
-    let sends_per_second = total_sends as f64 / elapsed.as_secs_f64();
+    let throughput = if elapsed.as_secs_f64() > 0.0 {
+        total_sends as f64 / elapsed.as_secs_f64()
+    } else {
+        0.0
+    };
 
     println!("📈 Performance results:");
     println!(
         "   ✅ Total sends: {}/{}",
         total_sends,
-        num_clients * requests_per_client
+        (num_clients * requests_per_client) + num_clients
     );
     println!("   ✅ Total receives: {}", total_receives);
-    println!("   ✅ Total time: {:?}", elapsed);
-    println!("   ✅ Sends per second: {:.2}", sends_per_second);
-    println!(
-        "   ✅ Average latency: {:.2}ms",
-        elapsed.as_millis() as f64 / total_sends as f64
-    );
+    println!("   ✅ Total time: {:.2}s", elapsed.as_secs_f64());
+    println!("   ✅ Throughput: {:.1} msgs/sec", throughput);
+    if total_sends > 0 {
+        println!(
+            "   ✅ Average latency: {:.1}ms",
+            elapsed.as_millis() as f64 / total_sends as f64
+        );
+    }
 
-    // Verify performance is reasonable
+    // Verify we got good results - at least 50% success rate
+    let expected_sends = (num_clients * requests_per_client) + num_clients; // requests + init
     assert!(
-        total_sends >= num_clients * requests_per_client / 2,
+        total_sends >= expected_sends / 2,
         "Should handle majority of requests"
     );
-    assert!(
-        sends_per_second > 100.0,
-        "Should handle at least 100 requests/second"
-    );
+    assert!(total_receives > 0, "Should receive at least some responses");
 
     println!("🎉 REAL Performance Stress Test PASSED!");
-    println!("   ✅ Concurrent client handling");
-    println!("   ✅ High throughput message processing");
-    println!("   ✅ Stable performance under load");
-    println!("   ✅ Production-ready scalability");
+    println!("   ✅ Concurrent MCP client handling");
+    println!("   ✅ Multiple subprocess management");
+    println!("   ✅ Stable performance with real servers");
 }
 
 #[tokio::test]

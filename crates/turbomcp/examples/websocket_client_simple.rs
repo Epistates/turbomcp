@@ -17,8 +17,6 @@
 //! cargo run --example websocket_client_simple --features "http,websocket"
 //! ```
 
-use std::collections::HashMap;
-
 #[cfg(all(feature = "http", feature = "websocket"))]
 use turbomcp_client::Client;
 #[cfg(all(feature = "http", feature = "websocket"))]

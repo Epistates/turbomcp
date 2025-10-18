@@ -17,9 +17,6 @@
 //! cargo run --example http_client_simple --features http
 //! ```
 
-use std::collections::HashMap;
-use std::time::Duration;
-
 #[cfg(feature = "http")]
 use turbomcp_client::{Client, Result};
 #[cfg(feature = "http")]

@@ -12,7 +12,7 @@ struct HelloServer;
 #[turbomcp::server(name = "hello", version = "1.0.0")]
 impl HelloServer {
     /// Say hello to someone
-    #[tool]
+    #[tool(description = "Say hello to someone")]
     async fn hello(&self, name: String) -> McpResult<String> {
         Ok(format!("Hello, {}!", name))
     }

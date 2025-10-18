@@ -233,11 +233,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Clear all plugins
-    pub fn without_plugins(mut self) -> Self {
-        self.plugins.clear();
-        self
-    }
 
     // ============================================================================
     // LLM PROVIDER CONFIGURATION
@@ -271,11 +266,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Clear all LLM providers
-    pub fn without_llm_providers(mut self) -> Self {
-        self.llm_providers.clear();
-        self
-    }
 
     // ============================================================================
     // HANDLER CONFIGURATION
@@ -395,37 +385,6 @@ impl ClientBuilder {
         Ok(client)
     }
 
-    // ============================================================================
-    // INSPECTION METHODS
-    // ============================================================================
-
-    /// Get the current capabilities configuration
-    pub fn capabilities(&self) -> &ClientCapabilities {
-        &self.capabilities
-    }
-
-    /// Get the current connection configuration
-    pub fn connection_config(&self) -> &ConnectionConfig {
-        &self.connection_config
-    }
-
-    /// Get the number of registered plugins
-    pub fn plugin_count(&self) -> usize {
-        self.plugins.len()
-    }
-
-    /// Get the number of registered LLM providers
-    pub fn llm_provider_count(&self) -> usize {
-        self.llm_providers.len()
-    }
-
-    /// Check if any handlers are registered
-    pub fn has_handlers(&self) -> bool {
-        self.elicitation_handler.is_some()
-            || self.progress_handler.is_some()
-            || self.log_handler.is_some()
-            || self.resource_update_handler.is_some()
-    }
 
     // ============================================================================
     // QUICK-START HELPERS - Maximum DX, Zero Bloat
