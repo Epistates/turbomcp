@@ -6,31 +6,19 @@
 //! These utilities are designed for testing scenarios only and should never
 //! be used in production code.
 
-#[cfg(feature = "test-utils")]
 use super::{DpopAlgorithm, DpopError, DpopKeyPair, NonceStorage, Result, StorageStats};
-#[cfg(feature = "test-utils")]
 use async_trait::async_trait;
-#[cfg(feature = "test-utils")]
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-#[cfg(feature = "test-utils")]
 use p256::ecdsa::{SigningKey, VerifyingKey};
-#[cfg(feature = "test-utils")]
 use p256::elliptic_curve::rand_core::OsRng;
-#[cfg(feature = "test-utils")]
 use ring::rand;
-#[cfg(feature = "test-utils")]
 use ring::rand::SecureRandom;
-#[cfg(feature = "test-utils")]
 use serde_json::json;
-#[cfg(feature = "test-utils")]
 use std::collections::HashMap;
-#[cfg(feature = "test-utils")]
 use std::sync::{Arc, RwLock};
-#[cfg(feature = "test-utils")]
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Comprehensive mock key manager for testing DPoP key operations
-#[cfg(feature = "test-utils")]
 #[derive(Debug)]
 pub struct MockKeyManager {
     /// Storage for generated test keys  
@@ -41,7 +29,6 @@ pub struct MockKeyManager {
 }
 
 /// Statistics for test key operations
-#[cfg(feature = "test-utils")]
 #[derive(Debug, Default, Clone)]
 pub struct TestKeyStats {
     /// Number of keys generated
@@ -61,7 +48,6 @@ pub struct TestKeyStats {
 }
 
 /// Mock in-memory nonce storage for testing
-#[cfg(feature = "test-utils")]
 #[derive(Debug, Default)]
 pub struct MockNonceStorage {
     /// In-memory nonce storage
@@ -75,7 +61,6 @@ pub struct MockNonceStorage {
 }
 
 /// Test nonce information
-#[cfg(feature = "test-utils")]
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Test structure fields
 struct StoredTestNonce {
@@ -88,7 +73,6 @@ struct StoredTestNonce {
 }
 
 /// Mock storage statistics  
-#[cfg(feature = "test-utils")]
 #[derive(Debug, Default, Clone)]
 pub struct MockStorageStats {
     store_operations: u64,
@@ -96,7 +80,6 @@ pub struct MockStorageStats {
     cleanup_operations: u64,
 }
 
-#[cfg(feature = "test-utils")]
 impl MockKeyManager {
     /// Create a new mock key manager for testing
     pub fn new() -> Self {
@@ -344,7 +327,6 @@ impl MockKeyManager {
     }
 }
 
-#[cfg(feature = "test-utils")]
 impl MockNonceStorage {
     /// Create new mock nonce storage for testing
     pub fn new() -> Self {
@@ -376,7 +358,6 @@ impl MockNonceStorage {
     }
 }
 
-#[cfg(feature = "test-utils")]
 #[async_trait]
 impl NonceStorage for MockNonceStorage {
     async fn store_nonce(
@@ -495,7 +476,6 @@ impl NonceStorage for MockNonceStorage {
     }
 }
 
-#[cfg(feature = "test-utils")]
 impl Default for MockKeyManager {
     fn default() -> Self {
         Self::new()
