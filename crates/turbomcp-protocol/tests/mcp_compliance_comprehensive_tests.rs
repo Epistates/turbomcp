@@ -117,42 +117,6 @@ mod mcp_compliance_tests {
         assert!(parsed.get("_meta").is_some());
     }
 
-    /// Test that ProgressToken supports both string and integer types per MCP 2025-06-18 spec
-    #[test]
-    fn test_progress_token_supports_string_and_integer() {
-        // Test string ProgressToken
-        let string_token = ProgressToken::String("test-token".to_string());
-        let serialized = serde_json::to_string(&string_token).unwrap();
-        assert_eq!(serialized, "\"test-token\"");
-
-        let deserialized: ProgressToken = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized, string_token);
-
-        // Test integer ProgressToken
-        let int_token = ProgressToken::Integer(42);
-        let serialized = serde_json::to_string(&int_token).unwrap();
-        assert_eq!(serialized, "42");
-
-        let deserialized: ProgressToken = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized, int_token);
-
-        // Test that JSON with string is properly parsed
-        let json_string = "\"string-token\"";
-        let parsed: ProgressToken = serde_json::from_str(json_string).unwrap();
-        match parsed {
-            ProgressToken::String(s) => assert_eq!(s, "string-token"),
-            _ => panic!("Expected string variant"),
-        }
-
-        // Test that JSON with integer is properly parsed
-        let json_int = "123";
-        let parsed: ProgressToken = serde_json::from_str(json_int).unwrap();
-        match parsed {
-            ProgressToken::Integer(i) => assert_eq!(i, 123),
-            _ => panic!("Expected integer variant"),
-        }
-    }
-
     /// Test that all request types support _meta field per MCP 2025-06-18 spec
     #[test]
     fn test_all_request_types_support_meta_field() {

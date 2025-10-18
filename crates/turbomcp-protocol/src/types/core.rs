@@ -8,7 +8,6 @@
 //!
 //! - [`ProtocolVersion`] - Protocol version identifier
 //! - [`RequestId`] - JSON-RPC request identifier
-//! - [`ProgressToken`] - Progress tracking token (string or integer)
 //! - [`BaseMetadata`] - Common name/title structure
 //! - [`Implementation`] - Implementation information
 //! - [`Annotations`] - Common annotation structure
@@ -92,104 +91,6 @@ pub type Base64String = String;
 
 /// Cursor for pagination
 pub type Cursor = String;
-
-/// Progress token for tracking long-running operations
-///
-/// Per MCP 2025-06-18 specification, progress tokens can be either strings or integers
-/// to provide flexibility in how clients and servers track long-running operations.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum ProgressToken {
-    /// String-based progress token
-    String(String),
-    /// Integer-based progress token
-    Integer(i64),
-}
-
-impl ProgressToken {
-    /// Create a new string-based progress token
-    pub fn from_string<S: Into<String>>(s: S) -> Self {
-        Self::String(s.into())
-    }
-
-    /// Create a new integer-based progress token
-    pub fn from_integer(i: i64) -> Self {
-        Self::Integer(i)
-    }
-
-    /// Check if this is a string token
-    pub fn is_string(&self) -> bool {
-        matches!(self, Self::String(_))
-    }
-
-    /// Check if this is an integer token
-    pub fn is_integer(&self) -> bool {
-        matches!(self, Self::Integer(_))
-    }
-
-    /// Get the string value if this is a string token
-    pub fn as_string(&self) -> Option<&str> {
-        match self {
-            Self::String(s) => Some(s),
-            Self::Integer(_) => None,
-        }
-    }
-
-    /// Get the integer value if this is an integer token
-    pub fn as_integer(&self) -> Option<i64> {
-        match self {
-            Self::String(_) => None,
-            Self::Integer(i) => Some(*i),
-        }
-    }
-
-    /// Convert to a string representation for display/logging
-    pub fn to_display_string(&self) -> String {
-        match self {
-            Self::String(s) => s.clone(),
-            Self::Integer(i) => i.to_string(),
-        }
-    }
-}
-
-impl std::fmt::Display for ProgressToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::String(s) => write!(f, "{}", s),
-            Self::Integer(i) => write!(f, "{}", i),
-        }
-    }
-}
-
-impl From<String> for ProgressToken {
-    fn from(s: String) -> Self {
-        Self::String(s)
-    }
-}
-
-impl From<&str> for ProgressToken {
-    fn from(s: &str) -> Self {
-        Self::String(s.to_string())
-    }
-}
-
-impl From<i64> for ProgressToken {
-    fn from(i: i64) -> Self {
-        Self::Integer(i)
-    }
-}
-
-impl From<i32> for ProgressToken {
-    fn from(i: i32) -> Self {
-        Self::Integer(i64::from(i))
-    }
-}
-
-impl From<u32> for ProgressToken {
-    fn from(i: u32) -> Self {
-        Self::Integer(i64::from(i))
-    }
-}
 
 /// Standard JSON-RPC error codes per specification
 pub mod error_codes {

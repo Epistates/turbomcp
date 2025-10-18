@@ -18,7 +18,6 @@ fn test_type_aliases() {
     let _mime_type: MimeType = "text/plain".to_string();
     let _base64: Base64String = "SGVsbG8gV29ybGQ=".to_string();
     let _cursor: Cursor = "next_page".to_string();
-    let _progress_token: ProgressToken = ProgressToken::String("progress_123".to_string());
 }
 
 // ============================================================================
@@ -897,21 +896,10 @@ fn test_server_request_variants() {
 #[test]
 fn test_client_notification_variants() {
     let initialized = ClientNotification::Initialized(InitializedNotification);
-    let progress = ClientNotification::Progress(ProgressNotification {
-        progress_token: ProgressToken::String("token".to_string()),
-        progress: 50.0,
-        total: Some(100.0),
-        message: None,
-    });
 
     match initialized {
         ClientNotification::Initialized(_) => (),
         _ => panic!("Expected initialized notification"),
-    }
-
-    match progress {
-        ClientNotification::Progress(notif) => assert_eq!(notif.progress, 50.0),
-        _ => panic!("Expected progress notification"),
     }
 }
 

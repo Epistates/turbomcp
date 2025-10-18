@@ -9,7 +9,7 @@ use super::{
     completion::CompleteRequestParams,
     elicitation::ElicitRequestParams,
     initialization::{InitializeRequest, InitializedNotification},
-    logging::{LoggingNotification, ProgressNotification, SetLevelRequest},
+    logging::{LoggingNotification, SetLevelRequest},
     ping::PingParams,
     prompts::{GetPromptRequest, ListPromptsRequest},
     resources::{
@@ -107,10 +107,6 @@ pub enum ClientNotification {
     #[serde(rename = "notifications/initialized")]
     Initialized(InitializedNotification),
 
-    /// Progress update
-    #[serde(rename = "notifications/progress")]
-    Progress(ProgressNotification),
-
     /// Roots list changed
     #[serde(rename = "notifications/roots/list_changed")]
     RootsListChanged(RootsListChangedNotification),
@@ -131,10 +127,6 @@ pub enum ServerNotification {
     /// Resource list changed
     #[serde(rename = "notifications/resources/list_changed")]
     ResourceListChanged,
-
-    /// Progress update
-    #[serde(rename = "notifications/progress")]
-    Progress(ProgressNotification),
 
     /// Request cancellation
     #[serde(rename = "notifications/cancelled")]
