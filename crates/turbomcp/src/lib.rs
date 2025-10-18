@@ -570,7 +570,6 @@ pub mod helpers;
 
 pub mod injection;
 pub mod lifespan;
-pub mod progress;
 pub mod registry;
 
 pub mod router;
@@ -621,7 +620,6 @@ pub use crate::elicitation_api::{
 pub use crate::helpers::*;
 pub use crate::injection::*;
 pub use crate::lifespan::*;
-pub use crate::progress::*;
 pub use crate::registry::*;
 pub use crate::router::{ToolRouter, ToolRouterExt};
 pub use crate::server::*;
@@ -1196,27 +1194,6 @@ impl Context {
     pub async fn error<S: AsRef<str>>(&self, message: S) -> McpResult<()> {
         tracing::error!("{}", message.as_ref());
         // Logging notification sent via tracing infrastructure
-        Ok(())
-    }
-
-    /// Report progress for long-running operations
-    ///
-    /// # Errors
-    ///
-    /// Returns [`McpError::Context`] if progress reporting fails due to
-    /// invalid progress values or notification system errors.
-    pub async fn report_progress(&self, progress: f64, total: Option<f64>) -> McpResult<()> {
-        tracing::debug!("Progress: {} / {:?}", progress, total);
-
-        // Generate or use existing progress token
-        let token = crate::progress::ProgressToken::new();
-
-        // Update progress using the global progress manager
-        crate::progress::global_progress_manager().update_progress(&token, progress, total)?;
-
-        // Progress notification sent to MCP client via notification system
-        // Integrated with the MCP notification protocol
-
         Ok(())
     }
 

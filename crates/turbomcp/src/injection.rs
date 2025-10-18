@@ -162,47 +162,6 @@ impl Injectable for Logger {
     }
 }
 
-/// Injectable progress reporter
-#[derive(Clone)]
-pub struct ProgressReporter {
-    token: crate::progress::ProgressToken,
-}
-
-impl ProgressReporter {
-    /// Report progress update
-    pub async fn update(&self, progress: f64, total: Option<f64>) -> McpResult<()> {
-        crate::progress::global_progress_manager().update_progress(&self.token, progress, total)
-    }
-
-    /// Report progress with message
-    pub async fn update_with_message(
-        &self,
-        progress: f64,
-        total: Option<f64>,
-        message: String,
-    ) -> McpResult<()> {
-        crate::progress::global_progress_manager().update_progress_with_message(
-            &self.token,
-            progress,
-            total,
-            message,
-        )
-    }
-
-    /// Mark operation as complete
-    pub async fn complete(&self) -> McpResult<()> {
-        crate::progress::global_progress_manager().complete_operation(&self.token)
-    }
-}
-
-#[async_trait]
-impl Injectable for ProgressReporter {
-    async fn inject(_ctx: &Context) -> McpResult<Self> {
-        let token = crate::progress::start_progress("Handler operation");
-        Ok(Self { token })
-    }
-}
-
 /// Database connection pool injectable
 #[derive(Clone)]
 pub struct Database {
@@ -607,15 +566,5 @@ mod tests {
         cache.set("key1", "value1").await.unwrap();
         let value: Option<String> = cache.get("key1").await.unwrap();
         assert_eq!(value, Some("value1".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_progress_reporter_injection() {
-        let ctx = create_test_context().await;
-        let reporter = ProgressReporter::inject(&ctx).await.unwrap();
-
-        // Test progress reporting
-        reporter.update(50.0, Some(100.0)).await.unwrap();
-        reporter.complete().await.unwrap();
     }
 }
