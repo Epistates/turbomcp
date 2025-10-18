@@ -145,6 +145,7 @@ impl HandlerError {
     /// assert_eq!(jsonrpc_error.code, -1);
     /// assert!(jsonrpc_error.message.contains("User rejected"));
     /// ```
+    #[must_use]
     pub fn into_jsonrpc_error(&self) -> JsonRpcError {
         let (code, message) = match self {
             HandlerError::UserCancelled => (-1, "User rejected sampling request".to_string()),
@@ -231,11 +232,13 @@ impl ElicitationRequest {
     ///
     /// * `id` - Request ID from JSON-RPC envelope
     /// * `request` - Protocol-level elicit request
+    #[must_use]
     pub fn new(id: MessageId, request: turbomcp_protocol::types::ElicitRequest) -> Self {
         Self { id, inner: request }
     }
 
     /// Get request ID from JSON-RPC envelope
+    #[must_use]
     pub fn id(&self) -> &MessageId {
         &self.id
     }
@@ -243,6 +246,7 @@ impl ElicitationRequest {
     /// Get human-readable message for the user
     ///
     /// This is the primary prompt/question being asked of the user.
+    #[must_use]
     pub fn message(&self) -> &str {
         &self.inner.params.message
     }
@@ -276,6 +280,7 @@ impl ElicitationRequest {
     /// }
     /// # }
     /// ```
+    #[must_use]
     pub fn schema(&self) -> &turbomcp_protocol::types::ElicitationSchema {
         &self.inner.params.schema
     }
@@ -284,6 +289,7 @@ impl ElicitationRequest {
     ///
     /// Converts milliseconds from the protocol to ergonomic `Duration` type.
     /// No data loss occurs (unlike converting to integer seconds).
+    #[must_use]
     pub fn timeout(&self) -> Option<Duration> {
         self.inner
             .params
@@ -292,6 +298,7 @@ impl ElicitationRequest {
     }
 
     /// Check if request can be cancelled by the user
+    #[must_use]
     pub fn is_cancellable(&self) -> bool {
         self.inner.params.cancellable.unwrap_or(false)
     }
@@ -299,11 +306,13 @@ impl ElicitationRequest {
     /// Get access to underlying protocol request if needed
     ///
     /// For advanced use cases where you need the raw protocol type.
+    #[must_use]
     pub fn as_protocol(&self) -> &turbomcp_protocol::types::ElicitRequest {
         &self.inner
     }
 
     /// Consume wrapper and return protocol request
+    #[must_use]
     pub fn into_protocol(self) -> turbomcp_protocol::types::ElicitRequest {
         self.inner
     }
@@ -344,6 +353,7 @@ impl ElicitationResponse {
     /// # Arguments
     ///
     /// * `content` - User-submitted data conforming to the request schema
+    #[must_use]
     pub fn accept(content: HashMap<String, serde_json::Value>) -> Self {
         Self {
             inner: turbomcp_protocol::types::ElicitResult {
@@ -355,6 +365,7 @@ impl ElicitationResponse {
     }
 
     /// Create response with decline action (user explicitly declined)
+    #[must_use]
     pub fn decline() -> Self {
         Self {
             inner: turbomcp_protocol::types::ElicitResult {
@@ -366,6 +377,7 @@ impl ElicitationResponse {
     }
 
     /// Create response with cancel action (user dismissed without choice)
+    #[must_use]
     pub fn cancel() -> Self {
         Self {
             inner: turbomcp_protocol::types::ElicitResult {
@@ -377,11 +389,13 @@ impl ElicitationResponse {
     }
 
     /// Get the action from this response
+    #[must_use]
     pub fn action(&self) -> ElicitationAction {
         self.inner.action
     }
 
     /// Get the content from this response
+    #[must_use]
     pub fn content(&self) -> Option<&HashMap<String, serde_json::Value>> {
         self.inner.content.as_ref()
     }
@@ -910,6 +924,7 @@ pub struct HandlerRegistry {
 
 impl HandlerRegistry {
     /// Create a new empty handler registry
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -972,61 +987,73 @@ impl HandlerRegistry {
     }
 
     /// Check if a roots handler is registered
+    #[must_use]
     pub fn has_roots_handler(&self) -> bool {
         self.roots.is_some()
     }
 
     /// Check if an elicitation handler is registered
+    #[must_use]
     pub fn has_elicitation_handler(&self) -> bool {
         self.elicitation.is_some()
     }
 
     /// Check if a progress handler is registered
+    #[must_use]
     pub fn has_progress_handler(&self) -> bool {
         self.progress.is_some()
     }
 
     /// Check if a log handler is registered
+    #[must_use]
     pub fn has_log_handler(&self) -> bool {
         self.log.is_some()
     }
 
     /// Check if a resource update handler is registered
+    #[must_use]
     pub fn has_resource_update_handler(&self) -> bool {
         self.resource_update.is_some()
     }
 
     /// Get the progress handler if registered
+    #[must_use]
     pub fn get_progress_handler(&self) -> Option<Arc<dyn ProgressHandler>> {
         self.progress.clone()
     }
 
     /// Get the log handler if registered
+    #[must_use]
     pub fn get_log_handler(&self) -> Option<Arc<dyn LogHandler>> {
         self.log.clone()
     }
 
     /// Get the resource update handler if registered
+    #[must_use]
     pub fn get_resource_update_handler(&self) -> Option<Arc<dyn ResourceUpdateHandler>> {
         self.resource_update.clone()
     }
 
     /// Get the cancellation handler if registered
+    #[must_use]
     pub fn get_cancellation_handler(&self) -> Option<Arc<dyn CancellationHandler>> {
         self.cancellation.clone()
     }
 
     /// Get the resource list changed handler if registered
+    #[must_use]
     pub fn get_resource_list_changed_handler(&self) -> Option<Arc<dyn ResourceListChangedHandler>> {
         self.resource_list_changed.clone()
     }
 
     /// Get the prompt list changed handler if registered
+    #[must_use]
     pub fn get_prompt_list_changed_handler(&self) -> Option<Arc<dyn PromptListChangedHandler>> {
         self.prompt_list_changed.clone()
     }
 
     /// Get the tool list changed handler if registered
+    #[must_use]
     pub fn get_tool_list_changed_handler(&self) -> Option<Arc<dyn ToolListChangedHandler>> {
         self.tool_list_changed.clone()
     }

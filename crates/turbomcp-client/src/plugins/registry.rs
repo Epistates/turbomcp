@@ -59,6 +59,7 @@ impl Default for PluginRegistry {
 
 impl PluginRegistry {
     /// Create a new empty plugin registry
+    #[must_use]
     pub fn new() -> Self {
         Self {
             plugins: Vec::new(),
@@ -195,11 +196,13 @@ impl PluginRegistry {
     }
 
     /// Check if a plugin is registered
+    #[must_use]
     pub fn has_plugin(&self, plugin_name: &str) -> bool {
         self.plugin_map.contains_key(plugin_name)
     }
 
     /// Get a plugin by name
+    #[must_use]
     pub fn get_plugin(&self, plugin_name: &str) -> Option<Arc<dyn ClientPlugin>> {
         self.plugin_map
             .get(plugin_name)
@@ -208,6 +211,7 @@ impl PluginRegistry {
     }
 
     /// Get all registered plugin names in execution order
+    #[must_use]
     pub fn get_plugin_names(&self) -> Vec<String> {
         self.plugins
             .iter()
@@ -216,6 +220,7 @@ impl PluginRegistry {
     }
 
     /// Get the number of registered plugins
+    #[must_use]
     pub fn plugin_count(&self) -> usize {
         self.plugins.len()
     }
@@ -362,6 +367,7 @@ impl PluginRegistry {
     }
 
     /// Get plugin information for debugging
+    #[must_use]
     pub fn get_plugin_info(&self) -> Vec<(String, String, Option<String>)> {
         self.plugins
             .iter()

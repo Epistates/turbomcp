@@ -145,6 +145,7 @@ pub struct PluginContext {
 
 impl PluginContext {
     /// Create a new plugin context
+    #[must_use]
     pub fn new(
         client_name: String,
         client_version: String,
@@ -162,16 +163,19 @@ impl PluginContext {
     }
 
     /// Check if a capability is available
+    #[must_use]
     pub fn has_capability(&self, capability: &str) -> bool {
         self.capabilities.contains_key(capability)
     }
 
     /// Get a configuration value
+    #[must_use]
     pub fn get_config(&self, key: &str) -> Option<&Value> {
         self.config.get(key)
     }
 
     /// Check if a plugin dependency is available
+    #[must_use]
     pub fn has_plugin(&self, plugin_name: &str) -> bool {
         self.available_plugins.contains(&plugin_name.to_string())
     }
@@ -192,6 +196,7 @@ pub struct RequestContext {
 
 impl RequestContext {
     /// Create a new request context
+    #[must_use]
     pub fn new(request: JsonRpcRequest, metadata: HashMap<String, Value>) -> Self {
         Self {
             request,
@@ -201,11 +206,13 @@ impl RequestContext {
     }
 
     /// Get the request method
+    #[must_use]
     pub fn method(&self) -> &str {
         &self.request.method
     }
 
     /// Get request parameters
+    #[must_use]
     pub fn params(&self) -> Option<&Value> {
         self.request.params.as_ref()
     }
@@ -216,6 +223,7 @@ impl RequestContext {
     }
 
     /// Get metadata value
+    #[must_use]
     pub fn get_metadata(&self, key: &str) -> Option<&Value> {
         self.metadata.get(key)
     }
@@ -242,6 +250,7 @@ pub struct ResponseContext {
 
 impl ResponseContext {
     /// Create a new response context
+    #[must_use]
     pub fn new(
         request_context: RequestContext,
         response: Option<Value>,

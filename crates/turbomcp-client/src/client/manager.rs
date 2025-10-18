@@ -110,6 +110,7 @@ impl Default for ManagerConfig {
 
 impl ManagerConfig {
     /// Create a new manager configuration with default values
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -152,12 +153,14 @@ impl ServerGroup {
     }
 
     /// Set the failover threshold
+    #[must_use]
     pub fn with_failover_threshold(mut self, threshold: usize) -> Self {
         self.failover_threshold = threshold;
         self
     }
 
     /// Get all server IDs in priority order (primary first, then backups)
+    #[must_use]
     pub fn all_servers(&self) -> Vec<&str> {
         std::iter::once(self.primary.as_str())
             .chain(self.backups.iter().map(|s| s.as_str()))
@@ -165,6 +168,7 @@ impl ServerGroup {
     }
 
     /// Get the next available server after the current one
+    #[must_use]
     pub fn next_server(&self, current: &str) -> Option<&str> {
         let servers = self.all_servers();
         let current_idx = servers.iter().position(|&s| s == current)?;
@@ -217,6 +221,7 @@ pub struct SessionManager<T: Transport + 'static> {
 
 impl<T: Transport + Send + 'static> SessionManager<T> {
     /// Create a new connection manager with the specified configuration
+    #[must_use]
     pub fn new(config: ManagerConfig) -> Self {
         Self {
             config,
@@ -226,6 +231,7 @@ impl<T: Transport + Send + 'static> SessionManager<T> {
     }
 
     /// Create a new connection manager with default configuration
+    #[must_use]
     pub fn with_defaults() -> Self {
         Self::new(ManagerConfig::default())
     }

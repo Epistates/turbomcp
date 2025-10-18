@@ -224,21 +224,25 @@ impl OAuth2Client {
     }
 
     /// Get access to the authorization code client
+    #[must_use]
     pub fn auth_code_client(&self) -> &BasicClient {
         &self.auth_code_client
     }
 
     /// Get access to the client credentials client (if available)
+    #[must_use]
     pub fn client_credentials_client(&self) -> Option<&BasicClient> {
         self.client_credentials_client.as_ref()
     }
 
     /// Get access to the device code client (if available)
+    #[must_use]
     pub fn device_code_client(&self) -> Option<&BasicClient> {
         self.device_code_client.as_ref()
     }
 
     /// Get the provider configuration
+    #[must_use]
     pub fn provider_config(&self) -> &ProviderConfig {
         &self.provider_config
     }

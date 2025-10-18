@@ -83,6 +83,7 @@ impl Default for MiddlewareChain {
 
 impl MiddlewareChain {
     /// Create a new empty middleware chain
+    #[must_use]
     pub fn new() -> Self {
         Self {
             request_middleware: Vec::new(),
@@ -207,16 +208,19 @@ impl MiddlewareChain {
     }
 
     /// Get the number of request middleware
+    #[must_use]
     pub fn request_middleware_count(&self) -> usize {
         self.request_middleware.len()
     }
 
     /// Get the number of response middleware
+    #[must_use]
     pub fn response_middleware_count(&self) -> usize {
         self.response_middleware.len()
     }
 
     /// Get names of all request middleware
+    #[must_use]
     pub fn get_request_middleware_names(&self) -> Vec<String> {
         self.request_middleware
             .iter()
@@ -225,6 +229,7 @@ impl MiddlewareChain {
     }
 
     /// Get names of all response middleware
+    #[must_use]
     pub fn get_response_middleware_names(&self) -> Vec<String> {
         self.response_middleware
             .iter()

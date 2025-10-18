@@ -133,6 +133,7 @@ pub enum DpopError {
 
 impl DpopError {
     /// Check if this error indicates a security violation
+    #[must_use]
     pub fn is_security_violation(&self) -> bool {
         matches!(
             self,
@@ -144,6 +145,7 @@ impl DpopError {
     }
 
     /// Check if this error is due to client clock skew
+    #[must_use]
     pub fn is_clock_skew_error(&self) -> bool {
         matches!(
             self,
@@ -152,6 +154,7 @@ impl DpopError {
     }
 
     /// Check if this error is a cryptographic failure
+    #[must_use]
     pub fn is_cryptographic_error(&self) -> bool {
         matches!(
             self,
@@ -160,6 +163,7 @@ impl DpopError {
     }
 
     /// Get error severity for logging and monitoring
+    #[must_use]
     pub fn severity(&self) -> ErrorSeverity {
         match self {
             // Critical security violations
@@ -191,6 +195,7 @@ impl DpopError {
     }
 
     /// Get suggested remediation for this error
+    #[must_use]
     pub fn remediation_hint(&self) -> &'static str {
         match self {
             Self::ClockSkewTooLarge { .. } => "Synchronize system clock with NTP server",

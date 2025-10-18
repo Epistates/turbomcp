@@ -288,6 +288,7 @@ impl ClientCapabilities {
     /// assert!(capabilities.resources);
     /// assert!(capabilities.sampling);
     /// ```
+    #[must_use]
     pub fn all() -> Self {
         Self {
             tools: true,
@@ -313,6 +314,7 @@ impl ClientCapabilities {
     /// assert!(capabilities.resources);
     /// assert!(!capabilities.sampling);
     /// ```
+    #[must_use]
     pub fn core() -> Self {
         Self {
             tools: true,
@@ -338,6 +340,7 @@ impl ClientCapabilities {
     /// assert!(!capabilities.resources);
     /// assert!(!capabilities.sampling);
     /// ```
+    #[must_use]
     pub fn minimal() -> Self {
         Self {
             tools: true,
@@ -350,6 +353,7 @@ impl ClientCapabilities {
     /// Only tools enabled
     ///
     /// Same as `minimal()`, provided for clarity.
+    #[must_use]
     pub fn only_tools() -> Self {
         Self::minimal()
     }
@@ -368,6 +372,7 @@ impl ClientCapabilities {
     /// assert!(!capabilities.prompts);
     /// assert!(capabilities.resources);
     /// ```
+    #[must_use]
     pub fn only_resources() -> Self {
         Self {
             tools: false,
@@ -391,6 +396,7 @@ impl ClientCapabilities {
     /// assert!(capabilities.prompts);
     /// assert!(!capabilities.resources);
     /// ```
+    #[must_use]
     pub fn only_prompts() -> Self {
         Self {
             tools: false,
@@ -403,6 +409,7 @@ impl ClientCapabilities {
     /// Only sampling enabled
     ///
     /// Use this for clients that exclusively handle server-initiated sampling requests.
+    #[must_use]
     pub fn only_sampling() -> Self {
         Self {
             tools: false,
@@ -571,6 +578,7 @@ impl ClientBuilder {
     /// Create a new client builder
     ///
     /// Returns a new builder with default configuration.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -584,6 +592,7 @@ impl ClientBuilder {
     /// # Arguments
     ///
     /// * `enabled` - Whether to enable tool support
+    #[must_use]
     pub fn with_tools(mut self, enabled: bool) -> Self {
         self.capabilities.tools = enabled;
         self
@@ -594,6 +603,7 @@ impl ClientBuilder {
     /// # Arguments
     ///
     /// * `enabled` - Whether to enable prompt support
+    #[must_use]
     pub fn with_prompts(mut self, enabled: bool) -> Self {
         self.capabilities.prompts = enabled;
         self
@@ -604,6 +614,7 @@ impl ClientBuilder {
     /// # Arguments
     ///
     /// * `enabled` - Whether to enable resource support
+    #[must_use]
     pub fn with_resources(mut self, enabled: bool) -> Self {
         self.capabilities.resources = enabled;
         self
@@ -614,6 +625,7 @@ impl ClientBuilder {
     /// # Arguments
     ///
     /// * `enabled` - Whether to enable sampling support
+    #[must_use]
     pub fn with_sampling(mut self, enabled: bool) -> Self {
         self.capabilities.sampling = enabled;
         self
@@ -624,6 +636,7 @@ impl ClientBuilder {
     /// # Arguments
     ///
     /// * `capabilities` - The capabilities configuration
+    #[must_use]
     pub fn with_capabilities(mut self, capabilities: ClientCapabilities) -> Self {
         self.capabilities = capabilities;
         self
@@ -638,6 +651,7 @@ impl ClientBuilder {
     /// # Arguments
     ///
     /// * `config` - The connection configuration
+    #[must_use]
     pub fn with_connection_config(mut self, config: ConnectionConfig) -> Self {
         self.connection_config = config;
         self
@@ -648,6 +662,7 @@ impl ClientBuilder {
     /// # Arguments
     ///
     /// * `timeout_ms` - Timeout in milliseconds
+    #[must_use]
     pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
         self.connection_config.timeout_ms = timeout_ms;
         self
@@ -658,6 +673,7 @@ impl ClientBuilder {
     /// # Arguments
     ///
     /// * `max_retries` - Maximum number of retries
+    #[must_use]
     pub fn with_max_retries(mut self, max_retries: u32) -> Self {
         self.connection_config.max_retries = max_retries;
         self
@@ -668,6 +684,7 @@ impl ClientBuilder {
     /// # Arguments
     ///
     /// * `delay_ms` - Retry delay in milliseconds
+    #[must_use]
     pub fn with_retry_delay(mut self, delay_ms: u64) -> Self {
         self.connection_config.retry_delay_ms = delay_ms;
         self
@@ -678,6 +695,7 @@ impl ClientBuilder {
     /// # Arguments
     ///
     /// * `interval_ms` - Keep-alive interval in milliseconds
+    #[must_use]
     pub fn with_keepalive(mut self, interval_ms: u64) -> Self {
         self.connection_config.keepalive_ms = interval_ms;
         self
@@ -705,6 +723,7 @@ impl ClientBuilder {
     ///     .enable_resilience()
     ///     .build(StdioTransport::new());
     /// ```
+    #[must_use]
     pub fn enable_resilience(mut self) -> Self {
         self.enable_resilience = true;
         self
@@ -738,6 +757,7 @@ impl ClientBuilder {
     ///     })
     ///     .build(StdioTransport::new());
     /// ```
+    #[must_use]
     pub fn with_retry_config(
         mut self,
         config: turbomcp_transport::resilience::RetryConfig,
@@ -772,6 +792,7 @@ impl ClientBuilder {
     ///     })
     ///     .build(StdioTransport::new());
     /// ```
+    #[must_use]
     pub fn with_circuit_breaker_config(
         mut self,
         config: turbomcp_transport::resilience::CircuitBreakerConfig,
@@ -806,6 +827,7 @@ impl ClientBuilder {
     ///     })
     ///     .build(StdioTransport::new());
     /// ```
+    #[must_use]
     pub fn with_health_check_config(
         mut self,
         config: turbomcp_transport::resilience::HealthCheckConfig,
@@ -856,6 +878,7 @@ impl ClientBuilder {
     /// # Arguments
     ///
     /// * `plugins` - Vector of plugin implementations
+    #[must_use]
     pub fn with_plugins(mut self, plugins: Vec<Arc<dyn crate::plugins::ClientPlugin>>) -> Self {
         self.plugins.extend(plugins);
         self
@@ -1130,21 +1153,25 @@ impl ClientBuilder {
     // ============================================================================
 
     /// Get the current capabilities configuration
+    #[must_use]
     pub fn capabilities(&self) -> &ClientCapabilities {
         &self.capabilities
     }
 
     /// Get the current connection configuration
+    #[must_use]
     pub fn connection_config(&self) -> &ConnectionConfig {
         &self.connection_config
     }
 
     /// Get the number of registered plugins
+    #[must_use]
     pub fn plugin_count(&self) -> usize {
         self.plugins.len()
     }
 
     /// Check if any handlers are registered
+    #[must_use]
     pub fn has_handlers(&self) -> bool {
         self.elicitation_handler.is_some()
             || self.progress_handler.is_some()

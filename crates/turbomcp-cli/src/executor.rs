@@ -13,6 +13,7 @@ pub struct CommandExecutor {
 }
 
 impl CommandExecutor {
+    #[must_use]
     pub fn new(format: OutputFormat, colored: bool, verbose: bool) -> Self {
         Self {
             formatter: Formatter::new(format, colored),

@@ -1375,6 +1375,7 @@ impl<T: Transport + 'static> Client<T> {
     }
 
     /// Get the client's capabilities configuration
+    #[must_use]
     pub fn capabilities(&self) -> &ClientCapabilities {
         &self.inner.capabilities
     }

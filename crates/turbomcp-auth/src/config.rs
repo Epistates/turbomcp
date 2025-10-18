@@ -300,6 +300,7 @@ pub struct McpResourceRegistry {
 
 impl McpResourceRegistry {
     /// Create a new MCP resource registry
+    #[must_use]
     pub fn new(base_resource_uri: String, auth_server: String) -> Self {
         Self {
             resources: Arc::new(RwLock::new(HashMap::new())),
@@ -522,6 +523,7 @@ pub struct DynamicClientRegistration {
 
 impl DynamicClientRegistration {
     /// Create a new dynamic client registration manager
+    #[must_use]
     pub fn new(registration_endpoint: String) -> Self {
         Self {
             registration_endpoint,
@@ -583,6 +585,7 @@ impl DynamicClientRegistration {
     }
 
     /// Create a default MCP client registration request
+    #[must_use]
     pub fn create_mcp_client_request(
         client_name: &str,
         redirect_uris: Vec<String>,

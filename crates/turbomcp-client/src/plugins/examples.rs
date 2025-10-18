@@ -96,6 +96,7 @@ pub struct MetricsPlugin {
 
 impl MetricsPlugin {
     /// Create a new metrics plugin
+    #[must_use]
     pub fn new(_config: PluginConfig) -> Self {
         Self {
             metrics: Arc::new(Mutex::new(MetricsData::default())),
@@ -105,6 +106,7 @@ impl MetricsPlugin {
     }
 
     /// Get current metrics data
+    #[must_use]
     pub fn get_metrics(&self) -> MetricsData {
         self.metrics.lock().unwrap().clone()
     }
@@ -357,6 +359,7 @@ pub struct RetryPlugin {
 
 impl RetryPlugin {
     /// Create a new retry plugin
+    #[must_use]
     pub fn new(config: PluginConfig) -> Self {
         let retry_config = match config {
             PluginConfig::Retry(config) => config,
@@ -616,6 +619,7 @@ struct CacheStats {
 
 impl CachePlugin {
     /// Create a new cache plugin
+    #[must_use]
     pub fn new(config: PluginConfig) -> Self {
         let cache_config = match config {
             PluginConfig::Cache(config) => config,

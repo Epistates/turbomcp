@@ -14,6 +14,7 @@ pub struct Formatter {
 }
 
 impl Formatter {
+    #[must_use]
     pub fn new(format: OutputFormat, colored: bool) -> Self {
         Self { format, colored }
     }

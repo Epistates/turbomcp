@@ -33,6 +33,7 @@ pub enum DpopAlgorithm {
 
 impl DpopAlgorithm {
     /// Get the algorithm name as specified in RFC 7518
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::RS256 => "RS256",
@@ -42,6 +43,7 @@ impl DpopAlgorithm {
     }
 
     /// Get recommended key size for the algorithm
+    #[must_use]
     pub fn recommended_key_size(self) -> u32 {
         match self {
             Self::RS256 | Self::PS256 => 2048, // RSA-2048 minimum
@@ -50,6 +52,7 @@ impl DpopAlgorithm {
     }
 
     /// Check if algorithm is suitable for production use
+    #[must_use]
     pub fn is_production_ready(self) -> bool {
         // All RFC 9449 required algorithms are implemented
         true
@@ -95,6 +98,7 @@ pub struct DpopKeyPair {
 
 impl DpopKeyPair {
     /// Check if the key pair has expired
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         self.expires_at
             .map(|expires| SystemTime::now() > expires)
@@ -102,6 +106,7 @@ impl DpopKeyPair {
     }
 
     /// Check if the key pair will expire within the given duration
+    #[must_use]
     pub fn expires_within(&self, duration: Duration) -> bool {
         self.expires_at
             .map(|expires| expires <= SystemTime::now() + duration)
@@ -109,6 +114,7 @@ impl DpopKeyPair {
     }
 
     /// Get the age of this key pair
+    #[must_use]
     pub fn age(&self) -> Duration {
         SystemTime::now()
             .duration_since(self.created_at)
@@ -288,6 +294,7 @@ pub struct DpopProof {
 
 impl DpopProof {
     /// Create a new DPoP proof
+    #[must_use]
     pub fn new(header: DpopHeader, payload: DpopPayload, signature: String) -> Self {
         Self {
             header,
@@ -298,6 +305,7 @@ impl DpopProof {
     }
 
     /// Create a new DPoP proof with pre-computed JWT string for performance
+    #[must_use]
     pub fn new_with_jwt(
         header: DpopHeader,
         payload: DpopPayload,
@@ -510,6 +518,7 @@ impl DpopProof {
     }
 
     /// Check if proof has expired based on timestamp
+    #[must_use]
     pub fn is_expired(&self, max_age: Duration) -> bool {
         let issued_at = SystemTime::UNIX_EPOCH + Duration::from_secs(self.payload.iat as u64);
         SystemTime::now() > issued_at + max_age

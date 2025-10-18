@@ -166,6 +166,7 @@ pub struct AccessToken {
 
 impl AccessToken {
     /// Create a new access token
+    #[must_use]
     pub fn new(
         token: String,
         expires_at: Option<SystemTime>,
@@ -181,21 +182,25 @@ impl AccessToken {
     }
 
     /// Get the token value
+    #[must_use]
     pub fn token(&self) -> &str {
         &self.token
     }
 
     /// Get the token expiration time
+    #[must_use]
     pub fn expires_at(&self) -> Option<SystemTime> {
         self.expires_at
     }
 
     /// Get the token scopes
+    #[must_use]
     pub fn scopes(&self) -> &[String] {
         &self.scopes
     }
 
     /// Get the token metadata
+    #[must_use]
     pub fn metadata(&self) -> &HashMap<String, serde_json::Value> {
         &self.metadata
     }

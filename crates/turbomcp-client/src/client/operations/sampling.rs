@@ -63,6 +63,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     ///
     /// Returns true if a sampling handler has been configured and sampling
     /// capabilities are enabled.
+    #[must_use]
     pub fn has_sampling_handler(&self) -> bool {
         self.inner
             .sampling_handler

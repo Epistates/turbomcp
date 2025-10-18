@@ -243,6 +243,7 @@ pub struct KeyRotationPolicy {
 
 impl KeyRotationPolicy {
     /// Create a policy suitable for development environments
+    #[must_use]
     pub fn development() -> Self {
         Self {
             key_lifetime: Duration::from_secs(24 * 3600), // 24 hours
@@ -252,6 +253,7 @@ impl KeyRotationPolicy {
     }
 
     /// Create a policy suitable for production environments
+    #[must_use]
     pub fn production() -> Self {
         Self {
             key_lifetime: Duration::from_secs(7 * 24 * 3600), // 7 days
@@ -261,6 +263,7 @@ impl KeyRotationPolicy {
     }
 
     /// Calculate expiration time for a key created at the given time
+    #[must_use]
     pub fn calculate_expiration(&self, created_at: SystemTime) -> Option<SystemTime> {
         if self.auto_rotate {
             Some(created_at + self.key_lifetime)
@@ -314,6 +317,7 @@ pub struct MemoryKeyStorage {
 
 impl MemoryKeyStorage {
     /// Create a new in-memory key storage
+    #[must_use]
     pub fn new() -> Self {
         Self {
             keys: Arc::new(RwLock::new(HashMap::new())),
@@ -541,6 +545,7 @@ pub struct RotationMetrics {
 
 impl RotationMetrics {
     /// Create new rotation metrics instance
+    #[must_use]
     pub fn new() -> Self {
         Self {
             successful_rotations: std::sync::atomic::AtomicU64::new(0),
@@ -624,6 +629,7 @@ impl AutoRotationService {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// # });
     /// ```
+    #[must_use]
     pub fn new(key_manager: Arc<DpopKeyManager>) -> Self {
         Self {
             key_manager,

@@ -294,6 +294,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     }
 
     /// Check if a roots handler is registered
+    #[must_use]
     pub fn has_roots_handler(&self) -> bool {
         self.inner
             .handlers
@@ -303,6 +304,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     }
 
     /// Check if an elicitation handler is registered
+    #[must_use]
     pub fn has_elicitation_handler(&self) -> bool {
         self.inner
             .handlers
@@ -312,6 +314,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     }
 
     /// Check if a progress handler is registered
+    #[must_use]
     pub fn has_progress_handler(&self) -> bool {
         self.inner
             .handlers
@@ -321,6 +324,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     }
 
     /// Check if a log handler is registered
+    #[must_use]
     pub fn has_log_handler(&self) -> bool {
         self.inner
             .handlers
@@ -330,6 +334,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     }
 
     /// Check if a resource update handler is registered
+    #[must_use]
     pub fn has_resource_update_handler(&self) -> bool {
         self.inner
             .handlers

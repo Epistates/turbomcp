@@ -44,6 +44,7 @@ pub struct DpopProofGenerator {
 
 impl DpopProofGenerator {
     /// Create a new DPoP proof generator
+    #[must_use]
     pub fn new(key_manager: Arc<DpopKeyManager>) -> Self {
         Self::with_nonce_tracker(key_manager, Arc::new(MemoryNonceTracker::new()))
     }
@@ -436,6 +437,7 @@ pub struct MemoryNonceTracker {
 
 impl MemoryNonceTracker {
     /// Create a new memory nonce tracker
+    #[must_use]
     pub fn new() -> Self {
         Self {
             used_nonces: Arc::new(RwLock::new(HashMap::new())),
@@ -650,6 +652,7 @@ impl RedisNonceTracker {
     }
 
     /// Set custom default client ID (feature disabled)
+    #[must_use]
     pub fn with_client_id(self, _client_id: String) -> Self {
         self
     }
