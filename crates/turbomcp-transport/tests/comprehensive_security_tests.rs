@@ -16,7 +16,8 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 use turbomcp_transport::security::{
-    EnhancedSecurityConfigBuilder, SecurityError, SecurityHeaders, validate_message_size,
+    EnhancedSecurityConfigBuilder, SecurityConfigBuilder, SecurityError, SecurityHeaders,
+    validate_message_size,
 };
 
 /// Test helper for creating security headers
@@ -48,10 +49,13 @@ mod integration_tests {
     async fn test_full_security_stack_legitimate_request() {
         // Test all security layers with a legitimate request
         let (validator, session_manager) = EnhancedSecurityConfigBuilder::new()
-            .allow_localhost(true)
-            .require_authentication(true)
-            .with_api_keys(vec!["valid_key_123".to_string()])
-            .with_rate_limit(100, Duration::from_secs(60))
+            .with_security_config(
+                SecurityConfigBuilder::new()
+                    .allow_localhost(true)
+                    .require_authentication(true)
+                    .with_api_keys(vec!["valid_key_123".to_string()])
+                    .with_rate_limit(100, Duration::from_secs(60)),
+            )
             .with_max_sessions_per_ip(5)
             .enforce_ip_binding(true)
             .build();
@@ -90,10 +94,13 @@ mod integration_tests {
     #[tokio::test]
     async fn test_full_security_stack_blocks_attacks() {
         let (validator, session_manager) = EnhancedSecurityConfigBuilder::new()
-            .allow_localhost(true)
-            .require_authentication(true)
-            .with_api_keys(vec!["valid_key_123".to_string()])
-            .with_rate_limit(5, Duration::from_secs(60)) // Very low limit for testing
+            .with_security_config(
+                SecurityConfigBuilder::new()
+                    .allow_localhost(true)
+                    .require_authentication(true)
+                    .with_api_keys(vec!["valid_key_123".to_string()])
+                    .with_rate_limit(5, Duration::from_secs(60)), // Very low limit for testing
+            )
             .with_max_sessions_per_ip(2) // Low limit for testing
             .enforce_ip_binding(true)
             .build();
@@ -174,8 +181,11 @@ mod attack_scenarios {
     #[tokio::test]
     async fn test_dns_rebinding_attack_prevention() {
         let (validator, _) = EnhancedSecurityConfigBuilder::new()
-            .allow_localhost(true)
-            .allow_any_origin(false) // Critical: no wildcard origins
+            .with_security_config(
+                SecurityConfigBuilder::new()
+                    .allow_localhost(true)
+                    .allow_any_origin(false), // Critical: no wildcard origins
+            )
             .build();
 
         let legitimate_ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -325,8 +335,11 @@ mod attack_scenarios {
     #[tokio::test]
     async fn test_rate_limit_attack_resistance() {
         let (validator, _) = EnhancedSecurityConfigBuilder::new()
-            .allow_localhost(true)
-            .with_rate_limit(10, Duration::from_secs(1)) // 10 requests per second
+            .with_security_config(
+                SecurityConfigBuilder::new()
+                    .allow_localhost(true)
+                    .with_rate_limit(10, Duration::from_secs(1)), // 10 requests per second
+            )
             .build();
 
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -366,9 +379,12 @@ mod edge_cases {
     #[tokio::test]
     async fn test_malformed_headers_handling() {
         let (validator, session_manager) = EnhancedSecurityConfigBuilder::new()
-            .allow_localhost(true)
-            .require_authentication(true)
-            .with_api_keys(vec!["valid_key".to_string()])
+            .with_security_config(
+                SecurityConfigBuilder::new()
+                    .allow_localhost(true)
+                    .require_authentication(true)
+                    .with_api_keys(vec!["valid_key".to_string()]),
+            )
             .build();
 
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -560,10 +576,13 @@ mod performance_tests {
     #[tokio::test]
     async fn test_security_validation_performance() {
         let (validator, _) = EnhancedSecurityConfigBuilder::new()
-            .allow_localhost(true)
-            .require_authentication(true)
-            .with_api_keys(vec!["test_key".to_string()])
-            .with_rate_limit(10000, Duration::from_secs(60)) // High limit for performance testing
+            .with_security_config(
+                SecurityConfigBuilder::new()
+                    .allow_localhost(true)
+                    .require_authentication(true)
+                    .with_api_keys(vec!["test_key".to_string()])
+                    .with_rate_limit(10000, Duration::from_secs(60)), // High limit for performance testing
+            )
             .build();
 
         let ip: IpAddr = "127.0.0.1".parse().unwrap();
@@ -597,9 +616,12 @@ mod performance_tests {
     #[tokio::test]
     async fn test_memory_usage_under_load() {
         let (validator, session_manager) = EnhancedSecurityConfigBuilder::new()
-            .allow_localhost(true)
+            .with_security_config(
+                SecurityConfigBuilder::new()
+                    .allow_localhost(true)
+                    .with_rate_limit(1000, Duration::from_secs(60)),
+            )
             .with_max_sessions_per_ip(100)
-            .with_rate_limit(1000, Duration::from_secs(60))
             .build();
 
         // Test memory stability under sustained load

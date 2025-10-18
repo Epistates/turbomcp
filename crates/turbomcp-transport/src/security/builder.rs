@@ -158,65 +158,9 @@ impl EnhancedSecurityConfigBuilder {
         }
     }
 
-    // Basic security configuration methods (delegate to SecurityConfigBuilder)
-
-    /// Set allowed origins for CORS
-    pub fn with_allowed_origins(mut self, origins: Vec<String>) -> Self {
-        self.security_config = self.security_config.with_allowed_origins(origins);
-        self
-    }
-
-    /// Add a single allowed origin
-    pub fn add_allowed_origin(mut self, origin: String) -> Self {
-        self.security_config = self.security_config.add_allowed_origin(origin);
-        self
-    }
-
-    /// Allow localhost origins (localhost and 127.0.0.1)
-    pub fn allow_localhost(mut self, allow: bool) -> Self {
-        self.security_config = self.security_config.allow_localhost(allow);
-        self
-    }
-
-    /// Allow any origin (wildcard '*' - use with caution in production)
-    pub fn allow_any_origin(mut self, allow: bool) -> Self {
-        self.security_config = self.security_config.allow_any_origin(allow);
-        self
-    }
-
-    /// Require authentication
-    pub fn require_authentication(mut self, require: bool) -> Self {
-        self.security_config = self.security_config.require_authentication(require);
-        self
-    }
-
-    /// Set API keys for authentication
-    pub fn with_api_keys(mut self, keys: Vec<String>) -> Self {
-        self.security_config = self.security_config.with_api_keys(keys);
-        self
-    }
-
-    /// Add a single API key
-    pub fn add_api_key(mut self, key: String) -> Self {
-        self.security_config = self.security_config.add_api_key(key);
-        self
-    }
-
-    /// Set authentication method
-    pub fn with_auth_method(mut self, method: AuthMethod) -> Self {
-        self.security_config = self.security_config.with_auth_method(method);
-        self
-    }
-
-    /// Set rate limiting parameters
-    pub fn with_rate_limit(mut self, max_requests: usize, window: Duration) -> Self {
-        self.security_config = self.security_config.with_rate_limit(max_requests, window);
-        self
-    }
-
-    /// Disable rate limiting
-    pub fn disable_rate_limiting(mut self) -> Self {
-        self.security_config = self.security_config.disable_rate_limiting();
+    /// Use a pre-configured SecurityConfigBuilder
+    pub fn with_security_config(mut self, security_config: SecurityConfigBuilder) -> Self {
+        self.security_config = security_config;
         self
     }
 
@@ -265,16 +209,6 @@ impl EnhancedSecurityConfigBuilder {
         let session_manager = SessionSecurityManager::new(self.session_config);
         (validator, session_manager)
     }
-
-    /// Get the current security configuration builder
-    pub fn security_config(&self) -> &SecurityConfigBuilder {
-        &self.security_config
-    }
-
-    /// Get the current session configuration
-    pub fn session_config(&self) -> &SessionSecurityConfig {
-        &self.session_config
-    }
 }
 
 #[cfg(test)]
@@ -321,7 +255,7 @@ mod tests {
     #[test]
     fn test_enhanced_security_config_builder() {
         let (validator, session_manager) = EnhancedSecurityConfigBuilder::new()
-            .allow_localhost(true)
+            .with_security_config(SecurityConfigBuilder::new().allow_localhost(true))
             .with_max_sessions_per_ip(5)
             .with_session_idle_timeout(Duration::from_secs(15 * 60))
             .enforce_ip_binding(true)

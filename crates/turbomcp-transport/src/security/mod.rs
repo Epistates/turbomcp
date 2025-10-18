@@ -144,8 +144,11 @@ mod tests {
     fn test_enhanced_security_example() {
         // Test enhanced security configuration
         let (_validator, session_manager) = EnhancedSecurityConfigBuilder::new()
-            .allow_localhost(true)
-            .allow_any_origin(true)
+            .with_security_config(
+                SecurityConfigBuilder::new()
+                    .allow_localhost(true)
+                    .allow_any_origin(true),
+            )
             .with_max_sessions_per_ip(2)
             .build();
 

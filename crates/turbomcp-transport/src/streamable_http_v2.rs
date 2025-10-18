@@ -198,16 +198,6 @@ impl StreamableHttpConfigBuilder {
         self
     }
 
-    /// Disable rate limiting entirely (useful for development/testing)
-    ///
-    /// # Security Warning
-    /// Only use this in trusted environments. Production deployments should
-    /// always have rate limiting enabled.
-    pub fn without_rate_limit(mut self) -> Self {
-        self.rate_limit = None;
-        self
-    }
-
     /// Allow localhost connections (default: true)
     pub fn allow_localhost(mut self, allow: bool) -> Self {
         self.allow_localhost = allow;
