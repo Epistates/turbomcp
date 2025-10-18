@@ -525,7 +525,6 @@ See `MIGRATION.md` for complete upgrade guide.
 
 ### 🏗️ **CORE INFRASTRUCTURE IMPROVEMENTS**
 - **ENHANCED**: MessagePack serialization with `msgpacker` integration (temporary test workaround in place)
-- **NEW**: Flexible ProgressToken supporting both string and integer types with backward compatibility
 - **IMPROVED**: Macro system with better compile-time routing and automatic discovery
 - **OPTIMIZED**: Message processing with enhanced format detection and validation
 
@@ -548,7 +547,7 @@ See `MIGRATION.md` for complete upgrade guide.
   - ✅ **Added `complete()`**: Argument completion support (completion/complete) for IDE-like experiences
   - ✅ **Added `list_roots()`**: Filesystem roots listing (roots/list) for boundary understanding
   - ✅ **Added elicitation handlers**: Server-initiated user information requests (elicitation/create)
-  - ✅ **Added bidirectional handlers**: Full progress, log, and resource update handler registration
+  - ✅ **Added bidirectional handlers**: Log and resource update handler registration
   - ✅ **Added handler query methods**: `has_*_handler()` methods for capability checking
 - **Full MCP 2025-06-18 Compliance**: SharedClient now provides complete protocol compliance matching regular Client
 - **Zero Breaking Changes**: All additions are purely additive maintaining full backward compatibility
@@ -835,9 +834,8 @@ println!("Suggestions: {:?}", completions.values);
 - **Streamable HTTP Transport**: MCP 2025-06-18 compliant HTTP/SSE transport with streaming capabilities
 - **Client Plugin System**: Extensible plugin architecture for client customization  
 - **LLM Integration**: Comprehensive LLM provider system with sampling protocol
-- **Bidirectional Handlers**: Full support for all 4 MCP handler types:
+- **Bidirectional Handlers**: Full support for MCP handler types:
   - ElicitationHandler for server-initiated prompts
-  - ProgressHandler for operation tracking
   - LogHandler for structured logging
   - ResourceUpdateHandler for file change notifications
 - **Enhanced Builder API**: Improved ServerBuilder and ClientBuilder patterns
