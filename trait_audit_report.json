@@ -1,0 +1,1801 @@
+{
+  "summary": {
+    "total_traits": 153,
+    "single_method_traits": 47,
+    "by_method_count": {
+      "1": 47,
+      "3": 28,
+      "6": 16,
+      "9": 4,
+      "4": 6,
+      "5": 6,
+      "7": 10,
+      "2": 34,
+      "11": 2
+    },
+    "categorization": {
+      "DEFINITELY_REMOVE": 4,
+      "MAYBE_REMOVE": 0,
+      "KEEP_AS_IS": 43
+    }
+  },
+  "details": {
+    "DEFINITELY_REMOVE": [
+      {
+        "trait": {
+          "name": "TransportEventListener",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/core.rs",
+          "line": 559,
+          "method_count": 1,
+          "methods": [
+            "on_event"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait TransportEventListener: Send + Sync {",
+          "body": "/// Handles a transport event.\n    async fn on_event(&self, event: TransportEvent);"
+        },
+        "usage": {
+          "impl_count": 0,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [],
+        "remove_reasons": [
+          "Single method trait",
+          "No implementations found"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ServerTransportEventListener",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/server.rs",
+          "line": 413,
+          "method_count": 1,
+          "methods": [
+            "on_event"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ServerTransportEventListener: Send + Sync {",
+          "body": "/// Handle a server transport event\n    async fn on_event(&self, event: ServerTransportEvent);"
+        },
+        "usage": {
+          "impl_count": 0,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [],
+        "remove_reasons": [
+          "Single method trait",
+          "No implementations found"
+        ]
+      },
+      {
+        "trait": {
+          "name": "TransportEventListener",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-transport-2.0.0-rc.2/src/core.rs",
+          "line": 559,
+          "method_count": 1,
+          "methods": [
+            "on_event"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait TransportEventListener: Send + Sync {",
+          "body": "/// Handles a transport event.\n    async fn on_event(&self, event: TransportEvent);"
+        },
+        "usage": {
+          "impl_count": 0,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [],
+        "remove_reasons": [
+          "Single method trait",
+          "No implementations found"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ServerTransportEventListener",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-transport-2.0.0-rc.2/src/server.rs",
+          "line": 413,
+          "method_count": 1,
+          "methods": [
+            "on_event"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ServerTransportEventListener: Send + Sync {",
+          "body": "/// Handle a server transport event\n    async fn on_event(&self, event: ServerTransportEvent);"
+        },
+        "usage": {
+          "impl_count": 0,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [],
+        "remove_reasons": [
+          "Single method trait",
+          "No implementations found"
+        ]
+      }
+    ],
+    "MAYBE_REMOVE": [],
+    "KEEP_AS_IS": [
+      {
+        "trait": {
+          "name": "MetricsCollector",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/metrics.rs",
+          "line": 393,
+          "method_count": 1,
+          "methods": [
+            "collect"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait MetricsCollector: Send + Sync {",
+          "body": "/// Collect metrics into a HashMap for export to monitoring systems\n    fn collect(&self) -> HashMap<String, f64>;"
+        },
+        "usage": {
+          "impl_count": 8,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/metrics.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/metrics.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/metrics.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-transport-2.0.0-rc.2/src/metrics.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (8)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ElicitationExtract",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+          "line": 190,
+          "method_count": 1,
+          "methods": [
+            "extract"
+          ],
+          "assoc_types": [
+            "from"
+          ],
+          "has_generics": false,
+          "signature": "pub trait ElicitationExtract: Sized {",
+          "body": "/// Extract a value of this type from elicitation data\n    fn extract(data: &ElicitationData, key: &str) -> McpResult<Self>;"
+        },
+        "usage": {
+          "impl_count": 10,
+          "dyn_usage": 0,
+          "bound_usage": 2,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/elicitation_api.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/elicitation_api.rs"
+          ]
+        },
+        "keep_reasons": [
+          "Has associated types: from",
+          "Multiple implementations (10)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ContextElicitation",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+          "line": 230,
+          "method_count": 1,
+          "methods": [
+            "elicit"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ContextElicitation {",
+          "body": "/// Start building an elicitation request\n    fn elicit(&self) -> ElicitationBuilder;"
+        },
+        "usage": {
+          "impl_count": 2,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/elicitation_api.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (2)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ServerElicitation",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+          "line": 243,
+          "method_count": 1,
+          "methods": [
+            "elicit"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ServerElicitation: ServerToClientRequests {",
+          "body": "/// Send an elicitation request to the client\n    async fn elicit(&self, request: ElicitRequest) -> McpResult<ElicitationResult>;"
+        },
+        "usage": {
+          "impl_count": 2,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/elicitation_api.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (2)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "HandlerRegistration",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lib.rs",
+          "line": 1371,
+          "method_count": 1,
+          "methods": [
+            "register_with_builder"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait HandlerRegistration {",
+          "body": "/// Register with a server builder\n    async fn register_with_builder(&self, builder: &mut ServerBuilder) -> McpResult<()>;"
+        },
+        "usage": {
+          "impl_count": 5,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/benches/performance_tests.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lib.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/benches/performance_tests.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/lib.rs",
+            "/Users/nickpaterno/work/turbomcp/benches/integration/end_to_end_benchmark.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (5)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ContextProvider",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/injection.rs",
+          "line": 33,
+          "method_count": 1,
+          "methods": [
+            "provide"
+          ],
+          "assoc_types": [
+            "T"
+          ],
+          "has_generics": true,
+          "signature": "pub trait ContextProvider<T>: Send + Sync\nwhere\n    T: Injectable + Clone,\n{",
+          "body": "/// Provide an instance of type T\n    async fn provide(&self, ctx: &Context) -> McpResult<T>;"
+        },
+        "usage": {
+          "impl_count": 0,
+          "dyn_usage": 4,
+          "bound_usage": 2,
+          "impl_files": [],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/injection.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/injection.rs"
+          ],
+          "bound_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/injection.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/injection.rs"
+          ]
+        },
+        "keep_reasons": [
+          "Has associated types: T",
+          "Uses generics/lifetimes",
+          "Used in trait objects (4 times)"
+        ],
+        "remove_reasons": [
+          "Single method trait",
+          "No implementations found"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ToolRouterExt",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/router.rs",
+          "line": 189,
+          "method_count": 1,
+          "methods": [
+            "combine"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ToolRouterExt {",
+          "body": "/// Combine multiple routers (delegates to mcp-server)\n    fn combine(routers: Vec<Self>) -> McpResult<Self>\n    where\n        Self: Sized;"
+        },
+        "usage": {
+          "impl_count": 2,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/router.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/router.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (2)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ToStructuredOutput",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/structured.rs",
+          "line": 81,
+          "method_count": 1,
+          "methods": [
+            "to_structured_output"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ToStructuredOutput {",
+          "body": "/// Convert to a structured output with optional schema\n    fn to_structured_output(&self) -> crate::McpResult<StructuredOutput>;"
+        },
+        "usage": {
+          "impl_count": 2,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/structured.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/structured.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (2)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ElicitationHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+          "line": 438,
+          "method_count": 1,
+          "methods": [
+            "handle_elicitation"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ElicitationHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle an elicitation request from the server\n    ///\n    /// This method is called when a server needs user input. The implementation\n    /// should present the request to the user and collect their response.\n    ///\n    /// # Arguments\n    ///\n    /// * `request` - The elicitation request containing prompt, schema, and metadata\n    ///\n    /// # Returns\n    ///\n    /// Returns the user's response or an error if the operation failed.\n    async fn handle_elicitation(\n        &self,\n        request: ElicitationRequest,\n    ) -> HandlerResult<ElicitationResponse>;"
+        },
+        "usage": {
+          "impl_count": 20,
+          "dyn_usage": 14,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/elicitation_client.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/enhanced_registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/examples/elicitation_client.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/enhanced_registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/composite.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/enhanced_registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/handlers/composite.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/enhanced_registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (14 times)",
+          "Multiple implementations (20)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ProgressHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+          "line": 500,
+          "method_count": 1,
+          "methods": [
+            "handle_progress"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ProgressHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a progress notification from the server\n    ///\n    /// This method is called when the server sends progress updates for\n    /// long-running operations.\n    ///\n    /// # Arguments\n    ///\n    /// * `notification` - Progress information including current status and completion state\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the notification was processed successfully.\n    async fn handle_progress(&self, notification: ProgressNotification) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 8,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (8)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "LogHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+          "line": 559,
+          "method_count": 1,
+          "methods": [
+            "handle_log"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait LogHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a log message from the server\n    ///\n    /// This method is called when the server sends log messages to the client.\n    /// Implementations can route these to the client's logging system.\n    ///\n    /// # Arguments\n    ///\n    /// * `log` - The log notification with level and data (per MCP 2025-06-18 spec)\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the log message was processed successfully.\n    async fn handle_log(&self, log: LoggingNotification) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 6,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (6)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ResourceUpdateHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+          "line": 621,
+          "method_count": 1,
+          "methods": [
+            "handle_resource_update"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ResourceUpdateHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a resource update notification\n    ///\n    /// This method is called when a subscribed resource changes on the server.\n    ///\n    /// # Arguments\n    ///\n    /// * `notification` - Information about the resource change\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the notification was processed successfully.\n    async fn handle_resource_update(\n        &self,\n        notification: ResourceUpdatedNotification,\n    ) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 8,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/resource_subscription_comprehensive_test.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/tests/resource_subscription_comprehensive_test.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (8)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "RootsHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+          "line": 676,
+          "method_count": 1,
+          "methods": [
+            "handle_roots_request"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait RootsHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a roots/list request from the server\n    ///\n    /// This method is called when the server wants to know which filesystem roots\n    /// the client has available. The implementation should return a list of Root\n    /// objects representing directories or files the server can operate on.\n    ///\n    /// # Returns\n    ///\n    /// Returns a vector of Root objects, each with a URI (must start with file://)\n    /// and optional human-readable name.\n    ///\n    /// # Note\n    ///\n    /// Per MCP specification, URIs must start with `file://` for now. This restriction\n    /// may be relaxed in future protocol versions.\n    async fn handle_roots_request(&self) -> HandlerResult<Vec<turbomcp_protocol::types::Root>>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 6,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (6 times)",
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "CancellationHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+          "line": 743,
+          "method_count": 1,
+          "methods": [
+            "handle_cancellation"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait CancellationHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a cancellation notification\n    ///\n    /// This method is called when the server cancels a request that the client\n    /// previously issued.\n    ///\n    /// # Arguments\n    ///\n    /// * `notification` - The cancellation notification containing request ID and optional reason\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the cancellation was processed successfully.\n    async fn handle_cancellation(&self, notification: CancelledNotification) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ResourceListChangedHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+          "line": 791,
+          "method_count": 1,
+          "methods": [
+            "handle_resource_list_changed"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ResourceListChangedHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a resource list changed notification\n    ///\n    /// This method is called when the server's available resource list changes.\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the notification was processed successfully.\n    async fn handle_resource_list_changed(&self) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "PromptListChangedHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+          "line": 826,
+          "method_count": 1,
+          "methods": [
+            "handle_prompt_list_changed"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait PromptListChangedHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a prompt list changed notification\n    ///\n    /// This method is called when the server's available prompt list changes.\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the notification was processed successfully.\n    async fn handle_prompt_list_changed(&self) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ToolListChangedHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+          "line": 861,
+          "method_count": 1,
+          "methods": [
+            "handle_tool_list_changed"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ToolListChangedHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a tool list changed notification\n    ///\n    /// This method is called when the server's available tool list changes.\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the notification was processed successfully.\n    async fn handle_tool_list_changed(&self) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "SamplingHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/sampling.rs",
+          "line": 27,
+          "method_count": 1,
+          "methods": [
+            "handle_create_message"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait SamplingHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a sampling/createMessage request from a server\n    ///\n    /// This method should:\n    /// 1. Present the request to the user for approval\n    /// 2. Delegate to an external LLM service (could be another MCP server)\n    /// 3. Present the result to the user for review\n    /// 4. Return the approved result\n    ///\n    /// # Arguments\n    ///\n    /// * `request_id` - The JSON-RPC request ID from the server for proper response correlation\n    /// * `request` - The sampling request parameters\n    async fn handle_create_message(\n        &self,\n        request_id: String,\n        request: CreateMessageRequest,\n    ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>>;"
+        },
+        "usage": {
+          "impl_count": 10,
+          "dyn_usage": 10,
+          "bound_usage": 2,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/lib.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/routing/handlers/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/lib.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/sampling.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/registry.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/composite.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/core.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/handlers/composite.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/core.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/sampling.rs"
+          ],
+          "bound_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/registry.rs"
+          ]
+        },
+        "keep_reasons": [
+          "Used in trait objects (10 times)",
+          "Multiple implementations (10)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "StandardErrorConversion",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/error_utils.rs",
+          "line": 9,
+          "method_count": 1,
+          "methods": [
+            "to_standard_error"
+          ],
+          "assoc_types": [],
+          "has_generics": true,
+          "signature": "pub trait StandardErrorConversion<T> {",
+          "body": "/// Convert error to standard string format with context\n    fn to_standard_error(self, context: &str) -> Result<T, String>;"
+        },
+        "usage": {
+          "impl_count": 2,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/error_utils.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/error_utils.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Uses generics/lifetimes",
+          "Multiple implementations (2)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "Shareable",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/shared.rs",
+          "line": 86,
+          "method_count": 1,
+          "methods": [
+            "new"
+          ],
+          "assoc_types": [
+            "fn"
+          ],
+          "has_generics": true,
+          "signature": "pub trait Shareable<T>: Clone + Send + Sync + 'static {",
+          "body": "/// Create a new shared wrapper around the inner type\n    fn new(inner: T) -> Self;"
+        },
+        "usage": {
+          "impl_count": 10,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/elicitation.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/shared.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/elicitation.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/shared.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Has associated types: fn",
+          "Uses generics/lifetimes",
+          "Multiple implementations (10)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "MetricsExporter",
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/metrics.rs",
+          "line": 388,
+          "method_count": 1,
+          "methods": [
+            "export"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait MetricsExporter: Send + Sync {",
+          "body": "/// Export metrics snapshot\n    fn export(&self, snapshot: &MetricsSnapshot) -> Result<String, Box<dyn std::error::Error>>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/metrics.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-transport-2.0.0-rc.2/src/metrics.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "MetricsCollector",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/metrics.rs",
+          "line": 393,
+          "method_count": 1,
+          "methods": [
+            "collect"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait MetricsCollector: Send + Sync {",
+          "body": "/// Collect metrics into a HashMap for export to monitoring systems\n    fn collect(&self) -> HashMap<String, f64>;"
+        },
+        "usage": {
+          "impl_count": 8,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/metrics.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/metrics.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/metrics.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-transport-2.0.0-rc.2/src/metrics.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (8)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ElicitationExtract",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/elicitation_api.rs",
+          "line": 190,
+          "method_count": 1,
+          "methods": [
+            "extract"
+          ],
+          "assoc_types": [
+            "from"
+          ],
+          "has_generics": false,
+          "signature": "pub trait ElicitationExtract: Sized {",
+          "body": "/// Extract a value of this type from elicitation data\n    fn extract(data: &ElicitationData, key: &str) -> McpResult<Self>;"
+        },
+        "usage": {
+          "impl_count": 10,
+          "dyn_usage": 0,
+          "bound_usage": 2,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/elicitation_api.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/elicitation_api.rs"
+          ]
+        },
+        "keep_reasons": [
+          "Has associated types: from",
+          "Multiple implementations (10)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ContextElicitation",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/elicitation_api.rs",
+          "line": 230,
+          "method_count": 1,
+          "methods": [
+            "elicit"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ContextElicitation {",
+          "body": "/// Start building an elicitation request\n    fn elicit(&self) -> ElicitationBuilder;"
+        },
+        "usage": {
+          "impl_count": 2,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/elicitation_api.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (2)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ServerElicitation",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/elicitation_api.rs",
+          "line": 243,
+          "method_count": 1,
+          "methods": [
+            "elicit"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ServerElicitation: ServerToClientRequests {",
+          "body": "/// Send an elicitation request to the client\n    async fn elicit(&self, request: ElicitRequest) -> McpResult<ElicitationResult>;"
+        },
+        "usage": {
+          "impl_count": 2,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/elicitation_api.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (2)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "HandlerRegistration",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/lib.rs",
+          "line": 1371,
+          "method_count": 1,
+          "methods": [
+            "register_with_builder"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait HandlerRegistration {",
+          "body": "/// Register with a server builder\n    async fn register_with_builder(&self, builder: &mut ServerBuilder) -> McpResult<()>;"
+        },
+        "usage": {
+          "impl_count": 5,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/benches/performance_tests.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lib.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/benches/performance_tests.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/lib.rs",
+            "/Users/nickpaterno/work/turbomcp/benches/integration/end_to_end_benchmark.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (5)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ContextProvider",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/injection.rs",
+          "line": 33,
+          "method_count": 1,
+          "methods": [
+            "provide"
+          ],
+          "assoc_types": [
+            "T"
+          ],
+          "has_generics": true,
+          "signature": "pub trait ContextProvider<T>: Send + Sync\nwhere\n    T: Injectable + Clone,\n{",
+          "body": "/// Provide an instance of type T\n    async fn provide(&self, ctx: &Context) -> McpResult<T>;"
+        },
+        "usage": {
+          "impl_count": 0,
+          "dyn_usage": 4,
+          "bound_usage": 2,
+          "impl_files": [],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/injection.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/injection.rs"
+          ],
+          "bound_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/injection.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/injection.rs"
+          ]
+        },
+        "keep_reasons": [
+          "Has associated types: T",
+          "Uses generics/lifetimes",
+          "Used in trait objects (4 times)"
+        ],
+        "remove_reasons": [
+          "Single method trait",
+          "No implementations found"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ToolRouterExt",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/router.rs",
+          "line": 189,
+          "method_count": 1,
+          "methods": [
+            "combine"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ToolRouterExt {",
+          "body": "/// Combine multiple routers (delegates to mcp-server)\n    fn combine(routers: Vec<Self>) -> McpResult<Self>\n    where\n        Self: Sized;"
+        },
+        "usage": {
+          "impl_count": 2,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/router.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/router.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (2)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ToStructuredOutput",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/structured.rs",
+          "line": 81,
+          "method_count": 1,
+          "methods": [
+            "to_structured_output"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ToStructuredOutput {",
+          "body": "/// Convert to a structured output with optional schema\n    fn to_structured_output(&self) -> crate::McpResult<StructuredOutput>;"
+        },
+        "usage": {
+          "impl_count": 2,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/structured.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/structured.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (2)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "StandardErrorConversion",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/error_utils.rs",
+          "line": 9,
+          "method_count": 1,
+          "methods": [
+            "to_standard_error"
+          ],
+          "assoc_types": [],
+          "has_generics": true,
+          "signature": "pub trait StandardErrorConversion<T> {",
+          "body": "/// Convert error to standard string format with context\n    fn to_standard_error(self, context: &str) -> Result<T, String>;"
+        },
+        "usage": {
+          "impl_count": 2,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/error_utils.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/error_utils.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Uses generics/lifetimes",
+          "Multiple implementations (2)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "Shareable",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/shared.rs",
+          "line": 86,
+          "method_count": 1,
+          "methods": [
+            "new"
+          ],
+          "assoc_types": [
+            "fn"
+          ],
+          "has_generics": true,
+          "signature": "pub trait Shareable<T>: Clone + Send + Sync + 'static {",
+          "body": "/// Create a new shared wrapper around the inner type\n    fn new(inner: T) -> Self;"
+        },
+        "usage": {
+          "impl_count": 10,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/elicitation.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/shared.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/elicitation.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/shared.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Has associated types: fn",
+          "Uses generics/lifetimes",
+          "Multiple implementations (10)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "MetricsExporter",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-transport-2.0.0-rc.2/src/metrics.rs",
+          "line": 388,
+          "method_count": 1,
+          "methods": [
+            "export"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait MetricsExporter: Send + Sync {",
+          "body": "/// Export metrics snapshot\n    fn export(&self, snapshot: &MetricsSnapshot) -> Result<String, Box<dyn std::error::Error>>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 0,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/metrics.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-transport-2.0.0-rc.2/src/metrics.rs"
+          ],
+          "dyn_files": [],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ElicitationHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+          "line": 438,
+          "method_count": 1,
+          "methods": [
+            "handle_elicitation"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ElicitationHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle an elicitation request from the server\n    ///\n    /// This method is called when a server needs user input. The implementation\n    /// should present the request to the user and collect their response.\n    ///\n    /// # Arguments\n    ///\n    /// * `request` - The elicitation request containing prompt, schema, and metadata\n    ///\n    /// # Returns\n    ///\n    /// Returns the user's response or an error if the operation failed.\n    async fn handle_elicitation(\n        &self,\n        request: ElicitationRequest,\n    ) -> HandlerResult<ElicitationResponse>;"
+        },
+        "usage": {
+          "impl_count": 20,
+          "dyn_usage": 14,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/elicitation_client.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/enhanced_registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/examples/elicitation_client.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/enhanced_registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/composite.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/enhanced_registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/handlers/composite.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/enhanced_registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (14 times)",
+          "Multiple implementations (20)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ProgressHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+          "line": 500,
+          "method_count": 1,
+          "methods": [
+            "handle_progress"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ProgressHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a progress notification from the server\n    ///\n    /// This method is called when the server sends progress updates for\n    /// long-running operations.\n    ///\n    /// # Arguments\n    ///\n    /// * `notification` - Progress information including current status and completion state\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the notification was processed successfully.\n    async fn handle_progress(&self, notification: ProgressNotification) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 8,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (8)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "LogHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+          "line": 559,
+          "method_count": 1,
+          "methods": [
+            "handle_log"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait LogHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a log message from the server\n    ///\n    /// This method is called when the server sends log messages to the client.\n    /// Implementations can route these to the client's logging system.\n    ///\n    /// # Arguments\n    ///\n    /// * `log` - The log notification with level and data (per MCP 2025-06-18 spec)\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the log message was processed successfully.\n    async fn handle_log(&self, log: LoggingNotification) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 6,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (6)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ResourceUpdateHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+          "line": 621,
+          "method_count": 1,
+          "methods": [
+            "handle_resource_update"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ResourceUpdateHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a resource update notification\n    ///\n    /// This method is called when a subscribed resource changes on the server.\n    ///\n    /// # Arguments\n    ///\n    /// * `notification` - Information about the resource change\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the notification was processed successfully.\n    async fn handle_resource_update(\n        &self,\n        notification: ResourceUpdatedNotification,\n    ) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 8,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/resource_subscription_comprehensive_test.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/tests/resource_subscription_comprehensive_test.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (8)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "RootsHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+          "line": 676,
+          "method_count": 1,
+          "methods": [
+            "handle_roots_request"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait RootsHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a roots/list request from the server\n    ///\n    /// This method is called when the server wants to know which filesystem roots\n    /// the client has available. The implementation should return a list of Root\n    /// objects representing directories or files the server can operate on.\n    ///\n    /// # Returns\n    ///\n    /// Returns a vector of Root objects, each with a URI (must start with file://)\n    /// and optional human-readable name.\n    ///\n    /// # Note\n    ///\n    /// Per MCP specification, URIs must start with `file://` for now. This restriction\n    /// may be relaxed in future protocol versions.\n    async fn handle_roots_request(&self) -> HandlerResult<Vec<turbomcp_protocol::types::Root>>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 6,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (6 times)",
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "CancellationHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+          "line": 743,
+          "method_count": 1,
+          "methods": [
+            "handle_cancellation"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait CancellationHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a cancellation notification\n    ///\n    /// This method is called when the server cancels a request that the client\n    /// previously issued.\n    ///\n    /// # Arguments\n    ///\n    /// * `notification` - The cancellation notification containing request ID and optional reason\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the cancellation was processed successfully.\n    async fn handle_cancellation(&self, notification: CancelledNotification) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ResourceListChangedHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+          "line": 791,
+          "method_count": 1,
+          "methods": [
+            "handle_resource_list_changed"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ResourceListChangedHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a resource list changed notification\n    ///\n    /// This method is called when the server's available resource list changes.\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the notification was processed successfully.\n    async fn handle_resource_list_changed(&self) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "PromptListChangedHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+          "line": 826,
+          "method_count": 1,
+          "methods": [
+            "handle_prompt_list_changed"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait PromptListChangedHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a prompt list changed notification\n    ///\n    /// This method is called when the server's available prompt list changes.\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the notification was processed successfully.\n    async fn handle_prompt_list_changed(&self) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "ToolListChangedHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+          "line": 861,
+          "method_count": 1,
+          "methods": [
+            "handle_tool_list_changed"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait ToolListChangedHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a tool list changed notification\n    ///\n    /// This method is called when the server's available tool list changes.\n    ///\n    /// # Returns\n    ///\n    /// Returns `Ok(())` if the notification was processed successfully.\n    async fn handle_tool_list_changed(&self) -> HandlerResult<()>;"
+        },
+        "usage": {
+          "impl_count": 4,
+          "dyn_usage": 8,
+          "bound_usage": 0,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/handlers.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/handlers.rs"
+          ],
+          "bound_files": []
+        },
+        "keep_reasons": [
+          "Used in trait objects (8 times)",
+          "Multiple implementations (4)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "SamplingHandler",
+          "file": "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/sampling.rs",
+          "line": 27,
+          "method_count": 1,
+          "methods": [
+            "handle_create_message"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "pub trait SamplingHandler: Send + Sync + std::fmt::Debug {",
+          "body": "/// Handle a sampling/createMessage request from a server\n    ///\n    /// This method should:\n    /// 1. Present the request to the user for approval\n    /// 2. Delegate to an external LLM service (could be another MCP server)\n    /// 3. Present the result to the user for review\n    /// 4. Return the approved result\n    ///\n    /// # Arguments\n    ///\n    /// * `request_id` - The JSON-RPC request ID from the server for proper response correlation\n    /// * `request` - The sampling request parameters\n    async fn handle_create_message(\n        &self,\n        request_id: String,\n        request: CreateMessageRequest,\n    ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>>;"
+        },
+        "usage": {
+          "impl_count": 10,
+          "dyn_usage": 10,
+          "bound_usage": 2,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/lib.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/routing/handlers/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/lib.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/sampling.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/registry.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/composite.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/core.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/sampling.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/handlers/composite.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/core.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-client-2.0.0-rc.2/src/client/operations/sampling.rs"
+          ],
+          "bound_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/registry.rs"
+          ]
+        },
+        "keep_reasons": [
+          "Used in trait objects (10 times)",
+          "Multiple implementations (10)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      },
+      {
+        "trait": {
+          "name": "Service",
+          "file": "/Users/nickpaterno/work/turbomcp/tests/integration/error_propagation_fault_injection_test.rs",
+          "line": 641,
+          "method_count": 1,
+          "methods": [
+            "handle_request"
+          ],
+          "assoc_types": [],
+          "has_generics": false,
+          "signature": "trait Service: Send + Sync {",
+          "body": "async fn handle_request(&self, request: TestRequest) -> McpResult<TestResponse>;"
+        },
+        "usage": {
+          "impl_count": 51,
+          "dyn_usage": 18,
+          "bound_usage": 10,
+          "impl_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/service.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/audit.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/auth.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/validation.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/transport_integration_tests.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/context.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/keys.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/registry.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/shared.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum_integration.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/extension.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/tests/mod.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/service/interface.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/service.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/middleware/audit.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/middleware/auth.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/middleware/validation.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/tests/transport_integration_tests.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/context.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/registry.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-protocol-2.0.0-rc.2/src/shared.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-transport-2.0.0-rc.2/src/axum_integration.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-transport-2.0.0-rc.2/src/axum/extension.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-transport-2.0.0-rc.2/src/axum/tests/mod.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-transport-2.0.0-rc.2/src/axum/service/interface.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-dpop-2.0.0-rc.2/src/keys.rs",
+            "/Users/nickpaterno/work/turbomcp/tests/integration/error_propagation_fault_injection_test.rs"
+          ],
+          "dyn_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/service.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/context.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/service.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/context.rs",
+            "/Users/nickpaterno/work/turbomcp/tests/integration/error_propagation_fault_injection_test.rs"
+          ],
+          "bound_files": [
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/audit.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/auth.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/validation.rs",
+            "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/context.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/middleware/audit.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/middleware/auth.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-server-2.0.0-rc.2/src/middleware/validation.rs",
+            "/Users/nickpaterno/work/turbomcp/target/package/turbomcp-2.0.0-rc.2/src/context.rs"
+          ]
+        },
+        "keep_reasons": [
+          "Used in trait objects (18 times)",
+          "Multiple implementations (51)",
+          "Used as trait bound (10 times)"
+        ],
+        "remove_reasons": [
+          "Single method trait"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,4644 @@
+{
+  "overview": {
+    "total_files": 404,
+    "production_files": 304,
+    "test_files": 100
+  },
+  "todos": {
+    "total": 273,
+    "by_type": {
+      "TODO": 272,
+      "FIXME": 1,
+      "XXX": 0,
+      "HACK": 0
+    },
+    "details": {
+      "TODO": [
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 132,
+          "comment": "TODO: Implement actual specification document parsing",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 148,
+          "comment": "TODO: Implement RFC 2119 keyword extraction",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 161,
+          "comment": "TODO: Implement hierarchical structure parsing",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 174,
+          "comment": "TODO: Implement code block extraction",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 193,
+          "comment": "TODO: Implement requirement categorization logic",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 205,
+          "comment": "TODO: Implement dependency analysis",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 219,
+          "comment": "TODO: Implement requirement prioritization",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 231,
+          "comment": "TODO: Implement completeness validation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 249,
+          "comment": "TODO: Implement requirement-to-test mapping",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 261,
+          "comment": "TODO: Implement coverage gap detection",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 273,
+          "comment": "TODO: Implement test template generation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 286,
+          "comment": "TODO: Implement traceability matrix",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 303,
+          "comment": "TODO: Implement temporal progress tracking",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 315,
+          "comment": "TODO: Implement test result aggregation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 328,
+          "comment": "TODO: Implement compliance metrics calculation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 340,
+          "comment": "TODO: Implement progress forecasting",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 359,
+          "comment": "TODO: Implement executive summary generation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 372,
+          "comment": "TODO: Implement detailed technical reporting",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 385,
+          "comment": "TODO: Implement HTML dashboard generation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 399,
+          "comment": "TODO: Implement multiple export formats",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 416,
+          "comment": "TODO: Implement CI/CD integration",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 429,
+          "comment": "TODO: Implement badge generation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 441,
+          "comment": "TODO: Implement automated monitoring",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 467,
+          "comment": "TODO: Parse all MCP specification documents",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 472,
+          "comment": "TODO: Extract MUST/SHOULD/MAY requirements",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 477,
+          "comment": "TODO: Map requirements to existing test cases",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 482,
+          "comment": "TODO: Analyze current compliance status",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 487,
+          "comment": "TODO: Generate comprehensive tracking reports",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 500,
+          "comment": "TODO: Generate HTML compliance dashboard",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 506,
+          "comment": "TODO: Validate specification coverage",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 515,
+          "comment": "TODO: Calculate implementation progress",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 540,
+          "comment": "TODO: Parse MDX/Markdown specification documents",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 546,
+          "comment": "TODO: Extract RFC 2119 normative keywords",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 552,
+          "comment": "TODO: Parse document hierarchical structure",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+          "line": 558,
+          "comment": "TODO: Extract code blocks and examples",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_basic_protocol_compliance.rs",
+          "line": 89,
+          "comment": "**TODO**: Fix JsonRpcResponse to make id required except for parse errors",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_basic_protocol_compliance.rs",
+          "line": 141,
+          "comment": "**TODO**: Redesign JsonRpcResponse to use an enum for result/error mutual exclusion",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 38,
+          "comment": "TODO: Test that TurboMCP can work with and without authorization",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 46,
+          "comment": "TODO: Test HTTP transport authorization compliance",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 54,
+          "comment": "TODO: Test that stdio transport uses environment credentials",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 62,
+          "comment": "TODO: Test OAuth 2.1 compliance",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 70,
+          "comment": "TODO: Test compliance with all referenced RFCs",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 89,
+          "comment": "TODO: Test MCP server resource server capabilities",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 97,
+          "comment": "TODO: Test MCP client OAuth client capabilities",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 105,
+          "comment": "TODO: Test authorization server integration",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 113,
+          "comment": "TODO: Test that roles are properly separated and implemented",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 136,
+          "comment": "TODO: Test Protected Resource Metadata implementation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 147,
+          "comment": "TODO: Test WWW-Authenticate header discovery",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 160,
+          "comment": "TODO: Test well-known URI discovery",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 171,
+          "comment": "TODO: Test discovery fallback order",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 185,
+          "comment": "TODO: Test authorization server metadata discovery",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 199,
+          "comment": "TODO: Test different issuer URL handling",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 209,
+          "comment": "TODO: Test discovery priority ordering",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 224,
+          "comment": "TODO: Test authorization_servers field validation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 253,
+          "comment": "TODO: Test dynamic client registration",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 262,
+          "comment": "TODO: Test fallback registration mechanisms",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 270,
+          "comment": "TODO: Test automated registration benefits",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 278,
+          "comment": "TODO: Test hardcoded client ID fallback",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 286,
+          "comment": "TODO: Test user registration UI fallback",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 313,
+          "comment": "TODO: Test resource parameter implementation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 322,
+          "comment": "TODO: Test resource parameter in both request types",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 342,
+          "comment": "TODO: Test canonical URI format validation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 354,
+          "comment": "TODO: Test URI case normalization",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 365,
+          "comment": "TODO: Test trailing slash handling",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 377,
+          "comment": "TODO: Test resource parameter encoding",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 386,
+          "comment": "TODO: Test mandatory resource parameter sending",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 410,
+          "comment": "TODO: Test Authorization Bearer header usage",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 419,
+          "comment": "TODO: Test token inclusion in all requests",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 430,
+          "comment": "TODO: Test query string token prohibition",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 440,
+          "comment": "TODO: Test token validation implementation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 448,
+          "comment": "TODO: Test audience validation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 456,
+          "comment": "TODO: Test 401 response for invalid tokens",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 464,
+          "comment": "TODO: Test token source validation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 472,
+          "comment": "TODO: Test token passthrough prohibition",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 493,
+          "comment": "TODO: Test OAuth 2.1 security compliance",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 506,
+          "comment": "TODO: Test PKCE implementation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 519,
+          "comment": "TODO: Test PKCE support verification",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 528,
+          "comment": "TODO: Test S256 method preference",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 541,
+          "comment": "TODO: Test HTTPS requirement enforcement",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 557,
+          "comment": "TODO: Test redirect URI security",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 568,
+          "comment": "TODO: Test secure token storage",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 576,
+          "comment": "TODO: Test token lifetime management",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 584,
+          "comment": "TODO: Test refresh token rotation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 592,
+          "comment": "TODO: Test state parameter implementation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 616,
+          "comment": "TODO: Test 401 unauthorized responses",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 630,
+          "comment": "TODO: Test 403 forbidden responses",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 644,
+          "comment": "TODO: Test 400 bad request responses",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 653,
+          "comment": "TODO: Test OAuth 2.1 error format compliance",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 661,
+          "comment": "TODO: Test authorization server error handling",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 677,
+          "comment": "TODO: Test token audience binding",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 685,
+          "comment": "TODO: Test audience validation failure handling",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 693,
+          "comment": "TODO: Test confused deputy prevention",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 701,
+          "comment": "TODO: Test token passthrough prohibition",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 709,
+          "comment": "TODO: Test upstream API token handling",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 717,
+          "comment": "TODO: Test token privilege restriction",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 732,
+          "comment": "TODO: Test complete authorization flow",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 740,
+          "comment": "TODO: Test discovery to token flow",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 748,
+          "comment": "TODO: Test dynamic registration flow",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 756,
+          "comment": "TODO: Test token refresh flow",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 764,
+          "comment": "TODO: Test error recovery flows",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 772,
+          "comment": "TODO: Test multi-server authorization",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 787,
+          "comment": "TODO: Property test for token validation consistency",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 795,
+          "comment": "TODO: Property test for audience binding",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 803,
+          "comment": "TODO: Property test for PKCE security",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 811,
+          "comment": "TODO: Property test for URI canonicalization",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_authorization_compliance_tests.rs",
+          "line": 819,
+          "comment": "TODO: Property test for error handling consistency",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 156,
+          "comment": "Based on TODO count in basic protocol tests",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 241,
+          "comment": "TODO: Test JSON-RPC protocol over stdio transport",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 242,
+          "comment": "TODO: Test JSON-RPC protocol over HTTP transport",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 243,
+          "comment": "TODO: Test protocol consistency across transports",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 250,
+          "comment": "TODO: Test that authorization works with HTTP transport",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 251,
+          "comment": "TODO: Test that stdio transport uses environment credentials",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 252,
+          "comment": "TODO: Test authorization flow consistency",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 259,
+          "comment": "TODO: Test progress notifications with server tools",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 260,
+          "comment": "TODO: Test cancellation with client sampling",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 261,
+          "comment": "TODO: Test logging across all feature areas",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 268,
+          "comment": "TODO: Test complete client-server interaction",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 269,
+          "comment": "TODO: Test tool execution with progress and cancellation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 270,
+          "comment": "TODO: Test resource access with authorization",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 282,
+          "comment": "TODO: Measure test execution time",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 283,
+          "comment": "TODO: Identify performance bottlenecks in compliance validation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 284,
+          "comment": "TODO: Optimize test suite performance",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 291,
+          "comment": "TODO: Measure message throughput",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 292,
+          "comment": "TODO: Measure transport latency",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 293,
+          "comment": "TODO: Measure authorization overhead",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 305,
+          "comment": "TODO: Generate detailed compliance matrix",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 306,
+          "comment": "TODO: Track progress against MCP specification sections",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 307,
+          "comment": "TODO: Identify highest priority compliance gaps",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 314,
+          "comment": "TODO: Parse MCP specification documents",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 315,
+          "comment": "TODO: Map specification requirements to test cases",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 316,
+          "comment": "TODO: Identify any missing test coverage",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 323,
+          "comment": "TODO: Measure passing vs failing tests",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 324,
+          "comment": "TODO: Track implementation completion percentage",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 325,
+          "comment": "TODO: Generate progress reports",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 436,
+          "comment": "pub fn validate_tdd_test_pattern(test_name: &str, has_todo: bool, has_spec_reference: bool) -> bool {",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_master_compliance_test_suite.rs",
+          "line": 441,
+          "comment": "has_todo && has_spec_reference",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 44,
+          "comment": "TODO: Validate that TurboMCP can generate ping requests in this format",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 59,
+          "comment": "TODO: Test that TurboMCP server responds to ping with exactly this format",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 71,
+          "comment": "TODO: Test timeout scenarios and connection health detection",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 79,
+          "comment": "TODO: Test both client->server and server->client ping",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 88,
+          "comment": "TODO: Test configurable ping intervals and rate limiting",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 118,
+          "comment": "TODO: Validate TurboMCP supports progressToken in _meta",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 127,
+          "comment": "TODO: Test that TurboMCP generates unique progress tokens",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 145,
+          "comment": "TODO: Validate TurboMCP can send notifications/progress",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 155,
+          "comment": "TODO: Test that progress values always increase",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 172,
+          "comment": "TODO: Test floating point progress values",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 181,
+          "comment": "TODO: Test that invalid/inactive tokens are rejected",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 189,
+          "comment": "TODO: Test progress notification rate limiting",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 197,
+          "comment": "TODO: Test that progress stops when operation completes",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 225,
+          "comment": "TODO: Validate TurboMCP cancellation notification format",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 235,
+          "comment": "TODO: Test that initialize requests cannot be cancelled",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 243,
+          "comment": "TODO: Test validation of referenced request IDs",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 251,
+          "comment": "TODO: Test resource cleanup on cancellation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 259,
+          "comment": "TODO: Test that cancelled requests don't get responses",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 267,
+          "comment": "TODO: Test race condition scenarios",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 278,
+          "comment": "TODO: Test graceful handling of invalid cancellations",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 286,
+          "comment": "TODO: Test both client->server and server->client cancellation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 314,
+          "comment": "TODO: Validate TurboMCP pagination response format",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 331,
+          "comment": "TODO: Test cursor-based pagination requests",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 342,
+          "comment": "TODO: Test cursor opacity requirements",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 356,
+          "comment": "TODO: Test pagination support for all specified operations",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 367,
+          "comment": "TODO: Test that page sizes can vary",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 383,
+          "comment": "TODO: Test end-of-results detection",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 392,
+          "comment": "TODO: Test cursor stability across requests",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 400,
+          "comment": "TODO: Test error handling for invalid cursors",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 426,
+          "comment": "TODO: Validate TurboMCP logging capability declaration",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 439,
+          "comment": "TODO: Test all standard log levels are supported",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 458,
+          "comment": "TODO: Test logging/setLevel request handling",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 483,
+          "comment": "TODO: Validate log message notification format",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 493,
+          "comment": "TODO: Test that setting level to \"error\" filters out info/debug messages",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 501,
+          "comment": "TODO: Test log message rate limiting",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 512,
+          "comment": "TODO: Test security filtering of sensitive information",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 520,
+          "comment": "TODO: Test error handling for invalid log levels",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 528,
+          "comment": "TODO: Test various data field structures",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 554,
+          "comment": "TODO: Validate TurboMCP completions capability",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 578,
+          "comment": "TODO: Test completion/complete request handling",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 597,
+          "comment": "TODO: Test both reference types are supported",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 618,
+          "comment": "TODO: Validate completion response structure",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 627,
+          "comment": "TODO: Test that completion responses never exceed 100 items",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 655,
+          "comment": "TODO: Test context arguments are properly handled",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 664,
+          "comment": "TODO: Test that completion results are properly ranked",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 676,
+          "comment": "TODO: Test all specified error conditions",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 684,
+          "comment": "TODO: Test completion request rate limiting",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 692,
+          "comment": "TODO: Test input validation and security controls",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 700,
+          "comment": "TODO: Test fuzzy matching capabilities",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 715,
+          "comment": "TODO: Test cancelling operations with active progress tokens",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 723,
+          "comment": "TODO: Test progress notifications during large paginated results",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 731,
+          "comment": "TODO: Test completion operations are properly logged",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 739,
+          "comment": "TODO: Test ping health checks during utility operations",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 747,
+          "comment": "TODO: Test error logging for all utilities",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 755,
+          "comment": "TODO: Test concurrent utility usage patterns",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 770,
+          "comment": "TODO: Property test for progress monotonicity",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 778,
+          "comment": "TODO: Property test for cursor stability",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 786,
+          "comment": "TODO: Property test for log level filtering",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 794,
+          "comment": "TODO: Property test for completion uniqueness",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_utilities_compliance_tests.rs",
+          "line": 802,
+          "comment": "TODO: Property test for ping consistency",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 43,
+          "comment": "TODO: Test that all transports handle UTF-8 correctly",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 54,
+          "comment": "TODO: Test that message format is preserved regardless of transport",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 62,
+          "comment": "TODO: Test client->server and server->client messaging",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 70,
+          "comment": "TODO: Test that same protocol works over different transports",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 91,
+          "comment": "TODO: Test subprocess launching mechanism",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 99,
+          "comment": "TODO: Test stdin/stdout message exchange",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 114,
+          "comment": "TODO: Test newline-delimited message parsing",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 125,
+          "comment": "TODO: Test rejection of messages with embedded newlines",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 134,
+          "comment": "TODO: Test stderr logging capabilities",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 142,
+          "comment": "TODO: Test that only valid MCP messages go to stdout",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 150,
+          "comment": "TODO: Test that only valid MCP messages go to stdin",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 158,
+          "comment": "TODO: Test graceful process termination",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 166,
+          "comment": "TODO: Test broken pipes, process crashes, etc.",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 187,
+          "comment": "TODO: Test single endpoint handling both methods",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 196,
+          "comment": "TODO: Test Origin header validation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 204,
+          "comment": "TODO: Test localhost-only binding",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 218,
+          "comment": "TODO: Test POST request format compliance",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 229,
+          "comment": "TODO: Test different response types based on message type",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 237,
+          "comment": "TODO: Test Server-Sent Events implementation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 247,
+          "comment": "TODO: Test GET request SSE streams",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 258,
+          "comment": "TODO: Test session ID management",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 270,
+          "comment": "TODO: Test session ID format validation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 282,
+          "comment": "TODO: Test session termination and recovery",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 290,
+          "comment": "TODO: Test explicit session deletion",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 301,
+          "comment": "TODO: Test protocol version header requirement",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 310,
+          "comment": "TODO: Test protocol version validation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 318,
+          "comment": "TODO: Test backwards compatibility behavior",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 327,
+          "comment": "TODO: Test multiple simultaneous connections",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 336,
+          "comment": "TODO: Test SSE resumability features",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 344,
+          "comment": "TODO: Test event ID uniqueness requirements",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 353,
+          "comment": "TODO: Test disconnection vs cancellation handling",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 361,
+          "comment": "TODO: Test backwards compatibility with old transport",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 380,
+          "comment": "TODO: Test that custom transports maintain message format",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 388,
+          "comment": "TODO: Test lifecycle compliance in custom transports",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 396,
+          "comment": "TODO: Test bidirectional communication in custom transports",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 404,
+          "comment": "TODO: Test that custom transports provide adequate documentation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 412,
+          "comment": "TODO: Test interoperability features",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 427,
+          "comment": "TODO: Test DNS rebinding attack protection",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 435,
+          "comment": "TODO: Test secure localhost binding",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 443,
+          "comment": "TODO: Test authentication mechanisms",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 451,
+          "comment": "TODO: Test secure session ID generation",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 459,
+          "comment": "TODO: Test transport-level security measures",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 474,
+          "comment": "TODO: Test process crash detection and recovery",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 482,
+          "comment": "TODO: Test HTTP connection error handling",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 490,
+          "comment": "TODO: Test SSE disconnection recovery",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 498,
+          "comment": "TODO: Test malformed message rejection",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 506,
+          "comment": "TODO: Test timeout handling mechanisms",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 514,
+          "comment": "TODO: Test resource cleanup on transport errors",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 529,
+          "comment": "TODO: Test message processing performance",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 537,
+          "comment": "TODO: Test connection establishment efficiency",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 545,
+          "comment": "TODO: Test memory usage patterns",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 553,
+          "comment": "TODO: Test concurrent connection performance",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 561,
+          "comment": "TODO: Test large message support",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 576,
+          "comment": "TODO: Test dynamic transport switching",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 584,
+          "comment": "TODO: Test session persistence across transports",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 592,
+          "comment": "TODO: Test transport fallback logic",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 600,
+          "comment": "TODO: Test transport capability detection",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 608,
+          "comment": "TODO: Test multi-transport environments",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 623,
+          "comment": "TODO: Property test for message ordering",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 631,
+          "comment": "TODO: Property test for reliable delivery",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 639,
+          "comment": "TODO: Property test for UTF-8 handling",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 647,
+          "comment": "TODO: Property test for format consistency",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_transport_compliance_tests.rs",
+          "line": 655,
+          "comment": "TODO: Property test for transport agnostic behavior",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/real_end_to_end_working_examples.rs",
+          "line": 1195,
+          "comment": "TODO: Refactor to:",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/zero_tolerance_enforcement.rs",
+          "line": 49,
+          "comment": "TODO: implement\",",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/zero_tolerance_enforcement.rs",
+          "line": 50,
+          "comment": "\"Incomplete test - no TODOs allowed in tests\",",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/zero_tolerance_enforcement.rs",
+          "line": 52,
+          "comment": "(\"todo!()\", \"Incomplete implementation - no todo!() in tests\"),",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/integration_examples_tests.rs",
+          "line": 299,
+          "comment": "/ TODO: Currently spawns real subprocess which is slow. Refactor to:",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+          "line": 439,
+          "comment": "TODO(v2.1): Fix PrimitiveSchemaDefinition type mismatch between elicitation.rs and types/elicitation.rs",
+          "is_test": false
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lib.rs",
+          "line": 230,
+          "comment": "!         let issues = code.matches(\"TODO\").count() + code.matches(\"FIXME\").count();",
+          "is_test": false
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/sampling.rs",
+          "line": 47,
+          "comment": "/         todo!(\"Implement sampling logic\")",
+          "is_test": false
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/websocket_bidirectional_integration_test.rs",
+          "line": 677,
+          "comment": "TODO: Fix ping/pong response handling - currently times out waiting for response",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/sampling_rejection_hang_test.rs",
+          "line": 104,
+          "comment": "TODO: Implement this test once correlation tracking is added",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/long_running_connection_tests.rs",
+          "line": 355,
+          "comment": "TODO: Implement once WebSocket is working",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/long_running_connection_tests.rs",
+          "line": 378,
+          "comment": "TODO: Implement",
+          "is_test": true
+        },
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/long_running_connection_tests.rs",
+          "line": 401,
+          "comment": "TODO: Implement",
+          "is_test": true
+        }
+      ],
+      "FIXME": [
+        {
+          "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lib.rs",
+          "line": 230,
+          "comment": "!         let issues = code.matches(\"TODO\").count() + code.matches(\"FIXME\").count();",
+          "is_test": false
+        }
+      ],
+      "XXX": [],
+      "HACK": []
+    }
+  },
+  "clone_usage": {
+    "total": 1266,
+    "by_file": {
+      "/Users/nickpaterno/work/turbomcp/demo/plugin_execution_patterns.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/tests/property_tests.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/tests/external_dependency_integration.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/tests/coverage_tests.rs": 6,
+      "/Users/nickpaterno/work/turbomcp/tests/mcp_schema_compliance_tests.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/tests/mcp_basic_protocol_compliance.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/tests/state_tests.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/tests/fault_tolerance_tests.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/tests/integration.rs": 9,
+      "/Users/nickpaterno/work/turbomcp/tests/benchmark_tests.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/tests/server_tests.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/tests/timeout_integration_tests.rs": 7,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/observability.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/timeout.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime.rs": 12,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/registry.rs": 17,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/main.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/sampling.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/lifecycle.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/elicitation.rs": 21,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/capabilities.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/tests/common/mod.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/security.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/audit.rs": 7,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/auth.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/mod.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/validation.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/tests.rs": 9,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/config/tests.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime/websocket.rs": 10,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime/http.rs": 13,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/lifecycle/tests.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/server/core.rs": 23,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/server/transport.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/registry/tests.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/bidirectional.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/mod.rs": 14,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/validation.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/tests.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/utils.rs": 6,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/error/tests.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/wrapper.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/utils.rs": 6,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/tools.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/initialize.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/traits/elicitation.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/implementations/function_tool.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/macro_end_to_end_tests.rs": 12,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/complete_feature_coverage_test.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/transport_integration_tests.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/real_end_to_end_working_examples.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/runtime_configuration_tests.rs": 7,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/lifespan_coverage.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/resource_subscription_comprehensive_test.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/elicitation_integration_test.rs": 18,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/roots_integration_test.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/sampling_integration_test.rs": 19,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/mcp_utilities_integration_test.rs": 25,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/integration_examples_tests.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/completion_integration_test.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/transport_protocol_compliance_test.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/macro_dogfood_tests.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/elicitation_client.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/sampling_server.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/resources.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/session.rs": 21,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/simd.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lib.rs": 14,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/injection.rs": 10,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/server.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/test_utils.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/schema.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lifespan.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/progress.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/router.rs": 19,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/structured.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/uri.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/sse_server.rs": 10,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation.rs": 13,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/context_factory.rs": 9,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/context.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/registry/tests.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-auth/src/types.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-auth/src/config.rs": 6,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-auth/src/manager.rs": 7,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-auth/src/providers/api_key.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-auth/src/oauth2/client.rs": 12,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/resource.rs": 6,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/context_aware_dispatch.rs": 23,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/uri_template.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/completion.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/server.rs": 24,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/tool.rs": 7,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/ping.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/prompt.rs": 6,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/attrs.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/compile_time_router.rs": 32,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/template.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/elicitation.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/keys.rs": 14,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/redis_storage.rs": 14,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/types.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/test_utils.rs": 10,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/proof.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/yubihsm.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/mod.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/pkcs11.rs": 11,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/tests/bidirectional_test.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs": 8,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/sampling.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/registry.rs": 12,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/middleware.rs": 11,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/examples.rs": 11,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/macros.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/core.rs": 18,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/protocol.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/dispatcher.rs": 8,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/manager.rs": 6,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/tests/mcp_compliance_comprehensive_tests.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/message.rs": 8,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/session.rs": 22,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/enhanced_registry.rs": 10,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/registry.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/zero_copy.rs": 11,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/error.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/lib.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/validation.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/state.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/lock_free.rs": 7,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/versioning.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/shared.rs": 7,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/capabilities.rs": 11,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/utils.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/types/core.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/types/tests.rs": 7,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/types/elicitation.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/context/request.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/context/client.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/capabilities/tests.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/jsonrpc/tests.rs": 16,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/versioning/tests.rs": 29,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/validation/tests.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/http_endpoint_url_regression_test.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/websocket_bidirectional_integration_test.rs": 8,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/tcp_tests.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/unix_tests.rs": 19,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/comprehensive_security_tests.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/long_running_connection_tests.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/core.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/bidirectional.rs": 8,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/child_process.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/unix.rs": 14,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum_integration.rs": 13,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/server.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/metrics.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/streamable_http_v2.rs": 27,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/stdio.rs": 6,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/streamable_http_client.rs": 13,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/tcp.rs": 9,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/tower.rs": 10,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/shared.rs": 8,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/transport_metrics_metadata/tests.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/bidirectional.rs": 12,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/types.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/tasks.rs": 20,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/transport.rs": 7,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/mcp_methods.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/mod.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/elicitation.rs": 14,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/connection.rs": 5,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/session.rs": 9,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/extension.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/resilience/transport.rs": 12,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/resilience/deduplication.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/resilience/metrics.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/resilience/circuit_breaker.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/middleware/rate_limit.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/middleware/mcp.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/tests/router.rs": 10,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/tests/integration.rs": 7,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/router/builder.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/tests_legacy/functional_cli_tests.rs": 6,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/tests_legacy/main_integration_tests.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/tests_legacy/http_functionality_tests.rs": 4,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/src/transport.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/src/lib.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/src/executor.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/tests/property/property_based_tests.rs": 11,
+      "/Users/nickpaterno/work/turbomcp/tests/integration/error_propagation_fault_injection_test.rs": 6,
+      "/Users/nickpaterno/work/turbomcp/tests/integration/server_middleware_routing_test.rs": 3,
+      "/Users/nickpaterno/work/turbomcp/tests/integration/auth_flows_test.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/tests/integration/transport_implementations_test.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/tests/integration/macro_system_test.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/tests/integration/protocol_validation_test.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/tests/integration/transport_resilience_test.rs": 2,
+      "/Users/nickpaterno/work/turbomcp/benches/integration/end_to_end_benchmark.rs": 1,
+      "/Users/nickpaterno/work/turbomcp/benches/regression/performance_regression_detector.rs": 3
+    },
+    "hot_spots": [
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/compile_time_router.rs",
+        "count": 32,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/versioning/tests.rs",
+        "count": 29,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/streamable_http_v2.rs",
+        "count": 27,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/mcp_utilities_integration_test.rs",
+        "count": 25,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/server.rs",
+        "count": 24,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/server/core.rs",
+        "count": 23,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/context_aware_dispatch.rs",
+        "count": 23,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/session.rs",
+        "count": 22,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/elicitation.rs",
+        "count": 21,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/session.rs",
+        "count": 21,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/tasks.rs",
+        "count": 20,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/sampling_integration_test.rs",
+        "count": 19,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/router.rs",
+        "count": 19,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/unix_tests.rs",
+        "count": 19,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/elicitation_integration_test.rs",
+        "count": 18,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/core.rs",
+        "count": 18,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/registry.rs",
+        "count": 17,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/jsonrpc/tests.rs",
+        "count": 16,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/mod.rs",
+        "count": 14,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lib.rs",
+        "count": 14,
+        "is_test": false
+      }
+    ]
+  },
+  "box_usage": {
+    "box_dyn": 178,
+    "box_dyn_error": 107,
+    "files_with_box": [
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/external_dependency_integration.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/examples/websocket_dogfood_server.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/examples/websocket_dogfood_client.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/demo/src/main.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/observability.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/lib.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/service.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/main.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/elicitation.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/capabilities.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/audit.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/auth.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/validation.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime/websocket.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime/http.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/server/core.rs",
+        "box_dyn": 8,
+        "box_dyn_error": 8,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/implementations/function_tool.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/macro_end_to_end_tests.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/mcp_protocol_compliance_comprehensive.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/real_end_to_end_working_examples.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/integration_examples_tests.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/websocket_client_simple.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/http_server.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/websocket_server.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/http_app.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/tools.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/stdio_server.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/sampling_server.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/hello_world.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/stdio_app.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/elicitation_server.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/macro_server.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/validation.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/stateful.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/unix_server.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/resources.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/tcp_server.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/registry.rs",
+        "box_dyn": 3,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lib.rs",
+        "box_dyn": 3,
+        "box_dyn_error": 3,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/injection.rs",
+        "box_dyn": 3,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/validation.rs",
+        "box_dyn": 4,
+        "box_dyn_error": 4,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lifespan.rs",
+        "box_dyn": 5,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/context.rs",
+        "box_dyn": 10,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/registry/tests.rs",
+        "box_dyn": 3,
+        "box_dyn_error": 0,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/resource.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/completion.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/tool.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/ping.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/prompt.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/template.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/elicitation.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/bidirectional_wrapper.rs",
+        "box_dyn": 15,
+        "box_dyn_error": 10,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/keys.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/types.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/proof.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/mod.rs",
+        "box_dyn": 4,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/lib.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/sampling.rs",
+        "box_dyn": 9,
+        "box_dyn_error": 9,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/core.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/registry.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/mod.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/plugins.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/sampling.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/message.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/session.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/zero_copy.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/error_utils.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/lib.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/shared.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/context/capabilities.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/security/validation.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/websocket_bidirectional_integration_test.rs",
+        "box_dyn": 6,
+        "box_dyn_error": 6,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/core.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/lib.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/metrics.rs",
+        "box_dyn": 3,
+        "box_dyn_error": 3,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/streamable_http_v2.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 1,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/stdio.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/types.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/mod.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/mod.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/resilience/transport.rs",
+        "box_dyn": 3,
+        "box_dyn_error": 0,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/resilience/mod.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/error_propagation_fault_injection_test.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 0,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/transport_implementations_test.rs",
+        "box_dyn": 3,
+        "box_dyn_error": 0,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/protocol_validation_test.rs",
+        "box_dyn": 1,
+        "box_dyn_error": 0,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/transport_resilience_test.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 0,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/benches/regression/performance_regression_detector.rs",
+        "box_dyn": 2,
+        "box_dyn_error": 2,
+        "is_test": true
+      }
+    ]
+  },
+  "string_allocations": {
+    "total": 5233,
+    "by_pattern": {
+      "\\.to_string\\(\\)": 4045,
+      "\\.to_owned\\(\\)": 0,
+      "String::from\\(": 4,
+      "format!\\(": 1184
+    },
+    "hot_spots": [
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_client_features_compliance_tests.rs",
+        "count": 146,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/coverage_tests.rs",
+        "count": 50,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_schema_compliance_tests.rs",
+        "count": 52,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_basic_protocol_compliance.rs",
+        "count": 24,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_tools_compliance_tests.rs",
+        "count": 114,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_server_features_compliance_tests.rs",
+        "count": 86,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration.rs",
+        "count": 30,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/tests/server_tests.rs",
+        "count": 39,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime.rs",
+        "count": 68,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/registry.rs",
+        "count": 27,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/error.rs",
+        "count": 26,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/metrics.rs",
+        "count": 43,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime/websocket.rs",
+        "count": 24,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime/http.rs",
+        "count": 39,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/registry/tests.rs",
+        "count": 71,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/tests.rs",
+        "count": 32,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/error/tests.rs",
+        "count": 74,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/macro_end_to_end_tests.rs",
+        "count": 104,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/real_end_to_end_working_examples.rs",
+        "count": 54,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/resource_subscription_comprehensive_test.rs",
+        "count": 33,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/elicitation_integration_test.rs",
+        "count": 33,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/roots_integration_test.rs",
+        "count": 33,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/sampling_integration_test.rs",
+        "count": 78,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/mcp_utilities_integration_test.rs",
+        "count": 25,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/completion_integration_test.rs",
+        "count": 88,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/macro_dogfood_tests.rs",
+        "count": 59,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/elicitation_server.rs",
+        "count": 34,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/session.rs",
+        "count": 36,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lib.rs",
+        "count": 35,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/injection.rs",
+        "count": 28,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/sse_server.rs",
+        "count": 26,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/registry/tests.rs",
+        "count": 29,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-auth/src/manager.rs",
+        "count": 28,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-auth/src/oauth2/client.rs",
+        "count": 27,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/resource.rs",
+        "count": 37,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/server.rs",
+        "count": 25,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/tool.rs",
+        "count": 26,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/schema.rs",
+        "count": 28,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/prompt.rs",
+        "count": 31,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/attrs.rs",
+        "count": 38,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/compile_time_router.rs",
+        "count": 30,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/redis_storage.rs",
+        "count": 26,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/types.rs",
+        "count": 25,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/proof.rs",
+        "count": 58,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/yubihsm.rs",
+        "count": 49,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/pkcs11.rs",
+        "count": 56,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+        "count": 31,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/registry.rs",
+        "count": 24,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/examples.rs",
+        "count": 35,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/core.rs",
+        "count": 46,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/tests/mcp_compliance_validation_tests.rs",
+        "count": 48,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/session.rs",
+        "count": 28,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/validation.rs",
+        "count": 95,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/test_helpers.rs",
+        "count": 21,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/capabilities.rs",
+        "count": 26,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/types/tests.rs",
+        "count": 168,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/capabilities/tests.rs",
+        "count": 30,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/jsonrpc/tests.rs",
+        "count": 46,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/validation/tests.rs",
+        "count": 76,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/websocket_bidirectional_integration_test.rs",
+        "count": 26,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/comprehensive_security_tests.rs",
+        "count": 45,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/bidirectional.rs",
+        "count": 39,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/child_process.rs",
+        "count": 22,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum_integration.rs",
+        "count": 65,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/stdio.rs",
+        "count": 26,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/streamable_http_client.rs",
+        "count": 42,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/tower.rs",
+        "count": 22,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/bidirectional.rs",
+        "count": 23,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/transport.rs",
+        "count": 28,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/auth.rs",
+        "count": 25,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/validator.rs",
+        "count": 30,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/utils.rs",
+        "count": 27,
+        "is_test": false
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/tests_legacy/functional_cli_tests.rs",
+        "count": 36,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/tests_legacy/main_integration_tests.rs",
+        "count": 28,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/tests_legacy/http_functionality_tests.rs",
+        "count": 25,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/error_propagation_fault_injection_test.rs",
+        "count": 23,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/server_middleware_routing_test.rs",
+        "count": 24,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/auth_flows_test.rs",
+        "count": 93,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/transport_implementations_test.rs",
+        "count": 44,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/macro_system_test.rs",
+        "count": 32,
+        "is_test": true
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/protocol_validation_test.rs",
+        "count": 22,
+        "is_test": true
+      }
+    ]
+  },
+  "must_use": {
+    "result_functions": 450,
+    "must_use_count": 287,
+    "missing_must_use": [
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/demo/plugin_execution_patterns.rs",
+        "result_functions": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/error_tests.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/external_dependency_integration.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_automated_spec_tracking_system.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/mcp_basic_protocol_compliance.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/examples/websocket_dogfood_server.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/examples/websocket_dogfood_client.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/demo/src/main.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/observability.rs",
+        "result_functions": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/timeout.rs",
+        "result_functions": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/main.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/elicitation.rs",
+        "result_functions": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/auth.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/validation.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime/websocket.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime/http.rs",
+        "result_functions": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/mcp_protocol_compliance_comprehensive.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/roots_integration_test.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/sampling_integration_test.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/mcp_utilities_integration_test.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/integration_examples_tests.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/completion_integration_test.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/stdio_client.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/elicitation_client.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/http_server.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/websocket_server.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/http_app.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/tools.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/stdio_server.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/sampling_server.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/http_client_simple.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/hello_world.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/stdio_app.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/elicitation_server.rs",
+        "result_functions": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/macro_server.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/basic_client.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/unix_client.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/validation.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/tcp_client.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/stateful.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/comprehensive.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/unix_server.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/resources.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/tcp_server.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/validation.rs",
+        "result_functions": 14
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/tests/error_integration_tests.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/resource.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/uri_template.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/server.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/tool.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/prompt.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/bidirectional_wrapper.rs",
+        "result_functions": 10
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/keys.rs",
+        "result_functions": 19
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/redis_storage.rs",
+        "result_functions": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/types.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/test_utils.rs",
+        "result_functions": 8
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/proof.rs",
+        "result_functions": 32
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/yubihsm.rs",
+        "result_functions": 19
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/mod.rs",
+        "result_functions": 11
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/pkcs11.rs",
+        "result_functions": 21
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/common.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/lib.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/sampling.rs",
+        "result_functions": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/prelude.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/registry.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/mod.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/core.rs",
+        "result_functions": 14
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/protocol.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/dispatcher.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/manager.rs",
+        "result_functions": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/prompts.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/tools.rs",
+        "result_functions": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/completion.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/plugins.rs",
+        "result_functions": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/sampling.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/resources.rs",
+        "result_functions": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/connection.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/handlers.rs",
+        "result_functions": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/enhanced_registry.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/zero_copy.rs",
+        "result_functions": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/error_utils.rs",
+        "result_functions": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/lib.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/lock_free.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/versioning.rs",
+        "result_functions": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/jsonrpc.rs",
+        "result_functions": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/shared.rs",
+        "result_functions": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/capabilities.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/context/server_initiated.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/context/capabilities.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/security/validation.rs",
+        "result_functions": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/websocket_bidirectional_integration_test.rs",
+        "result_functions": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum_integration.rs",
+        "result_functions": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/streamable_http_v2.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/types.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/mod.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/session.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/auth.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/validator.rs",
+        "result_functions": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/mod.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/origin.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/rate_limit.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/security/utils.rs",
+        "result_functions": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/resilience/mod.rs",
+        "result_functions": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/middleware/security.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/middleware/auth.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/middleware/rate_limit.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/middleware/mcp.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/service/state.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/handlers/json_rpc.rs",
+        "result_functions": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/property/property_based_tests.rs",
+        "result_functions": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/performance/performance_concurrency_test.rs",
+        "result_functions": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/benches/regression/performance_regression_detector.rs",
+        "result_functions": 3
+      }
+    ]
+  },
+  "async_usage": {
+    "async_functions": 2057,
+    "await_calls": 3181,
+    "files": [
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/demo/plugin_execution_patterns.rs",
+        "async_functions": 6,
+        "await_calls": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/external_dependency_integration.rs",
+        "async_functions": 6,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/coverage_tests.rs",
+        "async_functions": 5,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/fault_tolerance_tests.rs",
+        "async_functions": 5,
+        "await_calls": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration.rs",
+        "async_functions": 22,
+        "await_calls": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/examples/websocket_dogfood_server.rs",
+        "async_functions": 3,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/examples/websocket_dogfood_client.rs",
+        "async_functions": 1,
+        "await_calls": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/demo/src/main.rs",
+        "async_functions": 2,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/tests/test_helpers.rs",
+        "async_functions": 3,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/tests/timeout_integration_tests.rs",
+        "async_functions": 14,
+        "await_calls": 37
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/observability.rs",
+        "async_functions": 7,
+        "await_calls": 15
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/timeout.rs",
+        "async_functions": 10,
+        "await_calls": 16
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime.rs",
+        "async_functions": 14,
+        "await_calls": 33
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/lib.rs",
+        "async_functions": 2,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/service.rs",
+        "async_functions": 1,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/main.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/sampling.rs",
+        "async_functions": 7,
+        "await_calls": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/lifecycle.rs",
+        "async_functions": 7,
+        "await_calls": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/elicitation.rs",
+        "async_functions": 26,
+        "await_calls": 46
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/capabilities.rs",
+        "async_functions": 0,
+        "await_calls": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/tests/common/mod.rs",
+        "async_functions": 2,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/metrics/tests.rs",
+        "async_functions": 11,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/audit.rs",
+        "async_functions": 0,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/auth.rs",
+        "async_functions": 0,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/validation.rs",
+        "async_functions": 0,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/middleware/tests.rs",
+        "async_functions": 5,
+        "await_calls": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime/websocket.rs",
+        "async_functions": 12,
+        "await_calls": 20
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/runtime/http.rs",
+        "async_functions": 12,
+        "await_calls": 18
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/lifecycle/tests.rs",
+        "async_functions": 29,
+        "await_calls": 68
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/server/core.rs",
+        "async_functions": 18,
+        "await_calls": 40
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/server/shutdown.rs",
+        "async_functions": 2,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/server/transport.rs",
+        "async_functions": 1,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/bidirectional.rs",
+        "async_functions": 4,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/mod.rs",
+        "async_functions": 7,
+        "await_calls": 25
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/tests.rs",
+        "async_functions": 12,
+        "await_calls": 11
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/traits.rs",
+        "async_functions": 6,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/utils.rs",
+        "async_functions": 3,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/prompts.rs",
+        "async_functions": 2,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/tools.rs",
+        "async_functions": 2,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/initialize.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/completion.rs",
+        "async_functions": 2,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/logging.rs",
+        "async_functions": 2,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/roots.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/mod.rs",
+        "async_functions": 16,
+        "await_calls": 16
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/ping.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/sampling.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/resources.rs",
+        "async_functions": 6,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/routing/handlers/elicitation.rs",
+        "async_functions": 2,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/traits/resource.rs",
+        "async_functions": 3,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/traits/completion.rs",
+        "async_functions": 2,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/traits/logging.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/traits/resource_template.rs",
+        "async_functions": 4,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/traits/tool.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/traits/ping.rs",
+        "async_functions": 5,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/traits/prompt.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/traits/sampling.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/traits/elicitation.rs",
+        "async_functions": 3,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-server/src/handlers/implementations/function_tool.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/macro_end_to_end_tests.rs",
+        "async_functions": 41,
+        "await_calls": 54
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/streamable_http_v2_bug_fixes.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/complete_feature_coverage_test.rs",
+        "async_functions": 27,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/transport_integration_tests.rs",
+        "async_functions": 8,
+        "await_calls": 29
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/mcp_protocol_compliance_comprehensive.rs",
+        "async_functions": 20,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/real_end_to_end_working_examples.rs",
+        "async_functions": 9,
+        "await_calls": 52
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/zero_tolerance_enforcement.rs",
+        "async_functions": 0,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/runtime_configuration_tests.rs",
+        "async_functions": 14,
+        "await_calls": 31
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/lifespan_coverage.rs",
+        "async_functions": 17,
+        "await_calls": 79
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/resource_subscription_comprehensive_test.rs",
+        "async_functions": 23,
+        "await_calls": 52
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/elicitation_integration_test.rs",
+        "async_functions": 10,
+        "await_calls": 32
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/roots_integration_test.rs",
+        "async_functions": 19,
+        "await_calls": 50
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/sampling_integration_test.rs",
+        "async_functions": 21,
+        "await_calls": 61
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/websocket_integration_tests.rs",
+        "async_functions": 9,
+        "await_calls": 42
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/mcp_utilities_integration_test.rs",
+        "async_functions": 29,
+        "await_calls": 72
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/integration_examples_tests.rs",
+        "async_functions": 9,
+        "await_calls": 15
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/completion_integration_test.rs",
+        "async_functions": 17,
+        "await_calls": 36
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/transport_protocol_compliance_test.rs",
+        "async_functions": 12,
+        "await_calls": 27
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/tests/macro_dogfood_tests.rs",
+        "async_functions": 23,
+        "await_calls": 37
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/websocket_client_simple.rs",
+        "async_functions": 1,
+        "await_calls": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/stdio_client.rs",
+        "async_functions": 1,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/elicitation_client.rs",
+        "async_functions": 2,
+        "await_calls": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/http_server.rs",
+        "async_functions": 3,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/websocket_server.rs",
+        "async_functions": 4,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/minimal_test.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/http_app.rs",
+        "async_functions": 4,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/tools.rs",
+        "async_functions": 6,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/stdio_server.rs",
+        "async_functions": 4,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/sampling_server.rs",
+        "async_functions": 2,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/http_client_simple.rs",
+        "async_functions": 1,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/hello_world.rs",
+        "async_functions": 2,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/stdio_app.rs",
+        "async_functions": 5,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/elicitation_server.rs",
+        "async_functions": 3,
+        "await_calls": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/macro_server.rs",
+        "async_functions": 4,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/basic_client.rs",
+        "async_functions": 1,
+        "await_calls": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/unix_client.rs",
+        "async_functions": 1,
+        "await_calls": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/validation.rs",
+        "async_functions": 6,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/tcp_client.rs",
+        "async_functions": 1,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/stateful.rs",
+        "async_functions": 5,
+        "await_calls": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/comprehensive.rs",
+        "async_functions": 1,
+        "await_calls": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/unix_server.rs",
+        "async_functions": 4,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/resources.rs",
+        "async_functions": 4,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/examples/tcp_server.rs",
+        "async_functions": 3,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/benches/performance_tests.rs",
+        "async_functions": 5,
+        "await_calls": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/session.rs",
+        "async_functions": 22,
+        "await_calls": 49
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/simd.rs",
+        "async_functions": 29,
+        "await_calls": 38
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation_api.rs",
+        "async_functions": 7,
+        "await_calls": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/transport.rs",
+        "async_functions": 0,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lib.rs",
+        "async_functions": 35,
+        "await_calls": 30
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/injection.rs",
+        "async_functions": 31,
+        "await_calls": 28
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/validation.rs",
+        "async_functions": 6,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/lifespan.rs",
+        "async_functions": 11,
+        "await_calls": 15
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/progress.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/router.rs",
+        "async_functions": 4,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/sse_server.rs",
+        "async_functions": 11,
+        "await_calls": 23
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/elicitation.rs",
+        "async_functions": 13,
+        "await_calls": 20
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/context_factory.rs",
+        "async_functions": 19,
+        "await_calls": 16
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/context.rs",
+        "async_functions": 15,
+        "await_calls": 23
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp/src/registry/tests.rs",
+        "async_functions": 8,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-auth/src/types.rs",
+        "async_functions": 15,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-auth/src/config.rs",
+        "async_functions": 6,
+        "await_calls": 8
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-auth/src/manager.rs",
+        "async_functions": 12,
+        "await_calls": 23
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-auth/src/providers/api_key.rs",
+        "async_functions": 8,
+        "await_calls": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/tests/helper_macro_tests.rs",
+        "async_functions": 2,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/resource.rs",
+        "async_functions": 0,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/tool_router.rs",
+        "async_functions": 0,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/context_aware_dispatch.rs",
+        "async_functions": 1,
+        "await_calls": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/lib.rs",
+        "async_functions": 14,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/completion.rs",
+        "async_functions": 0,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/server.rs",
+        "async_functions": 1,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/tool.rs",
+        "async_functions": 0,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/helpers.rs",
+        "async_functions": 0,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/ping.rs",
+        "async_functions": 0,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/prompt.rs",
+        "async_functions": 0,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/compile_time_router.rs",
+        "async_functions": 2,
+        "await_calls": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/template.rs",
+        "async_functions": 0,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/elicitation.rs",
+        "async_functions": 0,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-macros/src/bidirectional_wrapper.rs",
+        "async_functions": 12,
+        "await_calls": 12
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/keys.rs",
+        "async_functions": 30,
+        "await_calls": 52
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/redis_storage.rs",
+        "async_functions": 9,
+        "await_calls": 20
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/types.rs",
+        "async_functions": 4,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/test_utils.rs",
+        "async_functions": 5,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/proof.rs",
+        "async_functions": 26,
+        "await_calls": 38
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/yubihsm.rs",
+        "async_functions": 12,
+        "await_calls": 11
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/mod.rs",
+        "async_functions": 14,
+        "await_calls": 11
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/pkcs11.rs",
+        "async_functions": 10,
+        "await_calls": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-dpop/src/hsm/common.rs",
+        "async_functions": 4,
+        "await_calls": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/tests/bidirectional_test.rs",
+        "async_functions": 2,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/handlers.rs",
+        "async_functions": 42,
+        "await_calls": 8
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/lib.rs",
+        "async_functions": 11,
+        "await_calls": 12
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/sampling.rs",
+        "async_functions": 9,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/prelude.rs",
+        "async_functions": 1,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/core.rs",
+        "async_functions": 9,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/registry.rs",
+        "async_functions": 22,
+        "await_calls": 29
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/mod.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/middleware.rs",
+        "async_functions": 17,
+        "await_calls": 9
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/examples.rs",
+        "async_functions": 15,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/plugins/macros.rs",
+        "async_functions": 3,
+        "await_calls": 8
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/core.rs",
+        "async_functions": 25,
+        "await_calls": 64
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/protocol.rs",
+        "async_functions": 4,
+        "await_calls": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/dispatcher.rs",
+        "async_functions": 1,
+        "await_calls": 10
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/manager.rs",
+        "async_functions": 14,
+        "await_calls": 22
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/builder.rs",
+        "async_functions": 6,
+        "await_calls": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/handlers.rs",
+        "async_functions": 5,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/prompts.rs",
+        "async_functions": 4,
+        "await_calls": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/tools.rs",
+        "async_functions": 6,
+        "await_calls": 9
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/completion.rs",
+        "async_functions": 7,
+        "await_calls": 10
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/plugins.rs",
+        "async_functions": 5,
+        "await_calls": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/sampling.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/resources.rs",
+        "async_functions": 6,
+        "await_calls": 9
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-client/src/client/operations/connection.rs",
+        "async_functions": 4,
+        "await_calls": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/handlers.rs",
+        "async_functions": 11,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/session.rs",
+        "async_functions": 6,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/enhanced_registry.rs",
+        "async_functions": 2,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/zero_copy.rs",
+        "async_functions": 9,
+        "await_calls": 10
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/lib.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/shared.rs",
+        "async_functions": 22,
+        "await_calls": 42
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/utils.rs",
+        "async_functions": 5,
+        "await_calls": 10
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-protocol/src/context/capabilities.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/http_endpoint_url_regression_test.rs",
+        "async_functions": 6,
+        "await_calls": 16
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/websocket_bidirectional_integration_test.rs",
+        "async_functions": 33,
+        "await_calls": 156
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/streamable_http_client_tests.rs",
+        "async_functions": 8,
+        "await_calls": 27
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/tcp_tests.rs",
+        "async_functions": 5,
+        "await_calls": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/unix_tests.rs",
+        "async_functions": 10,
+        "await_calls": 14
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/comprehensive_security_tests.rs",
+        "async_functions": 13,
+        "await_calls": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/sampling_rejection_hang_test.rs",
+        "async_functions": 5,
+        "await_calls": 8
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/tests/long_running_connection_tests.rs",
+        "async_functions": 7,
+        "await_calls": 15
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/core.rs",
+        "async_functions": 15,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/bidirectional.rs",
+        "async_functions": 16,
+        "await_calls": 17
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/child_process.rs",
+        "async_functions": 14,
+        "await_calls": 42
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/unix.rs",
+        "async_functions": 10,
+        "await_calls": 20
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/lib.rs",
+        "async_functions": 2,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum_integration.rs",
+        "async_functions": 22,
+        "await_calls": 14
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/server.rs",
+        "async_functions": 20,
+        "await_calls": 16
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/streamable_http_v2.rs",
+        "async_functions": 13,
+        "await_calls": 16
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/stdio.rs",
+        "async_functions": 10,
+        "await_calls": 26
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/streamable_http_client.rs",
+        "async_functions": 15,
+        "await_calls": 49
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/tcp.rs",
+        "async_functions": 10,
+        "await_calls": 19
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/tower.rs",
+        "async_functions": 17,
+        "await_calls": 31
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/shared.rs",
+        "async_functions": 26,
+        "await_calls": 39
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/bidirectional.rs",
+        "async_functions": 15,
+        "await_calls": 28
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/types.rs",
+        "async_functions": 4,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/tasks.rs",
+        "async_functions": 7,
+        "await_calls": 29
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/transport.rs",
+        "async_functions": 22,
+        "await_calls": 44
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/mcp_methods.rs",
+        "async_functions": 7,
+        "await_calls": 19
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/mod.rs",
+        "async_functions": 7,
+        "await_calls": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/elicitation.rs",
+        "async_functions": 12,
+        "await_calls": 17
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/websocket_bidirectional/connection.rs",
+        "async_functions": 16,
+        "await_calls": 40
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/extension.rs",
+        "async_functions": 2,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/resilience/health.rs",
+        "async_functions": 13,
+        "await_calls": 6
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/resilience/transport.rs",
+        "async_functions": 14,
+        "await_calls": 36
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/resilience/metrics.rs",
+        "async_functions": 9,
+        "await_calls": 17
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/resilience/mod.rs",
+        "async_functions": 2,
+        "await_calls": 3
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/middleware/security.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/middleware/auth.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/middleware/rate_limit.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/middleware/mcp.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/tests/mod.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/tests/router.rs",
+        "async_functions": 2,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/tests/integration.rs",
+        "async_functions": 4,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/service/interface.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/service/state.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/handlers/sse.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/handlers/health.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/handlers/json_rpc.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/handlers/metrics.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/handlers/websocket.rs",
+        "async_functions": 2,
+        "await_calls": 7
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/handlers/root.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/handlers/capabilities.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/router/extension.rs",
+        "async_functions": 1,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-transport/src/axum/router/builder.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/tests_legacy/cli_structure_tests.rs",
+        "async_functions": 0,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/tests_legacy/functional_cli_tests.rs",
+        "async_functions": 14,
+        "await_calls": 9
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/tests_legacy/main_integration_tests.rs",
+        "async_functions": 4,
+        "await_calls": 4
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/tests_legacy/http_functionality_tests.rs",
+        "async_functions": 2,
+        "await_calls": 0
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/src/transport.rs",
+        "async_functions": 3,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/src/lib.rs",
+        "async_functions": 2,
+        "await_calls": 2
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/src/executor.rs",
+        "async_functions": 9,
+        "await_calls": 135
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/src/main.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/crates/turbomcp-cli/src/prelude.rs",
+        "async_functions": 1,
+        "await_calls": 1
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/property/property_based_tests.rs",
+        "async_functions": 10,
+        "await_calls": 24
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/error_propagation_fault_injection_test.rs",
+        "async_functions": 16,
+        "await_calls": 24
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/server_middleware_routing_test.rs",
+        "async_functions": 22,
+        "await_calls": 37
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/auth_flows_test.rs",
+        "async_functions": 26,
+        "await_calls": 29
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/transport_implementations_test.rs",
+        "async_functions": 38,
+        "await_calls": 34
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/macro_system_test.rs",
+        "async_functions": 30,
+        "await_calls": 15
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/protocol_validation_test.rs",
+        "async_functions": 17,
+        "await_calls": 17
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/transport_resilience_test.rs",
+        "async_functions": 20,
+        "await_calls": 62
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/integration/macro_system_test_comprehensive.rs",
+        "async_functions": 10,
+        "await_calls": 5
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/tests/performance/performance_concurrency_test.rs",
+        "async_functions": 12,
+        "await_calls": 27
+      },
+      {
+        "file": "/Users/nickpaterno/work/turbomcp/benches/integration/end_to_end_benchmark.rs",
+        "async_functions": 7,
+        "await_calls": 8
+      }
+    ]
+  },
+  "api_surface": {
+    "pub_fn": 1646,
+    "pub_crate_fn": 6,
+    "private_fn": 4783,
+    "pub_struct": 568,
+    "pub_enum": 144,
+    "pub_trait": 76
+  }
+}
