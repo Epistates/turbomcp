@@ -732,7 +732,7 @@ impl McpServer {
     ///     Ok(())
     /// }
     /// ```
-    #[cfg(all(feature = "websocket", feature = "http"))]
+    #[cfg(feature = "websocket")]
     #[tracing::instrument(skip(self), fields(
         transport = "websocket",
         service_name = %self.config.name,
@@ -778,7 +778,7 @@ impl McpServer {
     ///     Ok(())
     /// }
     /// ```
-    #[cfg(all(feature = "websocket", feature = "http"))]
+    #[cfg(feature = "websocket")]
     #[tracing::instrument(skip(self, config), fields(
         transport = "websocket",
         service_name = %self.config.name,

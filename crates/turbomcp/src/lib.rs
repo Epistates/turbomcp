@@ -632,7 +632,7 @@ pub use crate::sse_server::*;
 pub use crate::structured::*;
 pub use crate::transport::*;
 pub use crate::validation::*;
-#[cfg(all(feature = "auth", feature = "dpop"))]
+#[cfg(feature = "dpop")]
 pub use turbomcp_dpop::{DpopKeyManager, DpopProofGenerator};
 
 // Re-export inventory for macro use

@@ -27,7 +27,7 @@
 //! - Concurrent: Multiple clients on same server
 //! - Message throughput: Periodic messages during long connection
 
-#![cfg(all(feature = "http", feature = "websocket"))]
+#![cfg(feature = "websocket")]
 
 use futures::StreamExt;
 use serde_json::{Value, json};

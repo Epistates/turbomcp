@@ -17,6 +17,9 @@
 //! cargo run --example http_client_simple --features http
 //! ```
 
+use std::collections::HashMap;
+use std::time::Duration;
+
 #[cfg(feature = "http")]
 use turbomcp_client::{Client, Result};
 #[cfg(feature = "http")]
@@ -27,6 +30,7 @@ use turbomcp_transport::streamable_http_client::{
 #[tokio::main]
 #[cfg(feature = "http")]
 async fn main() -> Result<()> {
+
     tracing_subscriber::fmt()
         .with_env_filter("info")
         .with_writer(std::io::stdout)

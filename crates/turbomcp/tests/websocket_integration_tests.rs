@@ -13,23 +13,23 @@
 //! - ✅ Keep-alive ping/pong
 //! - ✅ Custom WebSocket paths
 
-#[cfg(all(feature = "http", feature = "websocket"))]
+#[cfg(feature = "websocket")]
 use futures::{SinkExt, StreamExt};
-#[cfg(all(feature = "http", feature = "websocket"))]
+#[cfg(feature = "websocket")]
 use serde_json::{Value, json};
-#[cfg(all(feature = "http", feature = "websocket"))]
+#[cfg(feature = "websocket")]
 use std::time::Duration;
-#[cfg(all(feature = "http", feature = "websocket"))]
+#[cfg(feature = "websocket")]
 use tokio::time::{sleep, timeout};
-#[cfg(all(feature = "http", feature = "websocket"))]
+#[cfg(feature = "websocket")]
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 
-#[cfg(all(feature = "http", feature = "websocket"))]
+#[cfg(feature = "websocket")]
 use turbomcp::prelude::*;
 
 /// Test WebSocket connection and basic tool call
 #[tokio::test]
-#[cfg(all(feature = "http", feature = "websocket"))]
+#[cfg(feature = "websocket")]
 async fn test_websocket_basic_connection_and_tool_call() {
     // Create test server with tools
     #[derive(Clone)]
@@ -214,7 +214,7 @@ async fn test_websocket_basic_connection_and_tool_call() {
 
 /// Test concurrent WebSocket connections
 #[tokio::test]
-#[cfg(all(feature = "http", feature = "websocket"))]
+#[cfg(feature = "websocket")]
 async fn test_websocket_concurrent_connections() {
     #[derive(Clone)]
     struct ConcurrentServer;
@@ -321,7 +321,7 @@ async fn test_websocket_concurrent_connections() {
 
 /// Test invalid JSON handling
 #[tokio::test]
-#[cfg(all(feature = "http", feature = "websocket"))]
+#[cfg(feature = "websocket")]
 async fn test_websocket_invalid_json_handling() {
     #[derive(Clone)]
     struct InvalidJsonServer;
@@ -397,7 +397,7 @@ async fn test_websocket_invalid_json_handling() {
 
 /// Test WebSocket ping/pong keep-alive
 #[tokio::test]
-#[cfg(all(feature = "http", feature = "websocket"))]
+#[cfg(feature = "websocket")]
 async fn test_websocket_ping_pong_keepalive() {
     #[derive(Clone)]
     struct KeepAliveServer;
@@ -447,7 +447,7 @@ async fn test_websocket_ping_pong_keepalive() {
 
 /// Test custom WebSocket path
 #[tokio::test]
-#[cfg(all(feature = "http", feature = "websocket"))]
+#[cfg(feature = "websocket")]
 async fn test_websocket_custom_path() {
     #[derive(Clone)]
     struct CustomPathServer;
