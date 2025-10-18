@@ -3,12 +3,11 @@
 //! This module provides handler traits and registration mechanisms for processing
 //! server-initiated requests. The MCP protocol is bidirectional, meaning servers
 //! can also send requests to clients for various purposes like elicitation,
-//! progress reporting, logging, and resource updates.
+//! logging, and resource updates.
 //!
 //! ## Handler Types
 //!
 //! - **ElicitationHandler**: Handle user input requests from servers
-//! - **ProgressHandler**: Process progress notifications from long-running operations
 //! - **LogHandler**: Route server log messages to client logging systems
 //! - **ResourceUpdateHandler**: Handle notifications when resources change
 //!
@@ -81,7 +80,6 @@ use turbomcp_protocol::types::LogLevel;
 pub use turbomcp_protocol::types::{
     CancelledNotification,       // MCP 2025-06-18 spec
     LoggingNotification,         // MCP 2025-06-18 spec
-    ProgressNotification,        // MCP 2025-06-18 spec
     ResourceUpdatedNotification, // MCP 2025-06-18 spec
 };
 
@@ -469,63 +467,6 @@ pub trait ElicitationHandler: Send + Sync + std::fmt::Debug {
 }
 
 // ============================================================================
-// PROGRESS HANDLER TRAIT
-// ============================================================================
-
-// ProgressNotification is re-exported from protocol (see imports above)
-// This ensures MCP 2025-06-18 spec compliance
-
-/// Handler for server progress notifications
-///
-/// Progress handlers receive notifications about long-running server operations.
-/// This allows clients to display progress bars, status updates, or other
-/// feedback to users during operations that take significant time.
-///
-/// # Examples
-///
-/// ```rust,no_run
-/// use turbomcp_client::handlers::{ProgressHandler, ProgressNotification, HandlerResult};
-/// use async_trait::async_trait;
-///
-/// #[derive(Debug)]
-/// struct ProgressBarHandler;
-///
-/// #[async_trait]
-/// impl ProgressHandler for ProgressBarHandler {
-///     async fn handle_progress(&self, notification: ProgressNotification) -> HandlerResult<()> {
-///         // Use MCP spec fields directly
-///         let progress_val = notification.progress;
-///         if let Some(total) = notification.total {
-///             let percentage = (progress_val / total) * 100.0;
-///             println!("Progress: {:.1}%", percentage);
-///         } else {
-///             println!("Progress: {}", progress_val);
-///         }
-///
-///         if let Some(msg) = &notification.message {
-///             println!("Status: {}", msg);
-///         }
-///
-///         Ok(())
-///     }
-/// }
-/// ```
-#[async_trait]
-pub trait ProgressHandler: Send + Sync + std::fmt::Debug {
-    /// Handle a progress notification from the server
-    ///
-    /// This method is called when the server sends progress updates for
-    /// long-running operations.
-    ///
-    /// # Arguments
-    ///
-    /// * `notification` - Progress information including current status and completion state
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if the notification was processed successfully.
-    async fn handle_progress(&self, notification: ProgressNotification) -> HandlerResult<()>;
-}
 
 // ============================================================================
 // LOG HANDLER TRAIT
@@ -900,9 +841,6 @@ pub struct HandlerRegistry {
     /// Elicitation handler for user input requests
     pub elicitation: Option<Arc<dyn ElicitationHandler>>,
 
-    /// Progress handler for operation updates
-    pub progress: Option<Arc<dyn ProgressHandler>>,
-
     /// Log handler for server log messages
     pub log: Option<Arc<dyn LogHandler>>,
 
@@ -939,12 +877,6 @@ impl HandlerRegistry {
     pub fn set_elicitation_handler(&mut self, handler: Arc<dyn ElicitationHandler>) {
         debug!("Registering elicitation handler");
         self.elicitation = Some(handler);
-    }
-
-    /// Register a progress handler
-    pub fn set_progress_handler(&mut self, handler: Arc<dyn ProgressHandler>) {
-        debug!("Registering progress handler");
-        self.progress = Some(handler);
     }
 
     /// Register a log handler
@@ -998,12 +930,6 @@ impl HandlerRegistry {
         self.elicitation.is_some()
     }
 
-    /// Check if a progress handler is registered
-    #[must_use]
-    pub fn has_progress_handler(&self) -> bool {
-        self.progress.is_some()
-    }
-
     /// Check if a log handler is registered
     #[must_use]
     pub fn has_log_handler(&self) -> bool {
@@ -1014,12 +940,6 @@ impl HandlerRegistry {
     #[must_use]
     pub fn has_resource_update_handler(&self) -> bool {
         self.resource_update.is_some()
-    }
-
-    /// Get the progress handler if registered
-    #[must_use]
-    pub fn get_progress_handler(&self) -> Option<Arc<dyn ProgressHandler>> {
-        self.progress.clone()
     }
 
     /// Get the log handler if registered
@@ -1092,20 +1012,6 @@ impl HandlerRegistry {
         }
     }
 
-    /// Handle a progress notification
-    pub async fn handle_progress(&self, notification: ProgressNotification) -> HandlerResult<()> {
-        match &self.progress {
-            Some(handler) => {
-                debug!("Processing progress notification");
-                handler.handle_progress(notification).await
-            }
-            None => {
-                debug!("No progress handler registered, ignoring notification");
-                Ok(())
-            }
-        }
-    }
-
     /// Handle a log message
     pub async fn handle_log(&self, log: LoggingNotification) -> HandlerResult<()> {
         match &self.log {
@@ -1151,31 +1057,6 @@ impl ElicitationHandler for DeclineElicitationHandler {
     ) -> HandlerResult<ElicitationResponse> {
         warn!("Declining elicitation request: {}", request.message());
         Ok(ElicitationResponse::decline())
-    }
-}
-
-/// Default progress handler that logs progress to tracing
-#[derive(Debug)]
-pub struct LoggingProgressHandler;
-
-#[async_trait]
-impl ProgressHandler for LoggingProgressHandler {
-    async fn handle_progress(&self, notification: ProgressNotification) -> HandlerResult<()> {
-        // Per MCP spec: progress notifications have progress, total (optional), message (optional)
-        let progress = notification.progress;
-        let progress_str = if let Some(total) = notification.total {
-            format!("{}/{}", progress, total)
-        } else {
-            format!("{}", progress)
-        };
-
-        if let Some(message) = &notification.message {
-            info!("Progress {}: {}", progress_str, message);
-        } else {
-            info!("Progress: {}", progress_str);
-        }
-
-        Ok(())
     }
 }
 
@@ -1298,21 +1179,10 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
-    struct TestProgressHandler;
-
-    #[async_trait]
-    impl ProgressHandler for TestProgressHandler {
-        async fn handle_progress(&self, _notification: ProgressNotification) -> HandlerResult<()> {
-            Ok(())
-        }
-    }
-
     #[tokio::test]
     async fn test_handler_registry_creation() {
         let registry = HandlerRegistry::new();
         assert!(!registry.has_elicitation_handler());
-        assert!(!registry.has_progress_handler());
         assert!(!registry.has_log_handler());
         assert!(!registry.has_resource_update_handler());
     }
@@ -1352,15 +1222,6 @@ mod tests {
         let response = registry.handle_elicitation(request).await.unwrap();
         assert_eq!(response.action(), ElicitationAction::Accept);
         assert!(response.content().is_some());
-    }
-
-    #[tokio::test]
-    async fn test_progress_handler_registration() {
-        let mut registry = HandlerRegistry::new();
-        let handler = Arc::new(TestProgressHandler);
-
-        registry.set_progress_handler(handler);
-        assert!(registry.has_progress_handler());
     }
 
     #[tokio::test]

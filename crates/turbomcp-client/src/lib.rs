@@ -191,9 +191,6 @@ pub use handlers::{
     // Logging (MCP 2025-06-18 spec compliant)
     LogHandler,
     LoggingNotification,
-    // Progress (MCP 2025-06-18 spec compliant)
-    ProgressHandler,
-    ProgressNotification,
     PromptListChangedHandler,
     // List changed handlers (MCP 2025-06-18 spec compliant)
     ResourceListChangedHandler,
@@ -562,7 +559,6 @@ pub struct ClientBuilder {
     connection_config: ConnectionConfig,
     plugins: Vec<Arc<dyn crate::plugins::ClientPlugin>>,
     elicitation_handler: Option<Arc<dyn crate::handlers::ElicitationHandler>>,
-    progress_handler: Option<Arc<dyn crate::handlers::ProgressHandler>>,
     log_handler: Option<Arc<dyn crate::handlers::LogHandler>>,
     resource_update_handler: Option<Arc<dyn crate::handlers::ResourceUpdateHandler>>,
     // Robustness configuration
@@ -901,19 +897,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Register a progress handler for processing operation progress updates
-    ///
-    /// # Arguments
-    ///
-    /// * `handler` - The progress handler implementation
-    pub fn with_progress_handler(
-        mut self,
-        handler: Arc<dyn crate::handlers::ProgressHandler>,
-    ) -> Self {
-        self.progress_handler = Some(handler);
-        self
-    }
-
     /// Register a log handler for processing server log messages
     ///
     /// # Arguments
@@ -976,9 +959,6 @@ impl ClientBuilder {
         // Register handlers
         if let Some(handler) = self.elicitation_handler {
             client.set_elicitation_handler(handler);
-        }
-        if let Some(handler) = self.progress_handler {
-            client.set_progress_handler(handler);
         }
         if let Some(handler) = self.log_handler {
             client.set_log_handler(handler);
@@ -1082,9 +1062,6 @@ impl ClientBuilder {
         if let Some(handler) = self.elicitation_handler {
             client.set_elicitation_handler(handler);
         }
-        if let Some(handler) = self.progress_handler {
-            client.set_progress_handler(handler);
-        }
         if let Some(handler) = self.log_handler {
             client.set_log_handler(handler);
         }
@@ -1135,9 +1112,6 @@ impl ClientBuilder {
         if let Some(handler) = self.elicitation_handler {
             client.set_elicitation_handler(handler);
         }
-        if let Some(handler) = self.progress_handler {
-            client.set_progress_handler(handler);
-        }
         if let Some(handler) = self.log_handler {
             client.set_log_handler(handler);
         }
@@ -1174,7 +1148,6 @@ impl ClientBuilder {
     #[must_use]
     pub fn has_handlers(&self) -> bool {
         self.elicitation_handler.is_some()
-            || self.progress_handler.is_some()
             || self.log_handler.is_some()
             || self.resource_update_handler.is_some()
     }

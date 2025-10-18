@@ -54,8 +54,6 @@ pub use crate::{
     PluginContext,
     PluginError,
     PluginResult,
-    ProgressHandler,
-    ProgressNotification,
     PromptListChangedHandler,
     ResourceListChangedHandler,
     ResourceUpdateHandler,
@@ -101,10 +99,6 @@ pub use turbomcp_protocol::types::{
     ImageContent,
     // Logging
     LogLevel,
-
-    // Progress
-    ProgressNotification as ProtocolProgressNotification,
-    ProgressToken,
 
     Prompt,
     Resource,

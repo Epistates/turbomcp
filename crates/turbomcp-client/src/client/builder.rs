@@ -47,7 +47,6 @@ pub struct ClientBuilder {
     plugins: Vec<Arc<dyn crate::plugins::ClientPlugin>>,
     llm_providers: HashMap<String, Arc<dyn crate::llm::LLMProvider>>,
     elicitation_handler: Option<Arc<dyn crate::handlers::ElicitationHandler>>,
-    progress_handler: Option<Arc<dyn crate::handlers::ProgressHandler>>,
     log_handler: Option<Arc<dyn crate::handlers::LogHandler>>,
     resource_update_handler: Option<Arc<dyn crate::handlers::ResourceUpdateHandler>>,
     session_config: Option<crate::llm::SessionConfig>,
@@ -284,19 +283,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Set progress handler
-    ///
-    /// # Arguments
-    ///
-    /// * `handler` - Progress handler
-    pub fn with_progress_handler(
-        mut self,
-        handler: Arc<dyn crate::handlers::ProgressHandler>,
-    ) -> Self {
-        self.progress_handler = Some(handler);
-        self
-    }
-
     /// Set log handler
     ///
     /// # Arguments
@@ -366,9 +352,6 @@ impl ClientBuilder {
         // Register handlers
         if let Some(handler) = self.elicitation_handler {
             client.handlers.register_elicitation_handler(handler);
-        }
-        if let Some(handler) = self.progress_handler {
-            client.handlers.register_progress_handler(handler);
         }
         if let Some(handler) = self.log_handler {
             client.handlers.register_log_handler(handler);

@@ -4,7 +4,7 @@
 //! that process server-initiated operations and notifications.
 
 use crate::handlers::{
-    CancellationHandler, ElicitationHandler, LogHandler, ProgressHandler, PromptListChangedHandler,
+    CancellationHandler, ElicitationHandler, LogHandler, PromptListChangedHandler,
     ResourceListChangedHandler, ResourceUpdateHandler, RootsHandler, ToolListChangedHandler,
 };
 use std::sync::Arc;
@@ -104,47 +104,6 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             .lock()
             .expect("handlers mutex poisoned")
             .set_elicitation_handler(handler);
-    }
-
-    /// Register a progress handler for processing operation progress updates
-    ///
-    /// Progress handlers receive notifications about long-running server operations.
-    /// Display progress bars, status updates, or other
-    /// feedback to users.
-    ///
-    /// # Arguments
-    ///
-    /// * `handler` - The progress handler implementation
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use turbomcp_client::Client;
-    /// use turbomcp_client::handlers::{ProgressHandler, ProgressNotification, HandlerResult};
-    /// use turbomcp_transport::stdio::StdioTransport;
-    /// use async_trait::async_trait;
-    /// use std::sync::Arc;
-    ///
-    /// #[derive(Debug)]
-    /// struct MyProgressHandler;
-    ///
-    /// #[async_trait]
-    /// impl ProgressHandler for MyProgressHandler {
-    ///     async fn handle_progress(&self, notification: ProgressNotification) -> HandlerResult<()> {
-    ///         println!("Progress: {:?}", notification);
-    ///         Ok(())
-    ///     }
-    /// }
-    ///
-    /// let mut client = Client::new(StdioTransport::new());
-    /// client.set_progress_handler(Arc::new(MyProgressHandler));
-    /// ```
-    pub fn set_progress_handler(&self, handler: Arc<dyn ProgressHandler>) {
-        self.inner
-            .handlers
-            .lock()
-            .expect("handlers mutex poisoned")
-            .set_progress_handler(handler);
     }
 
     /// Register a log handler for processing server log messages
@@ -311,16 +270,6 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             .lock()
             .expect("handlers mutex poisoned")
             .has_elicitation_handler()
-    }
-
-    /// Check if a progress handler is registered
-    #[must_use]
-    pub fn has_progress_handler(&self) -> bool {
-        self.inner
-            .handlers
-            .lock()
-            .expect("handlers mutex poisoned")
-            .has_progress_handler()
     }
 
     /// Check if a log handler is registered
