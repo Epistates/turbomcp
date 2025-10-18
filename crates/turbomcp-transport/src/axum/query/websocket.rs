@@ -3,10 +3,8 @@
 //! This module defines query parameters for WebSocket connections,
 //! supporting protocol negotiation and session management.
 
-#[cfg(feature = "http")]
 use serde::Deserialize;
 
-#[cfg(feature = "http")]
 /// Query parameters for WebSocket endpoint
 #[derive(Debug, Deserialize)]
 pub struct WebSocketQuery {
@@ -17,7 +15,6 @@ pub struct WebSocketQuery {
     pub protocol: Option<String>,
 }
 
-#[cfg(feature = "http")]
 impl Default for WebSocketQuery {
     fn default() -> Self {
         Self {
@@ -27,7 +24,6 @@ impl Default for WebSocketQuery {
     }
 }
 
-#[cfg(feature = "http")]
 impl WebSocketQuery {
     /// Create new WebSocket query with session ID
     pub fn with_session(session_id: String) -> Self {

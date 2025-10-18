@@ -3,12 +3,9 @@
 //! This module defines the core MCP service trait that implementations
 //! must provide to handle MCP protocol requests.
 
-#[cfg(feature = "http")]
 use crate::tower::SessionInfo;
-#[cfg(feature = "http")]
 use turbomcp_protocol::Result as McpResult;
 
-#[cfg(feature = "http")]
 /// Core MCP service trait
 ///
 /// Implementations of this trait provide the business logic for handling
@@ -49,7 +46,6 @@ pub trait McpService: Send + Sync + 'static {
     }
 }
 
-#[cfg(feature = "http")]
 impl std::fmt::Debug for dyn McpService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("McpService")

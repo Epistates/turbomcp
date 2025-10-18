@@ -1,6 +1,5 @@
 //! Environment configuration for different deployment contexts
 
-#[cfg(feature = "http")]
 /// Environment configuration
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum Environment {
@@ -13,7 +12,6 @@ pub enum Environment {
     Production,
 }
 
-#[cfg(feature = "http")]
 impl Environment {
     /// Check if this is a development environment
     pub fn is_development(&self) -> bool {

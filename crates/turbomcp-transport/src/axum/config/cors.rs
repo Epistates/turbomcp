@@ -3,10 +3,8 @@
 //! This module provides CORS (Cross-Origin Resource Sharing) configuration
 //! with secure defaults for different environments.
 
-#[cfg(feature = "http")]
 use std::time::Duration;
 
-#[cfg(feature = "http")]
 /// CORS configuration with secure defaults
 #[derive(Debug, Clone)]
 pub struct CorsConfig {
@@ -26,14 +24,12 @@ pub struct CorsConfig {
     pub max_age: Option<Duration>,
 }
 
-#[cfg(feature = "http")]
 impl Default for CorsConfig {
     fn default() -> Self {
         Self::restrictive()
     }
 }
 
-#[cfg(feature = "http")]
 impl CorsConfig {
     /// Permissive CORS for development (allows all origins)
     pub fn permissive() -> Self {

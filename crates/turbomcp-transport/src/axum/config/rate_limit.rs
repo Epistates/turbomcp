@@ -3,7 +3,6 @@
 //! This module provides rate limiting configuration with different strategies
 //! and environment-specific presets.
 
-#[cfg(feature = "http")]
 /// Rate limiting key strategies
 #[derive(Debug, Clone)]
 pub enum RateLimitKey {
@@ -15,7 +14,6 @@ pub enum RateLimitKey {
     Custom,
 }
 
-#[cfg(feature = "http")]
 /// Rate limiting configuration
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
@@ -29,14 +27,12 @@ pub struct RateLimitConfig {
     pub key_function: RateLimitKey,
 }
 
-#[cfg(feature = "http")]
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self::moderate()
     }
 }
 
-#[cfg(feature = "http")]
 impl RateLimitConfig {
     /// Disabled rate limiting
     pub fn disabled() -> Self {

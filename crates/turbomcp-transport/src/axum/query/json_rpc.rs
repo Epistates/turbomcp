@@ -3,10 +3,8 @@
 //! This module defines the JSON-RPC 2.0 protocol structures used
 //! for MCP communication over HTTP endpoints.
 
-#[cfg(feature = "http")]
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "http")]
 /// JSON-RPC request payload
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
@@ -20,7 +18,6 @@ pub struct JsonRpcRequest {
     pub params: Option<serde_json::Value>,
 }
 
-#[cfg(feature = "http")]
 /// JSON-RPC response payload
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
@@ -36,7 +33,6 @@ pub struct JsonRpcResponse {
     pub error: Option<JsonRpcError>,
 }
 
-#[cfg(feature = "http")]
 /// JSON-RPC error object
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JsonRpcError {
@@ -49,7 +45,6 @@ pub struct JsonRpcError {
     pub data: Option<serde_json::Value>,
 }
 
-#[cfg(feature = "http")]
 impl JsonRpcRequest {
     /// Create new JSON-RPC request
     pub fn new(method: String, params: Option<serde_json::Value>) -> Self {
@@ -77,7 +72,6 @@ impl JsonRpcRequest {
     }
 }
 
-#[cfg(feature = "http")]
 impl JsonRpcResponse {
     /// Create success response
     pub fn success(id: Option<serde_json::Value>, result: serde_json::Value) -> Self {
@@ -105,7 +99,6 @@ impl JsonRpcResponse {
     }
 }
 
-#[cfg(feature = "http")]
 impl JsonRpcError {
     /// Parse error (-32700)
     pub fn parse_error(data: Option<serde_json::Value>) -> Self {

@@ -3,10 +3,8 @@
 //! This module defines query parameters for the SSE endpoint,
 //! supporting session management and event resumption.
 
-#[cfg(feature = "http")]
 use serde::Deserialize;
 
-#[cfg(feature = "http")]
 /// Query parameters for SSE endpoint
 #[derive(Debug, Deserialize, Default)]
 pub struct SseQuery {
@@ -17,7 +15,6 @@ pub struct SseQuery {
     pub last_event_id: Option<String>,
 }
 
-#[cfg(feature = "http")]
 impl SseQuery {
     /// Create new SSE query with session ID
     pub fn with_session(session_id: String) -> Self {

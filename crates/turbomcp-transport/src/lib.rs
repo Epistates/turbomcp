@@ -209,8 +209,7 @@ pub use core::{
 // Re-export server transport functionality
 pub use server::{
     ServerTransportConfig, ServerTransportConfigBuilder, ServerTransportDispatcher,
-    ServerTransportEvent, ServerTransportEventListener, ServerTransportManager,
-    ServerTransportWrapper,
+    ServerTransportEvent, ServerTransportManager, ServerTransportWrapper,
 };
 
 // Re-export transport implementations

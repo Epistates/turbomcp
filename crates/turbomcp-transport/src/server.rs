@@ -408,13 +408,6 @@ pub enum ServerTransportEvent {
     },
 }
 
-/// Server transport event listener
-#[async_trait]
-pub trait ServerTransportEventListener: Send + Sync {
-    /// Handle a server transport event
-    async fn on_event(&self, event: ServerTransportEvent);
-}
-
 /// Configuration builder for server transport
 #[derive(Debug)]
 pub struct ServerTransportConfigBuilder {

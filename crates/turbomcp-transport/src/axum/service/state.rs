@@ -3,20 +3,14 @@
 //! This module defines the shared state structure used by Axum applications
 //! to manage MCP services, sessions, and configuration.
 
-#[cfg(feature = "http")]
 use std::sync::Arc;
 
-#[cfg(feature = "http")]
 use tokio::sync::broadcast;
 
-#[cfg(feature = "http")]
 use super::McpService;
-#[cfg(feature = "http")]
 use crate::axum::config::McpServerConfig;
-#[cfg(feature = "http")]
 use crate::tower::SessionManager;
 
-#[cfg(feature = "http")]
 /// Shared state for Axum application using trait objects for flexibility
 ///
 /// This state is cloned for each request handler and provides access
@@ -36,7 +30,6 @@ pub struct McpAppState {
     pub config: McpServerConfig,
 }
 
-#[cfg(feature = "http")]
 impl std::fmt::Debug for McpAppState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("McpAppState")
@@ -48,7 +41,6 @@ impl std::fmt::Debug for McpAppState {
     }
 }
 
-#[cfg(feature = "http")]
 impl McpAppState {
     /// Create new application state
     pub fn new(

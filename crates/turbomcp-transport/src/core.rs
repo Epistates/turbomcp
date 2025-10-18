@@ -554,13 +554,6 @@ pub trait TransportFactory: Send + Sync + std::fmt::Debug {
     }
 }
 
-/// A trait for types that can listen for transport events.
-#[async_trait]
-pub trait TransportEventListener: Send + Sync {
-    /// Handles a transport event.
-    async fn on_event(&self, event: TransportEvent);
-}
-
 /// An emitter for broadcasting `TransportEvent`s to listeners.
 #[derive(Debug, Clone)]
 pub struct TransportEventEmitter {

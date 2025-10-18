@@ -3,7 +3,6 @@
 //! This module provides authentication configuration for various
 //! authentication methods including JWT and API keys.
 
-#[cfg(feature = "http")]
 /// Authentication configuration for middleware
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
@@ -17,7 +16,6 @@ pub struct AuthConfig {
     pub custom_validator: Option<String>,
 }
 
-#[cfg(feature = "http")]
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
@@ -29,7 +27,6 @@ impl Default for AuthConfig {
     }
 }
 
-#[cfg(feature = "http")]
 impl AuthConfig {
     /// Create new authentication config with JWT
     pub fn jwt(secret: String) -> Self {

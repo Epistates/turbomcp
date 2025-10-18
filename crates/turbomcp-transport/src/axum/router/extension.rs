@@ -3,13 +3,10 @@
 //! This module provides the AxumMcpExt trait which extends Axum routers
 //! with MCP capabilities while preserving existing application state.
 
-#[cfg(feature = "http")]
 use axum::Router;
 
-#[cfg(feature = "http")]
 use crate::axum::{McpServerConfig, McpService};
 
-#[cfg(feature = "http")]
 /// Extension trait for adding MCP capabilities to Axum routers
 ///
 /// This trait provides several methods for integrating MCP services:

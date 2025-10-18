@@ -3,10 +3,8 @@
 //! This module provides security headers configuration with environment-specific
 //! presets following security best practices.
 
-#[cfg(feature = "http")]
 use std::time::Duration;
 
-#[cfg(feature = "http")]
 /// X-Frame-Options configuration
 #[derive(Debug, Clone, PartialEq)]
 pub enum FrameOptions {
@@ -20,7 +18,6 @@ pub enum FrameOptions {
     Disabled,
 }
 
-#[cfg(feature = "http")]
 /// Security headers configuration
 #[derive(Debug, Clone)]
 pub struct SecurityConfig {
@@ -40,14 +37,12 @@ pub struct SecurityConfig {
     pub permissions_policy: Option<String>,
 }
 
-#[cfg(feature = "http")]
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self::staging()
     }
 }
 
-#[cfg(feature = "http")]
 impl SecurityConfig {
     /// Development security (minimal headers)
     pub fn development() -> Self {

@@ -3,15 +3,12 @@
 //! This module provides the main `McpServerConfig` struct with environment-specific
 //! presets and builder pattern methods for configuring the MCP server.
 
-#[cfg(feature = "http")]
 use std::time::Duration;
 
-#[cfg(feature = "http")]
 use super::{
     AuthConfig, CorsConfig, Environment, RateLimitConfig, SecurityConfig, TlsConfig, TlsVersion,
 };
 
-#[cfg(feature = "http")]
 /// Production-grade configuration for MCP server with comprehensive production settings
 #[derive(Debug, Clone)]
 pub struct McpServerConfig {
@@ -52,14 +49,12 @@ pub struct McpServerConfig {
     pub environment: Environment,
 }
 
-#[cfg(feature = "http")]
 impl Default for McpServerConfig {
     fn default() -> Self {
         Self::development()
     }
 }
 
-#[cfg(feature = "http")]
 impl McpServerConfig {
     /// Create development configuration with permissive settings
     pub fn development() -> Self {

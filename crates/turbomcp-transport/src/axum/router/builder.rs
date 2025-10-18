@@ -3,38 +3,26 @@
 //! This module contains the actual implementation of the AxumMcpExt trait for Router,
 //! providing the functionality to add MCP capabilities to Axum applications.
 
-#[cfg(feature = "http")]
 use std::sync::Arc;
-#[cfg(feature = "http")]
 use std::time::Duration;
 
-#[cfg(feature = "http")]
 use axum::{
     Router, middleware,
     routing::{get, post},
 };
-#[cfg(feature = "http")]
 use tokio::sync::broadcast;
-#[cfg(feature = "http")]
 use tower::ServiceBuilder;
-#[cfg(feature = "http")]
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer, trace::TraceLayer};
 
-#[cfg(feature = "http")]
 use crate::axum::config::McpServerConfig;
-#[cfg(feature = "http")]
 use crate::axum::handlers::{
     capabilities_handler, health_handler, json_rpc_handler, metrics_handler, sse_handler,
     websocket_handler,
 };
-#[cfg(feature = "http")]
 use crate::axum::router::AxumMcpExt;
-#[cfg(feature = "http")]
 use crate::axum::service::{McpAppState, McpService};
-#[cfg(feature = "http")]
 use crate::tower::{SessionInfo, SessionManager};
 
-#[cfg(feature = "http")]
 /// Session middleware - adds session tracking to all requests
 async fn session_middleware(
     mut request: axum::extract::Request,
@@ -46,7 +34,6 @@ async fn session_middleware(
     next.run(request).await
 }
 
-#[cfg(feature = "http")]
 /// Apply proven middleware stack to router
 fn apply_middleware<S>(router: Router<S>, config: &McpServerConfig) -> Router<S>
 where
@@ -68,7 +55,6 @@ where
         .layer(middleware::from_fn(session_middleware))
 }
 
-#[cfg(feature = "http")]
 impl<S> AxumMcpExt for Router<S>
 where
     S: Clone + Send + Sync + 'static,

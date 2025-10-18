@@ -11,17 +11,13 @@
 //! by functionality for better maintainability.
 
 #[cfg(test)]
-#[cfg(feature = "http")]
 pub mod config;
 #[cfg(test)]
-#[cfg(feature = "http")]
 pub mod integration;
 #[cfg(test)]
-#[cfg(feature = "http")]
 pub mod router;
 
 #[cfg(test)]
-#[cfg(feature = "http")]
 pub mod common {
     //! Common test utilities and mock services
 

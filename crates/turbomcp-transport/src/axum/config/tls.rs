@@ -3,7 +3,6 @@
 //! This module provides TLS (Transport Layer Security) configuration
 //! for secure HTTP connections.
 
-#[cfg(feature = "http")]
 /// TLS version specification
 #[derive(Debug, Clone)]
 pub enum TlsVersion {
@@ -13,7 +12,6 @@ pub enum TlsVersion {
     TlsV1_3,
 }
 
-#[cfg(feature = "http")]
 /// TLS configuration
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
@@ -27,7 +25,6 @@ pub struct TlsConfig {
     pub enable_http2: bool,
 }
 
-#[cfg(feature = "http")]
 impl Default for TlsConfig {
     fn default() -> Self {
         Self {
@@ -39,7 +36,6 @@ impl Default for TlsConfig {
     }
 }
 
-#[cfg(feature = "http")]
 impl TlsConfig {
     /// Create new TLS config with specific certificate and key files
     pub fn new(cert_file: String, key_file: String) -> Self {
