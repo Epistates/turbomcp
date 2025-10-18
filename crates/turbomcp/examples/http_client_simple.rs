@@ -30,7 +30,6 @@ use turbomcp_transport::streamable_http_client::{
 #[tokio::main]
 #[cfg(feature = "http")]
 async fn main() -> Result<()> {
-
     tracing_subscriber::fmt()
         .with_env_filter("info")
         .with_writer(std::io::stdout)

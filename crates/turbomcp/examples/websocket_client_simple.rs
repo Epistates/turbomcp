@@ -29,7 +29,6 @@ use turbomcp_transport::websocket_bidirectional::{
 #[tokio::main]
 #[cfg(feature = "websocket")]
 async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-
     tracing_subscriber::fmt()
         .with_env_filter("info")
         .with_writer(std::io::stdout)

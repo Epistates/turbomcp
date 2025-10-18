@@ -1,8 +1,6 @@
 //! URI template matching and parameter extraction
 
-#[cfg(feature = "uri-templates")]
 use once_cell::sync::Lazy;
-#[cfg(feature = "uri-templates")]
 use regex::Regex;
 use std::collections::HashMap;
 

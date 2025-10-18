@@ -6,7 +6,6 @@
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
-#[cfg(feature = "schema-generation")]
 use schemars::{JsonSchema, schema_for};
 
 use crate::{McpError, McpResult};
@@ -124,7 +123,6 @@ impl SchemaGenerator {
     }
 
     /// Generate enhanced schema with full metadata
-    #[cfg(feature = "schema-generation")]
     #[must_use]
     pub fn generate_enhanced<T: JsonSchema>(&self) -> SchemaGenerationResult {
         let schema_value = schema_for!(T);
@@ -290,7 +288,6 @@ fn remove_recursive(value: &mut Value, keys: &[&str]) {
 }
 
 /// Generate JSON schema for a type
-#[cfg(feature = "schema-generation")]
 #[must_use]
 pub fn generate_schema<T: JsonSchema>() -> Value {
     let generator = SchemaGenerator::new();
@@ -305,7 +302,6 @@ pub fn generate_schema<T>() -> Value {
 }
 
 /// Generate optimized schema for fast scenarios
-#[cfg(feature = "schema-generation")]
 #[must_use]
 pub fn generate_fast_schema<T: JsonSchema>() -> Value {
     let generator = SchemaGenerator::optimized_for_speed();
@@ -320,7 +316,6 @@ pub fn generate_fast_schema<T>() -> Value {
 }
 
 /// Generate JSON Schema for a type `T` using schemars with full metadata
-#[cfg(feature = "schema-generation")]
 #[must_use]
 pub fn json_schema_for<T: JsonSchema>() -> Value {
     generate_schema::<T>()
