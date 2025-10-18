@@ -16,6 +16,195 @@ use turbomcp_protocol::types::elicitation::PrimitiveSchemaDefinition;
 
 use crate::{McpError, McpResult};
 
+// =============================================================================
+// Schema Builder Functions
+// =============================================================================
+
+/// Builder for string schema
+pub struct StringSchemaBuilder {
+    title: Option<String>,
+    description: Option<String>,
+    format: Option<String>,
+    min_length: Option<u32>,
+    max_length: Option<u32>,
+    enum_values: Option<Vec<String>>,
+    enum_names: Option<Vec<String>>,
+}
+
+impl StringSchemaBuilder {
+    fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: Some(title.into()),
+            description: None,
+            format: None,
+            min_length: None,
+            max_length: None,
+            enum_values: None,
+            enum_names: None,
+        }
+    }
+
+    /// Set the description
+    pub fn description(mut self, desc: impl Into<String>) -> Self {
+        self.description = Some(desc.into());
+        self
+    }
+
+    /// Set the string format (e.g., "email", "uri", "date")
+    pub fn format(mut self, fmt: impl Into<String>) -> Self {
+        self.format = Some(fmt.into());
+        self
+    }
+
+    /// Set the minimum string length
+    pub fn min_length(mut self, min: u32) -> Self {
+        self.min_length = Some(min);
+        self
+    }
+
+    /// Set the maximum string length
+    pub fn max_length(mut self, max: u32) -> Self {
+        self.max_length = Some(max);
+        self
+    }
+
+    /// Set allowed enum values
+    pub fn enum_values(mut self, values: Vec<String>) -> Self {
+        self.enum_values = Some(values);
+        self
+    }
+
+    /// Set display names for enum values
+    pub fn enum_names(mut self, names: Vec<String>) -> Self {
+        self.enum_names = Some(names);
+        self
+    }
+
+    /// Build the schema definition
+    pub fn build(self) -> PrimitiveSchemaDefinition {
+        PrimitiveSchemaDefinition::String {
+            title: self.title,
+            description: self.description,
+            format: self.format,
+            min_length: self.min_length,
+            max_length: self.max_length,
+            enum_values: self.enum_values,
+            enum_names: self.enum_names,
+        }
+    }
+}
+
+/// Builder for integer schema
+pub struct IntegerSchemaBuilder {
+    title: Option<String>,
+    description: Option<String>,
+    minimum: Option<i64>,
+    maximum: Option<i64>,
+}
+
+impl IntegerSchemaBuilder {
+    fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: Some(title.into()),
+            description: None,
+            minimum: None,
+            maximum: None,
+        }
+    }
+
+    /// Set the description
+    pub fn description(mut self, desc: impl Into<String>) -> Self {
+        self.description = Some(desc.into());
+        self
+    }
+
+    /// Set both minimum and maximum values
+    pub fn range(mut self, min: i64, max: i64) -> Self {
+        self.minimum = Some(min);
+        self.maximum = Some(max);
+        self
+    }
+
+    /// Set the minimum value
+    pub fn minimum(mut self, min: i64) -> Self {
+        self.minimum = Some(min);
+        self
+    }
+
+    /// Set the maximum value
+    pub fn maximum(mut self, max: i64) -> Self {
+        self.maximum = Some(max);
+        self
+    }
+
+    /// Build the schema definition
+    pub fn build(self) -> PrimitiveSchemaDefinition {
+        PrimitiveSchemaDefinition::Integer {
+            title: self.title,
+            description: self.description,
+            minimum: self.minimum,
+            maximum: self.maximum,
+        }
+    }
+}
+
+/// Builder for boolean schema
+pub struct BooleanSchemaBuilder {
+    title: Option<String>,
+    description: Option<String>,
+    default: Option<bool>,
+}
+
+impl BooleanSchemaBuilder {
+    fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: Some(title.into()),
+            description: None,
+            default: None,
+        }
+    }
+
+    /// Set the description
+    pub fn description(mut self, desc: impl Into<String>) -> Self {
+        self.description = Some(desc.into());
+        self
+    }
+
+    /// Set the default value
+    pub fn default(mut self, default: bool) -> Self {
+        self.default = Some(default);
+        self
+    }
+
+    /// Build the schema definition
+    pub fn build(self) -> PrimitiveSchemaDefinition {
+        PrimitiveSchemaDefinition::Boolean {
+            title: self.title,
+            description: self.description,
+            default: self.default,
+        }
+    }
+}
+
+/// Create a string schema builder
+pub fn string(title: impl Into<String>) -> StringSchemaBuilder {
+    StringSchemaBuilder::new(title)
+}
+
+/// Create an integer schema builder
+pub fn integer(title: impl Into<String>) -> IntegerSchemaBuilder {
+    IntegerSchemaBuilder::new(title)
+}
+
+/// Create a boolean schema builder
+pub fn boolean(title: impl Into<String>) -> BooleanSchemaBuilder {
+    BooleanSchemaBuilder::new(title)
+}
+
+// =============================================================================
+// Elicitation Builder
+// =============================================================================
+
 /// Elicitation builder for creating type-safe elicitation requests
 pub struct ElicitationBuilder {
     message: String,
@@ -33,10 +222,7 @@ impl ElicitationBuilder {
 
     /// Add a field to the elicitation schema
     ///
-    /// Note: Due to PrimitiveSchemaDefinition uses MCP-compliant types from turbomcp_protocol::types
-    /// and turbomcp_protocol::types::elicitation, this method is temporarily commented out.
-    /// Use ElicitationSchema directly from protocol module for now.
-    #[allow(dead_code)]
+    /// Uses MCP-compliant PrimitiveSchemaDefinition from turbomcp_protocol::types::elicitation
     pub fn field(mut self, name: impl Into<String>, schema: PrimitiveSchemaDefinition) -> Self {
         // ElicitationSchema.properties is HashMap<String, PrimitiveSchemaDefinition> (required by spec)
         self.schema.properties.insert(name.into(), schema);
@@ -436,19 +622,21 @@ pub fn elicit(message: impl Into<String>) -> ElicitationBuilder {
 mod tests {
     use super::*;
 
-    // TODO(v2.1): Fix PrimitiveSchemaDefinition type mismatch between elicitation.rs and types/elicitation.rs
-    // #[test]
-    // fn test_elicitation_builder() {
-    //     let builder = elicit("Please configure your project")
-    //         .field("name", string("Project Name").min_length(3).max_length(50).build())
-    //         .field("port", integer("Port Number").range(1024.0, 65535.0).build())
-    //         .field("debug", boolean("Debug Mode").default(false).build())
-    //         .require(vec!["name"]);
-    //
-    //     assert_eq!(builder.message, "Please configure your project");
-    //     assert_eq!(builder.schema.properties.as_ref().map(|p| p.len()).unwrap_or(0), 3);
-    //     assert_eq!(builder.schema.required, Some(vec!["name".to_string()]));
-    // }
+    #[test]
+    fn test_elicitation_builder() {
+        let builder = elicit("Please configure your project")
+            .field(
+                "name",
+                string("Project Name").min_length(3).max_length(50).build(),
+            )
+            .field("port", integer("Port Number").range(1024, 65535).build())
+            .field("debug", boolean("Debug Mode").default(false).build())
+            .require(vec!["name"]);
+
+        assert_eq!(builder.message, "Please configure your project");
+        assert_eq!(builder.schema.properties.len(), 3);
+        assert_eq!(builder.schema.required, Some(vec!["name".to_string()]));
+    }
 
     #[test]
     fn test_elicitation_data_extraction() {
