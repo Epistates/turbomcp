@@ -3,6 +3,30 @@
 use quote::quote;
 use syn::Type;
 
+/// Generate JSON schema for a Rust type with optional description
+#[allow(dead_code)]
+pub fn generate_json_schema_with_description(
+    ty: &Type,
+    description: Option<&str>,
+) -> proc_macro2::TokenStream {
+    let base_schema = generate_json_schema(ty);
+
+    match description {
+        Some(desc) => {
+            quote! {
+                {
+                    let mut schema = #base_schema;
+                    if let ::serde_json::Value::Object(ref mut map) = schema {
+                        map.insert("description".to_string(), ::serde_json::Value::String(#desc.to_string()));
+                    }
+                    schema
+                }
+            }
+        }
+        None => base_schema,
+    }
+}
+
 /// Generate JSON schema for a Rust type
 #[allow(dead_code)]
 pub fn generate_json_schema(ty: &Type) -> proc_macro2::TokenStream {

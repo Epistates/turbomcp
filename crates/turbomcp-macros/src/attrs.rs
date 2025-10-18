@@ -213,3 +213,344 @@ mod tests {
         assert_eq!(root2.name, None);
     }
 }
+
+/// Tool macro attributes with syn-based parsing
+///
+/// Supports multiple rich metadata fields for improved LLM integration:
+/// - description: Primary tool description
+/// - usage: When/why to use this tool
+/// - performance: Expected performance characteristics
+/// - related: List of related/complementary tools
+/// - examples: Common usage examples
+///
+/// All fields combined into single pipe-delimited description for MCP compliance.
+#[derive(Debug, Default, Clone)]
+pub struct ToolAttrs {
+    pub description: Option<String>,
+    pub usage: Option<String>,
+    pub performance: Option<String>,
+    pub related: Vec<String>,
+    pub examples: Vec<String>,
+}
+
+impl ToolAttrs {
+    /// Parse from macro attribute arguments
+    ///
+    /// Supports multiple syntaxes:
+    /// - Backward compatible simple string: `#[tool("Say hello")]`
+    /// - Keyword format: `#[tool(description = "Say hello")]`
+    /// - Multiple fields with `description`, `usage`, `performance`, `related`, `examples`
+    /// - Array fields for related tools and examples
+    ///
+    /// Examples:
+    /// ```ignore
+    /// #[tool(description = "Query notes")]
+    /// #[tool(
+    ///    description = "Query",
+    ///    usage = "Find targets",
+    ///    performance = "<100ms",
+    ///    related = ["batch_execute"],
+    ///    examples = ["status: done"]
+    /// )]
+    /// ```
+    pub fn from_args(args: proc_macro::TokenStream) -> syn::Result<Self> {
+        let mut attrs = ToolAttrs::default();
+
+        if args.is_empty() {
+            return Ok(attrs);
+        }
+
+        // Try structured parsing first (handles multiple fields)
+        if let Ok(parsed) = syn::parse::<ToolAttrArgs>(args.clone()) {
+            for item in parsed.items {
+                match item.name.to_string().as_str() {
+                    "description" => {
+                        if let Some(value) = item.get_string_value() {
+                            attrs.description = Some(value);
+                        }
+                    }
+                    "usage" => {
+                        if let Some(value) = item.get_string_value() {
+                            attrs.usage = Some(value);
+                        }
+                    }
+                    "performance" => {
+                        if let Some(value) = item.get_string_value() {
+                            attrs.performance = Some(value);
+                        }
+                    }
+                    "related" => {
+                        if let Ok(values) = item.get_string_array() {
+                            attrs.related.extend(values);
+                        }
+                    }
+                    "examples" => {
+                        if let Ok(values) = item.get_string_array() {
+                            attrs.examples.extend(values);
+                        }
+                    }
+                    _ => {
+                        // Ignore unknown attributes for forward compatibility
+                        // This allows future extensions without breaking existing code
+                    }
+                }
+            }
+            return Ok(attrs);
+        }
+
+        // Fallback: single string parsing (backward compatibility)
+        // Handles: #[tool("description")]
+        if let Ok(lit_str) = syn::parse::<syn::LitStr>(args) {
+            attrs.description = Some(lit_str.value());
+        }
+
+        Ok(attrs)
+    }
+
+    /// Combine all fields into single pipe-delimited description string
+    ///
+    /// Format: "primary | Field: value | Field: value"
+    /// This keeps all metadata in the single `description` field required by MCP spec,
+    /// while providing rich context to LLMs.
+    ///
+    /// Example output:
+    /// "Query notes by metadata | Usage: Identify targets before batch ops | Performance: <100ms | Related: batch_execute, read_note | Examples: status: done, priority > 3"
+    #[allow(clippy::collapsible_if)]
+    pub fn combine_description(&self) -> String {
+        let mut parts = Vec::new();
+
+        // Primary description always first
+        if let Some(desc) = &self.description {
+            if !desc.is_empty() {
+                parts.push(desc.clone());
+            }
+        }
+
+        // Add optional fields in order
+        if let Some(usage) = &self.usage {
+            if !usage.is_empty() {
+                parts.push(format!("Usage: {}", usage));
+            }
+        }
+
+        if let Some(perf) = &self.performance {
+            if !perf.is_empty() {
+                parts.push(format!("Performance: {}", perf));
+            }
+        }
+
+        let related_str = self
+            .related
+            .iter()
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !related_str.is_empty() {
+            parts.push(format!("Related: {}", related_str));
+        }
+
+        let examples_str = self
+            .examples
+            .iter()
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !examples_str.is_empty() {
+            parts.push(format!("Examples: {}", examples_str));
+        }
+
+        // Join with " | " delimiter (chosen for clarity in descriptions)
+        if parts.is_empty() {
+            "Tool".to_string()
+        } else {
+            parts.join(" | ")
+        }
+    }
+}
+
+/// A single tool attribute item (name = value)
+/// Extended from AttrItem to support array values
+#[derive(Clone)]
+struct ToolAttrItem {
+    name: Ident,
+    _eq: Token![=],
+    value: Expr,
+}
+
+impl ToolAttrItem {
+    /// Get the string value if this is a string literal
+    fn get_string_value(&self) -> Option<String> {
+        match &self.value {
+            Expr::Lit(lit) => match &lit.lit {
+                Lit::Str(s) => Some(s.value()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Get array of strings from expression
+    /// Supports: ["a", "b", "c"] syntax
+    fn get_string_array(&self) -> syn::Result<Vec<String>> {
+        match &self.value {
+            Expr::Array(array) => {
+                let mut strings = Vec::new();
+                for elem in &array.elems {
+                    if let Expr::Lit(lit) = elem {
+                        if let Lit::Str(s) = &lit.lit {
+                            strings.push(s.value());
+                        } else {
+                            return Err(syn::Error::new_spanned(
+                                elem,
+                                "Expected string literal in array",
+                            ));
+                        }
+                    } else {
+                        return Err(syn::Error::new_spanned(
+                            elem,
+                            "Expected string literal in array",
+                        ));
+                    }
+                }
+                Ok(strings)
+            }
+            _ => Err(syn::Error::new_spanned(
+                &self.value,
+                "Expected array of strings, like [\"a\", \"b\"]",
+            )),
+        }
+    }
+}
+
+impl Parse for ToolAttrItem {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(ToolAttrItem {
+            name: input.parse()?,
+            _eq: input.parse()?,
+            value: input.parse()?,
+        })
+    }
+}
+
+/// Collection of tool attribute items
+struct ToolAttrArgs {
+    items: Vec<ToolAttrItem>,
+}
+
+impl Parse for ToolAttrArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let items = Punctuated::<ToolAttrItem, Token![,]>::parse_terminated(input)?
+            .into_iter()
+            .collect();
+        Ok(ToolAttrArgs { items })
+    }
+}
+
+#[cfg(test)]
+mod tool_attr_tests {
+    use super::*;
+
+    // Tests for combine_description() logic (no proc_macro TokenStream needed)
+
+    #[test]
+    fn test_tool_combine_description_empty() {
+        let attrs = ToolAttrs::default();
+        let combined = attrs.combine_description();
+        assert_eq!(combined, "Tool");
+    }
+
+    #[test]
+    fn test_tool_combine_description_single_field() {
+        let attrs = ToolAttrs {
+            description: Some("Query metadata".to_string()),
+            ..Default::default()
+        };
+        let combined = attrs.combine_description();
+        assert_eq!(combined, "Query metadata");
+    }
+
+    #[test]
+    fn test_tool_combine_description_multiple_fields() {
+        let attrs = ToolAttrs {
+            description: Some("Query metadata".to_string()),
+            usage: Some("Identify targets".to_string()),
+            performance: Some("<100ms".to_string()),
+            related: vec!["batch_execute".to_string()],
+            examples: vec!["status: done".to_string()],
+        };
+
+        let combined = attrs.combine_description();
+
+        // Verify all components are present
+        assert!(combined.contains("Query metadata"));
+        assert!(combined.contains("Usage: Identify targets"));
+        assert!(combined.contains("Performance: <100ms"));
+        assert!(combined.contains("Related: batch_execute"));
+        assert!(combined.contains("Examples: status: done"));
+
+        // Verify pipe delimiters are used
+        assert!(combined.contains(" | "));
+
+        // Verify order: description first
+        assert!(combined.starts_with("Query metadata"));
+    }
+
+    #[test]
+    fn test_tool_combine_description_multiple_related_and_examples() {
+        let attrs = ToolAttrs {
+            description: Some("Query".to_string()),
+            usage: None,
+            performance: None,
+            related: vec![
+                "tool1".to_string(),
+                "tool2".to_string(),
+                "tool3".to_string(),
+            ],
+            examples: vec!["example1".to_string(), "example2".to_string()],
+        };
+
+        let combined = attrs.combine_description();
+        assert!(combined.contains("Related: tool1, tool2, tool3"));
+        assert!(combined.contains("Examples: example1, example2"));
+    }
+
+    #[test]
+    fn test_tool_empty_fields_not_added() {
+        let attrs = ToolAttrs {
+            description: Some("Test".to_string()),
+            usage: Some("".to_string()), // Empty - should not be added
+            performance: None,
+            related: vec!["".to_string()], // Empty - should be filtered
+            examples: vec![],
+        };
+
+        let combined = attrs.combine_description();
+        assert_eq!(combined, "Test"); // Only description, no empty fields
+    }
+
+    #[test]
+    fn test_tool_combine_description_with_all_fields() {
+        let attrs = ToolAttrs {
+            description: Some("Query by metadata pattern".to_string()),
+            usage: Some("Identify targets before batch operations".to_string()),
+            performance: Some("<100ms typical on 10k notes".to_string()),
+            related: vec!["batch_execute".to_string(), "read_note".to_string()],
+            examples: vec!["status: \"draft\"".to_string(), "priority > 3".to_string()],
+        };
+
+        let combined = attrs.combine_description();
+
+        // Verify structure
+        assert!(combined.contains("Query by metadata pattern"));
+        assert!(combined.contains("Usage: Identify targets before batch operations"));
+        assert!(combined.contains("Performance: <100ms typical on 10k notes"));
+        assert!(combined.contains("Related: batch_execute, read_note"));
+        assert!(combined.contains("Examples: status: \"draft\", priority > 3"));
+
+        let expected_parts_count = 5; // description, usage, performance, related, examples
+        let pipe_count = combined.matches(" | ").count();
+        assert_eq!(pipe_count, expected_parts_count - 1); // N parts means N-1 pipes
+    }
+}

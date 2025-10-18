@@ -1,5 +1,6 @@
 //! Tool macro implementation
 
+use crate::attrs::ToolAttrs;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
@@ -9,28 +10,14 @@ use syn::{FnArg, ItemFn, Pat, PatType, Signature, Type, parse_macro_input};
 pub fn generate_tool_impl(args: TokenStream, input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as ItemFn);
 
-    // Argument parsing - extract description
-    let raw_args = args.to_string();
-    let description = if raw_args.is_empty() {
-        format!("Tool: {}", input.sig.ident)
-    } else {
-        // Extract description from various formats
-        if let Some(desc_pos) = raw_args.find("description=") {
-            let after_eq = &raw_args[desc_pos + 12..];
-            if let Some(stripped) = after_eq.strip_prefix('"') {
-                if let Some(end) = stripped.find('"') {
-                    stripped[..end].to_string()
-                } else {
-                    raw_args.trim().trim_matches('"').to_string()
-                }
-            } else {
-                raw_args.trim().trim_matches('"').to_string()
-            }
-        } else {
-            // Assume the whole thing is a description
-            raw_args.trim().trim_matches('"').to_string()
-        }
+    // Parse attributes using structured parser
+    let tool_attrs = match ToolAttrs::from_args(args) {
+        Ok(attrs) => attrs,
+        Err(err) => return err.to_compile_error().into(),
     };
+
+    // Combine all fields into single description string (MCP spec-compliant)
+    let description = tool_attrs.combine_description();
 
     let fn_name = &input.sig.ident;
     let fn_vis = &input.vis;
@@ -192,9 +179,13 @@ struct FunctionAnalysis {
 }
 
 /// Information about a parameter
+#[derive(Clone)]
 struct ParameterInfo {
     name: String,
     ty: Type,
+    // Doc comment extracted from attributes (if available in future)
+    #[allow(dead_code)]
+    doc: Option<String>,
 }
 
 /// Analyze function signature to extract parameters and generate appropriate code
@@ -234,6 +225,7 @@ fn analyze_function_signature(sig: &Signature) -> Result<FunctionAnalysis, syn::
                         parameters.push(ParameterInfo {
                             name: param_name.to_string(),
                             ty: (**ty).clone(),
+                            doc: None, // Currently not extracted; future enhancement for Phase 2
                         });
 
                         if !first_param {
@@ -351,7 +343,8 @@ fn generate_schema(analysis: &FunctionAnalysis) -> TokenStream2 {
 
     for p in &analysis.parameters {
         let key = syn::LitStr::new(&p.name, proc_macro2::Span::call_site());
-        let schema_ts = crate::schema::generate_json_schema(&p.ty);
+        let schema_ts =
+            crate::schema::generate_json_schema_with_description(&p.ty, p.doc.as_deref());
         prop_entries.push((key.clone(), schema_ts));
 
         // Check if this parameter is required (non-Option type)

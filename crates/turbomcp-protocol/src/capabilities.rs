@@ -1058,7 +1058,6 @@ pub mod builders {
         }
     }
 
-
     // ========================================================================
     // CLIENT CAPABILITIES BUILDER - TYPE-STATE SYSTEM
     // ========================================================================
@@ -1104,8 +1103,9 @@ pub mod builders {
         /// at compile time, preventing runtime configuration errors.
         ///
         /// By default, all capabilities are enabled (opt-out model).
-        pub fn builder(
-        ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, true, true, true>> {
+        pub fn builder()
+        -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, true, true, true>>
+        {
             ClientCapabilitiesBuilder::new()
         }
     }
@@ -1130,7 +1130,7 @@ pub mod builders {
             Self {
                 experimental: Some(HashMap::new()),
                 roots: Some(RootsCapabilities::default()),
-                sampling: Some(SamplingCapabilities::default()),
+                sampling: Some(SamplingCapabilities),
                 elicitation: Some(ElicitationCapabilities::default()),
                 negotiator: None,
                 strict_validation: false,
@@ -1206,7 +1206,7 @@ pub mod builders {
             if self.strict_validation {
                 // Validate experimental capabilities if present
                 if let Some(ref experimental) = self.experimental {
-                    for (key, _value) in experimental {
+                    for key in experimental.keys() {
                         if key.starts_with("turbomcp_") {
                             // Allow all TurboMCP experimental features
                             // Removed validation for deprecated methods:
@@ -1497,7 +1497,6 @@ pub mod builders {
             self
         }
     }
-
 
     #[cfg(test)]
     mod type_state_tests {
@@ -1865,10 +1864,7 @@ pub mod builders {
                 original_caps.experimental.is_some(),
                 cloned_caps.experimental.is_some()
             );
-            assert_eq!(
-                original_caps.roots.is_some(),
-                cloned_caps.roots.is_some()
-            );
+            assert_eq!(original_caps.roots.is_some(), cloned_caps.roots.is_some());
             assert_eq!(
                 original_caps.sampling.is_some(),
                 cloned_caps.sampling.is_some()
