@@ -1,15 +1,30 @@
-# TurboMCP Release Scripts
+# TurboMCP Release and Test Scripts
 
-This directory contains scripts for managing TurboMCP releases to crates.io.
+This directory contains scripts for managing TurboMCP releases and testing.
 
 ## Overview
 
-The release process is split into separate, focused scripts:
+### Active Scripts (Recommended)
 
-1. **check-versions.sh** - Validates version consistency
-2. **update-versions.sh** - Updates all version numbers
-3. **prepare-release.sh** - Validates release readiness
-4. **publish.sh** - Publishes to crates.io
+The release process uses these focused, maintained scripts:
+
+1. **check-versions.sh** - Validates version consistency across the workspace
+2. **update-versions.sh** - Updates all version numbers in one pass
+3. **prepare-release.sh** - Comprehensive validation before release
+4. **publish.sh** - Publishes crates to crates.io in dependency order
+
+Additionally:
+
+5. **test-feature-combinations.sh** - Tests specific feature combinations (optional)
+6. **run_benchmarks.sh** - Runs performance benchmarks
+
+### Deprecated Scripts (Use Makefile instead)
+
+These scripts are maintained for backwards compatibility but should not be used for new workflows:
+
+- **run_tests.sh** - Use `make test` instead
+- **run_comprehensive_tests.sh** - Use `make test` and `make coverage` instead
+- **coverage.sh** - Use `make coverage` instead
 
 ## Quick Start
 

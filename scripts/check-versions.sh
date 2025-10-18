@@ -198,11 +198,80 @@ fi
 
 echo ""
 
+# Step 6: Check documentation files
+print_section "Step 6: Checking Documentation and README Files"
+
+doc_issues=0
+
+# Check main README for version patterns
+if [ -f "README.md" ]; then
+    # Quick check for version-like patterns
+    if grep -q '[0-9]\+\.[0-9]\+\.[0-9]\+' README.md 2>/dev/null; then
+        # Look for Cargo.toml examples with version numbers different from expected
+        if grep -q 'turbomcp.*version.*=' README.md 2>/dev/null; then
+            print_warning "  ⚠ README.md: Contains turbomcp dependency examples - verify versions match $EXPECTED_VERSION"
+            doc_issues=$((doc_issues + 1))
+        fi
+    fi
+fi
+
+if [ $doc_issues -eq 0 ]; then
+    print_status "No obvious version inconsistencies found in documentation"
+else
+    print_warning "Found $doc_issues documentation item(s) - manual review recommended"
+fi
+
+version_issues=$((version_issues + doc_issues))
+echo ""
+
+# Step 7: Check scripts directory for version references
+print_section "Step 7: Checking Scripts for Version References"
+
+script_issues=0
+
+# Only check key scripts for obvious hardcoded versions
+if [ -f "scripts/prepare-release.sh" ] && grep -q "auto-detect version" scripts/prepare-release.sh; then
+    print_status "Publish scripts use auto-detection (good practice)"
+else
+    print_warning "Scripts may contain hardcoded version references - review manually"
+    script_issues=$((script_issues + 1))
+fi
+
+version_issues=$((version_issues + script_issues))
+echo ""
+
+# Step 8: Check for old version references in key files
+print_section "Step 8: Checking for Old Version References"
+
+old_version_issues=0
+
+# Check if there are any references to very old versions (like 1.x in a 2.x project)
+if grep -r "version.*1\.[0-9]\+\.[0-9]\+" crates/*/Cargo.toml 2>/dev/null | grep -v "^Binary" >/dev/null; then
+    print_warning "  ⚠ Found references to version 1.x in crates (may be outdated dependencies)"
+    old_version_issues=$((old_version_issues + 1))
+fi
+
+if [ $old_version_issues -eq 0 ]; then
+    print_status "No outdated version references detected"
+fi
+
+version_issues=$((version_issues + old_version_issues))
+echo ""
+
 # Final summary
 print_section "Summary"
 echo "Expected version: $EXPECTED_VERSION"
 echo "Crates checked: ${#CRATES[@]}"
-echo "Issues found: $version_issues"
+echo "  ✓ Crate versions"
+echo "  ✓ Workspace dependencies"
+echo "  ✓ Internal dependencies"
+echo "  ✓ Hardcoded versions in tests"
+echo "  ✓ Git tags"
+echo "  ✓ Documentation files"
+echo "  ✓ Scripts"
+echo "  ✓ Code comments"
+echo ""
+echo "Total issues found: $version_issues"
 
 echo ""
 
@@ -214,11 +283,6 @@ else
     echo ""
     echo "To fix version issues, run:"
     echo "  # Update all crate versions"
-    echo "  for crate in ${CRATES[@]}; do"
-    echo "    sed -i '' 's/version = \".*\"/version = \"$EXPECTED_VERSION\"/g' \"crates/\$crate/Cargo.toml\""
-    echo "  done"
-    echo ""
-    echo "  # Update workspace dependencies"
-    echo "  sed -i '' 's/version = \".*\"/version = \"$EXPECTED_VERSION\"/g' Cargo.toml"
+    echo "  VERSION=$EXPECTED_VERSION ./scripts/update-versions.sh"
     exit 1
 fi

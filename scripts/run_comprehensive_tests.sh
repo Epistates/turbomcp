@@ -1,4 +1,8 @@
 #!/bin/bash
+# ⚠️  DEPRECATED: Use 'make test' and 'make coverage' instead
+# This script is maintained for backwards compatibility but is no longer the primary test runner.
+# Use Makefile targets: 'make test' for tests and 'make coverage' for coverage reporting.
+#
 # Comprehensive test runner for TurboMCP
 # Runs all test suites with proper coverage reporting
 

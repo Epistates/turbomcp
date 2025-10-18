@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+# ⚠️  DEPRECATED: Use 'make test' instead
+# This script is maintained for backwards compatibility but is no longer the primary test runner.
+# Use the Makefile target 'make test' for the standard test suite.
+#
 # TurboMCP Test Runner Script
 # This script runs the complete test suite for the TurboMCP framework
 

@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# ⚠️  DEPRECATED: Use 'make coverage' instead
+# This script is maintained for backwards compatibility.
+# Use the Makefile target 'make coverage' for coverage reporting.
+#
 # Coverage reporting script for TurboMCP
 set -euo pipefail
 
