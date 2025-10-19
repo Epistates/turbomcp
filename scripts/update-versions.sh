@@ -103,7 +103,7 @@ for crate in "${CRATES[@]}"; do
     # Update internal dependencies
     for dep_crate in "${CRATES[@]}"; do
         if [ "$crate" != "$dep_crate" ]; then
-            sed -i '' "s/^$dep_crate = { version = \"[^\"]*\"/turbomcp-$dep_crate = { version = \"$NEW_VERSION\"/" "$cargo_toml" || true
+            sed -i '' "s/^$dep_crate = { version = \"[^\"]*\"/$dep_crate = { version = \"$NEW_VERSION\"/" "$cargo_toml" || true
         fi
     done
 
