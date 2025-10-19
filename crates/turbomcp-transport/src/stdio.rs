@@ -4,6 +4,19 @@
 //! standard way MCP servers communicate with clients. It supports
 //! JSON-RPC over newline-delimited JSON.
 //!
+//! # MCP Specification Compliance (2025-06-18)
+//!
+//! This implementation is **fully compliant** with the MCP stdio transport specification:
+//!
+//! - ✅ **Newline-delimited JSON**: Uses `LinesCodec` for proper message framing
+//! - ✅ **No embedded newlines**: Validates messages don't contain `\n` or `\r` characters
+//! - ✅ **UTF-8 encoding**: All messages are UTF-8 encoded (enforced by `std::str::from_utf8`)
+//! - ✅ **stderr for logging**: Uses `tracing` crate which outputs to stderr by default
+//! - ✅ **Bidirectional communication**: Supports both client→server and server→client messages
+//! - ✅ **Valid JSON only**: Validates all messages are well-formed JSON before sending
+//!
+//! Per MCP spec: "Messages are delimited by newlines, and **MUST NOT** contain embedded newlines."
+//!
 //! # Interior Mutability Pattern
 //!
 //! This transport follows the research-backed hybrid mutex pattern for
@@ -299,6 +312,16 @@ impl StdioTransport {
         // Convert bytes back to string for stdio transport
         let json_str = std::str::from_utf8(&message.payload)
             .map_err(|e| TransportError::SerializationFailed(e.to_string()))?;
+
+        // MCP Spec Requirement: Messages MUST NOT contain embedded newlines
+        // Per spec: "Messages are delimited by newlines, and MUST NOT contain embedded newlines"
+        // This check MUST come before JSON validation to catch all newline cases
+        if json_str.contains('\n') || json_str.contains('\r') {
+            return Err(TransportError::ProtocolError(
+                "Message contains embedded newlines (forbidden by MCP stdio specification)"
+                    .to_string(),
+            ));
+        }
 
         // Validate JSON
         let _: serde_json::Value = serde_json::from_str(json_str)
@@ -649,6 +672,106 @@ mod tests {
             result,
             Err(TransportError::SerializationFailed(_))
         ));
+    }
+
+    #[test]
+    fn test_message_serialization_embedded_newline_lf() {
+        // MCP Spec: Messages MUST NOT contain embedded newlines
+        let json_with_newline = r#"{"jsonrpc":"2.0","id":"test","method":"test","params":{"text":"line1
+line2"}}"#;
+        let payload = Bytes::from(json_with_newline);
+        let message = TransportMessage::new(MessageId::from("test"), payload);
+
+        let result = StdioTransport::serialize_message(&message);
+        assert!(
+            matches!(result, Err(TransportError::ProtocolError(_))),
+            "Expected ProtocolError for message with LF, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_message_serialization_embedded_newline_crlf() {
+        // MCP Spec: Messages MUST NOT contain embedded newlines (including CRLF)
+        let json_with_crlf = "{\r\n\"jsonrpc\":\"2.0\",\"id\":\"test\"}";
+        let payload = Bytes::from(json_with_crlf);
+        let message = TransportMessage::new(MessageId::from("test"), payload);
+
+        let result = StdioTransport::serialize_message(&message);
+        assert!(
+            matches!(result, Err(TransportError::ProtocolError(_))),
+            "Expected ProtocolError for message with CRLF, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_message_serialization_embedded_cr() {
+        // MCP Spec: Messages MUST NOT contain carriage returns
+        let json_with_cr = "{\r\"jsonrpc\":\"2.0\",\"id\":\"test\"}";
+        let payload = Bytes::from(json_with_cr);
+        let message = TransportMessage::new(MessageId::from("test"), payload);
+
+        let result = StdioTransport::serialize_message(&message);
+        assert!(
+            matches!(result, Err(TransportError::ProtocolError(_))),
+            "Expected ProtocolError for message with CR, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_message_serialization_valid_no_newlines() {
+        // Verify that valid messages without newlines are accepted
+        let valid_json = r#"{"jsonrpc":"2.0","id":"test","method":"test","params":{"text":"single line"}}"#;
+        let payload = Bytes::from(valid_json);
+        let message = TransportMessage::new(MessageId::from("test"), payload);
+
+        let result = StdioTransport::serialize_message(&message);
+        assert!(
+            result.is_ok(),
+            "Valid message without newlines should be accepted"
+        );
+        assert_eq!(result.unwrap(), valid_json);
+    }
+
+    #[test]
+    fn test_message_serialization_escaped_newlines_allowed() {
+        // CRITICAL TEST: This verifies the spec interpretation
+        //
+        // The MCP spec says: "Messages are delimited by newlines, and MUST NOT contain embedded newlines"
+        //
+        // This means:
+        // - ✅ ALLOWED: JSON with ESCAPED newlines like {"text":"line1\nline2"}
+        //   The \n here is TWO bytes: backslash (0x5C) + 'n' (0x6E)
+        //   This does NOT contain a literal newline byte (0x0A)
+        //
+        // - ❌ FORBIDDEN: JSON with LITERAL newline bytes like {"text":"line1<0x0A>line2"}
+        //   This contains the newline delimiter byte (0x0A) which breaks message framing
+        //
+        // This is a raw string literal (r#"..."#) so the \n is stored as two characters
+        let json_with_escaped_newlines = r#"{"jsonrpc":"2.0","id":"test","method":"log","params":{"message":"line1\nline2\ntab:\there"}}"#;
+
+        // Verify this string does NOT contain literal newline/CR bytes
+        assert!(
+            !json_with_escaped_newlines.contains('\n'),
+            "Test setup error: raw string should not contain literal newline bytes"
+        );
+        assert!(
+            !json_with_escaped_newlines.contains('\r'),
+            "Test setup error: raw string should not contain literal CR bytes"
+        );
+
+        let payload = Bytes::from(json_with_escaped_newlines);
+        let message = TransportMessage::new(MessageId::from("test"), payload);
+
+        let result = StdioTransport::serialize_message(&message);
+        assert!(
+            result.is_ok(),
+            "JSON with ESCAPED newlines (backslash-n) should be ALLOWED per MCP spec. Got: {:?}",
+            result
+        );
+        assert_eq!(result.unwrap(), json_with_escaped_newlines);
     }
 
     #[test]
