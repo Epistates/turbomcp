@@ -723,7 +723,8 @@ line2"}}"#;
     #[test]
     fn test_message_serialization_valid_no_newlines() {
         // Verify that valid messages without newlines are accepted
-        let valid_json = r#"{"jsonrpc":"2.0","id":"test","method":"test","params":{"text":"single line"}}"#;
+        let valid_json =
+            r#"{"jsonrpc":"2.0","id":"test","method":"test","params":{"text":"single line"}}"#;
         let payload = Bytes::from(valid_json);
         let message = TransportMessage::new(MessageId::from("test"), payload);
 
