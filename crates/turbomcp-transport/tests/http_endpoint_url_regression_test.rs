@@ -1,6 +1,6 @@
 //! CRITICAL REGRESSION TEST: HTTP Endpoint URL Scheme
 //!
-//! Bug Report: TurboMCP 2.0.0-rc.2 HTTP endpoint missing http:// scheme
+//! Bug Report: TurboMCP 2.0.0 HTTP endpoint missing http:// scheme
 //!
 //! **Issue**: Server sends SSE endpoint event with URI "127.0.0.1:8080/mcp"
 //! instead of "http://127.0.0.1:8080/mcp", causing MCP client failures.

@@ -472,7 +472,7 @@ cargo test test_message_validation
 - **[turbomcp-transport](../turbomcp-transport/)** - Transport layer
 - **[turbomcp-server](../turbomcp-server/)** - Server framework
 
-**Note:** In v2.0.0-rc.2, `turbomcp-core` was merged into this crate to eliminate circular dependencies and improve cohesion.
+**Note:** In v2.0.0, `turbomcp-core` was merged into this crate to eliminate circular dependencies and improve cohesion.
 
 ## External Resources
 

@@ -1039,7 +1039,7 @@ mod tests {
     #[tokio::test]
     async fn test_endpoint_url_includes_http_scheme() {
         // REGRESSION TEST: Verify endpoint URL includes http:// scheme
-        // Bug: TurboMCP 2.0.0-rc.2 was sending "127.0.0.1:8080/mcp" instead of "http://127.0.0.1:8080/mcp"
+        // Bug: TurboMCP 2.0.0 was sending "127.0.0.1:8080/mcp" instead of "http://127.0.0.1:8080/mcp"
         // This caused MCP client failures as URIs without schemes are invalid
 
         let config = StreamableHttpConfig::default();

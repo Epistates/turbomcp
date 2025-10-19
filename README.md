@@ -9,7 +9,7 @@
 
 **Production-ready Rust SDK for the Model Context Protocol (MCP) with zero-boilerplate development and progressive enhancement.**
 
-Build MCP servers in seconds with automatic schema generation, type-safe handlers, and multiple transport protocols. **Note: v2.0.0-rc.2 (Release Candidate - not stable)**
+Build MCP servers in seconds with automatic schema generation, type-safe handlers, and multiple transport protocols.
 
 ## Table of Contents
 
@@ -163,7 +163,7 @@ Start minimal (STDIO only), add features as needed:
 
 ```toml
 [dependencies]
-turbomcp = "2.0.0-rc.2"
+turbomcp = "2.0.0"
 tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -949,7 +949,7 @@ Licensed under the [MIT License](./LICENSE) - Enterprise-friendly open source.
 
 ## Status
 
-TurboMCP v2.0.0-rc.2 provides:
+TurboMCP v2.0.0 provides:
 
 - Zero known security vulnerabilities with continuous monitoring
 - Performance focus with automated regression detection
@@ -958,7 +958,7 @@ TurboMCP v2.0.0-rc.2 provides:
 - 26 focused examples covering all usage patterns
 - Active development with regular security updates and performance improvements
 
-**Note:** This is a Release Candidate (RC). While code is production-ready, the API may have minor changes before stable v2.0.0 release. For stability, pin to exact version: `turbomcp = "=2.0.0-rc.2"`
+**Production Status:** TurboMCP 2.0.0 is production-ready with full MCP 2025-06-18 compliance and comprehensive test coverage. The API is stable.
 
 ---
 

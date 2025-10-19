@@ -4,7 +4,7 @@ This directory contains the individual crates that make up the TurboMCP framewor
 
 ## Table of Contents
 
-- [v2.0.0-rc.2 Architecture & Performance Highlights](#-v200-rc2-architecture--performance-highlights)
+- [v2.0.0 Architecture & Performance Highlights](#-v200-rc2-architecture--performance-highlights)
 - [Architecture Overview](#architecture-overview)
 - [Crates](#crates)
   - [turbomcp (Main SDK)](#turbomcp---main-sdk)
@@ -18,7 +18,7 @@ This directory contains the individual crates that make up the TurboMCP framewor
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 
-## 🎯 v2.0.0-rc.2 Architecture & Performance Highlights
+## 🎯 v2.0.0 Architecture & Performance Highlights
 
 **Major improvements in 2.0.0:**
 - **Modular Architecture** - Core and protocol modules decomposed for better maintainability
@@ -113,7 +113,7 @@ The main SDK crate providing ergonomic APIs and integration. This is what most u
 
 Complete implementation of the Model Context Protocol specification with JSON-RPC support and foundational types.
 
-**Note:** In v2.0.0-rc.2, `turbomcp-core` was merged into `turbomcp-protocol` to eliminate circular dependencies and improve cohesion.
+**Note:** In v2.0.0, `turbomcp-core` was merged into `turbomcp-protocol` to eliminate circular dependencies and improve cohesion.
 
 **Key Features:**
 - MCP 2025-06-18 specification compliance
@@ -194,22 +194,22 @@ Command-line interface for interacting with MCP servers, testing, and debugging.
 ### Complete Framework (Recommended)
 ```toml
 [dependencies]
-turbomcp = "2.0.0-rc.2"
+turbomcp = "2.0.0"
 ```
 
 ### Specific Layers Only
 ```toml
 [dependencies]
 # For building custom servers
-turbomcp-server = "2.0.0-rc.2"
-turbomcp-transport = "2.0.0-rc.2"
+turbomcp-server = "2.0.0"
+turbomcp-transport = "2.0.0"
 
 # For building custom clients
-turbomcp-client = "2.0.0-rc.2"
-turbomcp-protocol = "2.0.0-rc.2"
+turbomcp-client = "2.0.0"
+turbomcp-protocol = "2.0.0"
 
 # For low-level protocol work
-turbomcp-protocol = "2.0.0-rc.2"
+turbomcp-protocol = "2.0.0"
 ```
 
 ### Development Tools

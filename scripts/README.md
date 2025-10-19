@@ -32,10 +32,10 @@ For a new release:
 
 ```bash
 # 1. Update version numbers
-VERSION=2.0.0-rc.2 ./scripts/update-versions.sh
+VERSION=2.0.0 ./scripts/update-versions.sh
 
 # 2. Verify and prepare
-VERSION=2.0.0-rc.2 ./scripts/prepare-release.sh
+VERSION=2.0.0 ./scripts/prepare-release.sh
 
 # 3. Test publish (dry-run)
 ./scripts/publish.sh
@@ -44,8 +44,8 @@ VERSION=2.0.0-rc.2 ./scripts/prepare-release.sh
 DRY_RUN=false ./scripts/publish.sh
 
 # 5. Tag and push
-git tag v2.0.0-rc.2
-git push && git push origin v2.0.0-rc.2
+git tag v2.0.0
+git push && git push origin v2.0.0
 ```
 
 ## Scripts
@@ -60,7 +60,7 @@ git push && git push origin v2.0.0-rc.2
 ./scripts/check-versions.sh
 
 # Check against specific version
-VERSION=2.0.0-rc.2 ./scripts/check-versions.sh
+VERSION=2.0.0 ./scripts/check-versions.sh
 ```
 
 **What it checks:**
@@ -82,7 +82,7 @@ VERSION=2.0.0-rc.2 ./scripts/check-versions.sh
 
 **Usage:**
 ```bash
-VERSION=2.0.0-rc.2 ./scripts/update-versions.sh
+VERSION=2.0.0 ./scripts/update-versions.sh
 ```
 
 **What it updates:**
@@ -109,7 +109,7 @@ VERSION=2.0.0-rc.2 ./scripts/update-versions.sh
 ./scripts/prepare-release.sh
 
 # Specify version explicitly
-VERSION=2.0.0-rc.2 ./scripts/prepare-release.sh
+VERSION=2.0.0 ./scripts/prepare-release.sh
 ```
 
 **What it validates:**
@@ -181,20 +181,20 @@ DRY_RUN=false WAIT_TIME=60 ./scripts/publish.sh
 
 ```bash
 # Step 1: Create feature branch
-git checkout -b release/2.0.0-rc.2
+git checkout -b release/2.0.0
 
 # Step 2: Update versions
-VERSION=2.0.0-rc.2 ./scripts/update-versions.sh
+VERSION=2.0.0 ./scripts/update-versions.sh
 
 # Step 3: Review changes
 git diff
 
 # Step 4: Prepare release (validation)
-VERSION=2.0.0-rc.2 ./scripts/prepare-release.sh
+VERSION=2.0.0 ./scripts/prepare-release.sh
 
 # Step 5: Commit version bump
 git add -A
-git commit -m "chore: bump version to 2.0.0-rc.2"
+git commit -m "chore: bump version to 2.0.0"
 
 # Step 6: Test publish (dry-run)
 ./scripts/publish.sh
@@ -203,11 +203,11 @@ git commit -m "chore: bump version to 2.0.0-rc.2"
 DRY_RUN=false ./scripts/publish.sh
 
 # Step 8: Tag release
-git tag v2.0.0-rc.2
+git tag v2.0.0
 
 # Step 9: Push everything
-git push origin release/2.0.0-rc.2
-git push origin v2.0.0-rc.2
+git push origin release/2.0.0
+git push origin v2.0.0
 
 # Step 10: Create GitHub release
 # Go to GitHub and create release from tag
@@ -236,7 +236,7 @@ cargo publish --manifest-path crates/turbomcp-server/Cargo.toml
 ./scripts/check-versions.sh
 
 # Auto-fix versions
-VERSION=2.0.0-rc.2 ./scripts/update-versions.sh
+VERSION=2.0.0 ./scripts/update-versions.sh
 ```
 
 ### Test failures with hardcoded versions
@@ -246,7 +246,7 @@ VERSION=2.0.0-rc.2 ./scripts/update-versions.sh
 grep -r '"[0-9]\+\.[0-9]\+\.[0-9]\+"' crates/*/src/**/*test*.rs
 
 # Update manually or re-run update-versions.sh
-VERSION=2.0.0-rc.2 ./scripts/update-versions.sh
+VERSION=2.0.0 ./scripts/update-versions.sh
 ```
 
 ### Publish failures

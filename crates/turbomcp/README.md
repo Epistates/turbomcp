@@ -114,7 +114,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "2.0.0-rc.2"
+turbomcp = "2.0.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -777,7 +777,7 @@ Enable SIMD acceleration for maximum performance:
 
 ```toml
 [dependencies]
-turbomcp = { version = "2.0.0-rc.2", features = ["simd"] }
+turbomcp = { version = "2.0.0", features = ["simd"] }
 ```
 
 Configure performance settings:

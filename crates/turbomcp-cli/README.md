@@ -43,7 +43,7 @@
 cargo install turbomcp-cli
 
 # Install specific version
-cargo install turbomcp-cli --version 2.0.0-rc.2
+cargo install turbomcp-cli --version 2.0.0
 ```
 
 ### From Source
