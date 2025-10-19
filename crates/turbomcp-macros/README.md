@@ -219,6 +219,46 @@ async fn calculate(
 - Automatic error conversion
 - Tool metadata functions
 
+#### Rich Tool Descriptions (NEW)
+
+The `#[tool]` macro supports multiple metadata fields for improved LLM understanding and context:
+
+```rust
+#[tool(
+    description = "Query notes by metadata pattern",
+    usage = "Identify targets before batch operations",
+    performance = "<100ms typical on 10k notes",
+    related = ["batch_execute", "read_note"],
+    examples = ["status: \"draft\"", "priority > 3"]
+)]
+async fn query_notes(&self, pattern: String) -> McpResult<Vec<Note>> {
+    // Implementation
+}
+```
+
+All fields are combined into a single pipe-delimited description for MCP compliance:
+```
+"Query notes by metadata pattern | Usage: Identify targets before batch operations | Performance: <100ms typical on 10k notes | Related: batch_execute, read_note | Examples: status: "draft", priority > 3"
+```
+
+**Available Fields:**
+- **description**: Primary tool description (required)
+- **usage**: When/why to use this tool (optional)
+- **performance**: Expected performance characteristics (optional)
+- **related**: Related/complementary tools as array (optional)
+- **examples**: Common usage examples as array (optional)
+
+**Backward Compatible:** Simple string syntax still works:
+```rust
+#[tool("Add two numbers")]  // ✓ Still supported
+```
+
+This feature helps LLMs make better decisions about:
+- **When to use** the tool (usage context)
+- **What to expect** in terms of performance
+- **Related workflows** via connected tools
+- **How to use** through concrete examples
+
 ### `#[resource]` - Resource Registration
 
 Creates URI template-based resource handlers:
