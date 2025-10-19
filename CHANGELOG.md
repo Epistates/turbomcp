@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2025-10-18
+
+### Added
+
+- **Rich Tool Descriptions with Metadata**: Enhanced `#[tool]` macro now supports comprehensive metadata fields
+  - **New fields**: `description`, `usage`, `performance`, `related`, `examples`
+  - **LLM Optimization**: All fields combined into pipe-delimited description for better decision-making
+  - **Backward Compatible**: Simple string syntax still supported
+  - **Impact**: Improved LLM understanding of when/why/how to use tools
+  - **Example**: New `rich_tool_descriptions.rs` example demonstrating all metadata fields
+  - **Commit**: `aae59f8`
+
+- **MCP STDIO Transport Compliance Enhancements**: Comprehensive specification compliance with validation
+  - **Strict Validation**: Embedded newlines (LF/CR/CRLF) detection and rejection
+  - **Compliance Documentation**: Detailed checklist in module documentation
+  - **Test Coverage**: Comprehensive test suite for newline validation scenarios
+  - **Spec Clarification**: Literal newline bytes forbidden, escaped `\n` in JSON strings allowed
+  - **Error Messages**: MCP-specific compliance context in validation errors
+  - **Impact**: Prevents message framing issues in production environments
+  - **Commit**: `c2b4032`
+
+### Fixed
+
+- **Publish Script**: Minor fixes to release automation
+  - **Commit**: `0b6e6a3`
+
+### Improved
+
+- **Examples Documentation**: Updated to reflect rich tool descriptions example
+  - **Updated**: Example count from 17 to 18 examples
+  - **Added**: rich_tool_descriptions.rs to quick start commands and examples table
+  - **Commit**: `6e3b211`
+
 ## [2.0.0-rc.3] - 2025-10-18
 
 ### Removed
