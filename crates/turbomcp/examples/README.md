@@ -1,6 +1,6 @@
 # TurboMCP Examples
 
-**17 focused examples demonstrating TurboMCP 2.0 - from Hello World to production apps.**
+**18 focused examples demonstrating TurboMCP 2.0 - from Hello World to production apps.**
 
 ## 🚀 Quick Start
 
@@ -10,6 +10,9 @@ cargo run --example hello_world
 
 # Clean macro-based server (58 lines)
 cargo run --example macro_server
+
+# NEW: Rich tool descriptions with metadata (127 lines)
+cargo run --example rich_tool_descriptions
 
 # Complete STDIO app
 cargo run --example stdio_app
@@ -36,12 +39,13 @@ Learn server creation patterns:
 |---------|-------|----------------|
 | **hello_world.rs** | 24 | Absolute simplest MCP server - one tool |
 | **macro_server.rs** | 58 | Clean `#[server]` macro API, multiple tools |
+| **rich_tool_descriptions.rs** | 127 | NEW: Rich tool metadata (usage, performance, related, examples) |
 | **tools.rs** | 77 | Parameter types, validation, error handling |
 | **resources.rs** | 59 | Resource handlers with URIs |
 | **stateful.rs** | 59 | Arc<RwLock<T>> shared state pattern |
 | **http_server.rs** | 38 | HTTP/SSE transport (web-compatible) |
 
-**Total:** 6 examples averaging 53 lines
+**Total:** 7 examples averaging 63 lines
 
 ---
 
