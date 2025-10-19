@@ -7,18 +7,21 @@ use std::sync::atomic::Ordering;
 
 use turbomcp_protocol::types::{
     ListResourceTemplatesResult, ListResourcesResult, ReadResourceRequest, ReadResourceResult,
+    Resource,
 };
 use turbomcp_protocol::{Error, Result};
 
 impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// List available resources from the MCP server
     ///
-    /// Returns a list of resource URIs that are available for reading.
+    /// Returns a list of resources with their full metadata including URIs, names,
+    /// descriptions, MIME types, and other attributes provided by the server.
     /// Resources represent data or content that can be accessed by the client.
     ///
     /// # Returns
     ///
-    /// Returns a vector of resource URIs that can be read using `read_resource()`.
+    /// Returns a vector of `Resource` objects containing full metadata that can be
+    /// read using `read_resource()`.
     ///
     /// # Errors
     ///
@@ -38,12 +41,15 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     ///
     /// let resources = client.list_resources().await?;
     /// for resource in resources {
-    ///     println!("Available resource: {}", resource);
+    ///     println!("Resource: {} ({})", resource.name, resource.uri);
+    ///     if let Some(desc) = &resource.description {
+    ///         println!("  Description: {}", desc);
+    ///     }
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn list_resources(&self) -> Result<Vec<String>> {
+    pub async fn list_resources(&self) -> Result<Vec<Resource>> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
@@ -52,12 +58,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         let response: ListResourcesResult =
             self.execute_with_plugins("resources/list", None).await?;
 
-        let resource_uris = response
-            .resources
-            .into_iter()
-            .map(|resource| resource.uri)
-            .collect();
-        Ok(resource_uris)
+        Ok(response.resources)
     }
 
     /// Read the content of a specific resource by URI

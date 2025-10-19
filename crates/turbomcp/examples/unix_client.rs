@@ -66,9 +66,9 @@ async fn main() -> Result<()> {
     // List and read resources
     let resources = client.list_resources().await?;
     tracing::info!("📦 Found {} resources:", resources.len());
-    for resource_uri in &resources {
-        tracing::info!("  - {}", resource_uri);
-        let content = client.read_resource(resource_uri).await?;
+    for resource in &resources {
+        tracing::info!("  - {} ({})", resource.name, resource.uri);
+        let content = client.read_resource(&resource.uri).await?;
         tracing::info!("    Content: {:?}", content);
     }
 

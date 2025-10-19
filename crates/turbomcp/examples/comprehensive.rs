@@ -50,14 +50,17 @@ async fn main() -> Result<()> {
     // 4. List Resources
     tracing::info!("📁 Listing resources...");
     let resources = client.list_resources().await?;
-    for uri in &resources {
-        tracing::info!("  📄 {}", uri);
+    for resource in &resources {
+        tracing::info!("  📄 {} ({})", resource.name, resource.uri);
+        if let Some(desc) = &resource.description {
+            tracing::info!("     Description: {}", desc);
+        }
     }
 
     // 5. Read Resources
     if !resources.is_empty() {
         tracing::info!("📖 Reading first resource...");
-        let content = client.read_resource(&resources[0]).await?;
+        let content = client.read_resource(&resources[0].uri).await?;
         tracing::info!("  Content: {:?}", content.contents.first());
     }
 

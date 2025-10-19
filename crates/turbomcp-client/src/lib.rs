@@ -54,7 +54,7 @@
 //! // Access resources
 //! let resources = client.list_resources().await?;
 //! for resource in resources {
-//!     println!("Resource: {}", resource);
+//!     println!("Resource: {} ({})", resource.name, resource.uri);
 //! }
 //! # Ok(())
 //! # }

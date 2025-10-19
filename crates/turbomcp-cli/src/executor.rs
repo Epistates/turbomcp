@@ -175,7 +175,7 @@ impl CommandExecutor {
         match command {
             ResourceCommands::List { conn } => {
                 let client_type = create_client(&conn).await?;
-                let resource_uris = match client_type {
+                let resources = match client_type {
                     ClientType::Stdio(client) => {
                         client.initialize().await?;
                         client.list_resources().await?
@@ -190,9 +190,7 @@ impl CommandExecutor {
                     }
                 };
 
-                // Note: Client returns URIs only. For full Resource objects with metadata,
-                // we would need to extend the client API.
-                self.formatter.display(&resource_uris)
+                self.formatter.display(&resources)
             }
 
             ResourceCommands::Read { conn, uri } => {

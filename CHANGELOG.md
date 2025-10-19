@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2025-10-19
+
+### Fixed
+
+- **Resource Listing Metadata Loss**: Fixed critical bug where `Client::list_resources()` was discarding resource metadata
+  - **Issue**: Method was returning only URIs (`Vec<String>`), throwing away all metadata from server
+  - **Impact**: Broke applications like turbomcpstudio that needed resource names, descriptions, MIME types
+  - **Root Cause**: Implementation was mapping `ListResourcesResult::resources` to just URIs instead of returning full `Resource` objects
+  - **Fix**: Changed return type from `Vec<String>` to `Vec<Resource>` per MCP 2025-06-18 spec
+  - **Breaking Change**: No - `Resource` type was already exported and clients can access `.uri` field
+  - **Files Changed**:
+    - `turbomcp-client/src/client/operations/resources.rs` - Core fix to return full Resource objects
+    - `turbomcp-cli/src/executor.rs` - Updated to handle Resource objects
+    - `turbomcp-client/src/lib.rs` - Updated documentation examples
+    - `turbomcp/examples/comprehensive.rs` - Enhanced to display resource metadata
+    - `turbomcp/examples/unix_client.rs` - Updated to use resource.uri field
+  - **Reported By**: turbomcpstudio dogfood team
+  - **Severity**: High - Breaks core resource functionality
+
 ## [2.0.0] - 2025-10-18
 
 ### Added
