@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2025-10-19
+
+### Fixed
+
+- **Resource Reading Broken**: Fixed critical bug where resources could be listed but not read
+  - **Issue**: Resources were registered by method name but looked up by URI, causing "Resource not found" errors
+  - **Root Cause**: `#[server]` macro registered resources using `resource_name` instead of `resource_uri_template` as the DashMap key
+  - **Impact**: All `resources/read` requests failed with -32004 error even for valid resources
+  - **Fix**: Changed registration in `turbomcp-macros/src/server.rs:436` to use URI as key
+  - **Location**: `crates/turbomcp-macros/src/server.rs:436`
+  - **Example**: `#[resource("stdio://help")]` now registers with key "stdio://help" not "help"
+  - **Breaking Change**: No - this was a bug preventing correct MCP behavior
+  - **Regression Test**: Added `test_resource_registration_lookup_by_uri` to prevent future regressions
+  - **Reported By**: turbomcpstudio dogfood team via RESOURCE_READ_ISSUE.md
+  - **Severity**: Critical - Completely broke resource reading functionality
+
 ## [2.0.1] - 2025-10-19
 
 ### Fixed
