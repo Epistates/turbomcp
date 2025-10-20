@@ -432,7 +432,8 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                                 }
                             }
                         );
-                        builder = builder.resource(resource_name, resource_handler)?;
+                        // Register by URI (not name) so lookups work correctly
+                        builder = builder.resource(resource_uri_template, resource_handler)?;
                     }
                 )*
 
