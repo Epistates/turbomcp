@@ -578,3 +578,80 @@ fn test_registry_creation_consistency() {
         assert_eq!(registry.logging.len(), 0);
     }
 }
+
+/// Regression test for resource registration and lookup mismatch
+///
+/// This test ensures that resources are registered and looked up by the same key.
+/// Previously, resources were registered by name but looked up by URI, causing
+/// "Resource not found" errors even for valid resources.
+///
+/// See: RESOURCE_READ_ISSUE.md and GitHub issue for turbomcpstudio bug report
+#[test]
+fn test_resource_registration_lookup_by_uri() {
+    use crate::handlers::FunctionResourceHandler;
+    use turbomcp_protocol::RequestContext;
+    use turbomcp_protocol::types::{
+        ReadResourceRequest, ReadResourceResult, Resource, ResourceContent, TextResourceContents,
+    };
+
+    let registry = HandlerRegistry::new();
+
+    // Create a test resource with a URI (simulating #[resource("stdio://test")])
+    let test_uri = "stdio://test_resource";
+    let resource = Resource {
+        name: "test_resource".to_string(),
+        title: Some("Test Resource".to_string()),
+        uri: test_uri.to_string(),
+        description: Some("A test resource".to_string()),
+        mime_type: Some("text/plain".to_string()),
+        annotations: None,
+        size: None,
+        meta: None,
+    };
+
+    // Create a function handler
+    let handler = FunctionResourceHandler::new(
+        resource.clone(),
+        move |req: ReadResourceRequest, _ctx: RequestContext| {
+            Box::pin(async move {
+                Ok(ReadResourceResult {
+                    contents: vec![ResourceContent::Text(TextResourceContents {
+                        uri: req.uri,
+                        mime_type: Some("text/plain".to_string()),
+                        text: "Test content".to_string(),
+                        meta: None,
+                    })],
+                    _meta: None,
+                })
+            })
+        },
+    );
+
+    // Register by URI (this is what the macro should do)
+    registry
+        .register_resource(test_uri, handler)
+        .expect("Resource registration should succeed");
+
+    // Verify registration
+    assert_eq!(registry.resources.len(), 1, "Should have 1 resource");
+
+    // Critical test: lookup by URI should succeed (not by name!)
+    let retrieved = registry.get_resource(test_uri);
+    assert!(
+        retrieved.is_some(),
+        "Resource lookup by URI should succeed - this was the bug!"
+    );
+
+    // Also verify the resource appears in definitions with correct URI
+    let definitions = registry.get_resource_definitions();
+    assert_eq!(definitions.len(), 1);
+    assert_eq!(definitions[0].uri, test_uri);
+    assert_eq!(definitions[0].name, "test_resource");
+
+    // The bug: if we had registered by name, this would fail
+    let wrong_lookup = registry.get_resource("test_resource");
+    assert!(
+        wrong_lookup.is_none(),
+        "Lookup by name should fail - we registered by URI"
+    );
+}
