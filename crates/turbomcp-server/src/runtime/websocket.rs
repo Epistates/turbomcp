@@ -47,7 +47,7 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt, stream::SplitSink, stream::SplitStream};
 use serde_json::Value;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 use uuid::Uuid;
 
 use crate::routing::ServerRequestDispatcher;
@@ -79,6 +79,18 @@ pub struct WebSocketServerConfig {
 
     /// WebSocket endpoint path (default: "/ws")
     pub endpoint_path: String,
+
+    /// Maximum concurrent request handlers (default: 100)
+    ///
+    /// This limits how many client requests can be processed simultaneously per connection.
+    /// Provides automatic backpressure when the limit is reached.
+    ///
+    /// **Tuning Guide:**
+    /// - Low-resource systems: 50
+    /// - Standard servers: 100 (default)
+    /// - High-performance: 200-500
+    /// - Maximum recommended: 1000
+    pub max_concurrent_requests: usize,
 }
 
 impl Default for WebSocketServerConfig {
@@ -86,6 +98,7 @@ impl Default for WebSocketServerConfig {
         Self {
             bind_addr: "127.0.0.1:8080".to_string(),
             endpoint_path: "/ws".to_string(),
+            max_concurrent_requests: 100,
         }
     }
 }
@@ -309,6 +322,8 @@ where
     wrapper_factory: Arc<dyn Fn(H, WebSocketServerDispatcher) -> W + Send + Sync>,
     /// Security validator
     security_validator: Arc<SecurityValidator>,
+    /// Maximum concurrent request handlers
+    max_concurrent_requests: usize,
 }
 
 impl<H, W> Clone for WebSocketAppState<H, W>
@@ -321,6 +336,7 @@ where
             base_handler: Arc::clone(&self.base_handler),
             wrapper_factory: Arc::clone(&self.wrapper_factory),
             security_validator: Arc::clone(&self.security_validator),
+            max_concurrent_requests: self.max_concurrent_requests,
         }
     }
 }
@@ -330,6 +346,7 @@ async fn handle_websocket<H, W>(
     socket: WebSocket,
     base_handler: H,
     wrapper_factory: impl Fn(H, WebSocketServerDispatcher) -> W,
+    max_concurrent: usize,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     H: JsonRpcHandler + Send + Sync + Clone + 'static,
@@ -356,6 +373,7 @@ where
         handler,
         outbound_tx,
         pending_requests,
+        max_concurrent,
     ));
 
     // Wait for either task to complete (connection close)
@@ -394,14 +412,21 @@ async fn send_loop(
 }
 
 /// Receive loop: processes incoming WebSocket messages
+///
+/// Uses a semaphore to bound concurrent request handlers based on configuration.
+/// This prevents resource exhaustion while allowing proper task lifecycle management.
 async fn receive_loop<H>(
     mut receiver: SplitStream<WebSocket>,
     handler: H,
     outbound_tx: mpsc::UnboundedSender<WsMessage>,
     pending_requests: PendingRequests,
+    max_concurrent: usize,
 ) where
     H: JsonRpcHandler + Send + Sync + Clone + 'static,
 {
+    // ✅ Semaphore to bound concurrent request handlers (prevents resource exhaustion)
+    let request_semaphore = Arc::new(Semaphore::new(max_concurrent));
+
     while let Some(msg) = receiver.next().await {
         match msg {
             Ok(WsMessage::Text(text)) => {
@@ -508,10 +533,23 @@ async fn receive_loop<H>(
                 // - handler waits for sampling/elicitation response
                 // - response waits for receive_loop to process it
                 // Result: 60-second timeout as receive_loop can't process responses!
+                //
+                // ✅ BOUNDED CONCURRENCY: Use semaphore to limit concurrent handlers
+                // The permit is held for the duration of the request, providing back-pressure
+                // and preventing resource exhaustion. When the task completes, the permit
+                // is automatically released (RAII pattern).
                 let handler = handler.clone();
                 let outbound_tx = outbound_tx.clone();
+                let semaphore = Arc::clone(&request_semaphore);
+
                 tokio::spawn(async move {
+                    // Acquire permit (blocks if 100 requests already in flight)
+                    let _permit = semaphore
+                        .acquire()
+                        .await
+                        .expect("Semaphore should not be closed");
                     handle_client_request(&handler, &outbound_tx, value).await;
+                    // Permit automatically released on drop ✅
                 });
             }
             Ok(WsMessage::Close(_)) => {
@@ -614,9 +652,16 @@ where
     // Clone base handler and wrapper factory for this connection
     let base_handler = (*state.base_handler).clone();
     let wrapper_factory = Arc::clone(&state.wrapper_factory);
+    let max_concurrent = state.max_concurrent_requests;
 
     Ok(ws.on_upgrade(move |socket| async move {
-        if let Err(e) = handle_websocket(socket, base_handler, |h, d| (wrapper_factory)(h, d)).await
+        if let Err(e) = handle_websocket(
+            socket,
+            base_handler,
+            |h, d| (wrapper_factory)(h, d),
+            max_concurrent,
+        )
+        .await
         {
             tracing::error!("WebSocket handler error: {}", e);
         }
@@ -674,13 +719,11 @@ where
 ///
 /// * `base_handler` - The unwrapped server implementation
 /// * `wrapper_factory` - Factory to create wrapper (base + dispatcher → wrapped)
-/// * `addr` - Bind address (e.g. "127.0.0.1:8080")
-/// * `path` - WebSocket endpoint path (e.g. "/ws")
+/// * `config` - WebSocket server configuration (address, path, concurrency limits)
 pub async fn run_websocket<H, W, F>(
     base_handler: H,
     wrapper_factory: F,
-    addr: String,
-    path: String,
+    config: WebSocketServerConfig,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     H: JsonRpcHandler + Send + Sync + Clone + 'static,
@@ -712,6 +755,7 @@ where
         base_handler: Arc::new(base_handler),
         wrapper_factory: Arc::new(wrapper_factory),
         security_validator,
+        max_concurrent_requests: config.max_concurrent_requests,
     };
 
     // Get server info from base handler
@@ -719,15 +763,19 @@ where
 
     // Create router
     let app = Router::new()
-        .route(&path, get(websocket_handler::<H, W>))
+        .route(&config.endpoint_path, get(websocket_handler::<H, W>))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let listener = tokio::net::TcpListener::bind(&config.bind_addr).await?;
 
     tracing::info!("🚀 MCP 2025-06-18 Compliant WebSocket Transport Ready");
     tracing::info!("   Server: {} v{}", server_info.name, server_info.version);
-    tracing::info!("   Listening: {}", addr);
-    tracing::info!("   Endpoint: {} (WebSocket upgrade)", path);
+    tracing::info!("   Listening: {}", config.bind_addr);
+    tracing::info!("   Endpoint: {} (WebSocket upgrade)", config.endpoint_path);
+    tracing::info!(
+        "   Max Concurrent Requests: {}",
+        config.max_concurrent_requests
+    );
     tracing::info!("   Features: Native bidirectional, full-duplex JSON-RPC");
 
     axum::serve(

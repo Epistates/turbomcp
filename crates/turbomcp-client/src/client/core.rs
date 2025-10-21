@@ -21,6 +21,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
+use tokio::sync::Semaphore;
+
 use turbomcp_protocol::jsonrpc::*;
 use turbomcp_protocol::types::{
     ClientCapabilities as ProtocolClientCapabilities, InitializeResult as ProtocolInitializeResult,
@@ -59,6 +61,10 @@ pub(super) struct ClientInner<T: Transport + 'static> {
 
     /// Plugin registry for middleware (tokio mutex - holds across await)
     pub(super) plugin_registry: Arc<tokio::sync::Mutex<crate::plugins::PluginRegistry>>,
+
+    /// ✅ Semaphore for bounded concurrency of request/notification handlers
+    /// Limits concurrent server-initiated request handlers to prevent resource exhaustion
+    pub(super) handler_semaphore: Arc<Semaphore>,
 }
 
 /// The core MCP client implementation
@@ -190,16 +196,18 @@ impl<T: Transport + 'static> Client<T> {
     /// let client = Client::new(transport);
     /// ```
     pub fn new(transport: T) -> Self {
+        let capabilities = ClientCapabilities::default();
         let client = Self {
             inner: Arc::new(ClientInner {
                 protocol: ProtocolClient::new(transport),
-                capabilities: ClientCapabilities::default(),
+                capabilities: capabilities.clone(),
                 initialized: AtomicBool::new(false),
                 sampling_handler: Arc::new(StdMutex::new(None)),
                 handlers: Arc::new(StdMutex::new(HandlerRegistry::new())),
                 plugin_registry: Arc::new(tokio::sync::Mutex::new(
                     crate::plugins::PluginRegistry::new(),
                 )),
+                handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
             }),
         };
 
@@ -236,13 +244,14 @@ impl<T: Transport + 'static> Client<T> {
         let client = Self {
             inner: Arc::new(ClientInner {
                 protocol: ProtocolClient::new(transport),
-                capabilities,
+                capabilities: capabilities.clone(),
                 initialized: AtomicBool::new(false),
                 sampling_handler: Arc::new(StdMutex::new(None)),
                 handlers: Arc::new(StdMutex::new(HandlerRegistry::new())),
                 plugin_registry: Arc::new(tokio::sync::Mutex::new(
                     crate::plugins::PluginRegistry::new(),
                 )),
+                handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
             }),
         };
 
@@ -555,12 +564,21 @@ impl<T: Transport + 'static> Client<T> {
         let client_for_notifications = self.clone();
 
         // Request handler (elicitation, sampling, etc.)
+        let semaphore = Arc::clone(&self.inner.handler_semaphore);
         let request_handler = Arc::new(move |request: JsonRpcRequest| {
             let client = client_for_requests.clone();
             let method = request.method.clone();
             let req_id = request.id.clone();
-            // Spawn async task to handle the request
+            let semaphore = Arc::clone(&semaphore);
+
+            // ✅ Spawn async task with bounded concurrency
             tokio::spawn(async move {
+                // Acquire permit (blocks if 100 requests already in flight)
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .expect("Semaphore should not be closed");
+
                 tracing::debug!(
                     "🔄 [request_handler] Handling server-initiated request: method={}, id={:?}",
                     method,
@@ -581,18 +599,29 @@ impl<T: Transport + 'static> Client<T> {
                         req_id
                     );
                 }
+                // Permit automatically released on drop ✅
             });
             Ok(())
         });
 
         // Notification handler
+        let semaphore_notif = Arc::clone(&self.inner.handler_semaphore);
         let notification_handler = Arc::new(move |notification: JsonRpcNotification| {
             let client = client_for_notifications.clone();
-            // Spawn async task to handle the notification
+            let semaphore = Arc::clone(&semaphore_notif);
+
+            // ✅ Spawn async task with bounded concurrency
             tokio::spawn(async move {
+                // Acquire permit (blocks if 100 handlers already in flight)
+                let _permit = semaphore
+                    .acquire()
+                    .await
+                    .expect("Semaphore should not be closed");
+
                 if let Err(e) = client.handle_notification(notification).await {
                     tracing::error!("Error handling server notification: {}", e);
                 }
+                // Permit automatically released on drop ✅
             });
             Ok(())
         });

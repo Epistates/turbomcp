@@ -8,7 +8,8 @@ use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
+use tokio::task::JoinSet;
 use tokio_util::codec::{Framed, LinesCodec};
 use tracing::{debug, error, info, warn};
 
@@ -19,7 +20,6 @@ use crate::core::{
 use turbomcp_protocol::MessageId;
 
 /// TCP transport implementation
-#[derive(Debug)]
 pub struct TcpTransport {
     /// Local address to bind to
     bind_addr: SocketAddr,
@@ -37,12 +37,30 @@ pub struct TcpTransport {
     state: Arc<StdMutex<TransportState>>,
     /// Transport metrics (lock-free atomic)
     metrics: Arc<AtomicMetrics>,
+    /// ✅ Task lifecycle management
+    task_handles: Arc<tokio::sync::Mutex<JoinSet<()>>>,
+    /// ✅ Shutdown signal broadcaster
+    shutdown_tx: broadcast::Sender<()>,
+}
+
+// Manual Debug implementation since broadcast::Sender doesn't implement Debug
+impl std::fmt::Debug for TcpTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TcpTransport")
+            .field("bind_addr", &self.bind_addr)
+            .field("remote_addr", &self.remote_addr)
+            .field("capabilities", &self.capabilities)
+            .field("state", &self.state)
+            .field("metrics", &self.metrics)
+            .finish()
+    }
 }
 
 impl TcpTransport {
     /// Create a new TCP transport for server mode
     #[must_use]
     pub fn new_server(bind_addr: SocketAddr) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(1);
         Self {
             bind_addr,
             remote_addr: None,
@@ -57,12 +75,15 @@ impl TcpTransport {
             },
             state: Arc::new(StdMutex::new(TransportState::Disconnected)),
             metrics: Arc::new(AtomicMetrics::default()),
+            task_handles: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
+            shutdown_tx,
         }
     }
 
     /// Create a new TCP transport for client mode
     #[must_use]
     pub fn new_client(bind_addr: SocketAddr, remote_addr: SocketAddr) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(1);
         Self {
             bind_addr,
             remote_addr: Some(remote_addr),
@@ -77,6 +98,8 @@ impl TcpTransport {
             },
             state: Arc::new(StdMutex::new(TransportState::Disconnected)),
             metrics: Arc::new(AtomicMetrics::default()),
+            task_handles: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
+            shutdown_tx,
         }
     }
 
@@ -97,35 +120,62 @@ impl TcpTransport {
         *self.receiver.lock().await = Some(rx);
         *self.state.lock().expect("state mutex poisoned") = TransportState::Connected;
 
-        // Accept connections in background
+        // ✅ Accept connections in background with proper task tracking
         let connections = self.connections.clone();
-        tokio::spawn(async move {
+        let task_handles = Arc::clone(&self.task_handles);
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+
+        // Spawn accept loop and store handle
+        task_handles.lock().await.spawn(async move {
+            // Inner JoinSet for connection handlers
+            let mut connection_tasks = JoinSet::new();
+
             loop {
-                match listener.accept().await {
-                    Ok((stream, addr)) => {
-                        info!("Accepted TCP connection from {}", addr);
-                        let incoming_sender = tx.clone();
-                        let connections_ref = connections.clone();
-                        // Handle connection in separate task
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_tcp_connection_framed(
-                                stream,
-                                addr,
-                                incoming_sender,
-                                connections_ref,
-                            )
-                            .await
-                            {
-                                error!("TCP connection handler failed for {}: {}", addr, e);
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        error!("Failed to accept TCP connection: {}", e);
+                tokio::select! {
+                    // ✅ Listen for shutdown signal
+                    _ = shutdown_rx.recv() => {
+                        info!("TCP accept loop received shutdown signal");
                         break;
+                    }
+
+                    // Accept new connections
+                    result = listener.accept() => {
+                        match result {
+                            Ok((stream, addr)) => {
+                                info!("Accepted TCP connection from {}", addr);
+                                let incoming_sender = tx.clone();
+                                let connections_ref = connections.clone();
+
+                                // ✅ Handle connection in separate task and store handle
+                                connection_tasks.spawn(async move {
+                                    if let Err(e) = handle_tcp_connection_framed(
+                                        stream,
+                                        addr,
+                                        incoming_sender,
+                                        connections_ref,
+                                    )
+                                    .await
+                                    {
+                                        error!("TCP connection handler failed for {}: {}", addr, e);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                error!("Failed to accept TCP connection: {}", e);
+                                break;
+                            }
+                        }
                     }
                 }
             }
+
+            // ✅ Gracefully shutdown all connection handlers
+            info!(
+                "Shutting down {} active TCP connections",
+                connection_tasks.len()
+            );
+            connection_tasks.shutdown().await;
+            info!("TCP accept loop shutdown complete");
         });
 
         Ok(())
@@ -316,6 +366,45 @@ impl Transport for TcpTransport {
     async fn disconnect(&self) -> TransportResult<()> {
         info!("Stopping TCP transport");
         *self.state.lock().expect("state mutex poisoned") = TransportState::Disconnecting;
+
+        // ✅ Signal all tasks to shutdown
+        let _ = self.shutdown_tx.send(());
+
+        // ✅ Wait for all tasks to complete with timeout
+        let mut tasks = self.task_handles.lock().await;
+        let task_count = tasks.len();
+
+        if task_count > 0 {
+            info!("Waiting for {} TCP tasks to complete", task_count);
+
+            let shutdown_timeout = std::time::Duration::from_secs(5);
+            let start = std::time::Instant::now();
+
+            while let Some(result) = tokio::time::timeout(
+                shutdown_timeout.saturating_sub(start.elapsed()),
+                tasks.join_next(),
+            )
+            .await
+            .ok()
+            .flatten()
+            {
+                if let Err(e) = result
+                    && e.is_panic()
+                {
+                    warn!("TCP task panicked during shutdown: {:?}", e);
+                }
+            }
+
+            // ✅ Abort remaining tasks if timeout occurred
+            if !tasks.is_empty() {
+                warn!("Aborting {} TCP tasks due to timeout", tasks.len());
+                tasks.shutdown().await;
+            }
+
+            info!("All TCP tasks shutdown complete");
+        }
+
+        // Clean up resources
         *self.sender.lock().await = None;
         *self.receiver.lock().await = None;
         *self.state.lock().expect("state mutex poisoned") = TransportState::Disconnected;

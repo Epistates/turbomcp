@@ -32,6 +32,7 @@ use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::task::JoinSet;
 
 use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
@@ -296,6 +297,7 @@ impl ServerRequestDispatcher for StdioDispatcher {
 /// - Writes JSON-RPC to stdout (server responses AND server requests)
 /// - Maintains request/response correlation
 /// - Handles errors per MCP spec
+/// - Manages task lifecycle with JoinSet for clean shutdown
 pub async fn run_stdio_bidirectional(
     router: Arc<RequestRouter>,
     dispatcher: StdioDispatcher,
@@ -309,9 +311,12 @@ pub async fn run_stdio_bidirectional(
     let stdout = Arc::new(Mutex::new(stdout));
     let pending_requests = Arc::clone(&dispatcher.pending_requests);
 
-    // Spawn stdout writer task
+    // ✅ Create JoinSet to manage all spawned tasks
+    let mut tasks = JoinSet::new();
+
+    // ✅ Spawn stdout writer task and store handle in JoinSet
     let stdout_writer = Arc::clone(&stdout);
-    tokio::spawn(async move {
+    tasks.spawn(async move {
         while let Some(msg) = request_rx.recv().await {
             match msg {
                 StdioMessage::ServerRequest { request } => {
@@ -359,7 +364,8 @@ pub async fn run_stdio_bidirectional(
                     let router = Arc::clone(&router);
                     let stdout = Arc::clone(&stdout);
 
-                    tokio::spawn(async move {
+                    // ✅ Spawn request handler and store handle in JoinSet
+                    tasks.spawn(async move {
                         // Create properly configured context with server-to-client capabilities
                         let ctx = router.create_context();
                         let response = router.route(request, ctx).await;
@@ -377,6 +383,55 @@ pub async fn run_stdio_bidirectional(
         }
     }
 
+    // ✅ GRACEFUL SHUTDOWN: Wait for all tasks to complete
+    tracing::debug!(
+        "STDIO dispatcher shutting down, waiting for {} tasks",
+        tasks.len()
+    );
+
+    // Signal writer task to shutdown by dropping the channel
+    // The request_rx.recv() in the writer task will return None, causing it to exit
+    drop(dispatcher);
+
+    // Wait for all tasks to complete with timeout
+    let shutdown_timeout = std::time::Duration::from_secs(5);
+    let start = std::time::Instant::now();
+
+    while let Some(result) = tokio::time::timeout(
+        shutdown_timeout.saturating_sub(start.elapsed()),
+        tasks.join_next(),
+    )
+    .await
+    .ok()
+    .flatten()
+    {
+        match result {
+            Ok(()) => {
+                tracing::debug!("Task completed successfully during shutdown");
+            }
+            Err(e) if e.is_panic() => {
+                tracing::warn!("Task panicked during shutdown: {:?}", e);
+            }
+            Err(e) if e.is_cancelled() => {
+                tracing::debug!("Task was cancelled during shutdown");
+            }
+            Err(e) => {
+                tracing::debug!("Task error during shutdown: {:?}", e);
+            }
+        }
+    }
+
+    // ✅ Abort remaining tasks if timeout occurred
+    if !tasks.is_empty() {
+        tracing::warn!(
+            "Aborting {} tasks due to shutdown timeout ({}s)",
+            tasks.len(),
+            shutdown_timeout.as_secs()
+        );
+        tasks.shutdown().await;
+    }
+
+    tracing::debug!("STDIO dispatcher shutdown complete");
     Ok(())
 }
 
@@ -772,4 +827,131 @@ where
     }
 
     Ok(())
+}
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_stdio_dispatcher_clean_shutdown() {
+        // Test that STDIO dispatcher can be dropped without panic
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let dispatcher = StdioDispatcher::new(tx);
+
+        // Should not panic on drop
+        drop(dispatcher);
+    }
+
+    #[tokio::test]
+    async fn test_stdio_dispatcher_creation() {
+        // Test that StdioDispatcher can be created and used
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let dispatcher = StdioDispatcher::new(tx.clone());
+
+        // Clone should work (needed for concurrent usage)
+        let _dispatcher2 = dispatcher.clone();
+
+        // Sending messages should work
+        assert!(tx.send(StdioMessage::Shutdown).is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_joinset_task_tracking() {
+        // Test that JoinSet properly tracks and cleans up tasks
+        let mut tasks = JoinSet::new();
+
+        // Spawn some test tasks
+        for i in 0..5 {
+            tasks.spawn(async move {
+                tokio::time::sleep(tokio::time::Duration::from_millis(i * 10)).await;
+            });
+        }
+
+        assert_eq!(tasks.len(), 5);
+
+        // Wait for all tasks to complete
+        let mut completed = 0;
+        while let Some(result) = tasks.join_next().await {
+            assert!(result.is_ok());
+            completed += 1;
+        }
+
+        assert_eq!(completed, 5);
+        assert!(tasks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_joinset_with_timeout() {
+        // Test timeout behavior for slow tasks
+        let mut tasks = JoinSet::new();
+
+        // Spawn a slow task
+        tasks.spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+        });
+
+        // Wait with short timeout
+        let timeout = std::time::Duration::from_millis(100);
+        let start = std::time::Instant::now();
+
+        let result = tokio::time::timeout(timeout, tasks.join_next()).await;
+
+        // Should timeout
+        assert!(result.is_err());
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+
+        // Cleanup
+        tasks.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_stdio_message_types() {
+        // Test that StdioMessage enum works correctly
+        use turbomcp_protocol::jsonrpc::JsonRpcRequest;
+
+        let request = JsonRpcRequest {
+            jsonrpc: JsonRpcVersion,
+            method: "test".to_string(),
+            params: None,
+            id: MessageId::String("test-1".to_string()),
+        };
+
+        let msg = StdioMessage::ServerRequest { request };
+
+        match msg {
+            StdioMessage::ServerRequest { .. } => { /* OK */ }
+            _ => panic!("Expected ServerRequest"),
+        }
+
+        let shutdown_msg = StdioMessage::Shutdown;
+        match shutdown_msg {
+            StdioMessage::Shutdown => { /* OK */ }
+            _ => panic!("Expected Shutdown"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pending_requests_cleanup() {
+        // Test that pending requests are properly cleaned up
+        let pending_requests: Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        let (tx, _rx) = oneshot::channel();
+        pending_requests
+            .lock()
+            .await
+            .insert("test-id".to_string(), tx);
+
+        assert_eq!(pending_requests.lock().await.len(), 1);
+
+        // Remove the request
+        let removed = pending_requests.lock().await.remove("test-id");
+        assert!(removed.is_some());
+        assert_eq!(pending_requests.lock().await.len(), 0);
+    }
 }
