@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-server"
-version = "2.0.2"
+version = "2.0.3"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Fast MCP server implementation with middleware, routing, and lifecycle management"
@@ -13,9 +13,9 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
-turbomcp-protocol = { version = "2.0.2", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "2.0.2", path = "../turbomcp-transport", optional = true }
-turbomcp-macros = { version = "2.0.2", path = "../turbomcp-macros" }
+turbomcp-protocol = { version = "2.0.3", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "2.0.3", path = "../turbomcp-transport", optional = true }
+turbomcp-macros = { version = "2.0.3", path = "../turbomcp-macros" }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
