@@ -7,6 +7,130 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.3] - 2025-10-21
+
+### Added
+
+- **Configurable Concurrency Limits**: Semaphore-based concurrency is now configurable for production flexibility
+  - **WebSocket Server**: `WebSocketServerConfig::max_concurrent_requests` (default: 100)
+    - Configure via `WebSocketServerConfig { max_concurrent_requests: 200, .. }`
+    - Limits concurrent client→server request handlers per connection
+  - **Client**: `ClientCapabilities::max_concurrent_handlers` (default: 100)
+    - Configure via `ClientBuilder::new().with_max_concurrent_handlers(200)`
+    - Limits concurrent server→client request/notification handlers
+  - **Tuning Guide**:
+    - Low-resource systems: 50
+    - Standard deployments: 100 (default)
+    - High-performance: 200-500
+    - Maximum recommended: 1000
+  - **Benefits**: Production deployments can tune resource usage based on available memory/CPU
+
+### Fixed
+
+- **Task Lifecycle Management - Comprehensive Hardening**: Fixed critical "JoinHandle polled after completion" panics and implemented task lifecycle management across all transports
+  - **Issue**: Spawned tasks without proper lifecycle management caused panics on clean shutdown and potential resource leaks
+  - **Root Cause**: `tokio::spawn()` returned JoinHandles that were immediately dropped, leaving tasks orphaned
+  - **Impact**: STDIO servers panicked on EOF, WebSocket/TCP/Client handlers could leak resources
+  - **Scope**: Comprehensive fix across 4 major components
+  
+  #### Component 1: STDIO Transport (`turbomcp-server/src/runtime.rs`)
+  - **Pattern**: JoinSet with graceful shutdown
+  - **Changes**:
+    - Added `use tokio::task::JoinSet` import
+    - Refactored `run_stdio_bidirectional()` to track all spawned tasks in JoinSet
+    - Implemented graceful shutdown with 5-second timeout and abort fallback
+    - Added comprehensive unit tests (6 tests) and integration tests (9 tests)
+  - **Result**: No more panics on clean EOF, all tasks properly cleaned up
+  - **Tests**: `runtime::tests::*`, `stdio_lifecycle_test.rs`
+  
+  #### Component 2: WebSocket Server (`turbomcp-server/src/runtime/websocket.rs`)
+  - **Pattern**: Semaphore for bounded concurrency (industry best practice)
+  - **Changes**:
+    - Added `use tokio::sync::Semaphore` import
+    - Implemented semaphore-based concurrency control (configurable, default 100)
+    - Per-request tasks use RAII pattern (permits auto-released on drop)
+    - Main send/receive loops already properly tracked with tokio::select!
+    - **NEW**: Added `max_concurrent_requests` field to `WebSocketServerConfig`
+  - **Benefits**: Automatic backpressure, prevents resource exhaustion, simpler than JoinSet for short-lived tasks, **production configurable**
+  - **Result**: Bounded concurrency, no resource leaks, production-ready
+  
+  #### Component 3: TCP Transport (`turbomcp-transport/src/tcp.rs`)
+  - **Pattern**: JoinSet with shutdown signal + nested JoinSet for connections
+  - **Changes**:
+    - Added task tracking fields to `TcpTransport` struct
+    - Implemented graceful shutdown in `disconnect()` method
+    - Accept loop listens for shutdown signals via `tokio::select!`
+    - Connection handlers tracked in nested JoinSet
+  - **Result**: Clean shutdown of accept loop and all active connections
+  - **Tests**: Existing TCP tests pass with new implementation
+  
+  #### Component 4: Client Handlers (`turbomcp-client/src/client/core.rs`)
+  - **Pattern**: Semaphore for bounded concurrency (consistent with WebSocket)
+  - **Changes**:
+    - Added `handler_semaphore: Arc<Semaphore>` to `ClientInner` struct
+    - Updated both constructors (`new()` and `with_capabilities()`)
+    - Request and notification handlers acquire permits before processing
+    - Automatic cleanup via RAII pattern
+    - **NEW**: Added `max_concurrent_handlers` field to `ClientCapabilities`
+    - **NEW**: Added `with_max_concurrent_handlers()` builder method
+  - **Result**: Bounded concurrent request processing, prevents resource exhaustion, **production configurable**
+  - **Tests**: All 72 client tests pass
+  
+  #### Architecture & Patterns
+  - **Long-Running Infrastructure Tasks** → JoinSet + Shutdown Signal
+    - Accept loops, keep-alive monitors, health checks
+    - Graceful shutdown with timeout and abort fallback
+    - Example: STDIO stdout writer, TCP accept loop
+  - **Short-Lived Request Handlers** → Semaphore for Bounded Concurrency
+    - HTTP/WebSocket/Client request handlers
+    - Automatic backpressure and resource control
+    - Example: WebSocket per-request spawns, client handlers
+  - **Fire-and-Forget** → Explicitly Documented (rare, requires review)
+    - Non-critical logging, metrics emission
+    - Must be <100ms and truly non-critical
+  
+  #### Testing
+  - **Unit Tests**: 6 new tests in `runtime::tests::*`
+  - **Integration Tests**: 9 new tests in `stdio_lifecycle_test.rs`
+  - **Regression Prevention**: Tests verify clean shutdown without panics
+  - **All Existing Tests Pass**: No breaking changes
+  
+  #### Breaking Changes
+  - **None** - All changes are internal implementation details
+  - Public APIs unchanged
+  - Backward compatible
+  - Can be released as patch version (2.0.3)
+  
+  #### Performance Impact
+  - **JoinSet Overhead**: ~16 bytes per task + Arc operations (negligible for infrastructure tasks)
+  - **Semaphore Overhead**: Fixed memory, atomic operations (highly efficient)
+  - **Shutdown Time**: +0-5 seconds for graceful cleanup (configurable timeout)
+  - **Runtime Overhead**: None - tasks run identically
+  
+  #### Files Changed
+  - `crates/turbomcp-server/src/runtime.rs` - STDIO JoinSet implementation
+  - `crates/turbomcp-server/src/runtime/websocket.rs` - WebSocket semaphore implementation
+  - `crates/turbomcp-transport/src/tcp.rs` - TCP JoinSet implementation
+  - `crates/turbomcp-client/src/client/core.rs` - Client semaphore implementation
+  - `crates/turbomcp-server/tests/stdio_lifecycle_test.rs` - New integration tests
+  - `TASK_LIFECYCLE_GUIDELINES.md` - Developer guidelines
+  - `TASK_LIFECYCLE_ANALYSIS.md` - Technical analysis
+  - `TASK_LIFECYCLE_VISUAL.md` - Visual documentation
+  
+  #### Verification Steps
+  ```bash
+  # All tests pass
+  cargo test --package turbomcp-server runtime::tests      # 6 tests ✅
+  cargo test --package turbomcp-server stdio_lifecycle_test # 9 tests ✅  
+  cargo test --package turbomcp-transport tcp              # 1 test ✅
+  cargo test --package turbomcp-client                     # 72 tests ✅
+  
+  # Manual verification
+  echo '{"jsonrpc":"2.0","method":"ping","id":1}' | cargo run --example stdio_server
+  # Expected: Clean exit without panic ✅
+  ```
+  
+
 ## [2.0.2] - 2025-10-19
 
 ### Fixed

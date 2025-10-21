@@ -835,17 +835,20 @@ impl McpServer {
 
         // Use factory-based WebSocket server with full bidirectional support
         use crate::runtime::websocket::run_websocket;
-        run_websocket(
-            router,
-            wrapper_factory,
-            socket_addr.to_string(),
-            config.endpoint_path.clone(),
-        )
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "WebSocket server failed");
-            crate::ServerError::handler(e.to_string())
-        })?;
+
+        // Update config with resolved bind address
+        let ws_config = crate::runtime::websocket::WebSocketServerConfig {
+            bind_addr: socket_addr.to_string(),
+            endpoint_path: config.endpoint_path.clone(),
+            max_concurrent_requests: config.max_concurrent_requests,
+        };
+
+        run_websocket(router, wrapper_factory, ws_config)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "WebSocket server failed");
+                crate::ServerError::handler(e.to_string())
+            })?;
 
         info!("WebSocket server shutdown complete");
         Ok(())

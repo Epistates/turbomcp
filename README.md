@@ -163,7 +163,7 @@ Start minimal (STDIO only), add features as needed:
 
 ```toml
 [dependencies]
-turbomcp = "2.0.0"
+turbomcp = "2.0"
 tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
