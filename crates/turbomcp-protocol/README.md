@@ -277,10 +277,61 @@ let client_caps = ClientCapabilities {
 
 ### Error Handling
 
+The protocol crate provides `Error`, a rich MCP 2025-06-18 specification-compliant error type with comprehensive context and observability support.
+
+#### Understanding `Box<Error>`
+
+**All error constructors return `Box<Error>`** for important architectural reasons:
+
+```rust
+use turbomcp_protocol::Error;
+
+// Constructors return Box<Error>, not Error
+let err: Box<Error> = Error::tool_not_found("calculator");
+let err: Box<Error> = Error::invalid_params("Email required");
+```
+
+**Why `Box<Error>`?**
+
+1. **Cheap Cloning**: Errors clone efficiently across async boundaries
+2. **Rich Context Preservation**: Full error chain, metadata, and backtrace
+3. **Observability Integration**: Seamless tracing and metrics
+4. **Memory Efficiency**: Error type is large (contains UUID, context, backtrace) - boxing keeps it off the stack
+
+#### Creating Errors
+
+```rust
+use turbomcp_protocol::{Error, ErrorKind};
+
+// MCP specification errors (map to standard error codes)
+let err = Error::tool_not_found("calculator");              // -32001
+let err = Error::tool_execution_failed("calc", "div by 0"); // -32002
+let err = Error::prompt_not_found("code_review");           // -32003
+let err = Error::resource_not_found("file:///missing");     // -32004
+let err = Error::resource_access_denied("file:///etc/passwd", "forbidden"); // -32005
+let err = Error::invalid_params("Email must be valid");     // -32602
+let err = Error::user_rejected("User declined sampling");   // -1
+
+// Add rich context with builder pattern
+let err = Error::internal("Database error")
+    .with_operation("user_create")
+    .with_component("postgres_repository")
+    .with_request_id("req-123")
+    .with_context("user_id", user_id)
+    .with_context("table", "users");
+
+// Error chaining for root cause analysis
+let database_error = Error::internal("Connection pool exhausted");
+let app_error = Error::unavailable("Service temporarily unavailable")
+    .with_source(database_error);
+```
+
+#### Working with JSON-RPC Errors
+
 ```rust
 use turbomcp_protocol::{JsonRpcError, JsonRpcErrorCode, Error};
 
-// Create protocol-specific errors
+// Create JSON-RPC errors directly
 fn handle_tool_error(error: &str) -> JsonRpcError {
     JsonRpcError {
         code: JsonRpcErrorCode::InvalidParams,
@@ -289,9 +340,57 @@ fn handle_tool_error(error: &str) -> JsonRpcError {
     }
 }
 
-// Create MCP error from JSON-RPC error
-let error = Error::tool_execution_failed("Missing parameter 'name'");
+// Convert protocol Error to JSON-RPC error code
+let err = Error::tool_not_found("calculator");
+let code = err.jsonrpc_error_code();  // -32001
+let http = err.http_status_code();    // 404
+
+// Create Error from JSON-RPC error code (preserves semantics)
+let err = Error::rpc(-32001, "Tool 'calculator' not found");
+assert_eq!(err.kind, ErrorKind::ToolNotFound);
 ```
+
+#### Error Properties
+
+```rust
+use turbomcp_protocol::Error;
+
+let err = Error::timeout("Request took too long");
+
+// Check error characteristics
+if err.is_retryable() {
+    // Retry the operation
+}
+
+if err.is_temporary() {
+    // Wait and retry
+}
+
+// Get HTTP status code for REST APIs
+let status = err.http_status_code();  // 408
+
+// Get MCP-compliant JSON-RPC error code
+let code = err.jsonrpc_error_code();  // -32012
+```
+
+#### Integration with Application Layer
+
+If you're using the main `turbomcp` crate, you typically use `McpError` in your tool handlers. The server layer automatically converts to `Box<Error>`:
+
+```rust
+// In your tool handler (turbomcp crate)
+use turbomcp::{McpError, McpResult};
+
+#[tool("My tool")]
+async fn my_tool(&self) -> McpResult<String> {
+    Err(McpError::Tool("Something failed".into()))  // Simple error
+}
+
+// Server layer converts to:
+// ServerError::Protocol(Error::tool_execution_failed("my_tool", "Something failed"))
+```
+
+See the [turbomcp crate error handling docs](../turbomcp/README.md#error-handling) for the complete error architecture.
 
 ### Custom Message Types
 

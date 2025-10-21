@@ -657,6 +657,45 @@ let server = shared.consume().await?; // Extracts the value
 
 ## Error Handling
 
+### Error Architecture
+
+TurboMCP uses a layered error system designed for both simplicity and MCP specification compliance:
+
+| Error Type | Crate | Purpose | Use When |
+|------------|-------|---------|----------|
+| **`McpError`** | `turbomcp` | Simple application errors | Writing tools, resources, prompts |
+| **`ProtocolError`** | `turbomcp_protocol` | MCP-spec compliant errors with rich context | Protocol implementation, server internals |
+
+#### Quick Decision Guide
+
+**Use `McpError` if you are:**
+- Writing tool handlers with `#[tool]`
+- Implementing resource providers with `#[resource]`
+- Building prompt handlers with `#[prompt]`
+- Writing application-level business logic
+
+**Use `ProtocolError` if you are:**
+- Implementing custom protocol handlers
+- Building server middleware
+- Need observability context (request IDs, metadata, error chaining)
+- Require MCP 2025-06-18 specification error codes
+
+**Key Insight:** Errors automatically convert between layers. Use `McpError` in your handlers - the server layer converts to `ProtocolError` with full MCP compliance.
+
+#### Architecture Flow
+
+```
+Your Tool Handler
+    ↓ Returns McpError
+Server Layer (turbomcp-server)
+    ↓ Converts to ServerError::Protocol(Box<ProtocolError>)
+Protocol Layer (turbomcp-protocol)
+    ↓ Serializes with MCP error codes
+JSON-RPC Response
+```
+
+See `examples/error_patterns.rs` for comprehensive examples of both error types.
+
 ### Ergonomic Error Creation
 
 Use the `mcp_error!` macro for easy error creation:
@@ -677,9 +716,9 @@ async fn read_file(&self, path: String) -> McpResult<String> {
 }
 ```
 
-### Error Types
+### Application-Level Errors (`McpError`)
 
-TurboMCP provides comprehensive error types:
+Simple enum for common error cases:
 
 ```rust
 use turbomcp::McpError;
@@ -702,6 +741,38 @@ match result {
     }
 }
 ```
+
+### Protocol-Level Errors (`ProtocolError`)
+
+For advanced use cases requiring rich context and MCP specification compliance:
+
+```rust
+use turbomcp::ProtocolError;  // Re-exported from turbomcp_protocol
+
+// Constructors return Box<ProtocolError> for efficient cloning and rich context
+let err = ProtocolError::tool_not_found("calculator");
+let err = ProtocolError::invalid_params("Email must be valid");
+let err = ProtocolError::resource_access_denied(
+    "file://secret.txt",
+    "Path outside allowed directory"
+);
+
+// Add observability context with builder pattern
+let err = ProtocolError::internal("Database connection failed")
+    .with_operation("user_lookup")
+    .with_component("auth_service")
+    .with_request_id(request_id)
+    .with_context("user_id", user_id);
+
+// Maps to MCP 2025-06-18 specification error codes
+assert_eq!(err.jsonrpc_error_code(), -32603);  // Internal error
+```
+
+**Why `Box<ProtocolError>`?**
+- Enables cheap cloning across async boundaries
+- Preserves full error context and source chain
+- Integrates with observability systems (tracing, metrics)
+- Automatic backtrace capture in debug builds
 
 ## Advanced Features
 

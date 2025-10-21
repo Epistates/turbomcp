@@ -526,6 +526,14 @@ pub use turbomcp_protocol::{
     ServerCapabilities,
 };
 
+// Re-export protocol error types for advanced error handling
+// Most users should use McpError, but ProtocolError provides
+// MCP-spec compliant errors with rich context for protocol-level code.
+// See Error Handling section in README for guidance.
+pub use turbomcp_protocol::Error as ProtocolError;
+pub use turbomcp_protocol::ErrorKind as ProtocolErrorKind;
+pub use turbomcp_protocol::Result as ProtocolResult;
+
 // Re-export commonly used types from turbomcp_protocol::types
 pub use turbomcp_protocol::types::{
     CompleteResult, CompletionResponse, Content, CreateMessageRequest, CreateMessageResult,

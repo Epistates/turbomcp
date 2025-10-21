@@ -289,6 +289,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
                 let config = WebSocketServerConfig {
                     bind_addr: socket_addr.to_string(),
                     endpoint_path: path.to_string(),
+                    max_concurrent_requests: 100, // Use default
                 };
 
                 // Use ServerBuilder's canonical WebSocket implementation

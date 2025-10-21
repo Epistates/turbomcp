@@ -252,9 +252,10 @@ pub use turbomcp_transport::websocket_bidirectional::{
 ///     prompts: true,
 ///     resources: true,
 ///     sampling: false,
+///     max_concurrent_handlers: 100,
 /// };
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ClientCapabilities {
     /// Whether the client supports tool calling
     pub tools: bool,
@@ -267,6 +268,30 @@ pub struct ClientCapabilities {
 
     /// Whether the client supports sampling
     pub sampling: bool,
+
+    /// Maximum concurrent request/notification handlers (default: 100)
+    ///
+    /// This limits how many server-initiated requests/notifications can be processed simultaneously.
+    /// Provides automatic backpressure when the limit is reached.
+    ///
+    /// **Tuning Guide:**
+    /// - Low-resource clients: 50
+    /// - Standard clients: 100 (default)
+    /// - High-performance: 200-500
+    /// - Maximum recommended: 1000
+    pub max_concurrent_handlers: usize,
+}
+
+impl Default for ClientCapabilities {
+    fn default() -> Self {
+        Self {
+            tools: false,
+            prompts: false,
+            resources: false,
+            sampling: false,
+            max_concurrent_handlers: 100,
+        }
+    }
 }
 
 impl ClientCapabilities {
@@ -292,6 +317,7 @@ impl ClientCapabilities {
             prompts: true,
             resources: true,
             sampling: true,
+            max_concurrent_handlers: 100,
         }
     }
 
@@ -318,6 +344,7 @@ impl ClientCapabilities {
             prompts: true,
             resources: true,
             sampling: false,
+            max_concurrent_handlers: 100,
         }
     }
 
@@ -344,6 +371,7 @@ impl ClientCapabilities {
             prompts: false,
             resources: false,
             sampling: false,
+            max_concurrent_handlers: 100,
         }
     }
 
@@ -376,6 +404,7 @@ impl ClientCapabilities {
             prompts: false,
             resources: true,
             sampling: false,
+            max_concurrent_handlers: 100,
         }
     }
 
@@ -400,6 +429,7 @@ impl ClientCapabilities {
             prompts: true,
             resources: false,
             sampling: false,
+            max_concurrent_handlers: 100,
         }
     }
 
@@ -413,6 +443,7 @@ impl ClientCapabilities {
             prompts: false,
             resources: false,
             sampling: true,
+            max_concurrent_handlers: 100,
         }
     }
 }
@@ -624,6 +655,37 @@ impl ClientBuilder {
     #[must_use]
     pub fn with_sampling(mut self, enabled: bool) -> Self {
         self.capabilities.sampling = enabled;
+        self
+    }
+
+    /// Set maximum concurrent request/notification handlers
+    ///
+    /// This limits how many server-initiated requests/notifications can be processed simultaneously.
+    /// Provides automatic backpressure when the limit is reached.
+    ///
+    /// # Arguments
+    ///
+    /// * `limit` - Maximum concurrent handlers (default: 100)
+    ///
+    /// # Tuning Guide
+    ///
+    /// - Low-resource clients: 50
+    /// - Standard clients: 100 (default)
+    /// - High-performance: 200-500
+    /// - Maximum recommended: 1000
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_client::ClientBuilder;
+    /// # use turbomcp_transport::StdioTransport;
+    ///
+    /// let builder = ClientBuilder::new()
+    ///     .with_max_concurrent_handlers(200);
+    /// ```
+    #[must_use]
+    pub fn with_max_concurrent_handlers(mut self, limit: usize) -> Self {
+        self.capabilities.max_concurrent_handlers = limit;
         self
     }
 
