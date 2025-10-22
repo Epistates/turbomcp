@@ -4,7 +4,7 @@
 //! middleware building, lifecycle management, and server construction.
 
 use std::sync::Arc;
-use tracing::{info, info_span};
+use tracing::{info, info_span, warn};
 
 use crate::{
     config::ServerConfig,
@@ -545,6 +545,51 @@ impl McpServer {
     /// - Network settings (bind address, endpoint path, keep-alive)
     /// - Advanced settings (replay buffer size, etc.)
     ///
+    /// # Bind Address Configuration
+    ///
+    /// **IMPORTANT**: The `addr` parameter takes precedence over `config.bind_addr`.
+    /// If they differ, a deprecation warning is logged.
+    ///
+    /// **Best Practice** (recommended for forward compatibility):
+    /// ```no_run
+    /// # use turbomcp_server::ServerBuilder;
+    /// # use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = StreamableHttpConfigBuilder::new()
+    ///     .with_bind_address("127.0.0.1:3001")  // Set bind address in config
+    ///     .build();
+    ///
+    /// // Pass matching addr parameter (or use default "127.0.0.1:8080")
+    /// ServerBuilder::new()
+    ///     .build()
+    ///     .run_http_with_config("127.0.0.1:3001", config).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// **Deprecated** (will be removed in v3.x):
+    /// ```no_run
+    /// # use turbomcp_server::ServerBuilder;
+    /// # use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // ⚠️ Avoid setting different addresses - causes deprecation warning
+    /// let config = StreamableHttpConfigBuilder::new()
+    ///     .with_bind_address("0.0.0.0:5000")  // This is ignored!
+    ///     .build();
+    ///
+    /// // The addr parameter wins (3001 is used, not 5000)
+    /// ServerBuilder::new()
+    ///     .build()
+    ///     .run_http_with_config("127.0.0.1:3001", config).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// **Future (v3.x)**: The `addr` parameter will be removed. Configure bind address
+    /// via `config.with_bind_address()` only.
+    ///
     /// # Examples
     ///
     /// ## Benchmarking configuration (no rate limits)
@@ -560,6 +605,7 @@ impl McpServer {
     ///         .build();
     ///
     ///     let config = StreamableHttpConfigBuilder::new()
+    ///         .with_bind_address("127.0.0.1:3000")
     ///         .without_rate_limit()  // Disable rate limiting
     ///         .build();
     ///
@@ -582,6 +628,7 @@ impl McpServer {
     ///         .build();
     ///
     ///     let config = StreamableHttpConfigBuilder::new()
+    ///         .with_bind_address("127.0.0.1:3000")
     ///         .with_rate_limit(1000, Duration::from_secs(60))  // 1000 req/min
     ///         .allow_any_origin(false)  // Strict CORS
     ///         .require_authentication(true)  // Require auth
@@ -608,16 +655,12 @@ impl McpServer {
     pub async fn run_http_with_config<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
         self,
         addr: A,
-        config: turbomcp_transport::streamable_http_v2::StreamableHttpConfig,
+        mut config: turbomcp_transport::streamable_http_v2::StreamableHttpConfig,
     ) -> ServerResult<()> {
         use std::collections::HashMap;
         use tokio::sync::{Mutex, RwLock};
 
         info!("Starting MCP server with HTTP transport");
-        info!(
-            config = ?config,
-            "HTTP configuration loaded"
-        );
 
         self.lifecycle.start().await;
 
@@ -629,6 +672,32 @@ impl McpServer {
             .ok_or_else(|| crate::ServerError::configuration("No address resolved"))?;
 
         info!("Resolved address: {}", socket_addr);
+
+        // Check for conflicting bind addresses and warn about deprecation
+        let socket_addr_str = socket_addr.to_string();
+        if config.bind_addr != socket_addr_str {
+            warn!(
+                addr_parameter = %socket_addr_str,
+                config_bind_addr = %config.bind_addr,
+                "⚠️  DEPRECATION WARNING: The `addr` parameter takes precedence over `config.bind_addr`"
+            );
+            warn!(
+                "⚠️  In TurboMCP v3.x, the `addr` parameter will be removed. Please use StreamableHttpConfigBuilder::new().with_bind_address(\"{}\").build() instead",
+                socket_addr_str
+            );
+            warn!(
+                "⚠️  Avoid setting both `addr` parameter and `config.bind_addr` to prevent confusion"
+            );
+
+            // Update config to single source of truth
+            config.bind_addr = socket_addr_str.clone();
+            config.base_url = format!("http://{}", socket_addr_str);
+        }
+
+        info!(
+            config = ?config,
+            "HTTP configuration (updated with resolved address)"
+        );
 
         // BIDIRECTIONAL HTTP SETUP
         // Create shared state for session management and bidirectional MCP
