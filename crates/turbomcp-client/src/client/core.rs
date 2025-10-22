@@ -235,6 +235,7 @@ impl<T: Transport + 'static> Client<T> {
     ///     prompts: true,
     ///     resources: false,
     ///     sampling: false,
+    ///     max_concurrent_handlers: 100,
     /// };
     ///
     /// let transport = StdioTransport::new();
