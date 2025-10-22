@@ -359,6 +359,18 @@ impl Transport for StdioTransport {
                 self.metrics.connections.fetch_add(1, Ordering::Relaxed);
                 self.set_state(TransportState::Connected);
                 debug!("Stdio transport connected");
+
+                // ⚠️ CRITICAL: Warn about stdio transport output constraints
+                // This warning is unmissable and cannot be suppressed
+                warn!(
+                    target: "turbomcp_stdio_compliance",
+                    "⚠️  CRITICAL: stdio transport active\n\
+                     All output MUST go to stderr. Any println!(), eprintln!(), or \
+                     stdout writes will corrupt the MCP protocol.\n\
+                     Use: tracing_subscriber::fmt().with_writer(std::io::stderr)\n\
+                     Docs: https://docs.modelcontextprotocol.io/docs/stdio-transport"
+                );
+
                 Ok(())
             }
             Err(e) => {
