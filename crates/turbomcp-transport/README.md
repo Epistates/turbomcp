@@ -94,7 +94,7 @@ All transports preserve JSON-RPC message format and MCP lifecycle requirements.
 │ └── Graceful degradation                   │
 ├─────────────────────────────────────────────┤
 │ Performance & Optimization                 │
-│ ├── Advanced compression                   │
+│ ├── Multi-algorithm compression            │
 │ ├── Connection reuse                       │
 │ ├── Message batching                       │
 │ └── Memory-efficient streaming             │
@@ -387,14 +387,14 @@ impl Transport for CustomTransport {
 
 | Feature | Description | Default |
 |---------|-------------|---------|
-| `http` | Enable HTTP/SSE transport | ✅ |
-| `websocket` | Enable WebSocket transport | ✅ |
-| `tcp` | Enable TCP transport | ✅ |
-| `unix` | Enable Unix socket transport | ✅ |
-| `tls` | Enable TLS/SSL support | ✅ |
-| `compression` | Enable compression algorithms | ✅ |
-| `metrics` | Enable metrics collection | ✅ |
-| `circuit-breaker` | Enable circuit breaker pattern | ✅ |
+| `stdio` | Enable STDIO transport | ✅ |
+| `http` | Enable HTTP/SSE transport | ❌ |
+| `websocket` | Enable WebSocket transport | ❌ |
+| `tcp` | Enable TCP transport | ❌ |
+| `unix` | Enable Unix socket transport | ❌ |
+| `tls` | Enable TLS/SSL support | ❌ |
+| `compression` | Enable compression algorithms | ❌ |
+| `metrics` | Enable metrics collection | ❌ |
 
 ## SharedTransport for Async Concurrency
 
@@ -428,7 +428,7 @@ let handle2 = tokio::spawn(async move {
 let (send_result, message) = tokio::join!(handle1, handle2);
 ```
 
-### Advanced Concurrent Patterns
+### Concurrent Patterns
 
 ```rust
 use turbomcp_transport::SharedTransport;
@@ -507,7 +507,9 @@ tokio::spawn(async move {
 
 ## Performance Characteristics
 
-### Benchmarks
+### Typical Performance Metrics
+
+These metrics are indicative and will vary based on hardware, message size, and system load.
 
 | Transport | Latency (avg) | Throughput | Memory Usage |
 |-----------|---------------|------------|--------------|
@@ -558,9 +560,7 @@ cargo test circuit_breaker
 ## Security Documentation
 
 For comprehensive security information, see:
-- **[Security Features Guide](./SECURITY_FEATURES.md)** - Detailed security documentation
-- **[TLS Configuration](./docs/tls.md)** - TLS setup and certificate management
-- **[Authentication Guide](./docs/auth.md)** - JWT and API key authentication
+- **[Security Features Guide](./SECURITY_FEATURES.md)** - Detailed security documentation including TLS configuration and authentication setup
 
 ## Related Crates
 

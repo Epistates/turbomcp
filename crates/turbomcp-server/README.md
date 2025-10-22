@@ -15,8 +15,12 @@ MCP server framework with OAuth 2.1 MCP compliance, middleware pipeline, and lif
 - [Handler Registry](#handler-registry)
 - [Authentication & Session](#authentication-with-turbomcp-auth)
 - [Middleware System](#middleware-system)
-- [Advanced Features](#advanced-features)
-- [Integration](#integration)
+- [Session Management](#session-management-with-turbomcp)
+- [Health & Lifecycle](#health--lifecycle)
+- [Metrics & Observability](#metrics--observability)
+- [Integration Examples](#integration-examples)
+- [Feature Flags](#feature-flags)
+- [Development](#development)
 
 ## Overview
 
@@ -86,7 +90,7 @@ MCP server framework with OAuth 2.1 MCP compliance, middleware pipeline, and lif
 │ └── Response serialization                 │
 ├─────────────────────────────────────────────┤
 │ Authentication & Session                   │
-│ ├── OAuth 2.0 providers                   │
+│ ├── OAuth 2.1 providers                    │
 │ ├── JWT token validation                   │
 │ ├── Session lifecycle                      │
 │ └── Security middleware                    │
@@ -495,33 +499,29 @@ struct ProductionServer {
 impl ProductionServer {
     #[tool("Process user data")]
     async fn process_user(&self, ctx: Context, target_user_id: String) -> McpResult<User> {
-    // Example: Use Context API for authentication and user info
-    if !ctx.is_authenticated() {
-        return Err(McpError::Unauthorized("Authentication required".to_string()));
-    }
-    
-    let current_user = ctx.user_id().unwrap_or("anonymous");
-    let roles = ctx.roles();
-    
-    ctx.info(&format!("User {} accessing profile for {}", current_user, target_user_id)).await?;
-    
-    // Check permissions
-    if !roles.contains(&"admin".to_string()) && current_user != target_user_id {
-        return Err(McpError::Unauthorized("Insufficient permissions".to_string()));
-    }
-        // Context provides:
-        // - Authentication info: ctx.user_id(), ctx.permissions()
-        // - Request correlation: ctx.request_id()
-        // - Metrics: ctx.record_metric()
-        // - Logging: ctx.info(), ctx.error()
-        
-        if let Some(authenticated_user) = ctx.user_id() {
-            let user = self.database.get_user(&user_id).await?;
-            ctx.record_metric("user_lookups", 1);
-            Ok(user)
-        } else {
-            Err(McpError::Unauthorized("Authentication required".to_string()))
+        // Example: Use Context API for authentication
+        if !ctx.is_authenticated() {
+            return Err(McpError::Unauthorized("Authentication required".to_string()));
         }
+
+        let current_user = ctx.user_id.as_deref().unwrap_or("anonymous");
+        let roles = ctx.roles();
+
+        tracing::info!("User {} accessing profile for {}", current_user, target_user_id);
+
+        // Check permissions
+        if !roles.contains(&"admin".to_string()) && Some(current_user) != Some(&target_user_id) {
+            return Err(McpError::Unauthorized("Insufficient permissions".to_string()));
+        }
+
+        // Context provides:
+        // - Authentication info: ctx.is_authenticated(), ctx.roles()
+        // - Request correlation: ctx.request_id
+        // - User identity: ctx.user_id
+        // - Session tracking: ctx.session_id
+
+        let user = self.database.get_user(&target_user_id).await?;
+        Ok(user)
     }
 }
 
@@ -581,13 +581,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Feature | Description | Default |
 |---------|-------------|---------|
-| `oauth` | Enable OAuth 2.0 authentication | ✅ |
-| `metrics` | Enable metrics collection | ✅ |
-| `health-checks` | Enable health check endpoints | ✅ |
-| `session-redis` | Enable Redis session storage | ❌ |
-| `session-postgres` | Enable PostgreSQL session storage | ❌ |
-| `tracing` | Enable distributed tracing | ✅ |
-| `compression` | Enable response compression | ✅ |
+| `stdio` | Enable STDIO transport | ✅ |
+| `http` | Enable HTTP transport | ❌ |
+| `websocket` | Enable WebSocket transport | ❌ |
+| `tcp` | Enable TCP transport | ❌ |
+| `unix` | Enable Unix socket transport | ❌ |
+| `auth` | Enable JWT authentication middleware | ❌ |
+| `metrics` | Enable metrics collection | ❌ |
+| `health-checks` | Enable health check endpoints | ❌ |
+| `middleware` | Enable middleware stack (CORS, security headers, etc) | ❌ |
+| `rate-limiting` | Enable rate limiting middleware | ❌ |
+| `graceful-shutdown` | Enable graceful shutdown handling | ❌ |
+| `observability` | Enable observability features | ❌ |
+| `hot-reload` | Enable hot reloading of handlers | ❌ |
+| `all-transports` | Enable all transport types | ❌ |
+| `full` | Enable all features | ❌ |
 
 ## Server Sharing with Clone (Axum/Tower Pattern)
 
@@ -751,7 +759,7 @@ RUST_LOG=debug cargo run --example production_server
 
 ## External Resources
 
-- **[OAuth 2.0 Specification](https://tools.ietf.org/html/rfc6749)** - OAuth 2.0 authorization framework
+- **[OAuth 2.1 Specification](https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1-10)** - OAuth 2.1 authorization framework
 - **[PKCE Specification](https://tools.ietf.org/html/rfc7636)** - Proof Key for Code Exchange
 - **[Prometheus Metrics](https://prometheus.io/docs/concepts/data_model/)** - Metrics format specification
 

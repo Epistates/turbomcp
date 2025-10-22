@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/turbomcp/badge.svg)](https://docs.rs/turbomcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Tests](https://github.com/Epistates/turbomcp/actions/workflows/test.yml/badge.svg)](https://github.com/Epistates/turbomcp/actions/workflows/test.yml)
-[![Security](https://img.shields.io/badge/Security-Audited-green.svg)](./SECURITY.md)
+[![Security](https://img.shields.io/badge/Security-Audited-green.svg)](./crates/turbomcp-transport/SECURITY_FEATURES.md)
 [![Performance](https://img.shields.io/badge/Performance-Benchmarked-brightgreen.svg)](./benches/)
 
 **Production-ready Rust SDK for the Model Context Protocol (MCP) with zero-boilerplate development and progressive enhancement.**
@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 **That's it.** Save as `main.rs`, run `cargo run`, and connect from Claude Desktop.
 
-→ **[Examples (26)](crates/turbomcp/examples/)** | **[API Docs](https://docs.rs/turbomcp)** | **[Transport Patterns](crates/turbomcp/examples/TRANSPORT_EXAMPLES_README.md)**
+**[Examples (26)](crates/turbomcp/examples/)** | **[API Docs](https://docs.rs/turbomcp)** | **[Transport Patterns](crates/turbomcp/examples/TRANSPORT_EXAMPLES_README.md)**
 
 ---
 
@@ -743,7 +743,7 @@ turbomcp-cli resources list --command "./target/debug/your-server"
 turbomcp-cli prompts list --command "./target/debug/your-server"
 ```
 
-### Examples - All 25
+### Examples - All 26
 
 **Foundational Examples:**
 | Example | Topic |
@@ -767,11 +767,13 @@ turbomcp-cli prompts list --command "./target/debug/your-server"
 | Example | Topic |
 |---------|-------|
 | [stdio_app.rs](./crates/turbomcp/examples/stdio_app.rs) | Complete STDIO application |
+| [stdio_server.rs](./crates/turbomcp/examples/stdio_server.rs) | STDIO server transport |
 | [http_app.rs](./crates/turbomcp/examples/http_app.rs) | Complete HTTP/SSE application |
 | [http_server.rs](./crates/turbomcp/examples/http_server.rs) | HTTP/SSE transport only |
 | [tcp_server.rs](./crates/turbomcp/examples/tcp_server.rs) | TCP network transport |
 | [unix_server.rs](./crates/turbomcp/examples/unix_server.rs) | Unix socket transport |
 | [websocket_server.rs](./crates/turbomcp/examples/websocket_server.rs) | WebSocket bidirectional transport |
+| [transports_demo.rs](./crates/turbomcp/examples/transports_demo.rs) | Multi-transport demonstration |
 
 **Client Examples:**
 | Example | Topic |
@@ -929,7 +931,7 @@ TurboMCP prioritizes compile-time optimization over runtime flexibility. This cr
 - **[Benchmarking Guide](./benches/README.md)** - Performance testing and optimization
 - **[Security Documentation](./crates/turbomcp-transport/SECURITY_FEATURES.md)** - Enterprise security features
 - **[Architecture Guide](./ARCHITECTURE.md)** - System design and component interaction
-- **[Examples Guide](./crates/turbomcp/examples/README.md)** - 26 focused examples with learning path
+- **[Examples Guide](./crates/turbomcp/examples/README.md)** - 26 focused examples with learning paths
 - **[Transport Patterns](./crates/turbomcp/examples/TRANSPORT_EXAMPLES_README.md)** - TCP, HTTP, WebSocket, Unix socket patterns
 - **[MCP Specification](https://modelcontextprotocol.io)** - Official protocol documentation
 - **[Migration Guide](./MIGRATION.md)** - v1.x to v2.0 changes
@@ -965,16 +967,16 @@ Licensed under the [MIT License](./LICENSE) - Enterprise-friendly open source.
 
 ## Status
 
-TurboMCP v2.0.0 provides:
+TurboMCP v2.0.4 provides:
 
 - Zero known security vulnerabilities with continuous monitoring
 - Performance focus with automated regression detection
 - Full MCP 2025-06-18 specification compliance
 - Production deployment patterns with container & Kubernetes support
-- 25 focused examples covering all usage patterns
+- 26 focused examples covering all usage patterns
 - Active development with regular security updates and performance improvements
 
-**Production Status:** TurboMCP 2.0.0 is production-ready with full MCP 2025-06-18 compliance and comprehensive test coverage. The API is stable.
+**Production Status:** TurboMCP 2.0.4 is production-ready with full MCP 2025-06-18 compliance and comprehensive test coverage. The API is stable.
 
 ---
 

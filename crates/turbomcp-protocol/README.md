@@ -163,11 +163,13 @@ let request: JsonRpcRequest = serde_json::from_str(json_data)?;
 // Handle specific message types
 match request.method.as_str() {
     "initialize" => {
-        let init_req: InitializeRequest = serde_json::from_value(request.params)?;
+        let params = request.params.unwrap_or_default();
+        let init_req: InitializeRequest = serde_json::from_value(params)?;
         // Process initialization
     },
     "tools/list" => {
-        let tools_req: ListToolsRequest = serde_json::from_value(request.params)?;
+        let params = request.params.unwrap_or_default();
+        let tools_req: ListToolsRequest = serde_json::from_value(params)?;
         // Process tools list request
     },
     _ => {

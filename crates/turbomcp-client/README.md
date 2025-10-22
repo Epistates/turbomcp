@@ -34,12 +34,12 @@ MCP client with complete MCP 2025-06-18 specification support and plugin middlew
 | Transport | Status | Feature Flag | Use Case |
 |-----------|--------|--------------|----------|
 | **STDIO** | ✅ Full | default | Local process communication |
-| **HTTP/SSE** | ✅ Full | `http` | Web-compatible HTTP servers (New in 2.0!) |
+| **HTTP/SSE** | ✅ Client | `http` | HTTP/SSE client transport |
 | **TCP** | ✅ Full | `tcp` | Network socket communication |
 | **Unix** | ✅ Full | `unix` | Fast local IPC |
 | **WebSocket** | ✅ Full | `websocket` | Real-time bidirectional |
 
-> **New in 2.0**: HTTP/SSE client transport with `Client::connect_http()` convenience API!
+> **Version 2.0.4**: HTTP/SSE client transport with `Client::connect_http()` convenience API.
 
 ## Quick Start
 
@@ -531,12 +531,12 @@ cargo run --example elicitation_interactive_client
 | `tcp` | TCP transport | ✅ |
 | `unix` | Unix socket transport | ✅ |
 | `websocket` | WebSocket transport | ✅ |
-| `http` | HTTP/SSE (server-side only) | ⚠️ |
+| `http` | HTTP/SSE client transport | ✅ |
 
 Enable features in `Cargo.toml`:
 ```toml
 [dependencies]
-turbomcp-client = { version = "2.0.0", features = ["tcp", "websocket"] }
+turbomcp-client = { version = "2.0.4", features = ["tcp", "websocket"] }
 ```
 
 ## Architecture
@@ -610,11 +610,11 @@ cargo run --example sampling_client
 
 ## Roadmap
 
-### Completed in 2.0
+### Version 2.0.4 Features
 
-- [x] **HTTP/SSE Client Transport** - Client-side HTTP/SSE with `Client::connect_http()`
-- [x] **Convenience Constructors** - One-liner client creation for all transports
-- [x] **Ergonomic Config Builders** - Simplified configuration APIs
+- **HTTP/SSE Client Transport** - Client-side HTTP/SSE with `Client::connect_http()`
+- **Convenience Constructors** - One-liner client creation for all transports
+- **Ergonomic Config Builders** - Simplified configuration APIs
 
 ### Planned Features
 

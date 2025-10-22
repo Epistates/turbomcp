@@ -136,7 +136,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "2.0.0"
+turbomcp = "2.0.4"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -870,7 +870,7 @@ Enable SIMD acceleration for maximum performance:
 
 ```toml
 [dependencies]
-turbomcp = { version = "2.0.0", features = ["simd"] }
+turbomcp = { version = "2.0.4", features = ["simd"] }
 ```
 
 Configure performance settings:
@@ -893,23 +893,22 @@ server.run_stdio().await?;
 
 ### Unit Testing
 
-Test your tools directly:
+Test your tools directly by calling them as normal methods:
 
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+    use turbomcp::prelude::*;
+
     #[tokio::test]
     async fn test_calculator() {
         let calc = Calculator;
-        
-        let result = calc.test_tool_call("add", serde_json::json!({
-            "a": 5,
-            "b": 3
-        })).await.unwrap();
-        
-        assert_eq!(result, serde_json::json!(8));
+
+        // Call the tool method directly
+        let result = calc.add(5, 3).await.unwrap();
+
+        assert_eq!(result, 8);
     }
 }
 ```
@@ -1078,7 +1077,7 @@ cargo run --example memory_profile
 - **[Architecture Guide](../../ARCHITECTURE.md)** - System design and components
 - **[Security Features](../turbomcp-transport/SECURITY_FEATURES.md)** - Comprehensive security documentation
 - **[API Documentation](https://docs.rs/turbomcp)** - Complete API reference
-- **[Performance Guide](./docs/performance.md)** - Optimization strategies
+- **[Stdio Output Guide](./docs/stdio-output-guide.md)** - STDIO transport output requirements
 - **[Examples](./examples/)** - Ready-to-use code examples
 
 ## Related Projects

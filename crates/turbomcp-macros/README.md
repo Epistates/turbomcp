@@ -18,7 +18,13 @@
   - [#[resource] - Resource Registration](#resource---resource-registration)
   - [#[prompt] - Prompt Template Registration](#prompt---prompt-template-registration)
 - [Advanced Features](#advanced-features)
-- [Production Recipes](#production-recipes)
+- [Metadata Access](#metadata-access)
+- [Macro Attributes](#macro-attributes)
+- [Generated Code Examples](#generated-code-examples)
+- [IDE Integration](#ide-integration)
+- [Testing Support](#testing-support)
+- [Performance](#performance)
+- [Development](#development)
 
 ## Overview
 
