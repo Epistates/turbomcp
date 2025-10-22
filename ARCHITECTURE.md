@@ -25,17 +25,21 @@ TurboMCP is built as a **layered architecture** with clear separation between fo
 
 The foundation consists of focused crates that provide robust, low-level functionality:
 
-### [`turbomcp-core`](./crates/turbomcp-core/) - Foundation Layer
+### [`turbomcp-protocol`](./crates/turbomcp-protocol/) - Foundation Layer
 
-**Purpose:** Core abstractions and performance-critical types
+**Purpose:** Protocol implementation, core abstractions, and performance-critical types
 
 ```
 Responsibilities:
+├── JSON-RPC 2.0 message format
+├── MCP protocol version 2025-06-18
 ├── SIMD-accelerated message processing
-├── Request/Response context management  
+├── Request/Response context management
 ├── Rich error handling with context
 ├── Session state management
 ├── Component registry system
+├── Capability negotiation
+├── JSON Schema validation
 └── Zero-copy optimization utilities
 ```
 
@@ -45,27 +49,13 @@ Responsibilities:
 - 🧵 **Thread-Safe State** - Concurrent session and request management
 - 🎯 **Rich Error Context** - Structured error handling with `thiserror`
 - 📊 **Observability Hooks** - Built-in metrics and tracing integration
-
-### [`turbomcp-protocol`](./crates/turbomcp-protocol/) - Protocol Implementation
-
-**Purpose:** MCP specification compliance and message format handling
-
-```
-Responsibilities:
-├── JSON-RPC 2.0 message format
-├── MCP protocol version 2025-06-18
-├── Capability negotiation
-├── JSON Schema validation
-├── Type definitions for all MCP types
-└── Protocol version management
-```
-
-**Key Features:**
 - 📋 **Complete MCP Support** - Full implementation of MCP 2025-06-18 specification
 - 🔧 **JSON-RPC 2.0** - Compliant request/response/notification handling
 - ✅ **Schema Validation** - Runtime validation with `jsonschema` crate
 - 🤝 **Capability Negotiation** - Automatic feature detection and negotiation
-- 📝 **Rich Type System** - Rust types for all protocol messages
+
+**Note:** In v2.0.0, the former `turbomcp-core` crate was merged into `turbomcp-protocol` to eliminate circular dependencies and provide a unified foundation layer.
+
 
 ### [`turbomcp-transport`](./crates/turbomcp-transport/) - Transport Layer
 
@@ -255,7 +245,7 @@ sequenceDiagram
     participant Client
     participant Transport as turbomcp-transport
     participant Protocol as turbomcp-protocol  
-    participant Core as turbomcp-core
+    participant Core as turbomcp-protocol
     participant Server as turbomcp-server
     participant Handler as TurboMCP Handler
     
@@ -304,17 +294,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```rust
 use turbomcp_server::{McpServer, HandlerRegistry};
 use turbomcp_transport::stdio::StdioTransport;
+use turbomcp_protocol::types::ToolInfo;
 
-#[tokio::main] 
+#[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut server = McpServer::new();
-    
+
     // Manual handler registration
     server.register_tool_handler("my_tool", |params| async {
         // Custom handler implementation
         Ok(serde_json::json!({"result": "processed"}))
     }).await?;
-    
+
     // Manual transport setup
     server.serve(StdioTransport::new()).await?;
     Ok(())
@@ -344,8 +335,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 |----------|---------------------|---------------|
 | **🚀 Quick Prototyping** | Use high-level framework | [`turbomcp`](./crates/turbomcp/) |
 | **🏭 Production Application** | Framework + selective core crates | [`turbomcp`](./crates/turbomcp/) + [`turbomcp-transport`](./crates/turbomcp-transport/) |
-| **🔧 Custom Transport** | Build on infrastructure | [`turbomcp-core`](./crates/turbomcp-core/) + [`turbomcp-protocol`](./crates/turbomcp-protocol/) + custom |
-| **📚 Library Integration** | Use specific components | [`turbomcp-core`](./crates/turbomcp-core/) + needed layers |
+| **🔧 Custom Transport** | Build on infrastructure | [`turbomcp-protocol`](./crates/turbomcp-protocol/) + custom transport |
+| **📚 Library Integration** | Use specific components | [`turbomcp-protocol`](./crates/turbomcp-protocol/) + needed layers |
 | **⚡ Performance Critical** | Direct infrastructure usage | Core crates + manual optimization |
 | **🧪 Testing & Development** | CLI tools | [`turbomcp-cli`](./crates/turbomcp-cli/) |
 
@@ -376,4 +367,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 - **[Main README](./README.md)** - Getting started and overview
 - **[Security Guide](./crates/turbomcp-transport/SECURITY_FEATURES.md)** - Enterprise security features
 - **[API Documentation](https://docs.rs/turbomcp)** - Complete API reference
-- **[Contributing Guide](./CONTRIBUTING.md)** - How to contribute to TurboMCP
+- **[Migration Guide](./MIGRATION.md)** - v1.x to v2.0 migration guide

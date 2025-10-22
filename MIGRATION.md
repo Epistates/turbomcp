@@ -214,31 +214,46 @@ use turbomcp_core::context::*;  // Still works
 
 ## 📦 Crate-by-Crate Migration
 
-### turbomcp-core
+### turbomcp-core → turbomcp-protocol (Merged in v2.0.0)
 
 **Breaking Changes:**
-- None for public API
-- Internal modules reorganized (transparent via re-exports)
+- The `turbomcp-core` crate was merged into `turbomcp-protocol` in v2.0.0
+- For most users, this is transparent due to re-exports
+- Direct imports from `turbomcp_core::` need to be updated to `turbomcp_protocol::`
 
-**New Features:**
+**New Features (now in turbomcp-protocol):**
 - `ZeroCopyMessage` type for ultra-high throughput
 - Security validation utilities (`validate_path`, etc.)
 - Enhanced SIMD support
+- Unified foundation layer with protocol types
 
 **Migration:**
 ```rust
-// No changes needed - public API unchanged
+// Before (1.x) - if you directly imported from turbomcp-core
+use turbomcp_core::context::RequestContext;
+use turbomcp_core::errors::McpError;
+
+// After (2.0) - import from turbomcp-protocol
+use turbomcp_protocol::context::RequestContext;
+use turbomcp_protocol::errors::McpError;
+
+// Or use the prelude (recommended - works in both versions)
+use turbomcp::prelude::*;
 ```
 
 ### turbomcp-protocol
 
 **Breaking Changes:**
-- None for public API
-- Internal types module reorganized
+- Merged with `turbomcp-core` (see above)
+- Internal types module reorganized (transparent via re-exports)
 
 **Migration:**
 ```rust
-// No changes needed - public API unchanged
+// No changes needed if using prelude or high-level API
+use turbomcp::prelude::*;
+
+// Direct imports continue to work
+use turbomcp_protocol::types::*;
 ```
 
 ### turbomcp-transport
