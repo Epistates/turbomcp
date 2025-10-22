@@ -22,6 +22,7 @@ pub fn generate_router(
     resource_methods: &[(Ident, Ident, Ident)], // (method_name, metadata_fn, handler_fn)
     server_name: &str,
     server_version: &str,
+    transports: &Option<Vec<String>>,
 ) -> TokenStream {
     // Generate tool list for tools/list method
     let tool_list_items: Vec<_> = tool_methods
@@ -300,8 +301,9 @@ pub fn generate_router(
     );
 
     // Generate bidirectional transport methods (run_stdio, run_http, run_websocket)
+    // Pass transports filter to only generate specified transports
     let bidirectional_transports =
-        bidirectional_wrapper::generate_bidirectional_transport_methods(struct_name);
+        bidirectional_wrapper::generate_bidirectional_transport_methods(struct_name, transports);
 
     quote! {
         // Helper function for URI template matching - generated at compile time for maximum performance

@@ -24,8 +24,8 @@ quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits", "parsing"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# JSON Schema generation
-schemars = { version = "0.8", optional = true }
+# JSON Schema generation (always required - macros always generate schemas)
+schemars = { version = "0.8" }
 
 # CRITICAL FIX: Add dependencies for macro-generated code
 # These are required because the #[server] macro generates code that uses these crates
@@ -40,9 +40,9 @@ turbomcp-protocol = { version = "2.0.3", path = "../turbomcp-protocol" }
 async-trait = "0.1"
 
 [features]
-default = ["schema"]
-schema = ["schemars"]
+default = []
 # CRITICAL FIX: Feature flags for macro-generated code
 http = ["axum"]
 tcp = ["tokio", "dep:turbomcp-transport"]
 unix = ["tokio", "dep:turbomcp-transport"]
+# Note: schemars is always required and not a feature - it's used by all macros

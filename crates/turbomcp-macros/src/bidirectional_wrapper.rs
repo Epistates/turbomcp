@@ -196,39 +196,34 @@ pub fn generate_bidirectional_wrapper(
 ///
 /// These methods delegate to ServerBuilder's canonical implementations,
 /// ensuring consistent MCP protocol compliance across all patterns.
-pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStream {
-    quote! {
-        // ===================================================================
-        // MCP Transport Methods - Full MCP 2025-06-18 Support
-        // ===================================================================
+pub fn generate_bidirectional_transport_methods(
+    struct_name: &Ident,
+    transports: &Option<Vec<String>>,
+) -> TokenStream {
+    // Determine which transports to generate code for
+    // If transports is specified, use only those; otherwise generate all
+    let should_generate_http = transports
+        .as_ref()
+        .map(|t| t.contains(&"http".to_string()))
+        .unwrap_or(true);
 
-        impl #struct_name
-        where
-            Self: Clone + Send + Sync + 'static,
-        {
-            /// Run server with stdio transport (MCP 2025-06-18 compliant)
-            ///
-            /// This method provides complete MCP support over stdio:
-            /// - Client→Server: Tools, prompts, resources
-            /// - Server→Client: Sampling, elicitation, roots, ping
-            ///
-            /// # Example
-            ///
-            /// ```rust,ignore
-            /// #[tokio::main]
-            /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-            ///     MyServer.run_stdio().await
-            /// }
-            /// ```
-            pub async fn run_stdio(self) -> Result<(), Box<dyn ::std::error::Error>> {
-                // Create server instance using ServerBuilder pattern
-                let server = self.create_server()?;
+    let should_generate_websocket = transports
+        .as_ref()
+        .map(|t| t.contains(&"websocket".to_string()))
+        .unwrap_or(true);
 
-                // Use ServerBuilder's canonical STDIO implementation
-                server.run_stdio().await
-                    .map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
-            }
+    let should_generate_tcp = transports
+        .as_ref()
+        .map(|t| t.contains(&"tcp".to_string()))
+        .unwrap_or(true);
 
+    let should_generate_unix = transports
+        .as_ref()
+        .map(|t| t.contains(&"unix".to_string()))
+        .unwrap_or(true);
+    // Generate HTTP methods conditionally
+    let http_methods = if should_generate_http {
+        quote! {
             /// Run server with HTTP transport (MCP 2025-06-18 compliant)
             ///
             /// **Note**: Requires the `http` feature to be enabled on `turbomcp`.
@@ -265,7 +260,14 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
                 server.run_http_with_config(addr, config).await
                     .map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
             }
+        }
+    } else {
+        quote! {}
+    };
 
+    // Generate WebSocket methods conditionally
+    let websocket_methods = if should_generate_websocket {
+        quote! {
             /// Run server with WebSocket transport (MCP 2025-06-18 compliant)
             ///
             /// **Note**: Requires the `websocket` feature to be enabled on `turbomcp`.
@@ -308,7 +310,14 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
                 server.run_websocket_with_config(addr, config).await
                     .map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
             }
+        }
+    } else {
+        quote! {}
+    };
 
+    // Generate TCP methods conditionally
+    let tcp_methods = if should_generate_tcp {
+        quote! {
             /// Run server with TCP transport (MCP compliant)
             ///
             /// This method provides TCP socket transport for network communication.
@@ -334,7 +343,14 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
                 let server = self.create_server()?;
                 server.run_tcp(addr).await.map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
             }
+        }
+    } else {
+        quote! {}
+    };
 
+    // Generate Unix socket methods conditionally
+    let unix_methods = if should_generate_unix {
+        quote! {
             /// Run server with Unix Domain Socket transport (MCP compliant)
             ///
             /// This method provides Unix socket transport for local IPC.
@@ -360,6 +376,47 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
                 let server = self.create_server()?;
                 server.run_unix(path).await.map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
             }
+        }
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        // ===================================================================
+        // MCP Transport Methods - Full MCP 2025-06-18 Support
+        // ===================================================================
+
+        impl #struct_name
+        where
+            Self: Clone + Send + Sync + 'static,
+        {
+            /// Run server with stdio transport (MCP 2025-06-18 compliant)
+            ///
+            /// This method provides complete MCP support over stdio:
+            /// - Client→Server: Tools, prompts, resources
+            /// - Server→Client: Sampling, elicitation, roots, ping
+            ///
+            /// # Example
+            ///
+            /// ```rust,ignore
+            /// #[tokio::main]
+            /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+            ///     MyServer.run_stdio().await
+            /// }
+            /// ```
+            pub async fn run_stdio(self) -> Result<(), Box<dyn ::std::error::Error>> {
+                // Create server instance using ServerBuilder pattern
+                let server = self.create_server()?;
+
+                // Use ServerBuilder's canonical STDIO implementation
+                server.run_stdio().await
+                    .map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
+            }
+
+            #http_methods
+            #websocket_methods
+            #tcp_methods
+            #unix_methods
         }
     }
 }

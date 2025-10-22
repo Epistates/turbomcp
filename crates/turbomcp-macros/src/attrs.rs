@@ -75,9 +75,16 @@ pub struct ServerAttrs {
     pub version: Option<String>,
     pub description: Option<String>,
     pub roots: Vec<Root>,
+    /// Optional: explicitly specify which transports to generate code for
+    /// If not specified, generates code for all enabled features
+    /// Example: transports = ["http", "tcp"]
+    pub transports: Option<Vec<String>>,
 }
 
 impl ServerAttrs {
+    /// Valid transport names that can be used in the transports attribute
+    const VALID_TRANSPORTS: &'static [&'static str] = &["stdio", "http", "websocket", "tcp", "unix"];
+
     /// Parse from the macro attribute arguments
     /// Supports multiple syntaxes for maximum ergonomics:
     /// - name = "server-name"
@@ -85,6 +92,7 @@ impl ServerAttrs {
     /// - description = "Server description"
     /// - root = "/path:Name"
     /// - root = "/another/path"
+    /// - transports = ["http", "tcp"]
     pub fn from_args(args: proc_macro::TokenStream) -> syn::Result<Self> {
         let mut attrs = ServerAttrs::default();
 
@@ -115,6 +123,24 @@ impl ServerAttrs {
                 "root" => {
                     if let Some(value) = item.get_string_value() {
                         attrs.roots.push(Root::from_str(&value));
+                    }
+                }
+                "transports" => {
+                    if let Some(transports) = item.get_string_array_value() {
+                        // Validate all transports
+                        for transport in &transports {
+                            if !Self::VALID_TRANSPORTS.contains(&transport.as_str()) {
+                                return Err(syn::Error::new_spanned(
+                                    &item.value,
+                                    format!(
+                                        "Invalid transport '{}'. Valid transports are: {}",
+                                        transport,
+                                        Self::VALID_TRANSPORTS.join(", ")
+                                    ),
+                                ));
+                            }
+                        }
+                        attrs.transports = Some(transports);
                     }
                 }
                 _ => {
@@ -169,6 +195,27 @@ impl AttrItem {
                 Lit::Str(s) => Some(s.value()),
                 _ => None,
             },
+            _ => None,
+        }
+    }
+
+    /// Get array of string values if this is an array of string literals
+    /// Example: ["http", "tcp"] → Some(vec!["http".to_string(), "tcp".to_string()])
+    fn get_string_array_value(&self) -> Option<Vec<String>> {
+        match &self.value {
+            Expr::Array(arr) => {
+                let mut values = Vec::new();
+                for elem in &arr.elems {
+                    match elem {
+                        Expr::Lit(lit_expr) => match &lit_expr.lit {
+                            Lit::Str(s) => values.push(s.value()),
+                            _ => return None, // Non-string element in array
+                        },
+                        _ => return None, // Non-literal element in array
+                    }
+                }
+                Some(values)
+            }
             _ => None,
         }
     }

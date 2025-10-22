@@ -156,6 +156,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
         &resource_method_data,
         &name_value,
         &version_value,
+        &attrs.transports,
     );
 
     // Idiomatic implementation for impl blocks only
