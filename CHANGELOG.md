@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.4] - 2025-10-22
+
+### Added
+
+- **Explicit Transport Selection with `transports` Attribute**: New optional macro parameter for specifying which transports a server uses
+  - Reduces generated code by only creating methods for specified transports
+  - Eliminates cfg warnings on Nightly Rust when transports are specified
+  - Supported values: `stdio`, `http`, `websocket`, `tcp`, `unix`
+  - Example: `#[server(name = "my-server", version = "0.1.0", transports = ["stdio"])]`
+  - Compile-time validation with helpful error messages
+  - Fully backward compatible (omitting attribute generates all transports as before)
+
+### Changed
+
+- **Schema-Generation Now Unconditional**: Moved `schemars` from optional to always-enabled dependency
+  - Schema generation is now available by default (required for MCP spec compliance)
+  - Only affects build-time dependencies (zero runtime overhead)
+  - Simplified mental model: users don't have to remember to enable schema-generation feature
+  - Still works with `default-features = false` if needed
+
+- **Macro Warnings Strategy**: Removed `#[allow(unexpected_cfgs)]` from generated code
+  - Cfg warnings on Nightly Rust now provide actionable guidance
+  - Guides users toward explicit transport specification
+  - Cleaner design: warnings point to solutions rather than hiding issues
+  - Stable Rust (1.89+) unaffected (no warnings by default)
+
+### Fixed
+
+- **Code Quality**: Removed anti-pattern of suppressing warnings in generated code
+- **Schema Module**: Removed fallback implementations and unused cfg guards
+
+### Technical Details
+
+- Added transport validation in `attrs.rs`
+- Conditional method generation in `bidirectional_wrapper.rs`
+- Wire transport attribute through macro pipeline in `server.rs` and `compile_time_router.rs`
+- Added comprehensive `examples/transports_demo.rs` showing all usage patterns
+
+### Backward Compatibility
+
+- ✅ Zero breaking changes
+- ✅ All existing code continues to work
+- ✅ Fully backward compatible with 2.0.3
+
 ## [2.0.3] - 2025-10-21
 
 ### Added
