@@ -27,9 +27,7 @@ struct StdioViolation {
 
 impl StdioSafetyValidator {
     fn new() -> Self {
-        Self {
-            errors: Vec::new(),
-        }
+        Self { errors: Vec::new() }
     }
 
     fn has_errors(&self) -> bool {
@@ -69,13 +67,15 @@ impl Visit<'_> for StdioSafetyValidator {
                 "println" => {
                     self.errors.push(StdioViolation {
                         macro_name: "println!()".to_string(),
-                        line_hint: "forbidden in stdio server (use eprintln! or tracing)".to_string(),
+                        line_hint: "forbidden in stdio server (use eprintln! or tracing)"
+                            .to_string(),
                     });
                 }
                 "print" => {
                     self.errors.push(StdioViolation {
                         macro_name: "print!()".to_string(),
-                        line_hint: "forbidden in stdio server (use eprintln! or tracing)".to_string(),
+                        line_hint: "forbidden in stdio server (use eprintln! or tracing)"
+                            .to_string(),
                     });
                 }
                 _ => {}

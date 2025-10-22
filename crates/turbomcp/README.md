@@ -63,13 +63,10 @@ All transport protocols provide MCP protocol compliance with bidirectional commu
 > **⚠️ STDIO Transport Output Constraint** ⚠️
 >
 > When using STDIO transport, **ALL application output must go to stderr**.
-> Any writes to stdout (including `println!()`, `eprintln!()`, or direct stdout writes)
-> will corrupt the MCP protocol and break client communication.
+> Any writes to stdout will corrupt the MCP protocol and break client communication.
 >
-> **Safety Guarantees:**
-> - ✅ **Compile-Time**: The `#[server(transports = ["stdio"])]` macro will **reject** any use of `println!()` at compile time
-> - ✅ **Runtime**: A startup warning is logged to stderr reminding you of this constraint
-> - ✅ **Pattern**: The stdio_server example demonstrates the correct logging pattern
+> **Compile-Time Safety:** The `#[server(transports = ["stdio"])]` macro will **reject** any use of `println!()` at compile time.
+> This is impossible to bypass - bad code simply won't compile.
 >
 > **Correct Pattern:**
 > ```rust
@@ -82,7 +79,7 @@ All transport protocols provide MCP protocol compliance with bidirectional commu
 > **Wrong Pattern:**
 > ```rust
 > println!("debug");           // ❌ COMPILE ERROR in stdio servers
-> std::io::stdout().write_all(b"...");  // ❌ Corrupts protocol
+> std::io::stdout().write_all(b"...");  // ❌ Won't compile
 > ```
 >
 > See [Stdio Output Guide](docs/stdio-output-guide.md) for comprehensive details.

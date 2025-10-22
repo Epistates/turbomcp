@@ -74,7 +74,7 @@ impl RealProductionMcpServer {
         let mut count = self.request_count.write().await;
         *count += 1;
         let result = a + b;
-        println!("Server performing addition: {} + {} = {}", a, b, result);
+        eprintln!("Server performing addition: {} + {} = {}", a, b, result);
         Ok(result)
     }
 

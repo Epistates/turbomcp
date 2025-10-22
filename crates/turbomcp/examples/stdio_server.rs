@@ -63,16 +63,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ⚠️ REQUIRED: Configure logging to stderr for stdio transport
     // Stdio transport uses stdout exclusively for MCP protocol messages.
     // If logging is configured for stdout, it will corrupt the protocol.
-    // This pattern is MANDATORY for all stdio transport servers.
+    //
+    // The #[server(transports = ["stdio"])] macro prevents println!() at compile time,
+    // so this logging configuration is the only way to handle application output.
     tracing_subscriber::fmt()
         .with_env_filter("error")
-        .with_writer(std::io::stderr)  // ← CRITICAL: stderr, not stdout
+        .with_writer(std::io::stderr) // ← CRITICAL: stderr, not stdout
         .init();
 
-    // On connection, you'll see this warning in stderr:
-    // ⚠️  CRITICAL: stdio transport active
-    // All output MUST go to stderr...
-    // This is a reminder that the constraint is active.
     StdioServer.run_stdio().await?;
 
     Ok(())
