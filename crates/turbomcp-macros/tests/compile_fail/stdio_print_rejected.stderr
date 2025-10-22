@@ -1,0 +1,33 @@
+error: ❌ stdio transport detected but found unsafe stdout writes:
+
+         print!(): forbidden in stdio server (use eprintln! or tracing)
+
+       Stdio transport reserves stdout for MCP protocol messages.
+       All output MUST go to stderr:
+
+       ✅ CORRECT:
+       eprintln!("debug info");
+       tracing::info!("message");  // if configured for stderr
+
+       ❌ WRONG:
+       println!("debug info");
+       std::io::stdout().write_all(b"...");
+
+       See: https://docs.modelcontextprotocol.io/guides/stdio-output
+  --> tests/compile_fail/stdio_print_rejected.rs:11:1
+   |
+11 | / impl MyServer {
+12 | |     #[turbomcp_macros::tool("My tool")]
+13 | |     async fn my_tool(&self) -> Result<String> {
+14 | |         print!("This is not allowed");
+...  |
+17 | | }
+   | |_^
+
+warning: unused import: `turbomcp_protocol::Result`
+ --> tests/compile_fail/stdio_print_rejected.rs:5:5
+  |
+5 | use turbomcp_protocol::Result;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default

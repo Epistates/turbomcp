@@ -126,3 +126,5 @@ benchmark_results.md
 !README.md
 
 .stderr
+# Exception: Include trybuild test fixtures
+!**/tests/compile_fail/*.stderr
