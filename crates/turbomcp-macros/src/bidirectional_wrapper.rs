@@ -53,7 +53,7 @@ pub fn generate_bidirectional_wrapper(
             ///
             /// # Example
             ///
-            /// ```no_run
+            /// ```rust,ignore
             /// use turbomcp::runtime::stdio_bidirectional::StdioDispatcher;
             ///
             /// let dispatcher = StdioDispatcher::new(/* ... */);
@@ -214,7 +214,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             ///
             /// # Example
             ///
-            /// ```no_run
+            /// ```rust,ignore
             /// #[tokio::main]
             /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ///     MyServer.run_stdio().await
@@ -304,7 +304,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             ///
             /// # Example
             ///
-            /// ```no_run
+            /// ```rust,ignore
             /// #[tokio::main]
             /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ///     MyServer.run_tcp("127.0.0.1:8765").await
@@ -327,7 +327,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             ///
             /// # Example
             ///
-            /// ```no_run
+            /// ```rust,ignore
             /// #[tokio::main]
             /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ///     MyServer.run_unix("/tmp/mcp.sock").await

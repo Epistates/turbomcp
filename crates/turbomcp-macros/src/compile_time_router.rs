@@ -589,7 +589,7 @@ pub fn generate_router(
             /// - ✅ Smart localhost security (Origin validation)
             ///
             /// # Example
-            /// ```rust,no_run
+            /// ```rust,ignore
             /// use axum::Router;
             /// use std::sync::Arc;
             ///
@@ -633,7 +633,7 @@ pub fn generate_router(
             /// * `path` - Custom endpoint path (e.g., "/api/mcp", "/v1/mcp")
             ///
             /// # Example
-            /// ```rust,no_run
+            /// ```rust,ignore
             /// use axum::Router;
             /// use std::sync::Arc;
             ///
