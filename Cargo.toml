@@ -11,7 +11,7 @@ members = [
     "crates/turbomcp-macros",
     "crates/turbomcp-dpop",  # 2.0.0: Re-extracted for clean minimal build
     "crates/turbomcp-auth",  # 2.0.0: Extracted for clean minimal build
-    # "crates/turbomcp-proxy", # Phase 2 (stashed for v2.0.3 release - will be restored after core patch)
+    # "crates/turbomcp-proxy", # Phase 2 (stashed for v2.0.4 release - will be restored after documentation updates)
     # "crates/turbomcp-security", # DISSOLVED: Security functionality moved to individual crates per ephemeral strategy
     "demo",
 ]
@@ -164,7 +164,7 @@ testcontainers = "0.25.0"
 doc-comment = "0.3"
 
 # Workspace dependencies are defined below
-# Internal crate dependencies - 2.0.0-rc RELEASE CANDIDATE (with default-features = false for granular control)
+# Internal crate dependencies - 2.0.4 (with default-features = false for granular control)
 turbomcp = { version = "2.0.4", path = "crates/turbomcp" }
 # turbomcp-core merged into turbomcp-protocol in v2.0.0
 turbomcp-protocol = { version = "2.0.4", path = "crates/turbomcp-protocol", default-features = false }
@@ -173,7 +173,7 @@ turbomcp-client = { version = "2.0.4", path = "crates/turbomcp-client", default-
 turbomcp-server = { version = "2.0.4", path = "crates/turbomcp-server", default-features = false }
 turbomcp-macros = { version = "2.0.4", path = "crates/turbomcp-macros", default-features = false }
 turbomcp-cli = { version = "2.0.4", path = "crates/turbomcp-cli", default-features = false }
-# turbomcp-dpop = { version = "2.0.0", path = "crates/turbomcp-dpop" }  # INTEGRATED into turbomcp/src/auth/dpop/
+# turbomcp-dpop = { version = "2.0.4", path = "crates/turbomcp-dpop" }  # Available as optional feature
 
 [profile.dev]
 opt-level = 1

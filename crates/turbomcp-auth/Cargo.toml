@@ -25,7 +25,7 @@ async-trait = "0.1"
 thiserror = "2.0.16"
 tracing = "0.1"
 
-# OAuth 2.1 dependencies - battle-tested library
+# OAuth 2.1 dependencies
 oauth2 = "4.4.2"
 base64 = "0.22"
 sha2 = "0.10"
