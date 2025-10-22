@@ -15,13 +15,13 @@ NC='\033[0m' # No Color
 # Expected version (can be overridden)
 EXPECTED_VERSION=${VERSION:-""}
 
-# Crate list
+# Crate list (in dependency order)
 CRATES=(
     "turbomcp-protocol"
     "turbomcp-dpop"
+    "turbomcp-transport"
     "turbomcp-macros"
     "turbomcp-auth"
-    "turbomcp-transport"
     "turbomcp-server"
     "turbomcp-client"
     "turbomcp-cli"
@@ -128,9 +128,14 @@ for crate in "${CRATES[@]}"; do
             if echo "$dep_line" | grep -q "workspace = true"; then
                 echo "  ✓ $crate → $dep_crate: workspace = true"
             else
-                dep_version=$(echo "$dep_line" | sed 's/.*version = "\([^"]*\)".*/\1/' || echo "PATH ONLY")
+                # Extract version - handle both inline and multiline formats
+                if echo "$dep_line" | grep -q 'version = '; then
+                    dep_version=$(echo "$dep_line" | grep -oE 'version = "[^"]*"' | sed 's/version = "\([^"]*\)"/\1/')
+                else
+                    dep_version="PATH ONLY"
+                fi
 
-                if [ "$dep_version" = "PATH ONLY" ] || [ "$dep_version" = "$dep_line" ]; then
+                if [ -z "$dep_version" ] || [ "$dep_version" = "PATH ONLY" ]; then
                     echo "  ℹ $crate → $dep_crate: path dependency only"
                 elif [ "$dep_version" = "$EXPECTED_VERSION" ]; then
                     echo "  ✓ $crate → $dep_crate: $dep_version"
@@ -157,18 +162,31 @@ for test_file in $(find crates/*/src crates/*/tests -name "*.rs" -type f 2>/dev/
     # Search for lines that check the DEFAULT config version
     while IFS= read -r line; do
         # Only check lines testing DEFAULT values (not lines where version is explicitly set to something else)
-        # Skip lines that have .version() method call or version: assignment (these are setting custom versions)
+        # Skip lines that have:
+        # 1. .version() method call (setting custom version)
+        # 2. version: assignment (struct initialization with custom version)
+        # 3. Lines within 10 lines after "version:" assignment (these are testing the custom version)
         if echo "$line" | grep -qE '(assert.*version|DEFAULT_VERSION|SERVER_VERSION)' && \
-           ! echo "$line" | grep -qE '(\.version\(|version:.*to_string)'; then
-            if echo "$line" | grep -qE '"[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?"' && \
-               ! echo "$line" | grep -q "\"$EXPECTED_VERSION\""; then
-                found_version=$(echo "$line" | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?"' | head -1 | tr -d '"')
-                # Only report if it looks like a previous version (2.0.x or 1.0.x pattern suggesting it should be current)
-                if echo "$found_version" | grep -qE '^2\.0\.[0-2]$'; then
-                    relative_path=$(echo "$test_file" | sed 's|.*/crates/|crates/|')
-                    print_error "  ✗ $relative_path: Found version $found_version (expected $EXPECTED_VERSION)"
-                    echo "    Line: $(echo "$line" | xargs)"
-                    hardcoded_issues=$((hardcoded_issues + 1))
+           ! echo "$line" | grep -qE '(\.version\(|version:)'; then
+            # Also skip if this test file has a custom version assignment nearby
+            line_num=$(grep -n "^.*$line" "$test_file" | head -1 | cut -d: -f1)
+            if [ -n "$line_num" ]; then
+                # Check 10 lines before for version: assignment
+                start_line=$((line_num > 10 ? line_num - 10 : 1))
+                context_has_custom_version=$(sed -n "${start_line},${line_num}p" "$test_file" | grep -c 'version: "' || true)
+                
+                if [ "$context_has_custom_version" -eq 0 ]; then
+                    if echo "$line" | grep -qE '"[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?"' && \
+                       ! echo "$line" | grep -q "\"$EXPECTED_VERSION\""; then
+                        found_version=$(echo "$line" | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?"' | head -1 | tr -d '"')
+                        # Only report if it looks like a previous version (2.0.x or 1.0.x pattern suggesting it should be current)
+                        if echo "$found_version" | grep -qE '^2\.0\.[0-2]$'; then
+                            relative_path=$(echo "$test_file" | sed 's|.*/crates/|crates/|')
+                            print_error "  ✗ $relative_path: Found version $found_version (expected $EXPECTED_VERSION)"
+                            echo "    Line: $(echo "$line" | xargs)"
+                            hardcoded_issues=$((hardcoded_issues + 1))
+                        fi
+                    fi
                 fi
             fi
         fi

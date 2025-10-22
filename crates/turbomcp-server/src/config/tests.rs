@@ -110,9 +110,9 @@ fn test_builder_name() {
 
 #[test]
 fn test_builder_version() {
-    let config = ConfigurationBuilder::new().version("2.0.0").build();
+    let config = ConfigurationBuilder::new().version("2.0.3").build();
 
-    assert_eq!(config.version, "2.0.0");
+    assert_eq!(config.version, "2.0.3");
 }
 
 #[test]
