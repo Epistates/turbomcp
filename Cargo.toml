@@ -17,10 +17,35 @@ members = [
 ]
 resolver = "2"
 
+[workspace.lints.rust]
+# Declare expected cfgs from feature-gated code in the #[server] macro
+# (transport, authentication, etc.)
+#
+# NOTE: This is a backward-compatibility accommodation. When the #[server] macro
+# generates code without explicit transport specification, it conditionally generates
+# methods for all transports. This workspace-level declaration tells the compiler
+# "yes, these cfg conditions are expected and valid".
+#
+# BETTER PATTERN (v2.0.4+): Users who explicitly specify transports via the macro:
+#   #[server(name = "my-server", transports = ["stdio", "http"])]
+# will only generate cfg guards for their specified transports, requiring no
+# workspace-level declarations and avoiding this code smell entirely.
+#
+# See .strategy/DILIGENCE_PASS_2.0.4_DX_IMPROVEMENTS.md for design rationale.
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(http)',
+    'cfg(websocket)',
+    'cfg(tcp)',
+    'cfg(unix)',
+    'cfg(auth)',
+    'cfg(dpop)',
+    'cfg(docsrs)',
+] }
+
 [workspace.lints.clippy]
 # Allow pedantic lints that are too strict for this codebase
 missing_errors_doc = "allow"
-missing_panics_doc = "allow" 
+missing_panics_doc = "allow"
 module_name_repetitions = "allow"
 return_self_not_must_use = "allow"
 cast_possible_truncation = "allow"
