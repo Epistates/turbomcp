@@ -559,7 +559,7 @@ pub use tokio;
 pub use uuid;
 // Re-export core and protocol types for macro use
 pub use turbomcp_protocol;
-pub use turbomcp_server as turbomcp_server; // Re-export entire module for macro-generated code
+pub use turbomcp_server; // Re-export entire module for macro-generated code
 pub use turbomcp_transport;
 // Re-export tracing for logging in macro-generated code
 pub use tracing;
