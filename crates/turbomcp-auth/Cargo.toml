@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-auth"
-version = "2.0.3"
+version = "2.0.4"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "OAuth 2.1 and authentication for TurboMCP with MCP protocol compliance"
@@ -51,10 +51,10 @@ reqwest = { version = "0.12", features = ["json"] }
 once_cell = "1.19"
 
 # Internal dependencies
-turbomcp-protocol = { version = "2.0.3", path = "../turbomcp-protocol" }
+turbomcp-protocol = { version = "2.0.4", path = "../turbomcp-protocol" }
 
 # Optional: DPoP support
-turbomcp-dpop = { version = "2.0.3", path = "../turbomcp-dpop", optional = true }
+turbomcp-dpop = { version = "2.0.4", path = "../turbomcp-dpop", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

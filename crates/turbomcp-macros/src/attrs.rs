@@ -83,7 +83,8 @@ pub struct ServerAttrs {
 
 impl ServerAttrs {
     /// Valid transport names that can be used in the transports attribute
-    const VALID_TRANSPORTS: &'static [&'static str] = &["stdio", "http", "websocket", "tcp", "unix"];
+    const VALID_TRANSPORTS: &'static [&'static str] =
+        &["stdio", "http", "websocket", "tcp", "unix"];
 
     /// Parse from the macro attribute arguments
     /// Supports multiple syntaxes for maximum ergonomics:

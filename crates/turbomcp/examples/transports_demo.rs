@@ -15,6 +15,7 @@ use turbomcp::prelude::*;
 /// Backward-compatible server - generates all enabled transports by default
 /// When no transports are specified, the macro behaves exactly as before,
 /// creating methods for all enabled features (http, websocket, tcp, unix)
+#[allow(dead_code)]
 #[derive(Clone)]
 struct AllTransportsServer;
 
@@ -33,6 +34,7 @@ impl AllTransportsServer {
 /// HTTP-only server - explicitly restricted to HTTP transport
 /// This server will only have the run_http() method available,
 /// even if other transports are enabled in Cargo.toml
+#[allow(dead_code)]
 #[derive(Clone)]
 struct HttpOnlyServer;
 
@@ -51,6 +53,7 @@ impl HttpOnlyServer {
 
 /// TCP-only server - explicitly restricted to TCP transport
 /// This server will only have the run_tcp() method available
+#[allow(dead_code)]
 #[derive(Clone)]
 struct TcpOnlyServer;
 
@@ -70,6 +73,7 @@ impl TcpOnlyServer {
 /// Multi-transport server - explicitly includes HTTP and TCP
 /// This server will have run_http() and run_tcp() methods,
 /// but not run_websocket() or run_unix() even if enabled
+#[allow(dead_code)]
 #[derive(Clone)]
 struct HttpTcpServer;
 
@@ -142,7 +146,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Valid transports: http, websocket, tcp, unix");
     println!("Invalid transports will cause compile-time error:\n");
     println!("  #[server(transports = [\"invalid\"])]");
-    println!("  → error: Invalid transport 'invalid'. Valid transports are: http, websocket, tcp, unix\n");
+    println!(
+        "  → error: Invalid transport 'invalid'. Valid transports are: http, websocket, tcp, unix\n"
+    );
 
     Ok(())
 }

@@ -715,7 +715,7 @@ pub mod prelude {
     // Re-export commonly needed external types
     pub use async_trait::async_trait;
     pub use serde::{Deserialize, Serialize};
-    pub use serde_json;  // Re-export serde_json for macro-generated code
+    pub use serde_json; // Re-export serde_json for macro-generated code
 
     // ============================================================================
     // Streamable HTTP v2 (MCP 2025-06-18 Compliant) - RECOMMENDED
