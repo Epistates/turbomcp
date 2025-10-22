@@ -127,24 +127,53 @@ print_status "Updated workspace Cargo.toml"
 echo ""
 
 # Step 3: Find and update test files with hardcoded versions
-print_section "Step 3: Checking for Hardcoded Versions in Tests"
+print_section "Step 3: Updating Hardcoded Versions in Tests"
+
+# Get current version to know what to replace
+CURRENT_VERSION=$(grep '^version = ' "crates/turbomcp-protocol/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
 
 test_files_updated=0
 
-for test_file in $(find crates/*/src -name "*.rs" -type f 2>/dev/null | grep -E "(test|config)\.rs$"); do
-    # Check if file contains version strings
-    if grep -q '"[0-9]\+\.[0-9]\+\.[0-9]\+\(-[a-z0-9.]\+\)\?"' "$test_file"; then
-        # Update version strings in assertions and constants
-        sed -i '' "s/\"[0-9]\+\.[0-9]\+\.[0-9]\+\(-[a-z0-9.]\+\)\?\"/\"$NEW_VERSION\"/g" "$test_file"
-        print_warning "Updated hardcoded versions in $test_file"
-        test_files_updated=$((test_files_updated + 1))
+# Find test files more broadly (includes tests.rs, test.rs, config.rs, etc.)
+for test_file in $(find crates/*/src crates/*/tests -name "*.rs" -type f 2>/dev/null | grep -E "(test|config)"); do
+    # Check if file contains the OLD version in version-related assertions/configs
+    # Only update lines that check DEFAULT values (not lines setting custom versions)
+    if grep -qE "(assert.*version|DEFAULT_VERSION|SERVER_VERSION).*\"$CURRENT_VERSION\"" "$test_file" && \
+       ! grep -qE "\.version\(\"$CURRENT_VERSION\"\)|version:.*\"$CURRENT_VERSION\".*to_string" "$test_file"; then
+        # Create a temporary file for targeted replacement
+        temp_file="${test_file}.tmp"
+        
+        # Only replace versions in lines that look like DEFAULT version checks (not custom version setters)
+        awk -v old="$CURRENT_VERSION" -v new="$NEW_VERSION" '
+        {
+            # Only replace on lines that check the default version (skip lines setting custom versions)
+            if ($0 ~ /(assert.*version|DEFAULT_VERSION|SERVER_VERSION)/ && \
+                $0 !~ /\.version\(|version:.*to_string/) {
+                gsub("\"" old "\"", "\"" new "\"")
+            }
+            print
+        }' "$test_file" > "$temp_file"
+        
+        # Count actual changes
+        count=$(diff "$test_file" "$temp_file" | grep -c "^<" || true)
+        
+        if [ "$count" -gt 0 ]; then
+            mv "$temp_file" "$test_file"
+            relative_path=$(echo "$test_file" | sed 's|.*/crates/|crates/|')
+            print_status "Updated $count occurrence(s) in $relative_path"
+            test_files_updated=$((test_files_updated + 1))
+        else
+            rm -f "$temp_file"
+        fi
     fi
 done
 
+echo ""
 if [ $test_files_updated -eq 0 ]; then
     print_status "No hardcoded versions found in test files"
 else
-    print_warning "Updated $test_files_updated test file(s) - please review changes!"
+    print_status "Updated $test_files_updated test file(s) with version changes"
+    print_warning "Review changes to ensure no unintended replacements"
 fi
 
 echo ""

@@ -151,18 +151,25 @@ print_section "Step 4: Checking for Hardcoded Versions in Tests"
 
 hardcoded_issues=0
 
-# Common patterns to search for
-# Look for old version patterns in test files
-for test_file in $(find crates/*/src -name "*.rs" -type f | grep -E "(test|spec)\.rs$"); do
-    # Search for quoted version strings that don't match expected
+# Look for version patterns in test files (broader search includes tests.rs, test.rs, config.rs, etc.)
+# Only flag tests that check the DEFAULT version, not custom versions set in test data
+for test_file in $(find crates/*/src crates/*/tests -name "*.rs" -type f 2>/dev/null | grep -E "(test|config)"); do
+    # Search for lines that check the DEFAULT config version
     while IFS= read -r line; do
-        if echo "$line" | grep -qE '"[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?"' && \
-           ! echo "$line" | grep -q "\"$EXPECTED_VERSION\""; then
-            found_version=$(echo "$line" | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?"' | tr -d '"')
-            if [ "$found_version" != "$EXPECTED_VERSION" ]; then
-                print_warning "  ⚠ $test_file: Found version $found_version"
-                echo "    Line: $(echo "$line" | xargs)"
-                hardcoded_issues=$((hardcoded_issues + 1))
+        # Only check lines testing DEFAULT values (not lines where version is explicitly set to something else)
+        # Skip lines that have .version() method call or version: assignment (these are setting custom versions)
+        if echo "$line" | grep -qE '(assert.*version|DEFAULT_VERSION|SERVER_VERSION)' && \
+           ! echo "$line" | grep -qE '(\.version\(|version:.*to_string)'; then
+            if echo "$line" | grep -qE '"[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?"' && \
+               ! echo "$line" | grep -q "\"$EXPECTED_VERSION\""; then
+                found_version=$(echo "$line" | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?"' | head -1 | tr -d '"')
+                # Only report if it looks like a previous version (2.0.x or 1.0.x pattern suggesting it should be current)
+                if echo "$found_version" | grep -qE '^2\.0\.[0-2]$'; then
+                    relative_path=$(echo "$test_file" | sed 's|.*/crates/|crates/|')
+                    print_error "  ✗ $relative_path: Found version $found_version (expected $EXPECTED_VERSION)"
+                    echo "    Line: $(echo "$line" | xargs)"
+                    hardcoded_issues=$((hardcoded_issues + 1))
+                fi
             fi
         fi
     done < "$test_file"
@@ -171,7 +178,10 @@ done
 if [ $hardcoded_issues -eq 0 ]; then
     print_status "No hardcoded version mismatches found in test files"
 else
-    print_warning "Found $hardcoded_issues potential hardcoded version(s) - review manually"
+    print_error "Found $hardcoded_issues hardcoded version mismatch(es) in test files"
+    echo ""
+    echo "To fix, run: VERSION=$EXPECTED_VERSION ./scripts/update-versions.sh"
+    version_issues=$((version_issues + hardcoded_issues))
 fi
 
 echo ""
