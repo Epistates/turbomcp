@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Macro-Generated Doc Test Failures**: Fixed compilation failures when users run `cargo test` on projects using the `#[server]` macro
+  - **Issue**: Generated methods (`run_stdio()`, `run_tcp()`, `into_mcp_router()`, etc.) had doc examples marked as ````no_run`, which still compiles the code
+  - **Root Cause**: Placeholder names like `MyServer` in examples attempted to compile in user projects, causing `cannot find value 'MyServer'` errors
+  - **Solution**: Changed all macro-generated doc examples from ````no_run`/````rust,no_run` to ````rust,ignore`
+  - **Files Modified**:
+    - `crates/turbomcp-macros/src/bidirectional_wrapper.rs` (4 doc examples)
+    - `crates/turbomcp-macros/src/compile_time_router.rs` (2 doc examples)
+  - **Impact**: Users can now run `cargo test` without failures from turbomcp-generated documentation
+  - **Details**: See `MACRO_DOC_TEST_FIX.md` for complete analysis
+
 - **Task Lifecycle Management - Comprehensive Hardening**: Fixed critical "JoinHandle polled after completion" panics and implemented task lifecycle management across all transports
   - **Issue**: Spawned tasks without proper lifecycle management caused panics on clean shutdown and potential resource leaks
   - **Root Cause**: `tokio::spawn()` returned JoinHandles that were immediately dropped, leaving tasks orphaned
