@@ -6,11 +6,116 @@
 //! - Integrating seamlessly with the existing builder pattern for advanced use cases
 //! - Providing proper JSON schemas and Context injection
 //! - Creating the essential run_stdio() method
+//! - Validating stdio transport safety (no println! in servers using stdio)
 
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use syn::{Ident, ItemImpl};
+use syn::{Ident, ItemImpl, visit::Visit};
+
+/// Visitor that detects stdio-unsafe macros (println!, etc.) in server impl
+struct StdioSafetyValidator {
+    errors: Vec<StdioViolation>,
+}
+
+/// A detected violation of stdio safety
+#[derive(Debug, Clone)]
+struct StdioViolation {
+    macro_name: String,
+    line_hint: String,
+}
+
+impl StdioSafetyValidator {
+    fn new() -> Self {
+        Self {
+            errors: Vec::new(),
+        }
+    }
+
+    fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    fn format_error_message(&self) -> String {
+        let violations = self
+            .errors
+            .iter()
+            .map(|v| format!("  {}: {}", v.macro_name, v.line_hint))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        format!(
+            "❌ stdio transport detected but found unsafe stdout writes:\n\n{}\n\n\
+            Stdio transport reserves stdout for MCP protocol messages.\n\
+            All output MUST go to stderr:\n\n\
+            ✅ CORRECT:\n\
+               eprintln!(\"debug info\");\n\
+               tracing::info!(\"message\");  // if configured for stderr\n\n\
+            ❌ WRONG:\n\
+               println!(\"debug info\");\n\
+               std::io::stdout().write_all(b\"...\");\n\n\
+            See: https://docs.modelcontextprotocol.io/guides/stdio-output",
+            violations
+        )
+    }
+}
+
+impl Visit<'_> for StdioSafetyValidator {
+    fn visit_macro(&mut self, node: &syn::Macro) {
+        // Check if this is a macro we need to validate
+        if let Some(ident) = node.path.get_ident() {
+            let macro_name = ident.to_string();
+            match macro_name.as_str() {
+                "println" => {
+                    self.errors.push(StdioViolation {
+                        macro_name: "println!()".to_string(),
+                        line_hint: "forbidden in stdio server (use eprintln! or tracing)".to_string(),
+                    });
+                }
+                "print" => {
+                    self.errors.push(StdioViolation {
+                        macro_name: "print!()".to_string(),
+                        line_hint: "forbidden in stdio server (use eprintln! or tracing)".to_string(),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // Continue visiting child nodes
+        syn::visit::visit_macro(self, node);
+    }
+}
+
+/// Validate that servers using stdio transport don't use println! or similar stdout macros
+fn validate_stdio_safety(
+    impl_block: &ItemImpl,
+    transports: &Option<Vec<String>>,
+) -> Result<(), syn::Error> {
+    // Check if stdio is in the transports list
+    // If transports is None, it defaults to all transports (including stdio)
+    let should_check = match transports {
+        Some(transports) => transports.contains(&"stdio".to_string()),
+        None => true, // Default includes all transports
+    };
+
+    if !should_check {
+        return Ok(());
+    }
+
+    // Walk the AST looking for unsafe macros
+    let mut validator = StdioSafetyValidator::new();
+    validator.visit_item_impl(impl_block);
+
+    if validator.has_errors() {
+        return Err(syn::Error::new_spanned(
+            impl_block,
+            validator.format_error_message(),
+        ));
+    }
+
+    Ok(())
+}
 
 /// Generate the TurboMCP server implementation (idiomatic impl block pattern)
 pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStream {
@@ -19,6 +124,12 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
         Ok(attrs) => attrs,
         Err(e) => return e.to_compile_error().into(),
     };
+
+    // Validate stdio transport safety (no println! in stdio servers)
+    if let Err(e) = validate_stdio_safety(&input_impl, &attrs.transports) {
+        return e.to_compile_error().into();
+    }
+
     // Extract the struct name from the impl block
     let struct_name = match &*input_impl.self_ty {
         syn::Type::Path(type_path) => match type_path.path.segments.last() {
