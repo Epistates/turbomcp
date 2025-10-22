@@ -4,7 +4,10 @@
 //! middleware building, lifecycle management, and server construction.
 
 use std::sync::Arc;
-use tracing::{info, info_span, warn};
+use tracing::{info, info_span};
+
+#[cfg(feature = "http")]
+use tracing::warn;
 
 use crate::{
     config::ServerConfig,
