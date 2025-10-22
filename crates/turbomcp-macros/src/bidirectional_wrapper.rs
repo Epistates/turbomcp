@@ -40,7 +40,7 @@ pub fn generate_bidirectional_wrapper(
             /// The underlying server implementation
             inner: ::std::sync::Arc<#struct_name>,
             /// Server-to-client capabilities interface
-            server_to_client: ::std::sync::Arc<dyn turbomcp_protocol::context::capabilities::ServerToClientRequests>,
+            server_to_client: ::std::sync::Arc<dyn ::turbomcp::turbomcp_protocol::context::capabilities::ServerToClientRequests>,
         }
 
         impl #wrapper_name {
@@ -61,15 +61,15 @@ pub fn generate_bidirectional_wrapper(
             /// ```
             pub fn with_dispatcher<D>(server: #struct_name, dispatcher: D) -> Self
             where
-                D: turbomcp_server::routing::ServerRequestDispatcher + 'static,
+                D: ::turbomcp::turbomcp_server::routing::ServerRequestDispatcher + 'static,
             {
                 // Create bidirectional router
-                let mut bidirectional = turbomcp_server::routing::BidirectionalRouter::new();
+                let mut bidirectional = ::turbomcp::turbomcp_server::routing::BidirectionalRouter::new();
                 bidirectional.set_dispatcher(dispatcher);
 
                 // Create server-to-client adapter
-                let server_to_client: ::std::sync::Arc<dyn turbomcp_protocol::context::capabilities::ServerToClientRequests> =
-                    ::std::sync::Arc::new(turbomcp_server::capabilities::ServerToClientAdapter::new(bidirectional));
+                let server_to_client: ::std::sync::Arc<dyn ::turbomcp::turbomcp_protocol::context::capabilities::ServerToClientRequests> =
+                    ::std::sync::Arc::new(::turbomcp::turbomcp_server::capabilities::ServerToClientAdapter::new(bidirectional));
 
                 Self {
                     inner: ::std::sync::Arc::new(server),
@@ -97,9 +97,9 @@ pub fn generate_bidirectional_wrapper(
             /// not be invoked directly.
             pub async fn handle_request_with_context(
                 &self,
-                req: turbomcp_protocol::jsonrpc::JsonRpcRequest,
-                mut ctx: turbomcp_protocol::RequestContext,
-            ) -> turbomcp_protocol::jsonrpc::JsonRpcResponse {
+                req: ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcRequest,
+                mut ctx: ::turbomcp::turbomcp_protocol::RequestContext,
+            ) -> ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse {
                 // Inject server-to-client capabilities into the context
                 // This enables ctx.create_message(), ctx.elicit(), ctx.list_roots(), etc.
                 ctx = ctx.with_server_to_client(::std::sync::Arc::clone(&self.server_to_client));
@@ -122,7 +122,7 @@ pub fn generate_bidirectional_wrapper(
 
         // Implement JsonRpcHandler for the wrapper (for HTTP transport compatibility)
         #[::turbomcp::async_trait]
-        impl turbomcp_protocol::JsonRpcHandler for #wrapper_name
+        impl ::turbomcp::turbomcp_protocol::JsonRpcHandler for #wrapper_name
         where
             Self: Send + Sync + 'static,
         {
@@ -131,7 +131,7 @@ pub fn generate_bidirectional_wrapper(
                 req_value: serde_json::Value,
             ) -> serde_json::Value {
                 // Parse the request
-                let req: turbomcp_protocol::jsonrpc::JsonRpcRequest =
+                let req: ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcRequest =
                     match serde_json::from_value(req_value) {
                         Ok(r) => r,
                         Err(e) => {
@@ -147,7 +147,7 @@ pub fn generate_bidirectional_wrapper(
                     };
 
                 // Create default context
-                let ctx = turbomcp_protocol::RequestContext::new();
+                let ctx = ::turbomcp::turbomcp_protocol::RequestContext::new();
 
                 // Handle with full context
                 let response = self.handle_request_with_context(req, ctx).await;
@@ -168,8 +168,8 @@ pub fn generate_bidirectional_wrapper(
                 }
             }
 
-            fn server_info(&self) -> turbomcp_protocol::ServerInfo {
-                turbomcp_protocol::ServerInfo {
+            fn server_info(&self) -> ::turbomcp::turbomcp_protocol::ServerInfo {
+                ::turbomcp::turbomcp_protocol::ServerInfo {
                     name: #server_name.to_string(),
                     version: #server_version.to_string(),
                 }
@@ -230,6 +230,9 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             }
 
             /// Run server with HTTP transport (MCP 2025-06-18 compliant)
+            ///
+            /// **Note**: Requires the `http` feature to be enabled on `turbomcp`.
+            /// Add `turbomcp = { version = "2.0", features = ["http"] }` to your Cargo.toml.
             #[cfg(feature = "http")]
             pub async fn run_http<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
@@ -239,6 +242,9 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             }
 
             /// Run HTTP server with custom endpoint path (MCP 2025-06-18 compliant)
+            ///
+            /// **Note**: Requires the `http` feature to be enabled on `turbomcp`.
+            /// Add `turbomcp = { version = "2.0", features = ["http"] }` to your Cargo.toml.
             #[cfg(feature = "http")]
             pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
@@ -249,7 +255,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
                 let server = self.create_server()?;
 
                 // Configure HTTP with custom endpoint path
-                use ::turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+                use ::turbomcp::turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
 
                 let config = StreamableHttpConfigBuilder::new()
                     .with_endpoint_path(path)
@@ -261,6 +267,9 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             }
 
             /// Run server with WebSocket transport (MCP 2025-06-18 compliant)
+            ///
+            /// **Note**: Requires the `websocket` feature to be enabled on `turbomcp`.
+            /// Add `turbomcp = { version = "2.0", features = ["websocket"] }` to your Cargo.toml.
             #[cfg(feature = "websocket")]
             pub async fn run_websocket<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
@@ -270,6 +279,9 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             }
 
             /// Run WebSocket server with custom endpoint path (MCP 2025-06-18 compliant)
+            ///
+            /// **Note**: Requires the `websocket` feature to be enabled on `turbomcp`.
+            /// Add `turbomcp = { version = "2.0", features = ["websocket"] }` to your Cargo.toml.
             #[cfg(feature = "websocket")]
             pub async fn run_websocket_with_path<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
@@ -280,7 +292,7 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
                 let server = self.create_server()?;
 
                 // Configure WebSocket with custom endpoint path
-                use ::turbomcp_server::WebSocketServerConfig;
+                use ::turbomcp::turbomcp_server::WebSocketServerConfig;
                 let socket_addr = addr
                     .to_socket_addrs()?
                     .next()
@@ -301,6 +313,9 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             ///
             /// This method provides TCP socket transport for network communication.
             /// TCP is useful for local network communication or when stdio/HTTP aren't suitable.
+            ///
+            /// **Note**: Requires the `tcp` feature to be enabled on `turbomcp`.
+            /// Add `turbomcp = { version = "2.0", features = ["tcp"] }` to your Cargo.toml.
             ///
             /// # Example
             ///
@@ -324,6 +339,9 @@ pub fn generate_bidirectional_transport_methods(struct_name: &Ident) -> TokenStr
             ///
             /// This method provides Unix socket transport for local IPC.
             /// Unix sockets are ideal for same-machine communication with lower overhead than TCP.
+            ///
+            /// **Note**: Requires the `unix` feature to be enabled on `turbomcp` and is only available on Unix-like systems.
+            /// Add `turbomcp = { version = "2.0", features = ["unix"] }` to your Cargo.toml.
             ///
             /// # Example
             ///
