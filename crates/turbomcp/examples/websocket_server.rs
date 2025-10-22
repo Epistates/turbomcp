@@ -20,7 +20,7 @@ use turbomcp::prelude::*;
 struct WebSocketServer;
 
 #[cfg(feature = "websocket")]
-#[turbomcp::server(name = "websocket-demo", version = "1.0.0")]
+#[turbomcp::server(name = "websocket-demo", version = "1.0.0", transports = ["websocket"])]
 impl WebSocketServer {
     #[tool("Echo a message")]
     async fn echo(&self, message: String) -> McpResult<String> {

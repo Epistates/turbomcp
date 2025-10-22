@@ -160,10 +160,35 @@ Production-ready reference implementations:
 
 ---
 
+## 🎯 NEW in 2.0.4: Explicit Transport Selection
+
+The `#[server]` macro now supports the `transports` attribute to specify which transports your server uses:
+
+```rust
+// Only stdio transport
+#[server(name = "my-server", version = "0.1.0", transports = ["stdio"])]
+impl MyServer { ... }
+
+// Multiple transports
+#[server(name = "my-server", version = "0.1.0", transports = ["stdio", "http", "tcp"])]
+impl MyServer { ... }
+```
+
+**Benefits:**
+- ✅ Explicit intent about which transports you support
+- ✅ Smaller generated code (unused methods not generated)
+- ✅ Zero cfg warnings on Nightly Rust
+- ✅ Fully backward compatible (omitting attribute generates all transports)
+
+**See also:** `transports_demo.rs` for comprehensive examples of all usage patterns
+
+---
+
 ## 📖 By Use Case
 
 **Want to build a CLI tool?**
 → Start with `hello_world.rs`, then `macro_server.rs`
+→ Both now include `transports = ["stdio"]` for best practices
 
 **Want to build a web service?**
 → Use `http_server.rs`, then `http_app.rs`

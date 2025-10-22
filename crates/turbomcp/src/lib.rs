@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 //! # TurboMCP - Model Context Protocol SDK
 //!
 //! Rust SDK for the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)
@@ -557,6 +559,8 @@ pub use axum;
 pub use tokio;
 // Re-export uuid for HTTP session ID generation in macro-generated code
 pub use uuid;
+// Re-export serde_json for macro-generated code that uses json!() and to_value()
+pub use serde_json;
 // Re-export core and protocol types for macro use
 pub use turbomcp_protocol;
 pub use turbomcp_server; // Re-export entire module for macro-generated code
@@ -601,7 +605,7 @@ pub mod validation;
 #[cfg(feature = "uri-templates")]
 pub mod uri;
 
-#[cfg(feature = "schema-generation")]
+// Schema module is always enabled - JSON schema generation is required for MCP
 pub mod schema;
 
 // Re-export from submodules
@@ -711,6 +715,7 @@ pub mod prelude {
     // Re-export commonly needed external types
     pub use async_trait::async_trait;
     pub use serde::{Deserialize, Serialize};
+    pub use serde_json;  // Re-export serde_json for macro-generated code
 
     // ============================================================================
     // Streamable HTTP v2 (MCP 2025-06-18 Compliant) - RECOMMENDED

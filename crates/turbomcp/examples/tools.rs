@@ -19,7 +19,7 @@ struct MathOp {
     precision: Option<u32>, // Optional with default
 }
 
-#[turbomcp::server(name = "tools-demo", version = "1.0.0")]
+#[turbomcp::server(name = "tools-demo", version = "1.0.0", transports = ["stdio"])]
 impl ToolsServer {
     /// Simple parameters - basic types
     #[tool("Add two numbers")]

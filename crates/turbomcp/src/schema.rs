@@ -159,30 +159,6 @@ impl SchemaGenerator {
         }
     }
 
-    /// Generate enhanced schema (fallback without schemars)
-    #[cfg(not(feature = "schema-generation"))]
-    pub fn generate_enhanced<T>(&self) -> SchemaGenerationResult {
-        let mut schema = serde_json::json!({
-            "type": "object",
-            "additionalProperties": true
-        });
-
-        // Apply basic optimizations
-        self.apply_optimizations(&mut schema);
-
-        SchemaGenerationResult {
-            schema,
-            metadata: SchemaMetadata {
-                title: Some("Generated Schema".to_string()),
-                description: Some("Auto-generated schema (schemars not available)".to_string()),
-                version: Some("1.0.0".to_string()),
-                strict: false,
-                custom_rules: Vec::new(),
-                optimize_for: self.options.optimization.clone(),
-            },
-        }
-    }
-
     /// Apply performance optimizations to schema
     fn apply_optimizations(&self, schema: &mut Value) {
         match self.options.optimization {
@@ -294,13 +270,6 @@ pub fn generate_schema<T: JsonSchema>() -> Value {
     generator.generate_enhanced::<T>().schema
 }
 
-/// Fallback schema generation without schemars
-#[cfg(not(feature = "schema-generation"))]
-pub fn generate_schema<T>() -> Value {
-    let generator = SchemaGenerator::new();
-    generator.generate_enhanced::<T>().schema
-}
-
 /// Generate optimized schema for fast scenarios
 #[must_use]
 pub fn generate_fast_schema<T: JsonSchema>() -> Value {
@@ -308,22 +277,9 @@ pub fn generate_fast_schema<T: JsonSchema>() -> Value {
     generator.generate_enhanced::<T>().schema
 }
 
-/// Generate optimized schema for fast scenarios (fallback)
-#[cfg(not(feature = "schema-generation"))]
-pub fn generate_fast_schema<T>() -> Value {
-    let generator = SchemaGenerator::optimized_for_speed();
-    generator.generate_enhanced::<T>().schema
-}
-
 /// Generate JSON Schema for a type `T` using schemars with full metadata
 #[must_use]
 pub fn json_schema_for<T: JsonSchema>() -> Value {
-    generate_schema::<T>()
-}
-
-/// Generate JSON Schema for a type `T` (fallback)
-#[cfg(not(feature = "schema-generation"))]
-pub fn json_schema_for<T>() -> Value {
     generate_schema::<T>()
 }
 

@@ -9,7 +9,7 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct ValidationServer;
 
-#[turbomcp::server(name = "validation-demo", version = "1.0.0")]
+#[turbomcp::server(name = "validation-demo", version = "1.0.0", transports = ["stdio"])]
 impl ValidationServer {
     /// Basic validation with simple checks
     #[tool("Create user with age validation")]

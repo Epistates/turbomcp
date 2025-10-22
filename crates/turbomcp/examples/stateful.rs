@@ -15,7 +15,7 @@ struct CounterServer {
     counters: Arc<RwLock<HashMap<String, i64>>>,
 }
 
-#[turbomcp::server(name = "counter", version = "1.0.0")]
+#[turbomcp::server(name = "counter", version = "1.0.0", transports = ["stdio"])]
 impl CounterServer {
     fn new() -> Self {
         Self {

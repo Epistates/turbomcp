@@ -30,7 +30,7 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct HttpServer;
 
-#[turbomcp::server(name = "http-demo", version = "1.0.0")]
+#[turbomcp::server(name = "http-demo", version = "1.0.0", transports = ["http"])]
 impl HttpServer {
     #[tool("Get server info")]
     async fn info(&self) -> McpResult<String> {

@@ -61,20 +61,10 @@ where
     }
 }
 
-/// Generate JSON schema for a type when schema-generation feature is enabled
-#[cfg(feature = "schema-generation")]
+/// Generate JSON schema for a type (always available - schema generation is required by MCP)
 #[must_use]
 pub fn generate_json_schema<T: schemars::JsonSchema>() -> serde_json::Value {
     crate::schema::generate_schema::<T>()
-}
-
-/// Fallback for when schema-generation is not enabled
-#[cfg(not(feature = "schema-generation"))]
-pub fn generate_json_schema<T>() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "description": "Schema generation not enabled. Add 'schema-generation' feature for full schema support."
-    })
 }
 
 /// Trait for types that can be converted to structured output

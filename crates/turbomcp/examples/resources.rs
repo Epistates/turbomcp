@@ -14,7 +14,7 @@ struct DocsServer {
     documents: Arc<RwLock<HashMap<String, String>>>,
 }
 
-#[turbomcp::server(name = "docs", version = "1.0.0", root = "file:///docs:Documentation")]
+#[turbomcp::server(name = "docs", version = "1.0.0", root = "file:///docs:Documentation", transports = ["stdio"])]
 impl DocsServer {
     fn new() -> Self {
         let mut docs = HashMap::new();

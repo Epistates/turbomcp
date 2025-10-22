@@ -35,7 +35,7 @@ struct WebApp {
     counter: Arc<RwLock<i64>>,
 }
 
-#[turbomcp::server(name = "web-app", version = "1.0.0")]
+#[turbomcp::server(name = "web-app", version = "1.0.0", transports = ["http"])]
 impl WebApp {
     fn new() -> Self {
         Self {

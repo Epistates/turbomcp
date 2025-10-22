@@ -159,10 +159,10 @@ cargo run
 cargo install turbomcp-cli
 
 # For HTTP server
-turbomcp-cli tools-list --url http://localhost:8080/mcp
+turbomcp-cli tools list --url http://localhost:8080/mcp
 
-# For STDIO server  
-turbomcp-cli tools-list --command "./target/debug/my-server"
+# For STDIO server
+turbomcp-cli tools list --command "./target/debug/my-server"
 ```
 
 ## Type-State Capability Builders
@@ -901,9 +901,13 @@ Use the TurboMCP CLI for integration testing:
 cargo install turbomcp-cli
 
 # Test server functionality
-turbomcp-cli tools-list --url http://localhost:8080/mcp
-turbomcp-cli tools-call --url http://localhost:8080/mcp --name add --arguments '{"a": 5, "b": 3}'
-turbomcp-cli schema-export --url http://localhost:8080/mcp --output schemas.json
+turbomcp-cli tools list --url http://localhost:8080/mcp
+turbomcp-cli tools call add --arguments '{"a": 5, "b": 3}' --url http://localhost:8080/mcp
+turbomcp-cli tools schema --url http://localhost:8080/mcp
+
+# Test STDIO server
+turbomcp-cli tools list --command "./target/debug/my-server"
+turbomcp-cli resources list --command "./target/debug/my-server"
 ```
 
 ## Client Setup

@@ -17,7 +17,7 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct StdioServer;
 
-#[turbomcp::server(name = "stdio-demo", version = "1.0.0")]
+#[turbomcp::server(name = "stdio-demo", version = "1.0.0", transports = ["stdio"])]
 impl StdioServer {
     #[tool("Echo a message")]
     async fn echo(&self, message: String) -> McpResult<String> {

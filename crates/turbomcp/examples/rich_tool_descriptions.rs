@@ -20,7 +20,8 @@ struct DataAnalysisServer;
 #[turbomcp::server(
     name = "data-analysis",
     version = "1.0.0",
-    description = "Server demonstrating rich tool descriptions"
+    description = "Server demonstrating rich tool descriptions",
+    transports = ["stdio"]
 )]
 impl DataAnalysisServer {
     /// Simple tool with basic description (backward compatible)

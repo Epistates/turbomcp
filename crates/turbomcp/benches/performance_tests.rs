@@ -118,8 +118,7 @@ fn bench_context_operations(c: &mut Criterion) {
     });
 }
 
-/// Benchmark actual macro-generated schema performance
-#[cfg(feature = "schema-generation")]
+/// Benchmark actual macro-generated schema performance (always enabled)
 fn bench_schema_generation(c: &mut Criterion) {
     use turbomcp::prelude::*;
 
@@ -167,7 +166,8 @@ fn bench_uri_templates(c: &mut Criterion) {
 }
 
 // Group all benchmarks
-#[cfg(all(feature = "schema-generation", feature = "uri-templates"))]
+// Schema generation is always enabled, but uri-templates is optional
+#[cfg(feature = "uri-templates")]
 criterion_group!(
     benches,
     bench_sync_operations,
@@ -177,30 +177,13 @@ criterion_group!(
     bench_uri_templates
 );
 
-#[cfg(all(feature = "schema-generation", not(feature = "uri-templates")))]
+#[cfg(not(feature = "uri-templates"))]
 criterion_group!(
     benches,
     bench_sync_operations,
     bench_helper_functions,
     bench_context_operations,
     bench_schema_generation
-);
-
-#[cfg(all(not(feature = "schema-generation"), feature = "uri-templates"))]
-criterion_group!(
-    benches,
-    bench_sync_operations,
-    bench_helper_functions,
-    bench_context_operations,
-    bench_uri_templates
-);
-
-#[cfg(not(any(feature = "schema-generation", feature = "uri-templates")))]
-criterion_group!(
-    benches,
-    bench_sync_operations,
-    bench_helper_functions,
-    bench_context_operations
 );
 
 criterion_main!(benches);

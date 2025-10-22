@@ -10,7 +10,7 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct CalculatorApp;
 
-#[turbomcp::server(name = "calculator", version = "1.0.0")]
+#[turbomcp::server(name = "calculator", version = "1.0.0", transports = ["stdio"])]
 impl CalculatorApp {
     #[tool("Add two numbers")]
     async fn add(&self, a: f64, b: f64) -> McpResult<f64> {
