@@ -48,7 +48,7 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct Calculator;
 
-#[server(name = "calculator", version = "1.0.0")]
+#[server(name = "calculator", version = "1.0.0", transports = ["stdio"])]
 impl Calculator {
     #[tool("Add two numbers")]
     async fn add(&self, a: f64, b: f64) -> McpResult<f64> {
@@ -102,7 +102,7 @@ Start minimal (STDIO only), add features as needed:
 - Context injection for dependencies
 - Interactive elicitation forms
 - Automatic logging and tracing
-- 26 focused examples covering all patterns
+- 25 focused examples covering all patterns
 - Comprehensive documentation
 
 ---
@@ -206,7 +206,8 @@ Configure in Claude Desktop:
 Test with CLI:
 ```bash
 cargo install turbomcp-cli
-turbomcp-cli tools-call --command "./your-server" --name hello --args '{"name": "World"}'
+turbomcp-cli tools list --command "./your-server"
+turbomcp-cli tools call hello --arguments '{"name": "World"}' --command "./your-server"
 ```
 
 ---
@@ -730,52 +731,67 @@ cargo deny check                    # License compliance
 cargo install turbomcp-cli
 
 # Test your server during development
-turbomcp-cli tools-list --command "./target/debug/your-server"
-turbomcp-cli tools-call --command "./target/debug/your-server" \
-  --name "process_data" --args '{"input": "test data"}'
+turbomcp-cli tools list --command "./target/debug/your-server"
+turbomcp-cli tools call process_data --arguments '{"input": "test data"}' \
+  --command "./target/debug/your-server"
 
 # Export schemas for documentation
-turbomcp-cli schema-export --command "./target/debug/your-server" \
-  --output schemas.json --format pretty
+turbomcp-cli tools schema --command "./target/debug/your-server" --format pretty
 
-# Performance profiling
-turbomcp-cli benchmark --command "./target/debug/your-server" \
-  --duration 60s --concurrency 10
+# List resources and prompts
+turbomcp-cli resources list --command "./target/debug/your-server"
+turbomcp-cli prompts list --command "./target/debug/your-server"
 ```
 
-### Examples
+### Examples - All 25
 
-**Server Examples:**
-| Example | Lines | Topic |
-|---------|-------|-------|
-| [hello_world.rs](./crates/turbomcp/examples/hello_world.rs) | 24 | Simplest server - one tool |
-| [macro_server.rs](./crates/turbomcp/examples/macro_server.rs) | 58 | Using `#[server]` macro |
-| [tools.rs](./crates/turbomcp/examples/tools.rs) | 77 | Parameter types & validation |
-| [resources.rs](./crates/turbomcp/examples/resources.rs) | 59 | Resource handlers with URIs |
-| [stateful.rs](./crates/turbomcp/examples/stateful.rs) | 59 | Arc<RwLock<T>> state pattern |
-| [http_server.rs](./crates/turbomcp/examples/http_server.rs) | 38 | HTTP/SSE transport |
+**Foundational Examples:**
+| Example | Topic |
+|---------|-------|
+| [hello_world.rs](./crates/turbomcp/examples/hello_world.rs) | Simplest server - one tool |
+| [macro_server.rs](./crates/turbomcp/examples/macro_server.rs) | Using `#[server]` macro |
+| [minimal_test.rs](./crates/turbomcp/examples/minimal_test.rs) | Testing patterns |
+| [tools.rs](./crates/turbomcp/examples/tools.rs) | Parameter types & validation |
+| [resources.rs](./crates/turbomcp/examples/resources.rs) | Resource handlers with URIs |
+| [rich_tool_descriptions.rs](./crates/turbomcp/examples/rich_tool_descriptions.rs) | Advanced tool documentation |
+| [validation.rs](./crates/turbomcp/examples/validation.rs) | Input validation & error handling |
+
+**Stateful & Advanced Server Examples:**
+| Example | Topic |
+|---------|-------|
+| [stateful.rs](./crates/turbomcp/examples/stateful.rs) | Arc<RwLock<T>> state pattern |
+| [sampling_server.rs](./crates/turbomcp/examples/sampling_server.rs) | LLM sampling & bidirectional communication |
+| [elicitation_server.rs](./crates/turbomcp/examples/elicitation_server.rs) | Interactive form elicitation |
+
+**Transport & Server Patterns:**
+| Example | Topic |
+|---------|-------|
+| [stdio_app.rs](./crates/turbomcp/examples/stdio_app.rs) | Complete STDIO application |
+| [http_app.rs](./crates/turbomcp/examples/http_app.rs) | Complete HTTP/SSE application |
+| [http_server.rs](./crates/turbomcp/examples/http_server.rs) | HTTP/SSE transport only |
+| [tcp_server.rs](./crates/turbomcp/examples/tcp_server.rs) | TCP network transport |
+| [unix_server.rs](./crates/turbomcp/examples/unix_server.rs) | Unix socket transport |
+| [websocket_server.rs](./crates/turbomcp/examples/websocket_server.rs) | WebSocket bidirectional transport |
 
 **Client Examples:**
-| Example | Lines | Topic |
-|---------|-------|-------|
-| [basic_client.rs](./crates/turbomcp/examples/basic_client.rs) | 45 | Connect, list, call |
-| [comprehensive.rs](./crates/turbomcp/examples/comprehensive.rs) | 76 | All MCP features |
-| [elicitation_client.rs](./crates/turbomcp/examples/elicitation_client.rs) | 237 | Interactive forms |
-| [sampling_server.rs](./crates/turbomcp/examples/sampling_server.rs) | 277 | LLM sampling |
-
-**Transport Examples:**
-| Server | Client | Transport |
-|--------|--------|-----------|
-| [tcp_server.rs](./crates/turbomcp/examples/tcp_server.rs) | [tcp_client.rs](./crates/turbomcp/examples/tcp_client.rs) | TCP network |
-| [http_server.rs](./crates/turbomcp/examples/http_server.rs) | [http_client_simple.rs](./crates/turbomcp/examples/http_client_simple.rs) | HTTP/SSE |
-| [unix_server.rs](./crates/turbomcp/examples/unix_server.rs) | [unix_client.rs](./crates/turbomcp/examples/unix_client.rs) | Unix socket |
-| [websocket_server.rs](./crates/turbomcp/examples/websocket_server.rs) | [websocket_client_simple.rs](./crates/turbomcp/examples/websocket_client_simple.rs) | WebSocket |
+| Example | Topic |
+|---------|-------|
+| [basic_client.rs](./crates/turbomcp/examples/basic_client.rs) | Connect, list, and call tools |
+| [stdio_client.rs](./crates/turbomcp/examples/stdio_client.rs) | STDIO client communication |
+| [tcp_client.rs](./crates/turbomcp/examples/tcp_client.rs) | TCP client connection |
+| [http_client_simple.rs](./crates/turbomcp/examples/http_client_simple.rs) | HTTP/SSE client |
+| [unix_client.rs](./crates/turbomcp/examples/unix_client.rs) | Unix socket client |
+| [websocket_client_simple.rs](./crates/turbomcp/examples/websocket_client_simple.rs) | WebSocket client |
+| [comprehensive.rs](./crates/turbomcp/examples/comprehensive.rs) | All MCP features combined |
+| [elicitation_client.rs](./crates/turbomcp/examples/elicitation_client.rs) | Interactive form responses |
 
 **Run examples:**
 ```bash
 cargo run --example hello_world
 cargo run --example elicitation_client
 cargo run --example http_app
+cargo run --example tcp_server  # Then in another terminal:
+cargo run --example tcp_client
 ```
 
 ---
@@ -955,7 +971,7 @@ TurboMCP v2.0.0 provides:
 - Performance focus with automated regression detection
 - Full MCP 2025-06-18 specification compliance
 - Production deployment patterns with container & Kubernetes support
-- 26 focused examples covering all usage patterns
+- 25 focused examples covering all usage patterns
 - Active development with regular security updates and performance improvements
 
 **Production Status:** TurboMCP 2.0.0 is production-ready with full MCP 2025-06-18 compliance and comprehensive test coverage. The API is stable.

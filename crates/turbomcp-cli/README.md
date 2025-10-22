@@ -208,24 +208,24 @@ The CLI supports three transport methods:
 
 ### HTTP/HTTPS
 ```bash
-turbomcp-cli tools-list --url http://localhost:8080/mcp
-turbomcp-cli tools-list --url https://api.example.com/mcp
+turbomcp-cli tools list --url http://localhost:8080/mcp
+turbomcp-cli tools list --url https://api.example.com/mcp
 ```
 
 ### WebSocket
 ```bash
-turbomcp-cli tools-list --url ws://localhost:8080/mcp
-turbomcp-cli tools-list --url wss://api.example.com/mcp
+turbomcp-cli tools list --url ws://localhost:8080/mcp
+turbomcp-cli tools list --url wss://api.example.com/mcp
 ```
 
 ### STDIO (Standard Input/Output)
 ```bash
 # Using --command option
-turbomcp-cli tools-list --command "./my-server"
-turbomcp-cli tools-list --command "python server.py"
+turbomcp-cli tools list --command "./my-server"
+turbomcp-cli tools list --command "python server.py"
 
 # Or specify path in --url (auto-detected)
-turbomcp-cli tools-list --url "./my-server"
+turbomcp-cli tools list --url "./my-server"
 ```
 
 **Transport Auto-Detection:**
