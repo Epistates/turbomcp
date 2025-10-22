@@ -165,13 +165,35 @@ else
 fi
 echo ""
 
-# Generate documentation
+# Generate documentation with full features (docs.rs uses nightly)
 print_section "Documentation Generation"
-if cargo doc --workspace --no-deps --quiet; then
+echo "Building docs with full features (nightly + doc_cfg)..."
+if cargo +nightly doc --lib --workspace --no-deps --features full --quiet 2>&1 | tee /tmp/rustdoc.log; then
     print_status "Documentation generated successfully"
 else
     print_error "Documentation generation failed"
+    echo ""
+    echo "Last 30 lines of output:"
+    tail -30 /tmp/rustdoc.log
     exit 1
+fi
+
+# Check for rustdoc warnings
+print_section "Documentation Quality Check"
+if grep -i "error\[E" /tmp/rustdoc.log; then
+    print_error "Documentation has compilation errors - must fix before publishing"
+    exit 1
+fi
+
+# Warn about rustdoc warnings (but don't fail)
+if grep -i "warning:" /tmp/rustdoc.log; then
+    print_warning "Documentation generation completed with warnings:"
+    grep -i "warning:" /tmp/rustdoc.log | head -5
+    echo ""
+    print_warning "Review warnings above and fix if possible"
+    echo ""
+else
+    print_status "Documentation has no warnings"
 fi
 echo ""
 
@@ -254,7 +276,8 @@ echo "✅ Compilation: passed"
 echo "✅ Tests: passed"
 echo "✅ Clippy: passed"
 echo "✅ Formatting: passed"
-echo "✅ Documentation: passed"
+echo "✅ Documentation: generated & validated"
+echo "✅ Doc quality: checked"
 echo "✅ Metadata: passed"
 echo "✅ Packaging: passed"
 echo ""
