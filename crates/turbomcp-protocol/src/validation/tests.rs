@@ -1,6 +1,6 @@
 //! Comprehensive protocol validation tests
 //!
-//! Following the world-class pattern from tokio/axum, these tests are co-located
+//! Following the pattern from tokio/axum, these tests are co-located
 //! with the validation.rs implementation. This gives tests access to private items
 //! and makes it clear which code is being tested.
 

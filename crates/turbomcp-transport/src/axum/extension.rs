@@ -30,7 +30,7 @@ use turbomcp_protocol::SessionManager;
 ///
 /// This trait provides convenient methods for adding MCP routes to existing
 /// Axum routers with various configuration options. It supports both simple
-/// integration and advanced state-preserving patterns for existing applications.
+/// integration and state-preserving patterns for existing applications.
 pub trait AxumMcpExt {
     /// Add MCP routes to an existing router with custom configuration
     fn turbo_mcp_routes_with_config<T: McpService + 'static>(

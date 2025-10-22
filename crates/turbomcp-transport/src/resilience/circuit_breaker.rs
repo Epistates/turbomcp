@@ -1,6 +1,6 @@
 //! Circuit breaker pattern implementation for fault tolerance
 //!
-//! This module provides a robust circuit breaker implementation that:
+//! This module provides a circuit breaker implementation that:
 //! - Monitors operation success/failure rates
 //! - Trips open to fail fast when error thresholds are exceeded
 //! - Gradually recovers through a half-open state

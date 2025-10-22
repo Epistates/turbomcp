@@ -7,7 +7,7 @@
 //! 3. Delegate to external LLM services (which can be MCP servers themselves)
 //! 4. Return standardized results
 //!
-//! ## Perfect MCP Compliance
+//! ## MCP Compliance
 //!
 //! Unlike embedding LLM APIs directly (anti-pattern), this implementation:
 //! - Delegates to external services
@@ -22,7 +22,7 @@ use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult};
 /// MCP-compliant sampling handler trait
 ///
 /// The client receives sampling requests and delegates to configured LLM services.
-/// This maintains perfect separation of concerns per MCP specification.
+/// This maintains separation of concerns per MCP specification.
 #[async_trait]
 pub trait SamplingHandler: Send + Sync + std::fmt::Debug {
     /// Handle a sampling/createMessage request from a server
@@ -47,7 +47,7 @@ pub trait SamplingHandler: Send + Sync + std::fmt::Debug {
 /// Default implementation that delegates to external MCP servers
 ///
 /// This is the "batteries included" approach - it connects to LLM MCP servers
-/// but maintains perfect protocol compliance.
+/// but maintains protocol compliance.
 #[derive(Debug)]
 pub struct DelegatingSamplingHandler {
     /// Client instances for LLM MCP servers

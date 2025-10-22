@@ -1,6 +1,6 @@
-//! Redis-based storage implementation for DPoP nonce tracking
+//! Redis-based storage for DPoP nonce tracking
 //!
-//! This module provides Redis-backed persistent storage for DPoP nonce
+//! This module provides Redis-backed storage for DPoP nonce
 //! tracking and replay protection when the `redis-storage` feature is enabled.
 
 use super::{DpopError, NonceStorage, Result};
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, trace, warn};
 
-/// Redis-based nonce storage implementation with comprehensive DPoP tracking
+/// Redis-based nonce storage for DPoP tracking
 #[derive(Debug, Clone)]
 pub struct RedisNonceStorage {
     /// Redis client for async operations
@@ -58,7 +58,7 @@ struct StoredNonce {
 }
 
 impl RedisNonceStorage {
-    /// Create a new Redis nonce storage instance with production configuration
+    /// Create a new Redis nonce storage instance
     pub async fn new(connection_string: &str) -> Result<Self> {
         let client = Client::open(connection_string).map_err(|e| DpopError::StorageError {
             reason: format!("Failed to create Redis client: {}", e),

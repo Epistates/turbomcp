@@ -204,7 +204,7 @@ pub use session::{SessionAnalytics, SessionConfig, SessionManager};
 pub use shared::{ConsumableShared, Shareable, Shared, SharedError};
 pub use state::StateManager;
 
-// Re-export ONLY essential types at root (v2.0 - world-class DX)
+// Re-export ONLY essential types at root (v2.0 - improved ergonomics)
 // Everything else requires module qualification: turbomcp_protocol::types::*
 pub use types::{
     // Most common tool operations

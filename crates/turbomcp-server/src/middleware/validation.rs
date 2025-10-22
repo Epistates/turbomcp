@@ -42,7 +42,7 @@ impl ValidationConfig {
     /// Create new validation config with MCP 2025-06-18 official schema
     ///
     /// This uses the official MCP protocol schema from modelcontextprotocol.io
-    /// Schema source: https://github.com/modelcontextprotocol/specification
+    /// Schema source: <https://github.com/modelcontextprotocol/specification>
     pub fn with_mcp_schemas() -> Result<Self, ValidationError> {
         let mut schemas = HashMap::new();
 

@@ -1,6 +1,6 @@
-//! OAuth 2.0 Client Implementation
+//! OAuth 2.1 Client Implementation
 //!
-//! This module provides a proven OAuth 2.0 client wrapper that supports:
+//! This module provides an OAuth 2.1 client wrapper that supports:
 //! - Authorization Code flow (with PKCE)
 //! - Client Credentials flow (server-to-server)
 //! - Device Authorization flow (CLI/IoT)
@@ -16,7 +16,7 @@ use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 use super::super::config::{OAuth2Config, ProviderConfig, ProviderType, RefreshBehavior};
 
-/// Production-grade OAuth2 client wrapper supporting all modern flows
+/// OAuth 2.1 client wrapper supporting all modern flows
 #[derive(Debug, Clone)]
 pub struct OAuth2Client {
     /// Authorization code flow client (most common)
@@ -30,7 +30,7 @@ pub struct OAuth2Client {
 }
 
 impl OAuth2Client {
-    /// Create a proven OAuth2 client supporting all flows
+    /// Create an OAuth 2.1 client supporting all flows
     pub fn new(config: &OAuth2Config, provider_type: ProviderType) -> McpResult<Self> {
         // Validate URLs
         let auth_url = AuthUrl::new(config.auth_url.clone())
@@ -39,7 +39,7 @@ impl OAuth2Client {
         let token_url = TokenUrl::new(config.token_url.clone())
             .map_err(|_| McpError::validation("Invalid token URL".to_string()))?;
 
-        // Enhanced redirect URI validation with comprehensive security checks
+        // Redirect URI validation with security checks
         let redirect_url = Self::validate_redirect_uri(&config.redirect_uri)?;
 
         // Create authorization code flow client (primary)
@@ -140,7 +140,7 @@ impl OAuth2Client {
         }
     }
 
-    /// Comprehensive redirect URI validation with security best practices
+    /// Redirect URI validation with security checks
     ///
     /// Security considerations:
     /// - Prevents open redirect attacks
@@ -215,10 +215,9 @@ impl OAuth2Client {
             }
         }
 
-        // Industry Standard: Use oauth2 crate's RedirectUrl for validation
-        // This provides well-established URL validation per OAuth 2.0 specifications
+        // Use oauth2 crate's RedirectUrl for validation
+        // This provides URL validation per OAuth 2.1 specifications
         // For production security, implement exact whitelist matching of allowed URIs
-        // (not pattern matching, which is error-prone per OAuth Security Best Practice RFC)
         RedirectUrl::new(uri.to_string())
             .map_err(|_| McpError::validation("Failed to create redirect URL".to_string()))
     }

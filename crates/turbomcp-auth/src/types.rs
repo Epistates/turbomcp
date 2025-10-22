@@ -110,7 +110,7 @@ pub enum AuthCredentials {
         /// API key
         key: String,
     },
-    /// OAuth 2.0 authorization code
+    /// OAuth 2.1 authorization code
     OAuth2Code {
         /// Authorization code
         code: String,

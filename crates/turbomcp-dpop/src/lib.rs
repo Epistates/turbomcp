@@ -9,7 +9,7 @@
 //! - ✅ **Cryptographic Security** - RSA, ECDSA P-256, and PSS support
 //! - ✅ **Token Binding** - Prevents stolen token usage
 //! - ✅ **Replay Protection** - Nonce tracking and timestamp validation
-//! - ✅ **Enterprise Ready** - HSM integration, audit logging, key rotation
+//! - ✅ **Production Features** - HSM integration, audit logging, key rotation
 //!
 //! ## Architecture
 //!

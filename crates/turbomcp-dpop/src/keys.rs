@@ -1,6 +1,6 @@
 //! DPoP key management and cryptographic operations
 //!
-//! This module provides proven key management for DPoP operations including
+//! This module provides key management for DPoP operations including
 //! key generation, storage, rotation, and secure cryptographic primitives.
 
 use std::collections::HashMap;
@@ -509,11 +509,11 @@ fn constant_time_compare(a: &str, b: &str) -> bool {
     result == 0
 }
 
-/// Automated key rotation service for production deployments
+/// Automated key rotation service
 ///
 /// This service runs as a background task, monitoring key expiration and automatically
-/// rotating keys based on the configured rotation policy. Provides
-/// key lifecycle management with monitoring and error recovery.
+/// rotating keys based on the configured rotation policy. Provides key lifecycle
+/// management with monitoring and error recovery.
 #[derive(Debug)]
 pub struct AutoRotationService {
     /// Key manager for rotation operations

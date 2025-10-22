@@ -1,6 +1,6 @@
 //! OAuth 2.1 Implementation
 //!
-//! This module provides a comprehensive OAuth 2.1 implementation with:
+//! This module provides an OAuth 2.1 implementation with:
 //! - Authorization Code flow with PKCE (RFC 7636)
 //! - Refresh tokens
 //! - Resource Indicators (RFC 8707)

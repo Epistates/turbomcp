@@ -1,6 +1,6 @@
 //! WebSocket bidirectional transport with elicitation support
 //!
-//! This module provides a proven WebSocket transport implementation
+//! This module provides a WebSocket transport implementation
 //! with full bidirectional communication support for the MCP 2025-06-18 protocol,
 //! including server-initiated elicitation requests.
 //!

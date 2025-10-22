@@ -257,7 +257,7 @@ impl Transport for WebSocketBidirectionalTransport {
 }
 
 impl WebSocketBidirectionalTransport {
-    /// Send a raw WebSocket message (for advanced use cases)
+    /// Send a raw WebSocket message (for low-level use cases)
     ///
     /// This method sends control frames (ping, pong, close) and other raw messages.
     /// It properly flushes the buffer to ensure immediate delivery to the TCP socket.

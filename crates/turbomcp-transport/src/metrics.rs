@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::{TransportMetrics, TransportType};
 
-/// Advanced metrics collector for transports
+/// Metrics collector for transports
 #[derive(Debug, Clone)]
 pub struct MetricsCollector {
     /// Per-transport metrics

@@ -1,6 +1,6 @@
 //! Test utilities for DPoP implementation
 //!
-//! This module provides comprehensive testing utilities and mock implementations
+//! This module provides testing utilities and mock implementations
 //! for DPoP components when the `test-utils` feature is enabled.
 //!
 //! These utilities are designed for testing scenarios only and should never
@@ -18,10 +18,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-/// Comprehensive mock key manager for testing DPoP key operations
+/// Mock key manager for testing DPoP key operations
 #[derive(Debug)]
 pub struct MockKeyManager {
-    /// Storage for generated test keys  
+    /// Storage for generated test keys
     keys: Arc<RwLock<HashMap<String, DpopKeyPair>>>,
 
     /// Test key generation statistics
@@ -89,7 +89,7 @@ impl MockKeyManager {
         }
     }
 
-    /// Generate a proven test key pair using ring cryptography
+    /// Generate a test key pair using ring cryptography
     pub async fn generate_test_key(&self, algorithm: DpopAlgorithm) -> Result<DpopKeyPair> {
         let start_time = SystemTime::now();
 

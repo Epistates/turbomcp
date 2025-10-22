@@ -46,9 +46,9 @@
 //! }
 //! ```
 //!
-//! ## Elicitation Support (New in 1.0.3)
+//! ## Elicitation Support
 //!
-//! The server now includes comprehensive elicitation support for interactive user input:
+//! The server includes comprehensive elicitation support for interactive user input:
 //!
 //! - `ElicitationCoordinator` for managing elicitation lifecycle
 //! - Request/response correlation with timeouts
@@ -56,7 +56,7 @@
 //! - Priority-based request queuing
 //! - Automatic cleanup of expired requests
 //!
-//! ## Sampling Support (New in 1.0.3)
+//! ## Sampling Support
 //!
 //! The server provides built-in support for server-initiated sampling requests to clients:
 //!
@@ -98,7 +98,7 @@
 //! - Integration with elicitation for dynamic sampling decisions
 //! - Configurable timeouts and retry logic
 //!
-//! ## Compile-Time Routing (Experimental - New in 1.0.3)
+//! ## Compile-Time Routing (Experimental)
 //!
 //! Zero-cost compile-time router generation for high-throughput scenarios:
 //!

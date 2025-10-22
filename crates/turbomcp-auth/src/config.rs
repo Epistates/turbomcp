@@ -57,14 +57,14 @@ pub enum AuthProviderType {
     Custom,
 }
 
-/// Security levels for OAuth 2.0 flows
+/// Security levels for OAuth 2.1 flows
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SecurityLevel {
-    /// Standard OAuth 2.0 with PKCE (existing behavior - no breaking changes)
+    /// Standard OAuth 2.1 with PKCE
     Standard,
     /// Enhanced security with DPoP token binding
     Enhanced,
-    /// Maximum security with full DPoP + additional features
+    /// Maximum security with full DPoP
     Maximum,
 }
 
@@ -177,7 +177,7 @@ pub struct AuthorizationConfig {
     pub resource_permissions: HashMap<String, Vec<String>>,
 }
 
-/// OAuth 2.0 configuration
+/// OAuth 2.1 configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2Config {
     /// Client ID
@@ -192,7 +192,7 @@ pub struct OAuth2Config {
     pub redirect_uri: String,
     /// Scopes to request
     pub scopes: Vec<String>,
-    /// OAuth 2.0 flow type
+    /// OAuth 2.1 flow type
     pub flow_type: OAuth2FlowType,
     /// Additional parameters
     pub additional_params: HashMap<String, String>,
@@ -218,7 +218,7 @@ fn default_auto_resource_indicators() -> bool {
     true
 }
 
-/// OAuth 2.0 flow types
+/// OAuth 2.1 flow types
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum OAuth2FlowType {
     /// Authorization Code flow
@@ -231,7 +231,7 @@ pub enum OAuth2FlowType {
     Implicit,
 }
 
-/// OAuth 2.0 authorization result
+/// OAuth 2.1 authorization result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2AuthResult {
     /// Authorization URL for user

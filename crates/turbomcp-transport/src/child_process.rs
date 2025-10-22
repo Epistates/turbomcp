@@ -1,7 +1,7 @@
 //! Child Process Transport for TurboMCP
 //!
 //! This module provides a transport implementation for communicating with MCP servers
-//! running as child processes. It uses Tokio's async process management with robust
+//! running as child processes. It uses Tokio's async process management with reliable
 //! error handling, graceful shutdown, and proper STDIO stream management.
 //!
 //! # Interior Mutability Pattern

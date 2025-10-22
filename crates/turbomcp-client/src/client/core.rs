@@ -330,7 +330,7 @@ impl<T: Transport + 'static> Client<T> {
 impl Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTransport> {
     /// Connect to an HTTP MCP server (convenience method)
     ///
-    /// This is a beautiful one-liner alternative to manual configuration.
+    /// This is a convenient one-liner alternative to manual configuration.
     /// Creates an HTTP client, connects, and initializes in one call.
     ///
     /// # Arguments
@@ -354,7 +354,7 @@ impl Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTran
     /// use turbomcp_client::Client;
     ///
     /// # async fn example() -> turbomcp_protocol::Result<()> {
-    /// // Beautiful one-liner - balanced with server DX
+    /// // Convenient one-liner - balanced with server DX
     /// let client = Client::connect_http("http://localhost:8080").await?;
     ///
     /// // Now use it directly
@@ -455,7 +455,7 @@ impl Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTran
 impl Client<turbomcp_transport::tcp::TcpTransport> {
     /// Connect to a TCP MCP server (convenience method)
     ///
-    /// Beautiful one-liner for TCP connections - balanced DX.
+    /// Convenient one-liner for TCP connections - balanced DX.
     ///
     /// # Arguments
     ///
@@ -510,7 +510,7 @@ impl Client<turbomcp_transport::tcp::TcpTransport> {
 impl Client<turbomcp_transport::unix::UnixTransport> {
     /// Connect to a Unix socket MCP server (convenience method)
     ///
-    /// Beautiful one-liner for Unix socket IPC - balanced DX.
+    /// Convenient one-liner for Unix socket IPC - balanced DX.
     ///
     /// # Arguments
     ///

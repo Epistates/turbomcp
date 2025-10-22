@@ -95,7 +95,7 @@ impl RetryPolicy {
 /// Streamable HTTP client configuration
 #[derive(Clone, Debug)]
 pub struct StreamableHttpClientConfig {
-    /// Base URL (e.g., "https://api.example.com")
+    /// Base URL (e.g., <https://api.example.com>)
     pub base_url: String,
 
     /// MCP endpoint path (e.g., "/mcp")

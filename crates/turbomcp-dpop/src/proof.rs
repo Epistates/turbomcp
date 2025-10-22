@@ -1,8 +1,8 @@
 //! DPoP proof generation and validation
 //!
 //! This module implements RFC 9449 compliant DPoP proof generation and validation
-//! with comprehensive security features including replay attack prevention,
-//! timing attack protection, and cryptographic validation.
+//! with security features including replay attack prevention, timing attack protection,
+//! and cryptographic validation.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ use super::{
 #[cfg(feature = "redis-storage")]
 use super::{redis_storage::RedisNonceStorage, types::NonceStorage};
 
-/// DPoP proof generator with comprehensive security features
+/// DPoP proof generator with security features
 #[derive(Debug)]
 pub struct DpopProofGenerator {
     /// Key manager for cryptographic operations
@@ -228,10 +228,10 @@ impl DpopProofGenerator {
         })
     }
 
-    /// Get or generate a default key pair with proven key management
+    /// Get or generate a default key pair
     async fn get_or_generate_default_key(&self) -> Result<DpopKeyPair> {
-        // Production implementation: Generate key with proper algorithm selection
-        // Key rotation would be handled by the key manager's internal policies
+        // Generate key with proper algorithm selection
+        // Key rotation is handled by the key manager's internal policies
         debug!("Generating DPoP key pair for proof generation");
 
         self.key_manager
@@ -484,11 +484,11 @@ impl Default for MemoryNonceTracker {
     }
 }
 
-/// Redis-based nonce tracker for distributed production deployments
+/// Redis-based nonce tracker for distributed deployments
 ///
-/// This implementation provides Redis-backed nonce tracking with full
-/// DPoP replay protection across multiple server instances. Only available
-/// when the `redis-storage` feature is enabled.
+/// This implementation provides Redis-backed nonce tracking with DPoP replay
+/// protection across multiple server instances. Only available when the
+/// `redis-storage` feature is enabled.
 #[cfg(feature = "redis-storage")]
 #[derive(Debug)]
 pub struct RedisNonceTracker {

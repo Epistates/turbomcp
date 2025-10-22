@@ -15,7 +15,7 @@
 //!
 //! ### Advanced Protocol Features
 //! - **Roots Support** - Configurable filesystem roots via macro or builder API with OS-aware defaults
-//! - **Zero Ceremony Elicitation** - Server-initiated user input with beautiful title-first builders (Enhanced 1.0.4)  
+//! - **Zero Ceremony Elicitation** - Server-initiated user input with builder pattern support  
 //! - **Sampling Protocol** - Bidirectional LLM sampling capabilities with metadata tracking
 //! - **Compile-Time Routing** - Zero-cost compile-time router generation (experimental)
 //!
@@ -180,7 +180,7 @@
 //! }
 //! ```
 //!
-//! ## Elicitation Support - Zero Ceremony Builders (Enhanced in 1.0.4)
+//! ## Elicitation Support - Zero Ceremony Builders
 //!
 //! TurboMCP provides ergonomic elicitation with zero ceremony builders for intuitive APIs:
 //!
@@ -210,7 +210,7 @@
 //! - **Smart Constructors**: Title-first API eliminates nested parentheses
 //! - **Backward Compatible**: Builder variants available as `*_builder()`
 //!
-//! ## Sampling Support (New in 1.0.3)
+//! ## Sampling Support
 //!
 //! Server-initiated sampling requests enable bidirectional LLM communication:
 //!
@@ -319,7 +319,7 @@
 //! ### For Basic Tool Servers (Recommended for Beginners)
 //! ```toml
 //! [dependencies]
-//! turbomcp = { version = "1.0", default-features = false, features = ["minimal"] }
+//! turbomcp = { version = "2.0", default-features = false, features = ["minimal"] }
 //! ```
 //! **What you get:** STDIO transport, core macros, basic error handling  
 //! **Perfect for:** Simple MCP tools, CLI integrations, getting started  
@@ -328,9 +328,9 @@
 //! ### For Production Web Servers
 //! ```toml
 //! [dependencies]
-//! turbomcp = { version = "1.0", features = ["full"] }
+//! turbomcp = { version = "2.0", features = ["full"] }
 //! ```
-//! **What you get:** All transports, authentication, databases, full feature set  
+//! **What you get:** All transports, authentication features, full feature set  
 //! **Perfect for:** Production deployments, web applications, enterprise usage  
 //! **Transports:** HTTP/SSE, WebSocket, TCP, Unix, STDIO
 //!
@@ -338,9 +338,9 @@
 //! ```toml
 //! [dependencies]
 //! turbomcp = {
-//!     version = "1.0",
+//!     version = "2.0",
 //!     default-features = false,
-//!     features = ["minimal", "http", "schema-generation"]
+//!     features = ["minimal", "http"]
 //! }
 //! ```
 //! **Mix and match:** Start with `minimal` and add only what you need

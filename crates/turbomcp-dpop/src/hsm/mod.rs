@@ -10,10 +10,10 @@
 //! ## Features
 //!
 //! - **Zero-copy operations**: Private keys never leave the HSM
-//! - **Session management**: Efficient connection pooling and session reuse
-//! - **Enterprise monitoring**: Comprehensive metrics and audit logging
+//! - **Session management**: Connection pooling and session reuse
+//! - **Monitoring**: Metrics and audit logging
 //! - **Type safety**: Compile-time guarantees for HSM operations
-//! - **Async throughout**: Full tokio compatibility for high performance
+//! - **Async throughout**: Full tokio compatibility
 //!
 //! ## Usage
 //!
@@ -51,7 +51,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! turbomcp-dpop = { version = "1.1.0-exp.3", features = ["hsm-pkcs11", "hsm-yubico"] }
+//! turbomcp-dpop = { version = "2.0.4", features = ["hsm-pkcs11", "hsm-yubico"] }
 //! ```
 
 #[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]

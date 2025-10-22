@@ -1,7 +1,6 @@
 //! DPoP error types and conversions
 //!
-//! This module provides comprehensive error handling for DPoP operations, integrating
-//! seamlessly with TurboMCP's existing error hierarchy while providing detailed
+//! This module provides error handling for DPoP operations with detailed
 //! context for cryptographic and protocol-level failures.
 
 use std::fmt;

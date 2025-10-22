@@ -60,9 +60,9 @@
 //! # }
 //! ```
 //!
-//! ## Elicitation Response Handling (New in 1.0.3)
+//! ## Elicitation Response Handling
 //!
-//! The client now supports handling server-initiated elicitation requests:
+//! The client supports handling server-initiated elicitation requests:
 //!
 //! ```rust,no_run
 //! use turbomcp_client::Client;
@@ -81,7 +81,7 @@
 //! }
 //! ```
 //!
-//! ## Sampling Support (New in 1.0.3)
+//! ## Sampling Support
 //!
 //! Handle server-initiated sampling requests for LLM capabilities:
 //!
@@ -116,7 +116,7 @@
 //!                     meta: None,
 //!                 }
 //!             ),
-//!              model: "gpt-4".to_string(),
+//!              model: Some("gpt-4".to_string()),
 //!             stop_reason: Some(StopReason::EndTurn),
 //!             _meta: None,
 //!         })
@@ -452,8 +452,8 @@ impl ClientCapabilities {
 // Note: ProtocolClient implementation moved to client/protocol.rs for better modularity
 /// MCP client for communicating with servers
 ///
-/// The `Client` struct provides a beautiful, ergonomic interface for interacting with MCP servers.
-/// It handles all protocol complexity internally, exposing only clean, type-safe methods.
+/// The `Client` struct provides an ergonomic interface for interacting with MCP servers.
+/// It handles protocol complexity internally, exposing clean, type-safe methods.
 ///
 /// # Type Parameters
 ///
