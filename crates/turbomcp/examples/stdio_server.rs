@@ -2,6 +2,29 @@
 //!
 //! Demonstrates stdio transport for CLI tools and Claude Desktop integration.
 //!
+//! # ⚠️ CRITICAL: Output Constraint
+//!
+//! When using stdio transport, **ALL application output must go to stderr**.
+//! **Any writes to stdout (including `println!()`) will corrupt the MCP protocol.**
+//!
+//! ## ✅ Correct Pattern
+//!
+//! ```ignore
+//! // Logs go to stderr (configured below)
+//! tracing::info!("message");
+//! eprintln!("error message");
+//! ```
+//!
+//! ## ❌ Wrong Pattern
+//!
+//! ```ignore
+//! println!("debug");               // ❌ Corrupts protocol
+//! std::io::stdout().write_all(b"x");  // ❌ Corrupts protocol
+//! ```
+//!
+//! The `#[server]` macro with `transports = ["stdio"]` will **reject** any use of
+//! `println!()` at compile time, preventing this mistake before deployment.
+//!
 //! **Run standalone:**
 //! ```bash
 //! cargo run --example stdio_server --features stdio
@@ -37,12 +60,19 @@ impl StdioServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Logs MUST go to stderr for stdio transport
+    // ⚠️ REQUIRED: Configure logging to stderr for stdio transport
+    // Stdio transport uses stdout exclusively for MCP protocol messages.
+    // If logging is configured for stdout, it will corrupt the protocol.
+    // This pattern is MANDATORY for all stdio transport servers.
     tracing_subscriber::fmt()
         .with_env_filter("error")
-        .with_writer(std::io::stderr)
+        .with_writer(std::io::stderr)  // ← CRITICAL: stderr, not stdout
         .init();
 
+    // On connection, you'll see this warning in stderr:
+    // ⚠️  CRITICAL: stdio transport active
+    // All output MUST go to stderr...
+    // This is a reminder that the constraint is active.
     StdioServer.run_stdio().await?;
 
     Ok(())

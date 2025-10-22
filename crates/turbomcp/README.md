@@ -60,7 +60,32 @@ Rust SDK for the Model Context Protocol (MCP) with comprehensive specification s
 
 All transport protocols provide MCP protocol compliance with bidirectional communication, automatic reconnection, and session management.
 
-> **⚠️ STDIO Protocol Compliance**: When using STDIO transport (the default), avoid any logging or output to stdout. The MCP protocol requires stdout to contain **only** JSON-RPC messages. Any other output will break client communication. Use stderr for debugging if needed.
+> **⚠️ STDIO Transport Output Constraint** ⚠️
+>
+> When using STDIO transport, **ALL application output must go to stderr**.
+> Any writes to stdout (including `println!()`, `eprintln!()`, or direct stdout writes)
+> will corrupt the MCP protocol and break client communication.
+>
+> **Safety Guarantees:**
+> - ✅ **Compile-Time**: The `#[server(transports = ["stdio"])]` macro will **reject** any use of `println!()` at compile time
+> - ✅ **Runtime**: A startup warning is logged to stderr reminding you of this constraint
+> - ✅ **Pattern**: The stdio_server example demonstrates the correct logging pattern
+>
+> **Correct Pattern:**
+> ```rust
+> // All output goes to stderr via tracing_subscriber
+> tracing_subscriber::fmt().with_writer(std::io::stderr).init();
+> tracing::info!("message");  // ✅ Goes to stderr
+> eprintln!("error");         // ✅ Explicit stderr
+> ```
+>
+> **Wrong Pattern:**
+> ```rust
+> println!("debug");           // ❌ COMPILE ERROR in stdio servers
+> std::io::stdout().write_all(b"...");  // ❌ Corrupts protocol
+> ```
+>
+> See [Stdio Output Guide](docs/stdio-output-guide.md) for comprehensive details.
 
 ### 🌟 **MCP Enhanced Features**
 - **🎵 AudioContent Support** - Multimedia content handling for audio data
