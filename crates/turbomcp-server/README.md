@@ -15,7 +15,7 @@ MCP server framework with OAuth 2.1 MCP compliance, middleware pipeline, and lif
 - [Handler Registry](#handler-registry)
 - [Authentication & Session](#authentication-with-turbomcp-auth)
 - [Middleware System](#middleware-system)
-- [Session Management](#session-management-with-turbomcp)
+- [Session Management](#session-management-with-turbomcp-protocol)
 - [Health & Lifecycle](#health--lifecycle)
 - [Metrics & Observability](#metrics--observability)
 - [Integration Examples](#integration-examples)
@@ -369,36 +369,33 @@ let middleware = MiddlewareStack::new()
 // The middleware stack is automatically applied by the server
 ```
 
-## Session Management with turbomcp
+## Session Management with turbomcp-protocol
 
-Session management is provided by the main `turbomcp` crate:
+Session management is provided by the `turbomcp-protocol` crate:
 
 ```rust
-use turbomcp::{SessionManager, SessionConfig};
-use std::time::Duration;
+use turbomcp_protocol::{SessionManager, SessionConfig};
+use chrono::Duration;
+use std::time::Duration as StdDuration;
 
 // Configure session management
 let session_config = SessionConfig {
-    timeout: Duration::from_secs(3600), // 1 hour
+    max_sessions: 1000,                           // Maximum concurrent sessions
+    session_timeout: Duration::hours(24),         // Session lifetime
+    max_request_history: 1000,                    // Request analytics depth
+    max_requests_per_session: Some(10000),        // Rate limiting per session
+    cleanup_interval: StdDuration::from_secs(300), // 5 minutes
     enable_analytics: true,
-    max_sessions_per_client: Some(10),
-    max_total_sessions: Some(1000),
-    cleanup_interval: Duration::from_secs(300), // 5 minutes
-    track_activity: true,
-    max_session_data_size: Some(1024 * 1024), // 1MB
 };
-
-// Or use preset configurations
-let session_config = SessionConfig::high_performance();
 
 // Create session manager
 let session_manager = SessionManager::new(session_config);
 
 // Session manager handles:
 // - Session lifecycle (create, update, expire)
-// - Per-client session limits with LRU eviction
+// - Request analytics and client behavior tracking
 // - Automatic cleanup of expired sessions
-// - Session analytics and activity tracking
+// - Elicitation and completion tracking
 ```
 
 ## Health & Lifecycle

@@ -116,7 +116,7 @@
 //!                     meta: None,
 //!                 }
 //!             ),
-//!              model: Some("gpt-4".to_string()),
+//!             model: "gpt-4".to_string(),
 //!             stop_reason: Some(StopReason::EndTurn),
 //!             _meta: None,
 //!         })
