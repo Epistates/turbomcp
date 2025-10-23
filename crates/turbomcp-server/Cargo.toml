@@ -31,15 +31,15 @@ parking_lot = "0.12"
 futures = "0.3"
 anyhow = "1.0"
 bytes = { workspace = true }
-regex = "1.10"
-jsonschema = { version = "0.17.1", default-features = false, features = ["resolve-file"] }
-config = { workspace = true }
+regex = "1.12"
+jsonschema = { version = "0.33", default-features = false, features = ["resolve-file"] }
+config = { version = "0.15", default-features = true }
 
 # Middleware dependencies (optional - only needed for HTTP/advanced features)
 tower = { workspace = true }  # Core abstraction layer (uses workspace 0.5.2)
 tower-http = { workspace = true, optional = true }
 tower_governor = { version = "0.7", optional = true }
-jsonwebtoken = { version = "9.2", optional = true }
+jsonwebtoken = { version = "10.1", features = ["aws_lc_rs"], optional = true }
 secrecy = { version = "0.8", features = ["serde"], optional = true }
 http = { version = "1.0" }  # Core HTTP types for Service abstraction (lightweight)
 axum = { version = "0.8.4", optional = true, features = ["ws", "json"] }

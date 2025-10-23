@@ -39,7 +39,7 @@ http = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 
 # UUID for session/token management
-uuid = { version = "1.0", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
 
 # Secret management
 secrecy = "0.8.0"

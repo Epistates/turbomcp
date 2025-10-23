@@ -25,7 +25,7 @@ syn = { version = "2.0", features = ["full", "extra-traits", "parsing", "visit"]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # JSON Schema generation (always required - macros always generate schemas)
-schemars = { version = "0.8" }
+schemars = { version = "1.0" }
 
 # CRITICAL FIX: Add dependencies for macro-generated code
 # These are required because the #[server] macro generates code that uses these crates

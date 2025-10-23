@@ -37,15 +37,15 @@ futures = { workspace = true }
 # Output formatting
 comfy-table = "7.1"
 owo-colors = "4.1"
-indicatif = "0.17"
+indicatif = "0.18"
 
 # Error handling
 anyhow = "1.0"
 thiserror = { workspace = true }
 
 # Config
-config = "0.14"
-dirs = "5.0"
+config = "0.15"
+dirs = "6.0"
 
 [dev-dependencies]
 tokio-test = "0.4"
