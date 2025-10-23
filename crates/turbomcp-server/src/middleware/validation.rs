@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use jsonschema::{Draft, JSONSchema};
+use jsonschema::Validator;
 use serde_json::Value;
 use tower::{Layer, Service};
 use tracing::{debug, error, warn};
@@ -18,7 +18,7 @@ use tracing::{debug, error, warn};
 #[derive(Debug, Clone)]
 pub struct ValidationConfig {
     /// Pre-compiled JSON schemas by method name
-    pub schemas: Arc<HashMap<String, JSONSchema>>,
+    pub schemas: Arc<HashMap<String, Validator>>,
     /// Whether to validate requests
     pub validate_requests: bool,
     /// Whether to validate responses
@@ -75,12 +75,9 @@ impl ValidationConfig {
 
             for (method, schema_name) in &method_mappings {
                 if let Some(schema_def) = definitions.get(*schema_name) {
-                    match JSONSchema::options()
-                        .with_draft(Draft::Draft7)
-                        .compile(schema_def)
-                    {
-                        Ok(compiled) => {
-                            schemas.insert(method.to_string(), compiled);
+                    match jsonschema::validator_for(schema_def) {
+                        Ok(validator) => {
+                            schemas.insert(method.to_string(), validator);
                         }
                         Err(e) => {
                             // Log warning but continue - some schemas might not compile
@@ -101,25 +98,17 @@ impl ValidationConfig {
     }
 
     /// Add a custom schema for a method
-    /// Note: Due to JSONSchema not implementing Clone, this creates a new config instance
     pub fn with_custom_schema(
         self,
         method: String,
         schema: Value,
     ) -> Result<Self, ValidationError> {
-        let compiled = JSONSchema::options()
-            .with_draft(Draft::Draft7)
-            .compile(&schema)
+        let validator = jsonschema::validator_for(&schema)
             .map_err(|e| ValidationError::SchemaCompileError(format!("{}: {}", method, e)))?;
 
-        // Since JSONSchema doesn't implement Clone, we can only extend existing configs
-        // by building new ones. In production, consider using Arc<RwLock<HashMap>>
-        // or a different schema management strategy.
-
-        // For now, we'll store the new schema separately and merge at runtime
-        // This is a limitation of the current jsonschema library design
+        // Store the new schema separately and merge at runtime
         let mut new_schemas = HashMap::new();
-        new_schemas.insert(method, compiled);
+        new_schemas.insert(method, validator);
 
         Ok(Self {
             schemas: Arc::new(new_schemas),
@@ -236,16 +225,18 @@ where
 pub fn validate_request_params(
     method: &str,
     params: &Value,
-    schemas: &HashMap<String, JSONSchema>,
+    schemas: &HashMap<String, Validator>,
 ) -> Result<(), ValidationError> {
     let schema = schemas.get(method);
 
     match schema {
-        Some(schema) => {
-            let result = schema.validate(params);
+        Some(validator) => {
+            // Use iter_errors to collect all validation errors
+            let errors: Vec<_> = validator.iter_errors(params).collect();
 
-            if let Err(errors) = result {
+            if !errors.is_empty() {
                 let error_messages: Vec<String> = errors
+                    .iter()
                     .map(|e| format!("{}: {}", e.instance_path, e))
                     .collect();
 
@@ -367,8 +358,8 @@ mod tests {
             }
         });
 
-        let compiled = JSONSchema::compile(&test_schema).unwrap();
-        schemas.insert("test_method".to_string(), compiled);
+        let validator = jsonschema::validator_for(&test_schema).unwrap();
+        schemas.insert("test_method".to_string(), validator);
 
         // Valid params
         let valid_params = json!({ "name": "test" });
