@@ -614,7 +614,11 @@ mod tests {
         // This would panic or error if .with_writer(std::io::stderr) was missing
         // and caused a tracing configuration conflict
         let result = config.init();
-        assert!(result.is_ok(), "Failed to initialize observability: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Failed to initialize observability: {:?}",
+            result
+        );
 
         // Test logs can be emitted (proves stderr writer is active)
         // If this were writing to stdout, it would violate MCP spec
