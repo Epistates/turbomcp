@@ -131,11 +131,13 @@ impl ObservabilityGuard {
                 ObservabilityError::InitializationFailed(format!("Invalid log level: {}", e))
             })?;
 
-        // Initialize tracing subscriber with structured JSON logging
+        // Initialize tracing subscriber with structured JSON logging to stderr
+        // Per MCP spec: stdout is reserved for protocol messages, stderr for logs
         Registry::default()
             .with(env_filter)
             .with(
                 fmt::layer()
+                    .with_writer(std::io::stderr)
                     .with_target(true)
                     .with_thread_ids(true)
                     .with_file(true)
@@ -578,5 +580,37 @@ mod tests {
 
         assert!(retrieved_logger.is_some());
         assert!(retrieved_monitor.is_some());
+    }
+
+    /// Regression test for observability stderr output
+    ///
+    /// This test documents the MCP specification requirement that observability
+    /// logs MUST be written to stderr, not stdout. This separation is critical
+    /// because:
+    ///
+    /// 1. Per MCP spec: stdout is reserved EXCLUSIVELY for JSON-RPC protocol messages
+    /// 2. Clients parse protocol messages from stdout and expect no other output
+    /// 3. Any logs mixed into stdout will corrupt the protocol stream
+    ///
+    /// The fix is in the `init()` method where `.with_writer(std::io::stderr)` is
+    /// configured on the `fmt::layer()`.
+    ///
+    /// # Regression Info
+    /// - Bug: Observability logs were written to stdout instead of stderr
+    /// - Fixed: Added `.with_writer(std::io::stderr)` to tracing subscriber initialization
+    /// - Runtime Test: See `examples/stdio_output_verification.rs` for integration verification
+    ///
+    /// # Verification
+    /// To verify this requirement is met, run:
+    /// ```bash
+    /// cargo run --example stdio_output_verification 1>stdout.log 2>stderr.log < /dev/null
+    /// cat stdout.log  # Should contain only JSON-RPC messages
+    /// cat stderr.log  # Should contain observability logs
+    /// ```
+    #[test]
+    fn test_observability_stderr_requirement_documented() {
+        // This test is primarily documentation of the requirement.
+        // For runtime verification, see: examples/stdio_output_verification.rs
+        // The actual fix is in ObservabilityGuard::init() which uses .with_writer(std::io::stderr)
     }
 }

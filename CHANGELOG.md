@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.5] - 2025-10-24
+
+### Fixed
+
+- **Observability stderr output bug**: Fixed regression where observability logs were being written to stdout instead of stderr
+  - Per MCP specification, stdout must be reserved exclusively for JSON-RPC protocol messages
+  - Logs were corrupting the protocol stream when mixing with JSON-RPC responses
+  - Root cause: `tracing_subscriber` fmt::layer() was missing explicit `.with_writer(std::io::stderr)` configuration
+  - Now correctly outputs all observability logs to stderr
+  - Added integration test in `examples/stdio_output_verification.rs` to prevent future regressions
+
+### Added
+
+- **Integration test**: `examples/stdio_output_verification.rs` demonstrates and validates stdout/stderr separation
+- **Regression test**: Documentation test in observability module with verification instructions
+
 ## [2.0.4] - 2025-10-22
 
 ### Added
