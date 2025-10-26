@@ -76,11 +76,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Why TurboMCP?
 
-### ✨ Zero Boilerplate
+### Zero Boilerplate
 
 Automatic JSON schema generation from function signatures. No manual schema construction, argument parsing, or result wrapping.
 
-### 🚀 Progressive Enhancement
+### Progressive Enhancement
 
 Start minimal (STDIO only), add features as needed:
 - HTTP/SSE for web integration
@@ -89,15 +89,16 @@ Start minimal (STDIO only), add features as needed:
 - OAuth 2.1 for authentication
 - SIMD for high throughput
 
-### 🔒 Production Ready
+### Production Ready
 
 - Zero known runtime vulnerabilities
 - Comprehensive error handling
 - Session management with cleanup
 - Rate limiting and security headers
 - Type-safe from compile to runtime
+- 3rd party audit (planned for Q4)
 
-### 🎯 Developer Experience
+### Developer Experience
 
 - Context injection for dependencies
 - Interactive elicitation forms
@@ -962,21 +963,6 @@ make test                    # Run full test suite
 ## 📄 License
 
 Licensed under the [MIT License](./LICENSE) - Enterprise-friendly open source.
-
----
-
-## Status
-
-TurboMCP v2.0.4 provides:
-
-- Zero known security vulnerabilities with continuous monitoring
-- Performance focus with automated regression detection
-- Full MCP 2025-06-18 specification compliance
-- Production deployment patterns with container & Kubernetes support
-- 26 focused examples covering all usage patterns
-- Active development with regular security updates and performance improvements
-
-**Production Status:** TurboMCP 2.0.4 is production-ready with full MCP 2025-06-18 compliance and comprehensive test coverage. The API is stable.
 
 ---
 
