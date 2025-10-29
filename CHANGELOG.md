@@ -7,6 +7,150 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2025-01-29
+
+### Major Features: turbomcp-proxy, OAuth2.1 Flows, Complete Authentication Stack
+
+#### New Crates
+
+##### turbomcp-proxy (NEW)
+**A production-grade MCP protocol proxy with transport flexibility and runtime introspection**
+
+- **Multi-Transport Support** (25 backend×frontend combinations, 100% tested)
+  - **Backends**: STDIO, HTTP, TCP, Unix Domain Sockets, WebSocket
+  - **Frontends**: STDIO, HTTP, TCP, Unix Domain Sockets, WebSocket
+  - All combinations validated with 40+ integration tests
+  - Configurable host, port, socket paths with production-ready error handling
+
+- **Protocol Features**
+  - Authorization code generation and validation
+  - Automatic URL scheme detection and routing
+  - Resource URI binding (RFC 8707 compliant)
+  - Metadata introspection and discovery
+  - Comprehensive error handling with context
+
+- **Architecture & Performance**
+  - Enum dispatch pattern for type-erased transport abstraction
+  - Zero-cost compile-time method dispatch via `dispatch_client!` macro
+  - 100% safe Rust (zero unsafe code)
+  - Consistent security validation across all transports
+
+- **Security**
+  - Command injection prevention
+  - SSRF (Server-Side Request Forgery) protection
+  - Path traversal protection
+  - Production-ready security documentation
+
+- **Testing**
+  - 40+ comprehensive integration tests
+  - All 25 transport combinations tested and working
+  - Security validation tests
+  - Builder pattern and configuration tests
+  - Edge case and metrics coverage
+
+---
+
+#### turbomcp-auth Enhancements
+**Complete OAuth 2.1 client and server implementation with RFC compliance**
+
+##### OAuth2Client - Production OAuth2.1 Flows
+- **Authorization Code Flow with PKCE** (RFC 7636)
+  - Automatic PKCE challenge/verifier generation for enhanced security
+  - State parameter for CSRF protection
+  - Works with all OAuth 2.1 providers
+  - Methods: `authorization_code_flow()`, `exchange_code_for_token()`
+
+- **Token Refresh**
+  - Refresh tokens without user interaction
+  - Automatic token validation checks
+  - Method: `refresh_access_token()`
+
+- **Client Credentials Flow** (Server-to-Server)
+  - Service account authentication
+  - No user interaction required
+  - Method: `client_credentials_flow()`
+
+- **Token Validation**
+  - Client-side expiration checks
+  - Format validation
+  - Integration with OAuth provider introspection endpoints
+
+##### OAuth2Provider (NEW)
+**Full AuthProvider trait implementation for OAuth 2.1**
+- Token validation via userinfo endpoints
+- Token caching (5-minute default) for performance
+- Refresh token handling
+- Automatic userinfo parsing for Google, GitHub, Microsoft, GitLab
+- Integration with AuthManager for multi-provider coordination
+
+##### Server-Side Helpers (NEW)
+**RFC 9728 Protected Resource Metadata and bearer token validation**
+
+- **ProtectedResourceMetadataBuilder**
+  - Generate RFC 9728 compliant metadata
+  - Configurable scopes, bearer methods, documentation URI
+  - Builder pattern for flexibility
+  - JSON serialization for /.well-known/protected-resource endpoint
+
+- **WwwAuthenticateBuilder**
+  - RFC 9728 compliant 401 Unauthorized responses
+  - Automatic header generation
+  - Metadata URI discovery support
+  - Scope and error information
+
+- **BearerTokenValidator**
+  - Extract bearer tokens from Authorization header
+  - Token format validation
+  - Case-insensitive Bearer scheme handling
+  - Structured error messages
+
+##### Examples
+- `oauth2_auth_code_flow.rs` - Complete OAuth2.1 client flow demonstration
+- `protected_resource_server.rs` - Server-side protected resource handling
+
+##### Documentation
+- Comprehensive README with quick-start guides (client and server)
+- RFC compliance matrix (7636, 7591, 8707, 9728, 9449)
+- Security best practices
+- Complete code examples in documentation
+
+---
+
+#### turbomcp-dpop
+**RFC 9449 Proof-of-Possession implementation with HSM support (already available in 2.0.5+)**
+
+- Full RFC 9449 DPoP specification implementation
+- RSA, ECDSA P-256, and PSS algorithm support
+- Replay attack prevention with nonce tracking
+- HSM integration (PKCS#11, YubiHSM)
+- Redis-backed distributed nonce storage
+- Constant-time comparison for timing attack protection
+
+---
+
+#### RFC Compliance Summary
+- **RFC 7636**: PKCE (Proof Key for Public OAuth Clients) - ✅ Fully implemented
+- **RFC 7591**: Dynamic Client Registration Protocol - ✅ Configuration types
+- **RFC 8707**: Resource Indicators for OAuth 2.0 - ✅ Canonical URI validation
+- **RFC 9728**: OAuth 2.0 Protected Resource Metadata - ✅ Full server implementation
+- **RFC 9449**: DPoP (Proof-of-Possession) - ✅ Optional feature
+
+#### Testing
+- **turbomcp-auth**: 18 tests passing
+- **turbomcp-dpop**: 21 tests passing
+- **turbomcp-proxy**: 40+ integration tests (all 25 transport combinations)
+- **Total**: 80+ comprehensive tests with 100% pass rate
+
+#### Breaking Changes
+- ✅ **Zero breaking changes** - fully backward compatible with 2.0.5
+
+#### Migration Path
+- See MIGRATION.md in turbomcp-auth and turbomcp-dpop for detailed upgrade guides
+- Existing API unchanged; new features are purely additive
+
+
+---
+
 ## [2.0.5] - 2025-10-24
 
 ### Fixed
