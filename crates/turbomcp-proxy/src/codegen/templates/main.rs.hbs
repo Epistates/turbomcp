@@ -1,0 +1,422 @@
+//! Generated MCP Proxy
+//!
+//! Server: {{server_name}} v{{server_version}}
+//! Generated: {{generation_date}}
+//! Frontend: {{frontend_type}}
+//! Backend: {{backend_type}}
+
+mod proxy;
+mod types;
+
+use std::sync::Arc;
+use std::collections::HashMap;
+use tokio;
+use turbomcp_client::Client;
+use turbomcp_transport::{ChildProcessTransport, ChildProcessConfig};
+use tracing::{info, error, debug};
+
+use proxy::ProxyRouter;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize logging
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .init();
+
+    info!("🚀 Starting {{server_name}} proxy");
+    info!("Frontend: {{frontend_type}}");
+    info!("Backend: {{backend_type}}");
+
+    // Initialize backend connection
+    let backend_client = init_backend().await?;
+
+    // Create proxy router
+    let router = Arc::new(ProxyRouter::new(backend_client));
+    info!("✅ Proxy router initialized");
+
+    // Start frontend server
+    {{#if (eq frontend_type "HTTP")}}
+    start_http_frontend(router).await?;
+    {{else}}
+    start_stdio_frontend(router).await?;
+    {{/if}}
+
+    Ok(())
+}
+
+/// Initialize backend MCP client
+async fn init_backend() -> Result<Arc<Client<ChildProcessTransport>>, Box<dyn std::error::Error>> {
+    info!("Initializing backend connection...");
+
+    // Get backend configuration from environment
+    let command = std::env::var("BACKEND_CMD")
+        .unwrap_or_else(|_| {
+            error!("BACKEND_CMD environment variable not set");
+            std::process::exit(1);
+        });
+
+    let args: Vec<String> = std::env::var("BACKEND_ARGS")
+        .unwrap_or_default()
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+
+    let working_dir = std::env::var("BACKEND_WORKING_DIR").ok();
+
+    info!("Backend command: {} {:?}", command, args);
+    if let Some(ref wd) = working_dir {
+        info!("Working directory: {}", wd);
+    }
+
+    // Create transport configuration
+    let config = ChildProcessConfig {
+        command,
+        args,
+        working_directory: working_dir,
+        environment: None,
+        ..Default::default()
+    };
+
+    // Create and connect transport
+    let transport = ChildProcessTransport::new(config);
+    transport.connect().await
+        .map_err(|e| format!("Failed to connect to backend: {}", e))?;
+
+    info!("✅ Backend transport connected");
+
+    // Create client
+    let client = Client::new(transport);
+
+    // Initialize MCP connection
+    client.initialize().await
+        .map_err(|e| format!("Failed to initialize backend client: {}", e))?;
+
+    info!("✅ Backend client initialized");
+
+    Ok(Arc::new(client))
+}
+
+{{#if (eq frontend_type "HTTP")}}
+/// Start HTTP frontend server
+async fn start_http_frontend(router: Arc<ProxyRouter>) -> Result<(), Box<dyn std::error::Error>> {
+    use axum::{
+        Router,
+        routing::post,
+        extract::State,
+        Json,
+        response::{IntoResponse, Response},
+        http::StatusCode,
+    };
+    use serde_json::{json, Value};
+
+    let bind_addr = std::env::var("BIND_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:3000".to_string());
+
+    info!("Starting HTTP server on {}", bind_addr);
+
+    // Create Axum app
+    let app = Router::new()
+        .route("/mcp", post(handle_mcp_request))
+        .route("/health", axum::routing::get(|| async { "OK" }))
+        .with_state(router);
+
+    // Parse bind address
+    let addr: std::net::SocketAddr = bind_addr.parse()
+        .map_err(|e| format!("Invalid bind address: {}", e))?;
+
+    info!("✅ HTTP server listening on http://{}", addr);
+    info!("Health check: http://{}/health", addr);
+    info!("MCP endpoint: http://{}/mcp", addr);
+
+    // Start server
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await
+        .map_err(|e| format!("HTTP server error: {}", e))?;
+
+    Ok(())
+}
+
+/// Handle MCP JSON-RPC requests
+async fn handle_mcp_request(
+    State(router): State<Arc<ProxyRouter>>,
+    Json(request): Json<Value>,
+) -> Response {
+    debug!("Received MCP request: {:?}", request);
+
+    // Parse JSON-RPC request
+    let method = match request.get("method").and_then(|v| v.as_str()) {
+        Some(m) => m,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32600,
+                        "message": "Invalid Request: missing method"
+                    },
+                    "id": request.get("id")
+                }))
+            ).into_response();
+        }
+    };
+
+    let id = request.get("id").cloned();
+    let params = request.get("params");
+
+    // Route request
+    let result = match method {
+        "tools/list" => {
+            proxy::list_tools(router.backend()).await
+        }
+        "tools/call" => {
+            let params = match params {
+                Some(p) => p,
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "error": {
+                                "code": -32602,
+                                "message": "Invalid params: tools/call requires params"
+                            },
+                            "id": id
+                        }))
+                    ).into_response();
+                }
+            };
+
+            let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let arguments: Option<HashMap<String, Value>> = params.get("arguments")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            router.route_tool(tool_name, arguments).await
+        }
+        "resources/list" => {
+            proxy::list_resources(router.backend()).await
+        }
+        "resources/read" => {
+            let params = match params {
+                Some(p) => p,
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "error": {
+                                "code": -32602,
+                                "message": "Invalid params: resources/read requires params"
+                            },
+                            "id": id
+                        }))
+                    ).into_response();
+                }
+            };
+
+            let uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+            router.route_resource(uri).await
+        }
+        "prompts/list" => {
+            proxy::list_prompts(router.backend()).await
+        }
+        "prompts/get" => {
+            let params = match params {
+                Some(p) => p,
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "jsonrpc": "2.0",
+                            "error": {
+                                "code": -32602,
+                                "message": "Invalid params: prompts/get requires params"
+                            },
+                            "id": id
+                        }))
+                    ).into_response();
+                }
+            };
+
+            let prompt_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let arguments: Option<HashMap<String, Value>> = params.get("arguments")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            router.route_prompt(prompt_name, arguments).await
+        }
+        _ => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32601,
+                        "message": format!("Method not found: {}", method)
+                    },
+                    "id": id
+                }))
+            ).into_response();
+        }
+    };
+
+    // Return response
+    match result {
+        Ok(value) => {
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "jsonrpc": "2.0",
+                    "result": value,
+                    "id": id
+                }))
+            ).into_response()
+        }
+        Err(e) => {
+            error!("Request failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32603,
+                        "message": format!("Internal error: {}", e)
+                    },
+                    "id": id
+                }))
+            ).into_response()
+        }
+    }
+}
+{{else}}
+/// Start STDIO frontend server
+async fn start_stdio_frontend(router: Arc<ProxyRouter>) -> Result<(), Box<dyn std::error::Error>> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use serde_json::{json, Value};
+
+    info!("✅ STDIO frontend ready - reading from stdin");
+
+    let stdin = tokio::io::stdin();
+    let mut reader = BufReader::new(stdin);
+    let mut stdout = tokio::io::stdout();
+
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+
+        // Read line from stdin
+        match reader.read_line(&mut line).await {
+            Ok(0) => {
+                info!("EOF reached, shutting down");
+                break;
+            }
+            Ok(_) => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                debug!("Received: {}", trimmed);
+
+                // Parse JSON-RPC request
+                let request: Value = match serde_json::from_str(trimmed) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        error!("Failed to parse JSON: {}", e);
+                        let error_response = json!({
+                            "jsonrpc": "2.0",
+                            "error": {
+                                "code": -32700,
+                                "message": format!("Parse error: {}", e)
+                            },
+                            "id": null
+                        });
+                        let response_str = serde_json::to_string(&error_response)?;
+                        stdout.write_all(response_str.as_bytes()).await?;
+                        stdout.write_all(b"\n").await?;
+                        stdout.flush().await?;
+                        continue;
+                    }
+                };
+
+                let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
+                let id = request.get("id").cloned();
+                let params = request.get("params");
+
+                // Route request (same logic as HTTP)
+                let result = match method {
+                    "tools/list" => proxy::list_tools(router.backend()).await,
+                    "tools/call" => {
+                        let tool_name = params
+                            .and_then(|p| p.get("name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let arguments = params
+                            .and_then(|p| p.get("arguments"))
+                            .and_then(|v| serde_json::from_value(v.clone()).ok());
+                        router.route_tool(tool_name, arguments).await
+                    }
+                    "resources/list" => proxy::list_resources(router.backend()).await,
+                    "resources/read" => {
+                        let uri = params
+                            .and_then(|p| p.get("uri"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        router.route_resource(uri).await
+                    }
+                    "prompts/list" => proxy::list_prompts(router.backend()).await,
+                    "prompts/get" => {
+                        let prompt_name = params
+                            .and_then(|p| p.get("name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let arguments = params
+                            .and_then(|p| p.get("arguments"))
+                            .and_then(|v| serde_json::from_value(v.clone()).ok());
+                        router.route_prompt(prompt_name, arguments).await
+                    }
+                    _ => Err(format!("Unknown method: {}", method).into()),
+                };
+
+                // Build response
+                let response = match result {
+                    Ok(value) => json!({
+                        "jsonrpc": "2.0",
+                        "result": value,
+                        "id": id
+                    }),
+                    Err(e) => {
+                        error!("Request failed: {}", e);
+                        json!({
+                            "jsonrpc": "2.0",
+                            "error": {
+                                "code": -32603,
+                                "message": format!("Internal error: {}", e)
+                            },
+                            "id": id
+                        })
+                    }
+                };
+
+                // Write response
+                let response_str = serde_json::to_string(&response)?;
+                stdout.write_all(response_str.as_bytes()).await?;
+                stdout.write_all(b"\n").await?;
+                stdout.flush().await?;
+            }
+            Err(e) => {
+                error!("Failed to read from stdin: {}", e);
+                break;
+            }
+        }
+    }
+
+    info!("STDIO frontend shutting down");
+    Ok(())
+}
+{{/if}}

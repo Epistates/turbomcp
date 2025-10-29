@@ -1,0 +1,212 @@
+//! Proxy implementation for {{server_name}}
+//!
+//! This module provides the proxy logic for forwarding requests between
+//! the {{frontend_type}} frontend and {{backend_type}} backend.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use serde_json::Value;
+use turbomcp_client::Client;
+use turbomcp_transport::{ChildProcessTransport, Transport};
+
+/// Proxy router that forwards MCP requests to the backend server
+pub struct ProxyRouter {
+    /// Backend MCP client
+    backend: Arc<Client<ChildProcessTransport>>,
+}
+
+impl ProxyRouter {
+    /// Create a new proxy router
+    ///
+    /// # Arguments
+    ///
+    /// * `backend` - The backend MCP client (must be initialized)
+    pub fn new(backend: Arc<Client<ChildProcessTransport>>) -> Self {
+        Self { backend }
+    }
+
+    /// Get a reference to the backend client
+    pub fn backend(&self) -> &Arc<Client<ChildProcessTransport>> {
+        &self.backend
+    }
+
+    /// Route a tool call to the appropriate handler
+    ///
+    /// # Arguments
+    ///
+    /// * `tool_name` - The name of the tool to call
+    /// * `arguments` - The arguments for the tool
+    ///
+    /// # Returns
+    ///
+    /// Returns the tool result as JSON value
+    pub async fn route_tool(
+        &self,
+        tool_name: &str,
+        arguments: Option<HashMap<String, Value>>,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        tracing::debug!(tool = tool_name, "Routing tool call");
+
+        match tool_name {
+            {{#each tools}}
+            "{{this.name}}" => self.handle_{{snake_case this.name}}(arguments).await,
+            {{/each}}
+            _ => Err(format!("Unknown tool: {}", tool_name).into()),
+        }
+    }
+
+    {{#each tools}}
+    /// Handle {{this.name}} tool
+    ///
+    /// Description: {{this.description}}
+    {{#if this.input_type}}
+    ///
+    /// # Input Type
+    /// `{{this.input_type}}`
+    {{/if}}
+    async fn handle_{{snake_case this.name}}(
+        &self,
+        arguments: Option<HashMap<String, Value>>,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        tracing::debug!(tool = "{{this.name}}", "Handling tool call");
+
+        // Forward to backend and return result
+        let result = self.backend.call_tool("{{this.name}}", arguments).await
+            .map_err(|e| format!("Backend call failed for {{this.name}}: {}", e))?;
+
+        tracing::debug!(tool = "{{this.name}}", "Tool call successful");
+        Ok(result)
+    }
+
+    {{/each}}
+
+    /// Route a resource read request to the appropriate handler
+    ///
+    /// # Arguments
+    ///
+    /// * `uri` - The URI of the resource to read
+    ///
+    /// # Returns
+    ///
+    /// Returns the resource content as JSON value
+    pub async fn route_resource(
+        &self,
+        uri: &str,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        tracing::debug!(resource_uri = uri, "Routing resource read");
+
+        match uri {
+            {{#each resources}}
+            "{{this.uri}}" => self.read_{{snake_case this.name}}().await,
+            {{/each}}
+            _ => Err(format!("Unknown resource: {}", uri).into()),
+        }
+    }
+
+    {{#each resources}}
+    /// Read {{this.name}} resource
+    ///
+    /// URI: {{this.uri}}
+    /// Description: {{this.description}}
+    async fn read_{{snake_case this.name}}(&self) -> Result<Value, Box<dyn std::error::Error>> {
+        tracing::debug!(resource = "{{this.uri}}", "Reading resource");
+
+        // Forward to backend
+        let result = self.backend.read_resource("{{this.uri}}").await
+            .map_err(|e| format!("Backend read failed for {{this.uri}}: {}", e))?;
+
+        // Convert result to JSON
+        let result_json = serde_json::to_value(&result)
+            .map_err(|e| format!("Failed to serialize resource result: {}", e))?;
+
+        tracing::debug!(resource = "{{this.uri}}", "Resource read successful");
+        Ok(result_json)
+    }
+
+    {{/each}}
+
+    /// Route a prompt request to the appropriate handler
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the prompt
+    /// * `arguments` - Optional arguments for the prompt
+    ///
+    /// # Returns
+    ///
+    /// Returns the prompt result as JSON value
+    pub async fn route_prompt(
+        &self,
+        name: &str,
+        arguments: Option<HashMap<String, Value>>,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        tracing::debug!(prompt = name, "Routing prompt request");
+
+        match name {
+            {{#each prompts}}
+            "{{this.name}}" => self.get_{{snake_case this.name}}(arguments).await,
+            {{/each}}
+            _ => Err(format!("Unknown prompt: {}", name).into()),
+        }
+    }
+
+    {{#each prompts}}
+    /// Get {{this.name}} prompt
+    ///
+    /// Description: {{this.description}}
+    async fn get_{{snake_case this.name}}(
+        &self,
+        arguments: Option<HashMap<String, Value>>,
+    ) -> Result<Value, Box<dyn std::error::Error>> {
+        tracing::debug!(prompt = "{{this.name}}", "Getting prompt");
+
+        // Forward to backend
+        let result = self.backend.get_prompt("{{this.name}}", arguments).await
+            .map_err(|e| format!("Backend prompt failed for {{this.name}}: {}", e))?;
+
+        // Convert result to JSON
+        let result_json = serde_json::to_value(&result)
+            .map_err(|e| format!("Failed to serialize prompt result: {}", e))?;
+
+        tracing::debug!(prompt = "{{this.name}}", "Prompt successful");
+        Ok(result_json)
+    }
+
+    {{/each}}
+}
+
+/// Helper function to list all available tools
+pub async fn list_tools(backend: &Client<ChildProcessTransport>) -> Result<Value, Box<dyn std::error::Error>> {
+    tracing::debug!("Listing all tools");
+
+    let tools = backend.list_tools().await
+        .map_err(|e| format!("Failed to list tools: {}", e))?;
+
+    Ok(serde_json::json!({
+        "tools": tools
+    }))
+}
+
+/// Helper function to list all available resources
+pub async fn list_resources(backend: &Client<ChildProcessTransport>) -> Result<Value, Box<dyn std::error::Error>> {
+    tracing::debug!("Listing all resources");
+
+    let resources = backend.list_resources().await
+        .map_err(|e| format!("Failed to list resources: {}", e))?;
+
+    Ok(serde_json::json!({
+        "resources": resources
+    }))
+}
+
+/// Helper function to list all available prompts
+pub async fn list_prompts(backend: &Client<ChildProcessTransport>) -> Result<Value, Box<dyn std::error::Error>> {
+    tracing::debug!("Listing all prompts");
+
+    let prompts = backend.list_prompts().await
+        .map_err(|e| format!("Failed to list prompts: {}", e))?;
+
+    Ok(serde_json::json!({
+        "prompts": prompts
+    }))
+}

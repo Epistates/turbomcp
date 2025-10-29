@@ -1,0 +1,102 @@
+//! Generated types for {{server_name}}
+//!
+//! This module contains all type definitions extracted from the MCP server
+//! specification, including tool inputs, outputs, and enums.
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+{{#each type_definitions}}
+/// {{this.description}}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+{{#if this.rename}}
+#[serde(rename = "{{this.rename}}")]
+{{/if}}
+pub struct {{this.name}} {
+    {{#each this.fields}}
+    {{#if this.description}}
+    /// {{this.description}}
+    {{/if}}
+    {{#if this.optional}}
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub {{this.name}}: Option<{{this.rust_type}}>,
+    {{else}}
+    pub {{this.name}}: {{this.rust_type}},
+    {{/if}}
+    {{/each}}
+}
+
+{{/each}}
+
+/// Tool enum for type-safe tool dispatch
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "name")]
+pub enum Tool {
+    {{#each tool_enums}}
+    #[serde(rename = "{{this.name}}")]
+    {{pascal_case this.name}} {
+        {{#each this.params}}
+        {{#if this.optional}}
+        #[serde(skip_serializing_if = "Option::is_none")]
+        {{this.name}}: Option<{{this.rust_type}}>,
+        {{else}}
+        {{this.name}}: {{this.rust_type}},
+        {{/if}}
+        {{/each}}
+    },
+    {{/each}}
+}
+
+impl Tool {
+    /// Get the tool name
+    pub fn name(&self) -> &str {
+        match self {
+            {{#each tool_enums}}
+            Tool::{{pascal_case this.name}} { .. } => "{{this.name}}",
+            {{/each}}
+        }
+    }
+
+    /// Convert tool to JSON arguments
+    pub fn to_arguments(&self) -> Value {
+        serde_json::to_value(self).unwrap_or(Value::Null)
+    }
+}
+
+/// Resource enum for type-safe resource access
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Resource {
+    {{#each resource_enums}}
+    {{pascal_case this.name}},
+    {{/each}}
+}
+
+impl Resource {
+    /// Get the resource URI
+    pub fn uri(&self) -> &str {
+        match self {
+            {{#each resource_enums}}
+            Resource::{{pascal_case this.name}} => "{{this.uri}}",
+            {{/each}}
+        }
+    }
+}
+
+/// Prompt enum for type-safe prompt access
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Prompt {
+    {{#each prompt_enums}}
+    {{pascal_case this.name}},
+    {{/each}}
+}
+
+impl Prompt {
+    /// Get the prompt name
+    pub fn name(&self) -> &str {
+        match self {
+            {{#each prompt_enums}}
+            Prompt::{{pascal_case this.name}} => "{{this.name}}",
+            {{/each}}
+        }
+    }
+}
