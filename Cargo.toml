@@ -11,7 +11,7 @@ members = [
     "crates/turbomcp-macros",
     "crates/turbomcp-dpop",  # 2.0.0: Re-extracted for clean minimal build
     "crates/turbomcp-auth",  # 2.0.0: Extracted for clean minimal build
-    # "crates/turbomcp-proxy", # Phase 2 (stashed for v2.0.4 release - will be restored after documentation updates)
+    "crates/turbomcp-proxy", # Phase 2: Universal MCP adapter/generator
     # "crates/turbomcp-security", # DISSOLVED: Security functionality moved to individual crates per ephemeral strategy
     "demo",
 ]
