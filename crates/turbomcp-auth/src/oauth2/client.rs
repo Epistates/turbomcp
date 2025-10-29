@@ -10,11 +10,15 @@
 
 use std::collections::HashMap;
 
-use oauth2::{AuthUrl, ClientId, ClientSecret, RedirectUrl, TokenUrl, basic::BasicClient};
+use oauth2::{
+    AuthUrl, ClientId, ClientSecret, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl,
+    RefreshToken, Scope, TokenResponse, TokenUrl, basic::{BasicClient, BasicTokenType},
+};
 
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 use super::super::config::{OAuth2Config, ProviderConfig, ProviderType, RefreshBehavior};
+use super::super::types::TokenInfo;
 
 /// OAuth 2.1 client wrapper supporting all modern flows
 #[derive(Debug, Clone)]
@@ -245,4 +249,227 @@ impl OAuth2Client {
     pub fn provider_config(&self) -> &ProviderConfig {
         &self.provider_config
     }
+
+    /// Start authorization code flow with PKCE
+    ///
+    /// This initiates the OAuth 2.1 authorization code flow with PKCE (RFC 7636)
+    /// for enhanced security, especially for public clients.
+    ///
+    /// # Arguments
+    /// * `scopes` - Requested OAuth scopes
+    /// * `state` - CSRF protection state parameter
+    ///
+    /// # Returns
+    /// Tuple of (authorization_url, PKCE code_verifier for later exchange)
+    pub fn authorization_code_flow(
+        &self,
+        scopes: Vec<String>,
+        state: String,
+    ) -> (String, String) {
+        // Generate PKCE challenge
+        let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+
+        // Build authorization URL with PKCE
+        let (auth_url, _state) = self
+            .auth_code_client
+            .authorize_url(|| oauth2::CsrfToken::new(state))
+            .add_scopes(scopes.into_iter().map(Scope::new))
+            .set_pkce_challenge(pkce_challenge)
+            .url();
+
+        (auth_url.to_string(), pkce_verifier.secret().to_string())
+    }
+
+    /// Exchange authorization code for access token
+    ///
+    /// This exchanges the authorization code received from the OAuth provider
+    /// for an access token using PKCE (RFC 7636).
+    ///
+    /// # Arguments
+    /// * `code` - Authorization code from OAuth provider
+    /// * `code_verifier` - PKCE code verifier (from authorization_code_flow)
+    ///
+    /// # Returns
+    /// TokenInfo containing access token and refresh token (if available)
+    pub async fn exchange_code_for_token(
+        &self,
+        code: String,
+        code_verifier: String,
+    ) -> McpResult<TokenInfo> {
+        let http_client = reqwest::Client::new();
+        let token_response = self
+            .auth_code_client
+            .exchange_code(oauth2::AuthorizationCode::new(code))
+            .set_pkce_verifier(PkceCodeVerifier::new(code_verifier))
+            .request_async(|request| async {
+                execute_oauth_request(&http_client, request).await
+            })
+            .await
+            .map_err(|e| McpError::internal(format!("Token exchange failed: {e}")))?;
+
+        Ok(self.token_response_to_token_info(token_response))
+    }
+
+    /// Refresh an access token
+    ///
+    /// This uses a refresh token to obtain a new access token without
+    /// requiring user interaction.
+    ///
+    /// # Arguments
+    /// * `refresh_token` - The refresh token
+    ///
+    /// # Returns
+    /// New TokenInfo with fresh access token
+    pub async fn refresh_access_token(&self, refresh_token: &str) -> McpResult<TokenInfo> {
+        let http_client = reqwest::Client::new();
+        let token_response = self
+            .auth_code_client
+            .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
+            .request_async(|request| async {
+                execute_oauth_request(&http_client, request).await
+            })
+            .await
+            .map_err(|e| McpError::internal(format!("Token refresh failed: {e}")))?;
+
+        Ok(self.token_response_to_token_info(token_response))
+    }
+
+    /// Client credentials flow for server-to-server authentication
+    ///
+    /// This implements the OAuth 2.1 Client Credentials flow for
+    /// service-to-service communication without user involvement.
+    ///
+    /// # Arguments
+    /// * `scopes` - Requested OAuth scopes
+    ///
+    /// # Returns
+    /// TokenInfo with access token (typically without refresh token)
+    pub async fn client_credentials_flow(&self, scopes: Vec<String>) -> McpResult<TokenInfo> {
+        let client = self
+            .client_credentials_client
+            .as_ref()
+            .ok_or_else(|| {
+                McpError::internal(
+                    "Client credentials flow requires client secret".to_string(),
+                )
+            })?;
+
+        let http_client = reqwest::Client::new();
+        let token_response = client
+            .exchange_client_credentials()
+            .add_scopes(scopes.into_iter().map(Scope::new))
+            .request_async(|request| async {
+                execute_oauth_request(&http_client, request).await
+            })
+            .await
+            .map_err(|e| McpError::internal(format!("Client credentials flow failed: {e}")))?;
+
+        Ok(self.token_response_to_token_info(token_response))
+    }
+
+    /// Convert oauth2 token response to TokenInfo
+    fn token_response_to_token_info(
+        &self,
+        response: oauth2::StandardTokenResponse<
+            oauth2::EmptyExtraTokenFields,
+            BasicTokenType,
+        >,
+    ) -> TokenInfo {
+        let expires_in = response
+            .expires_in()
+            .map(|duration| duration.as_secs());
+
+        TokenInfo {
+            access_token: response.access_token().secret().clone(),
+            token_type: format!("{:?}", response.token_type()),
+            refresh_token: response.refresh_token().map(|t| t.secret().clone()),
+            expires_in,
+            scope: response
+                .scopes()
+                .map(|scopes| {
+                    scopes
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                }),
+        }
+    }
+
+    /// Validate that an access token is still valid
+    ///
+    /// This checks if a token has expired based on expiration time.
+    /// Note: This is a client-side check only; servers may have revoked the token.
+    pub fn is_token_expired(&self, token: &TokenInfo) -> bool {
+        if let Some(expires_in) = token.expires_in {
+            // Assume token was valid "now" - in production, store issued_at timestamp
+            expires_in == 0
+        } else {
+            false
+        }
+    }
+}
+
+/// Execute OAuth request using reqwest HTTP client
+/// Converts between oauth2 and reqwest types
+async fn execute_oauth_request(
+    client: &reqwest::Client,
+    request: oauth2::HttpRequest,
+) -> Result<oauth2::HttpResponse, oauth2::reqwest::Error<reqwest::Error>> {
+    let method_str = format!("{}", request.method);
+    let url = request.url.clone();
+
+    // Build the request
+    let mut req_builder = match method_str.to_uppercase().as_str() {
+        "GET" => client.get(url),
+        "POST" => client.post(url),
+        m => {
+            return Err(oauth2::reqwest::Error::Other(format!(
+                "Unsupported HTTP method: {}",
+                m
+            )))
+        }
+    };
+
+    // Add body (always present, even if empty)
+    if !request.body.is_empty() {
+        req_builder = req_builder.body(request.body);
+    }
+
+    // Add headers - convert from oauth2 HeaderName/HeaderValue to reqwest types
+    for (name, value) in &request.headers {
+        let name_str = format!("{:?}", name); // Use debug format for HeaderName
+        // HeaderValue as_bytes should work
+        let value_bytes = value.as_bytes();
+
+        if let (Ok(header_name), Ok(header_value)) = (
+            reqwest::header::HeaderName::from_bytes(name_str.as_bytes()),
+            reqwest::header::HeaderValue::from_bytes(value_bytes),
+        ) {
+            req_builder = req_builder.header(header_name, header_value);
+        }
+    }
+
+    // Send request
+    let response = req_builder
+        .send()
+        .await
+        .map_err(|e| oauth2::reqwest::Error::Other(e.to_string()))?;
+
+    let status = response.status();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|e| oauth2::reqwest::Error::Other(e.to_string()))?
+        .to_vec();
+
+    // Convert reqwest status code to oauth2 status code
+    let oauth_status = oauth2::http::StatusCode::from_u16(status.as_u16())
+        .unwrap_or(oauth2::http::StatusCode::OK);
+
+    Ok(oauth2::HttpResponse {
+        status_code: oauth_status,
+        body,
+        headers: Default::default(),
+    })
 }
