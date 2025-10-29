@@ -30,6 +30,7 @@ pub mod config;
 pub mod manager;
 pub mod oauth2;
 pub mod providers;
+pub mod server;
 pub mod types;
 
 // Re-export configuration types
