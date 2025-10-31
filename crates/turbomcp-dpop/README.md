@@ -15,13 +15,13 @@ RFC 9449 compliant DPoP (Demonstrating Proof-of-Possession) implementation for O
 
 ```toml
 [dependencies]
-turbomcp-dpop = "2.0.5"
+turbomcp-dpop = "2.1.0"
 
 # With Redis storage
-turbomcp-dpop = { version = "2.0.5", features = ["redis-storage"] }
+turbomcp-dpop = { version = "2.1.0", features = ["redis-storage"] }
 
 # With HSM support
-turbomcp-dpop = { version = "2.0.5", features = ["hsm"] }
+turbomcp-dpop = { version = "2.1.0", features = ["hsm"] }
 ```
 
 ## Feature Flags

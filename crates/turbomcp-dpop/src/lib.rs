@@ -33,6 +33,7 @@
 
 // Core modules (always available when dpop feature is enabled)
 pub mod errors;
+pub mod helpers;
 pub mod keys;
 pub mod proof;
 pub mod types;
@@ -52,6 +53,9 @@ pub use errors::*;
 pub use keys::*;
 pub use proof::*;
 pub use types::*;
+
+// Re-export builder and validator from helpers
+pub use helpers::{DpopProofParams, DpopProofParamsBuilder, DpopValidator, ValidatedDpopClaims};
 
 /// DPoP result type
 pub type Result<T> = std::result::Result<T, DpopError>;

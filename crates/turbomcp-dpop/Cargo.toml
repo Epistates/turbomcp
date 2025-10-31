@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-dpop"
-version = "2.0.5"
+version = "2.1.0"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "DPoP (RFC 9449) implementation for TurboMCP with HSM support"
@@ -38,6 +38,7 @@ rand = "0.8.5"
 signature = "2.2"
 hex = "0.4"
 zeroize = "1.7"
+subtle = "2.6"
 
 # HTTP types for DPoP proof generation
 http = "1.0"
@@ -48,6 +49,9 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # UUID for nonce generation
 uuid = { version = "1.0", features = ["v4", "v7", "serde"] }
+
+# Builder pattern for ergonomic API
+bon = "3.6"
 
 # Redis storage (optional)
 redis = { version = "0.32.5", features = ["aio", "tokio-comp", "safe_iterators"], optional = true }

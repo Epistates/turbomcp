@@ -8,6 +8,7 @@ use std::fmt;
 use std::time::{Duration, SystemTime};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use rsa::traits::PublicKeyParts;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use zeroize::Zeroize;
@@ -119,6 +120,123 @@ impl DpopKeyPair {
         SystemTime::now()
             .duration_since(self.created_at)
             .unwrap_or(Duration::ZERO)
+    }
+
+    /// Generate a new P-256 (ES256) key pair
+    ///
+    /// Convenience method for generating EC P-256 keys commonly used with DPoP.
+    /// For production use with key rotation and management, use `DpopKeyManager`.
+    ///
+    /// # Errors
+    /// Returns error if key generation fails
+    pub fn generate_p256() -> Result<Self, crate::errors::DpopError> {
+        use p256::ecdsa::{SigningKey, VerifyingKey};
+        use rand::rngs::OsRng;
+        use sha2::{Digest, Sha256};
+
+        let signing_key = SigningKey::random(&mut OsRng);
+        let verifying_key = VerifyingKey::from(&signing_key);
+
+        // Get private key bytes
+        let private_bytes = signing_key.to_bytes();
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(private_bytes.as_ref());
+
+        // Extract x and y coordinates from the public key
+        let public_point = verifying_key.to_encoded_point(false);
+        let x_bytes = public_point.x().ok_or_else(|| crate::errors::DpopError::CryptographicError {
+            reason: "Failed to extract x coordinate from P-256 public key".to_string(),
+        })?;
+        let y_bytes = public_point.y().ok_or_else(|| crate::errors::DpopError::CryptographicError {
+            reason: "Failed to extract y coordinate from P-256 public key".to_string(),
+        })?;
+
+        let mut x = [0u8; 32];
+        let mut y = [0u8; 32];
+        x.copy_from_slice(x_bytes);
+        y.copy_from_slice(y_bytes);
+
+        // Calculate JWK thumbprint per RFC 7638
+        let jwk_json = serde_json::json!({
+            "crv": "P-256",
+            "kty": "EC",
+            "x": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(x),
+            "y": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(y),
+        });
+        let jwk_canonical = jwk_json.to_string();
+        let mut hasher = Sha256::new();
+        hasher.update(jwk_canonical.as_bytes());
+        let thumbprint = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+        Ok(Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            private_key: DpopPrivateKey::EcdsaP256 { key_bytes },
+            public_key: DpopPublicKey::EcdsaP256 { x, y },
+            thumbprint,
+            algorithm: DpopAlgorithm::ES256,
+            created_at: SystemTime::now(),
+            expires_at: None,
+            metadata: DpopKeyMetadata::default(),
+        })
+    }
+
+    /// Generate a new RSA-2048 (RS256) key pair
+    ///
+    /// Convenience method for generating RSA keys.
+    /// For production use with key rotation and management, use `DpopKeyManager`.
+    ///
+    /// # Errors
+    /// Returns error if key generation fails
+    pub fn generate_rs256() -> Result<Self, crate::errors::DpopError> {
+        use rsa::{RsaPrivateKey, RsaPublicKey};
+        use rsa::pkcs8::EncodePrivateKey;
+        use rand::rngs::OsRng;
+        use sha2::{Digest, Sha256};
+
+        let mut rng = OsRng;
+        let bits = 2048;
+        let private_key = RsaPrivateKey::new(&mut rng, bits)
+            .map_err(|e| crate::errors::DpopError::CryptographicError {
+                reason: format!("Failed to generate RSA key: {}", e),
+            })?;
+        let public_key = RsaPublicKey::from(&private_key);
+
+        let private_key_der = private_key
+            .to_pkcs8_der()
+            .map_err(|e| crate::errors::DpopError::CryptographicError {
+                reason: format!("Failed to encode private key: {}", e),
+            })?;
+
+        // Extract n and e parameters from the public key
+        let n_bytes = public_key.n().to_bytes_be();
+        let e_bytes = public_key.e().to_bytes_be();
+
+        // Calculate JWK thumbprint per RFC 7638
+        let jwk_json = serde_json::json!({
+            "e": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&e_bytes),
+            "kty": "RSA",
+            "n": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&n_bytes),
+        });
+        let jwk_canonical = jwk_json.to_string();
+        let mut hasher = Sha256::new();
+        hasher.update(jwk_canonical.as_bytes());
+        let thumbprint = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+        Ok(Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            private_key: DpopPrivateKey::Rsa {
+                key_der: private_key_der.as_bytes().to_vec(),
+            },
+            public_key: DpopPublicKey::Rsa {
+                n: n_bytes,
+                e: e_bytes,
+            },
+            thumbprint,
+            algorithm: DpopAlgorithm::RS256,
+            created_at: SystemTime::now(),
+            expires_at: None,
+            metadata: DpopKeyMetadata::default(),
+        })
     }
 }
 
@@ -522,6 +640,24 @@ impl DpopProof {
     pub fn is_expired(&self, max_age: Duration) -> bool {
         let issued_at = SystemTime::UNIX_EPOCH + Duration::from_secs(self.payload.iat as u64);
         SystemTime::now() > issued_at + max_age
+    }
+
+    /// Create a builder for DPoP proof generation
+    ///
+    /// Returns a builder that provides a fluent, type-safe API for creating DPoP proofs.
+    /// The builder uses compile-time checks to ensure required parameters are provided.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let proof = DpopProof::builder()
+    ///     .http_method("GET")
+    ///     .http_uri("https://api.example.com/resource")
+    ///     .access_token("token_value")
+    ///     .build_with_key(&key_pair)
+    ///     .await?;
+    /// ```
+    pub fn builder() -> crate::helpers::DpopProofParamsBuilder {
+        crate::helpers::DpopProofParams::builder()
     }
 }
 
