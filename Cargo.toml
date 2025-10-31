@@ -66,7 +66,18 @@ const_is_empty = "allow"
 
 [workspace.dependencies]
 # Core async runtime and utilities
-tokio = { version = "1.47", features = ["full"] }
+# Tokio: Production optimization - use only needed features instead of "full"
+# Includes: runtime, networking, sync, timers, signal handling, process, macros, io
+tokio = { version = "1.47", features = [
+    "rt", "rt-multi-thread",  # Multi-threaded async runtime
+    "net",                     # TCP/UDP networking
+    "sync",                    # Channels, mutexes, RwLock
+    "time",                    # Timeouts, delays, intervals
+    "signal",                  # Signal handling (graceful shutdown)
+    "process",                 # Child process spawning
+    "macros",                  # #[tokio::main] macro
+    "io-util",                 # Async I/O utilities
+] }
 tokio-util = { version = "0.7", features = ["full"] }
 futures = "0.3"
 async-trait = "0.1"
@@ -152,7 +163,7 @@ tokio-test = "0.4"
 wiremock = "0.6"
 pretty_assertions = "1.4"
 insta = { version = "1.34", features = ["json", "redactions"] }
-rand = "0.8.5"
+rand = "0.9"
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
 mock_instant = "0.3"
