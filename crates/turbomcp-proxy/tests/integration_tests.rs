@@ -14,7 +14,7 @@ async fn test_proxy_service_creation() {
     // which are covered by end-to-end testing in the main examples.
 
     // Placeholder for now - full integration tests require working stdio_server
-    assert!(true, "ProxyService module structure verified");
+    // ProxyService module structure verified - this test ensures the module compiles
 }
 
 #[tokio::test]
@@ -63,15 +63,11 @@ fn test_backend_transport_types() {
         path: "/tmp/mcp.sock".to_string(),
     };
 
-    #[cfg(feature = "websocket")]
-    {
-        let _ws = BackendTransport::WebSocket {
-            url: "ws://localhost:3000".to_string(),
-        };
-    }
+    let _ws = BackendTransport::WebSocket {
+        url: "ws://localhost:3000".to_string(),
+    };
 
-    // All variants construct successfully
-    assert!(true);
+    // All variants construct successfully - this test verifies enum variants are complete
 }
 
 #[tokio::test]

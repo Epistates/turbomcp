@@ -1,7 +1,7 @@
 // Placeholder benchmark for runtime proxy
 // Will be implemented in Phase 2
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 fn benchmark_runtime_proxy(_c: &mut Criterion) {
     // TODO: Implement in Phase 2

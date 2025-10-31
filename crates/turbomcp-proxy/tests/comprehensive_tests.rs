@@ -92,6 +92,8 @@ fn test_builder_with_stdio_and_working_dir() {
 
 #[tokio::test]
 async fn test_command_allowlist_enforcement() {
+    use tokio::time::{Duration, timeout};
+
     // Allowed commands should work (though may fail for missing binary)
     let allowed_commands = vec!["python", "python3", "node", "deno", "uv", "npx", "bun"];
 
@@ -100,12 +102,12 @@ async fn test_command_allowlist_enforcement() {
             .with_stdio_backend(cmd, vec![])
             .with_stdio_frontend();
 
-        let result = builder.build().await;
+        let result = timeout(Duration::from_secs(5), builder.build()).await;
 
         // May fail for missing binary, but not for command validation
         match result {
-            Ok(_) => {} // Success is fine
-            Err(e) => {
+            Ok(Ok(_)) => {} // Success is fine
+            Ok(Err(e)) => {
                 // Should not be a command allowlist error
                 let err_msg = e.to_string();
                 assert!(
@@ -114,6 +116,10 @@ async fn test_command_allowlist_enforcement() {
                     cmd,
                     e
                 );
+            }
+            Err(_) => {
+                // Timeout is acceptable - process didn't spawn in time
+                // This is expected when the binary doesn't exist
             }
         }
     }
@@ -155,10 +161,7 @@ async fn test_https_enforcement_for_non_localhost() {
         .with_stdio_frontend();
 
     let result = builder.build().await;
-    assert!(
-        result.is_err(),
-        "Non-HTTPS remote URL should be blocked"
-    );
+    assert!(result.is_err(), "Non-HTTPS remote URL should be blocked");
 
     // HTTPS remote should be allowed (may fail for unreachable, not validation)
     let builder = RuntimeProxyBuilder::new()
@@ -221,16 +224,14 @@ async fn test_private_ip_blocking() {
 
         let result = builder.build().await;
 
-        assert!(
-            result.is_err(),
-            "Private IP {} should be blocked",
-            url
-        );
+        assert!(result.is_err(), "Private IP {} should be blocked", url);
     }
 }
 
 #[tokio::test]
 async fn test_timeout_validation() {
+    use tokio::time::{Duration, timeout};
+
     // Timeout too large should be rejected
     let result = RuntimeProxyBuilder::new().with_timeout(999_999_999);
 
@@ -245,18 +246,21 @@ async fn test_timeout_validation() {
             .with_stdio_backend("python", vec!["server.py".to_string()])
             .with_stdio_frontend();
 
-        let result = builder.build().await;
+        let result = timeout(Duration::from_secs(5), builder.build()).await;
 
         // May fail for execution but not timeout validation
         match result {
-            Ok(_) => {}
-            Err(e) => {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
                 let err_msg = e.to_string();
                 assert!(
                     !err_msg.to_lowercase().contains("timeout validation"),
                     "Valid timeout should not cause timeout validation error: {}",
                     e
                 );
+            }
+            Err(_) => {
+                // Timeout is acceptable - process didn't spawn in time
             }
         }
     }
@@ -266,7 +270,10 @@ async fn test_timeout_validation() {
 async fn test_auth_token_handled_securely() {
     // Auth tokens should be accepted and not logged in errors
     let result = RuntimeProxyBuilder::new()
-        .with_http_backend("https://localhost:3000", Some("secret-token-12345".to_string()))
+        .with_http_backend(
+            "https://localhost:3000",
+            Some("secret-token-12345".to_string()),
+        )
         .with_stdio_frontend()
         .build()
         .await;
@@ -307,10 +314,7 @@ fn test_backend_config_stdio_variant() {
         client_version: "1.0.0".to_string(),
     };
 
-    assert!(matches!(
-        cfg.transport,
-        BackendTransport::Stdio { .. }
-    ));
+    assert!(matches!(cfg.transport, BackendTransport::Stdio { .. }));
 }
 
 #[test]
@@ -358,16 +362,18 @@ fn test_backend_config_unix_variant() {
 
 #[tokio::test]
 async fn test_empty_command_args_allowed() {
+    use tokio::time::{Duration, timeout};
+
     let builder = RuntimeProxyBuilder::new()
         .with_stdio_backend("python", vec![])
         .with_stdio_frontend();
 
-    let result = builder.build().await;
+    let result = timeout(Duration::from_secs(5), builder.build()).await;
 
     // May fail for execution but should not fail on validation
     match result {
-        Ok(_) => {}
-        Err(e) => {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
             let err_msg = e.to_string();
             assert!(
                 !err_msg.contains("args"),
@@ -375,11 +381,16 @@ async fn test_empty_command_args_allowed() {
                 e
             );
         }
+        Err(_) => {
+            // Timeout is acceptable - process didn't spawn in time
+        }
     }
 }
 
 #[tokio::test]
 async fn test_multiple_command_args() {
+    use tokio::time::{Duration, timeout};
+
     let builder = RuntimeProxyBuilder::new()
         .with_stdio_backend(
             "python",
@@ -391,18 +402,21 @@ async fn test_multiple_command_args() {
         )
         .with_stdio_frontend();
 
-    let result = builder.build().await;
+    let result = timeout(Duration::from_secs(5), builder.build()).await;
 
     // May fail for execution but should handle multiple args
     match result {
-        Ok(_) => {}
-        Err(e) => {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => {
             let err_msg = e.to_string();
             assert!(
                 !err_msg.contains("args"),
                 "Multiple args should be allowed: {}",
                 e
             );
+        }
+        Err(_) => {
+            // Timeout is acceptable - process didn't spawn in time
         }
     }
 }

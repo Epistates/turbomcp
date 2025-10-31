@@ -16,10 +16,26 @@
 # Inspect any MCP server
 turbomcp-proxy inspect stdio --cmd "python my-server.py"
 
-# Expose STDIO server over HTTP/SSE (most common use case)
+# Expose STDIO server over HTTP/SSE (development)
 turbomcp-proxy serve \
   --backend stdio --cmd "python my-server.py" \
-  --frontend http --bind 0.0.0.0:3000
+  --frontend http --bind 127.0.0.1:3000
+
+# Expose with JWT authentication (production - symmetric)
+turbomcp-proxy serve \
+  --backend stdio --cmd "python my-server.py" \
+  --frontend http --bind 0.0.0.0:3000 \
+  --jwt-secret "your-secret-key" \
+  --jwt-algorithm HS256
+
+# Expose with JWKS (production - asymmetric, OAuth providers)
+turbomcp-proxy serve \
+  --backend stdio --cmd "python my-server.py" \
+  --frontend http --bind 0.0.0.0:3000 \
+  --jwt-jwks-uri "https://accounts.google.com/.well-known/jwks.json" \
+  --jwt-algorithm RS256 \
+  --jwt-audience "https://api.example.com" \
+  --jwt-issuer "https://accounts.google.com"
 
 # Generate optimized Rust proxy
 turbomcp-proxy generate \
@@ -38,24 +54,28 @@ turbomcp-proxy schema openapi \
 
 ## Features
 
-### 🌐 Universal Compatibility
-Works with **any MCP implementation**:
-- ✅ TurboMCP (Rust)
-- ✅ Python SDK
-- ✅ TypeScript SDK
-- ✅ Custom implementations
+### Universal Compatibility
 
-### 🔍 Introspection-Based
+Works with **any MCP implementation**:
+- [x] TurboMCP (Rust)
+- [x] Python SDK
+- [x] TypeScript SDK
+- [x] Custom implementations
+
+### Introspection-Based
+
 - **Zero configuration** - discovers capabilities automatically
 - Extracts tools, resources, prompts with JSON schemas
 - Caches results for fast repeated use
 
-### ⚡ Multiple Modes
+### Multiple Modes
+
 - **Runtime Mode**: Fast prototyping, no compilation needed
 - **Codegen Mode**: Production binaries with 0ms overhead
 - **Schema Mode**: Export OpenAPI, GraphQL, Protobuf
 
-### 🔌 Universal Transport Support
+### Universal Transport Support
+
 - **STDIO ↔ HTTP/SSE** (bidirectional)
 - **HTTP ↔ STDIO** (bidirectional)
 - **TCP** (high-performance network)
@@ -63,20 +83,30 @@ Works with **any MCP implementation**:
 - **WebSocket** (browser-friendly, real-time)
 - **25+ Transport Combinations** (5 backends × 5 frontends)
 
-### 🔒 Production Security
+### Authentication & Security
+
+- **JWT Authentication** (RFC 7519 validation)
+  - Symmetric algorithms: HS256, HS384, HS512
+  - Asymmetric algorithms: RS256, RS384, RS512, ES256, ES384
+  - JWKS support for OAuth providers (Google, GitHub, Auth0, etc.)
+  - Automatic key caching with TTL
+  - Claims validation (exp, nbf, iat, iss, aud)
+  - Clock skew tolerance (60s default)
+- **API Key Authentication** (configurable header)
+- **OAuth 2.1 Support** (via turbomcp-auth integration)
+- **DPoP Token Binding** (RFC 9449, optional)
 - **Command allowlist** (prevents shell injection)
 - **SSRF protection** (blocks private IPs, metadata endpoints)
 - **Path traversal protection** (canonical path resolution)
 - **Auth token security** (automatic secret zeroization)
 - **Request limiting** (DoS protection, 10 MB default)
 - **Timeout enforcement** (prevents hanging requests)
-- **Comprehensive security audit** (world-class security practices)
 
 ---
 
 ## Use Cases
 
-### 1. Expose STDIO Server Over HTTP (90% of use cases)
+### 1. Expose STDIO Server Over HTTP (Most Common Use Case)
 
 **Problem:** You have a CLI MCP server, but need HTTP clients to access it
 
@@ -84,18 +114,32 @@ Works with **any MCP implementation**:
 # Your CLI server
 ./my-mcp-server
 
-# Expose it over HTTP
+# Expose it over HTTP (development)
 turbomcp-proxy serve \
   --backend stdio --cmd "./my-mcp-server" \
-  --frontend http --bind 0.0.0.0:3000
+  --frontend http --bind 127.0.0.1:3000
+
+# Expose with JWT authentication (production)
+turbomcp-proxy serve \
+  --backend stdio --cmd "./my-mcp-server" \
+  --frontend http --bind 0.0.0.0:3000 \
+  --jwt-secret "your-secret-key"
+
+# Expose with API key authentication (production)
+turbomcp-proxy serve \
+  --backend stdio --cmd "./my-mcp-server" \
+  --frontend http --bind 0.0.0.0:3000 \
+  --require-auth \
+  --api-key-header x-api-key
 
 # Now accessible via HTTP
 curl -X POST http://localhost:3000/mcp \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <jwt-token>" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-### 2. Connect to HTTP Server from STDIO Client (Phase 3 ✅)
+### 2. Connect to HTTP Server from STDIO Client
 
 **Problem:** Your tool expects STDIO, but server is HTTP
 
@@ -106,7 +150,7 @@ turbomcp-proxy serve \
   --frontend stdio \
   | my-cli-tool
 
-# With authentication
+# With backend authentication
 turbomcp-proxy serve \
   --backend http --http https://api.example.com/mcp \
   --auth-token "your-secret-token" \
@@ -246,25 +290,49 @@ Examples:
 ```bash
 turbomcp-proxy serve [OPTIONS]
 
-Options:
+Backend Options:
   --backend <TYPE>    Backend type (stdio, http, tcp, unix, websocket)
   --cmd <CMD>         Command to run (for stdio backend)
   --server <URL>      Server URL (for http/websocket backend)
   --tcp <HOST:PORT>   TCP endpoint (for tcp backend)
   --unix <PATH>       Unix socket path (for unix backend)
+  --auth-token <TOK>  Authentication token for HTTP backend
+
+Frontend Options:
   --frontend <TYPE>   Frontend type (stdio, http, tcp, unix, websocket)
   --bind <ADDR>       Bind address (for http/tcp/websocket frontend)
   --endpoint <PATH>   HTTP endpoint path (default: /mcp)
 
+Authentication Options (Frontend HTTP Server):
+  --jwt-secret <SECRET>        JWT secret for token validation
+  --api-key-header <HEADER>    API key header name (default: x-api-key)
+  --require-auth               Require authentication for all requests
+
+Environment Variables:
+  TURBOMCP_JWT_SECRET          JWT secret (alternative to --jwt-secret)
+
 Examples:
-  # STDIO → HTTP (most common)
+  # STDIO → HTTP (development, localhost only)
   turbomcp-proxy serve \
     --backend stdio --cmd "python server.py" \
-    --frontend http --bind 0.0.0.0:3000
+    --frontend http --bind 127.0.0.1:3000
 
-  # HTTP → STDIO
+  # STDIO → HTTP with JWT authentication (production)
+  turbomcp-proxy serve \
+    --backend stdio --cmd "python server.py" \
+    --frontend http --bind 0.0.0.0:3000 \
+    --jwt-secret "your-secret-key"
+
+  # STDIO → HTTP with API key authentication (production)
+  turbomcp-proxy serve \
+    --backend stdio --cmd "python server.py" \
+    --frontend http --bind 0.0.0.0:3000 \
+    --require-auth
+
+  # HTTP → STDIO with backend authentication
   turbomcp-proxy serve \
     --backend http --server https://api.example.com/mcp \
+    --auth-token "backend-token" \
     --frontend stdio
 
   # TCP → HTTP (high-performance network)
@@ -363,55 +431,71 @@ Examples:
 
 ## Development Status
 
-**Current Version:** 2.1.0 ✨ NEW
-**MVP Status:** ✅ Complete - Production Ready (Phases 1-4)
-**Latest Release:** 2.1.0 - Transport Expansion & Comprehensive Testing
+**Current Version:** 2.1.0
+**MVP Status:** Complete - Production Ready (Phases 1-4)
+**Latest Release:** 2.1.0 - Transport Expansion & Authentication
 
 See **[Progress Tracker](../../PROXY_PROGRESS.md)** for detailed progress.
 
-### Version 2.1.0 - Transport Expansion ✅ NEW
+### Version 2.1.0 - Transport Expansion & Authentication
 
 **Transport Coverage:**
-- ✅ **STDIO** (subprocess, CLI tools)
-- ✅ **HTTP/SSE** (web services, APIs)
-- ✅ **TCP** (high-performance network) - NEW
-- ✅ **Unix Domain Sockets** (IPC, same-host) - NEW
-- ✅ **WebSocket** (real-time, browser-friendly)
-- ✅ **25 Transport Combinations** (5 backends × 5 frontends)
+- [x] **STDIO** (subprocess, CLI tools)
+- [x] **HTTP/SSE** (web services, APIs)
+- [x] **TCP** (high-performance network)
+- [x] **Unix Domain Sockets** (IPC, same-host)
+- [x] **WebSocket** (real-time, browser-friendly)
+- [x] **25 Transport Combinations** (5 backends × 5 frontends)
+
+**Authentication & Security:**
+- [x] **JWT Authentication** (RFC 7519, HS256 validation)
+- [x] **API Key Authentication** (configurable header)
+- [x] **Environment Variable Support** (TURBOMCP_JWT_SECRET)
+- [x] **Security Warnings** (alerts when binding publicly without auth)
+- [x] **Command Allowlist** (prevents shell injection)
+- [x] **SSRF Protection** (blocks private IPs, metadata endpoints)
+- [x] **Path Traversal Protection** (canonical path resolution)
+- [x] **Auth Token Security** (automatic secret zeroization)
 
 **Quality Assurance:**
-- ✅ **40+ Comprehensive Tests** (transport combinations, security validations)
-- ✅ **World-Class Security Review** (SECURITY_REVIEW.md)
-- ✅ **Production Security** (command allowlist, SSRF protection, path traversal, auth tokens)
-- ✅ **Zero TODO Markers** (production-ready)
-- ✅ **100% Safe Rust** (no unsafe code)
+- [x] **40+ Comprehensive Tests** (transport combinations, security validations)
+- [x] **World-Class Security Review** (SECURITY_REVIEW.md)
+- [x] **Zero TODO Markers** (production-ready)
+- [x] **100% Safe Rust** (no unsafe code)
 
 **Core Components:**
-- ✅ **BackendConnector**: Supports 5 transport types with type-erased enum dispatch
-- ✅ **ProxyService**: McpService trait implementation for Axum integration
-- ✅ **IdTranslator**: Bidirectional message ID mapping for session correlation
-- ✅ **Introspection**: Complete server capability discovery (tools, resources, prompts)
-- ✅ **RuntimeProxyBuilder**: Security-first builder with comprehensive validation
+- [x] **BackendConnector**: Supports 5 transport types with type-erased enum dispatch
+- [x] **ProxyService**: McpService trait implementation for Axum integration
+- [x] **IdTranslator**: Bidirectional message ID mapping for session correlation
+- [x] **Introspection**: Complete server capability discovery (tools, resources, prompts)
+- [x] **RuntimeProxyBuilder**: Security-first builder with comprehensive validation
+- [x] **Authentication**: JWT and API key support via turbomcp-transport integration
 
 ### Roadmap
 
-- [x] **Phase 0:** Design & Planning (✅ Complete)
-- [x] **Phase 1:** Introspection Engine (✅ Complete - October 2025)
-- [x] **Phase 2:** Runtime Proxy - STDIO → HTTP (✅ Complete - October 2025)
-- [x] **Phase 3:** Runtime Proxy - HTTP → STDIO (✅ Complete - October 2025)
-- [x] **Phase 4:** Code Generation (✅ Complete - October 2025)
+- [x] **Phase 0:** Design & Planning (Complete)
+- [x] **Phase 1:** Introspection Engine (Complete - October 2025)
+- [x] **Phase 2:** Runtime Proxy - STDIO → HTTP (Complete - October 2025)
+- [x] **Phase 3:** Runtime Proxy - HTTP → STDIO (Complete - October 2025)
+- [x] **Phase 4:** Code Generation (Complete - October 2025)
   - 777 lines of production templates
   - 51/51 tests passing
   - Zero TODO markers
   - Type-safe Rust generation from JSON Schema
   - Dual frontend support (HTTP + STDIO)
+- [x] **Phase 4.5:** Authentication Integration (Complete - October 2025)
+  - JWT authentication (RFC 7519)
+  - API key authentication
+  - Environment variable support
+  - Security warnings for public bindings
 - [ ] **Phase 5:** Schema Export (Planning)
 - [ ] **Phase 6:** Protocol Adapters (Planning)
 - [ ] **Phase 7:** Production Features (Planning)
 
-**MVP Target:** Phases 1-3 (✅ Complete - October 2025)
-**Code Generation:** Phase 4 (✅ Complete - October 2025)
-**Full Release:** All phases (4/7 complete - 57%)
+**MVP Target:** Phases 1-3 (Complete - October 2025)
+**Code Generation:** Phase 4 (Complete - October 2025)
+**Authentication:** Phase 4.5 (Complete - October 2025)
+**Full Release:** All phases (4.5/7 complete - 64%)
 
 ---
 
@@ -454,4 +538,4 @@ MCP servers are often CLI tools (STDIO), but clients need network access (HTTP).
 
 ---
 
-**Made with ❤️ by the TurboMCP team**
+**Built by the TurboMCP team**
