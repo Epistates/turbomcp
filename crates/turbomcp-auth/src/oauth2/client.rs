@@ -53,7 +53,9 @@ impl OAuth2Client {
         let client_secret = if config.client_secret.expose_secret().is_empty() {
             None
         } else {
-            Some(ClientSecret::new(config.client_secret.expose_secret().clone()))
+            Some(ClientSecret::new(
+                config.client_secret.expose_secret().clone(),
+            ))
         };
 
         let mut auth_code_client = BasicClient::new(
@@ -476,11 +478,12 @@ impl OAuth2Client {
         let http_client = reqwest::Client::new();
 
         // Per RFC 7009 Section 2: Prefer refresh token, fallback to access token
-        let token_to_revoke: StandardRevocableToken = if let Some(ref refresh_token) = token_info.refresh_token {
-            RefreshToken::new(refresh_token.clone()).into()
-        } else {
-            oauth2::AccessToken::new(token_info.access_token.clone()).into()
-        };
+        let token_to_revoke: StandardRevocableToken =
+            if let Some(ref refresh_token) = token_info.refresh_token {
+                RefreshToken::new(refresh_token.clone()).into()
+            } else {
+                oauth2::AccessToken::new(token_info.access_token.clone()).into()
+            };
 
         self.auth_code_client
             .revoke_token(token_to_revoke)

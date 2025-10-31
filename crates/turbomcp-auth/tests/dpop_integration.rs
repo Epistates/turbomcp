@@ -18,7 +18,7 @@
 
 mod common;
 
-use common::{sha256_hash, MockOAuth2Server};
+use common::{MockOAuth2Server, sha256_hash};
 use turbomcp_dpop::{DpopKeyPair, DpopProof, DpopValidator};
 
 #[tokio::test]
@@ -113,7 +113,10 @@ async fn test_dpop_replay_attack_prevention() {
     // Note: In production, validator would track jti values
     // For this test, we verify the proof structure supports replay detection
     let jti = &first_validation.unwrap().jti;
-    assert!(!jti.is_empty(), "Proof should have unique jti for replay detection");
+    assert!(
+        !jti.is_empty(),
+        "Proof should have unique jti for replay detection"
+    );
 
     // Each proof should have a unique jti
     let proof2 = DpopProof::builder()
@@ -127,7 +130,10 @@ async fn test_dpop_replay_attack_prevention() {
     let second_validation = validator.validate(&proof2, Some(access_token)).await;
     let jti2 = &second_validation.unwrap().jti;
 
-    assert_ne!(jti, jti2, "Each proof must have unique jti to prevent replay");
+    assert_ne!(
+        jti, jti2,
+        "Each proof must have unique jti to prevent replay"
+    );
 }
 
 #[tokio::test]
@@ -269,7 +275,7 @@ async fn test_dpop_nonce_challenge_response() {
 #[tokio::test]
 async fn test_dpop_clock_skew_tolerance() {
     // GIVEN: A DPoP proof with timestamp slightly in the future
-    use std::time::{SystemTime, Duration};
+    use std::time::{Duration, SystemTime};
 
     let key_pair = DpopKeyPair::generate_p256().expect("Failed to generate key pair");
 
@@ -333,8 +339,18 @@ async fn test_dpop_key_rotation() {
 
     // THEN: Both proofs are structurally valid
     let validator = DpopValidator::new();
-    assert!(validator.validate(&proof_old, Some(access_token)).await.is_ok());
-    assert!(validator.validate(&proof_new, Some(access_token)).await.is_ok());
+    assert!(
+        validator
+            .validate(&proof_old, Some(access_token))
+            .await
+            .is_ok()
+    );
+    assert!(
+        validator
+            .validate(&proof_new, Some(access_token))
+            .await
+            .is_ok()
+    );
 
     // Note: Access tokens are bound to specific public keys
     // In production, token binding check would verify:

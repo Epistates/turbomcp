@@ -119,18 +119,24 @@ async fn test_concurrent_multi_provider_authentication() {
     let github_body: serde_json::Value = github_response.json().await.unwrap();
     let microsoft_body: serde_json::Value = microsoft_response.json().await.unwrap();
 
-    assert!(google_body["access_token"]
-        .as_str()
-        .unwrap()
-        .contains("google"));
-    assert!(github_body["access_token"]
-        .as_str()
-        .unwrap()
-        .contains("github"));
-    assert!(microsoft_body["access_token"]
-        .as_str()
-        .unwrap()
-        .contains("microsoft"));
+    assert!(
+        google_body["access_token"]
+            .as_str()
+            .unwrap()
+            .contains("google")
+    );
+    assert!(
+        github_body["access_token"]
+            .as_str()
+            .unwrap()
+            .contains("github")
+    );
+    assert!(
+        microsoft_body["access_token"]
+            .as_str()
+            .unwrap()
+            .contains("microsoft")
+    );
 }
 
 /// Test: Per-provider JWKS endpoint configuration
@@ -232,20 +238,22 @@ async fn test_issuer_specific_validation_rules() {
         let required_claims = config["required_claims"].as_array().unwrap();
 
         // THEN: Each provider has unique requirements
-        assert!(!required_claims.is_empty(), "Provider {} should have required claims", issuer);
+        assert!(
+            !required_claims.is_empty(),
+            "Provider {} should have required claims",
+            issuer
+        );
 
         if issuer.contains("google") {
-            assert!(required_claims
-                .iter()
-                .any(|c| c.as_str() == Some("email_verified")));
+            assert!(
+                required_claims
+                    .iter()
+                    .any(|c| c.as_str() == Some("email_verified"))
+            );
         } else if issuer.contains("github") {
-            assert!(required_claims
-                .iter()
-                .any(|c| c.as_str() == Some("login")));
+            assert!(required_claims.iter().any(|c| c.as_str() == Some("login")));
         } else if issuer.contains("microsoft") {
-            assert!(required_claims
-                .iter()
-                .any(|c| c.as_str() == Some("tid")));
+            assert!(required_claims.iter().any(|c| c.as_str() == Some("tid")));
         }
     }
 
@@ -262,7 +270,10 @@ async fn test_provider_failover() {
     let backup_server = MockOAuth2Server::start().await;
 
     // Primary provider fails
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
 
     Mock::given(method("POST"))
         .and(path("/token"))
@@ -296,10 +307,12 @@ async fn test_provider_failover() {
 
             assert_eq!(backup_result.status(), 200);
             let backup_body: serde_json::Value = backup_result.json().await.unwrap();
-            assert!(backup_body["access_token"]
-                .as_str()
-                .unwrap()
-                .contains("backup"));
+            assert!(
+                backup_body["access_token"]
+                    .as_str()
+                    .unwrap()
+                    .contains("backup")
+            );
         }
         _ => panic!("Expected primary provider to fail"),
     }
@@ -316,13 +329,9 @@ async fn test_cross_provider_token_isolation() {
     let google_server = MockOAuth2Server::start().await;
     let github_server = MockOAuth2Server::start().await;
 
-    google_server
-        .mock_token_success("google_token", None)
-        .await;
+    google_server.mock_token_success("google_token", None).await;
 
-    github_server
-        .mock_token_success("github_token", None)
-        .await;
+    github_server.mock_token_success("github_token", None).await;
 
     let client = reqwest::Client::new();
 
@@ -396,7 +405,10 @@ async fn test_provider_specific_error_formats() {
     let github_server = MockOAuth2Server::start().await;
 
     // Google error format (OAuth 2.0 standard)
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
 
     Mock::given(method("POST"))
         .and(path("/token"))
@@ -444,7 +456,10 @@ async fn test_provider_specific_error_formats() {
 
     assert_eq!(google_body["error"], "invalid_grant");
     assert_eq!(github_body["error"], "bad_verification_code");
-    assert!(github_body["error_uri"].is_string(), "GitHub includes error_uri");
+    assert!(
+        github_body["error_uri"].is_string(),
+        "GitHub includes error_uri"
+    );
 
     // Document: Map provider errors to unified error types
 }
@@ -499,7 +514,12 @@ async fn test_concurrent_jwks_fetching_multi_provider() {
     // THEN: All JWKS fetches succeed
     for (i, task) in tasks.into_iter().enumerate() {
         let response = task.await.expect("Task failed");
-        assert_eq!(response.status(), 200, "{} JWKS fetch should succeed", provider_names[i]);
+        assert_eq!(
+            response.status(),
+            200,
+            "{} JWKS fetch should succeed",
+            provider_names[i]
+        );
 
         let jwks: serde_json::Value = response.json().await.unwrap();
         let kid = jwks["keys"][0]["kid"].as_str().unwrap();

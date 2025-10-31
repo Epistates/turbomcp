@@ -266,16 +266,21 @@ impl DpopProofParams {
     ///
     /// # Errors
     /// Returns error if proof generation fails
-    pub async fn build_with_key(self, key_pair: &crate::types::DpopKeyPair) -> crate::Result<crate::types::DpopProof> {
+    pub async fn build_with_key(
+        self,
+        key_pair: &crate::types::DpopKeyPair,
+    ) -> crate::Result<crate::types::DpopProof> {
         // Use the existing proof generator
         let generator = crate::proof::DpopProofGenerator::new_simple().await?;
-        generator.generate_proof_with_params(
-            &self.http_method,
-            &self.http_uri,
-            self.access_token.as_deref(),
-            self.nonce.as_deref(),
-            Some(key_pair)
-        ).await
+        generator
+            .generate_proof_with_params(
+                &self.http_method,
+                &self.http_uri,
+                self.access_token.as_deref(),
+                self.nonce.as_deref(),
+                Some(key_pair),
+            )
+            .await
     }
 }
 
@@ -302,14 +307,14 @@ impl DpopValidator {
             clock_tolerance_secs: 60,
         }
     }
-    
+
     /// Create a validator with custom clock tolerance
     #[must_use]
     pub fn with_clock_tolerance(mut self, seconds: i64) -> Self {
         self.clock_tolerance_secs = seconds;
         self
     }
-    
+
     /// Validate a DPoP proof
     ///
     /// Performs comprehensive validation including:
@@ -323,22 +328,22 @@ impl DpopValidator {
     pub async fn validate(
         &self,
         proof: &crate::types::DpopProof,
-        access_token: Option<&str>
+        access_token: Option<&str>,
     ) -> crate::Result<ValidatedDpopClaims> {
         // Validate header
         self.validate_header(&proof.header)?;
-        
+
         // Validate timestamp
         self.validate_timestamp(&proof.payload)?;
-        
+
         // Validate required claims
         self.validate_required_claims(&proof.payload)?;
-        
+
         // Validate access token binding if provided
         if let Some(token) = access_token {
             self.validate_access_token_binding(proof, token)?;
         }
-        
+
         Ok(ValidatedDpopClaims {
             htm: proof.payload.htm.clone(),
             htu: proof.payload.htu.clone(),
@@ -347,17 +352,21 @@ impl DpopValidator {
             iat: proof.payload.iat,
         })
     }
-    
+
     fn validate_header(&self, header: &crate::types::DpopHeader) -> crate::Result<()> {
         // Check typ is "dpop+jwt"
         if header.typ != crate::DPOP_JWT_TYPE {
             return Err(crate::errors::DpopError::ProofValidationFailed {
-                reason: format!("Invalid typ header: expected '{}', got '{}'", crate::DPOP_JWT_TYPE, header.typ),
+                reason: format!(
+                    "Invalid typ header: expected '{}', got '{}'",
+                    crate::DPOP_JWT_TYPE,
+                    header.typ
+                ),
             });
         }
         Ok(())
     }
-    
+
     fn validate_timestamp(&self, payload: &crate::types::DpopPayload) -> crate::Result<()> {
         use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -379,7 +388,7 @@ impl DpopValidator {
 
         Ok(())
     }
-    
+
     fn validate_required_claims(&self, payload: &crate::types::DpopPayload) -> crate::Result<()> {
         if payload.jti.is_empty() {
             return Err(crate::errors::DpopError::InvalidProofStructure {
@@ -398,8 +407,12 @@ impl DpopValidator {
         }
         Ok(())
     }
-    
-    fn validate_access_token_binding(&self, proof: &crate::types::DpopProof, token: &str) -> crate::Result<()> {
+
+    fn validate_access_token_binding(
+        &self,
+        proof: &crate::types::DpopProof,
+        token: &str,
+    ) -> crate::Result<()> {
         use sha2::{Digest, Sha256};
 
         // Compute expected ath claim
@@ -412,7 +425,10 @@ impl DpopValidator {
         match &proof.payload.ath {
             Some(ath) if ath == &expected_ath => Ok(()),
             Some(ath) => Err(crate::errors::DpopError::AccessTokenHashFailed {
-                reason: format!("Access token hash mismatch: expected '{}', got '{}'", expected_ath, ath),
+                reason: format!(
+                    "Access token hash mismatch: expected '{}', got '{}'",
+                    expected_ath, ath
+                ),
             }),
             None => Err(crate::errors::DpopError::AccessTokenHashFailed {
                 reason: "Missing ath claim for access token binding".to_string(),

@@ -162,7 +162,10 @@ pub struct OAuth2Config {
     /// Client ID
     pub client_id: String,
     /// Client secret (stored securely with automatic zeroization on drop)
-    #[serde(serialize_with = "serialize_secret", deserialize_with = "deserialize_secret")]
+    #[serde(
+        serialize_with = "serialize_secret",
+        deserialize_with = "deserialize_secret"
+    )]
     pub client_secret: SecretString,
     /// Authorization endpoint
     pub auth_url: String,

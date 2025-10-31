@@ -33,7 +33,7 @@ async fn test_reject_none_algorithm_attack() {
         eyJzdWIiOiJhdHRhY2tlciIsImlzcyI6ImV2aWwuY29tIiwiYXVkIjoidGFyZ2V0LmNvbSIsImV4cCI6OTk5OTk5OTk5OX0.";
 
     // WHEN: We try to validate this JWT
-    use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = false; // Focus on algorithm check
@@ -77,10 +77,7 @@ async fn test_reject_jwk_injection_in_access_token() {
     let has_embedded_jwk = malicious_header.get("jwk").is_some();
 
     // THEN: We reject tokens with embedded JWK
-    assert!(
-        has_embedded_jwk,
-        "Test setup: JWT has embedded JWK"
-    );
+    assert!(has_embedded_jwk, "Test setup: JWT has embedded JWK");
 
     // In production: Access token validator should:
     // 1. Decode header without validation
@@ -102,8 +99,7 @@ async fn test_dpop_prevents_token_substitution() {
     use turbomcp_dpop::{DpopKeyPair, DpopProof, DpopValidator};
 
     // GIVEN: Legitimate user has DPoP-bound token
-    let legitimate_key = DpopKeyPair::generate_p256()
-        .expect("Failed to generate legitimate key");
+    let legitimate_key = DpopKeyPair::generate_p256().expect("Failed to generate legitimate key");
     let stolen_token = "dpop_bound_access_token";
 
     // Legitimate proof (correct key)
@@ -117,8 +113,7 @@ async fn test_dpop_prevents_token_substitution() {
         .expect("Failed to build legitimate proof");
 
     // WHEN: Attacker steals token and tries to use it with their key
-    let attacker_key = DpopKeyPair::generate_p256()
-        .expect("Failed to generate attacker key");
+    let attacker_key = DpopKeyPair::generate_p256().expect("Failed to generate attacker key");
 
     let attacker_proof = DpopProof::builder()
         .http_method("GET")
@@ -134,14 +129,19 @@ async fn test_dpop_prevents_token_substitution() {
 
     // Legitimate user succeeds
     assert!(
-        validator.validate(&legitimate_proof, Some(stolen_token)).await.is_ok(),
+        validator
+            .validate(&legitimate_proof, Some(stolen_token))
+            .await
+            .is_ok(),
         "Legitimate user with correct key should succeed"
     );
 
     // Attacker fails (in production, server checks token is bound to proof's key)
     // The ath claim validates, but the cnf claim in token wouldn't match attacker's key
     // Note: Full validation requires checking token's cnf claim against proof's JWK
-    let attacker_result = validator.validate(&attacker_proof, Some(stolen_token)).await;
+    let attacker_result = validator
+        .validate(&attacker_proof, Some(stolen_token))
+        .await;
     assert!(
         attacker_result.is_ok(), // Proof itself is valid
         "Proof structure is valid, but token binding check would fail"
@@ -188,7 +188,10 @@ async fn test_replay_attack_prevention_with_jti() {
     };
 
     // THEN: First request succeeds
-    assert!(first_attempt, "First request with unique jti should succeed");
+    assert!(
+        first_attempt,
+        "First request with unique jti should succeed"
+    );
 
     // WHEN: Attacker replays same JWT (same jti)
     let replay_attempt = {
@@ -202,7 +205,10 @@ async fn test_replay_attack_prevention_with_jti() {
     };
 
     // THEN: Replay is rejected
-    assert!(!replay_attempt, "Replay with duplicate jti must be rejected");
+    assert!(
+        !replay_attempt,
+        "Replay with duplicate jti must be rejected"
+    );
 
     // Production considerations:
     // - Store jti with expiration (TTL = token lifetime + clock skew)
@@ -246,10 +252,12 @@ async fn test_pkce_downgrade_attack_prevention() {
     assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.expect("Invalid JSON");
     assert_eq!(body["error"], "invalid_request");
-    assert!(body["error_description"]
-        .as_str()
-        .unwrap()
-        .contains("code_verifier"));
+    assert!(
+        body["error_description"]
+            .as_str()
+            .unwrap()
+            .contains("code_verifier")
+    );
 }
 
 /// Test: Token type confusion (Bearer vs DPoP)
@@ -396,8 +404,8 @@ async fn test_scope_escalation_prevention() {
     // Attacker requests: "read:profile admin:all"
     // Server grants:     "read:profile" (only authorized scopes)
 
-    use wiremock::{Mock, ResponseTemplate};
     use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
 
     Mock::given(method("POST"))
         .and(path("/token"))
@@ -427,7 +435,10 @@ async fn test_scope_escalation_prevention() {
     let granted_scope = body["scope"].as_str().unwrap();
 
     assert_eq!(granted_scope, "read:profile");
-    assert!(!granted_scope.contains("admin"), "Server must not grant unauthorized scopes");
+    assert!(
+        !granted_scope.contains("admin"),
+        "Server must not grant unauthorized scopes"
+    );
 }
 
 use std::collections::HashSet;

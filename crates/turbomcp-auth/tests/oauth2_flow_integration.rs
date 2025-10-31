@@ -38,7 +38,10 @@ async fn test_oauth2_token_exchange_success() {
             ("code", "test_auth_code_12345"),
             ("redirect_uri", "http://localhost:3000/callback"),
             ("client_id", "test_client_id"),
-            ("code_verifier", "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"), // PKCE
+            (
+                "code_verifier",
+                "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk",
+            ), // PKCE
         ])
         .send()
         .await
@@ -78,10 +81,12 @@ async fn test_oauth2_token_exchange_invalid_code() {
     assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.expect("Invalid JSON");
     assert_eq!(body["error"], "invalid_grant");
-    assert!(body["error_description"]
-        .as_str()
-        .unwrap()
-        .contains("invalid"));
+    assert!(
+        body["error_description"]
+            .as_str()
+            .unwrap()
+            .contains("invalid")
+    );
 }
 
 #[tokio::test]
@@ -90,8 +95,8 @@ async fn test_oauth2_pkce_code_challenge_validation() {
     let mock_server = MockOAuth2Server::start().await;
 
     // Generate PKCE challenge from verifier
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use sha2::{Digest, Sha256};
 
     let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -135,9 +140,7 @@ async fn test_oauth2_refresh_token_flow() {
     let mock_server = MockOAuth2Server::start().await;
     let new_access_token = "ya29.a0AfH6SMBx_NEW...";
 
-    mock_server
-        .mock_token_success(new_access_token, None)
-        .await;
+    mock_server.mock_token_success(new_access_token, None).await;
 
     // WHEN: We refresh an access token using a refresh token
     let client = reqwest::Client::new();

@@ -17,7 +17,7 @@
 mod common;
 
 use common::current_timestamp;
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -67,7 +67,10 @@ async fn test_jwt_expiration_boundary() {
 
     // THEN: Token is expired (exp is inclusive boundary)
     // RFC 7519: "exp" claim identifies expiration time on or after which JWT MUST NOT be accepted
-    assert!(result.is_err(), "Token at exact exp timestamp should be rejected");
+    assert!(
+        result.is_err(),
+        "Token at exact exp timestamp should be rejected"
+    );
 }
 
 /// Test: Clock skew tolerance (accept JWT slightly in future)
@@ -125,8 +128,11 @@ async fn test_clock_skew_tolerance() {
     )
     .expect("Failed to encode JWT");
 
-    let result_too_far =
-        decode::<TestClaims>(&token_too_far, &DecodingKey::from_secret(&secret), &validation);
+    let result_too_far = decode::<TestClaims>(
+        &token_too_far,
+        &DecodingKey::from_secret(&secret),
+        &validation,
+    );
 
     assert!(
         result_too_far.is_err(),
@@ -205,14 +211,14 @@ async fn test_missing_required_claims() {
     validation.set_required_spec_claims(&["sub", "exp", "iss"]);
     validation.validate_aud = false; // Don't validate audience for this test
 
-    let result = decode::<serde_json::Value>(
-        &token,
-        &DecodingKey::from_secret(&secret),
-        &validation,
-    );
+    let result =
+        decode::<serde_json::Value>(&token, &DecodingKey::from_secret(&secret), &validation);
 
     // THEN: Validation fails due to missing claim
-    assert!(result.is_err(), "JWT without required sub claim should be rejected");
+    assert!(
+        result.is_err(),
+        "JWT without required sub claim should be rejected"
+    );
 
     // Test: JWT with all required claims
     let claims_complete = json!({
@@ -273,13 +279,19 @@ async fn test_audience_claim_variations() {
         &DecodingKey::from_secret(&secret),
         &validation,
     );
-    assert!(result_single.is_ok(), "Single audience string should be accepted");
+    assert!(
+        result_single.is_ok(),
+        "Single audience string should be accepted"
+    );
 
     // Test 2: Multiple audiences as array
     let claims_array = TestClaims {
         sub: "user123".to_string(),
         iss: Some("https://auth.example.com".to_string()),
-        aud: Some(json!(["https://api.example.com", "https://api2.example.com"])), // Array
+        aud: Some(json!([
+            "https://api.example.com",
+            "https://api2.example.com"
+        ])), // Array
         exp: Some(now + 3600),
         iat: Some(now),
         nbf: Some(now),
@@ -292,8 +304,11 @@ async fn test_audience_claim_variations() {
     )
     .expect("Failed to encode JWT");
 
-    let result_array =
-        decode::<TestClaims>(&token_array, &DecodingKey::from_secret(&secret), &validation);
+    let result_array = decode::<TestClaims>(
+        &token_array,
+        &DecodingKey::from_secret(&secret),
+        &validation,
+    );
     assert!(
         result_array.is_ok(),
         "Audience array containing expected value should be accepted"
@@ -303,8 +318,11 @@ async fn test_audience_claim_variations() {
     let mut validation_wrong = Validation::new(Algorithm::HS256);
     validation_wrong.set_audience(&["https://wrong-audience.com"]);
 
-    let result_mismatch =
-        decode::<TestClaims>(&token_single, &DecodingKey::from_secret(&secret), &validation_wrong);
+    let result_mismatch = decode::<TestClaims>(
+        &token_single,
+        &DecodingKey::from_secret(&secret),
+        &validation_wrong,
+    );
     assert!(
         result_mismatch.is_err(),
         "JWT with non-matching audience should be rejected"
@@ -340,15 +358,22 @@ async fn test_issuer_validation() {
     validation.validate_aud = false; // Don't validate audience
 
     let result = decode::<TestClaims>(&token, &DecodingKey::from_secret(&secret), &validation);
-    assert!(result.is_ok(), "JWT from expected issuer should be accepted: {:?}", result.as_ref().err());
+    assert!(
+        result.is_ok(),
+        "JWT from expected issuer should be accepted: {:?}",
+        result.as_ref().err()
+    );
 
     // Test 2: Wrong issuer
     let mut validation_wrong = Validation::new(Algorithm::HS256);
     validation_wrong.set_issuer(&["https://wrong-issuer.com"]);
     validation_wrong.validate_aud = false; // Don't validate audience
 
-    let result_wrong =
-        decode::<TestClaims>(&token, &DecodingKey::from_secret(&secret), &validation_wrong);
+    let result_wrong = decode::<TestClaims>(
+        &token,
+        &DecodingKey::from_secret(&secret),
+        &validation_wrong,
+    );
     assert!(
         result_wrong.is_err(),
         "JWT from unexpected issuer should be rejected"
@@ -359,8 +384,11 @@ async fn test_issuer_validation() {
     validation_multi.set_issuer(&["https://auth.example.com", "https://auth2.example.com"]);
     validation_multi.validate_aud = false; // Don't validate audience
 
-    let result_multi =
-        decode::<TestClaims>(&token, &DecodingKey::from_secret(&secret), &validation_multi);
+    let result_multi = decode::<TestClaims>(
+        &token,
+        &DecodingKey::from_secret(&secret),
+        &validation_multi,
+    );
     assert!(
         result_multi.is_ok(),
         "JWT from one of multiple allowed issuers should be accepted"
@@ -431,11 +459,8 @@ async fn test_missing_expiration() {
     validation.validate_exp = true;
     validation.set_required_spec_claims(&["exp"]);
 
-    let result = decode::<serde_json::Value>(
-        &token,
-        &DecodingKey::from_secret(&secret),
-        &validation,
-    );
+    let result =
+        decode::<serde_json::Value>(&token, &DecodingKey::from_secret(&secret), &validation);
 
     // THEN: Validation fails
     assert!(

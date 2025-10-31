@@ -60,7 +60,10 @@ async fn test_jwks_fallback_to_cache_on_endpoint_failure() {
     let cache_timestamp = SystemTime::now();
 
     // WHEN: JWKS endpoint becomes unreachable (network issue, server down)
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
 
     Mock::given(method("GET"))
         .and(path("/jwks"))
@@ -91,7 +94,10 @@ async fn test_jwks_fallback_to_cache_on_endpoint_failure() {
         }
         Err(_) => {
             // Network error - use cached keys
-            assert!(cached_jwks["keys"].is_array(), "Should use cached JWKS on network failure");
+            assert!(
+                cached_jwks["keys"].is_array(),
+                "Should use cached JWKS on network failure"
+            );
         }
         _ => {}
     }
@@ -128,7 +134,10 @@ async fn test_key_rotation_with_grace_period() {
     });
 
     // Phase 1: Publish new key alongside old key (grace period)
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
 
     Mock::given(method("GET"))
         .and(path("/jwks"))
@@ -151,13 +160,20 @@ async fn test_key_rotation_with_grace_period() {
 
     // THEN: Both keys are available (grace period)
     let keys = rotation_jwks["keys"].as_array().unwrap();
-    assert_eq!(keys.len(), 2, "Should have both old and new keys during grace period");
+    assert_eq!(
+        keys.len(),
+        2,
+        "Should have both old and new keys during grace period"
+    );
 
     let new_kid = keys[0]["kid"].as_str().unwrap();
     let old_kid = keys[1]["kid"].as_str().unwrap();
 
     assert!(new_kid.contains("new"), "First key should be new (active)");
-    assert!(old_kid.contains("old"), "Second key should be old (grace period)");
+    assert!(
+        old_kid.contains("old"),
+        "Second key should be old (grace period)"
+    );
 
     // Phase 2: After grace period (1-2 seconds), remove old key
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -176,10 +192,15 @@ async fn test_key_rotation_with_grace_period() {
         .await
         .expect("JWKS fetch failed");
 
-    let post_grace_jwks: serde_json::Value = post_grace_response.json().await.expect("Invalid JSON");
+    let post_grace_jwks: serde_json::Value =
+        post_grace_response.json().await.expect("Invalid JSON");
     let final_keys = post_grace_jwks["keys"].as_array().unwrap();
 
-    assert_eq!(final_keys.len(), 1, "After grace period, only new key should remain");
+    assert_eq!(
+        final_keys.len(),
+        1,
+        "After grace period, only new key should remain"
+    );
 
     // Document: Grace period prevents validation failures during rotation
     // Zalando's approach: Automated rotation with phased rollout
@@ -236,7 +257,10 @@ async fn test_cache_invalidation_on_signature_failure() {
             "e": "AQAB"
         });
 
-        use wiremock::{Mock, ResponseTemplate, matchers::{method, path}};
+        use wiremock::{
+            Mock, ResponseTemplate,
+            matchers::{method, path},
+        };
 
         Mock::given(method("GET"))
             .and(path("/jwks"))
@@ -253,10 +277,14 @@ async fn test_cache_invalidation_on_signature_failure() {
             .expect("JWKS refresh failed");
 
         assert_eq!(refresh_response.status(), 200);
-        let refreshed_jwks: serde_json::Value = refresh_response.json().await.expect("Invalid JSON");
+        let refreshed_jwks: serde_json::Value =
+            refresh_response.json().await.expect("Invalid JSON");
 
         let refreshed_kid = refreshed_jwks["keys"][0]["kid"].as_str().unwrap();
-        assert_eq!(refreshed_kid, "new-key", "Should fetch updated JWKS on signature failure");
+        assert_eq!(
+            refreshed_kid, "new-key",
+            "Should fetch updated JWKS on signature failure"
+        );
     }
 
     // Document: Cache invalidation prevents using stale keys
@@ -295,9 +323,7 @@ async fn test_jwks_cache_ttl_refresh() {
     assert_eq!(initial_response.status(), 200);
 
     // WHEN: Requests arrive within TTL
-    let elapsed = SystemTime::now()
-        .duration_since(fetch_time)
-        .unwrap();
+    let elapsed = SystemTime::now().duration_since(fetch_time).unwrap();
 
     if elapsed < cache_ttl {
         // THEN: Serve from cache (no network request)
@@ -318,7 +344,10 @@ async fn test_jwks_cache_ttl_refresh() {
         "e": "AQAB"
     });
 
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
 
     Mock::given(method("GET"))
         .and(path("/jwks"))
@@ -466,7 +495,10 @@ async fn test_jwks_cache_control_headers() {
         "e": "AQAB"
     });
 
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
 
     Mock::given(method("GET"))
         .and(path("/jwks"))
@@ -500,12 +532,12 @@ async fn test_jwks_cache_control_headers() {
         "JWKS endpoint should return Cache-Control header"
     );
 
-    let etag = response
-        .headers()
-        .get("etag")
-        .and_then(|h| h.to_str().ok());
+    let etag = response.headers().get("etag").and_then(|h| h.to_str().ok());
 
-    assert!(etag.is_some(), "JWKS endpoint should return ETag for validation");
+    assert!(
+        etag.is_some(),
+        "JWKS endpoint should return ETag for validation"
+    );
 
     // Document: Client should parse max-age for cache TTL
     // Use ETag for conditional requests (If-None-Match: "jwks-v1")

@@ -144,12 +144,18 @@ impl DpopKeyPair {
 
         // Extract x and y coordinates from the public key
         let public_point = verifying_key.to_encoded_point(false);
-        let x_bytes = public_point.x().ok_or_else(|| crate::errors::DpopError::CryptographicError {
-            reason: "Failed to extract x coordinate from P-256 public key".to_string(),
-        })?;
-        let y_bytes = public_point.y().ok_or_else(|| crate::errors::DpopError::CryptographicError {
-            reason: "Failed to extract y coordinate from P-256 public key".to_string(),
-        })?;
+        let x_bytes =
+            public_point
+                .x()
+                .ok_or_else(|| crate::errors::DpopError::CryptographicError {
+                    reason: "Failed to extract x coordinate from P-256 public key".to_string(),
+                })?;
+        let y_bytes =
+            public_point
+                .y()
+                .ok_or_else(|| crate::errors::DpopError::CryptographicError {
+                    reason: "Failed to extract y coordinate from P-256 public key".to_string(),
+                })?;
 
         let mut x = [0u8; 32];
         let mut y = [0u8; 32];
@@ -188,24 +194,25 @@ impl DpopKeyPair {
     /// # Errors
     /// Returns error if key generation fails
     pub fn generate_rs256() -> Result<Self, crate::errors::DpopError> {
-        use rsa::{RsaPrivateKey, RsaPublicKey};
-        use rsa::pkcs8::EncodePrivateKey;
         use rand::rngs::OsRng;
+        use rsa::pkcs8::EncodePrivateKey;
+        use rsa::{RsaPrivateKey, RsaPublicKey};
         use sha2::{Digest, Sha256};
 
         let mut rng = OsRng;
         let bits = 2048;
-        let private_key = RsaPrivateKey::new(&mut rng, bits)
-            .map_err(|e| crate::errors::DpopError::CryptographicError {
+        let private_key = RsaPrivateKey::new(&mut rng, bits).map_err(|e| {
+            crate::errors::DpopError::CryptographicError {
                 reason: format!("Failed to generate RSA key: {}", e),
-            })?;
+            }
+        })?;
         let public_key = RsaPublicKey::from(&private_key);
 
-        let private_key_der = private_key
-            .to_pkcs8_der()
-            .map_err(|e| crate::errors::DpopError::CryptographicError {
+        let private_key_der = private_key.to_pkcs8_der().map_err(|e| {
+            crate::errors::DpopError::CryptographicError {
                 reason: format!("Failed to encode private key: {}", e),
-            })?;
+            }
+        })?;
 
         // Extract n and e parameters from the public key
         let n_bytes = public_key.n().to_bytes_be();

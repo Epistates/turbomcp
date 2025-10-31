@@ -8,8 +8,8 @@
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wiremock::{
-    matchers::{method, path},
     Mock, MockServer, ResponseTemplate,
+    matchers::{method, path},
 };
 
 /// OAuth2 mock server configuration
@@ -77,12 +77,10 @@ impl MockOAuth2Server {
     pub async fn mock_token_error(&self, error: &str, description: &str) {
         Mock::given(method("POST"))
             .and(path("/token"))
-            .respond_with(
-                ResponseTemplate::new(400).set_body_json(json!({
-                    "error": error,
-                    "error_description": description,
-                })),
-            )
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "error": error,
+                "error_description": description,
+            })))
             .mount(&self.server)
             .await;
     }
@@ -91,11 +89,9 @@ impl MockOAuth2Server {
     pub async fn mock_jwks(&self, jwk: serde_json::Value) {
         Mock::given(method("GET"))
             .and(path("/jwks"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({
-                    "keys": [jwk]
-                })),
-            )
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "keys": [jwk]
+            })))
             .mount(&self.server)
             .await;
     }
@@ -104,10 +100,10 @@ impl MockOAuth2Server {
     pub async fn mock_authorize_redirect(&self, redirect_uri: &str, code: &str, state: &str) {
         Mock::given(method("GET"))
             .and(path("/authorize"))
-            .respond_with(
-                ResponseTemplate::new(302)
-                    .insert_header("Location", format!("{}?code={}&state={}", redirect_uri, code, state)),
-            )
+            .respond_with(ResponseTemplate::new(302).insert_header(
+                "Location",
+                format!("{}?code={}&state={}", redirect_uri, code, state),
+            ))
             .mount(&self.server)
             .await;
     }
@@ -119,7 +115,7 @@ pub fn generate_test_jwt(
     private_key: &[u8],
     algorithm: jsonwebtoken::Algorithm,
 ) -> String {
-    use jsonwebtoken::{encode, EncodingKey, Header};
+    use jsonwebtoken::{EncodingKey, Header, encode};
 
     let key = match algorithm {
         jsonwebtoken::Algorithm::RS256 => {
@@ -139,8 +135,8 @@ pub fn generate_test_jwt(
 
 /// Generate a test RSA key pair (PEM format) for testing
 pub fn generate_test_rsa_keypair() -> (Vec<u8>, Vec<u8>) {
-    use rsa::{pkcs8::EncodePrivateKey, pkcs8::EncodePublicKey, RsaPrivateKey};
     use rsa::pkcs8::LineEnding;
+    use rsa::{RsaPrivateKey, pkcs8::EncodePrivateKey, pkcs8::EncodePublicKey};
 
     let mut rng = rand::thread_rng();
     let bits = 2048;
@@ -171,12 +167,7 @@ pub fn current_timestamp() -> u64 {
 }
 
 /// Create test JWT claims with standard fields
-pub fn test_jwt_claims(
-    sub: &str,
-    iss: &str,
-    aud: &str,
-    exp_offset_secs: i64,
-) -> serde_json::Value {
+pub fn test_jwt_claims(sub: &str, iss: &str, aud: &str, exp_offset_secs: i64) -> serde_json::Value {
     let now = current_timestamp();
     json!({
         "sub": sub,
@@ -190,8 +181,8 @@ pub fn test_jwt_claims(
 
 /// Calculate SHA-256 hash (for DPoP ath claim)
 pub fn sha256_hash(data: &str) -> String {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use sha2::{Digest, Sha256};
 
     let mut hasher = Sha256::new();

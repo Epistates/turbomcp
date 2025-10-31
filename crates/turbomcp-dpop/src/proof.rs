@@ -86,7 +86,8 @@ impl DpopProofGenerator {
     ) -> Result<DpopProof> {
         // For now, delegate to existing method (nonce will be auto-generated)
         // Full nonce support can be added later if needed
-        self.generate_proof_with_key(method, uri, access_token, key_pair).await
+        self.generate_proof_with_key(method, uri, access_token, key_pair)
+            .await
     }
 
     /// Generate a DPoP proof for an HTTP request

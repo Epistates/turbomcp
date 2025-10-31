@@ -56,7 +56,10 @@ async fn test_automatic_token_refresh_before_expiration() {
 
     // Best practice: Refresh 5 minutes before expiration (or 80% of lifetime)
     let refresh_threshold = (expires_in as f64 * 0.8) as u64;
-    assert!(refresh_threshold < expires_in, "Should refresh before expiration");
+    assert!(
+        refresh_threshold < expires_in,
+        "Should refresh before expiration"
+    );
 
     // WHEN: Client proactively refreshes before expiration
     let new_access_token = "access_token_refreshed";
@@ -65,7 +68,10 @@ async fn test_automatic_token_refresh_before_expiration() {
     let refresh_server = MockOAuth2Server::start().await;
 
     // Mock successful refresh
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
     Mock::given(method("POST"))
         .and(path("/token"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -129,7 +135,10 @@ async fn test_refresh_token_rotation_single_use() {
     assert_eq!(initial_response.status(), 200);
 
     // WHEN: Client uses refresh token (first time)
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path, body_string_contains}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{body_string_contains, method, path},
+    };
 
     Mock::given(method("POST"))
         .and(path("/token"))
@@ -145,14 +154,20 @@ async fn test_refresh_token_rotation_single_use() {
 
     let first_refresh = client
         .post(&mock_server.token_endpoint)
-        .form(&[("grant_type", "refresh_token"), ("refresh_token", initial_refresh)])
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", initial_refresh),
+        ])
         .send()
         .await
         .expect("Request failed");
 
     assert_eq!(first_refresh.status(), 200);
     let body: serde_json::Value = first_refresh.json().await.expect("Invalid JSON");
-    assert_eq!(body["refresh_token"], rotated_refresh, "Should return NEW refresh token");
+    assert_eq!(
+        body["refresh_token"], rotated_refresh,
+        "Should return NEW refresh token"
+    );
 
     // Track used token
     {
@@ -173,7 +188,10 @@ async fn test_refresh_token_rotation_single_use() {
 
     let reuse_attempt = client
         .post(&mock_server.token_endpoint)
-        .form(&[("grant_type", "refresh_token"), ("refresh_token", initial_refresh)])
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", initial_refresh),
+        ])
         .send()
         .await
         .expect("Request failed");
@@ -201,7 +219,10 @@ async fn test_refresh_token_rotation_grace_period() {
     let new_refresh = "refresh_new";
 
     // WHEN: Token is rotated
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
 
     Mock::given(method("POST"))
         .and(path("/token"))
@@ -217,7 +238,10 @@ async fn test_refresh_token_rotation_grace_period() {
     let client = reqwest::Client::new();
     let rotation_response = client
         .post(&mock_server.token_endpoint)
-        .form(&[("grant_type", "refresh_token"), ("refresh_token", old_refresh)])
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", old_refresh),
+        ])
         .send()
         .await
         .expect("Request failed");
@@ -244,7 +268,10 @@ async fn test_refresh_token_rotation_grace_period() {
 
     let grace_response = client
         .post(&mock_server.token_endpoint)
-        .form(&[("grant_type", "refresh_token"), ("refresh_token", old_refresh)])
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", old_refresh),
+        ])
         .send()
         .await
         .expect("Request failed");
@@ -256,7 +283,11 @@ async fn test_refresh_token_rotation_grace_period() {
         .as_secs();
 
     if current_time - rotation_time <= grace_period_secs {
-        assert_eq!(grace_response.status(), 200, "Should accept old token within grace period");
+        assert_eq!(
+            grace_response.status(),
+            200,
+            "Should accept old token within grace period"
+        );
     }
 
     // After grace period expires, old token should be rejected
@@ -293,7 +324,10 @@ async fn test_token_revocation_rfc7009() {
     assert_eq!(token_response.status(), 200);
 
     // WHEN: Client revokes the refresh token (RFC 7009)
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path, body_string_contains}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{body_string_contains, method, path},
+    };
 
     Mock::given(method("POST"))
         .and(path("/revoke"))
@@ -328,7 +362,10 @@ async fn test_token_revocation_rfc7009() {
 
     let use_revoked = client
         .post(&mock_server.token_endpoint)
-        .form(&[("grant_type", "refresh_token"), ("refresh_token", refresh_token)])
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+        ])
         .send()
         .await
         .expect("Request failed");
@@ -365,7 +402,10 @@ async fn test_revocation_propagates_to_access_tokens() {
         .expect("Request failed");
 
     // WHEN: Refresh token is revoked
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
 
     Mock::given(method("POST"))
         .and(path("/revoke"))
@@ -398,7 +438,10 @@ async fn test_token_lifetime_best_practices() {
     // GIVEN: Mock server following 2025 best practices
     let mock_server = MockOAuth2Server::start().await;
 
-    use wiremock::{Mock, ResponseTemplate, matchers::{method, path}};
+    use wiremock::{
+        Mock, ResponseTemplate,
+        matchers::{method, path},
+    };
 
     Mock::given(method("POST"))
         .and(path("/token"))
