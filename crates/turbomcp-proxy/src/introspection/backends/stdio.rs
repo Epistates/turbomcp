@@ -1,6 +1,6 @@
 //! STDIO Backend for MCP Servers
 //!
-//! This backend uses turbomcp-transport's StdioTransport and ChildProcessTransport
+//! This backend uses turbomcp-transport's `StdioTransport` and `ChildProcessTransport`
 //! to communicate with MCP servers over stdin/stdout.
 
 use async_trait::async_trait;
@@ -8,15 +8,15 @@ use bytes::Bytes;
 use serde_json::Value;
 use tracing::{debug, trace};
 use turbomcp_protocol::{
+    InitializeRequest, InitializeResult, MessageId,
     jsonrpc::{
         JsonRpcNotification, JsonRpcRequest, JsonRpcResponse, JsonRpcResponsePayload,
         JsonRpcVersion,
     },
-    InitializeRequest, InitializeResult, MessageId,
 };
 use turbomcp_transport::{
-    core::TransportMessageMetadata, ChildProcessConfig, ChildProcessTransport, Transport,
-    TransportMessage,
+    ChildProcessConfig, ChildProcessTransport, Transport, TransportMessage,
+    core::TransportMessageMetadata,
 };
 use uuid::Uuid;
 
@@ -26,8 +26,8 @@ use super::McpBackend;
 
 /// STDIO backend for connecting to MCP servers running as subprocesses
 ///
-/// This uses turbomcp-transport's ChildProcessTransport for maximum
-/// correctness and DRYness.
+/// This uses turbomcp-transport's `ChildProcessTransport` for maximum
+/// correctness and `DRYness`.
 pub struct StdioBackend {
     /// The underlying transport
     transport: ChildProcessTransport,
@@ -40,7 +40,11 @@ impl StdioBackend {
     ///
     /// # Arguments
     /// * `command` - The command to execute (e.g., "python", "node")
-    /// * `args` - Command arguments (e.g., ["server.py"])
+    /// * `args` - Command arguments (e.g., `["server.py"]`)
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the subprocess fails to start or connect.
     pub async fn new(command: impl Into<String>, args: Vec<String>) -> ProxyResult<Self> {
         let config = ChildProcessConfig {
             command: command.into(),
@@ -56,7 +60,7 @@ impl StdioBackend {
         transport
             .connect()
             .await
-            .map_err(|e| ProxyError::backend(format!("Failed to connect to subprocess: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to connect to subprocess: {e}")))?;
 
         Ok(Self {
             transport,
@@ -65,6 +69,10 @@ impl StdioBackend {
     }
 
     /// Create with working directory
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the subprocess fails to start, connect, or if the working directory is invalid.
     pub async fn with_working_dir(
         command: impl Into<String>,
         args: Vec<String>,
@@ -84,7 +92,7 @@ impl StdioBackend {
         transport
             .connect()
             .await
-            .map_err(|e| ProxyError::backend(format!("Failed to connect to subprocess: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to connect to subprocess: {e}")))?;
 
         Ok(Self {
             transport,
@@ -104,6 +112,8 @@ impl StdioBackend {
 
         let request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
+            // Cast u64 to i64 for JSON-RPC MessageId - IDs are sequential and won't overflow in practice
+            #[allow(clippy::cast_possible_wrap)]
             id: MessageId::Number(id as i64),
             method: method.to_string(),
             params: Some(params),
@@ -113,7 +123,7 @@ impl StdioBackend {
 
         // Serialize request
         let request_json = serde_json::to_string(&request)
-            .map_err(|e| ProxyError::backend(format!("Failed to serialize request: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to serialize request: {e}")))?;
 
         // Send via transport
         let message = TransportMessage {
@@ -125,33 +135,32 @@ impl StdioBackend {
         self.transport
             .send(message)
             .await
-            .map_err(|e| ProxyError::backend(format!("Failed to send message: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to send message: {e}")))?;
 
         // Receive response
         let response_message = self
             .transport
             .receive()
             .await
-            .map_err(|e| ProxyError::backend(format!("Failed to receive response: {}", e)))?
+            .map_err(|e| ProxyError::backend(format!("Failed to receive response: {e}")))?
             .ok_or_else(|| {
                 ProxyError::backend("No response received (transport closed)".to_string())
             })?;
 
         let response_str = String::from_utf8(response_message.payload.to_vec())
-            .map_err(|e| ProxyError::backend(format!("Invalid UTF-8 in response: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Invalid UTF-8 in response: {e}")))?;
 
         trace!(response = %response_str, "Received introspection response");
 
         // Parse response
         let response: JsonRpcResponse = serde_json::from_str(&response_str)
-            .map_err(|e| ProxyError::backend(format!("Failed to parse response: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to parse response: {e}")))?;
 
         // Extract result from response payload
         match response.payload {
             JsonRpcResponsePayload::Success { result } => Ok(result),
             JsonRpcResponsePayload::Error { error } => Err(ProxyError::backend(format!(
-                "Server returned error: {:?}",
-                error
+                "Server returned error: {error:?}"
             ))),
         }
     }
@@ -163,13 +172,13 @@ impl McpBackend for StdioBackend {
         debug!("Initializing STDIO backend via turbomcp-transport");
 
         let params = serde_json::to_value(&request).map_err(|e| {
-            ProxyError::backend(format!("Failed to serialize initialize request: {}", e))
+            ProxyError::backend(format!("Failed to serialize initialize request: {e}"))
         })?;
 
         let result = self.send_request("initialize", params).await?;
 
         let init_result: InitializeResult = serde_json::from_value(result).map_err(|e| {
-            ProxyError::backend(format!("Failed to deserialize initialize result: {}", e))
+            ProxyError::backend(format!("Failed to deserialize initialize result: {e}"))
         })?;
 
         debug!(
@@ -198,7 +207,7 @@ impl McpBackend for StdioBackend {
         };
 
         let notification_json = serde_json::to_string(&notification)
-            .map_err(|e| ProxyError::backend(format!("Failed to serialize notification: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to serialize notification: {e}")))?;
 
         trace!(method = %method, "Sending notification");
 
@@ -211,7 +220,7 @@ impl McpBackend for StdioBackend {
         self.transport
             .send(message)
             .await
-            .map_err(|e| ProxyError::backend(format!("Failed to send notification: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to send notification: {e}")))?;
 
         Ok(())
     }

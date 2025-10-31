@@ -1,6 +1,6 @@
 //! turbomcp-proxy: Universal MCP Adapter/Generator
 //!
-//! A universal tool that works with ANY MCP server implementation (TurboMCP, Python SDK,
+//! A universal tool that works with ANY MCP server implementation (`TurboMCP`, Python SDK,
 //! TypeScript SDK, custom implementations). It discovers server capabilities via the MCP
 //! protocol and dynamically generates adapters for different transports and protocols.
 //!

@@ -9,6 +9,6 @@ pub mod introspector;
 pub mod spec;
 
 // Re-export core types
-pub use backends::{stdio::StdioBackend, McpBackend};
+pub use backends::{McpBackend, stdio::StdioBackend};
 pub use introspector::McpIntrospector;
 pub use spec::*;

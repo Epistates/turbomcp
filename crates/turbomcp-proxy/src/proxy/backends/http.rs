@@ -5,12 +5,12 @@
 
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, trace};
 use turbomcp_protocol::{
-    jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcResponsePayload, JsonRpcVersion},
     InitializeRequest, InitializeResult, MessageId,
+    jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcResponsePayload, JsonRpcVersion},
 };
 
 use crate::error::{ProxyError, ProxyResult};
@@ -18,7 +18,7 @@ use crate::error::{ProxyError, ProxyResult};
 /// Configuration for HTTP backend
 #[derive(Clone)]
 pub struct HttpBackendConfig {
-    /// Base URL of the HTTP MCP server (e.g., "http://localhost:3000/mcp")
+    /// Base URL of the HTTP MCP server (e.g., "<http://localhost:3000/mcp>")
     pub url: String,
 
     /// Optional authentication token (Bearer) - protected with secrecy
@@ -72,6 +72,7 @@ pub struct HttpBackend {
 impl std::fmt::Debug for HttpBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HttpBackend")
+            .field("client", &"<reqwest::Client>")
             .field("url", &self.url)
             .field(
                 "auth_token",
@@ -105,7 +106,7 @@ impl HttpBackend {
             .min_tls_version(reqwest::tls::Version::TLS_1_2) // Minimum TLS 1.2
             .https_only(false) // Allow HTTP for localhost (validated by RuntimeProxyBuilder)
             .build()
-            .map_err(|e| ProxyError::backend(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to create HTTP client: {e}")))?;
 
         debug!("Created HTTP backend for URL: {}", config.url);
 
@@ -168,11 +169,17 @@ impl HttpBackend {
     }
 
     /// Send a JSON-RPC request and wait for response
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the HTTP request fails, returns a non-success status, or if parsing the JSON-RPC response fails.
     pub async fn send_request(&self, method: &str, params: Value) -> ProxyResult<Value> {
         let id = self.next_message_id();
 
         let request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
+            // Cast u64 to i64 for JSON-RPC MessageId - IDs are sequential and won't overflow in practice
+            #[allow(clippy::cast_possible_wrap)]
             id: MessageId::Number(id as i64),
             method: method.to_string(),
             params: Some(params),
@@ -194,7 +201,7 @@ impl HttpBackend {
         let response = req
             .send()
             .await
-            .map_err(|e| ProxyError::backend(format!("HTTP request failed: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("HTTP request failed: {e}")))?;
 
         // Check HTTP status
         if !response.status().is_success() {
@@ -203,16 +210,14 @@ impl HttpBackend {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unable to read response body".to_string());
-            return Err(ProxyError::backend(format!(
-                "HTTP error {}: {}",
-                status, body
-            )));
+            return Err(ProxyError::backend(format!("HTTP error {status}: {body}")));
         }
 
         // Parse JSON-RPC response
-        let json_response: JsonRpcResponse = response.json().await.map_err(|e| {
-            ProxyError::backend(format!("Failed to parse JSON-RPC response: {}", e))
-        })?;
+        let json_response: JsonRpcResponse = response
+            .json()
+            .await
+            .map_err(|e| ProxyError::backend(format!("Failed to parse JSON-RPC response: {e}")))?;
 
         // Check for JSON-RPC error and extract result
         match json_response.payload {
@@ -225,6 +230,10 @@ impl HttpBackend {
     }
 
     /// Send a JSON-RPC notification (no response expected)
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the HTTP request fails.
     pub async fn send_notification(&self, method: &str, params: Value) -> ProxyResult<()> {
         let notification = serde_json::json!({
             "jsonrpc": "2.0",
@@ -246,7 +255,7 @@ impl HttpBackend {
 
         req.send()
             .await
-            .map_err(|e| ProxyError::backend(format!("HTTP notification failed: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("HTTP notification failed: {e}")))?;
 
         Ok(())
     }
@@ -262,11 +271,19 @@ impl HttpBackend {
     }
 
     /// List available tools
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the request fails or the server returns an error.
     pub async fn list_tools(&self) -> ProxyResult<Value> {
         self.send_request("tools/list", Value::Null).await
     }
 
     /// Call a tool
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the request fails or the tool call fails on the server.
     pub async fn call_tool(&self, name: &str, arguments: Value) -> ProxyResult<Value> {
         let params = serde_json::json!({
             "name": name,
@@ -276,11 +293,19 @@ impl HttpBackend {
     }
 
     /// List available resources
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the request fails or the server returns an error.
     pub async fn list_resources(&self) -> ProxyResult<Value> {
         self.send_request("resources/list", Value::Null).await
     }
 
     /// Read a resource
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the request fails or the resource is not found.
     pub async fn read_resource(&self, uri: &str) -> ProxyResult<Value> {
         let params = serde_json::json!({
             "uri": uri
@@ -289,11 +314,19 @@ impl HttpBackend {
     }
 
     /// List available prompts
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the request fails or the server returns an error.
     pub async fn list_prompts(&self) -> ProxyResult<Value> {
         self.send_request("prompts/list", Value::Null).await
     }
 
     /// Get a prompt
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the request fails or the prompt is not found.
     pub async fn get_prompt(&self, name: &str, arguments: Option<Value>) -> ProxyResult<Value> {
         let mut params = serde_json::json!({
             "name": name
@@ -314,7 +347,7 @@ mod tests {
     // cargo test --package turbomcp-proxy --features runtime -- --ignored
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires running HTTP MCP server"]
     async fn test_http_backend_connection() {
         let config = HttpBackendConfig {
             url: "http://localhost:3000/mcp".to_string(),
@@ -329,7 +362,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
+    #[ignore = "requires running HTTP MCP server"]
     async fn test_http_backend_list_tools() {
         let config = HttpBackendConfig {
             url: "http://localhost:3000/mcp".to_string(),
@@ -354,7 +387,7 @@ mod tests {
             client_version: "1.0.0".to_string(),
         };
 
-        let debug_output = format!("{:?}", config);
+        let debug_output = format!("{config:?}");
         assert!(
             !debug_output.contains("secret-token-12345"),
             "Token should be redacted in debug output"

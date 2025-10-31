@@ -67,6 +67,10 @@ pub struct Cli {
 
 impl Cli {
     /// Execute the CLI command
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if command execution fails.
     pub async fn execute(self) -> ProxyResult<()> {
         // Initialize tracing based on verbosity
         self.init_tracing();
@@ -109,7 +113,7 @@ mod tests {
     #[test]
     fn test_cli_parsing() {
         // Should parse basic command
-        let cli = Cli::try_parse_from(&[
+        let cli = Cli::try_parse_from([
             "turbomcp-proxy",
             "inspect",
             "--backend",
@@ -122,7 +126,7 @@ mod tests {
 
     #[test]
     fn test_verbosity_levels() {
-        let cli = Cli::try_parse_from(&[
+        let cli = Cli::try_parse_from([
             "turbomcp-proxy",
             "-vvv",
             "inspect",
@@ -137,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_quiet_conflicts_with_verbose() {
-        let cli = Cli::try_parse_from(&[
+        let cli = Cli::try_parse_from([
             "turbomcp-proxy",
             "-v",
             "--quiet",

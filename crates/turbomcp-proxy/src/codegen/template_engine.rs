@@ -10,14 +10,18 @@ use crate::error::ProxyResult;
 
 /// Template engine for rendering Rust code
 ///
-/// Uses Handlebars templates embedded in the binary via include_str!.
-/// Provides helpers for case conversion (snake_case, PascalCase, etc.)
+/// Uses Handlebars templates embedded in the binary via `include_str`!.
+/// Provides helpers for case conversion (`snake_case`, `PascalCase`, etc.)
 pub struct TemplateEngine {
     handlebars: Handlebars<'static>,
 }
 
 impl TemplateEngine {
     /// Create a new template engine with all templates loaded
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if any template fails to register.
     pub fn new() -> ProxyResult<Self> {
         let mut hb = Handlebars::new();
 
@@ -25,32 +29,28 @@ impl TemplateEngine {
         hb.register_template_string("main", include_str!("templates/main.rs.hbs"))
             .map_err(|e| {
                 crate::error::ProxyError::codegen(format!(
-                    "Failed to register main.rs template: {}",
-                    e
+                    "Failed to register main.rs template: {e}"
                 ))
             })?;
 
         hb.register_template_string("proxy", include_str!("templates/proxy.rs.hbs"))
             .map_err(|e| {
                 crate::error::ProxyError::codegen(format!(
-                    "Failed to register proxy.rs template: {}",
-                    e
+                    "Failed to register proxy.rs template: {e}"
                 ))
             })?;
 
         hb.register_template_string("types", include_str!("templates/types.rs.hbs"))
             .map_err(|e| {
                 crate::error::ProxyError::codegen(format!(
-                    "Failed to register types.rs template: {}",
-                    e
+                    "Failed to register types.rs template: {e}"
                 ))
             })?;
 
         hb.register_template_string("cargo_toml", include_str!("templates/Cargo.toml.hbs"))
             .map_err(|e| {
                 crate::error::ProxyError::codegen(format!(
-                    "Failed to register Cargo.toml template: {}",
-                    e
+                    "Failed to register Cargo.toml template: {e}"
                 ))
             })?;
 
@@ -67,30 +67,46 @@ impl TemplateEngine {
     }
 
     /// Render the main.rs template
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if template rendering fails.
     pub fn render_main(&self, context: &impl serde::Serialize) -> ProxyResult<String> {
         self.handlebars.render("main", context).map_err(|e| {
-            crate::error::ProxyError::codegen(format!("Failed to render main.rs: {}", e))
+            crate::error::ProxyError::codegen(format!("Failed to render main.rs: {e}"))
         })
     }
 
     /// Render the proxy.rs template
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if template rendering fails.
     pub fn render_proxy(&self, context: &impl serde::Serialize) -> ProxyResult<String> {
         self.handlebars.render("proxy", context).map_err(|e| {
-            crate::error::ProxyError::codegen(format!("Failed to render proxy.rs: {}", e))
+            crate::error::ProxyError::codegen(format!("Failed to render proxy.rs: {e}"))
         })
     }
 
     /// Render the types.rs template
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if template rendering fails.
     pub fn render_types(&self, context: &impl serde::Serialize) -> ProxyResult<String> {
         self.handlebars.render("types", context).map_err(|e| {
-            crate::error::ProxyError::codegen(format!("Failed to render types.rs: {}", e))
+            crate::error::ProxyError::codegen(format!("Failed to render types.rs: {e}"))
         })
     }
 
     /// Render the Cargo.toml template
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if template rendering fails.
     pub fn render_cargo_toml(&self, context: &impl serde::Serialize) -> ProxyResult<String> {
         self.handlebars.render("cargo_toml", context).map_err(|e| {
-            crate::error::ProxyError::codegen(format!("Failed to render Cargo.toml: {}", e))
+            crate::error::ProxyError::codegen(format!("Failed to render Cargo.toml: {e}"))
         })
     }
 }

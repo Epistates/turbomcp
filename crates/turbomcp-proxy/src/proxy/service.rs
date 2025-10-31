@@ -1,6 +1,6 @@
-//! ProxyService - MCP service that forwards requests to backend servers
+//! `ProxyService` - MCP service that forwards requests to backend servers
 //!
-//! This service implements the McpService trait from turbomcp-transport,
+//! This service implements the `McpService` trait from turbomcp-transport,
 //! enabling it to be used with the Axum integration for HTTP/SSE transport.
 
 use async_trait::async_trait;
@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, trace};
-use turbomcp_protocol::{jsonrpc::JsonRpcRequest, Error as McpError, Result as McpResult};
+use turbomcp_protocol::{Error as McpError, Result as McpResult, jsonrpc::JsonRpcRequest};
 use turbomcp_transport::tower::SessionInfo;
 
 use super::BackendConnector;
@@ -16,7 +16,7 @@ use crate::introspection::ServerSpec;
 
 /// Proxy service that forwards MCP requests to a backend server
 ///
-/// This service implements the McpService trait, allowing it to be used
+/// This service implements the `McpService` trait, allowing it to be used
 /// with turbomcp-transport's Axum integration for HTTP/SSE transport.
 /// All requests are forwarded to the backend server via turbomcp-client.
 #[derive(Clone)]
@@ -35,6 +35,7 @@ impl ProxyService {
     ///
     /// * `backend` - The backend connector (must be introspected)
     /// * `spec` - The server spec from introspection
+    #[must_use]
     pub fn new(backend: BackendConnector, spec: ServerSpec) -> Self {
         Self {
             backend: Arc::new(RwLock::new(backend)),
@@ -46,8 +47,7 @@ impl ProxyService {
     async fn process_jsonrpc(&self, request: JsonRpcRequest) -> McpResult<Value> {
         trace!(
             "Processing JSON-RPC: method={}, id={:?}",
-            request.method,
-            request.id
+            request.method, request.id
         );
 
         // Route based on method
@@ -159,7 +159,7 @@ impl ProxyService {
             // Unknown method
             method => {
                 error!("Unknown method: {}", method);
-                Err(McpError::protocol(format!("Method not found: {}", method)))
+                Err(McpError::protocol(format!("Method not found: {method}")))
             }
         }
     }
@@ -212,14 +212,12 @@ mod tests {
             client_version: "1.0.0".to_string(),
         };
 
-        let mut backend = match BackendConnector::new(config).await {
-            Ok(b) => b,
-            Err(_) => return None,
+        let Ok(mut backend) = BackendConnector::new(config).await else {
+            return None;
         };
 
-        let spec = match backend.introspect().await {
-            Ok(s) => s,
-            Err(_) => return None,
+        let Ok(spec) = backend.introspect().await else {
+            return None;
         };
 
         Some(ProxyService::new(backend, spec))

@@ -1,6 +1,6 @@
 //! Error types for turbomcp-proxy
 //!
-//! Follows TurboMCP's 3-tier error hierarchy:
+//! Follows `TurboMCP`'s 3-tier error hierarchy:
 //! - Protocol: MCP protocol errors (preserved from turbomcp-protocol)
 //! - Transport: Network/transport errors (from turbomcp-transport)
 //! - Proxy: Proxy-specific errors (introspection, codegen, configuration)
@@ -12,7 +12,7 @@ pub type ProxyResult<T> = std::result::Result<T, ProxyError>;
 
 /// Main error type for turbomcp-proxy
 ///
-/// Follows TurboMCP error hierarchy pattern:
+/// Follows `TurboMCP` error hierarchy pattern:
 /// - Wraps protocol errors to preserve error codes (like -1 for user rejection)
 /// - Converts transport errors automatically
 /// - Provides structured proxy-specific errors with context
@@ -37,7 +37,9 @@ pub enum ProxyError {
     /// Errors during server capability discovery.
     #[error("Introspection error: {message}")]
     Introspection {
+        /// Description of what went wrong during introspection
         message: String,
+        /// Additional context about where/why the error occurred
         context: Option<String>,
     },
 
@@ -46,7 +48,9 @@ pub enum ProxyError {
     /// Errors during template rendering or code generation.
     #[error("Code generation error: {message}")]
     Codegen {
+        /// Description of the code generation failure
         message: String,
+        /// Name or content of the template that failed
         template: Option<String>,
     },
 
@@ -55,7 +59,9 @@ pub enum ProxyError {
     /// Invalid proxy configuration (missing required fields, invalid values).
     #[error("Configuration error: {message}")]
     Configuration {
+        /// Description of the configuration problem
         message: String,
+        /// Configuration key or field that caused the error
         key: Option<String>,
     },
 
@@ -64,7 +70,9 @@ pub enum ProxyError {
     /// Failed to connect to backend MCP server.
     #[error("Backend connection error: {message}")]
     BackendConnection {
+        /// Description of the connection failure
         message: String,
+        /// Type of backend server (e.g., "stdio", "http")
         backend_type: Option<String>,
     },
 
@@ -73,7 +81,9 @@ pub enum ProxyError {
     /// Backend server returned an error or operation failed.
     #[error("Backend error: {message}")]
     Backend {
+        /// Description of the backend error
         message: String,
+        /// Name of the operation that failed (e.g., `list_tools`, `call_tool`)
         operation: Option<String>,
     },
 
@@ -82,7 +92,9 @@ pub enum ProxyError {
     /// JSON schema validation failed for tool inputs/outputs.
     #[error("Schema validation error: {message}")]
     SchemaValidation {
+        /// Description of the validation failure
         message: String,
+        /// JSON pointer path to the schema field that failed validation
         schema_path: Option<String>,
     },
 
@@ -90,16 +102,30 @@ pub enum ProxyError {
     ///
     /// Operation exceeded configured timeout.
     #[error("Timeout: {operation} exceeded {timeout_ms}ms")]
-    Timeout { operation: String, timeout_ms: u64 },
+    Timeout {
+        /// Name of the operation that timed out
+        operation: String,
+        /// Timeout duration in milliseconds
+        timeout_ms: u64,
+    },
 
     /// Rate limit exceeded
     ///
     /// Too many requests to backend server.
     #[error("Rate limit exceeded: {message}")]
     RateLimitExceeded {
+        /// Description of the rate limit error
         message: String,
+        /// Recommended wait time in milliseconds before retrying
         retry_after_ms: Option<u64>,
     },
+
+    /// Authentication error (auth feature only)
+    ///
+    /// Authentication or JWT signing failed.
+    #[cfg(feature = "auth")]
+    #[error("Authentication error: {0}")]
+    Auth(String),
 
     /// Serialization error
     #[error("Serialization error: {0}")]
@@ -113,7 +139,9 @@ pub enum ProxyError {
     #[cfg(feature = "runtime")]
     #[error("HTTP error: {message}")]
     Http {
+        /// Description of the HTTP error
         message: String,
+        /// HTTP status code (e.g., 500, 503)
         status_code: Option<u16>,
     },
 }
@@ -253,6 +281,7 @@ impl ProxyError {
     /// Sanitize error message for client responses
     ///
     /// Removes internal details to prevent information disclosure.
+    #[must_use]
     pub fn sanitize(&self) -> String {
         match self {
             Self::Protocol(_) => "Protocol error occurred".to_string(),
@@ -264,15 +293,17 @@ impl ProxyError {
             Self::Backend { .. } => "Backend operation failed".to_string(),
             Self::SchemaValidation { .. } => "Schema validation failed".to_string(),
             Self::Timeout { operation, .. } => {
-                format!("Operation '{}' timed out", operation)
+                format!("Operation '{operation}' timed out")
             }
             Self::RateLimitExceeded { .. } => "Rate limit exceeded".to_string(),
+            #[cfg(feature = "auth")]
+            Self::Auth(_) => "Authentication error".to_string(),
             Self::Serialization(_) => "Data serialization error".to_string(),
             Self::Io(_) => "IO error occurred".to_string(),
             #[cfg(feature = "runtime")]
             Self::Http { status_code, .. } => {
                 if let Some(code) = status_code {
-                    format!("HTTP error {}", code)
+                    format!("HTTP error {code}")
                 } else {
                     "HTTP error occurred".to_string()
                 }
@@ -281,16 +312,19 @@ impl ProxyError {
     }
 
     /// Check if this is a protocol error
+    #[must_use]
     pub fn is_protocol_error(&self) -> bool {
         matches!(self, Self::Protocol(_))
     }
 
     /// Check if this is a transport error
+    #[must_use]
     pub fn is_transport_error(&self) -> bool {
         matches!(self, Self::Transport(_))
     }
 
     /// Check if this error is retryable
+    #[must_use]
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
@@ -305,12 +339,24 @@ impl ProxyError {
 /// Extension trait for Result types to add proxy error context
 pub trait ProxyErrorExt<T> {
     /// Add introspection context to error
+    ///
+    /// # Errors
+    ///
+    /// Returns the original error with added introspection context.
     fn introspection_context(self, context: impl Into<String>) -> ProxyResult<T>;
 
     /// Add backend context to error
+    ///
+    /// # Errors
+    ///
+    /// Returns the original error with added backend context.
     fn backend_context(self, context: impl Into<String>) -> ProxyResult<T>;
 
     /// Add configuration context to error
+    ///
+    /// # Errors
+    ///
+    /// Returns the original error with added configuration context.
     fn config_context(self, context: impl Into<String>) -> ProxyResult<T>;
 }
 
@@ -351,7 +397,7 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
             }
             ProxyError::Introspection { message, context } => {
                 let msg = if let Some(ctx) = context {
-                    format!("{}: {}", message, ctx)
+                    format!("{message}: {ctx}")
                 } else {
                     message
                 };
@@ -359,7 +405,7 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
             }
             ProxyError::Codegen { message, template } => {
                 let msg = if let Some(tmpl) = template {
-                    format!("{} (template: {})", message, tmpl)
+                    format!("{message} (template: {tmpl})")
                 } else {
                     message
                 };
@@ -367,7 +413,7 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
             }
             ProxyError::Configuration { message, key } => {
                 let msg = if let Some(k) = key {
-                    format!("{} (key: {})", message, k)
+                    format!("{message} (key: {k})")
                 } else {
                     message
                 };
@@ -378,7 +424,7 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
                 backend_type,
             } => {
                 let msg = if let Some(bt) = backend_type {
-                    format!("{} (backend: {})", message, bt)
+                    format!("{message} (backend: {bt})")
                 } else {
                     message
                 };
@@ -386,7 +432,7 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
             }
             ProxyError::Backend { message, operation } => {
                 let msg = if let Some(op) = operation {
-                    format!("{} (operation: {})", message, op)
+                    format!("{message} (operation: {op})")
                 } else {
                     message
                 };
@@ -398,12 +444,13 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
             ProxyError::Timeout {
                 operation,
                 timeout_ms,
-            } => turbomcp_protocol::Error::timeout(format!(
-                "{} exceeded {}ms",
-                operation, timeout_ms
-            )),
+            } => turbomcp_protocol::Error::timeout(format!("{operation} exceeded {timeout_ms}ms")),
             ProxyError::RateLimitExceeded { message, .. } => {
                 turbomcp_protocol::Error::rate_limited(message)
+            }
+            #[cfg(feature = "auth")]
+            ProxyError::Auth(message) => {
+                turbomcp_protocol::Error::internal(format!("Authentication error: {message}"))
             }
             ProxyError::Serialization(err) => {
                 turbomcp_protocol::Error::serialization(err.to_string())
@@ -415,7 +462,7 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
                 status_code,
             } => {
                 let msg = if let Some(code) = status_code {
-                    format!("{} (HTTP {})", message, code)
+                    format!("{message} (HTTP {code})")
                 } else {
                     message
                 };
@@ -489,8 +536,6 @@ mod tests {
 
     #[test]
     fn test_error_ext_trait() {
-        use std::fs;
-
         let result: Result<String, std::io::Error> = Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "file not found",

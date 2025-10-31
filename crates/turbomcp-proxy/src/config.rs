@@ -80,7 +80,6 @@ pub enum BackendConfig {
         path: String,
     },
     /// WebSocket backend with bidirectional communication
-    #[cfg(feature = "websocket")]
     WebSocket {
         /// WebSocket URL (ws:// or wss://)
         url: String,
@@ -96,6 +95,5 @@ pub enum FrontendType {
     /// HTTP with Server-Sent Events frontend
     Http,
     /// WebSocket bidirectional frontend
-    #[cfg(feature = "websocket")]
     WebSocket,
 }

@@ -47,6 +47,7 @@ pub enum BackendType {
 
 impl BackendArgs {
     /// Get the backend type
+    #[must_use]
     pub fn backend_type(&self) -> Option<BackendType> {
         self.backend.or_else(|| {
             if self.http.is_some() {
@@ -60,6 +61,10 @@ impl BackendArgs {
     }
 
     /// Validate that required arguments for the backend type are present
+    ///
+    /// # Errors
+    ///
+    /// Returns a string error message if required arguments for the specified backend type are missing.
     pub fn validate(&self) -> Result<(), String> {
         match self.backend_type() {
             Some(BackendType::Stdio) => {

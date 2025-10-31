@@ -8,12 +8,12 @@
 //!
 //! - Bounded memory: Maximum 10,000 mappings to prevent unbounded growth
 //! - Timeout-based eviction: Mappings expire after 5 minutes
-//! - Lock-free concurrency: Uses DashMap for thread-safe, lock-free operations
+//! - Lock-free concurrency: Uses `DashMap` for thread-safe, lock-free operations
 //! - Race-free cleanup: Atomic removal operations prevent TOCTOU bugs
 
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use turbomcp_protocol::MessageId;
 
@@ -34,7 +34,7 @@ struct MappingEntry {
     created_at: Instant,
 }
 
-/// Thread-safe bidirectional MessageId translator
+/// Thread-safe bidirectional `MessageId` translator
 ///
 /// Handles ID translation between frontend clients and backend server:
 /// - Frontend clients use their own ID schemes (strings, numbers)
@@ -45,11 +45,11 @@ struct MappingEntry {
 ///
 /// - Bounded: Maximum 10,000 concurrent mappings
 /// - Timeout: Mappings expire after 5 minutes
-/// - Lock-free: DashMap provides concurrent access without locks
+/// - Lock-free: `DashMap` provides concurrent access without locks
 /// - Race-free: Atomic operations prevent TOCTOU bugs
 #[derive(Debug, Clone)]
 pub struct IdTranslator {
-    /// Frontend ID → MappingEntry (contains backend ID + timestamp)
+    /// Frontend ID → `MappingEntry` (contains backend ID + timestamp)
     frontend_to_backend: Arc<DashMap<MessageId, MappingEntry>>,
 
     /// Backend ID → Frontend ID mapping (for reverse lookup)
@@ -67,6 +67,7 @@ pub struct IdTranslator {
 
 impl IdTranslator {
     /// Create a new ID translator with default limits
+    #[must_use]
     pub fn new() -> Self {
         Self::with_limits(MAX_MAPPINGS, MAPPING_TIMEOUT)
     }
@@ -77,6 +78,7 @@ impl IdTranslator {
     ///
     /// * `max_mappings` - Maximum concurrent mappings (prevents memory exhaustion)
     /// * `mapping_timeout` - How long before mappings expire (prevents leaks)
+    #[must_use]
     pub fn with_limits(max_mappings: usize, mapping_timeout: Duration) -> Self {
         Self {
             frontend_to_backend: Arc::new(DashMap::new()),
@@ -117,6 +119,8 @@ impl IdTranslator {
 
         // Generate sequential backend ID
         let backend_id_num = self.next_backend_id.fetch_add(1, Ordering::SeqCst);
+        // Cast u64 to i64 for JSON-RPC MessageId - IDs are sequential and won't overflow in practice
+        #[allow(clippy::cast_possible_wrap)]
         let backend_id = MessageId::Number(backend_id_num as i64);
 
         // Create mapping entry with timestamp
@@ -142,6 +146,7 @@ impl IdTranslator {
     /// # Returns
     ///
     /// The corresponding frontend ID, or None if not found
+    #[must_use]
     pub fn get_frontend_id(&self, backend_id: &MessageId) -> Option<MessageId> {
         self.backend_to_frontend
             .get(backend_id)
@@ -186,6 +191,7 @@ impl IdTranslator {
     ///
     /// Returns a join handle that can be used to cancel the task.
     /// The task runs every 60 seconds and evicts expired entries.
+    #[must_use]
     pub fn spawn_eviction_task(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -197,6 +203,7 @@ impl IdTranslator {
     }
 
     /// Get current mapping count (for monitoring/metrics)
+    #[must_use]
     pub fn mapping_count(&self) -> usize {
         self.frontend_to_backend.len()
     }
@@ -279,9 +286,9 @@ mod tests {
 
         // Allocate 10 IDs and verify they're sequential
         for i in 1..=10 {
-            let frontend_id = MessageId::String(format!("req-{}", i));
+            let frontend_id = MessageId::String(format!("req-{i}"));
             let backend_id = translator.allocate(frontend_id).unwrap();
-            assert_eq!(backend_id, MessageId::Number(i as i64));
+            assert_eq!(backend_id, MessageId::Number(i64::from(i)));
         }
     }
 
@@ -292,7 +299,7 @@ mod tests {
 
         // Allocate up to limit
         for i in 1..=5 {
-            let frontend_id = MessageId::String(format!("req-{}", i));
+            let frontend_id = MessageId::String(format!("req-{i}"));
             let result = translator.allocate(frontend_id);
             assert!(result.is_ok(), "Should allocate within limit");
         }
@@ -372,7 +379,7 @@ mod tests {
 
         // Fill to capacity
         for i in 1..=3 {
-            let frontend_id = MessageId::String(format!("req-{}", i));
+            let frontend_id = MessageId::String(format!("req-{i}"));
             translator.allocate(frontend_id).unwrap();
         }
 

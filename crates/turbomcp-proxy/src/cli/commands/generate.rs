@@ -85,14 +85,16 @@ pub struct GenerateCommand {
 
 impl GenerateCommand {
     /// Execute the generate command
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if backend validation fails, introspection fails, code generation fails, or file operations fail.
     #[cfg(feature = "codegen")]
     pub async fn execute(self) -> ProxyResult<()> {
         info!("Starting code generation...");
 
         // Validate backend arguments
-        self.backend
-            .validate()
-            .map_err(|e| ProxyError::configuration(e))?;
+        self.backend.validate().map_err(ProxyError::configuration)?;
 
         // Validate flags
         if self.release && !self.build {
@@ -142,10 +144,10 @@ impl GenerateCommand {
             version: Some(self.version.clone()),
             frontend_type,
             backend_type,
-            turbomcp_version: "2.0.5".to_string(),
+            turbomcp_version: "2.1.0".to_string(),
         };
 
-        let project = generator.generate(config)?;
+        let project = generator.generate(&config)?;
 
         info!(package = %project.package_name, "Code generation complete");
 
@@ -185,7 +187,12 @@ impl GenerateCommand {
     }
 
     /// Execute when codegen feature is not enabled
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` indicating that the codegen feature is not enabled.
     #[cfg(not(feature = "codegen"))]
+    #[allow(clippy::unused_async)]
     pub async fn execute(self) -> ProxyResult<()> {
         Err(ProxyError::configuration(
             "Code generation requires the 'codegen' feature to be enabled. \
@@ -261,21 +268,20 @@ impl GenerateCommand {
     #[cfg(feature = "codegen")]
     fn write_project(&self, project: &crate::codegen::GeneratedProject) -> ProxyResult<()> {
         // Create output directory
-        fs::create_dir_all(&self.output).map_err(|e| ProxyError::Io(e))?;
+        fs::create_dir_all(&self.output).map_err(ProxyError::Io)?;
 
         // Create src directory
         let src_dir = self.output.join("src");
-        fs::create_dir_all(&src_dir).map_err(|e| ProxyError::Io(e))?;
+        fs::create_dir_all(&src_dir).map_err(ProxyError::Io)?;
 
         // Write files
-        fs::write(src_dir.join("main.rs"), &project.main_rs).map_err(|e| ProxyError::Io(e))?;
+        fs::write(src_dir.join("main.rs"), &project.main_rs).map_err(ProxyError::Io)?;
 
-        fs::write(src_dir.join("proxy.rs"), &project.proxy_rs).map_err(|e| ProxyError::Io(e))?;
+        fs::write(src_dir.join("proxy.rs"), &project.proxy_rs).map_err(ProxyError::Io)?;
 
-        fs::write(src_dir.join("types.rs"), &project.types_rs).map_err(|e| ProxyError::Io(e))?;
+        fs::write(src_dir.join("types.rs"), &project.types_rs).map_err(ProxyError::Io)?;
 
-        fs::write(self.output.join("Cargo.toml"), &project.cargo_toml)
-            .map_err(|e| ProxyError::Io(e))?;
+        fs::write(self.output.join("Cargo.toml"), &project.cargo_toml).map_err(ProxyError::Io)?;
 
         Ok(())
     }
@@ -293,7 +299,7 @@ impl GenerateCommand {
 
         let output = cmd
             .output()
-            .map_err(|e| ProxyError::backend(format!("Failed to run cargo build: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to run cargo build: {e}")))?;
 
         if !output.status.success() {
             error!("Build failed:");
@@ -317,7 +323,7 @@ impl GenerateCommand {
 
         let status = cmd
             .status()
-            .map_err(|e| ProxyError::backend(format!("Failed to run proxy: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to run proxy: {e}")))?;
 
         if !status.success() {
             return Err(ProxyError::backend("Proxy exited with error".to_string()));

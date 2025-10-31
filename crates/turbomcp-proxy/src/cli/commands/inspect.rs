@@ -8,7 +8,7 @@ use std::io::{self, BufWriter};
 use tracing::info;
 
 use crate::cli::args::{BackendArgs, OutputArgs};
-use crate::cli::output::{get_formatter, OutputFormat};
+use crate::cli::output::{OutputFormat, get_formatter};
 use crate::error::{ProxyError, ProxyResult};
 use crate::introspection::{McpIntrospector, StdioBackend};
 
@@ -48,11 +48,13 @@ pub struct InspectCommand {
 
 impl InspectCommand {
     /// Execute the inspect command
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if backend validation fails or introspection fails.
     pub async fn execute(self, format: OutputFormat) -> ProxyResult<()> {
         // Validate backend arguments
-        self.backend
-            .validate()
-            .map_err(|e| ProxyError::configuration(e))?;
+        self.backend.validate().map_err(ProxyError::configuration)?;
 
         info!(
             backend = ?self.backend.backend_type(),
@@ -188,8 +190,8 @@ mod tests {
         let cmd = InspectCommand {
             backend: BackendArgs {
                 backend: Some(crate::cli::args::BackendType::Stdio),
-                cmd: Some("echo".to_string()),
-                args: vec!["test".to_string()],
+                cmd: Some("python".to_string()),
+                args: vec!["-c".to_string(), "print('test')".to_string()],
                 working_dir: None,
                 http: None,
                 websocket: None,
@@ -202,7 +204,7 @@ mod tests {
             client_version: "1.0.0".to_string(),
         };
 
-        // Should successfully create backend (echo command exists)
+        // Should successfully create backend (python command is in allowlist)
         let backend = cmd.create_backend().await;
         assert!(backend.is_ok());
     }

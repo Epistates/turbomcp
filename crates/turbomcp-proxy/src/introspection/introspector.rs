@@ -5,18 +5,22 @@
 
 use tracing::{debug, info, trace};
 use turbomcp_protocol::{
+    InitializeRequest, InitializeResult,
     types::{
+        ClientCapabilities, Cursor, ElicitationCapabilities, Implementation, RootsCapabilities,
+        SamplingCapabilities,
         prompts::{ListPromptsRequest, ListPromptsResult},
         resources::{ListResourcesRequest, ListResourcesResult},
         tools::{ListToolsRequest, ListToolsResult},
-        ClientCapabilities, Cursor, ElicitationCapabilities, Implementation, RootsCapabilities,
-        SamplingCapabilities,
     },
-    InitializeRequest, InitializeResult,
 };
 
 use super::backends::McpBackend;
-use super::spec::*;
+use super::spec::{
+    Annotations, EmptyCapability, LoggingCapability, PromptArgument, PromptSpec, PromptsCapability,
+    ResourceSpec, ResourceTemplateSpec, ResourcesCapability, ServerCapabilities, ServerInfo,
+    ServerSpec, ToolAnnotations, ToolInputSchema, ToolOutputSchema, ToolSpec, ToolsCapability,
+};
 use crate::error::{ProxyError, ProxyResult};
 
 /// MCP Server Introspector
@@ -32,6 +36,7 @@ pub struct McpIntrospector {
 
 impl McpIntrospector {
     /// Create a new introspector with default client info
+    #[must_use]
     pub fn new() -> Self {
         Self {
             client_name: "turbomcp-proxy-introspector".to_string(),
@@ -56,7 +61,11 @@ impl McpIntrospector {
     /// 1. Connect to the server via the backend
     /// 2. Perform initialization handshake
     /// 3. List all tools, resources, and prompts
-    /// 4. Build a complete ServerSpec
+    /// 4. Build a complete `ServerSpec`
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if connection fails, initialization fails, or listing resources fails.
     pub async fn introspect(&self, backend: &mut dyn McpBackend) -> ProxyResult<ServerSpec> {
         info!(
             client = %self.client_name,
@@ -82,7 +91,7 @@ impl McpIntrospector {
             title: None, // Not provided in InitializeResult
         };
 
-        let capabilities = self.extract_capabilities(&init_result);
+        let capabilities = Self::extract_capabilities(&init_result);
 
         // Step 3: List tools (if server supports them)
         let tools = if capabilities.tools.is_some() {
@@ -156,8 +165,8 @@ impl McpIntrospector {
         backend.initialize(request).await
     }
 
-    /// Extract capabilities from InitializeResult
-    fn extract_capabilities(&self, init_result: &InitializeResult) -> ServerCapabilities {
+    /// Extract capabilities from `InitializeResult`
+    fn extract_capabilities(init_result: &InitializeResult) -> ServerCapabilities {
         let caps = &init_result.capabilities;
 
         ServerCapabilities {
@@ -191,13 +200,13 @@ impl McpIntrospector {
             };
 
             let params = serde_json::to_value(&request).map_err(|e| {
-                ProxyError::backend(format!("Failed to serialize tools/list request: {}", e))
+                ProxyError::backend(format!("Failed to serialize tools/list request: {e}"))
             })?;
 
             let result_value = backend.call_method("tools/list", params).await?;
 
             let result: ListToolsResult = serde_json::from_value(result_value).map_err(|e| {
-                ProxyError::backend(format!("Failed to parse tools/list response: {}", e))
+                ProxyError::backend(format!("Failed to parse tools/list response: {e}"))
             })?;
 
             // Convert protocol tools to spec tools
@@ -258,14 +267,14 @@ impl McpIntrospector {
             };
 
             let params = serde_json::to_value(&request).map_err(|e| {
-                ProxyError::backend(format!("Failed to serialize resources/list request: {}", e))
+                ProxyError::backend(format!("Failed to serialize resources/list request: {e}"))
             })?;
 
             let result_value = backend.call_method("resources/list", params).await?;
 
             let result: ListResourcesResult =
                 serde_json::from_value(result_value).map_err(|e| {
-                    ProxyError::backend(format!("Failed to parse resources/list response: {}", e))
+                    ProxyError::backend(format!("Failed to parse resources/list response: {e}"))
                 })?;
 
             // Convert protocol resources to spec resources
@@ -320,13 +329,13 @@ impl McpIntrospector {
             };
 
             let params = serde_json::to_value(&request).map_err(|e| {
-                ProxyError::backend(format!("Failed to serialize prompts/list request: {}", e))
+                ProxyError::backend(format!("Failed to serialize prompts/list request: {e}"))
             })?;
 
             let result_value = backend.call_method("prompts/list", params).await?;
 
             let result: ListPromptsResult = serde_json::from_value(result_value).map_err(|e| {
-                ProxyError::backend(format!("Failed to parse prompts/list response: {}", e))
+                ProxyError::backend(format!("Failed to parse prompts/list response: {e}"))
             })?;
 
             // Convert protocol prompts to spec prompts

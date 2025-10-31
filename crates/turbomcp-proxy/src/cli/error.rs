@@ -3,13 +3,14 @@
 //! Converts technical errors into human-readable messages with helpful
 //! suggestions and context.
 
-use colored::*;
+use colored::Colorize;
 
 use crate::error::ProxyError;
 
 /// Format an error for CLI display
+#[must_use]
 pub fn format_error(error: &ProxyError) -> String {
-    let formatted = match error {
+    match error {
         ProxyError::Backend { message, .. } => {
             format!(
                 "{} Backend error\n  {}\n\n{}\n  {}",
@@ -55,15 +56,12 @@ pub fn format_error(error: &ProxyError) -> String {
                 "Check file permissions and disk space"
             )
         }
-        _ => {
-            format!("{} {}", "✗".red().bold(), error)
-        }
-    };
-
-    formatted
+        _ => format!("{} {}", "✗".red().bold(), error),
+    }
 }
 
 /// Display an error to stderr and return exit code
+#[must_use]
 pub fn display_error(error: &ProxyError) -> i32 {
     eprintln!("{}", format_error(error));
     1

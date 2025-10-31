@@ -313,6 +313,7 @@ pub struct Annotations {
 
 impl ServerSpec {
     /// Check if server supports a specific capability
+    #[must_use]
     pub fn has_capability(&self, capability: &str) -> bool {
         match capability {
             "logging" => self.capabilities.logging.is_some(),
@@ -324,7 +325,8 @@ impl ServerSpec {
         }
     }
 
-    /// Check if server supports list_changed notifications for a capability
+    /// Check if server supports `list_changed` notifications for a capability
+    #[must_use]
     pub fn supports_list_changed(&self, capability: &str) -> bool {
         match capability {
             "prompts" => self
@@ -350,6 +352,7 @@ impl ServerSpec {
     }
 
     /// Check if server supports resource subscriptions
+    #[must_use]
     pub fn supports_resource_subscriptions(&self) -> bool {
         self.capabilities
             .resources
@@ -359,6 +362,7 @@ impl ServerSpec {
     }
 
     /// Get a summary of what the server offers
+    #[must_use]
     pub fn summary(&self) -> String {
         format!(
             "{} v{}: {} tools, {} resources, {} prompts",

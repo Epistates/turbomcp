@@ -1,6 +1,6 @@
 //! Rust code generator implementation
 //!
-//! This module provides the main RustCodeGenerator that converts a ServerSpec
+//! This module provides the main `RustCodeGenerator` that converts a `ServerSpec`
 //! into a complete Rust project with Cargo.toml and source files.
 
 use chrono::Utc;
@@ -9,7 +9,10 @@ use convert_case::{Case, Casing};
 use crate::error::ProxyResult;
 use crate::introspection::ServerSpec;
 
-use super::context::*;
+use super::context::{
+    CargoContext, MainContext, PromptDefinition, PromptEnumVariant, ProxyContext,
+    ResourceDefinition, ResourceEnumVariant, ToolDefinition, ToolEnumVariant, TypesContext,
+};
 use super::template_engine::TemplateEngine;
 use super::type_generator::TypeGenerator;
 
@@ -28,7 +31,7 @@ pub struct GenConfig {
     /// Backend transport type
     pub backend_type: BackendType,
 
-    /// TurboMCP version to use
+    /// `TurboMCP` version to use
     pub turbomcp_version: String,
 }
 
@@ -39,7 +42,7 @@ impl Default for GenConfig {
             version: None,
             frontend_type: FrontendType::Http,
             backend_type: BackendType::Stdio,
-            turbomcp_version: "2.0.5".to_string(),
+            turbomcp_version: "2.1.0".to_string(),
         }
     }
 }
@@ -107,7 +110,7 @@ pub struct GeneratedProject {
 
 /// Rust code generator
 ///
-/// Converts a ServerSpec into a complete Rust project with type-safe code.
+/// Converts a `ServerSpec` into a complete Rust project with type-safe code.
 pub struct RustCodeGenerator {
     /// Template engine
     template_engine: TemplateEngine,
@@ -121,6 +124,10 @@ pub struct RustCodeGenerator {
 
 impl RustCodeGenerator {
     /// Create a new Rust code generator
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the template engine fails to initialize.
     pub fn new(spec: ServerSpec) -> ProxyResult<Self> {
         let template_engine = TemplateEngine::new()?;
         let type_generator = TypeGenerator::new();
@@ -133,14 +140,18 @@ impl RustCodeGenerator {
     }
 
     /// Generate a complete Rust project
-    pub fn generate(mut self, config: GenConfig) -> ProxyResult<GeneratedProject> {
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if code generation or template rendering fails.
+    pub fn generate(mut self, config: &GenConfig) -> ProxyResult<GeneratedProject> {
         tracing::info!("Generating Rust project for {}", self.spec.server_info.name);
 
         // Build contexts (types_context first to populate type_generator)
         let types_context = self.build_types_context();
-        let main_context = self.build_main_context(&config);
-        let proxy_context = self.build_proxy_context(&config);
-        let cargo_context = self.build_cargo_context(&config);
+        let main_context = self.build_main_context(config);
+        let proxy_context = self.build_proxy_context(config);
+        let cargo_context = self.build_cargo_context(config);
 
         // Render templates
         let main_rs = self.template_engine.render_main(&main_context)?;
@@ -199,7 +210,7 @@ impl RustCodeGenerator {
                 let name = resource
                     .uri
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap_or(&resource.uri)
                     .to_case(Case::Snake);
 
@@ -299,7 +310,7 @@ impl RustCodeGenerator {
                 let name = resource
                     .uri
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap_or(&resource.uri)
                     .to_case(Case::Snake);
 
@@ -442,7 +453,7 @@ mod tests {
         let generator = RustCodeGenerator::new(spec).unwrap();
 
         let config = GenConfig::default();
-        let project = generator.generate(config);
+        let project = generator.generate(&config);
 
         assert!(project.is_ok(), "Should generate project successfully");
 
@@ -489,7 +500,7 @@ mod tests {
 
         // Check that types were generated
         assert!(
-            types_ctx.type_definitions.len() >= 1,
+            !types_ctx.type_definitions.is_empty(),
             "Should generate at least input type"
         );
 

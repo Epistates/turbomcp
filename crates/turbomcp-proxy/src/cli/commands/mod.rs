@@ -32,6 +32,10 @@ pub enum Command {
 
 impl Command {
     /// Execute the command with the specified output format
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the command execution fails.
     pub async fn execute(self, format: OutputFormat) -> ProxyResult<()> {
         match self {
             Command::Inspect(cmd) => cmd.execute(format).await,

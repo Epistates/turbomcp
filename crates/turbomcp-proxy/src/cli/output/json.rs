@@ -16,6 +16,7 @@ pub struct JsonFormatter {
 
 impl JsonFormatter {
     /// Create a new JSON formatter
+    #[must_use]
     pub fn new(pretty: bool) -> Self {
         Self { pretty }
     }
@@ -29,7 +30,7 @@ impl OutputFormatter for JsonFormatter {
             serde_json::to_string(spec)?
         };
 
-        writeln!(writer, "{}", json)?;
+        writeln!(writer, "{json}")?;
         Ok(())
     }
 
@@ -45,7 +46,7 @@ impl OutputFormatter for JsonFormatter {
             serde_json::to_string(&error_obj)?
         };
 
-        writeln!(writer, "{}", json)?;
+        writeln!(writer, "{json}")?;
         Ok(())
     }
 
@@ -61,7 +62,7 @@ impl OutputFormatter for JsonFormatter {
             serde_json::to_string(&success_obj)?
         };
 
-        writeln!(writer, "{}", json)?;
+        writeln!(writer, "{json}")?;
         Ok(())
     }
 }

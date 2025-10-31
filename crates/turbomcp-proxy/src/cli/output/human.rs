@@ -6,7 +6,7 @@
 //! - Table formatting for tools/resources
 //! - TTY detection for automatic color disabling
 
-use colored::*;
+use colored::Colorize;
 use std::io::Write;
 
 use super::OutputFormatter;
@@ -20,9 +20,10 @@ pub struct HumanFormatter {
 
 impl HumanFormatter {
     /// Create a new human formatter
+    #[must_use]
     pub fn new() -> Self {
         Self {
-            use_color: atty::is(atty::Stream::Stdout) && !std::env::var("NO_COLOR").is_ok(),
+            use_color: atty::is(atty::Stream::Stdout) && std::env::var("NO_COLOR").is_err(),
         }
     }
 
@@ -40,7 +41,7 @@ impl HumanFormatter {
         if self.use_color {
             format!("  {}: {}", key.bold(), value)
         } else {
-            format!("  {}: {}", key, value)
+            format!("  {key}: {value}")
         }
     }
 
@@ -50,7 +51,7 @@ impl HumanFormatter {
         if self.use_color {
             format!("{}• {}", indent, text.bright_white())
         } else {
-            format!("{}• {}", indent, text)
+            format!("{indent}• {text}")
         }
     }
 }
@@ -62,6 +63,7 @@ impl Default for HumanFormatter {
 }
 
 impl OutputFormatter for HumanFormatter {
+    #[allow(clippy::too_many_lines)]
     fn write_spec(&self, spec: &ServerSpec, writer: &mut dyn Write) -> ProxyResult<()> {
         // Header
         writeln!(writer)?;
@@ -195,13 +197,13 @@ impl OutputFormatter for HumanFormatter {
 
                 // Show input schema summary
                 if let Some(ref props) = tool.input_schema.properties {
-                    if !props.is_empty() {
-                        writeln!(
-                            writer,
-                            "    {}: {}",
-                            "Parameters".bold(),
-                            props.keys().cloned().collect::<Vec<_>>().join(", ")
-                        )?;
+                    let keys = props
+                        .keys()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if !keys.is_empty() {
+                        writeln!(writer, "    {}: {}", "Parameters".bold(), keys)?;
                     }
                 }
 
@@ -333,7 +335,7 @@ impl OutputFormatter for HumanFormatter {
         if self.use_color {
             writeln!(writer, "{}: {}", "Error".bold().red(), error)?;
         } else {
-            writeln!(writer, "Error: {}", error)?;
+            writeln!(writer, "Error: {error}")?;
         }
         Ok(())
     }
@@ -342,7 +344,7 @@ impl OutputFormatter for HumanFormatter {
         if self.use_color {
             writeln!(writer, "{} {}", "✓".green(), message)?;
         } else {
-            writeln!(writer, "✓ {}", message)?;
+            writeln!(writer, "✓ {message}")?;
         }
         Ok(())
     }

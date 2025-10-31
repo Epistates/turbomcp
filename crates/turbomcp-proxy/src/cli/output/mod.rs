@@ -26,19 +26,33 @@ pub enum OutputFormat {
     Yaml,
 }
 
-/// Trait for formatting and outputting ServerSpec results
+/// Trait for formatting and outputting `ServerSpec` results
 pub trait OutputFormatter {
     /// Format and write the server specification
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if writing to the output fails.
     fn write_spec(&self, spec: &ServerSpec, writer: &mut dyn Write) -> ProxyResult<()>;
 
     /// Format and write an error message
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if writing to the output fails.
     fn write_error(&self, error: &str, writer: &mut dyn Write) -> ProxyResult<()>;
 
     /// Format and write a success message
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if writing to the output fails.
     fn write_success(&self, message: &str, writer: &mut dyn Write) -> ProxyResult<()>;
 }
 
 /// Factory function to create the appropriate formatter
+#[must_use]
+#[allow(clippy::match_same_arms)]
 pub fn get_formatter(format: OutputFormat) -> Box<dyn OutputFormatter> {
     match format {
         OutputFormat::Human => Box::new(human::HumanFormatter::new()),

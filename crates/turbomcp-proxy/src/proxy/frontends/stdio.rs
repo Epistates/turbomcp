@@ -14,7 +14,7 @@ use turbomcp_protocol::jsonrpc::{
 use crate::error::{ProxyError, ProxyResult};
 use crate::proxy::backends::HttpBackend;
 
-/// Maximum line size in bytes (10 MB) - matches MAX_REQUEST_SIZE from runtime module
+/// Maximum line size in bytes (10 MB) - matches `MAX_REQUEST_SIZE` from runtime module
 const MAX_LINE_SIZE: usize = 10 * 1024 * 1024;
 
 /// STDIO frontend configuration
@@ -59,6 +59,10 @@ impl StdioFrontend {
     ///
     /// Reads JSON-RPC requests from stdin, forwards to backend, writes responses to stdout.
     /// Runs until EOF on stdin or error.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if reading from stdin fails, parsing JSON-RPC requests fails, or forwarding to backend fails.
     pub async fn run(self) -> ProxyResult<()> {
         debug!("Starting STDIO frontend event loop");
 
@@ -125,7 +129,7 @@ impl StdioFrontend {
                 }
                 Err(e) => {
                     error!("Error reading from stdin: {}", e);
-                    return Err(ProxyError::backend(format!("STDIO read error: {}", e)));
+                    return Err(ProxyError::backend(format!("STDIO read error: {e}")));
                 }
             }
         }
@@ -138,8 +142,7 @@ impl StdioFrontend {
     async fn handle_request(&self, request: JsonRpcRequest) -> ProxyResult<()> {
         trace!(
             "Handling request: method={}, id={:?}",
-            request.method,
-            request.id
+            request.method, request.id
         );
 
         // Route the request to the appropriate backend method
@@ -250,6 +253,7 @@ impl StdioFrontend {
     }
 
     /// Write a JSON-RPC response to stdout
+    #[allow(clippy::unused_async)]
     async fn write_response(&self, response: &JsonRpcResponse) -> ProxyResult<()> {
         let json = serde_json::to_string(response)?;
 
@@ -257,13 +261,13 @@ impl StdioFrontend {
 
         // Write to stdout (blocking, but fast enough for line-based output)
         let mut stdout = std::io::stdout();
-        writeln!(stdout, "{}", json)
-            .map_err(|e| ProxyError::backend(format!("Failed to write to stdout: {}", e)))?;
+        writeln!(stdout, "{json}")
+            .map_err(|e| ProxyError::backend(format!("Failed to write to stdout: {e}")))?;
 
         if self.config.flush_after_message {
             stdout
                 .flush()
-                .map_err(|e| ProxyError::backend(format!("Failed to flush stdout: {}", e)))?;
+                .map_err(|e| ProxyError::backend(format!("Failed to flush stdout: {e}")))?;
         }
 
         Ok(())

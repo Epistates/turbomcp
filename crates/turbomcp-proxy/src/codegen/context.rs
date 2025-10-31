@@ -1,7 +1,7 @@
 //! Context data structures for code generation
 //!
 //! This module defines the context structures that are passed to Handlebars templates
-//! to generate proxy code. These structures bridge the gap between MCP ServerSpec
+//! to generate proxy code. These structures bridge the gap between MCP `ServerSpec`
 //! and template rendering.
 
 use serde::{Deserialize, Serialize};
@@ -120,7 +120,7 @@ pub struct TypesContext {
 /// A custom type definition (struct)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TypeDefinition {
-    /// Type name (PascalCase)
+    /// Type name (`PascalCase`)
     pub name: String,
 
     /// Type description
@@ -136,7 +136,7 @@ pub struct TypeDefinition {
 /// A field in a struct
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldDefinition {
-    /// Field name (snake_case)
+    /// Field name (`snake_case`)
     pub name: String,
 
     /// Rust type
@@ -201,7 +201,7 @@ pub struct CargoContext {
     /// Server name for description
     pub server_name: String,
 
-    /// TurboMCP version
+    /// `TurboMCP` version
     pub turbomcp_version: String,
 
     /// Frontend transport type (for conditional dependencies)
@@ -293,7 +293,7 @@ mod tests {
             package_name: "test-proxy".to_string(),
             version: "0.1.0".to_string(),
             server_name: "test-server".to_string(),
-            turbomcp_version: "2.0.5".to_string(),
+            turbomcp_version: "2.1.0".to_string(),
             frontend_type: "HTTP".to_string(),
             transport_features: vec!["http".to_string(), "stdio".to_string()],
             additional_dependencies: vec![],

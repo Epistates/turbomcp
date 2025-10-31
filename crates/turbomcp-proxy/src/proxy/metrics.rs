@@ -32,6 +32,7 @@ pub struct AtomicMetrics {
 
 impl AtomicMetrics {
     /// Create a new metrics collector with all counters at zero
+    #[must_use]
     pub fn new() -> Self {
         Self {
             requests_forwarded: AtomicU64::new(0),
@@ -98,6 +99,7 @@ impl AtomicMetrics {
     /// Creates a consistent snapshot of all metrics at a point in time.
     /// Note: This is not a fully atomic snapshot - metrics may change
     /// between individual reads, but each metric is read atomically.
+    #[allow(clippy::cast_precision_loss)]
     pub fn snapshot(&self) -> ProxyMetrics {
         ProxyMetrics {
             requests_forwarded: self.requests_forwarded.load(Ordering::Relaxed),
@@ -105,6 +107,7 @@ impl AtomicMetrics {
             bytes_sent: self.bytes_sent.load(Ordering::Relaxed),
             bytes_received: self.bytes_received.load(Ordering::Relaxed),
             active_sessions: self.active_sessions.load(Ordering::Relaxed),
+            // Precision loss is acceptable when converting microseconds to milliseconds for display
             average_latency_ms: self.avg_latency_us.load(Ordering::Relaxed) as f64 / 1000.0,
         }
     }
@@ -156,16 +159,20 @@ impl ProxyMetrics {
     /// Calculate success rate as a percentage
     ///
     /// Returns `None` if no requests have been made yet.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
     pub fn success_rate(&self) -> Option<f64> {
         let total = self.requests_forwarded + self.requests_failed;
         if total == 0 {
             None
         } else {
+            // Precision loss is acceptable for percentage calculations
             Some((self.requests_forwarded as f64 / total as f64) * 100.0)
         }
     }
 
     /// Calculate total requests (successful + failed)
+    #[must_use]
     pub fn total_requests(&self) -> u64 {
         self.requests_forwarded + self.requests_failed
     }
@@ -176,6 +183,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn test_atomic_metrics_creation() {
         let metrics = AtomicMetrics::new();
         let snapshot = metrics.snapshot();
@@ -228,6 +236,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn test_latency_tracking() {
         let metrics = AtomicMetrics::new();
 
@@ -242,6 +251,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn test_reset() {
         let metrics = AtomicMetrics::new();
 

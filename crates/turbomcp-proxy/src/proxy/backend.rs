@@ -5,26 +5,27 @@
 
 use serde_json::Value;
 use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{debug, info};
 use turbomcp_client::Client;
 use turbomcp_protocol::types::{Prompt, ReadResourceResult, Resource, Tool};
-use std::net::SocketAddr;
-use std::path::PathBuf;
 use turbomcp_transport::{
-    streamable_http_client::{StreamableHttpClientConfig, StreamableHttpClientTransport},
     ChildProcessConfig, ChildProcessTransport, TcpTransport, Transport, UnixTransport,
+    WebSocketBidirectionalConfig, WebSocketBidirectionalTransport,
+    streamable_http_client::{StreamableHttpClientConfig, StreamableHttpClientTransport},
 };
 
-#[cfg(feature = "websocket")]
-use turbomcp_transport::{WebSocketBidirectionalConfig, WebSocketBidirectionalTransport};
-
 use crate::error::{ProxyError, ProxyResult};
-use crate::introspection::ServerSpec;
+use crate::introspection::{
+    PromptSpec, PromptsCapability, ResourceSpec, ResourcesCapability, ServerCapabilities,
+    ServerInfo, ServerSpec, ToolInputSchema, ToolSpec, ToolsCapability,
+};
 
 /// Type-erased client wrapper supporting multiple transports
 ///
-/// This enum allows BackendConnector to work with different transport types
+/// This enum allows `BackendConnector` to work with different transport types
 /// without requiring generic parameters that would complicate the API.
 #[derive(Clone)]
 enum AnyClient {
@@ -41,11 +42,10 @@ enum AnyClient {
     Unix(Arc<Client<UnixTransport>>),
 
     /// WebSocket bidirectional transport
-    #[cfg(feature = "websocket")]
     WebSocket(Arc<Client<WebSocketBidirectionalTransport>>),
 }
 
-/// Macro to dispatch method calls on AnyClient enum
+/// Macro to dispatch method calls on `AnyClient` enum
 macro_rules! dispatch_client {
     ($client:expr, $method:ident($($args:expr),*)) => {
         match $client {
@@ -53,7 +53,6 @@ macro_rules! dispatch_client {
             AnyClient::Http(c) => c.$method($($args),*).await,
             AnyClient::Tcp(c) => c.$method($($args),*).await,
             AnyClient::Unix(c) => c.$method($($args),*).await,
-            #[cfg(feature = "websocket")]
             AnyClient::WebSocket(c) => c.$method($($args),*).await,
         }
     };
@@ -91,7 +90,6 @@ pub enum BackendTransport {
         path: String,
     },
     /// WebSocket bidirectional
-    #[cfg(feature = "websocket")]
     WebSocket {
         /// WebSocket URL
         url: String,
@@ -138,6 +136,15 @@ impl BackendConnector {
     /// # Returns
     ///
     /// A connected backend connector ready for requests
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the backend fails to initialize, connect, or if the transport type is not supported.
+    ///
+    /// # Panics
+    ///
+    /// Panics if "127.0.0.1:0" cannot be parsed as a `SocketAddr` (should never happen as it's a valid address).
+    #[allow(clippy::too_many_lines)]
     pub async fn new(config: BackendConfig) -> ProxyResult<Self> {
         info!("Creating backend connector: {:?}", config.transport);
 
@@ -160,7 +167,7 @@ impl BackendConnector {
 
                 // Connect the transport
                 transport.connect().await.map_err(|e| {
-                    ProxyError::backend(format!("Failed to connect to subprocess: {}", e))
+                    ProxyError::backend(format!("Failed to connect to subprocess: {e}"))
                 })?;
 
                 debug!("STDIO backend connected: {} {:?}", command, args);
@@ -168,7 +175,7 @@ impl BackendConnector {
                 // Create and initialize client
                 let client = Client::new(transport);
                 let _init_result = client.initialize().await.map_err(|e| {
-                    ProxyError::backend(format!("Failed to initialize backend: {}", e))
+                    ProxyError::backend(format!("Failed to initialize backend: {e}"))
                 })?;
 
                 AnyClient::Stdio(Arc::new(client))
@@ -183,11 +190,11 @@ impl BackendConnector {
                     ..Default::default()
                 };
 
-                let mut transport = StreamableHttpClientTransport::new(http_config);
+                let transport = StreamableHttpClientTransport::new(http_config);
 
                 // Connect the transport
                 transport.connect().await.map_err(|e| {
-                    ProxyError::backend(format!("Failed to connect to HTTP backend: {}", e))
+                    ProxyError::backend(format!("Failed to connect to HTTP backend: {e}"))
                 })?;
 
                 debug!("HTTP backend connected: {}", url);
@@ -195,27 +202,27 @@ impl BackendConnector {
                 // Create and initialize client
                 let client = Client::new(transport);
                 let _init_result = client.initialize().await.map_err(|e| {
-                    ProxyError::backend(format!("Failed to initialize backend: {}", e))
+                    ProxyError::backend(format!("Failed to initialize backend: {e}"))
                 })?;
 
                 AnyClient::Http(Arc::new(client))
             }
 
             BackendTransport::Tcp { host, port } => {
-                let addr = format!("{}:{}", host, port)
+                let addr = format!("{host}:{port}")
                     .parse::<SocketAddr>()
-                    .map_err(|e| {
-                        ProxyError::backend(format!("Invalid TCP address: {}", e))
-                    })?;
+                    .map_err(|e| ProxyError::backend(format!("Invalid TCP address: {e}")))?;
 
-                let mut transport = TcpTransport::new_client(
-                    "127.0.0.1:0".parse().unwrap_or_else(|_| "127.0.0.1:0".parse().unwrap()),
+                let transport = TcpTransport::new_client(
+                    "127.0.0.1:0"
+                        .parse()
+                        .unwrap_or_else(|_| "127.0.0.1:0".parse().unwrap()),
                     addr,
                 );
 
                 // Connect the transport
                 transport.connect().await.map_err(|e| {
-                    ProxyError::backend(format!("Failed to connect to TCP backend: {}", e))
+                    ProxyError::backend(format!("Failed to connect to TCP backend: {e}"))
                 })?;
 
                 debug!("TCP backend connected: {}:{}", host, port);
@@ -223,7 +230,7 @@ impl BackendConnector {
                 // Create and initialize client
                 let client = Client::new(transport);
                 let _init_result = client.initialize().await.map_err(|e| {
-                    ProxyError::backend(format!("Failed to initialize backend: {}", e))
+                    ProxyError::backend(format!("Failed to initialize backend: {e}"))
                 })?;
 
                 AnyClient::Tcp(Arc::new(client))
@@ -232,11 +239,11 @@ impl BackendConnector {
             BackendTransport::Unix { path } => {
                 let socket_path = PathBuf::from(path);
 
-                let mut transport = UnixTransport::new_client(socket_path.clone());
+                let transport = UnixTransport::new_client(socket_path.clone());
 
                 // Connect the transport
                 transport.connect().await.map_err(|e| {
-                    ProxyError::backend(format!("Failed to connect to Unix socket: {}", e))
+                    ProxyError::backend(format!("Failed to connect to Unix socket: {e}"))
                 })?;
 
                 debug!("Unix socket backend connected: {}", path);
@@ -244,13 +251,12 @@ impl BackendConnector {
                 // Create and initialize client
                 let client = Client::new(transport);
                 let _init_result = client.initialize().await.map_err(|e| {
-                    ProxyError::backend(format!("Failed to initialize backend: {}", e))
+                    ProxyError::backend(format!("Failed to initialize backend: {e}"))
                 })?;
 
                 AnyClient::Unix(Arc::new(client))
             }
 
-            #[cfg(feature = "websocket")]
             BackendTransport::WebSocket { url } => {
                 let ws_config = WebSocketBidirectionalConfig {
                     url: Some(url.clone()),
@@ -260,7 +266,7 @@ impl BackendConnector {
                 let transport = WebSocketBidirectionalTransport::new(ws_config)
                     .await
                     .map_err(|e| {
-                        ProxyError::backend(format!("Failed to connect to WebSocket: {}", e))
+                        ProxyError::backend(format!("Failed to connect to WebSocket: {e}"))
                     })?;
 
                 debug!("WebSocket backend connected: {}", url);
@@ -268,7 +274,7 @@ impl BackendConnector {
                 // Create and initialize client
                 let client = Client::new(transport);
                 let _init_result = client.initialize().await.map_err(|e| {
-                    ProxyError::backend(format!("Failed to initialize backend: {}", e))
+                    ProxyError::backend(format!("Failed to initialize backend: {e}"))
                 })?;
 
                 AnyClient::WebSocket(Arc::new(client))
@@ -288,6 +294,10 @@ impl BackendConnector {
     ///
     /// Discovers all capabilities (tools, resources, prompts) and caches
     /// the result for use by the frontend server.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the introspection fails or the server capabilities cannot be determined.
     pub async fn introspect(&mut self) -> ProxyResult<ServerSpec> {
         debug!("Introspecting backend server");
 
@@ -311,21 +321,17 @@ impl BackendConnector {
     async fn introspect_via_client(&self) -> ProxyResult<ServerSpec> {
         // List tools
         let tools = dispatch_client!(&self.client, list_tools())
-            .map_err(|e| ProxyError::backend(format!("Failed to list tools: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to list tools: {e}")))?;
 
         // List resources
         let resources = dispatch_client!(&self.client, list_resources())
-            .map_err(|e| ProxyError::backend(format!("Failed to list resources: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to list resources: {e}")))?;
 
         // List prompts
         let prompts = dispatch_client!(&self.client, list_prompts())
-            .map_err(|e| ProxyError::backend(format!("Failed to list prompts: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to list prompts: {e}")))?;
 
         // Build ServerSpec using our introspection types
-        use crate::introspection::{
-            PromptsCapability, ResourcesCapability, ServerCapabilities, ServerInfo, ToolsCapability,
-        };
-
         let server_info = ServerInfo {
             name: "backend-server".to_string(),
             version: "unknown".to_string(),
@@ -347,12 +353,9 @@ impl BackendConnector {
         };
 
         // Convert tools/resources/prompts to our spec types
-        use crate::introspection::{PromptSpec, ResourceSpec, ToolSpec};
-
         let tool_specs: Vec<ToolSpec> = tools
             .into_iter()
             .map(|t| {
-                use crate::introspection::ToolInputSchema;
                 let mut additional = HashMap::new();
                 if let Some(additional_props) = t.input_schema.additional_properties {
                     additional.insert(
@@ -425,11 +428,16 @@ impl BackendConnector {
     }
 
     /// Get cached server spec
+    #[must_use]
     pub fn spec(&self) -> Option<&ServerSpec> {
         self.spec.as_ref()
     }
 
     /// Call a tool on the backend
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the tool call fails or the tool is not found.
     pub async fn call_tool(
         &self,
         name: &str,
@@ -438,41 +446,61 @@ impl BackendConnector {
         debug!("Calling backend tool: {}", name);
 
         dispatch_client!(&self.client, call_tool(name, arguments))
-            .map_err(|e| ProxyError::backend(format!("Tool call failed: {}", e)))
+            .map_err(|e| ProxyError::backend(format!("Tool call failed: {e}")))
     }
 
     /// List tools from the backend
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if listing tools fails.
     pub async fn list_tools(&self) -> ProxyResult<Vec<Tool>> {
         dispatch_client!(&self.client, list_tools())
-            .map_err(|e| ProxyError::backend(format!("Failed to list tools: {}", e)))
+            .map_err(|e| ProxyError::backend(format!("Failed to list tools: {e}")))
     }
 
     /// List resources from the backend
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if listing resources fails.
     pub async fn list_resources(&self) -> ProxyResult<Vec<Resource>> {
         dispatch_client!(&self.client, list_resources())
-            .map_err(|e| ProxyError::backend(format!("Failed to list resources: {}", e)))
+            .map_err(|e| ProxyError::backend(format!("Failed to list resources: {e}")))
     }
 
     /// Read a resource from the backend
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if reading the resource fails or the resource is not found.
     pub async fn read_resource(&self, uri: &str) -> ProxyResult<ReadResourceResult> {
         dispatch_client!(&self.client, read_resource(uri))
-            .map_err(|e| ProxyError::backend(format!("Failed to read resource: {}", e)))
+            .map_err(|e| ProxyError::backend(format!("Failed to read resource: {e}")))
     }
 
     /// List prompts from the backend
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if listing prompts fails.
     pub async fn list_prompts(&self) -> ProxyResult<Vec<Prompt>> {
         dispatch_client!(&self.client, list_prompts())
-            .map_err(|e| ProxyError::backend(format!("Failed to list prompts: {}", e)))
+            .map_err(|e| ProxyError::backend(format!("Failed to list prompts: {e}")))
     }
 
     /// Get a prompt from the backend
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if getting the prompt fails or the prompt is not found.
     pub async fn get_prompt(
         &self,
         name: &str,
         arguments: Option<HashMap<String, Value>>,
     ) -> ProxyResult<turbomcp_protocol::types::GetPromptResult> {
         dispatch_client!(&self.client, get_prompt(name, arguments))
-            .map_err(|e| ProxyError::backend(format!("Failed to get prompt: {}", e)))
+            .map_err(|e| ProxyError::backend(format!("Failed to get prompt: {e}")))
     }
 }
 

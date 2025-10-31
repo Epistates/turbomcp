@@ -5,7 +5,8 @@
 use axum::Router;
 use clap::Args;
 use secrecy::SecretString;
-use tracing::info;
+use tracing::{info, warn};
+use turbomcp_transport::axum::{AxumMcpExt, McpServerConfig, config::AuthConfig};
 
 use crate::cli::args::BackendArgs;
 use crate::error::{ProxyError, ProxyResult};
@@ -64,15 +65,72 @@ pub struct ServeCommand {
     /// Authentication token for HTTP backend (Bearer token)
     #[arg(long, value_name = "TOKEN")]
     pub auth_token: Option<String>,
+
+    // ═══════════════════════════════════════════════════
+    // AUTHENTICATION (Frontend HTTP Server Protection)
+    // ═══════════════════════════════════════════════════
+    /// JWT secret for frontend authentication (symmetric HS256/384/512)
+    ///
+    /// When provided, the HTTP/SSE frontend will require valid JWT tokens.
+    /// Tokens must be provided in the Authorization header: `Bearer <token>`
+    /// Use this for symmetric algorithms (HS256, HS384, HS512).
+    #[arg(long, env = "TURBOMCP_JWT_SECRET", value_name = "SECRET")]
+    pub jwt_secret: Option<String>,
+
+    /// JWKS URI for asymmetric JWT validation (RS256/384/512, ES256/384)
+    ///
+    /// Fetch public keys from this URI for asymmetric JWT validation.
+    /// Use this with OAuth providers (Google, GitHub, Auth0, etc.).
+    /// Example: <https://accounts.google.com/.well-known/jwks.json>
+    #[arg(long, env = "TURBOMCP_JWT_JWKS_URI", value_name = "URI")]
+    pub jwt_jwks_uri: Option<String>,
+
+    /// JWT algorithm for validation
+    ///
+    /// Specify which algorithm to use for JWT validation.
+    /// Symmetric: HS256 (default), HS384, HS512
+    /// Asymmetric: RS256, RS384, RS512, ES256, ES384
+    #[arg(long, value_name = "ALG", default_value = "HS256")]
+    pub jwt_algorithm: String,
+
+    /// JWT audience claim validation (aud)
+    ///
+    /// Require token to have this audience. Can be specified multiple times.
+    /// Example: --jwt-audience "<https://api.example.com>"
+    #[arg(long, value_name = "AUD")]
+    pub jwt_audience: Vec<String>,
+
+    /// JWT issuer claim validation (iss)
+    ///
+    /// Require token to have this issuer. Can be specified multiple times.
+    /// Example: --jwt-issuer "<https://accounts.google.com>"
+    #[arg(long, value_name = "ISS")]
+    pub jwt_issuer: Vec<String>,
+
+    /// API key header name for frontend authentication
+    ///
+    /// When used with --require-auth, requests must include this header
+    /// with a valid API key. Common values: "x-api-key", "authorization"
+    #[arg(long, value_name = "HEADER", default_value = "x-api-key")]
+    pub api_key_header: String,
+
+    /// Require authentication for all frontend requests
+    ///
+    /// When enabled without --jwt-secret or --jwt-jwks-uri, uses API key authentication.
+    /// IMPORTANT: Always enable this when binding to 0.0.0.0
+    #[arg(long)]
+    pub require_auth: bool,
 }
 
 impl ServeCommand {
     /// Execute the serve command
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if backend validation fails, runtime initialization fails, or serving fails.
     pub async fn execute(self) -> ProxyResult<()> {
         // Validate backend arguments
-        self.backend
-            .validate()
-            .map_err(|e| ProxyError::configuration(e))?;
+        self.backend.validate().map_err(ProxyError::configuration)?;
 
         info!(
             backend = ?self.backend.backend_type(),
@@ -93,6 +151,7 @@ impl ServeCommand {
     }
 
     /// Execute with HTTP frontend (Phase 2: STDIO → HTTP)
+    #[allow(clippy::too_many_lines)]
     async fn execute_http_frontend(&self) -> ProxyResult<()> {
         use crate::cli::args::BackendType;
 
@@ -124,24 +183,96 @@ impl ServeCommand {
         // Create proxy service
         let proxy_service = ProxyService::new(backend, spec);
 
-        // Create Axum router with MCP routes
-        use turbomcp_transport::axum::{AxumMcpExt, McpServerConfig};
+        // Configure authentication
+        let auth_config = if self.require_auth
+            || self.jwt_secret.is_some()
+            || self.jwt_jwks_uri.is_some()
+        {
+            if self.jwt_secret.is_some() || self.jwt_jwks_uri.is_some() {
+                use turbomcp_transport::axum::config::{JwtAlgorithm, JwtConfig};
 
+                // Parse algorithm
+                let algorithm = match self.jwt_algorithm.to_uppercase().as_str() {
+                    "HS256" => JwtAlgorithm::HS256,
+                    "HS384" => JwtAlgorithm::HS384,
+                    "HS512" => JwtAlgorithm::HS512,
+                    "RS256" => JwtAlgorithm::RS256,
+                    "RS384" => JwtAlgorithm::RS384,
+                    "RS512" => JwtAlgorithm::RS512,
+                    "ES256" => JwtAlgorithm::ES256,
+                    "ES384" => JwtAlgorithm::ES384,
+                    other => {
+                        return Err(ProxyError::configuration(format!(
+                            "Invalid JWT algorithm: {other}. Valid: HS256, HS384, HS512, RS256, RS384, RS512, ES256, ES384"
+                        )));
+                    }
+                };
+
+                // Build JWT config
+                let jwt_config = JwtConfig {
+                    secret: self.jwt_secret.clone(),
+                    jwks_uri: self.jwt_jwks_uri.clone(),
+                    algorithm,
+                    audience: (!self.jwt_audience.is_empty()).then(|| self.jwt_audience.clone()),
+                    issuer: (!self.jwt_issuer.is_empty()).then(|| self.jwt_issuer.clone()),
+                    validate_exp: true,
+                    validate_nbf: true,
+                    leeway: 60,
+                    server_uri: None,
+                    introspection_endpoint: None,
+                    introspection_client_id: None,
+                    introspection_client_secret: None,
+                };
+
+                info!("Enabling JWT authentication for frontend");
+                if let Some(jwks_uri) = &self.jwt_jwks_uri {
+                    info!("   Method: Asymmetric ({:?}) with JWKS", algorithm);
+                    info!("   JWKS URI: {}", jwks_uri);
+                } else {
+                    info!("   Method: Symmetric ({:?})", algorithm);
+                }
+                if let Some(audience) = &jwt_config.audience {
+                    info!("   Audience: {}", audience.join(", "));
+                }
+                if let Some(issuer) = &jwt_config.issuer {
+                    info!("   Issuer: {}", issuer.join(", "));
+                }
+
+                Some(AuthConfig::jwt_with_config(jwt_config))
+            } else {
+                info!(
+                    "Enabling API key authentication (header: {})",
+                    self.api_key_header
+                );
+                Some(AuthConfig::api_key(self.api_key_header.clone()))
+            }
+        } else {
+            // Warn if binding to 0.0.0.0 without auth
+            if self.bind.starts_with("0.0.0.0") {
+                warn!("⚠️  Binding to 0.0.0.0 without authentication enabled!");
+                warn!(
+                    "   Consider using --require-auth, --jwt-secret, or --jwt-jwks-uri for production"
+                );
+            }
+            None
+        };
+
+        // Create Axum router with MCP routes and authentication
         info!("Building HTTP server with Axum MCP integration...");
-        let app = Router::new().turbo_mcp_routes_with_config(
-            proxy_service,
-            McpServerConfig {
-                enable_compression: true,
-                enable_tracing: true,
-                ..Default::default()
-            },
-        );
+        let config = McpServerConfig {
+            enable_compression: true,
+            enable_tracing: true,
+            auth: auth_config,
+            ..Default::default()
+        };
+
+        let app = Router::new().turbo_mcp_routes_with_config(proxy_service, config);
 
         // Parse bind address
         let addr: std::net::SocketAddr = self
             .bind
             .parse()
-            .map_err(|e| ProxyError::configuration(format!("Invalid bind address: {}", e)))?;
+            .map_err(|e| ProxyError::configuration(format!("Invalid bind address: {e}")))?;
 
         info!("Proxy server listening on http://{}/mcp", addr);
         info!("Backend: STDIO subprocess");
@@ -154,11 +285,11 @@ impl ServeCommand {
         // Run HTTP server using axum::serve
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
-            .map_err(|e| ProxyError::backend(format!("Failed to bind to {}: {}", addr, e)))?;
+            .map_err(|e| ProxyError::backend(format!("Failed to bind to {addr}: {e}")))?;
 
         axum::serve(listener, app)
             .await
-            .map_err(|e| ProxyError::backend(format!("HTTP server error: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("HTTP server error: {e}")))?;
 
         Ok(())
     }
@@ -241,20 +372,11 @@ impl ServeCommand {
                 }
             }
             Some(BackendType::Websocket) => {
-                #[cfg(feature = "websocket")]
-                {
-                    let url = self.backend.websocket.as_ref().ok_or_else(|| {
-                        ProxyError::configuration("WebSocket URL not specified".to_string())
-                    })?;
+                let url = self.backend.websocket.as_ref().ok_or_else(|| {
+                    ProxyError::configuration("WebSocket URL not specified".to_string())
+                })?;
 
-                    BackendTransport::WebSocket { url: url.clone() }
-                }
-                #[cfg(not(feature = "websocket"))]
-                {
-                    return Err(ProxyError::configuration(
-                        "WebSocket backend requires the 'websocket' feature".to_string(),
-                    ));
-                }
+                BackendTransport::WebSocket { url: url.clone() }
             }
             None => {
                 return Err(ProxyError::configuration(
@@ -293,6 +415,13 @@ mod tests {
             client_name: "test-proxy".to_string(),
             client_version: "1.0.0".to_string(),
             auth_token: None,
+            jwt_secret: None,
+            jwt_jwks_uri: None,
+            jwt_algorithm: "HS256".to_string(),
+            jwt_audience: vec![],
+            jwt_issuer: vec![],
+            api_key_header: "x-api-key".to_string(),
+            require_auth: false,
         };
 
         let config = cmd.create_backend_config();

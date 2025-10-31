@@ -18,6 +18,7 @@ pub struct TypeGenerator {
 
 impl TypeGenerator {
     /// Create a new type generator
+    #[must_use]
     pub fn new() -> Self {
         Self {
             generated_types: HashSet::new(),
@@ -26,14 +27,15 @@ impl TypeGenerator {
 
     /// Convert a JSON Schema to a Rust type name
     ///
-    /// Returns the Rust type string (e.g., "String", "Vec<i64>", "CustomType")
+    /// Returns the Rust type string (e.g., "String", "Vec<i64>", "`CustomType`")
+    #[must_use]
     pub fn schema_to_rust_type(&self, schema: &Value, type_name_hint: Option<&str>) -> String {
         // Handle references
         if let Some(ref_str) = schema.get("$ref").and_then(|v| v.as_str()) {
             // Extract type name from $ref (e.g., "#/definitions/MyType" -> "MyType")
             return ref_str
                 .split('/')
-                .last()
+                .next_back()
                 .unwrap_or("Value")
                 .to_case(Case::Pascal);
         }
@@ -45,9 +47,9 @@ impl TypeGenerator {
             .unwrap_or("object");
 
         match type_str {
-            "string" => self.handle_string_type(schema),
+            "string" => Self::handle_string_type(schema),
             "number" => "f64".to_string(),
-            "integer" => self.handle_integer_type(schema),
+            "integer" => Self::handle_integer_type(schema),
             "boolean" => "bool".to_string(),
             "array" => self.handle_array_type(schema),
             "object" => {
@@ -63,7 +65,11 @@ impl TypeGenerator {
         }
     }
 
-    /// Generate a TypeDefinition from a JSON Schema object
+    /// Generate a `TypeDefinition` from a JSON Schema object
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the schema is missing required properties or a type with the same name already exists.
     pub fn generate_type_from_schema(
         &mut self,
         name: &str,
@@ -75,8 +81,7 @@ impl TypeGenerator {
         // Check for duplicate
         if self.generated_types.contains(&type_name) {
             return Err(ProxyError::codegen(format!(
-                "Type {} already generated",
-                type_name
+                "Type {type_name} already generated"
             )));
         }
 
@@ -86,9 +91,7 @@ impl TypeGenerator {
         let properties = schema
             .get("properties")
             .and_then(|v| v.as_object())
-            .ok_or_else(|| {
-                ProxyError::codegen(format!("Schema for {} missing properties", name))
-            })?;
+            .ok_or_else(|| ProxyError::codegen(format!("Schema for {name} missing properties")))?;
 
         // Extract required fields
         let required: HashSet<String> = schema
@@ -130,10 +133,10 @@ impl TypeGenerator {
     }
 
     /// Generate parameters from a JSON Schema for enum variants
+    #[must_use]
     pub fn generate_params_from_schema(&self, schema: &Value) -> Vec<ParamDefinition> {
-        let properties = match schema.get("properties").and_then(|v| v.as_object()) {
-            Some(props) => props,
-            None => return vec![],
+        let Some(properties) = schema.get("properties").and_then(|v| v.as_object()) else {
+            return vec![];
         };
 
         let required: HashSet<String> = schema
@@ -161,7 +164,7 @@ impl TypeGenerator {
 
     // Private helper methods
 
-    fn handle_string_type(&self, schema: &Value) -> String {
+    fn handle_string_type(schema: &Value) -> String {
         // Check for enum (string union type)
         if schema.get("enum").is_some() {
             // Could generate a proper enum, but for simplicity use String
@@ -171,15 +174,14 @@ impl TypeGenerator {
         }
     }
 
-    fn handle_integer_type(&self, schema: &Value) -> String {
+    fn handle_integer_type(schema: &Value) -> String {
         // Check format hint
         if let Some(format) = schema.get("format").and_then(|v| v.as_str()) {
             match format {
                 "int32" => "i32".to_string(),
-                "int64" => "i64".to_string(),
                 "uint32" => "u32".to_string(),
                 "uint64" => "u64".to_string(),
-                _ => "i64".to_string(),
+                _ => "i64".to_string(), // Includes "int64" and unknown formats
             }
         } else {
             "i64".to_string()
@@ -191,7 +193,7 @@ impl TypeGenerator {
 
         if let Some(items_schema) = items {
             let item_type = self.schema_to_rust_type(items_schema, None);
-            format!("Vec<{}>", item_type)
+            format!("Vec<{item_type}>")
         } else {
             "Vec<serde_json::Value>".to_string()
         }
@@ -211,41 +213,41 @@ mod tests {
 
     #[test]
     fn test_simple_types() {
-        let gen = TypeGenerator::new();
+        let type_gen = TypeGenerator::new();
 
         assert_eq!(
-            gen.schema_to_rust_type(&json!({"type": "string"}), None),
+            type_gen.schema_to_rust_type(&json!({"type": "string"}), None),
             "String"
         );
         assert_eq!(
-            gen.schema_to_rust_type(&json!({"type": "number"}), None),
+            type_gen.schema_to_rust_type(&json!({"type": "number"}), None),
             "f64"
         );
         assert_eq!(
-            gen.schema_to_rust_type(&json!({"type": "integer"}), None),
+            type_gen.schema_to_rust_type(&json!({"type": "integer"}), None),
             "i64"
         );
         assert_eq!(
-            gen.schema_to_rust_type(&json!({"type": "boolean"}), None),
+            type_gen.schema_to_rust_type(&json!({"type": "boolean"}), None),
             "bool"
         );
     }
 
     #[test]
     fn test_array_type() {
-        let gen = TypeGenerator::new();
+        let type_gen = TypeGenerator::new();
 
         let schema = json!({
             "type": "array",
             "items": {"type": "string"}
         });
 
-        assert_eq!(gen.schema_to_rust_type(&schema, None), "Vec<String>");
+        assert_eq!(type_gen.schema_to_rust_type(&schema, None), "Vec<String>");
     }
 
     #[test]
     fn test_nested_array() {
-        let gen = TypeGenerator::new();
+        let type_gen = TypeGenerator::new();
 
         let schema = json!({
             "type": "array",
@@ -255,26 +257,26 @@ mod tests {
             }
         });
 
-        assert_eq!(gen.schema_to_rust_type(&schema, None), "Vec<Vec<i64>>");
+        assert_eq!(type_gen.schema_to_rust_type(&schema, None), "Vec<Vec<i64>>");
     }
 
     #[test]
     fn test_integer_formats() {
-        let gen = TypeGenerator::new();
+        let type_gen = TypeGenerator::new();
 
         assert_eq!(
-            gen.schema_to_rust_type(&json!({"type": "integer", "format": "int32"}), None),
+            type_gen.schema_to_rust_type(&json!({"type": "integer", "format": "int32"}), None),
             "i32"
         );
         assert_eq!(
-            gen.schema_to_rust_type(&json!({"type": "integer", "format": "int64"}), None),
+            type_gen.schema_to_rust_type(&json!({"type": "integer", "format": "int64"}), None),
             "i64"
         );
     }
 
     #[test]
     fn test_generate_type_from_schema() {
-        let mut gen = TypeGenerator::new();
+        let mut type_gen = TypeGenerator::new();
 
         let schema = json!({
             "type": "object",
@@ -286,7 +288,7 @@ mod tests {
             "required": ["name", "age"]
         });
 
-        let type_def = gen
+        let type_def = type_gen
             .generate_type_from_schema("User", &schema, Some("User information".to_string()))
             .unwrap();
 
@@ -307,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_generate_params_from_schema() {
-        let gen = TypeGenerator::new();
+        let type_gen = TypeGenerator::new();
 
         let schema = json!({
             "type": "object",
@@ -319,7 +321,7 @@ mod tests {
             "required": ["query"]
         });
 
-        let params = gen.generate_params_from_schema(&schema);
+        let params = type_gen.generate_params_from_schema(&schema);
 
         assert_eq!(params.len(), 3);
 
@@ -333,7 +335,7 @@ mod tests {
 
     #[test]
     fn test_duplicate_type_prevention() {
-        let mut gen = TypeGenerator::new();
+        let mut type_gen = TypeGenerator::new();
 
         let schema = json!({
             "type": "object",
@@ -343,17 +345,23 @@ mod tests {
         });
 
         // First generation should succeed
-        assert!(gen.generate_type_from_schema("User", &schema, None).is_ok());
+        assert!(
+            type_gen
+                .generate_type_from_schema("User", &schema, None)
+                .is_ok()
+        );
 
         // Second generation of same type should fail
-        assert!(gen
-            .generate_type_from_schema("User", &schema, None)
-            .is_err());
+        assert!(
+            type_gen
+                .generate_type_from_schema("User", &schema, None)
+                .is_err()
+        );
     }
 
     #[test]
     fn test_complex_nested_type() {
-        let gen = TypeGenerator::new();
+        let type_gen = TypeGenerator::new();
 
         let schema = json!({
             "type": "object",
@@ -375,7 +383,7 @@ mod tests {
             }
         });
 
-        let params = gen.generate_params_from_schema(&schema);
+        let params = type_gen.generate_params_from_schema(&schema);
 
         let tags = params.iter().find(|p| p.name == "tags").unwrap();
         assert_eq!(tags.rust_type, "Vec<String>");
