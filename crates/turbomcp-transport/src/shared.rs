@@ -182,15 +182,21 @@ impl<T: Transport> std::fmt::Debug for SharedTransport<T> {
 #[async_trait]
 impl<T: Transport> Transport for SharedTransport<T> {
     fn transport_type(&self) -> TransportType {
-        // This is a blocking call, but we need async for the mutex
-        // For now, we'll use a blocking implementation
-        // In a real scenario, you might want to cache this value
-        panic!("Use SharedTransport::transport_type() async method instead")
+        // Cannot implement: requires async mutex access
+        // Use SharedTransport::transport_type_async() instead
+        unimplemented!(
+            "SharedTransport::transport_type() cannot be called directly. \
+             Use the async version: transport_type_async()"
+        )
     }
 
     fn capabilities(&self) -> &TransportCapabilities {
-        // Same issue - we can't return a reference from an async mutex
-        panic!("Use SharedTransport::capabilities() async method instead")
+        // Cannot implement: cannot return reference from async mutex
+        // Use SharedTransport::capabilities_async() instead
+        unimplemented!(
+            "SharedTransport::capabilities() cannot be called directly. \
+             Use the async version: capabilities_async()"
+        )
     }
 
     async fn state(&self) -> TransportState {
@@ -222,8 +228,12 @@ impl<T: Transport> Transport for SharedTransport<T> {
     }
 
     fn endpoint(&self) -> Option<String> {
-        // Same issue - blocking method but we need async
-        panic!("Use SharedTransport::endpoint() async method instead")
+        // Cannot implement: requires async mutex access
+        // Use SharedTransport::endpoint_async() instead
+        unimplemented!(
+            "SharedTransport::endpoint() cannot be called directly. \
+             Use the async version: endpoint_async()"
+        )
     }
 
     async fn configure(&self, config: TransportConfig) -> TransportResult<()> {

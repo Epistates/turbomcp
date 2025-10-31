@@ -143,23 +143,13 @@ impl McpServerConfig {
 
     /// Builder method: Configure API key authentication
     pub fn with_api_key_auth(mut self, header_name: String) -> Self {
-        self.auth = Some(AuthConfig {
-            enabled: true,
-            jwt_secret: None,
-            api_key_header: Some(header_name),
-            custom_validator: None,
-        });
+        self.auth = Some(AuthConfig::api_key(header_name));
         self
     }
 
     /// Builder method: Configure JWT authentication
     pub fn with_jwt_auth(mut self, secret: String) -> Self {
-        self.auth = Some(AuthConfig {
-            enabled: true,
-            jwt_secret: Some(secret),
-            api_key_header: None,
-            custom_validator: None,
-        });
+        self.auth = Some(AuthConfig::jwt(secret));
         self
     }
 
@@ -189,21 +179,11 @@ impl McpServerConfig {
     /// Load authentication configuration from environment variables
     fn load_auth_from_env() -> Option<AuthConfig> {
         if let Ok(jwt_secret) = std::env::var("TURBOMCP_JWT_SECRET") {
-            return Some(AuthConfig {
-                enabled: true,
-                jwt_secret: Some(jwt_secret),
-                api_key_header: None,
-                custom_validator: None,
-            });
+            return Some(AuthConfig::jwt(jwt_secret));
         }
 
         if let Ok(api_key_header) = std::env::var("TURBOMCP_API_KEY_HEADER") {
-            return Some(AuthConfig {
-                enabled: true,
-                jwt_secret: None,
-                api_key_header: Some(api_key_header),
-                custom_validator: None,
-            });
+            return Some(AuthConfig::api_key(api_key_header));
         }
 
         None

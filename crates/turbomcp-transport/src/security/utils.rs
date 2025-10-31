@@ -181,26 +181,15 @@ pub fn is_localhost_origin(origin: &str) -> bool {
         .any(|&pattern| origin.starts_with(pattern))
 }
 
-/// Generate a secure random string for tokens/keys
+/// Generate a cryptographically secure random string for tokens/keys
+///
+/// Uses rand::rng() which provides a cryptographically secure PRNG (StdRng/ChaCha12)
+/// that is periodically reseeded from the OS's secure random source (OsRng).
+/// This provides the best balance of security and performance for token generation.
 pub fn generate_secure_token(length: usize) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    use rand::distr::{Alphanumeric, SampleString};
 
-    let mut result = String::with_capacity(length);
-
-    for _ in 0..length {
-        let mut hasher = DefaultHasher::new();
-        std::time::SystemTime::now().hash(&mut hasher);
-        uuid::Uuid::new_v4().hash(&mut hasher);
-
-        let hash = hasher.finish();
-        let char_index = (hash % 62) as usize;
-
-        let chars = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        result.push(chars[char_index] as char);
-    }
-
-    result
+    Alphanumeric.sample_string(&mut rand::rng(), length)
 }
 
 /// Common message size limits

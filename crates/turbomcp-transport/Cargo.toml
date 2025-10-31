@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-transport"
-version = "2.0.5"
+version = "2.1.0"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Multi-protocol transport layer supporting HTTP, WebSocket, STDIO, and TCP for MCP communications"
@@ -54,6 +54,11 @@ tokio-rustls = { version = "0.26", optional = true }
 tracing = { workspace = true }
 metrics = { workspace = true, optional = true }
 
+# Authentication (optional)
+turbomcp-auth = { version = "2.1.0", path = "../turbomcp-auth", optional = true }
+jsonwebtoken = { version = "9.3", optional = true }
+base64 = { version = "0.22", optional = true }
+
 # Utilities
 uuid = { workspace = true }
 chrono = { workspace = true }
@@ -64,6 +69,7 @@ arc-swap = { workspace = true }
 dashmap = { workspace = true }
 fastrand = "2.0"
 once_cell = "1.19"
+rand = { workspace = true }
 
 # Development utilities
 wiremock = { version = "0.6", optional = true }
@@ -96,6 +102,10 @@ compression = ["flate2", "brotli", "lz4_flex"]
 
 # TLS support
 tls = ["rustls", "tokio-rustls"]
+
+# Authentication
+auth = ["dep:turbomcp-auth", "http"]
+jwt-validation = ["jsonwebtoken", "base64", "http", "reqwest"]
 
 # Observability
 metrics = ["dep:metrics"]

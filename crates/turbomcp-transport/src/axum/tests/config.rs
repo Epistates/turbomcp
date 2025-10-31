@@ -189,15 +189,17 @@ mod tests {
         assert!(tls_config.enable_http2);
 
         // Test authentication configuration creation
-        let auth_config = AuthConfig {
-            enabled: true,
-            jwt_secret: Some("test-secret".to_string()),
-            api_key_header: Some("X-API-Key".to_string()),
-            custom_validator: None,
-        };
+        let auth_config = AuthConfig::jwt("test-secret".to_string());
         assert!(auth_config.enabled);
-        assert_eq!(auth_config.jwt_secret.unwrap(), "test-secret");
-        assert_eq!(auth_config.api_key_header.unwrap(), "X-API-Key");
+        assert!(auth_config.jwt.is_some());
+        assert_eq!(
+            auth_config.jwt.as_ref().unwrap().secret.as_ref().unwrap(),
+            "test-secret"
+        );
+
+        let api_config = AuthConfig::api_key("X-API-Key".to_string());
+        assert!(api_config.enabled);
+        assert_eq!(api_config.api_key_header.unwrap(), "X-API-Key");
 
         // Test CORS origins parsing logic
         let cors_origins_string = "https://app.example.com,https://admin.example.com";
@@ -249,17 +251,21 @@ mod tests {
     fn test_auth_config_variants() {
         let jwt_config = AuthConfig::jwt("secret".to_string());
         assert!(jwt_config.enabled);
-        assert_eq!(jwt_config.jwt_secret.unwrap(), "secret");
+        assert!(jwt_config.jwt.is_some());
+        assert_eq!(
+            jwt_config.jwt.as_ref().unwrap().secret.as_ref().unwrap(),
+            "secret"
+        );
         assert!(jwt_config.api_key_header.is_none());
 
         let api_key_config = AuthConfig::api_key("X-API-Key".to_string());
         assert!(api_key_config.enabled);
-        assert!(api_key_config.jwt_secret.is_none());
+        assert!(api_key_config.jwt.is_none());
         assert_eq!(api_key_config.api_key_header.unwrap(), "X-API-Key");
 
         let disabled_config = AuthConfig::disabled();
         assert!(!disabled_config.enabled);
-        assert!(disabled_config.jwt_secret.is_none());
+        assert!(disabled_config.jwt.is_none());
         assert!(disabled_config.api_key_header.is_none());
     }
 

@@ -10,11 +10,15 @@
 //! - [`security`] - Security headers application
 //! - [`rate_limit`] - Request rate limiting
 //! - [`auth`] - Authentication and authorization
+//! - [`jwks`] - JWKS (JSON Web Key Set) fetching and caching
 
 pub mod mcp;
 pub mod security;
 pub mod rate_limit;
 pub mod auth;
+
+#[cfg(feature = "jwt-validation")]
+pub mod jwks;
 
 // Re-export all middleware functions for convenience
 pub use mcp::mcp_middleware;

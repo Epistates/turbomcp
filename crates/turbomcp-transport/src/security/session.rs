@@ -100,16 +100,8 @@ impl SecureSessionInfo {
 
     /// Generate a cryptographically secure session ID
     fn generate_secure_id() -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        // Use current time, process ID, and random data for entropy
-        let mut hasher = DefaultHasher::new();
-        std::time::SystemTime::now().hash(&mut hasher);
-        std::process::id().hash(&mut hasher);
-        uuid::Uuid::new_v4().hash(&mut hasher);
-
-        format!("mcp_session_{:x}", hasher.finish())
+        // UUID v4 is already cryptographically secure via rand::thread_rng()
+        format!("mcp_session_{}", uuid::Uuid::new_v4())
     }
 
     /// Hash user agent for fingerprinting

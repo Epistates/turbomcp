@@ -7,6 +7,8 @@
 //! NOTE: This entire module is only compiled when feature="http" is enabled.
 //! See lib.rs for the module-level feature gate.
 
+#[cfg(feature = "auth")]
+pub mod auth_router;
 pub mod config;
 pub mod handlers;
 pub mod query;
