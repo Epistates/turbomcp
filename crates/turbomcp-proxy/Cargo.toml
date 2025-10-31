@@ -1,20 +1,25 @@
 [package]
 name = "turbomcp-proxy"
 version = "2.1.0"
-edition = "2021"
+edition = "2024"
 authors = ["TurboMCP Team"]
 description = "Universal MCP adapter/generator - introspection, proxying, and code generation for any MCP server"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/turbomcp/turbomcp"
 keywords = ["mcp", "proxy", "adapter", "code-generation", "introspection"]
 categories = ["command-line-utilities", "web-programming", "development-tools"]
+rust-version = "1.89.0"
+
+[lints]
+workspace = true
 
 [dependencies]
 # TurboMCP (consumer-only - we only depend ON these, nothing depends on us)
-turbomcp-protocol = { path = "../turbomcp-protocol", version = "2.0.5" }
-turbomcp-transport = { path = "../turbomcp-transport", version = "2.0.5", features = ["http", "tcp", "unix"] }
-turbomcp-client = { path = "../turbomcp-client", version = "2.0.5" }
-turbomcp-server = { path = "../turbomcp-server", version = "2.0.5", optional = true }
+turbomcp-protocol = { path = "../turbomcp-protocol", version = "2.1.0" }
+turbomcp-transport = { path = "../turbomcp-transport", version = "2.1.0", features = ["http", "tcp", "unix", "websocket", "jwt-validation"] }
+turbomcp-client = { path = "../turbomcp-client", version = "2.1.0" }
+turbomcp-server = { path = "../turbomcp-server", version = "2.1.0", optional = true }
+turbomcp-auth = { path = "../turbomcp-auth", version = "2.1.0", optional = true }
 
 # Async runtime
 tokio = { version = "1.47", features = ["full"] }
@@ -26,7 +31,7 @@ serde_json = "1.0"
 bytes = "1.5"
 
 # CLI (optional)
-clap = { version = "4.5", features = ["derive", "cargo"], optional = true }
+clap = { version = "4.5", features = ["derive", "cargo", "env"], optional = true }
 colored = { version = "2.0", optional = true }
 atty = { version = "0.2", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
@@ -60,6 +65,7 @@ url = "2.5"
 
 # Security
 secrecy = "0.10"
+jsonwebtoken = { version = "10.1", features = ["aws_lc_rs"], optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -76,12 +82,13 @@ introspection = []
 runtime = ["axum", "tower", "tower-http", "reqwest", "tokio-tungstenite"]
 codegen = ["handlebars", "convert_case", "chrono"]
 schema = ["schemars"]
+auth = ["dep:turbomcp-auth", "dep:jsonwebtoken"]
 
 # CLI
 cli = ["clap", "colored", "atty", "tracing-subscriber"]
 
 # Full feature set
-full = ["introspection", "runtime", "codegen", "schema", "cli"]
+full = ["introspection", "runtime", "codegen", "schema", "cli", "auth"]
 
 [[bin]]
 name = "turbomcp-proxy"
@@ -95,3 +102,7 @@ harness = false
 [[bench]]
 name = "runtime_proxy"
 harness = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
