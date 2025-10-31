@@ -4,6 +4,7 @@
 //! in production-like scenarios.
 
 #![cfg(feature = "middleware")]
+#![allow(deprecated)]
 
 use std::time::Duration;
 

@@ -29,7 +29,8 @@ pub mod validation;
 
 pub use audit::{AuditConfig, AuditLayer};
 #[cfg(feature = "auth")]
-pub use auth::{AuthConfig, AuthLayer, Claims};
+#[allow(deprecated)]
+pub use auth::{AuthConfig, AuthContext, AuthLayer, Claims, UserInfo};
 #[cfg(feature = "rate-limiting")]
 pub use rate_limit::{RateLimitConfig, RateLimitLayer};
 pub use security::{SecurityConfig, SecurityLayer};

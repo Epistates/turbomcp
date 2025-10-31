@@ -5,6 +5,8 @@
 //! cargo bench --bench middleware_benchmarks --features "middleware,auth"
 //! ```
 
+#![allow(deprecated)]
+
 use criterion::{criterion_group, criterion_main};
 
 #[cfg(feature = "middleware")]

@@ -13,6 +13,7 @@ use tower::{Layer, Service};
 use tracing::{debug, info, warn};
 
 #[cfg(feature = "auth")]
+#[allow(deprecated)]
 use super::auth::Claims;
 
 /// Audit configuration
@@ -165,6 +166,7 @@ where
 
             // Extract user info if available (only when auth feature is enabled)
             #[cfg(feature = "auth")]
+            #[allow(deprecated)]
             let user_id = req
                 .extensions()
                 .get::<Claims>()

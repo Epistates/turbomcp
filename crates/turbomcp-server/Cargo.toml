@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-server"
-version = "2.0.5"
+version = "2.1.0"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Fast MCP server implementation with middleware, routing, and lifecycle management"
@@ -13,9 +13,10 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
-turbomcp-protocol = { version = "2.0.5", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "2.0.5", path = "../turbomcp-transport", optional = true }
-turbomcp-macros = { version = "2.0.5", path = "../turbomcp-macros" }
+turbomcp-protocol = { version = "2.1.0", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "2.1.0", path = "../turbomcp-transport", optional = true }
+turbomcp-macros = { version = "2.1.0", path = "../turbomcp-macros" }
+turbomcp-auth = { version = "2.1.0", path = "../turbomcp-auth", optional = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -59,7 +60,8 @@ harness = false
 [features]
 default = ["stdio"]
 # Core capabilities (minimal by default)
-auth = ["dep:jsonwebtoken", "dep:secrecy"]
+auth = ["dep:turbomcp-auth", "dep:jsonwebtoken", "dep:secrecy"]
+dpop = ["auth", "turbomcp-auth/dpop"]
 health-checks = []
 hot-reload = []
 metrics = []
@@ -75,4 +77,4 @@ tcp = ["dep:turbomcp-transport", "turbomcp-transport/tcp"]
 unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
 # Convenience feature bundles
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]
-full = ["all-transports", "auth", "health-checks", "metrics", "middleware", "rate-limiting", "graceful-shutdown"]
+full = ["all-transports", "auth", "dpop", "health-checks", "metrics", "middleware", "rate-limiting", "graceful-shutdown"]

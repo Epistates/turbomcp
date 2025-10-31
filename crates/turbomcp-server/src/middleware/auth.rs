@@ -1,8 +1,15 @@
-//! JWT Authentication middleware using well-established jsonwebtoken library
+//! JWT Authentication middleware using unified AuthContext from turbomcp-auth
 //!
-//! This middleware handles JWT token verification and user identity extraction.
-//! It follows security best practices for token validation and claim extraction.
+//! This middleware handles JWT token verification and user identity extraction using
+//! the unified AuthContext type. It follows security best practices for token validation
+//! and claim extraction.
+//!
+//! # Migration Note
+//!
+//! This module now uses `turbomcp_auth::AuthContext` as the canonical authentication type.
+//! The old `Claims` type is deprecated and will be removed in a future version.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -14,7 +21,19 @@ use serde::{Deserialize, Serialize};
 use tower::{Layer, Service};
 use tracing::{debug, warn};
 
-/// JWT Claims structure
+// Re-export unified types from turbomcp-auth
+pub use turbomcp_auth::{AuthContext, UserInfo};
+
+/// Legacy Claims structure (DEPRECATED)
+///
+/// This type is deprecated and will be removed in a future version.
+/// Use `turbomcp_auth::AuthContext` instead.
+///
+/// For backward compatibility, this type can still be deserialized from JWT tokens.
+#[deprecated(
+    since = "2.0.5",
+    note = "Use turbomcp_auth::AuthContext instead. This type will be removed in 3.0.0"
+)]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
     /// Subject (user ID)
@@ -33,6 +52,7 @@ pub struct Claims {
     pub aud: Option<String>,
 }
 
+#[allow(deprecated)]
 impl Claims {
     /// Check if the token is expired
     pub fn is_expired(&self) -> bool {
@@ -46,6 +66,40 @@ impl Claims {
     /// Check if user has a specific role
     pub fn has_role(&self, role: &str) -> bool {
         self.roles.iter().any(|r| r == role)
+    }
+
+    /// Convert legacy Claims to unified AuthContext
+    ///
+    /// This provides a migration path from the old Claims type to the new AuthContext.
+    pub fn to_auth_context(&self) -> AuthContext {
+        AuthContext {
+            sub: self.sub.clone(),
+            iss: self.iss.clone(),
+            aud: self.aud.clone(),
+            exp: Some(self.exp),
+            iat: Some(self.iat),
+            nbf: None,
+            jti: None,
+            user: UserInfo {
+                id: self.sub.clone(),
+                username: self.sub.clone(), // Default to sub if no username
+                email: None,
+                display_name: None,
+                avatar_url: None,
+                metadata: HashMap::new(),
+            },
+            roles: self.roles.clone(),
+            permissions: Vec::new(),
+            scopes: Vec::new(),
+            request_id: None,
+            authenticated_at: SystemTime::now(),
+            expires_at: Some(UNIX_EPOCH + std::time::Duration::from_secs(self.exp)),
+            token: None,
+            provider: "jwt".to_string(),
+            #[cfg(feature = "dpop")]
+            dpop_jkt: None,
+            metadata: HashMap::new(),
+        }
     }
 }
 
@@ -218,13 +272,14 @@ where
         let mut inner = self.inner.clone();
 
         Box::pin(async move {
-            // Extract and validate JWT token
+            // Extract and validate JWT token, returning unified AuthContext
             match extract_and_validate_token(&req, &config) {
-                Ok(claims) => {
-                    debug!(user_id = %claims.sub, "Authentication successful");
+                Ok(auth_context) => {
+                    debug!(user_id = %auth_context.sub, "Authentication successful");
 
-                    // Add claims to request extensions for downstream use
-                    req.extensions_mut().insert(claims);
+                    // Add AuthContext to request extensions for downstream use
+                    // This is the canonical authentication representation
+                    req.extensions_mut().insert(auth_context);
                 }
                 Err(error) => {
                     warn!(?error, "Authentication failed");
@@ -257,11 +312,11 @@ pub enum AuthError {
     TokenExpired,
 }
 
-/// Extract and validate JWT token from request
+/// Extract and validate JWT token from request, returning unified AuthContext
 fn extract_and_validate_token<B>(
     req: &http::Request<B>,
     config: &AuthConfig,
-) -> Result<Claims, AuthError> {
+) -> Result<AuthContext, AuthError> {
     // Extract Authorization header
     let auth_header = req
         .headers()
@@ -293,18 +348,33 @@ fn extract_and_validate_token<B>(
         validation.set_audience(&[audience]);
     }
 
-    // Decode and validate token
+    // Decode and validate token as raw JSON first
     let decoding_key = DecodingKey::from_secret(config.secret.expose_secret().as_bytes());
-    let token_data = decode::<Claims>(token, &decoding_key, &validation)?;
+    let token_data = decode::<serde_json::Value>(token, &decoding_key, &validation)?;
 
-    let claims = token_data.claims;
+    // Try to convert to unified AuthContext
+    match AuthContext::from_jwt_claims(token_data.claims) {
+        Ok(auth_context) => {
+            // Additional validation using AuthContext methods
+            if auth_context.is_expired() {
+                return Err(AuthError::TokenExpired);
+            }
+            Ok(auth_context)
+        }
+        Err(_) => {
+            // Fallback: Try legacy Claims format and convert
+            #[allow(deprecated)]
+            let token_data = decode::<Claims>(token, &decoding_key, &validation)?;
+            let claims = token_data.claims;
 
-    // Additional validation
-    if claims.is_expired() {
-        return Err(AuthError::TokenExpired);
+            if claims.is_expired() {
+                return Err(AuthError::TokenExpired);
+            }
+
+            // Convert legacy Claims to unified AuthContext
+            Ok(claims.to_auth_context())
+        }
     }
-
-    Ok(claims)
 }
 
 #[cfg(test)]
@@ -314,6 +384,7 @@ mod tests {
     use secrecy::Secret;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    #[allow(deprecated)]
     fn create_test_token(secret: &str, exp_offset: i64) -> String {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -350,9 +421,10 @@ mod tests {
         let result = extract_and_validate_token(&req, &config);
         assert!(result.is_ok());
 
-        let claims = result.unwrap();
-        assert_eq!(claims.sub, "test_user");
-        assert!(claims.has_role("user"));
+        // Now returns AuthContext instead of Claims
+        let auth_context = result.unwrap();
+        assert_eq!(auth_context.sub, "test_user");
+        assert!(auth_context.has_role("user"));
     }
 
     #[test]
