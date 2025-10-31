@@ -6,7 +6,7 @@
 //! 3. Returns appropriate 401 responses with WWW-Authenticate headers
 
 use turbomcp_auth::server::{
-    ProtectedResourceMetadataBuilder, WwwAuthenticateBuilder, BearerTokenValidator,
+    BearerTokenValidator, ProtectedResourceMetadataBuilder, WwwAuthenticateBuilder,
     unauthorized_response_body,
 };
 
@@ -68,7 +68,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "   {} {} => {:?}",
             status,
             header,
-            result.map(|t| format!("token: {}", t))
+            result
+                .map(|t| format!("token: {}", t))
                 .unwrap_or_else(|e| format!("error: {}", e))
         );
     }

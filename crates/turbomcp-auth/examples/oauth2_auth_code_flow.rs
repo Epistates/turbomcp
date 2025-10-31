@@ -10,8 +10,8 @@
 //! 4. Client exchanges code for access token using code_verifier
 
 use turbomcp_auth::{
-    oauth2::OAuth2Client,
     config::{OAuth2Config, OAuth2FlowType, ProviderType},
+    oauth2::OAuth2Client,
 };
 
 #[tokio::main]
@@ -19,9 +19,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Create OAuth2 configuration
     let oauth_config = OAuth2Config {
         client_id: "my-client-id".to_string(),
-        client_secret: "my-client-secret".to_string(), // Can be empty for public clients
+        client_secret: "my-client-secret".to_string().into(), // Can be empty for public clients
         auth_url: "https://provider.example.com/oauth/authorize".to_string(),
         token_url: "https://provider.example.com/oauth/token".to_string(),
+        revocation_url: Some("https://provider.example.com/oauth/revoke".to_string()), // RFC 7009
         redirect_uri: "http://localhost:8080/callback".to_string(),
         scopes: vec![
             "openid".to_string(),
@@ -57,7 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // authorize the application, and the authorization server would redirect
     // to the redirect_uri with an authorization code
     println!("3. After user authorizes, authorization server redirects to:");
-    println!("   {redirect_uri}?code=AUTH_CODE&state=STATE\n",
+    println!(
+        "   {redirect_uri}?code=AUTH_CODE&state=STATE\n",
         redirect_uri = oauth_config.redirect_uri
     );
 
@@ -65,7 +67,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // This would normally come from the redirect URL parameters
     // For demo purposes, we'll show the structure:
     println!("4. To exchange code for token, call:");
-    println!("   oauth_client.exchange_code_for_token(code, \"{}\").await?", code_verifier);
+    println!(
+        "   oauth_client.exchange_code_for_token(code, \"{}\").await?",
+        code_verifier
+    );
     println!("\nThis returns TokenInfo with:");
     println!("   - access_token: Bearer token for API requests");
     println!("   - refresh_token: Token to refresh access_token (if provided by provider)");

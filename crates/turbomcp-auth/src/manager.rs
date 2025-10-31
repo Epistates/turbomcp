@@ -1,57 +1,75 @@
 //! Authentication Manager
 //!
 //! Central authentication manager for coordinating multiple authentication providers.
+//!
+//! # MCP Compliance
+//!
+//! Per MCP specification (2025-06-18), authentication is **stateless**.
+//! Each request must include valid credentials (Bearer token in Authorization header).
+//! This manager does NOT maintain server-side session state for authentication decisions.
+//!
+//! ## Stateless Authentication Flow
+//!
+//! ```rust,no_run
+//! # use turbomcp_auth::{AuthManager, AuthCredentials, config::AuthConfig};
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! # let config = AuthConfig {
+//! #     enabled: true,
+//! #     providers: vec![],
+//! #     authorization: Default::default(),
+//! # };
+//! # let manager = AuthManager::new(config);
+//! # let credentials = AuthCredentials::ApiKey { key: "test".to_string() };
+//! // 1. Authenticate user and get auth context
+//! let auth_context = manager.authenticate("oauth2", credentials).await?;
+//!
+//! // 2. Extract token from auth context
+//! let token = auth_context.token.as_ref().unwrap().access_token.clone();
+//!
+//! // 3. On subsequent requests, validate token EVERY TIME
+//! let validated_context = manager.validate_token(&token, Some("oauth2")).await?;
+//! // ✅ Token validated via provider - truly stateless
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
 
 use tokio::sync::RwLock;
 
 use super::config::AuthConfig;
-use super::types::{AuthContext, AuthCredentials, AuthProvider};
+use super::context::AuthContext as UnifiedAuthContext; // Unified AuthContext for external API
+use super::types::{AuthCredentials, AuthProvider};
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 /// Authentication manager for coordinating multiple authentication providers
+///
+/// # MCP Specification Compliance
+///
+/// This manager implements **stateless** authentication per MCP spec (RFC 9728).
+/// No server-side session state is maintained. All authentication decisions are made
+/// by validating credentials on EVERY request.
 #[derive(Debug)]
 pub struct AuthManager {
     /// Authentication configuration
     config: AuthConfig,
     /// Registered authentication providers
     providers: Arc<RwLock<HashMap<String, Arc<dyn AuthProvider>>>>,
-    /// Active sessions
-    sessions: Arc<RwLock<HashMap<String, AuthContext>>>,
-    /// Session cleanup task handle
-    _cleanup_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl AuthManager {
     /// Create a new authentication manager
+    ///
+    /// # MCP Specification Compliance
+    ///
+    /// Creates a stateless authentication manager per MCP spec.
+    /// No server-side session state is maintained.
     #[must_use]
     pub fn new(config: AuthConfig) -> Self {
-        let manager = Self {
+        Self {
             config,
             providers: Arc::new(RwLock::new(HashMap::new())),
-            sessions: Arc::new(RwLock::new(HashMap::new())),
-            _cleanup_handle: None,
-        };
-
-        // Start session cleanup task
-        let sessions_clone = manager.sessions.clone();
-        let cleanup_handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
-            loop {
-                interval.tick().await;
-                let now = SystemTime::now();
-                let mut sessions = sessions_clone.write().await;
-                sessions
-                    .retain(|_, context| context.expires_at.is_none_or(|expires| expires > now));
-            }
-        });
-
-        Self {
-            _cleanup_handle: Some(cleanup_handle),
-            ..manager
         }
     }
 
@@ -72,11 +90,45 @@ impl AuthManager {
     }
 
     /// Authenticate user with credentials
+    ///
+    /// # MCP Specification Compliance
+    ///
+    /// Authenticates the user and returns an `AuthContext`.
+    /// **NO server-side session state is created** - per MCP stateless requirement.
+    ///
+    /// The returned `AuthContext` contains a token (if applicable) that the client
+    /// must include in subsequent requests via the `Authorization` header.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_auth::{AuthManager, AuthCredentials, config::AuthConfig};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = AuthConfig {
+    /// #     enabled: true,
+    /// #     providers: vec![],
+    /// #     authorization: Default::default(),
+    /// # };
+    /// # let manager = AuthManager::new(config);
+    /// let credentials = AuthCredentials::ApiKey {
+    ///     key: "secret_key".to_string(),
+    /// };
+    ///
+    /// let auth_context = manager.authenticate("api", credentials).await?;
+    ///
+    /// // Extract token for subsequent requests
+    /// if let Some(token_info) = &auth_context.token {
+    ///     let access_token = &token_info.access_token;
+    ///     // Client must send: Authorization: Bearer {access_token}
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn authenticate(
         &self,
         provider_name: &str,
         credentials: AuthCredentials,
-    ) -> McpResult<AuthContext> {
+    ) -> McpResult<UnifiedAuthContext> {
         if !self.config.enabled {
             return Err(McpError::internal("Authentication is disabled".to_string()));
         }
@@ -93,22 +145,45 @@ impl AuthManager {
             auth_context.roles = self.config.authorization.default_roles.clone();
         }
 
-        // Store session
-        let session_id = auth_context.session_id.clone();
-        self.sessions
-            .write()
-            .await
-            .insert(session_id, auth_context.clone());
-
+        // MCP Spec: Stateless authentication - NO session storage
+        // Client must include token in Authorization header on every request
         Ok(auth_context)
     }
 
     /// Validate token and get authentication context
+    ///
+    /// # MCP Specification Compliance
+    ///
+    /// Validates the token on EVERY request per MCP stateless requirement.
+    /// This method MUST be called for each incoming request to ensure the token
+    /// is still valid (not expired, not revoked, etc.).
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The access token to validate (from Authorization header)
+    /// * `provider_name` - Optional provider name (if known). If None, tries all providers.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_auth::AuthManager;
+    /// # async fn handle_request(manager: &AuthManager, auth_header: &str) -> Result<(), Box<dyn std::error::Error>> {
+    /// // Extract token from Authorization header
+    /// let token = auth_header.strip_prefix("Bearer ").unwrap();
+    ///
+    /// // Validate token on EVERY request (stateless)
+    /// let auth_context = manager.validate_token(token, None).await?;
+    ///
+    /// // Use auth_context for authorization decisions
+    /// println!("Authenticated user: {}", auth_context.user.username);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn validate_token(
         &self,
         token: &str,
         provider_name: Option<&str>,
-    ) -> McpResult<AuthContext> {
+    ) -> McpResult<UnifiedAuthContext> {
         if !self.config.enabled {
             return Err(McpError::internal("Authentication is disabled".to_string()));
         }
@@ -123,42 +198,17 @@ impl AuthManager {
         } else {
             // Try all providers
             for provider in providers.values() {
-                if let Ok(context) = provider.validate_token(token).await {
-                    return Ok(context);
+                if let Ok(auth_context) = provider.validate_token(token).await {
+                    return Ok(auth_context);
                 }
             }
             Err(McpError::internal("Token validation failed".to_string()))
         }
     }
 
-    /// Get session by ID
-    pub async fn get_session(&self, session_id: &str) -> Option<AuthContext> {
-        self.sessions.read().await.get(session_id).cloned()
-    }
-
-    /// Revoke session
-    pub async fn revoke_session(&self, session_id: &str) -> McpResult<()> {
-        let context = self
-            .sessions
-            .write()
-            .await
-            .remove(session_id)
-            .ok_or_else(|| McpError::internal("Session not found".to_string()))?;
-
-        // Try to revoke token with provider
-        let providers = self.providers.read().await;
-        if let Some(provider) = providers.get(&context.provider)
-            && let Some(token) = &context.token
-        {
-            let _ = provider.revoke_token(&token.access_token).await;
-        }
-
-        Ok(())
-    }
-
     /// Check if user has permission
     #[must_use]
-    pub fn check_permission(&self, context: &AuthContext, permission: &str) -> bool {
+    pub fn check_permission(&self, context: &UnifiedAuthContext, permission: &str) -> bool {
         context.permissions.contains(&permission.to_string())
             || context.roles.iter().any(|role| {
                 self.config
@@ -171,7 +221,7 @@ impl AuthManager {
 
     /// Check if user has role
     #[must_use]
-    pub fn check_role(&self, context: &AuthContext, role: &str) -> bool {
+    pub fn check_role(&self, context: &UnifiedAuthContext, role: &str) -> bool {
         context.roles.contains(&role.to_string())
     }
 }
@@ -194,7 +244,7 @@ pub async fn global_auth_manager() -> Option<Arc<AuthManager>> {
 }
 
 /// Convenience function to check authentication
-pub async fn check_auth(token: &str) -> McpResult<AuthContext> {
+pub async fn check_auth(token: &str) -> McpResult<UnifiedAuthContext> {
     if let Some(manager) = global_auth_manager().await {
         manager.validate_token(token, None).await
     } else {
@@ -208,10 +258,7 @@ pub async fn check_auth(token: &str) -> McpResult<AuthContext> {
 mod tests {
     use super::*;
     use crate::{
-        config::{
-            AuthorizationConfig, OAuth2Config, OAuth2FlowType, SecurityLevel, SessionConfig,
-            SessionStorageType,
-        },
+        config::{AuthorizationConfig, OAuth2Config, OAuth2FlowType, SecurityLevel},
         providers::ApiKeyProvider,
         types::UserInfo,
     };
@@ -221,9 +268,10 @@ mod tests {
     fn test_oauth2_config() {
         let config = OAuth2Config {
             client_id: "test_client".to_string(),
-            client_secret: "test_secret".to_string(),
+            client_secret: "test_secret".to_string().into(),
             auth_url: "https://auth.example.com/oauth/authorize".to_string(),
             token_url: "https://auth.example.com/oauth/token".to_string(),
+            revocation_url: None,
             redirect_uri: "http://localhost:8080/callback".to_string(),
             scopes: vec!["read".to_string(), "write".to_string()],
             flow_type: OAuth2FlowType::AuthorizationCode,
@@ -285,13 +333,6 @@ mod tests {
         let config = AuthConfig {
             enabled: true,
             providers: vec![],
-            session: SessionConfig {
-                timeout_seconds: 3600,
-                secure_cookies: true,
-                cookie_domain: None,
-                storage: SessionStorageType::Memory,
-                max_sessions_per_user: Some(5),
-            },
             authorization: AuthorizationConfig {
                 rbac_enabled: true,
                 default_roles: vec!["user".to_string()],

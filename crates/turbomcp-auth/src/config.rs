@@ -7,6 +7,7 @@ use std::sync::Arc;
 #[cfg(feature = "dpop")]
 use std::time::Duration;
 
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -17,14 +18,18 @@ use turbomcp_protocol::{Error as McpError, Result as McpResult};
 use super::dpop::DpopAlgorithm;
 
 /// Authentication configuration
+///
+/// # MCP Compliance
+///
+/// Per MCP specification (2025-06-18), authentication is **stateless**.
+/// All authentication is token-based with validation on every request.
+/// No server-side session state is maintained.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
     /// Enable authentication
     pub enabled: bool,
     /// Authentication provider configuration
     pub providers: Vec<AuthProviderConfig>,
-    /// Session configuration
-    pub session: SessionConfig,
     /// Authorization configuration
     pub authorization: AuthorizationConfig,
 }
@@ -138,32 +143,6 @@ impl Default for DpopConfig {
     }
 }
 
-/// Session configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionConfig {
-    /// Session timeout duration in seconds
-    pub timeout_seconds: u64,
-    /// Whether to use secure cookies
-    pub secure_cookies: bool,
-    /// Cookie domain
-    pub cookie_domain: Option<String>,
-    /// Session storage type
-    pub storage: SessionStorageType,
-    /// Maximum concurrent sessions per user
-    pub max_sessions_per_user: Option<u32>,
-}
-
-/// Session storage types
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum SessionStorageType {
-    /// In-memory storage
-    Memory,
-    /// Redis storage
-    Redis,
-    /// Database storage
-    Database,
-}
-
 /// Authorization configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorizationConfig {
@@ -182,12 +161,16 @@ pub struct AuthorizationConfig {
 pub struct OAuth2Config {
     /// Client ID
     pub client_id: String,
-    /// Client secret
-    pub client_secret: String,
+    /// Client secret (stored securely with automatic zeroization on drop)
+    #[serde(serialize_with = "serialize_secret", deserialize_with = "deserialize_secret")]
+    pub client_secret: SecretString,
     /// Authorization endpoint
     pub auth_url: String,
     /// Token endpoint
     pub token_url: String,
+    /// Token revocation endpoint (RFC 7009) - optional but recommended
+    #[serde(default)]
+    pub revocation_url: Option<String>,
     /// Redirect URI
     pub redirect_uri: String,
     /// Scopes to request
@@ -211,6 +194,23 @@ pub struct OAuth2Config {
     /// is automatically included in all OAuth flows for MCP compliance
     #[serde(default = "default_auto_resource_indicators")]
     pub auto_resource_indicators: bool,
+}
+
+// Custom serialization for SecretString
+fn serialize_secret<S>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(secret.expose_secret())
+}
+
+// Custom deserialization for SecretString
+fn deserialize_secret<'de, D>(deserializer: D) -> Result<SecretString, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s: String = serde::Deserialize::deserialize(deserializer)?;
+    Ok(SecretString::new(s))
 }
 
 /// Default auto resource indicators setting (enabled for MCP compliance)

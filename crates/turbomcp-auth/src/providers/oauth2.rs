@@ -10,8 +10,9 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use super::super::config::AuthProviderType;
+use super::super::context::AuthContext;
 use super::super::oauth2::OAuth2Client;
-use super::super::types::{AuthContext, AuthCredentials, AuthProvider, TokenInfo, UserInfo};
+use super::super::types::{AuthCredentials, AuthProvider, TokenInfo, UserInfo};
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 /// OAuth 2.1 authentication provider
@@ -21,6 +22,9 @@ pub struct OAuth2Provider {
     name: String,
     /// OAuth2 client for handling flows
     client: Arc<OAuth2Client>,
+    /// MCP server canonical URI (RFC 8707) - required for token binding
+    #[allow(dead_code)]
+    resource_uri: String,
     /// HTTP client for userinfo endpoint
     http_client: reqwest::Client,
     /// Token cache to avoid redundant requests
@@ -37,11 +41,23 @@ struct CachedToken {
 }
 
 impl OAuth2Provider {
-    /// Create a new OAuth2 provider
-    pub fn new(name: String, client: Arc<OAuth2Client>) -> Self {
+    /// Create a new OAuth2 provider with MCP server resource URI
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Provider name for identification
+    /// * `client` - OAuth2 client configured for the provider
+    /// * `resource_uri` - **MCP server canonical URI** (RFC 8707) - e.g., "https://mcp.example.com"
+    ///
+    /// # MCP Requirement
+    ///
+    /// The resource URI binds all tokens to the specific MCP server, preventing
+    /// token misuse across service boundaries per RFC 8707.
+    pub fn new(name: String, client: Arc<OAuth2Client>, resource_uri: String) -> Self {
         Self {
             name,
             client,
+            resource_uri,
             http_client: reqwest::Client::new(),
             token_cache: Arc::new(RwLock::new(std::collections::HashMap::new())),
         }
@@ -50,12 +66,9 @@ impl OAuth2Provider {
     /// Get user info from the OAuth provider's userinfo endpoint
     async fn fetch_user_info(&self, access_token: &str) -> McpResult<UserInfo> {
         let provider_config = self.client.provider_config();
-        let userinfo_endpoint = provider_config
-            .userinfo_endpoint
-            .as_ref()
-            .ok_or_else(|| {
-                McpError::internal("Provider does not support userinfo endpoint".to_string())
-            })?;
+        let userinfo_endpoint = provider_config.userinfo_endpoint.as_ref().ok_or_else(|| {
+            McpError::internal("Provider does not support userinfo endpoint".to_string())
+        })?;
 
         let response = self
             .http_client
@@ -172,54 +185,70 @@ impl AuthProvider for OAuth2Provider {
                 // Cache for 5 minutes
                 if elapsed < std::time::Duration::from_secs(300) {
                     let user_info = self.fetch_user_info(token).await?;
-                    let session_id = Uuid::new_v4().to_string();
-                    return Ok(AuthContext {
-                        user_id: user_info.id.clone(),
-                        user: user_info,
-                        roles: vec!["oauth_user".to_string()],
-                        permissions: vec!["api_access".to_string()],
-                        session_id,
-                        token: Some(cached.token.clone()),
-                        provider: self.name.clone(),
-                        authenticated_at: SystemTime::now(),
-                        expires_at: cached
-                            .token
-                            .expires_in
-                            .map(|secs| SystemTime::now() + std::time::Duration::from_secs(secs)),
-                        metadata: std::collections::HashMap::new(),
-                    });
+                    let request_id = Uuid::new_v4().to_string();
+                    let mut builder = AuthContext::builder()
+                        .subject(user_info.id.clone())
+                        .user(user_info)
+                        .roles(vec!["oauth_user".to_string()])
+                        .permissions(vec!["api_access".to_string()])
+                        .request_id(request_id)
+                        .token(cached.token.clone())
+                        .provider(self.name.clone())
+                        .authenticated_at(SystemTime::now());
+
+                    if let Some(secs) = cached.token.expires_in {
+                        builder = builder
+                            .expires_at(SystemTime::now() + std::time::Duration::from_secs(secs));
+                    }
+
+                    return builder
+                        .build()
+                        .map_err(|e| McpError::internal(e.to_string()));
                 }
             }
         }
 
         // Token not in cache or cache expired - fetch user info to validate
         let user_info = self.fetch_user_info(token).await?;
-        let session_id = Uuid::new_v4().to_string();
+        let request_id = Uuid::new_v4().to_string();
 
-        Ok(AuthContext {
-            user_id: user_info.id.clone(),
-            user: user_info,
-            roles: vec!["oauth_user".to_string()],
-            permissions: vec!["api_access".to_string()],
-            session_id,
-            token: None, // Don't include token in validation response
-            provider: self.name.clone(),
-            authenticated_at: SystemTime::now(),
-            expires_at: None,
-            metadata: std::collections::HashMap::new(),
-        })
+        AuthContext::builder()
+            .subject(user_info.id.clone())
+            .user(user_info)
+            .roles(vec!["oauth_user".to_string()])
+            .permissions(vec!["api_access".to_string()])
+            .request_id(request_id)
+            .provider(self.name.clone())
+            .authenticated_at(SystemTime::now())
+            .build()
+            .map_err(|e| McpError::internal(e.to_string()))
     }
 
     async fn refresh_token(&self, refresh_token: &str) -> McpResult<TokenInfo> {
+        // Refresh token using the OAuth2 client
+        // Note: RFC 8707 resource parameter is handled in OAuth2Client::refresh_access_token
         self.client.refresh_access_token(refresh_token).await
     }
 
     async fn revoke_token(&self, token: &str) -> McpResult<()> {
-        // Remove from cache
-        self.token_cache.write().await.remove(token);
+        // Remove from cache first
+        let cached_token = self.token_cache.write().await.remove(token);
 
-        // In a real implementation, call the OAuth provider's revocation endpoint
-        // For now, we just clear the cache
+        // If we have the full token info, revoke it at the provider (RFC 7009)
+        if let Some(cached) = cached_token {
+            self.client.revoke_token(&cached.token).await?;
+        } else {
+            // If not in cache, create a minimal TokenInfo for revocation
+            let token_info = TokenInfo {
+                access_token: token.to_string(),
+                token_type: "Bearer".to_string(),
+                refresh_token: None,
+                expires_in: None,
+                scope: None,
+            };
+            self.client.revoke_token(&token_info).await?;
+        }
+
         Ok(())
     }
 
@@ -237,9 +266,10 @@ mod tests {
     fn test_oauth2_provider_creation() {
         let config = OAuth2Config {
             client_id: "test-client".to_string(),
-            client_secret: "test-secret".to_string(),
+            client_secret: "test-secret".to_string().into(),
             auth_url: "https://provider.example.com/oauth/authorize".to_string(),
             token_url: "https://provider.example.com/oauth/token".to_string(),
+            revocation_url: Some("https://provider.example.com/oauth/revoke".to_string()),
             redirect_uri: "http://localhost:8080/callback".to_string(),
             scopes: vec!["openid".to_string(), "profile".to_string()],
             flow_type: crate::config::OAuth2FlowType::AuthorizationCode,
@@ -253,7 +283,11 @@ mod tests {
 
         let oauth_client = OAuth2Client::new(&config, ProviderType::Generic)
             .expect("Failed to create OAuth2Client");
-        let provider = OAuth2Provider::new("test".to_string(), Arc::new(oauth_client));
+        let provider = OAuth2Provider::new(
+            "test".to_string(),
+            Arc::new(oauth_client),
+            "https://mcp.example.com".to_string(), // MCP server resource URI
+        );
 
         assert_eq!(provider.name(), "test");
         assert_eq!(provider.provider_type(), AuthProviderType::OAuth2);

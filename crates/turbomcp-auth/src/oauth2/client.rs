@@ -12,8 +12,11 @@ use std::collections::HashMap;
 
 use oauth2::{
     AuthUrl, ClientId, ClientSecret, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl,
-    RefreshToken, Scope, TokenResponse, TokenUrl, basic::{BasicClient, BasicTokenType},
+    RefreshToken, RevocationUrl, Scope, TokenResponse, TokenUrl,
+    basic::{BasicClient, BasicTokenType},
+    revocation::StandardRevocableToken,
 };
+use secrecy::ExposeSecret;
 
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
@@ -47,19 +50,26 @@ impl OAuth2Client {
         let redirect_url = Self::validate_redirect_uri(&config.redirect_uri)?;
 
         // Create authorization code flow client (primary)
-        let client_secret = if config.client_secret.is_empty() {
+        let client_secret = if config.client_secret.expose_secret().is_empty() {
             None
         } else {
-            Some(ClientSecret::new(config.client_secret.clone()))
+            Some(ClientSecret::new(config.client_secret.expose_secret().clone()))
         };
 
-        let auth_code_client = BasicClient::new(
+        let mut auth_code_client = BasicClient::new(
             ClientId::new(config.client_id.clone()),
             client_secret.clone(),
             auth_url.clone(),
             Some(token_url.clone()),
         )
         .set_redirect_uri(redirect_url);
+
+        // Set revocation endpoint if provided (RFC 7009)
+        if let Some(ref revocation_url_str) = config.revocation_url {
+            let revocation_url = RevocationUrl::new(revocation_url_str.clone())
+                .map_err(|_| McpError::validation("Invalid revocation URL".to_string()))?;
+            auth_code_client = auth_code_client.set_revocation_uri(revocation_url);
+        }
 
         // Create client credentials client if we have a secret (server-to-server)
         let client_credentials_client = if client_secret.is_some() {
@@ -255,17 +265,54 @@ impl OAuth2Client {
     /// This initiates the OAuth 2.1 authorization code flow with PKCE (RFC 7636)
     /// for enhanced security, especially for public clients.
     ///
+    /// # PKCE Code Verifier Storage (CRITICAL SECURITY REQUIREMENT)
+    ///
+    /// The returned code_verifier MUST be securely stored and associated with the
+    /// state parameter until the authorization code is exchanged for tokens.
+    ///
+    /// **Storage Options (from most to least secure):**
+    ///
+    /// 1. **Server-side encrypted session** (RECOMMENDED for web apps)
+    ///    - Store in server session with HttpOnly, Secure, SameSite=Lax cookies
+    ///    - Associate with state parameter for CSRF protection
+    ///    - Automatic cleanup after exchange or timeout
+    ///
+    /// 2. **Redis/Database with TTL** (RECOMMENDED for distributed systems)
+    ///    - Key: state parameter, Value: encrypted code_verifier
+    ///    - Set TTL to match authorization timeout (typically 10 minutes)
+    ///    - Use server-side encryption at rest
+    ///
+    /// 3. **In-memory for SPAs** (ACCEPTABLE for public clients only)
+    ///    - Store in JavaScript closure or React state (NOT localStorage/sessionStorage)
+    ///    - Clear immediately after token exchange
+    ///    - Risk: XSS can steal verifier
+    ///
+    /// **NEVER:**
+    /// - Store in localStorage or sessionStorage (XSS risk)
+    /// - Send to client in URL or query parameters
+    /// - Log or expose in error messages
+    ///
     /// # Arguments
     /// * `scopes` - Requested OAuth scopes
-    /// * `state` - CSRF protection state parameter
+    /// * `state` - CSRF protection state parameter (use cryptographically random value)
     ///
     /// # Returns
-    /// Tuple of (authorization_url, PKCE code_verifier for later exchange)
-    pub fn authorization_code_flow(
-        &self,
-        scopes: Vec<String>,
-        state: String,
-    ) -> (String, String) {
+    /// Tuple of (authorization_url, PKCE code_verifier for secure storage)
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Server-side web app (RECOMMENDED)
+    /// let state = generate_csrf_token();  // Cryptographically random
+    /// let (auth_url, code_verifier) = client.authorization_code_flow(scopes, state.clone());
+    ///
+    /// // Store securely server-side
+    /// session.insert("oauth_state", state);
+    /// session.insert("pkce_verifier", code_verifier);  // Encrypted session
+    ///
+    /// // Redirect user
+    /// redirect_to(auth_url);
+    /// ```
+    pub fn authorization_code_flow(&self, scopes: Vec<String>, state: String) -> (String, String) {
         // Generate PKCE challenge
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
@@ -301,33 +348,60 @@ impl OAuth2Client {
             .auth_code_client
             .exchange_code(oauth2::AuthorizationCode::new(code))
             .set_pkce_verifier(PkceCodeVerifier::new(code_verifier))
-            .request_async(|request| async {
-                execute_oauth_request(&http_client, request).await
-            })
+            .request_async(|request| async { execute_oauth_request(&http_client, request).await })
             .await
             .map_err(|e| McpError::internal(format!("Token exchange failed: {e}")))?;
 
         Ok(self.token_response_to_token_info(token_response))
     }
 
-    /// Refresh an access token
+    /// Refresh an access token with automatic refresh token rotation
     ///
     /// This uses a refresh token to obtain a new access token without
-    /// requiring user interaction.
+    /// requiring user interaction. OAuth 2.1 and RFC 9700 recommend refresh
+    /// token rotation where the server issues a new refresh token with each
+    /// refresh request.
+    ///
+    /// # Refresh Token Rotation (OAuth 2.1 / RFC 9700 Best Practice)
+    ///
+    /// When the server supports rotation:
+    /// - A new refresh token is returned in the response
+    /// - The old refresh token should be discarded immediately
+    /// - Store and use the new refresh token for future requests
+    /// - This prevents token theft detection
+    ///
+    /// **Important:** Always check if `token_info.refresh_token` is present in
+    /// the response. If present, you MUST replace your stored refresh token
+    /// with the new one. If absent, continue using the current refresh token.
     ///
     /// # Arguments
-    /// * `refresh_token` - The refresh token
+    /// * `refresh_token` - The current refresh token
     ///
     /// # Returns
-    /// New TokenInfo with fresh access token
+    /// New TokenInfo with:
+    /// - Fresh access token (always present)
+    /// - New refresh token (if server supports rotation)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut stored_refresh_token = "current_refresh_token";
+    /// let new_tokens = client.refresh_access_token(stored_refresh_token).await?;
+    ///
+    /// // Check for refresh token rotation
+    /// if let Some(new_refresh_token) = &new_tokens.refresh_token {
+    ///     // Server rotated the token - update storage
+    ///     stored_refresh_token = new_refresh_token;
+    ///     println!("Refresh token rotated (security best practice)");
+    /// }
+    /// // Use new access token
+    /// let access_token = new_tokens.access_token;
+    /// ```
     pub async fn refresh_access_token(&self, refresh_token: &str) -> McpResult<TokenInfo> {
         let http_client = reqwest::Client::new();
         let token_response = self
             .auth_code_client
             .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
-            .request_async(|request| async {
-                execute_oauth_request(&http_client, request).await
-            })
+            .request_async(|request| async { execute_oauth_request(&http_client, request).await })
             .await
             .map_err(|e| McpError::internal(format!("Token refresh failed: {e}")))?;
 
@@ -345,22 +419,15 @@ impl OAuth2Client {
     /// # Returns
     /// TokenInfo with access token (typically without refresh token)
     pub async fn client_credentials_flow(&self, scopes: Vec<String>) -> McpResult<TokenInfo> {
-        let client = self
-            .client_credentials_client
-            .as_ref()
-            .ok_or_else(|| {
-                McpError::internal(
-                    "Client credentials flow requires client secret".to_string(),
-                )
-            })?;
+        let client = self.client_credentials_client.as_ref().ok_or_else(|| {
+            McpError::internal("Client credentials flow requires client secret".to_string())
+        })?;
 
         let http_client = reqwest::Client::new();
         let token_response = client
             .exchange_client_credentials()
             .add_scopes(scopes.into_iter().map(Scope::new))
-            .request_async(|request| async {
-                execute_oauth_request(&http_client, request).await
-            })
+            .request_async(|request| async { execute_oauth_request(&http_client, request).await })
             .await
             .map_err(|e| McpError::internal(format!("Client credentials flow failed: {e}")))?;
 
@@ -370,30 +437,59 @@ impl OAuth2Client {
     /// Convert oauth2 token response to TokenInfo
     fn token_response_to_token_info(
         &self,
-        response: oauth2::StandardTokenResponse<
-            oauth2::EmptyExtraTokenFields,
-            BasicTokenType,
-        >,
+        response: oauth2::StandardTokenResponse<oauth2::EmptyExtraTokenFields, BasicTokenType>,
     ) -> TokenInfo {
-        let expires_in = response
-            .expires_in()
-            .map(|duration| duration.as_secs());
+        let expires_in = response.expires_in().map(|duration| duration.as_secs());
 
         TokenInfo {
             access_token: response.access_token().secret().clone(),
             token_type: format!("{:?}", response.token_type()),
             refresh_token: response.refresh_token().map(|t| t.secret().clone()),
             expires_in,
-            scope: response
-                .scopes()
-                .map(|scopes| {
-                    scopes
-                        .iter()
-                        .map(|s| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                }),
+            scope: response.scopes().map(|scopes| {
+                scopes
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }),
         }
+    }
+
+    /// Revoke a token using RFC 7009 Token Revocation
+    ///
+    /// Per RFC 7009 Section 2, prefer revoking refresh tokens (which MUST be supported
+    /// by the server if issued) over access tokens (which MAY be supported).
+    ///
+    /// # Arguments
+    /// * `token_info` - Token information containing access and/or refresh token
+    ///
+    /// # Returns
+    /// Ok if revocation succeeded or token was already invalid (per RFC 7009)
+    ///
+    /// # Errors
+    /// Returns error if:
+    /// - No revocation endpoint was configured
+    /// - Network/HTTP error occurred
+    /// - Server returned an error response
+    pub async fn revoke_token(&self, token_info: &TokenInfo) -> McpResult<()> {
+        let http_client = reqwest::Client::new();
+
+        // Per RFC 7009 Section 2: Prefer refresh token, fallback to access token
+        let token_to_revoke: StandardRevocableToken = if let Some(ref refresh_token) = token_info.refresh_token {
+            RefreshToken::new(refresh_token.clone()).into()
+        } else {
+            oauth2::AccessToken::new(token_info.access_token.clone()).into()
+        };
+
+        self.auth_code_client
+            .revoke_token(token_to_revoke)
+            .map_err(|e| McpError::internal(format!("Token revocation not configured: {e}")))?
+            .request_async(|request| async { execute_oauth_request(&http_client, request).await })
+            .await
+            .map_err(|e| McpError::internal(format!("Token revocation failed: {e}")))?;
+
+        Ok(())
     }
 
     /// Validate that an access token is still valid
@@ -427,7 +523,7 @@ async fn execute_oauth_request(
             return Err(oauth2::reqwest::Error::Other(format!(
                 "Unsupported HTTP method: {}",
                 m
-            )))
+            )));
         }
     };
 
@@ -464,8 +560,8 @@ async fn execute_oauth_request(
         .to_vec();
 
     // Convert reqwest status code to oauth2 status code
-    let oauth_status = oauth2::http::StatusCode::from_u16(status.as_u16())
-        .unwrap_or(oauth2::http::StatusCode::OK);
+    let oauth_status =
+        oauth2::http::StatusCode::from_u16(status.as_u16()).unwrap_or(oauth2::http::StatusCode::OK);
 
     Ok(oauth2::HttpResponse {
         status_code: oauth_status,

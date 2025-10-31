@@ -3,7 +3,7 @@
 //! This module contains core types used throughout the TurboMCP authentication system.
 
 use std::collections::HashMap;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use oauth2::RefreshToken;
@@ -13,8 +13,18 @@ use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 use super::config::AuthProviderType;
 
-/// Authentication context containing user information and session data
+/// Authentication context (LEGACY - use `context::AuthContext` instead)
+///
+/// NOTE: This is the legacy AuthContext type. New code should use
+/// `crate::context::AuthContext` (the unified canonical type).
+///
+/// This type will be removed in version 3.0.0. Use the unified `context::AuthContext` instead.
+/// The `to_unified()` method can help with migration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[deprecated(
+    since = "2.0.5",
+    note = "Use context::AuthContext instead. This type is legacy and will be removed in 3.0.0"
+)]
 pub struct AuthContext {
     /// User ID
     pub user_id: String,
@@ -24,8 +34,11 @@ pub struct AuthContext {
     pub roles: Vec<String>,
     /// User permissions
     pub permissions: Vec<String>,
-    /// Session ID
-    pub session_id: String,
+    /// Request ID for replay protection (MCP compliant - NOT session-based)
+    ///
+    /// Per MCP specification, authentication is stateless. This field is for
+    /// request-level binding (DPoP nonces, one-time tokens), not session management.
+    pub request_id: String,
     /// Token information
     pub token: Option<TokenInfo>,
     /// Authentication provider used
@@ -36,6 +49,40 @@ pub struct AuthContext {
     pub expires_at: Option<SystemTime>,
     /// Additional metadata
     pub metadata: HashMap<String, serde_json::Value>,
+}
+
+#[allow(deprecated)]
+impl AuthContext {
+    /// Convert legacy types::AuthContext to unified context::AuthContext
+    pub fn to_unified(&self) -> crate::context::AuthContext {
+        crate::context::AuthContext {
+            sub: self.user_id.clone(),
+            iss: None, // Not present in legacy type
+            aud: None, // Not present in legacy type
+            exp: self
+                .expires_at
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())),
+            iat: self
+                .authenticated_at
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs()),
+            nbf: None, // Not present in legacy type
+            jti: None, // Not present in legacy type
+            user: self.user.clone(),
+            roles: self.roles.clone(),
+            permissions: self.permissions.clone(),
+            scopes: Vec::new(), // Not present in legacy type
+            request_id: Some(self.request_id.clone()),
+            authenticated_at: self.authenticated_at,
+            expires_at: self.expires_at,
+            token: self.token.clone(),
+            provider: self.provider.clone(),
+            #[cfg(feature = "dpop")]
+            dpop_jkt: None, // Not present in legacy type
+            metadata: self.metadata.clone(),
+        }
+    }
 }
 
 /// User information
@@ -80,10 +127,13 @@ pub trait AuthProvider: Send + Sync + std::fmt::Debug {
     fn provider_type(&self) -> AuthProviderType;
 
     /// Authenticate user with credentials
-    async fn authenticate(&self, credentials: AuthCredentials) -> McpResult<AuthContext>;
+    async fn authenticate(
+        &self,
+        credentials: AuthCredentials,
+    ) -> McpResult<crate::context::AuthContext>;
 
     /// Validate existing token/session
-    async fn validate_token(&self, token: &str) -> McpResult<AuthContext>;
+    async fn validate_token(&self, token: &str) -> McpResult<crate::context::AuthContext>;
 
     /// Refresh access token
     async fn refresh_token(&self, refresh_token: &str) -> McpResult<TokenInfo>;

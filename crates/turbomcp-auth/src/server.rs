@@ -7,10 +7,10 @@
 
 use std::collections::HashMap;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
-use crate::config::{ProtectedResourceMetadata, BearerTokenMethod};
+use crate::config::{BearerTokenMethod, ProtectedResourceMetadata};
 
 /// Protected Resource Metadata endpoint builder
 ///
@@ -223,10 +223,7 @@ impl BearerTokenValidator {
 }
 
 /// Build a 401 Unauthorized JSON response body
-pub fn unauthorized_response_body(
-    metadata_uri: &str,
-    scope: Option<&str>,
-) -> Value {
+pub fn unauthorized_response_body(metadata_uri: &str, scope: Option<&str>) -> Value {
     let mut response = json!({
         "error": "unauthorized",
         "error_description": "Valid bearer token required",
@@ -238,6 +235,108 @@ pub fn unauthorized_response_body(
     }
 
     response
+}
+
+/// Validate that a token's audience matches the server's canonical URI
+///
+/// Per RFC 8707 (Resource Indicators) and MCP spec, access tokens must be bound
+/// to their intended audience to prevent confused deputy attacks.
+///
+/// # Normalization Rules (RFC 8707 Section 2)
+///
+/// - Scheme and host are case-insensitive (lowercase comparison)
+/// - Trailing slash is optional (normalized away)
+/// - Port is significant (must match if present)
+/// - Path is significant (exact match after normalization)
+///
+/// # Arguments
+///
+/// * `token_aud` - Audience claim from the JWT (aud claim)
+/// * `server_uri` - Server's canonical resource URI
+///
+/// # Errors
+///
+/// Returns error if:
+/// - Audience doesn't match server URI
+/// - Invalid URI format
+///
+/// # Examples
+///
+/// ```rust
+/// use turbomcp_auth::server::validate_audience;
+///
+/// // These all match:
+/// assert!(validate_audience("https://api.example.com", "https://api.example.com").is_ok());
+/// assert!(validate_audience("https://api.example.com/", "https://api.example.com").is_ok());
+/// assert!(validate_audience("https://API.EXAMPLE.COM", "https://api.example.com").is_ok());
+///
+/// // These don't match:
+/// assert!(validate_audience("https://api.example.com:8080", "https://api.example.com").is_err());
+/// assert!(validate_audience("https://api.example.com/path", "https://api.example.com").is_err());
+/// ```
+pub fn validate_audience(token_aud: &str, server_uri: &str) -> turbomcp_protocol::Result<()> {
+    use url::Url;
+
+    let token_url = Url::parse(token_aud).map_err(|e| {
+        turbomcp_protocol::Error::validation(format!("Invalid token audience URI: {}", e))
+    })?;
+
+    let server_url = Url::parse(server_uri)
+        .map_err(|e| turbomcp_protocol::Error::validation(format!("Invalid server URI: {}", e)))?;
+
+    // Normalize per RFC 8707
+    let token_normalized = normalize_resource_uri(&token_url);
+    let server_normalized = normalize_resource_uri(&server_url);
+
+    if token_normalized != server_normalized {
+        return Err(turbomcp_protocol::Error::validation(format!(
+            "Token audience '{}' does not match server URI '{}' (normalized: '{}' vs '{}')",
+            token_aud, server_uri, token_normalized, server_normalized
+        )));
+    }
+
+    Ok(())
+}
+
+/// Normalize a resource URI per RFC 8707 Section 2
+///
+/// Normalization rules:
+/// - Lowercase scheme and host
+/// - Remove default ports (80 for http, 443 for https)
+/// - Trim trailing slash from path
+fn normalize_resource_uri(url: &url::Url) -> String {
+    let mut normalized = String::new();
+
+    // Scheme (lowercase)
+    normalized.push_str(&url.scheme().to_lowercase());
+    normalized.push_str("://");
+
+    // Host (lowercase)
+    if let Some(host) = url.host_str() {
+        normalized.push_str(&host.to_lowercase());
+    }
+
+    // Port (only if non-default)
+    if let Some(port) = url.port() {
+        let default_port = match url.scheme() {
+            "http" => 80,
+            "https" => 443,
+            _ => 0,
+        };
+
+        if port != default_port {
+            normalized.push(':');
+            normalized.push_str(&port.to_string());
+        }
+    }
+
+    // Path (exact, but trim trailing slash)
+    let path = url.path();
+    if path != "/" {
+        normalized.push_str(path.trim_end_matches('/'));
+    }
+
+    normalized
 }
 
 #[cfg(test)]
@@ -254,14 +353,8 @@ mod tests {
         .with_documentation("https://api.example.com/docs".to_string())
         .build();
 
-        assert_eq!(
-            metadata["resource"],
-            "https://api.example.com"
-        );
-        assert_eq!(
-            metadata["authorization_server"],
-            "https://auth.example.com"
-        );
+        assert_eq!(metadata["resource"], "https://api.example.com");
+        assert_eq!(metadata["authorization_server"], "https://auth.example.com");
     }
 
     #[test]
@@ -306,5 +399,62 @@ mod tests {
 
         assert_eq!(response["error"], "unauthorized");
         assert!(response.get("metadata_uri").is_some());
+    }
+
+    #[test]
+    fn test_audience_validation_exact_match() {
+        assert!(validate_audience("https://api.example.com", "https://api.example.com").is_ok());
+    }
+
+    #[test]
+    fn test_audience_validation_trailing_slash() {
+        assert!(validate_audience("https://api.example.com/", "https://api.example.com").is_ok());
+        assert!(validate_audience("https://api.example.com", "https://api.example.com/").is_ok());
+    }
+
+    #[test]
+    fn test_audience_validation_case_insensitive() {
+        assert!(validate_audience("https://API.EXAMPLE.COM", "https://api.example.com").is_ok());
+        assert!(validate_audience("HTTPS://api.example.com", "https://api.example.com").is_ok());
+    }
+
+    #[test]
+    fn test_audience_validation_port_mismatch() {
+        assert!(
+            validate_audience("https://api.example.com:8080", "https://api.example.com").is_err()
+        );
+    }
+
+    #[test]
+    fn test_audience_validation_path_significant() {
+        assert!(
+            validate_audience("https://api.example.com/mcp", "https://api.example.com").is_err()
+        );
+        assert!(
+            validate_audience("https://api.example.com", "https://api.example.com/mcp").is_err()
+        );
+    }
+
+    #[test]
+    fn test_audience_validation_default_ports() {
+        // Default ports should be normalized away
+        assert!(
+            validate_audience("https://api.example.com:443", "https://api.example.com").is_ok()
+        );
+        assert!(validate_audience("http://api.example.com:80", "http://api.example.com").is_ok());
+    }
+
+    #[test]
+    fn test_normalize_resource_uri() {
+        use url::Url;
+
+        let url = Url::parse("https://API.EXAMPLE.COM:443/path/").unwrap();
+        assert_eq!(normalize_resource_uri(&url), "https://api.example.com/path");
+
+        let url = Url::parse("http://example.com:80").unwrap();
+        assert_eq!(normalize_resource_uri(&url), "http://example.com");
+
+        let url = Url::parse("https://example.com:8443/").unwrap();
+        assert_eq!(normalize_resource_uri(&url), "https://example.com:8443");
     }
 }

@@ -117,10 +117,10 @@ fn extract_token(auth_header: &str) -> Result<String, Box<dyn std::error::Error>
 
 ```toml
 [dependencies]
-turbomcp-auth = "2.0.5"
+turbomcp-auth = "2.1.0"
 
 # With DPoP support for enhanced security
-turbomcp-auth = { version = "2.0.5", features = ["dpop"] }
+turbomcp-auth = { version = "2.1.0", features = ["dpop"] }
 
 # With tokio runtime
 tokio = { version = "1", features = ["full"] }
@@ -150,8 +150,8 @@ uuid = { version = "1", features = ["v4"] }
 
 - **AuthManager** (`manager::AuthManager`)
   - Coordinates multiple authentication providers
-  - Session lifecycle management
-  - Automatic session cleanup
+  - Stateless authentication (MCP compliant)
+  - Token validation on every request
 
 - **Server Helpers** (`server::*`)
   - `ProtectedResourceMetadataBuilder` - RFC 9728 metadata generation

@@ -4,13 +4,13 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use super::super::config::AuthProviderType;
-use super::super::types::{AuthContext, AuthCredentials, AuthProvider, TokenInfo, UserInfo};
+use super::super::context::AuthContext;
+use super::super::types::{AuthCredentials, AuthProvider, TokenInfo, UserInfo};
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 /// API Key authentication provider
@@ -63,24 +63,24 @@ impl AuthProvider for ApiKeyProvider {
             AuthCredentials::ApiKey { key } => {
                 let api_keys = self.api_keys.read().await;
                 if let Some(user_info) = api_keys.get(&key) {
-                    Ok(AuthContext {
-                        user_id: user_info.id.clone(),
-                        user: user_info.clone(),
-                        roles: vec!["api_user".to_string()],
-                        permissions: vec!["api_access".to_string()],
-                        session_id: uuid::Uuid::new_v4().to_string(),
-                        token: Some(TokenInfo {
-                            access_token: key,
-                            token_type: "ApiKey".to_string(),
-                            refresh_token: None,
-                            expires_in: None,
-                            scope: None,
-                        }),
-                        provider: self.name.clone(),
-                        authenticated_at: SystemTime::now(),
-                        expires_at: None,
-                        metadata: HashMap::new(),
-                    })
+                    let token = TokenInfo {
+                        access_token: key,
+                        token_type: "ApiKey".to_string(),
+                        refresh_token: None,
+                        expires_in: None,
+                        scope: None,
+                    };
+
+                    AuthContext::builder()
+                        .subject(user_info.id.clone())
+                        .user(user_info.clone())
+                        .roles(vec!["api_user".to_string()])
+                        .permissions(vec!["api_access".to_string()])
+                        .request_id(uuid::Uuid::new_v4().to_string())
+                        .token(token)
+                        .provider(self.name.clone())
+                        .build()
+                        .map_err(|e| McpError::internal(e.to_string()))
                 } else {
                     Err(McpError::internal("Invalid API key".to_string()))
                 }
