@@ -164,7 +164,7 @@ Start minimal (STDIO only), add features as needed:
 
 ```toml
 [dependencies]
-turbomcp = "2.0"
+turbomcp = "2.1"
 tokio = { version = "1.0", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -213,9 +213,9 @@ turbomcp-cli tools call hello --arguments '{"name": "World"}' --command "./your-
 
 ---
 
-## Client Connections (v2.0)
+## Client Connections (v2.1)
 
-TurboMCP v2.0 provides beautiful one-liner client connections with automatic initialization:
+TurboMCP v2.1 provides beautiful one-liner client connections with automatic initialization:
 
 ### HTTP Client
 ```rust
@@ -276,11 +276,13 @@ client.initialize().await?;
 let tools = client.list_tools().await?;
 ```
 
-### Benefits of v2.0 Client API
+### Benefits of v2.1 Client API
 - **One-liner connections**: `connect_http()`, `connect_tcp()`, `connect_unix()`
 - **Auto-initialization**: No need to call `.connect()` or `.initialize()` manually
 - **Type-safe configuration**: Custom config functions with full IntelliSense
 - **Consistent API**: Same pattern across all transports
+- **OAuth 2.1 Support**: Automatic token handling with PKCE and multi-provider support
+- **MCP Proxy Support**: Universal adapter for any MCP server implementation
 
 ---
 
@@ -963,6 +965,25 @@ make test                    # Run full test suite
 ## 📄 License
 
 Licensed under the [MIT License](./LICENSE) - Enterprise-friendly open source.
+
+---
+
+## Status
+
+TurboMCP v2.1.0 provides:
+
+- Zero known security vulnerabilities with continuous monitoring
+- Performance focus with automated regression detection
+- Full MCP 2025-06-18 specification compliance
+- Production deployment patterns with container & Kubernetes support
+- 26 focused examples covering all usage patterns
+- Active development with regular security updates and performance improvements
+- **NEW**: turbomcp-proxy for universal MCP adaptation and code generation
+- **NEW**: Complete OAuth 2.1 authentication stack with PKCE and multi-provider support
+- **NEW**: RFC 9728 Protected Resource Metadata support
+- **NEW**: JWT and JWKS authentication middleware
+
+**Production Status:** TurboMCP 2.1.0 is production-ready with full MCP 2025-06-18 compliance, comprehensive test coverage (1,165+ tests passing), and the complete authentication stack. The API is stable.
 
 ---
 

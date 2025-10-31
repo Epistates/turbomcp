@@ -52,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### turbomcp-auth Enhancements
 **Complete OAuth 2.1 client and server implementation with RFC compliance**
+- Updated README.md to reflect stateless authentication architecture
+- Removed all references to session management from documentation
+- Clarified MCP compliance: stateless token validation on every request
 
 ##### OAuth2Client - Production OAuth2.1 Flows
 - **Authorization Code Flow with PKCE** (RFC 7636)
