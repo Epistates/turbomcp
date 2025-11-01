@@ -145,7 +145,11 @@ Start minimal (STDIO only), add features as needed:
 - Built-in benchmarking suite with 5% regression detection
 
 **Security & Authentication**
-- OAuth 2.0/2.1 with PKCE and multi-provider support (Google, GitHub, Microsoft)
+- **OAuth 2.1** with PKCE and multi-provider support:
+  - Social: Google, GitHub
+  - Enterprise: Microsoft, Okta, Keycloak
+  - Identity Platforms: Apple Sign In, Auth0
+  - Generic: Any OIDC-compliant provider
 - Rate limiting with token bucket algorithm
 - CORS protection and comprehensive security headers
 - Session management with cleanup and timeout enforcement
@@ -432,7 +436,7 @@ TurboMCP includes security features for production deployment:
 - **Security Headers**: Standard HTTP security headers (X-Frame-Options, CSP, HSTS)
 - **Session Management**: Secure session handling with timeout enforcement
 - **TLS Support**: Optional TLS for transport protocols
-- **OAuth 2.1**: Via optional `auth` feature (API key, Bearer token authentication)
+- **OAuth 2.1**: Via optional `auth` feature (8+ providers: Google, GitHub, Microsoft, Apple, Okta, Auth0, Keycloak, Generic)
 - **DPoP Support**: RFC 9449 Demonstration of Proof-of-Possession (via `dpop` feature)
 - **Rate Limiting**: Request throttling configuration
 - **Type-Safe Errors**: Structured error handling with context
