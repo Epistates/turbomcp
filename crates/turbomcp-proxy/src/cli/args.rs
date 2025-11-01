@@ -29,6 +29,14 @@ pub struct BackendArgs {
     #[arg(long, value_name = "URL", group = "backend-type")]
     pub http: Option<String>,
 
+    /// TCP backend address (host:port)
+    #[arg(long, value_name = "ADDR", group = "backend-type")]
+    pub tcp: Option<String>,
+
+    /// Unix domain socket path
+    #[arg(long, value_name = "PATH", group = "backend-type")]
+    pub unix: Option<String>,
+
     /// WebSocket backend URL
     #[arg(long, value_name = "URL", group = "backend-type")]
     pub websocket: Option<String>,
@@ -41,6 +49,10 @@ pub enum BackendType {
     Stdio,
     /// HTTP with Server-Sent Events
     Http,
+    /// TCP bidirectional communication
+    Tcp,
+    /// Unix domain socket
+    Unix,
     /// WebSocket bidirectional
     Websocket,
 }
@@ -52,6 +64,10 @@ impl BackendArgs {
         self.backend.or_else(|| {
             if self.http.is_some() {
                 Some(BackendType::Http)
+            } else if self.tcp.is_some() {
+                Some(BackendType::Tcp)
+            } else if self.unix.is_some() {
+                Some(BackendType::Unix)
             } else if self.websocket.is_some() {
                 Some(BackendType::Websocket)
             } else {
@@ -75,6 +91,18 @@ impl BackendArgs {
             Some(BackendType::Http) => {
                 if self.http.is_none() && self.backend == Some(BackendType::Http) {
                     return Err("--http URL is required for http backend".to_string());
+                }
+            }
+            Some(BackendType::Tcp) => {
+                if self.tcp.is_none() && self.backend == Some(BackendType::Tcp) {
+                    return Err(
+                        "--tcp address is required for tcp backend (format: host:port)".to_string(),
+                    );
+                }
+            }
+            Some(BackendType::Unix) => {
+                if self.unix.is_none() && self.backend == Some(BackendType::Unix) {
+                    return Err("--unix path is required for unix backend".to_string());
                 }
             }
             Some(BackendType::Websocket) => {
@@ -112,9 +140,41 @@ mod tests {
             args: vec![],
             working_dir: None,
             http: None,
+            tcp: None,
+            unix: None,
             websocket: None,
         };
         assert_eq!(args.backend_type(), Some(BackendType::Stdio));
+    }
+
+    #[test]
+    fn test_backend_type_detection_tcp() {
+        let args = BackendArgs {
+            backend: None,
+            cmd: None,
+            args: vec![],
+            working_dir: None,
+            http: None,
+            tcp: Some("localhost:5000".to_string()),
+            unix: None,
+            websocket: None,
+        };
+        assert_eq!(args.backend_type(), Some(BackendType::Tcp));
+    }
+
+    #[test]
+    fn test_backend_type_detection_unix() {
+        let args = BackendArgs {
+            backend: None,
+            cmd: None,
+            args: vec![],
+            working_dir: None,
+            http: None,
+            tcp: None,
+            unix: Some("/tmp/mcp.sock".to_string()),
+            websocket: None,
+        };
+        assert_eq!(args.backend_type(), Some(BackendType::Unix));
     }
 
     #[test]
@@ -125,6 +185,8 @@ mod tests {
             args: vec![],
             working_dir: None,
             http: None,
+            tcp: None,
+            unix: None,
             websocket: None,
         };
         assert!(args.validate().is_err());
@@ -135,6 +197,38 @@ mod tests {
             args: vec![],
             working_dir: None,
             http: None,
+            tcp: None,
+            unix: None,
+            websocket: None,
+        };
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn test_backend_validation_tcp() {
+        let args = BackendArgs {
+            backend: Some(BackendType::Tcp),
+            cmd: None,
+            args: vec![],
+            working_dir: None,
+            http: None,
+            tcp: Some("localhost:5000".to_string()),
+            unix: None,
+            websocket: None,
+        };
+        assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn test_backend_validation_unix() {
+        let args = BackendArgs {
+            backend: Some(BackendType::Unix),
+            cmd: None,
+            args: vec![],
+            working_dir: None,
+            http: None,
+            tcp: None,
+            unix: Some("/tmp/mcp.sock".to_string()),
             websocket: None,
         };
         assert!(args.validate().is_ok());

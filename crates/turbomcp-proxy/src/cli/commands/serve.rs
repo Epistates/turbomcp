@@ -150,18 +150,12 @@ impl ServeCommand {
         }
     }
 
-    /// Execute with HTTP frontend (Phase 2: STDIO → HTTP)
+    /// Execute with HTTP frontend
+    ///
+    /// Exposes a backend MCP server over HTTP/SSE for web clients.
+    /// Supports STDIO, HTTP, TCP, Unix, and WebSocket backends.
     #[allow(clippy::too_many_lines)]
     async fn execute_http_frontend(&self) -> ProxyResult<()> {
-        use crate::cli::args::BackendType;
-
-        // Only STDIO backend is supported for HTTP frontend
-        if self.backend.backend_type() != Some(BackendType::Stdio) {
-            return Err(ProxyError::configuration(
-                "HTTP frontend currently only supports STDIO backend".to_string(),
-            ));
-        }
-
         // Create backend config
         let backend_config = self.create_backend_config()?;
 
@@ -371,6 +365,33 @@ impl ServeCommand {
                     auth_token: None,
                 }
             }
+            Some(BackendType::Tcp) => {
+                let addr = self.backend.tcp.as_ref().ok_or_else(|| {
+                    ProxyError::configuration("TCP address not specified".to_string())
+                })?;
+
+                // Parse host and port
+                let parts: Vec<&str> = addr.split(':').collect();
+                if parts.len() != 2 {
+                    return Err(ProxyError::configuration(
+                        "Invalid TCP address format. Use host:port".to_string(),
+                    ));
+                }
+
+                let host = parts[0].to_string();
+                let port = parts[1]
+                    .parse::<u16>()
+                    .map_err(|_| ProxyError::configuration("Invalid port number".to_string()))?;
+
+                BackendTransport::Tcp { host, port }
+            }
+            Some(BackendType::Unix) => {
+                let path = self.backend.unix.as_ref().ok_or_else(|| {
+                    ProxyError::configuration("Unix socket path not specified".to_string())
+                })?;
+
+                BackendTransport::Unix { path: path.clone() }
+            }
             Some(BackendType::Websocket) => {
                 let url = self.backend.websocket.as_ref().ok_or_else(|| {
                     ProxyError::configuration("WebSocket URL not specified".to_string())
@@ -407,6 +428,8 @@ mod tests {
                 args: vec!["server.py".to_string()],
                 working_dir: None,
                 http: None,
+                tcp: None,
+                unix: None,
                 websocket: None,
             },
             frontend: "http".to_string(),
@@ -430,5 +453,69 @@ mod tests {
         let config = config.unwrap();
         assert_eq!(config.client_name, "test-proxy");
         assert_eq!(config.client_version, "1.0.0");
+    }
+
+    #[test]
+    fn test_tcp_backend_config() {
+        let cmd = ServeCommand {
+            backend: BackendArgs {
+                backend: Some(BackendType::Tcp),
+                cmd: None,
+                args: vec![],
+                working_dir: None,
+                http: None,
+                tcp: Some("localhost:5000".to_string()),
+                unix: None,
+                websocket: None,
+            },
+            frontend: "http".to_string(),
+            bind: "127.0.0.1:3000".to_string(),
+            path: "/mcp".to_string(),
+            client_name: "test-proxy".to_string(),
+            client_version: "1.0.0".to_string(),
+            auth_token: None,
+            jwt_secret: None,
+            jwt_jwks_uri: None,
+            jwt_algorithm: "HS256".to_string(),
+            jwt_audience: vec![],
+            jwt_issuer: vec![],
+            api_key_header: "x-api-key".to_string(),
+            require_auth: false,
+        };
+
+        let config = cmd.create_backend_config();
+        assert!(config.is_ok());
+    }
+
+    #[test]
+    fn test_unix_backend_config() {
+        let cmd = ServeCommand {
+            backend: BackendArgs {
+                backend: Some(BackendType::Unix),
+                cmd: None,
+                args: vec![],
+                working_dir: None,
+                http: None,
+                tcp: None,
+                unix: Some("/tmp/mcp.sock".to_string()),
+                websocket: None,
+            },
+            frontend: "http".to_string(),
+            bind: "127.0.0.1:3000".to_string(),
+            path: "/mcp".to_string(),
+            client_name: "test-proxy".to_string(),
+            client_version: "1.0.0".to_string(),
+            auth_token: None,
+            jwt_secret: None,
+            jwt_jwks_uri: None,
+            jwt_algorithm: "HS256".to_string(),
+            jwt_audience: vec![],
+            jwt_issuer: vec![],
+            api_key_header: "x-api-key".to_string(),
+            require_auth: false,
+        };
+
+        let config = cmd.create_backend_config();
+        assert!(config.is_ok());
     }
 }

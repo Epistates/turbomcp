@@ -21,6 +21,16 @@ turbomcp-proxy serve \
   --backend stdio --cmd "python my-server.py" \
   --frontend http --bind 127.0.0.1:3000
 
+# Connect to TCP server and expose over HTTP
+turbomcp-proxy serve \
+  --backend tcp --tcp localhost:5000 \
+  --frontend http --bind 127.0.0.1:3001
+
+# Connect to Unix socket and expose over HTTP
+turbomcp-proxy serve \
+  --backend unix --unix /tmp/mcp.sock \
+  --frontend http --bind 127.0.0.1:3002
+
 # Expose with JWT authentication (production - symmetric)
 turbomcp-proxy serve \
   --backend stdio --cmd "python my-server.py" \
@@ -42,12 +52,22 @@ turbomcp-proxy generate \
   --backend stdio --cmd "python my-server.py" \
   --frontend http \
   --output ./my-proxy \
-  --build --run
+  --build --release
 
-# Export OpenAPI schema
+# Export OpenAPI 3.1 schema
 turbomcp-proxy schema openapi \
   --backend stdio --cmd "python my-server.py" \
-  --output api-spec.yaml
+  --output api-spec.json
+
+# Export GraphQL schema
+turbomcp-proxy schema graphql \
+  --backend tcp --tcp localhost:5000 \
+  --output schema.graphql
+
+# Export Protobuf definition
+turbomcp-proxy schema protobuf \
+  --backend unix --unix /tmp/mcp.sock \
+  --output server.proto
 ```
 
 ---
@@ -266,23 +286,27 @@ Commands:
 ### `inspect` - Discover Capabilities
 
 ```bash
-turbomcp-proxy inspect <BACKEND> [OPTIONS]
+turbomcp-proxy inspect [OPTIONS]
 
-Backends:
-  stdio           STDIO server (--cmd required)
-  http            HTTP/SSE server (--server required)
-  websocket       WebSocket server (--server required)
+Backend Options:
+  --backend <TYPE>    Backend type (stdio, http, tcp, unix, websocket)
+  --cmd <CMD>         Command to run (for stdio backend)
+  --http <URL>        HTTP/SSE server URL
+  --tcp <ADDR>        TCP endpoint (host:port)
+  --unix <PATH>       Unix socket path
+  --websocket <URL>   WebSocket server URL
 
-Options:
-  --cmd <CMD>         Command to run (for stdio)
-  --server <URL>      Server URL (for http/websocket)
-  --json              Output as JSON
+Output Options:
   --output <FILE>     Save to file
+  --format <FORMAT>   Output format (human, json, yaml)
 
 Examples:
-  turbomcp-proxy inspect stdio --cmd "python server.py"
-  turbomcp-proxy inspect http --server https://api.example.com/mcp
-  turbomcp-proxy inspect stdio --cmd "npx @mcp/server-fs /tmp" --json
+  turbomcp-proxy inspect --backend stdio --cmd "python server.py"
+  turbomcp-proxy inspect --backend http --http https://api.example.com/mcp
+  turbomcp-proxy inspect --backend tcp --tcp localhost:5000 --format json
+  turbomcp-proxy inspect --backend unix --unix /tmp/mcp.sock --output capabilities.json
+
+Note: Inspect currently supports stdio backend. TCP, Unix, HTTP, and WebSocket backends are supported in the backend connector but not yet in the inspect introspection layer.
 ```
 
 ### `serve` - Runtime Proxy
@@ -372,72 +396,100 @@ Examples:
 
 ### `schema` - Schema Export
 
+Export MCP server capabilities as standard schema formats.
+
 ```bash
 turbomcp-proxy schema <FORMAT> [OPTIONS]
 
 Formats:
-  openapi       OpenAPI 3.0 specification
-  graphql       GraphQL schema
-  protobuf      Protocol Buffers
+  openapi       OpenAPI 3.1 specification (REST API schema)
+  graphql       GraphQL Schema Definition Language
+  protobuf      Protocol Buffers 3 definition
 
-Options:
-  --backend <TYPE>    Backend type
-  --cmd <CMD>         Command to run (for stdio)
-  --server <URL>      Server URL (for http/websocket)
-  --output <FILE>     Output file
+Backend Options:
+  --backend <TYPE>    Backend type (stdio, http, tcp, unix, websocket)
+  --cmd <CMD>         Command to run (for stdio backend)
+  --http <URL>        HTTP/SSE server URL
+  --tcp <ADDR>        TCP endpoint (host:port)
+  --unix <PATH>       Unix socket path
+
+Output Options:
+  --output <FILE>     Output file (default: stdout)
+  --with-examples     Include example requests/responses (OpenAPI only)
 
 Examples:
+  # Export OpenAPI from STDIO server
   turbomcp-proxy schema openapi \
     --backend stdio --cmd "python server.py" \
-    --output api-spec.yaml
+    --output api-spec.json
 
+  # Export GraphQL from TCP server
   turbomcp-proxy schema graphql \
-    --backend stdio --cmd "python server.py" \
+    --backend tcp --tcp localhost:5000 \
     --output schema.graphql
+
+  # Export Protobuf from Unix socket
+  turbomcp-proxy schema protobuf \
+    --backend unix --unix /tmp/mcp.sock \
+    --output server.proto
+
+  # Export to stdout
+  turbomcp-proxy schema openapi \
+    --backend stdio --cmd "npx @mcp/server-fs /tmp"
 ```
 
-### `adapter` - Protocol Adapters
+### `adapter` - Protocol Adapters (Phase 6 - Scaffolded)
+
+Expose MCP servers through standard web protocols. Adapter framework is ready for full implementation.
 
 ```bash
 turbomcp-proxy adapter <PROTOCOL> [OPTIONS]
 
 Protocols:
-  rest        REST API with OpenAPI
-  graphql     GraphQL with playground
+  rest        REST API with OpenAPI documentation
+  graphql     GraphQL API with schema explorer
 
-Options:
-  --backend <TYPE>    Backend type
-  --cmd <CMD>         Command to run (for stdio)
-  --server <URL>      Server URL (for http/websocket)
-  --bind <ADDR>       Bind address
-  --openapi-ui        Serve Swagger UI (REST only)
-  --playground        Serve GraphQL playground (GraphQL only)
+Backend Options:
+  --backend <TYPE>    Backend type (stdio, http, tcp, unix, websocket)
+  --cmd <CMD>         Command to run (for stdio backend)
+  --http <URL>        HTTP/SSE server URL
+  --tcp <ADDR>        TCP endpoint (host:port)
+  --unix <PATH>       Unix socket path
+
+Server Options:
+  --bind <ADDR>       Bind address (default: 127.0.0.1:3001)
+
+REST-Specific:
+  --openapi-ui        Serve Swagger UI at /docs (future)
+
+GraphQL-Specific:
+  --playground        Serve GraphQL Playground at /playground (future)
 
 Examples:
-  # REST API with Swagger
+  # REST API (framework ready)
   turbomcp-proxy adapter rest \
     --backend stdio --cmd "python server.py" \
-    --bind 0.0.0.0:3000 \
-    --openapi-ui
+    --bind 127.0.0.1:3000
 
-  # GraphQL with playground
+  # GraphQL API (framework ready)
   turbomcp-proxy adapter graphql \
-    --backend stdio --cmd "python server.py" \
-    --bind 0.0.0.0:4000 \
-    --playground
+    --backend tcp --tcp localhost:5000 \
+    --bind 127.0.0.1:4000
+
+Status: Command structure complete. Full implementation of REST and GraphQL adapters coming in next release.
 ```
 
 ---
 
 ## Development Status
 
-**Current Version:** 2.1.0
+**Current Version:** 2.1.1
 **MVP Status:** Complete - Production Ready (Phases 1-4)
-**Latest Release:** 2.1.0 - Transport Expansion & Authentication
+**Latest Release:** 2.1.1 - Transport Expansion & Authentication
 
 See **[Progress Tracker](../../PROXY_PROGRESS.md)** for detailed progress.
 
-### Version 2.1.0 - Transport Expansion & Authentication
+### Version 2.1.1 - Transport Expansion & Authentication
 
 **Transport Coverage:**
 - [x] **STDIO** (subprocess, CLI tools)
@@ -488,14 +540,27 @@ See **[Progress Tracker](../../PROXY_PROGRESS.md)** for detailed progress.
   - API key authentication
   - Environment variable support
   - Security warnings for public bindings
-- [ ] **Phase 5:** Schema Export (Planning)
-- [ ] **Phase 6:** Protocol Adapters (Planning)
+- [x] **Phase 5:** Schema Export (Complete - November 2025)
+  - OpenAPI 3.1 schema generation
+  - GraphQL schema definition generation
+  - Protobuf 3 schema generation
+  - File output support
+- [x] **Phase 5.5:** Transport & Backend Extension (Complete - November 2025)
+  - TCP backend support
+  - Unix domain socket backend support
+  - CLI argument validation and parsing
+  - Full transport integration
+- [x] **Phase 6:** Protocol Adapters (Scaffolding - November 2025)
+  - REST API adapter framework
+  - GraphQL adapter framework
+  - Ready for full implementation
 - [ ] **Phase 7:** Production Features (Planning)
 
 **MVP Target:** Phases 1-3 (Complete - October 2025)
 **Code Generation:** Phase 4 (Complete - October 2025)
 **Authentication:** Phase 4.5 (Complete - October 2025)
-**Full Release:** All phases (4.5/7 complete - 64%)
+**Schema Export & Transports:** Phase 5-5.5 (Complete - November 2025)
+**Full Release:** 6/7 phases complete - 86%
 
 ---
 
