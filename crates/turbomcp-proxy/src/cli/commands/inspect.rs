@@ -109,6 +109,18 @@ impl InspectCommand {
                     "HTTP backend not yet implemented".to_string(),
                 ))
             }
+            Some(BackendType::Tcp) => {
+                // TODO: Implement TCP backend in future phase
+                Err(ProxyError::configuration(
+                    "TCP backend not yet implemented for inspect command".to_string(),
+                ))
+            }
+            Some(BackendType::Unix) => {
+                // TODO: Implement Unix socket backend in future phase
+                Err(ProxyError::configuration(
+                    "Unix socket backend not yet implemented for inspect command".to_string(),
+                ))
+            }
             Some(BackendType::Websocket) => {
                 // TODO: Implement WebSocket backend in future phase
                 Err(ProxyError::configuration(
@@ -172,6 +184,8 @@ mod tests {
                 args: vec![],
                 working_dir: None,
                 http: None,
+                tcp: None,
+                unix: None,
                 websocket: None,
             },
             output: OutputArgs {
@@ -194,6 +208,8 @@ mod tests {
                 args: vec!["-c".to_string(), "print('test')".to_string()],
                 working_dir: None,
                 http: None,
+                tcp: None,
+                unix: None,
                 websocket: None,
             },
             output: OutputArgs {

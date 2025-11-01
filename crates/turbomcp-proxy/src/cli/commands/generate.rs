@@ -144,7 +144,7 @@ impl GenerateCommand {
             version: Some(self.version.clone()),
             frontend_type,
             backend_type,
-            turbomcp_version: "2.1.0".to_string(),
+            turbomcp_version: "2.1.1".to_string(),
         };
 
         let project = generator.generate(&config)?;
@@ -229,6 +229,12 @@ impl GenerateCommand {
             Some(BackendType::Http) => Err(ProxyError::configuration(
                 "HTTP backend not yet implemented for code generation".to_string(),
             )),
+            Some(BackendType::Tcp) => Err(ProxyError::configuration(
+                "TCP backend not yet implemented for code generation".to_string(),
+            )),
+            Some(BackendType::Unix) => Err(ProxyError::configuration(
+                "Unix socket backend not yet implemented for code generation".to_string(),
+            )),
             Some(BackendType::Websocket) => Err(ProxyError::configuration(
                 "WebSocket backend not yet implemented for code generation".to_string(),
             )),
@@ -258,6 +264,12 @@ impl GenerateCommand {
         match self.backend.backend_type() {
             Some(CliBackendType::Stdio) => Ok(BackendType::Stdio),
             Some(CliBackendType::Http) => Ok(BackendType::Http),
+            Some(CliBackendType::Tcp) => Err(ProxyError::configuration(
+                "TCP backend not yet implemented for code generation".to_string(),
+            )),
+            Some(CliBackendType::Unix) => Err(ProxyError::configuration(
+                "Unix socket backend not yet implemented for code generation".to_string(),
+            )),
             Some(CliBackendType::Websocket) => Ok(BackendType::WebSocket),
             None => Err(ProxyError::configuration(
                 "No backend specified".to_string(),
@@ -348,6 +360,8 @@ mod tests {
                 args: vec!["server.py".to_string()],
                 working_dir: None,
                 http: None,
+                tcp: None,
+                unix: None,
                 websocket: None,
             },
             frontend: "http".to_string(),
@@ -375,6 +389,8 @@ mod tests {
                 args: vec![],
                 working_dir: None,
                 http: None,
+                tcp: None,
+                unix: None,
                 websocket: None,
             },
             frontend: "http".to_string(),

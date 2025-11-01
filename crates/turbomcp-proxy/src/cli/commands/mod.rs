@@ -2,8 +2,10 @@
 //!
 //! Each command is implemented as a struct that can execute independently.
 
+pub mod adapter;
 pub mod generate;
 pub mod inspect;
+pub mod schema;
 pub mod serve;
 
 use clap::Subcommand;
@@ -25,9 +27,14 @@ pub enum Command {
     /// Generate optimized Rust proxy code
     #[command(visible_alias = "g")]
     Generate(generate::GenerateCommand),
-    // Future commands (Phase 4+)
-    // Schema(schema::SchemaCommand),
-    // Adapter(adapter::AdapterCommand),
+
+    /// Export server capabilities as schemas (`OpenAPI`, GraphQL, Protobuf)
+    #[command(visible_alias = "sch")]
+    Schema(schema::SchemaCommand),
+
+    /// Run protocol adapters (REST API, GraphQL)
+    #[command(visible_alias = "adp")]
+    Adapter(adapter::AdapterCommand),
 }
 
 impl Command {
@@ -46,6 +53,14 @@ impl Command {
             Command::Generate(cmd) => {
                 // Generate command doesn't use output format
                 cmd.execute().await
+            }
+            Command::Schema(cmd) => {
+                // Schema command uses output format for format selection
+                cmd.execute(format).await
+            }
+            Command::Adapter(cmd) => {
+                // Adapter command doesn't use output format
+                cmd.execute(format).await
             }
         }
     }
