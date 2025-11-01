@@ -27,9 +27,10 @@ pub struct CircuitBreakerConfig {
 }
 
 /// Circuit breaker states
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CircuitState {
     /// Circuit is closed (normal operation)
+    #[default]
     Closed,
     /// Circuit is open (failing fast)
     Open,
@@ -80,12 +81,6 @@ pub struct CircuitBreaker {
     last_state_change: Instant,
     /// Rolling window of recent operations
     rolling_window: VecDeque<OperationResult>,
-}
-
-impl Default for CircuitState {
-    fn default() -> Self {
-        Self::Closed
-    }
 }
 
 impl Default for CircuitBreakerConfig {

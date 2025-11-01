@@ -30,13 +30,14 @@ pub struct HealthCheckConfig {
 }
 
 /// Health status
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum HealthStatus {
     /// Transport is healthy
     Healthy,
     /// Transport is unhealthy
     Unhealthy,
     /// Health status is unknown
+    #[default]
     Unknown,
     /// Health check is in progress
     Checking,
@@ -66,12 +67,6 @@ pub struct HealthChecker {
     health_info: HealthInfo,
     /// Last health check result
     last_check_result: Option<bool>,
-}
-
-impl Default for HealthStatus {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl Default for HealthCheckConfig {
