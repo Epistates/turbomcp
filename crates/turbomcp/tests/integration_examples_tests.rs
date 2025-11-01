@@ -464,7 +464,7 @@ async fn test_mcp_protocol_compliance() {
 /// Test that examples produce clean JSON-RPC output with no log contamination
 #[tokio::test]
 async fn test_clean_json_output() {
-    let example_name = "11_production_deployment";
+    let example_name = "hello_world";
 
     // Use the helper but capture both stdout and stderr separately
     let mut child = Command::new("cargo")
