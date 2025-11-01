@@ -1,6 +1,6 @@
 //! REST API adapter for MCP servers
 //!
-//! Exposes MCP server capabilities as a RESTful HTTP API with OpenAPI documentation.
+//! Exposes MCP server capabilities as a `RESTful` HTTP API with `OpenAPI` documentation.
 //! Automatically generates REST endpoints from introspected tool and resource definitions.
 
 // Always-available imports (stdlib + core dependencies)
@@ -30,7 +30,7 @@ use axum::{
 pub struct RestAdapterConfig {
     /// Bind address (e.g., "127.0.0.1:3001")
     pub bind: String,
-    /// Enable OpenAPI Swagger UI
+    /// Enable `OpenAPI` Swagger UI
     pub openapi_ui: bool,
 }
 
@@ -48,7 +48,7 @@ impl RestAdapterConfig {
 #[cfg(feature = "rest")]
 #[derive(Clone)]
 struct RestAdapterState {
-    backend: BackendConnector,
+    backend: BackendConnector, // Used for routing tool calls, resource reads, prompt gets
     spec: Arc<ServerSpec>,
 }
 
@@ -63,6 +63,7 @@ pub struct RestAdapter {
 #[cfg(feature = "rest")]
 impl RestAdapter {
     /// Create a new REST adapter
+    #[must_use]
     pub fn new(config: RestAdapterConfig, backend: BackendConnector, spec: ServerSpec) -> Self {
         Self {
             config,
@@ -96,11 +97,10 @@ impl RestAdapter {
             .route("/health", get(health_check))
             .with_state(state);
 
-        // Add Swagger UI if enabled
+        // Note: Full Swagger UI integration requires utoipa-swagger-ui feature
         if self.config.openapi_ui {
-            info!("OpenAPI Swagger UI enabled at /docs");
-            // Note: Swagger UI integration requires utoipa-swagger-ui feature
-            // This is a placeholder for full implementation
+            info!("OpenAPI specification available at /openapi.json");
+            info!("Full Swagger UI integration requires utoipa-swagger-ui crate");
         }
 
         // Parse bind address
@@ -118,7 +118,7 @@ impl RestAdapter {
         // Start server
         axum::serve(listener, router)
             .await
-            .map_err(|e| ProxyError::backend(format!("REST adapter server error: {}", e)))?;
+            .map_err(|e| ProxyError::backend(format!("REST adapter server error: {e}")))?;
 
         Ok(())
     }
@@ -162,44 +162,71 @@ async fn list_tools(State(state): State<RestAdapterState>) -> impl IntoResponse 
 /// Call a tool (generic endpoint with tool name in body)
 #[cfg(feature = "rest")]
 async fn call_tool(
-    State(_state): State<RestAdapterState>,
+    State(state): State<RestAdapterState>,
     Json(payload): Json<Value>,
 ) -> impl IntoResponse {
     debug!("POST /api/tools with payload: {}", payload);
 
-    // This is a placeholder implementation
-    // Full implementation would:
-    // 1. Extract tool name and arguments from payload
-    // 2. Route to backend via BackendConnector
-    // 3. Translate message IDs via IdTranslator
-    // 4. Return response
+    // Extract tool name and arguments from payload
+    let Some(tool_name) = payload.get("name").and_then(|v| v.as_str()) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Missing required field 'name' in request body",
+                "code": -32602
+            })),
+        );
+    };
 
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "Tool call routing not yet fully implemented",
-            "code": -32603
-        })),
-    )
+    let arguments = payload
+        .get("arguments")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<std::collections::HashMap<String, Value>>()
+        });
+
+    // Call the backend
+    match state.backend.call_tool(tool_name, arguments).await {
+        Ok(result) => (StatusCode::OK, Json(json!({ "result": result }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("Tool call failed: {e}"),
+                "code": -32603
+            })),
+        ),
+    }
 }
 
 /// Call a specific tool by name
 #[cfg(feature = "rest")]
 async fn call_tool_by_name(
     Path(name): Path<String>,
-    State(_state): State<RestAdapterState>,
+    State(state): State<RestAdapterState>,
     Json(payload): Json<Value>,
 ) -> impl IntoResponse {
     debug!("POST /api/tools/{} with payload: {}", name, payload);
 
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "Tool call routing not yet fully implemented",
-            "tool": name,
-            "code": -32603
-        })),
-    )
+    let arguments = payload.as_object().map(|obj| {
+        obj.iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect::<std::collections::HashMap<String, Value>>()
+    });
+
+    // Call the backend
+    match state.backend.call_tool(&name, arguments).await {
+        Ok(result) => (StatusCode::OK, Json(json!({ "result": result }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("Tool call failed: {e}"),
+                "tool": name,
+                "code": -32603
+            })),
+        ),
+    }
 }
 
 /// List all resources
@@ -231,18 +258,22 @@ async fn list_resources(State(state): State<RestAdapterState>) -> impl IntoRespo
 #[cfg(feature = "rest")]
 async fn read_resource(
     Path(uri): Path<String>,
-    State(_state): State<RestAdapterState>,
+    State(state): State<RestAdapterState>,
 ) -> impl IntoResponse {
     debug!("GET /api/resources/{}", uri);
 
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "Resource reading not yet fully implemented",
-            "uri": uri,
-            "code": -32603
-        })),
-    )
+    // Call the backend
+    match state.backend.read_resource(&uri).await {
+        Ok(result) => (StatusCode::OK, Json(json!({ "contents": result.contents }))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("Resource read failed: {e}"),
+                "uri": uri,
+                "code": -32603
+            })),
+        ),
+    }
 }
 
 /// List all prompts
@@ -273,22 +304,41 @@ async fn list_prompts(State(state): State<RestAdapterState>) -> impl IntoRespons
 #[cfg(feature = "rest")]
 async fn get_prompt(
     Path(name): Path<String>,
-    State(_state): State<RestAdapterState>,
+    State(state): State<RestAdapterState>,
     Json(payload): Json<Value>,
 ) -> impl IntoResponse {
     debug!("POST /api/prompts/{} with payload: {}", name, payload);
 
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "Prompt execution not yet fully implemented",
-            "prompt": name,
-            "code": -32603
-        })),
-    )
+    let arguments = payload
+        .get("arguments")
+        .and_then(|v| v.as_object())
+        .map(|obj| {
+            obj.iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect::<std::collections::HashMap<String, Value>>()
+        });
+
+    // Call the backend
+    match state.backend.get_prompt(&name, arguments).await {
+        Ok(result) => (
+            StatusCode::OK,
+            Json(json!({
+                "description": result.description,
+                "messages": result.messages
+            })),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("Prompt get failed: {e}"),
+                "prompt": name,
+                "code": -32603
+            })),
+        ),
+    }
 }
 
-/// OpenAPI specification endpoint
+/// `OpenAPI` specification endpoint
 #[cfg(feature = "rest")]
 async fn openapi_spec(State(_state): State<RestAdapterState>) -> impl IntoResponse {
     debug!("GET /openapi.json");
