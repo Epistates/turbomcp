@@ -27,9 +27,10 @@ impl Default for ProxyConfig {
 }
 
 /// ID mapping strategy
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 pub enum IdMappingStrategy {
     /// Prefix message IDs with session ID
+    #[default]
     Prefix,
 
     /// Use UUID mapping table
@@ -37,12 +38,6 @@ pub enum IdMappingStrategy {
 
     /// Pass through (no mapping)
     PassThrough,
-}
-
-impl Default for IdMappingStrategy {
-    fn default() -> Self {
-        Self::Prefix
-    }
 }
 
 /// Backend configuration for runtime proxy

@@ -19,22 +19,17 @@ pub enum LifespanEvent {
 }
 
 /// Priority levels for hooks
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum HookPriority {
     /// Critical system hooks (run first on startup, last on shutdown)
     Critical = 0,
     /// High priority hooks
     High = 100,
     /// Normal priority hooks (default)
+    #[default]
     Normal = 500,
     /// Low priority hooks
     Low = 900,
-}
-
-impl Default for HookPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// Lifespan hook trait

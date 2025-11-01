@@ -159,22 +159,17 @@ impl ChoiceOption {
 }
 
 /// Priority level for elicitation requests
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Priority {
     /// Low priority - can be deferred
     Low,
     /// Normal priority - default
+    #[default]
     Normal,
     /// High priority - should be shown prominently
     High,
     /// Critical - requires immediate attention
     Critical,
-}
-
-impl Default for Priority {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 /// Context information for the elicitation request
