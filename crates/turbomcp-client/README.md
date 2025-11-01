@@ -39,7 +39,7 @@ MCP client with complete MCP 2025-06-18 specification support and plugin middlew
 | **Unix** | ✅ Full | `unix` | Fast local IPC |
 | **WebSocket** | ✅ Full | `websocket` | Real-time bidirectional |
 
-> **Version 2.1.0**: HTTP/SSE client transport with `Client::connect_http()` convenience API, OAuth 2.1 support, and universal proxy compatibility.
+> **Version 2.1.1**: HTTP/SSE client transport with `Client::connect_http()` convenience API, OAuth 2.1 support, and universal proxy compatibility.
 
 ## Quick Start
 
