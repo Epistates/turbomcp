@@ -212,7 +212,7 @@ mod tests {
             client_version: "1.0.0".to_string(),
         };
 
-        let Ok(mut backend) = BackendConnector::new(config).await else {
+        let Ok(backend) = BackendConnector::new(config).await else {
             return None;
         };
 

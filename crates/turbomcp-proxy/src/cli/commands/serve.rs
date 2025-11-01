@@ -167,7 +167,7 @@ impl ServeCommand {
 
         // Create backend connector
         info!("Connecting to backend...");
-        let mut backend = BackendConnector::new(backend_config).await?;
+        let backend = BackendConnector::new(backend_config).await?;
         info!("Backend connected successfully");
 
         // Introspect backend
