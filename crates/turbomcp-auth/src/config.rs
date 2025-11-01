@@ -63,20 +63,15 @@ pub enum AuthProviderType {
 }
 
 /// Security levels for OAuth 2.1 flows
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SecurityLevel {
     /// Standard OAuth 2.1 with PKCE
+    #[default]
     Standard,
     /// Enhanced security with DPoP token binding
     Enhanced,
     /// Maximum security with full DPoP
     Maximum,
-}
-
-impl Default for SecurityLevel {
-    fn default() -> Self {
-        Self::Standard
-    }
 }
 
 /// DPoP (Demonstration of Proof-of-Possession) configuration
@@ -108,9 +103,10 @@ fn default_clock_skew() -> Duration {
 
 /// DPoP key storage configuration
 #[cfg(feature = "dpop")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum DpopKeyStorageConfig {
     /// In-memory storage (development)
+    #[default]
     Memory,
     /// Redis storage (production)
     Redis {
@@ -122,13 +118,6 @@ pub enum DpopKeyStorageConfig {
         /// HSM configuration parameters
         config: serde_json::Value,
     },
-}
-
-#[cfg(feature = "dpop")]
-impl Default for DpopKeyStorageConfig {
-    fn default() -> Self {
-        Self::Memory
-    }
 }
 
 #[cfg(feature = "dpop")]
@@ -273,21 +262,16 @@ pub struct ProtectedResourceMetadata {
 }
 
 /// Bearer token delivery methods (RFC 9728)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum BearerTokenMethod {
     /// Authorization header (RFC 6750)
+    #[default]
     Header,
     /// Query parameter (RFC 6750) - discouraged for security
     Query,
     /// Request body (RFC 6750) - for POST requests only
     Body,
-}
-
-impl Default for BearerTokenMethod {
-    fn default() -> Self {
-        Self::Header
-    }
 }
 
 /// MCP Server Resource Registry for RFC 9728 compliance
@@ -470,19 +454,14 @@ pub struct ClientRegistrationResponse {
 }
 
 /// Application type for OAuth client (RFC 7591)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ApplicationType {
     /// Web application - runs on web server, can keep secrets
+    #[default]
     Web,
     /// Native application - mobile/desktop app, cannot keep secrets
     Native,
-}
-
-impl Default for ApplicationType {
-    fn default() -> Self {
-        Self::Web
-    }
 }
 
 /// Client Registration Error Response (RFC 7591)
