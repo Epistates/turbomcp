@@ -15,7 +15,7 @@ rust-version = "1.89.0"
 [dependencies]
 # Core TurboMCP
 turbomcp-client = { path = "../turbomcp-client", version = "2.1.0" }
-turbomcp-transport = { path = "../turbomcp-transport", version = "2.1.0", features = ["tcp", "unix"] }
+turbomcp-transport = { path = "../turbomcp-transport", version = "2.1.0" }
 turbomcp-protocol = { path = "../turbomcp-protocol", version = "2.1.0" }
 
 # CLI framework
@@ -49,6 +49,17 @@ dirs = "6.0"
 
 [dev-dependencies]
 tokio-test = "0.4"
+
+[features]
+# Transport features - enable individual transports as needed
+default = ["stdio", "tcp", "unix"]
+stdio = ["turbomcp-transport/stdio"]
+tcp = ["turbomcp-transport/tcp"]
+unix = ["turbomcp-transport/unix"]
+http = ["turbomcp-transport/http"]
+websocket = ["turbomcp-transport/websocket"]
+# Convenience: enable all transports
+all = ["stdio", "tcp", "unix", "http", "websocket"]
 
 [[bin]]
 name = "turbomcp-cli"

@@ -3,7 +3,7 @@
 use crate::cli::*;
 use crate::error::{CliError, CliResult};
 use crate::formatter::Formatter;
-use crate::transport::{ClientType, create_client};
+use crate::transport::create_client;
 use std::collections::HashMap;
 
 /// Execute CLI commands
@@ -45,21 +45,9 @@ impl CommandExecutor {
     async fn execute_tool_command(&self, command: ToolCommands) -> CliResult<()> {
         match command {
             ToolCommands::List { conn } => {
-                let client_type = create_client(&conn).await?;
-                let tools = match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.list_tools().await?
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.list_tools().await?
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.list_tools().await?
-                    }
-                };
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                let tools = client.list_tools().await?;
                 self.formatter.display_tools(&tools)
             }
 
@@ -77,40 +65,16 @@ impl CommandExecutor {
                         })?
                     };
 
-                let client_type = create_client(&conn).await?;
-                let result = match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.call_tool(&name, Some(args)).await?
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.call_tool(&name, Some(args)).await?
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.call_tool(&name, Some(args)).await?
-                    }
-                };
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                let result = client.call_tool(&name, Some(args)).await?;
                 self.formatter.display(&result)
             }
 
             ToolCommands::Schema { conn, name } => {
-                let client_type = create_client(&conn).await?;
-                let tools = match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.list_tools().await?
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.list_tools().await?
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.list_tools().await?
-                    }
-                };
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                let tools = client.list_tools().await?;
 
                 if let Some(tool_name) = name {
                     let tool = tools.iter().find(|t| t.name == tool_name).ok_or_else(|| {
@@ -134,21 +98,9 @@ impl CommandExecutor {
             }
 
             ToolCommands::Export { conn, output } => {
-                let client_type = create_client(&conn).await?;
-                let tools = match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.list_tools().await?
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.list_tools().await?
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.list_tools().await?
-                    }
-                };
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                let tools = client.list_tools().await?;
 
                 std::fs::create_dir_all(&output)?;
 
@@ -174,99 +126,38 @@ impl CommandExecutor {
     async fn execute_resource_command(&self, command: ResourceCommands) -> CliResult<()> {
         match command {
             ResourceCommands::List { conn } => {
-                let client_type = create_client(&conn).await?;
-                let resources = match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.list_resources().await?
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.list_resources().await?
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.list_resources().await?
-                    }
-                };
-
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                let resources = client.list_resources().await?;
                 self.formatter.display(&resources)
             }
 
             ResourceCommands::Read { conn, uri } => {
-                let client_type = create_client(&conn).await?;
-                let result = match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.read_resource(&uri).await?
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.read_resource(&uri).await?
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.read_resource(&uri).await?
-                    }
-                };
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                let result = client.read_resource(&uri).await?;
                 self.formatter.display(&result)
             }
 
             ResourceCommands::Templates { conn } => {
-                let client_type = create_client(&conn).await?;
-                let templates = match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.list_resource_templates().await?
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.list_resource_templates().await?
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.list_resource_templates().await?
-                    }
-                };
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                let templates = client.list_resource_templates().await?;
                 self.formatter.display(&templates)
             }
 
             ResourceCommands::Subscribe { conn, uri } => {
-                let client_type = create_client(&conn).await?;
-                match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.subscribe(&uri).await?;
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.subscribe(&uri).await?;
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.subscribe(&uri).await?;
-                    }
-                }
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                client.subscribe(&uri).await?;
                 println!("✓ Subscribed to: {uri}");
                 Ok(())
             }
 
             ResourceCommands::Unsubscribe { conn, uri } => {
-                let client_type = create_client(&conn).await?;
-                match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.unsubscribe(&uri).await?;
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.unsubscribe(&uri).await?;
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.unsubscribe(&uri).await?;
-                    }
-                }
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                client.unsubscribe(&uri).await?;
                 println!("✓ Unsubscribed from: {uri}");
                 Ok(())
             }
@@ -278,21 +169,9 @@ impl CommandExecutor {
     async fn execute_prompt_command(&self, command: PromptCommands) -> CliResult<()> {
         match command {
             PromptCommands::List { conn } => {
-                let client_type = create_client(&conn).await?;
-                let prompts = match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.list_prompts().await?
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.list_prompts().await?
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.list_prompts().await?
-                    }
-                };
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                let prompts = client.list_prompts().await?;
                 self.formatter.display_prompts(&prompts)
             }
 
@@ -313,40 +192,16 @@ impl CommandExecutor {
 
                 let args_option = if args.is_empty() { None } else { Some(args) };
 
-                let client_type = create_client(&conn).await?;
-                let result = match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.get_prompt(&name, args_option).await?
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.get_prompt(&name, args_option.clone()).await?
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.get_prompt(&name, args_option.clone()).await?
-                    }
-                };
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                let result = client.get_prompt(&name, args_option).await?;
                 self.formatter.display(&result)
             }
 
             PromptCommands::Schema { conn, name } => {
-                let client_type = create_client(&conn).await?;
-                let prompts = match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.list_prompts().await?
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.list_prompts().await?
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.list_prompts().await?
-                    }
-                };
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                let prompts = client.list_prompts().await?;
 
                 let prompt = prompts
                     .iter()
@@ -368,55 +223,22 @@ impl CommandExecutor {
                 ref_value,
                 argument,
             } => {
-                let client_type = create_client(&conn).await?;
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
 
                 // Use the appropriate completion method based on reference type
                 let result = match ref_type {
                     RefType::Prompt => {
                         let arg_name = argument.as_deref().unwrap_or("value");
-                        match client_type {
-                            ClientType::Stdio(client) => {
-                                client.initialize().await?;
-                                client
-                                    .complete_prompt(&ref_value, arg_name, "", None)
-                                    .await?
-                            }
-                            ClientType::Tcp(client) => {
-                                client.initialize().await?;
-                                client
-                                    .complete_prompt(&ref_value, arg_name, "", None)
-                                    .await?
-                            }
-                            ClientType::Unix(client) => {
-                                client.initialize().await?;
-                                client
-                                    .complete_prompt(&ref_value, arg_name, "", None)
-                                    .await?
-                            }
-                        }
+                        client
+                            .complete_prompt(&ref_value, arg_name, "", None)
+                            .await?
                     }
                     RefType::Resource => {
                         let arg_name = argument.as_deref().unwrap_or("uri");
-                        match client_type {
-                            ClientType::Stdio(client) => {
-                                client.initialize().await?;
-                                client
-                                    .complete_resource(&ref_value, arg_name, "", None)
-                                    .await?
-                            }
-                            ClientType::Tcp(client) => {
-                                client.initialize().await?;
-                                client
-                                    .complete_resource(&ref_value, arg_name, "", None)
-                                    .await?
-                            }
-                            ClientType::Unix(client) => {
-                                client.initialize().await?;
-                                client
-                                    .complete_resource(&ref_value, arg_name, "", None)
-                                    .await?
-                            }
-                        }
+                        client
+                            .complete_resource(&ref_value, arg_name, "", None)
+                            .await?
                     }
                 };
 
@@ -430,42 +252,17 @@ impl CommandExecutor {
     async fn execute_server_command(&self, command: ServerCommands) -> CliResult<()> {
         match command {
             ServerCommands::Info { conn } => {
-                let client_type = create_client(&conn).await?;
-                let info = match client_type {
-                    ClientType::Stdio(client) => {
-                        let result = client.initialize().await?;
-                        result.server_info
-                    }
-                    ClientType::Tcp(client) => {
-                        let result = client.initialize().await?;
-                        result.server_info
-                    }
-                    ClientType::Unix(client) => {
-                        let result = client.initialize().await?;
-                        result.server_info
-                    }
-                };
-                self.formatter.display_server_info(&info)
+                let client = create_client(&conn).await?;
+                let result = client.initialize().await?;
+                self.formatter.display_server_info(&result.server_info)
             }
 
             ServerCommands::Ping { conn } => {
-                let client_type = create_client(&conn).await?;
+                let client = create_client(&conn).await?;
                 let start = std::time::Instant::now();
 
-                match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.ping().await?;
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.ping().await?;
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.ping().await?;
-                    }
-                }
+                client.initialize().await?;
+                client.ping().await?;
 
                 let elapsed = start.elapsed();
                 println!("✓ Pong! ({:.2}ms)", elapsed.as_secs_f64() * 1000.0);
@@ -476,33 +273,17 @@ impl CommandExecutor {
                 // Convert level once before using
                 let protocol_level: turbomcp_protocol::types::LogLevel = level.clone().into();
 
-                let client_type = create_client(&conn).await?;
-                match client_type {
-                    ClientType::Stdio(client) => {
-                        client.initialize().await?;
-                        client.set_log_level(protocol_level).await?;
-                    }
-                    ClientType::Tcp(client) => {
-                        client.initialize().await?;
-                        client.set_log_level(protocol_level).await?;
-                    }
-                    ClientType::Unix(client) => {
-                        client.initialize().await?;
-                        client.set_log_level(protocol_level).await?;
-                    }
-                }
+                let client = create_client(&conn).await?;
+                client.initialize().await?;
+                client.set_log_level(protocol_level).await?;
                 println!("✓ Log level set to: {:?}", level);
                 Ok(())
             }
 
             ServerCommands::Roots { conn } => {
                 // Roots are part of server capabilities returned during initialization
-                let client_type = create_client(&conn).await?;
-                let result = match client_type {
-                    ClientType::Stdio(client) => client.initialize().await?,
-                    ClientType::Tcp(client) => client.initialize().await?,
-                    ClientType::Unix(client) => client.initialize().await?,
-                };
+                let client = create_client(&conn).await?;
+                let result = client.initialize().await?;
 
                 // Display server capabilities which includes roots info
                 self.formatter.display(&result.server_capabilities)
@@ -522,46 +303,20 @@ impl CommandExecutor {
 
     async fn execute_connect(&self, conn: Connection) -> CliResult<()> {
         println!("Connecting to server...");
-        let client_type = create_client(&conn).await?;
+        let client = create_client(&conn).await?;
 
-        let info = match client_type {
-            ClientType::Stdio(client) => {
-                let result = client.initialize().await?;
-                result.server_info
-            }
-            ClientType::Tcp(client) => {
-                let result = client.initialize().await?;
-                result.server_info
-            }
-            ClientType::Unix(client) => {
-                let result = client.initialize().await?;
-                result.server_info
-            }
-        };
+        let result = client.initialize().await?;
 
         println!("✓ Connected successfully!");
-        self.formatter.display_server_info(&info)
+        self.formatter.display_server_info(&result.server_info)
     }
 
     async fn execute_status(&self, conn: Connection) -> CliResult<()> {
-        let client_type = create_client(&conn).await?;
+        let client = create_client(&conn).await?;
 
-        let info = match client_type {
-            ClientType::Stdio(client) => {
-                let result = client.initialize().await?;
-                result.server_info
-            }
-            ClientType::Tcp(client) => {
-                let result = client.initialize().await?;
-                result.server_info
-            }
-            ClientType::Unix(client) => {
-                let result = client.initialize().await?;
-                result.server_info
-            }
-        };
+        let result = client.initialize().await?;
 
         println!("Status: Connected");
-        self.formatter.display_server_info(&info)
+        self.formatter.display_server_info(&result.server_info)
     }
 }
