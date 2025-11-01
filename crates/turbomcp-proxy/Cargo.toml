@@ -45,6 +45,14 @@ reqwest = { version = "0.12", features = ["json", "stream"], optional = true }
 # WebSocket (optional)
 tokio-tungstenite = { version = "0.28", optional = true }
 
+# REST API & OpenAPI (optional)
+utoipa = { version = "5.4", features = ["axum_extras", "macros"], optional = true }
+utoipa-swagger-ui = { version = "7.0", features = ["axum"], optional = true }
+
+# GraphQL (optional) - note: graphql support scaffolded for Phase 6
+# Requires: async-graphql and async-graphql-axum from latest releases
+# Currently using placeholder versions - will update when integrating async-graphql 7.0+
+
 # Code generation (optional)
 handlebars = { version = "6.0", optional = true }
 convert_case = { version = "0.6", optional = true }
@@ -84,11 +92,16 @@ codegen = ["handlebars", "convert_case", "chrono"]
 schema = ["schemars"]
 auth = ["dep:turbomcp-auth", "dep:jsonwebtoken"]
 
+# Adapters (Phase 6)
+rest = ["utoipa", "utoipa-swagger-ui", "axum", "tower", "tower-http"]
+graphql = ["axum", "tower", "tower-http"]  # async-graphql dependencies optional for now
+adapters = ["rest", "graphql"]
+
 # CLI
 cli = ["clap", "colored", "atty", "tracing-subscriber"]
 
 # Full feature set
-full = ["introspection", "runtime", "codegen", "schema", "cli", "auth"]
+full = ["introspection", "runtime", "codegen", "schema", "cli", "auth", "adapters"]
 
 [[bin]]
 name = "turbomcp-proxy"

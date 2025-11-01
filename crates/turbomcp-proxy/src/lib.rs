@@ -90,6 +90,12 @@ pub mod prelude {
     #[cfg(feature = "codegen")]
     pub use crate::codegen::RustCodeGenerator;
 
+    #[cfg(feature = "rest")]
+    pub use crate::adapters::rest::{RestAdapter, RestAdapterConfig};
+
+    #[cfg(feature = "graphql")]
+    pub use crate::adapters::graphql::{GraphQLAdapter, GraphQLAdapterConfig};
+
     // Proxy components
     pub use crate::proxy::{
         AtomicMetrics, BackendConnector, BackendTransport, IdTranslator, ProxyMetrics, ProxyService,
