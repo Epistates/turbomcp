@@ -148,7 +148,11 @@ impl OAuth2Client {
             },
             ProviderType::Apple => ProviderConfig {
                 provider_type,
-                default_scopes: vec!["openid".to_string(), "email".to_string(), "name".to_string()],
+                default_scopes: vec![
+                    "openid".to_string(),
+                    "email".to_string(),
+                    "name".to_string(),
+                ],
                 refresh_behavior: RefreshBehavior::Proactive,
                 userinfo_endpoint: Some("https://appleid.apple.com/auth/v1/user".to_string()),
                 additional_params: {
@@ -160,23 +164,37 @@ impl OAuth2Client {
             },
             ProviderType::Okta => ProviderConfig {
                 provider_type,
-                default_scopes: vec!["openid".to_string(), "email".to_string(), "profile".to_string()],
+                default_scopes: vec![
+                    "openid".to_string(),
+                    "email".to_string(),
+                    "profile".to_string(),
+                ],
                 refresh_behavior: RefreshBehavior::Proactive,
                 userinfo_endpoint: Some("/oauth2/v1/userinfo".to_string()), // Relative to Okta domain
                 additional_params: HashMap::new(),
             },
             ProviderType::Auth0 => ProviderConfig {
                 provider_type,
-                default_scopes: vec!["openid".to_string(), "email".to_string(), "profile".to_string()],
+                default_scopes: vec![
+                    "openid".to_string(),
+                    "email".to_string(),
+                    "profile".to_string(),
+                ],
                 refresh_behavior: RefreshBehavior::Proactive,
                 userinfo_endpoint: Some("/userinfo".to_string()), // Relative to Auth0 domain
                 additional_params: HashMap::new(),
             },
             ProviderType::Keycloak => ProviderConfig {
                 provider_type,
-                default_scopes: vec!["openid".to_string(), "email".to_string(), "profile".to_string()],
+                default_scopes: vec![
+                    "openid".to_string(),
+                    "email".to_string(),
+                    "profile".to_string(),
+                ],
                 refresh_behavior: RefreshBehavior::Proactive,
-                userinfo_endpoint: Some("/realms/{realm}/protocol/openid-connect/userinfo".to_string()),
+                userinfo_endpoint: Some(
+                    "/realms/{realm}/protocol/openid-connect/userinfo".to_string(),
+                ),
                 additional_params: HashMap::new(),
             },
             ProviderType::Generic | ProviderType::Custom(_) => ProviderConfig {

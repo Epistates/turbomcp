@@ -561,7 +561,11 @@ async fn test_apple_signin_oauth2_1_support() {
         .expect("Apple auth failed");
 
     // THEN: Token exchange succeeds
-    assert_eq!(response.status(), 200, "Apple token exchange should succeed");
+    assert_eq!(
+        response.status(),
+        200,
+        "Apple token exchange should succeed"
+    );
     let token: serde_json::Value = response.json().await.unwrap();
     assert_eq!(
         token["access_token"].as_str().unwrap(),
@@ -634,7 +638,11 @@ async fn test_auth0_identity_platform_oauth2_1_support() {
         .expect("Auth0 auth failed");
 
     // THEN: Token exchange succeeds with Auth0-specific claims
-    assert_eq!(response.status(), 200, "Auth0 token exchange should succeed");
+    assert_eq!(
+        response.status(),
+        200,
+        "Auth0 token exchange should succeed"
+    );
     let token: serde_json::Value = response.json().await.unwrap();
     assert_eq!(
         token["access_token"].as_str().unwrap(),
@@ -668,7 +676,11 @@ async fn test_keycloak_oidc_provider_oauth2_1_support() {
         .expect("Keycloak auth failed");
 
     // THEN: Token exchange succeeds with OIDC compliance
-    assert_eq!(response.status(), 200, "Keycloak token exchange should succeed");
+    assert_eq!(
+        response.status(),
+        200,
+        "Keycloak token exchange should succeed"
+    );
     let token: serde_json::Value = response.json().await.unwrap();
     assert_eq!(
         token["access_token"].as_str().unwrap(),
@@ -726,7 +738,7 @@ async fn test_all_new_providers_oauth2_1_features() {
     // THEN: All providers succeed with OAuth 2.1
     for task in tasks {
         let (provider_name, response) = task.await.unwrap();
-        let resp = response.expect(&format!("{} auth should succeed", provider_name));
+        let resp = response.unwrap_or_else(|_| panic!("{} auth should succeed", provider_name));
         assert_eq!(
             resp.status(),
             200,
