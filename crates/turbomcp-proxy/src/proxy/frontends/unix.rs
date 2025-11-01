@@ -28,6 +28,7 @@ pub struct UnixFrontendConfig {
 
 impl UnixFrontendConfig {
     /// Create a new Unix socket frontend configuration
+    #[must_use]
     pub fn new(path: impl Into<String>, timeout: Duration, max_request_size: usize) -> Self {
         Self {
             path: path.into(),
@@ -46,6 +47,7 @@ pub struct UnixFrontend {
 
 impl UnixFrontend {
     /// Create a new Unix socket frontend
+    #[must_use]
     pub fn new(
         config: UnixFrontendConfig,
         backend: BackendConnector,
@@ -91,7 +93,7 @@ impl UnixFrontend {
 
         loop {
             let (socket, _addr) = listener.accept().await.map_err(|e| {
-                ProxyError::backend_connection(format!("Unix socket accept error: {}", e))
+                ProxyError::backend_connection(format!("Unix socket accept error: {e}"))
             })?;
 
             debug!("Accepted Unix socket connection");
@@ -171,10 +173,10 @@ async fn handle_connection(
                     let response_bytes = serde_json::to_vec(&response)?;
 
                     socket.write_all(&response_bytes).await.map_err(|e| {
-                        ProxyError::backend_connection(format!("Unix socket write error: {}", e))
+                        ProxyError::backend_connection(format!("Unix socket write error: {e}"))
                     })?;
                     socket.write_all(b"\n").await.map_err(|e| {
-                        ProxyError::backend_connection(format!("Unix socket write error: {}", e))
+                        ProxyError::backend_connection(format!("Unix socket write error: {e}"))
                     })?;
 
                     // Reset buffer

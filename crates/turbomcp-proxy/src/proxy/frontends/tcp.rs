@@ -27,6 +27,7 @@ pub struct TcpFrontendConfig {
 
 impl TcpFrontendConfig {
     /// Create a new TCP frontend configuration
+    #[must_use]
     pub fn new(bind: impl Into<String>, timeout: Duration, max_request_size: usize) -> Self {
         Self {
             bind: bind.into(),
@@ -45,6 +46,7 @@ pub struct TcpFrontend {
 
 impl TcpFrontend {
     /// Create a new TCP frontend
+    #[must_use]
     pub fn new(
         config: TcpFrontendConfig,
         backend: BackendConnector,
@@ -71,7 +73,7 @@ impl TcpFrontend {
         })?;
 
         let addr = listener.local_addr().map_err(|e| {
-            ProxyError::backend_connection(format!("Failed to get listener address: {}", e))
+            ProxyError::backend_connection(format!("Failed to get listener address: {e}"))
         })?;
 
         info!("TCP frontend listening on {}", addr);
@@ -80,7 +82,7 @@ impl TcpFrontend {
             let (socket, peer_addr) = listener
                 .accept()
                 .await
-                .map_err(|e| ProxyError::backend_connection(format!("TCP accept error: {}", e)))?;
+                .map_err(|e| ProxyError::backend_connection(format!("TCP accept error: {e}")))?;
 
             debug!("Accepted TCP connection from {}", peer_addr);
 
@@ -159,10 +161,10 @@ async fn handle_connection(
                     let response_bytes = serde_json::to_vec(&response)?;
 
                     socket.write_all(&response_bytes).await.map_err(|e| {
-                        ProxyError::backend_connection(format!("TCP write error: {}", e))
+                        ProxyError::backend_connection(format!("TCP write error: {e}"))
                     })?;
                     socket.write_all(b"\n").await.map_err(|e| {
-                        ProxyError::backend_connection(format!("TCP write error: {}", e))
+                        ProxyError::backend_connection(format!("TCP write error: {e}"))
                     })?;
 
                     // Reset buffer
