@@ -8,17 +8,18 @@ use std::path::PathBuf;
 use crate::cli::args::BackendArgs;
 use crate::error::{ProxyError, ProxyResult};
 
-#[cfg(feature = "codegen")]
-use crate::{
-    codegen::{BackendType, FrontendType, GenConfig, RustCodeGenerator},
-    introspection::McpIntrospector,
-};
-
+// Only used when codegen feature is enabled
 #[cfg(feature = "codegen")]
 use std::fs;
 
 #[cfg(feature = "codegen")]
 use tracing::{error, info};
+
+#[cfg(feature = "codegen")]
+use crate::{
+    codegen::{BackendType, FrontendType, GenConfig, RustCodeGenerator},
+    introspection::McpIntrospector,
+};
 
 /// Generate optimized Rust proxy code
 ///
