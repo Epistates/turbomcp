@@ -107,7 +107,9 @@ build-all-features: ## Build with all features enabled
 test: ## Run comprehensive test suite (tests + clippy + fmt)
 	@echo "${BOLD}${CYAN}🧪 Running comprehensive test suite...${RESET}"
 	@echo "${BLUE}📋 Step 1/5: Running unit and integration tests...${RESET}"
-	@$(CARGO) test --workspace --lib --tests --exclude turbomcp-transport
+	@$(CARGO) test --workspace --lib --exclude turbomcp-transport
+	@$(CARGO) test -p turbomcp --tests -- --test-threads=1
+	@$(CARGO) test --workspace --tests --exclude turbomcp --exclude turbomcp-transport
 	@$(CARGO) test -p turbomcp-transport --lib --tests --features stdio,tcp
 	@echo "${BLUE}📋 Step 2/5: Running clippy linter on all crates and binaries...${RESET}"
 	@$(CARGO) clippy $(WORKSPACE_FLAGS) --all-targets --all-features -- -D warnings
