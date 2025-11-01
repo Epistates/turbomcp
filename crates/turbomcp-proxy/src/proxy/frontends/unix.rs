@@ -87,10 +87,7 @@ impl UnixFrontend {
             ))
         })?;
 
-        info!(
-            "Unix socket frontend listening on {}",
-            self.config.path
-        );
+        info!("Unix socket frontend listening on {}", self.config.path);
 
         loop {
             let (socket, _addr) = listener.accept().await.map_err(|e| {
@@ -105,8 +102,9 @@ impl UnixFrontend {
             let max_request_size = self.config.max_request_size;
 
             tokio::spawn(async move {
-                if let Err(e) = handle_connection(socket, backend, id_translator, timeout, max_request_size)
-                    .await
+                if let Err(e) =
+                    handle_connection(socket, backend, id_translator, timeout, max_request_size)
+                        .await
                 {
                     error!("Unix socket connection error: {}", e);
                 }
@@ -202,11 +200,8 @@ mod tests {
 
     #[test]
     fn test_unix_frontend_config() {
-        let config = UnixFrontendConfig::new(
-            "/tmp/mcp.sock",
-            Duration::from_secs(30),
-            10 * 1024 * 1024,
-        );
+        let config =
+            UnixFrontendConfig::new("/tmp/mcp.sock", Duration::from_secs(30), 10 * 1024 * 1024);
         assert_eq!(config.path, "/tmp/mcp.sock");
         assert_eq!(config.timeout, Duration::from_secs(30));
         assert_eq!(config.max_request_size, 10 * 1024 * 1024);

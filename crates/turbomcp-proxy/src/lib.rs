@@ -102,7 +102,9 @@ pub mod prelude {
     };
 
     // Frontend transports
-    pub use crate::proxy::frontends::{TcpFrontend, TcpFrontendConfig, UnixFrontend, UnixFrontendConfig};
+    pub use crate::proxy::frontends::{
+        TcpFrontend, TcpFrontendConfig, UnixFrontend, UnixFrontendConfig,
+    };
 }
 
 /// Version of turbomcp-proxy

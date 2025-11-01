@@ -4,8 +4,8 @@
 //! Automatically generates REST endpoints from introspected tool and resource definitions.
 
 // Always-available imports (stdlib + core dependencies)
+use serde_json::{Value, json};
 use std::sync::Arc;
-use serde_json::{json, Value};
 use tracing::{debug, info};
 
 // Core proxy types
@@ -13,17 +13,17 @@ use crate::error::{ProxyError, ProxyResult};
 
 // Feature-gated imports (only if rest feature is enabled)
 #[cfg(feature = "rest")]
+use crate::introspection::ServerSpec;
+#[cfg(feature = "rest")]
+use crate::proxy::BackendConnector;
+#[cfg(feature = "rest")]
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Router, Json,
 };
-#[cfg(feature = "rest")]
-use crate::introspection::ServerSpec;
-#[cfg(feature = "rest")]
-use crate::proxy::BackendConnector;
 
 /// REST adapter configuration
 #[derive(Debug, Clone)]
@@ -381,7 +381,11 @@ pub struct RestAdapter;
 #[cfg(not(feature = "rest"))]
 impl RestAdapter {
     /// Create a new REST adapter (stub)
-    pub fn new(_config: RestAdapterConfig, _backend: crate::proxy::BackendConnector, _spec: crate::introspection::ServerSpec) -> Self {
+    pub fn new(
+        _config: RestAdapterConfig,
+        _backend: crate::proxy::BackendConnector,
+        _spec: crate::introspection::ServerSpec,
+    ) -> Self {
         Self
     }
 

@@ -77,9 +77,10 @@ impl TcpFrontend {
         info!("TCP frontend listening on {}", addr);
 
         loop {
-            let (socket, peer_addr) = listener.accept().await.map_err(|e| {
-                ProxyError::backend_connection(format!("TCP accept error: {}", e))
-            })?;
+            let (socket, peer_addr) = listener
+                .accept()
+                .await
+                .map_err(|e| ProxyError::backend_connection(format!("TCP accept error: {}", e)))?;
 
             debug!("Accepted TCP connection from {}", peer_addr);
 
@@ -187,7 +188,8 @@ mod tests {
 
     #[test]
     fn test_tcp_frontend_config() {
-        let config = TcpFrontendConfig::new("127.0.0.1:5000", Duration::from_secs(30), 10 * 1024 * 1024);
+        let config =
+            TcpFrontendConfig::new("127.0.0.1:5000", Duration::from_secs(30), 10 * 1024 * 1024);
         assert_eq!(config.bind, "127.0.0.1:5000");
         assert_eq!(config.timeout, Duration::from_secs(30));
         assert_eq!(config.max_request_size, 10 * 1024 * 1024);

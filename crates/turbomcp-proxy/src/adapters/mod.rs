@@ -7,12 +7,12 @@
 //!
 //! This phase implements adapters to translate MCP protocol capabilities into standard web APIs.
 
-#[cfg(feature = "rest")]
-pub mod rest;
 #[cfg(feature = "graphql")]
 pub mod graphql;
-
 #[cfg(feature = "rest")]
-pub use rest::{RestAdapter, RestAdapterConfig};
+pub mod rest;
+
 #[cfg(feature = "graphql")]
 pub use graphql::{GraphQLAdapter, GraphQLAdapterConfig};
+#[cfg(feature = "rest")]
+pub use rest::{RestAdapter, RestAdapterConfig};

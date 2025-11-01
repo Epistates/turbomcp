@@ -12,16 +12,11 @@ use crate::error::{ProxyError, ProxyResult};
 
 // Feature-gated imports (only if graphql feature is enabled)
 #[cfg(feature = "graphql")]
-use axum::{
-    routing::get,
-    Router,
-    response::IntoResponse,
-    Json,
-};
-#[cfg(feature = "graphql")]
 use crate::introspection::ServerSpec;
 #[cfg(feature = "graphql")]
 use crate::proxy::BackendConnector;
+#[cfg(feature = "graphql")]
+use axum::{Json, Router, response::IntoResponse, routing::get};
 
 /// GraphQL adapter configuration
 #[derive(Debug, Clone)]
@@ -70,9 +65,7 @@ impl GraphQLAdapter {
         info!("Starting GraphQL adapter on {}", self.config.bind);
 
         // Build router with placeholder health check
-        async fn graphql_endpoint(
-            _body: String,
-        ) -> Json<serde_json::Value> {
+        async fn graphql_endpoint(_body: String) -> Json<serde_json::Value> {
             debug!("GraphQL request received");
             // This is a simplified placeholder
             // Full implementation would use async_graphql_axum middleware
@@ -129,7 +122,11 @@ pub struct GraphQLAdapter;
 #[cfg(not(feature = "graphql"))]
 impl GraphQLAdapter {
     /// Create a new GraphQL adapter (stub)
-    pub fn new(_config: GraphQLAdapterConfig, _backend: crate::proxy::BackendConnector, _spec: crate::introspection::ServerSpec) -> Self {
+    pub fn new(
+        _config: GraphQLAdapterConfig,
+        _backend: crate::proxy::BackendConnector,
+        _spec: crate::introspection::ServerSpec,
+    ) -> Self {
         Self
     }
 
