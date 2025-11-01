@@ -4,9 +4,10 @@
 //! authentication methods including JWT and API keys.
 
 /// JWT algorithm for token validation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum JwtAlgorithm {
     /// HMAC using SHA-256 (symmetric)
+    #[default]
     HS256,
     /// HMAC using SHA-384 (symmetric)
     HS384,
@@ -22,12 +23,6 @@ pub enum JwtAlgorithm {
     ES256,
     /// ECDSA using P-384 and SHA-384 (asymmetric)
     ES384,
-}
-
-impl Default for JwtAlgorithm {
-    fn default() -> Self {
-        Self::HS256
-    }
 }
 
 /// JWT validation configuration
