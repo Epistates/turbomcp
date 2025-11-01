@@ -100,6 +100,9 @@ pub mod prelude {
     pub use crate::proxy::{
         AtomicMetrics, BackendConnector, BackendTransport, IdTranslator, ProxyMetrics, ProxyService,
     };
+
+    // Frontend transports
+    pub use crate::proxy::frontends::{TcpFrontend, TcpFrontendConfig, UnixFrontend, UnixFrontendConfig};
 }
 
 /// Version of turbomcp-proxy
