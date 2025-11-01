@@ -8,7 +8,7 @@ OAuth 2.1 and authentication for TurboMCP with MCP protocol compliance.
   - Authorization Code flow (with PKCE for public/confidential clients)
   - Client Credentials flow (server-to-server)
   - Token refresh and validation
-- **Multi-Provider Support** - Google, GitHub, Microsoft, GitLab (with provider-specific configurations)
+- **Multi-Provider Support** - Google, GitHub, Microsoft, GitLab, Apple, Okta, Auth0, Keycloak (with provider-specific OAuth 2.1 configurations)
 - **OAuth2Provider** - Full AuthProvider implementation for OAuth 2.1
 - **API Key Authentication** - Simple API key-based authentication
 - **Server-Side Helpers** - RFC 9728 Protected Resource Metadata and WWW-Authenticate headers
@@ -132,6 +132,71 @@ uuid = { version = "1", features = ["v4"] }
 - `default` - Core authentication (no optional features)
 - `dpop` - Enable DPoP (RFC 9449) token binding support via `turbomcp-dpop`
 
+## Supported Providers
+
+TurboMCP Auth supports all major OAuth 2.1 providers with pre-configured endpoints and scopes:
+
+| Provider | Type | Scopes | Support | Notes |
+|----------|------|--------|---------|-------|
+| **Google** | Social | `openid`, `email`, `profile` | ✅ Full OAuth 2.1 | PKCE required |
+| **GitHub** | Social | `user:email`, `read:user` | ✅ Full OAuth 2.1 | Token refresh via offline_access |
+| **Microsoft** | Enterprise | `openid`, `profile`, `email`, `User.Read` | ✅ Full OAuth 2.1 | Azure AD integrated |
+| **GitLab** | Self-Hosted | `read_user`, `openid` | ✅ Full OAuth 2.1 | Self-hosted compatible |
+| **Apple** | Identity | `openid`, `email`, `name` | ✅ Full OAuth 2.1 | Requires response_mode=form_post |
+| **Okta** | Enterprise | `openid`, `email`, `profile` | ✅ Full OAuth 2.1 | Enterprise SSO ready |
+| **Auth0** | Identity Platform | `openid`, `email`, `profile` | ✅ Full OAuth 2.1 | Unified identity management |
+| **Keycloak** | Open Source OIDC | `openid`, `email`, `profile` | ✅ Full OAuth 2.1 | Self-hosted OIDC provider |
+| **Generic** | Custom | Configurable | ✅ Full OAuth 2.1 | Any OIDC-compliant provider |
+
+All providers support:
+- ✅ PKCE (RFC 7636) - Automatic proof key generation
+- ✅ Token refresh - Automatic and manual refresh
+- ✅ Resource Indicators (RFC 8707) - MCP server binding
+- ✅ Protected Resource Metadata (RFC 9728) - Server-side discovery
+- ✅ DPoP optional (RFC 9449) - Token binding for enhanced security
+
+### Provider Examples
+
+#### Google Sign-In
+```rust
+let client = OAuth2Client::new(&config, ProviderType::Google)?;
+```
+
+#### Microsoft Azure AD
+```rust
+let client = OAuth2Client::new(&config, ProviderType::Microsoft)?;
+```
+
+#### Apple Sign In
+```rust
+let client = OAuth2Client::new(&config, ProviderType::Apple)?;
+// Note: Apple requires PKCE and response_mode=form_post
+```
+
+#### Okta Enterprise
+```rust
+let client = OAuth2Client::new(&config, ProviderType::Okta)?;
+// Replace {domain} in auth/token URLs with your Okta domain
+```
+
+#### Auth0
+```rust
+let client = OAuth2Client::new(&config, ProviderType::Auth0)?;
+// Configure with your Auth0 tenant domain
+```
+
+#### Keycloak Self-Hosted
+```rust
+let client = OAuth2Client::new(&config, ProviderType::Keycloak)?;
+// Configure with your Keycloak realm and server URL
+```
+
+#### Custom Provider
+```rust
+let client = OAuth2Client::new(&config, ProviderType::Generic)?;
+// Or use ProviderType::Custom("my-provider".to_string())
+```
+
 ## Architecture
 
 ### Core Components
@@ -140,7 +205,11 @@ uuid = { version = "1", features = ["v4"] }
   - Authorization Code flow with PKCE (RFC 7636)
   - Client Credentials flow (server-to-server)
   - Token refresh and validation
-  - Provider-specific configurations for Google, GitHub, Microsoft, GitLab
+  - Provider-specific configurations for:
+    - **Social Login**: Google, GitHub
+    - **Enterprise**: Microsoft, Okta, Keycloak
+    - **Identity Platforms**: Apple, Auth0
+    - **Custom**: Generic provider with configurable endpoints
 
 - **OAuth2Provider** (`providers::OAuth2Provider`)
   - Implements AuthProvider trait

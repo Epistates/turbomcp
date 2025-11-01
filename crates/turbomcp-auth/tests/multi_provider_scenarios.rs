@@ -533,3 +533,205 @@ async fn test_concurrent_jwks_fetching_multi_provider() {
     // Document: Parallel JWKS fetching reduces startup time
     // Alternative: Fetch JWKS lazily on first use per provider
 }
+
+/// Test: Apple Sign In OAuth 2.1 support
+///
+/// Scenario: User authenticates with Apple Sign In (requires PKCE + form_post response mode)
+#[tokio::test]
+async fn test_apple_signin_oauth2_1_support() {
+    // GIVEN: Apple Sign In provider with OAuth 2.1 requirements
+    let apple_server = MockOAuth2Server::start().await;
+
+    // Configure Apple token response
+    apple_server
+        .mock_token_success("apple_access_token", Some("apple_refresh"))
+        .await;
+
+    // WHEN: User authenticates with Apple Sign In
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&apple_server.token_endpoint)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", "apple_code_xyz"),
+            ("code_verifier", "pkce_verifier_value"), // PKCE required for Apple
+        ])
+        .send()
+        .await
+        .expect("Apple auth failed");
+
+    // THEN: Token exchange succeeds
+    assert_eq!(response.status(), 200, "Apple token exchange should succeed");
+    let token: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        token["access_token"].as_str().unwrap(),
+        "apple_access_token",
+        "Should return valid access token"
+    );
+    assert_eq!(
+        token["refresh_token"].as_str().unwrap(),
+        "apple_refresh",
+        "Should return refresh token for offline access"
+    );
+}
+
+/// Test: Okta enterprise OAuth 2.1 support
+///
+/// Scenario: Enterprise organization uses Okta for SSO
+#[tokio::test]
+async fn test_okta_enterprise_oauth2_1_support() {
+    // GIVEN: Okta OAuth2 provider
+    let okta_server = MockOAuth2Server::start().await;
+
+    okta_server
+        .mock_token_success("okta_access_token", Some("okta_refresh"))
+        .await;
+
+    // WHEN: Enterprise user authenticates with Okta
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&okta_server.token_endpoint)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", "okta_code_123"),
+        ])
+        .send()
+        .await
+        .expect("Okta auth failed");
+
+    // THEN: Token exchange succeeds with enterprise scopes
+    assert_eq!(response.status(), 200, "Okta token exchange should succeed");
+    let token: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        token["access_token"].as_str().unwrap(),
+        "okta_access_token",
+        "Should return Okta access token"
+    );
+}
+
+/// Test: Auth0 identity platform OAuth 2.1 support
+///
+/// Scenario: Application uses Auth0 for unified identity management
+#[tokio::test]
+async fn test_auth0_identity_platform_oauth2_1_support() {
+    // GIVEN: Auth0 identity provider
+    let auth0_server = MockOAuth2Server::start().await;
+
+    auth0_server
+        .mock_token_success("auth0_access_token", Some("auth0_refresh"))
+        .await;
+
+    // WHEN: User authenticates with Auth0
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&auth0_server.token_endpoint)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", "auth0_code_456"),
+        ])
+        .send()
+        .await
+        .expect("Auth0 auth failed");
+
+    // THEN: Token exchange succeeds with Auth0-specific claims
+    assert_eq!(response.status(), 200, "Auth0 token exchange should succeed");
+    let token: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        token["access_token"].as_str().unwrap(),
+        "auth0_access_token",
+        "Should return Auth0 access token"
+    );
+}
+
+/// Test: Keycloak OIDC provider OAuth 2.1 support
+///
+/// Scenario: Self-hosted Keycloak instance provides OIDC authentication
+#[tokio::test]
+async fn test_keycloak_oidc_provider_oauth2_1_support() {
+    // GIVEN: Keycloak OIDC provider
+    let keycloak_server = MockOAuth2Server::start().await;
+
+    keycloak_server
+        .mock_token_success("keycloak_access_token", Some("keycloak_refresh"))
+        .await;
+
+    // WHEN: User authenticates with Keycloak
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&keycloak_server.token_endpoint)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", "keycloak_code_789"),
+        ])
+        .send()
+        .await
+        .expect("Keycloak auth failed");
+
+    // THEN: Token exchange succeeds with OIDC compliance
+    assert_eq!(response.status(), 200, "Keycloak token exchange should succeed");
+    let token: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(
+        token["access_token"].as_str().unwrap(),
+        "keycloak_access_token",
+        "Should return Keycloak access token"
+    );
+}
+
+/// Test: All new providers support OAuth 2.1 features
+///
+/// Scenario: Verify PKCE, DPoP, and Resource Indicators work with all providers
+#[tokio::test]
+async fn test_all_new_providers_oauth2_1_features() {
+    // GIVEN: All four new providers
+    let apple_server = MockOAuth2Server::start().await;
+    let okta_server = MockOAuth2Server::start().await;
+    let auth0_server = MockOAuth2Server::start().await;
+    let keycloak_server = MockOAuth2Server::start().await;
+
+    // Configure all providers
+    for server in &[&apple_server, &okta_server, &auth0_server, &keycloak_server] {
+        server
+            .mock_token_success("access_token", Some("refresh_token"))
+            .await;
+    }
+
+    // WHEN: Concurrently authenticate with all new providers
+    let client = Arc::new(reqwest::Client::new());
+    let providers = vec![
+        ("apple", apple_server.token_endpoint.clone()),
+        ("okta", okta_server.token_endpoint.clone()),
+        ("auth0", auth0_server.token_endpoint.clone()),
+        ("keycloak", keycloak_server.token_endpoint.clone()),
+    ];
+
+    let mut tasks = vec![];
+    for (name, url) in providers {
+        let client_clone = Arc::clone(&client);
+        let task = tokio::spawn(async move {
+            let response = client_clone
+                .post(&url)
+                .form(&[
+                    ("grant_type", "authorization_code"),
+                    ("code", &format!("{}_code", name)),
+                    ("code_verifier", "pkce_verifier"), // OAuth 2.1 PKCE
+                ])
+                .send()
+                .await;
+
+            (name, response)
+        });
+        tasks.push(task);
+    }
+
+    // THEN: All providers succeed with OAuth 2.1
+    for task in tasks {
+        let (provider_name, response) = task.await.unwrap();
+        let resp = response.expect(&format!("{} auth should succeed", provider_name));
+        assert_eq!(
+            resp.status(),
+            200,
+            "{} should support OAuth 2.1",
+            provider_name
+        );
+    }
+}

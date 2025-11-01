@@ -146,6 +146,39 @@ impl OAuth2Client {
                 userinfo_endpoint: Some("https://gitlab.com/api/v4/user".to_string()),
                 additional_params: HashMap::new(),
             },
+            ProviderType::Apple => ProviderConfig {
+                provider_type,
+                default_scopes: vec!["openid".to_string(), "email".to_string(), "name".to_string()],
+                refresh_behavior: RefreshBehavior::Proactive,
+                userinfo_endpoint: Some("https://appleid.apple.com/auth/v1/user".to_string()),
+                additional_params: {
+                    let mut params = HashMap::new();
+                    // Apple requires response_mode=form_post for web apps
+                    params.insert("response_mode".to_string(), "form_post".to_string());
+                    params
+                },
+            },
+            ProviderType::Okta => ProviderConfig {
+                provider_type,
+                default_scopes: vec!["openid".to_string(), "email".to_string(), "profile".to_string()],
+                refresh_behavior: RefreshBehavior::Proactive,
+                userinfo_endpoint: Some("/oauth2/v1/userinfo".to_string()), // Relative to Okta domain
+                additional_params: HashMap::new(),
+            },
+            ProviderType::Auth0 => ProviderConfig {
+                provider_type,
+                default_scopes: vec!["openid".to_string(), "email".to_string(), "profile".to_string()],
+                refresh_behavior: RefreshBehavior::Proactive,
+                userinfo_endpoint: Some("/userinfo".to_string()), // Relative to Auth0 domain
+                additional_params: HashMap::new(),
+            },
+            ProviderType::Keycloak => ProviderConfig {
+                provider_type,
+                default_scopes: vec!["openid".to_string(), "email".to_string(), "profile".to_string()],
+                refresh_behavior: RefreshBehavior::Proactive,
+                userinfo_endpoint: Some("/realms/{realm}/protocol/openid-connect/userinfo".to_string()),
+                additional_params: HashMap::new(),
+            },
             ProviderType::Generic | ProviderType::Custom(_) => ProviderConfig {
                 provider_type,
                 default_scopes: vec!["openid".to_string(), "profile".to_string()],

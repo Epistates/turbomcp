@@ -636,6 +636,14 @@ pub enum ProviderType {
     GitHub,
     /// GitLab OAuth2 provider
     GitLab,
+    /// Apple Sign In provider (OAuth 2.1 with custom requirements)
+    Apple,
+    /// Okta enterprise OAuth2 provider
+    Okta,
+    /// Auth0 identity platform provider
+    Auth0,
+    /// Keycloak open-source OIDC provider
+    Keycloak,
     /// Generic OAuth2 provider with standard scopes
     Generic,
     /// Custom provider with custom configuration
