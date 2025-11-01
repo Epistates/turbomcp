@@ -42,7 +42,7 @@ impl Default for GenConfig {
             version: None,
             frontend_type: FrontendType::Http,
             backend_type: BackendType::Stdio,
-            turbomcp_version: "2.1.0".to_string(),
+            turbomcp_version: "2.1.1".to_string(),
         }
     }
 }

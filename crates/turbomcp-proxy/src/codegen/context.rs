@@ -293,7 +293,7 @@ mod tests {
             package_name: "test-proxy".to_string(),
             version: "0.1.0".to_string(),
             server_name: "test-server".to_string(),
-            turbomcp_version: "2.1.0".to_string(),
+            turbomcp_version: "2.1.1".to_string(),
             frontend_type: "HTTP".to_string(),
             transport_features: vec!["http".to_string(), "stdio".to_string()],
             additional_dependencies: vec![],

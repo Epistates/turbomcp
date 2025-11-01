@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-proxy"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2024"
 authors = ["TurboMCP Team"]
 description = "Universal MCP adapter/generator - introspection, proxying, and code generation for any MCP server"
@@ -15,11 +15,11 @@ workspace = true
 
 [dependencies]
 # TurboMCP (consumer-only - we only depend ON these, nothing depends on us)
-turbomcp-protocol = { path = "../turbomcp-protocol", version = "2.1.0" }
-turbomcp-transport = { path = "../turbomcp-transport", version = "2.1.0", features = ["http", "tcp", "unix", "websocket", "jwt-validation"] }
-turbomcp-client = { path = "../turbomcp-client", version = "2.1.0" }
-turbomcp-server = { path = "../turbomcp-server", version = "2.1.0", optional = true }
-turbomcp-auth = { path = "../turbomcp-auth", version = "2.1.0", optional = true }
+turbomcp-protocol = { path = "../turbomcp-protocol", version = "2.1.1" }
+turbomcp-transport = { path = "../turbomcp-transport", version = "2.1.1", features = ["http", "tcp", "unix", "websocket", "jwt-validation"] }
+turbomcp-client = { path = "../turbomcp-client", version = "2.1.1" }
+turbomcp-server = { path = "../turbomcp-server", version = "2.1.1", optional = true }
+turbomcp-auth = { path = "../turbomcp-auth", version = "2.1.1", optional = true }
 
 # Async runtime
 tokio = { version = "1.47", features = ["full"] }

@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-transport"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Multi-protocol transport layer supporting HTTP, WebSocket, STDIO, and TCP for MCP communications"
@@ -55,7 +55,7 @@ tracing = { workspace = true }
 metrics = { workspace = true, optional = true }
 
 # Authentication (optional)
-turbomcp-auth = { version = "2.1.0", path = "../turbomcp-auth", optional = true }
+turbomcp-auth = { version = "2.1.1", path = "../turbomcp-auth", optional = true }
 jsonwebtoken = { version = "9.3", optional = true }
 base64 = { version = "0.22", optional = true }
 

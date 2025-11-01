@@ -1264,7 +1264,7 @@ fn test_tool_with_complete_annotations_integration() {
         }),
         meta: Some({
             let mut meta = HashMap::new();
-            meta.insert("version".to_string(), serde_json::json!("2.1.0"));
+            meta.insert("version".to_string(), serde_json::json!("2.1.1"));
             meta.insert("last_updated".to_string(), serde_json::json!("2025-08-29"));
             meta
         }),

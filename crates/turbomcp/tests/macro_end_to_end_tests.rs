@@ -827,7 +827,7 @@ struct ConfigServer {
     validators: Arc<Mutex<HashMap<String, ConfigValidator>>>,
 }
 
-#[server(name = "ConfigManager", version = "2.1.0")]
+#[server(name = "ConfigManager", version = "2.1.1")]
 impl ConfigServer {
     #[tool("Set configuration")]
     async fn set_config(&self, key: String, value: String) -> turbomcp::McpResult<Config> {
