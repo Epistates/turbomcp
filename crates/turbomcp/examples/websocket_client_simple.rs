@@ -17,6 +17,7 @@
 //! cargo run --example websocket_client_simple --features "http,websocket"
 //! ```
 
+#[allow(unused_imports)]
 use std::collections::HashMap;
 
 #[cfg(feature = "websocket")]

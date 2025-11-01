@@ -17,7 +17,9 @@
 //! cargo run --example http_client_simple --features http
 //! ```
 
+#[allow(unused_imports)]
 use std::collections::HashMap;
+#[allow(unused_imports)]
 use std::time::Duration;
 
 #[cfg(feature = "http")]
