@@ -33,7 +33,8 @@ async fn test_proxy_end_to_end() {
         client_version: "1.0.0".to_string(),
     };
 
-    let backend = BackendConnector::new(config).await
+    let backend = BackendConnector::new(config)
+        .await
         .expect("Failed to create backend connector");
 
     println!("✅ Backend connector created successfully\n");
@@ -41,13 +42,19 @@ async fn test_proxy_end_to_end() {
     // Test 2: Introspect backend (list tools)
     println!("Test 2: Introspect backend (list tools)...");
 
-    let spec = backend.introspect().await
+    let spec = backend
+        .introspect()
+        .await
         .expect("Failed to introspect backend");
 
     println!("✅ Introspection successful");
     println!("   Found {} tools:", spec.tools.len());
     for tool in &spec.tools {
-        println!("   - {}: {}", tool.name, tool.description.as_deref().unwrap_or(""));
+        println!(
+            "   - {}: {}",
+            tool.name,
+            tool.description.as_deref().unwrap_or("")
+        );
     }
     println!();
 
@@ -66,9 +73,14 @@ async fn test_proxy_end_to_end() {
     println!("Test 3: Call 'echo' tool with message...");
 
     let mut args = HashMap::new();
-    args.insert("message".to_string(), serde_json::json!("Hello from proxy!"));
+    args.insert(
+        "message".to_string(),
+        serde_json::json!("Hello from proxy!"),
+    );
 
-    let result = backend.call_tool("echo", Some(args)).await
+    let result = backend
+        .call_tool("echo", Some(args))
+        .await
         .expect("Failed to call echo tool");
 
     println!("✅ Tool call successful");
@@ -89,7 +101,9 @@ async fn test_proxy_end_to_end() {
     let mut args = HashMap::new();
     args.insert("text".to_string(), serde_json::json!("turbomcp"));
 
-    let result = backend.call_tool("reverse", Some(args)).await
+    let result = backend
+        .call_tool("reverse", Some(args))
+        .await
         .expect("Failed to call reverse tool");
 
     println!("✅ Tool call successful");

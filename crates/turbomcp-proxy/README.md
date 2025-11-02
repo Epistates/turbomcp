@@ -483,13 +483,13 @@ Status: Command structure complete. Full implementation of REST and GraphQL adap
 
 ## Development Status
 
-**Current Version:** 2.1.1
+**Current Version:** 2.1.2
 **MVP Status:** Complete - Production Ready (Phases 1-4)
-**Latest Release:** 2.1.1 - Transport Expansion & Authentication
+**Latest Release:** 2.1.2 - Transport Expansion & Authentication
 
 See **[Progress Tracker](../../PROXY_PROGRESS.md)** for detailed progress.
 
-### Version 2.1.1 - Transport Expansion & Authentication
+### Version 2.1.2 - Transport Expansion & Authentication
 
 **Transport Coverage:**
 - [x] **STDIO** (subprocess, CLI tools)
