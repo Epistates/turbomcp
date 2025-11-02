@@ -4,7 +4,7 @@
 ///
 /// These tests verify that the WebSocket server's max_concurrent_requests
 /// configuration is properly initialized and can be customized.
-use turbomcp_server::runtime::websocket::WebSocketServerConfig;
+use turbomcp_server::WebSocketServerConfig;
 
 #[test]
 fn test_websocket_config_default_concurrency() {
