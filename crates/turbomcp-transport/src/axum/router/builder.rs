@@ -29,7 +29,34 @@ async fn session_middleware(
     next: middleware::Next,
 ) -> axum::response::Response {
     // Create new session for this request
-    let session = SessionInfo::new();
+    let mut session = SessionInfo::new();
+
+    // Extract headers and store in session metadata
+    for (name, value) in request.headers().iter() {
+        if let Ok(value_str) = value.to_str() {
+            session
+                .metadata
+                .insert(name.to_string(), value_str.to_string());
+        }
+    }
+
+    // Extract specific useful headers
+    if let Some(user_agent) = request
+        .headers()
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+    {
+        session.user_agent = Some(user_agent.to_string());
+    }
+
+    if let Some(remote_addr) = request
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+    {
+        session.remote_addr = Some(remote_addr.to_string());
+    }
+
     request.extensions_mut().insert(session);
     next.run(request).await
 }
