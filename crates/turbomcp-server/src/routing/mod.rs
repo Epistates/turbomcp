@@ -10,11 +10,15 @@ mod handlers;
 mod traits;
 mod utils;
 mod validation;
+#[cfg(feature = "websocket")]
+mod websocket_dispatcher_adapter;
 
 // Re-export public types to maintain API compatibility
 pub use bidirectional::BidirectionalRouter;
 pub use config::RouterConfig;
 pub use traits::{Route, RouteHandler, RouteMetadata, ServerRequestDispatcher};
+#[cfg(feature = "websocket")]
+pub use websocket_dispatcher_adapter::WebSocketDispatcherAdapter;
 
 use dashmap::DashMap;
 use futures::stream::{self, StreamExt};

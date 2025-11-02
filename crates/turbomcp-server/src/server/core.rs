@@ -815,7 +815,7 @@ impl McpServer {
         self,
         addr: A,
     ) -> ServerResult<()> {
-        use crate::runtime::websocket::WebSocketServerConfig;
+        use crate::config::WebSocketServerConfig;
 
         // Build default configuration
         let config = WebSocketServerConfig::default();
@@ -860,8 +860,12 @@ impl McpServer {
     pub async fn run_websocket_with_config<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
         self,
         addr: A,
-        config: crate::runtime::websocket::WebSocketServerConfig,
+        config: crate::config::WebSocketServerConfig,
     ) -> ServerResult<()> {
+        use axum::{Router, middleware, routing::get};
+        use turbomcp_transport::axum::{WebSocketFactoryState, websocket_handler_with_factory};
+        use turbomcp_transport::tower::SessionInfo;
+
         info!("Starting MCP server with WebSocket transport");
         info!(config = ?config, "WebSocket configuration");
 
@@ -885,16 +889,21 @@ impl McpServer {
         // Router for this server (shared across all connections)
         let router = (*self.router).clone();
 
-        // Wrapper factory: configure router with per-connection dispatcher
-        // This is the same clean architecture as HTTP - each connection gets its own
-        // bidirectional dispatcher while sharing the routing logic
-        let wrapper_factory =
-            move |mut base_router: crate::routing::RequestRouter,
-                  dispatcher: crate::runtime::websocket::WebSocketServerDispatcher| {
-                // Clone the router for this connection and configure with dispatcher
-                // CRITICAL: set_server_request_dispatcher also recreates server_to_client adapter
-                base_router.set_server_request_dispatcher(dispatcher);
-                base_router
+        // Factory: creates per-connection handler with bidirectional support
+        // This is the unified architecture - transport layer handles WebSocket mechanics,
+        // server layer provides MCP-specific handler logic
+        let handler_factory =
+            move |transport_dispatcher: turbomcp_transport::axum::WebSocketDispatcher| {
+                // Wrap transport dispatcher with server layer adapter
+                let server_dispatcher =
+                    crate::routing::WebSocketDispatcherAdapter::new(transport_dispatcher);
+
+                // Clone router for this connection and configure with dispatcher
+                let mut connection_router = router.clone();
+                connection_router.set_server_request_dispatcher(server_dispatcher);
+
+                // Return as JsonRpcHandler trait object
+                Arc::new(connection_router) as Arc<dyn turbomcp_protocol::JsonRpcHandler>
             };
 
         info!(
@@ -905,22 +914,60 @@ impl McpServer {
             "WebSocket server starting with full bidirectional support (elicitation, sampling, roots, ping)"
         );
 
-        // Use factory-based WebSocket server with full bidirectional support
-        use crate::runtime::websocket::run_websocket;
+        // Create factory state for transport layer
+        let factory_state = WebSocketFactoryState::new(handler_factory);
 
-        // Update config with resolved bind address
-        let ws_config = crate::runtime::websocket::WebSocketServerConfig {
-            bind_addr: socket_addr.to_string(),
-            endpoint_path: config.endpoint_path.clone(),
-            max_concurrent_requests: config.max_concurrent_requests,
+        // Session middleware to extract headers (same as HTTP transport)
+        let session_middleware = |mut request: axum::extract::Request, next: middleware::Next| async move {
+            let mut session = SessionInfo::new();
+
+            // Extract headers and store in session metadata
+            for (name, value) in request.headers().iter() {
+                if let Ok(value_str) = value.to_str() {
+                    session
+                        .metadata
+                        .insert(name.to_string(), value_str.to_string());
+                }
+            }
+
+            // Extract specific useful headers
+            if let Some(user_agent) = request
+                .headers()
+                .get("user-agent")
+                .and_then(|v| v.to_str().ok())
+            {
+                session.user_agent = Some(user_agent.to_string());
+            }
+
+            if let Some(remote_addr) = request
+                .headers()
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+            {
+                session.remote_addr = Some(remote_addr.to_string());
+            }
+
+            request.extensions_mut().insert(session);
+            next.run(request).await
         };
 
-        run_websocket(router, wrapper_factory, ws_config)
+        // Build Axum router using transport layer
+        let app = Router::new()
+            .route(&config.endpoint_path, get(websocket_handler_with_factory))
+            .with_state(factory_state)
+            .layer(middleware::from_fn(session_middleware));
+
+        info!("WebSocket server bound to {}", socket_addr);
+
+        // Serve using Axum
+        let listener = tokio::net::TcpListener::bind(socket_addr)
             .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "WebSocket server failed");
-                crate::ServerError::handler(e.to_string())
-            })?;
+            .map_err(|e| crate::ServerError::configuration(format!("Failed to bind: {}", e)))?;
+
+        axum::serve(listener, app).await.map_err(|e| {
+            tracing::error!(error = %e, "WebSocket server failed");
+            crate::ServerError::handler(e.to_string())
+        })?;
 
         info!("WebSocket server shutdown complete");
         Ok(())

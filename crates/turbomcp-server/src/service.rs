@@ -174,8 +174,22 @@ impl Service<Request<Bytes>> for McpService {
         let metrics = Arc::clone(&self.metrics);
 
         Box::pin(async move {
+            // Extract headers before consuming the request
+            let (parts, body) = req.into_parts();
+
+            // Convert headers to a HashMap for metadata
+            let headers: std::collections::HashMap<String, String> = parts
+                .headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .to_str()
+                        .ok()
+                        .map(|v| (name.to_string(), v.to_string()))
+                })
+                .collect();
+
             // Extract the body as a string
-            let body = req.into_body();
             let json_str = match std::str::from_utf8(&body) {
                 Ok(s) => s,
                 Err(e) => {
@@ -207,7 +221,12 @@ impl Service<Request<Bytes>> for McpService {
             let response_opt = match parsed {
                 Ok(message) => {
                     // Create properly configured context with server-to-client capabilities
-                    let ctx = router.create_context().with_metadata("transport", "http");
+                    let mut ctx = router.create_context().with_metadata("transport", "http");
+
+                    // Add HTTP headers to context metadata
+                    if let Ok(headers_json) = serde_json::to_value(&headers) {
+                        ctx = ctx.with_metadata("http_headers", headers_json);
+                    }
 
                     let service = McpService::new(registry, router, metrics);
                     service.process_jsonrpc(message, ctx).await

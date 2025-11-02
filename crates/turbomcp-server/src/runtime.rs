@@ -15,17 +15,13 @@
 //! - `TransportDispatcher<TcpTransport>`: For TCP sockets
 //! - `TransportDispatcher<UnixTransport>`: For Unix domain sockets
 //! - `http::HttpDispatcher`: For HTTP + SSE sessions (feature-gated)
-//! - `websocket::WebSocketDispatcher`: For WebSocket connections (feature-gated)
+//! - WebSocket: Uses transport layer's bidirectional infrastructure (`turbomcp_transport::axum::WebSocketDispatcher`)
 //!
 //! All share the same request correlation and error handling logic.
 
 // HTTP bidirectional support (feature-gated)
 #[cfg(feature = "http")]
 pub mod http;
-
-// WebSocket bidirectional support (feature-gated)
-#[cfg(feature = "websocket")]
-pub mod websocket;
 
 use std::collections::HashMap;
 use std::sync::Arc;

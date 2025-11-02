@@ -196,7 +196,7 @@ pub use elicitation::{ElicitationCoordinator, ElicitationTransport, SharedElicit
 
 // Transport configuration (for ergonomic access)
 #[cfg(feature = "websocket")]
-pub use runtime::websocket::WebSocketServerConfig;
+pub use config::WebSocketServerConfig;
 
 /// Default server configuration
 #[must_use]

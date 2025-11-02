@@ -440,6 +440,31 @@ mod inline_tests {
     }
 }
 
+/// WebSocket server configuration
+///
+/// Configuration for WebSocket transport when using `run_websocket_with_config()`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(feature = "websocket")]
+pub struct WebSocketServerConfig {
+    /// Bind address (e.g., "127.0.0.1:8080")
+    pub bind_addr: String,
+    /// WebSocket endpoint path (default: "/ws")
+    pub endpoint_path: String,
+    /// Maximum concurrent request handlers per connection (default: 100)
+    pub max_concurrent_requests: usize,
+}
+
+#[cfg(feature = "websocket")]
+impl Default for WebSocketServerConfig {
+    fn default() -> Self {
+        Self {
+            bind_addr: "127.0.0.1:8080".to_string(),
+            endpoint_path: "/ws".to_string(),
+            max_concurrent_requests: 100,
+        }
+    }
+}
+
 // Additional comprehensive tests in separate file
 #[cfg(test)]
 mod tests;
