@@ -224,6 +224,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires building stdio_server example via cargo run, which can take 60+ seconds"]
     async fn test_service_creation() {
         if let Some(service) = create_test_service().await {
             // Verify capabilities
@@ -233,6 +234,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires building stdio_server example via cargo run, which can take 60+ seconds"]
     async fn test_tools_list() {
         if let Some(service) = create_test_service().await {
             let request = serde_json::json!({

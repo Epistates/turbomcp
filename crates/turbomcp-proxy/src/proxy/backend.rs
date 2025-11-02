@@ -615,6 +615,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires building stdio_server example via cargo run, which can take 60+ seconds"]
     async fn test_backend_connector_with_echo() {
         // This test requires the stdio_server example to be built
         let config = BackendConfig {
