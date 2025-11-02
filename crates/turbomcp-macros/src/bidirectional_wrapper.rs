@@ -128,8 +128,20 @@ pub fn generate_bidirectional_wrapper(
         {
             async fn handle_request(
                 &self,
-                req_value: serde_json::Value,
+                mut req_value: serde_json::Value,
             ) -> serde_json::Value {
+                // Extract headers and transport from request metadata (injected by transport layer)
+                let headers_json = req_value.get("_mcp_headers").cloned();
+                let transport = req_value.get("_mcp_transport")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                // Clean up internal fields before parsing JSON-RPC
+                if let Some(obj) = req_value.as_object_mut() {
+                    obj.remove("_mcp_headers");
+                    obj.remove("_mcp_transport");
+                }
+
                 // Parse the request
                 let req: ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcRequest =
                     match serde_json::from_value(req_value) {
@@ -146,8 +158,18 @@ pub fn generate_bidirectional_wrapper(
                         }
                     };
 
-                // Create default context
-                let ctx = ::turbomcp::turbomcp_protocol::RequestContext::new();
+                // Create context with transport metadata
+                let mut ctx = ::turbomcp::turbomcp_protocol::RequestContext::new();
+
+                // Add transport type to context
+                if let Some(t) = transport {
+                    ctx = ctx.with_metadata("transport", t);
+                }
+
+                // Add HTTP headers to context (for WebSocket upgrade headers or HTTP requests)
+                if let Some(headers) = headers_json {
+                    ctx = ctx.with_metadata("http_headers", headers);
+                }
 
                 // Handle with full context
                 let response = self.handle_request_with_context(req, ctx).await;
