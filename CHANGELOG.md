@@ -9,7 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.1.2] - 2025-11-02
 
-### Bug Fixes & Improvements: WebSocket Unification & Proxy Validation
+### Features & Improvements: WebSocket Unification, HTTP Header Access & Proxy Validation
+
+#### HTTP Header Extraction (NEW)
+**HTTP headers are now automatically extracted and accessible in request handlers**
+- HTTP request headers are extracted and stored in context metadata as `http_headers`
+- Headers available through `ctx.headers()` and `ctx.header(name)` helper methods
+- Supports all HTTP headers including custom headers (e.g., `x-request-id`, `x-custom-header`)
+- Headers accessible in both HTTP and WebSocket transports
+- Added comprehensive tests for header extraction and access patterns
+
+**Example Usage:**
+```rust
+#[handler]
+async fn my_handler(ctx: &mut Context) -> Result<()> {
+    // Access all headers
+    let headers = ctx.headers();
+    
+    // Access specific header
+    if let Some(user_agent) = ctx.header("user-agent") {
+        // Use header value
+    }
+}
+```
 
 #### WebSocket Unification
 **Eliminated 146 lines of duplicate code and unified WebSocket implementation across layers**
@@ -17,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Created `WebSocketDispatcher` for bidirectional server-to-client requests
 - Implemented `WebSocketFactory` pattern for per-connection handlers with configuration
 - Proper layering: transport handles WebSocket mechanics, server handles protocol logic
+- WebSocket requests also extract and store headers in session metadata
 - Maintains 100% API compatibility - zero breaking changes
 
 **Files Improved:**
