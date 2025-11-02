@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-dpop"
-version = "2.1.1"
+version = "2.1.2"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "DPoP (RFC 9449) implementation for TurboMCP with HSM support"
