@@ -22,6 +22,12 @@
 //! curl -X POST http://localhost:3000/mcp \
 //!   -H "Content-Type: application/json" \
 //!   -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"increment"},"id":2}'
+//!
+//! # Get request info (shows HTTP headers)
+//! curl -X POST http://localhost:3000/mcp \
+//!   -H "Content-Type: application/json" \
+//!   -H "User-Agent: My-Custom-Client/1.0" \
+//!   -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"request_info"},"id":3}'
 //! ```
 
 use std::sync::Arc;
@@ -56,6 +62,38 @@ impl WebApp {
         Ok(*counter)
     }
 
+    #[tool("Get request information including HTTP headers")]
+    async fn request_info(&self, ctx: Context) -> McpResult<String> {
+        let mut info = String::new();
+
+        // Get transport type
+        if let Some(transport) = ctx.transport() {
+            info.push_str(&format!("Transport: {}\n", transport));
+        }
+
+        // Get and display HTTP headers
+        if let Some(headers) = ctx.headers() {
+            info.push_str("\nHTTP Headers:\n");
+            for (name, value) in headers.iter() {
+                info.push_str(&format!("  {}: {}\n", name, value));
+            }
+        }
+
+        // Get specific common headers
+        if let Some(user_agent) = ctx.header("user-agent") {
+            info.push_str(&format!("\nUser-Agent: {}\n", user_agent));
+        }
+
+        if let Some(content_type) = ctx.header("content-type") {
+            info.push_str(&format!("Content-Type: {}\n", content_type));
+        }
+
+        // Add request metadata
+        info.push_str(&format!("\nRequest ID: {}\n", ctx.request_id()));
+
+        Ok(info)
+    }
+
     #[resource("app://status")]
     async fn status(&self) -> McpResult<String> {
         let counter = self.counter.read().await;
@@ -78,7 +116,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("📡 Listening on http://localhost:3000/mcp\n");
     println!("Available tools:");
     println!("  • increment - Increment the counter");
-    println!("  • get_counter - Get the current counter value\n");
+    println!("  • get_counter - Get the current counter value");
+    println!("  • request_info - Get request information including HTTP headers\n");
     println!("Available resources:");
     println!("  • app://status - Get application status\n");
 

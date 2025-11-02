@@ -1282,6 +1282,80 @@ impl Context {
         self.request.get_metadata(key)
     }
 
+    /// Get all HTTP headers from the request
+    ///
+    /// Returns a HashMap of header names to values if the request came via HTTP transport.
+    /// Returns None for non-HTTP transports (stdio, tcp, etc.).
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use turbomcp::Context;
+    /// # async fn example(ctx: Context) {
+    /// if let Some(headers) = ctx.headers() {
+    ///     if let Some(user_agent) = headers.get("user-agent") {
+    ///         println!("User-Agent: {}", user_agent);
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn headers(&self) -> Option<std::collections::HashMap<String, String>> {
+        self.get_metadata("http_headers")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+
+    /// Get a specific HTTP header value by name
+    ///
+    /// Header names are case-insensitive per HTTP spec.
+    /// Returns None if the header is not present or if the request didn't come via HTTP.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use turbomcp::Context;
+    /// # async fn example(ctx: Context) {
+    /// if let Some(user_agent) = ctx.header("user-agent") {
+    ///     println!("Request from: {}", user_agent);
+    /// }
+    ///
+    /// // Header names are case-insensitive
+    /// assert_eq!(ctx.header("user-agent"), ctx.header("User-Agent"));
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn header(&self, name: &str) -> Option<String> {
+        let headers = self.headers()?;
+        let name_lower = name.to_lowercase();
+
+        // Search case-insensitively
+        headers
+            .iter()
+            .find(|(k, _)| k.to_lowercase() == name_lower)
+            .map(|(_, v)| v.clone())
+    }
+
+    /// Get the transport type for this request
+    ///
+    /// Returns the transport protocol used (e.g., "http", "stdio", "tcp", "unix").
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use turbomcp::Context;
+    /// # async fn example(ctx: Context) {
+    /// match ctx.transport() {
+    ///     Some("http") => println!("HTTP request"),
+    ///     Some("stdio") => println!("STDIO request"),
+    ///     _ => println!("Unknown transport"),
+    /// }
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn transport(&self) -> Option<&str> {
+        self.get_metadata("transport").and_then(|v| v.as_str())
+    }
+
     /// Check if request is cancelled
     #[must_use]
     pub fn is_cancelled(&self) -> bool {

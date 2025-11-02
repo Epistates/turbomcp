@@ -37,6 +37,38 @@ impl WebSocketServer {
         Ok(format!("Current timestamp: {}", now))
     }
 
+    #[tool("Get WebSocket connection information including headers")]
+    async fn connection_info(&self, ctx: Context) -> McpResult<String> {
+        let mut info = String::new();
+
+        // Get transport type
+        if let Some(transport) = ctx.transport() {
+            info.push_str(&format!("Transport: {}\n", transport));
+        }
+
+        // Get WebSocket upgrade headers (captured during connection)
+        if let Some(headers) = ctx.headers() {
+            info.push_str("\nWebSocket Upgrade Headers:\n");
+            for (name, value) in headers.iter() {
+                info.push_str(&format!("  {}: {}\n", name, value));
+            }
+        }
+
+        // Get specific headers
+        if let Some(user_agent) = ctx.header("user-agent") {
+            info.push_str(&format!("\nUser-Agent: {}\n", user_agent));
+        }
+
+        if let Some(origin) = ctx.header("origin") {
+            info.push_str(&format!("Origin: {}\n", origin));
+        }
+
+        // Add request metadata
+        info.push_str(&format!("\nRequest ID: {}\n", ctx.request_id()));
+
+        Ok(info)
+    }
+
     #[resource("ws://status")]
     async fn status(&self) -> McpResult<String> {
         Ok("WebSocket server is running".to_string())
