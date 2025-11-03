@@ -114,6 +114,9 @@ pub use turbomcp_protocol::types::{
     Tool,
 };
 
+// Re-export Transport trait for generic bounds (e.g., LLM framework integrations)
+pub use turbomcp_transport::Transport;
+
 // Re-export async-trait for handler implementations
 pub use async_trait::async_trait;
 

@@ -575,6 +575,10 @@ pub use turbomcp_auth as auth;
 
 #[cfg(feature = "dpop")]
 pub use turbomcp_dpop as dpop;
+
+#[cfg(feature = "client-integration")]
+pub use turbomcp_client;
+
 pub mod context;
 pub mod context_factory;
 pub mod elicitation;
@@ -706,6 +710,36 @@ pub mod prelude {
     // Auth types (feature-gated)
     #[cfg(feature = "auth")]
     pub use super::{AuthContext, AuthManager, AuthProvider, OAuth2Config};
+
+    // ============================================================================
+    // Client Integration (Feature-Gated for Full-Stack Development)
+    // ============================================================================
+
+    /// MCP client types for full-stack development
+    ///
+    /// When the `client-integration` feature is enabled, this module re-exports
+    /// the complete MCP client library for building full-stack applications that
+    /// include both server and client capabilities.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use turbomcp::prelude::*;
+    ///
+    /// // Both server and client capabilities available
+    /// #[server]
+    /// struct MyServer;
+    ///
+    /// // Create a client and connect to another MCP server
+    /// // Note: You can still use the server-side Transport from prelude
+    /// let client = ClientBuilder::new()
+    ///     .with_tools(true)
+    ///     .build(StdioTransport::new())
+    ///     .await?;
+    /// ```
+    #[cfg(feature = "client-integration")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "client-integration")))]
+    pub use turbomcp_client::{Client, ClientBuilder, ClientCapabilities};
 
     // Re-export essential protocol types to avoid manual imports
     pub use turbomcp_protocol::types::{

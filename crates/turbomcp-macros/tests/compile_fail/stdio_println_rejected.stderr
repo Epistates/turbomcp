@@ -30,4 +30,4 @@ warning: unused import: `turbomcp_protocol::Result`
 5 | use turbomcp_protocol::Result;
   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
   |
-  = note: `#[warn(unused_imports)]` on by default
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

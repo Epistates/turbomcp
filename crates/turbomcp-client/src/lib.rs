@@ -157,6 +157,7 @@ pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 
 pub mod client;
 pub mod handlers;
+pub mod integration;
 pub mod plugins;
 pub mod prelude;
 pub mod sampling;
@@ -166,7 +167,8 @@ pub use client::{ConnectionInfo, ConnectionState, ManagerConfig, ServerGroup, Se
 
 use std::sync::Arc;
 
-use turbomcp_transport::Transport;
+// Re-export Transport trait for generic bounds in integrations
+pub use turbomcp_transport::Transport;
 
 // ============================================================================
 // TOP-LEVEL RE-EXPORTS FOR ERGONOMIC IMPORTS

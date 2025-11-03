@@ -69,6 +69,9 @@ turbomcp-transport = { version = "2.1.2", path = "../turbomcp-transport", defaul
 turbomcp-server = { version = "2.1.2", path = "../turbomcp-server", default-features = false }
 turbomcp-macros = { version = "2.1.2", path = "../turbomcp-macros", default-features = false }
 
+# Client library (optional - only needed for full-stack development)
+turbomcp-client = { version = "2.1.2", path = "../turbomcp-client", optional = true, default-features = false }
+
 [dev-dependencies]
 tokio-test = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
@@ -187,6 +190,19 @@ full = [
     "unix",
 ]
 
+# For full-stack development (server + client in single binary)
+# Includes both server and client capabilities with all transport protocols
+full-stack = [
+    "context-injection",
+    "uri-templates",
+    "stdio",
+    "http",
+    "websocket",
+    "tcp",
+    "unix",
+    "client-integration",
+]
+
 # For network servers - STDIO + TCP only
 network = ["stdio", "tcp"]
 
@@ -198,6 +214,7 @@ server-only = ["tcp", "unix"]
 # Core functionality
 context-injection = []                 # Enhanced Context API features
 uri-templates = ["regex"]             # URI template matching for resources
+client-integration = ["dep:turbomcp-client", "turbomcp-client/stdio"]  # Re-export client types for full-stack development
 # Note: JSON Schema generation (schemars) is always enabled - it's required by the macros
 # database feature removed - examples moved to separate crate for clean dependencies
 
@@ -214,6 +231,7 @@ dpop-test-utils = ["dpop", "turbomcp-dpop/test-utils"]  # Test utilities
 redis-storage = ["dpop-redis"]
 
 # Transport protocols (progressive enhancement)
+# Note: When client-integration is enabled, transport features propagate to turbomcp-client
 stdio = ["turbomcp-transport/stdio", "turbomcp-server/stdio"]           # Standard MCP transport
 http = [
     "turbomcp-transport/http",
