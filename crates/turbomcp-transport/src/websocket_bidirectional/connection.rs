@@ -122,6 +122,7 @@ impl WebSocketBidirectionalTransport {
     /// Start background tasks for message processing
     ///
     /// Starts all essential background tasks:
+    /// - Message reader (CRITICAL - routes responses to waiting callers)
     /// - Keep-alive (ping/pong)
     /// - Elicitation timeout monitor
     /// - Connection health monitor
@@ -129,6 +130,11 @@ impl WebSocketBidirectionalTransport {
     /// - Reconnection (if enabled)
     async fn start_background_tasks(&self) {
         let mut handles = self.task_handles.write().await;
+
+        // Message reader task (CRITICAL - must be first!)
+        // Without this, send_ping(), send_sampling(), etc. will timeout
+        let reader_handle = self.spawn_message_reader_task();
+        handles.push(reader_handle);
 
         // Keep-alive task (ping/pong)
         let keep_alive_handle = self.spawn_keep_alive_task();
@@ -159,7 +165,7 @@ impl WebSocketBidirectionalTransport {
         }
 
         info!(
-            "Started {} background tasks for session {}",
+            "Started {} background tasks for session {} (including message reader)",
             handles.len(),
             self.session_id
         );

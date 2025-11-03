@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use futures::SinkExt as _;
+use futures::{SinkExt as _, StreamExt as _};
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, error, info, trace, warn};
@@ -15,6 +15,156 @@ use crate::core::TransportState;
 use turbomcp_protocol::types::{ElicitResult, ElicitationAction};
 
 impl WebSocketBidirectionalTransport {
+    /// Spawn message reader task to continuously process WebSocket messages
+    ///
+    /// This is CRITICAL for bidirectional methods to work (ping, sampling, roots):
+    /// - Routes responses to their waiting correlation maps
+    /// - Processes keep-alive control frames
+    /// - Enables async bidirectional communication
+    ///
+    /// Without this task, `send_ping()`, `send_sampling()`, etc. will timeout
+    /// waiting for responses that never arrive.
+    pub fn spawn_message_reader_task(&self) -> tokio::task::JoinHandle<()> {
+        let reader = self.reader.clone();
+        let writer = self.writer.clone();
+        let session_id = self.session_id.clone();
+
+        // Clone everything we need for processing
+        let pending_pings = self.pending_pings.clone();
+        let pending_samplings = self.pending_samplings.clone();
+        let pending_roots = self.pending_roots.clone();
+        let elicitations = self.elicitations.clone();
+
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let session_id_clone = session_id.clone();
+
+        tokio::spawn(async move {
+            debug!(
+                "Message reader task started for session {}",
+                session_id_clone
+            );
+
+            loop {
+                tokio::select! {
+                    // Listen for shutdown signal
+                    _ = shutdown_rx.recv() => {
+                        debug!("Message reader received shutdown signal for session {}", session_id_clone);
+                        break;
+                    }
+
+                    // Read messages from WebSocket
+                    msg_result = async {
+                        if let Some(ref mut reader_guard) = *reader.lock().await {
+                            reader_guard.next().await
+                        } else {
+                            None
+                        }
+                    } => {
+                        match msg_result {
+                            Some(Ok(Message::Text(text))) => {
+                                // Parse JSON-RPC and route to appropriate handler
+                                if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&text) {
+                                    if let Some(id) = json_value.get("id").and_then(|v| v.as_str()) {
+                                        // Try to deliver to pending_pings
+                                        if let Some((_, response_tx)) = pending_pings.remove(id) {
+                                            if let Some(result) = json_value.get("result") {
+                                                if let Ok(ping_result) = serde_json::from_value(result.clone()) {
+                                                    let _ = response_tx.send(ping_result);
+                                                    continue;
+                                                }
+                                            }
+                                        }
+
+                                        // Try to deliver to pending_samplings
+                                        if let Some((_, response_tx)) = pending_samplings.remove(id) {
+                                            if let Some(result) = json_value.get("result") {
+                                                if let Ok(sampling_result) = serde_json::from_value(result.clone()) {
+                                                    let _ = response_tx.send(sampling_result);
+                                                    continue;
+                                                }
+                                            }
+                                        }
+
+                                        // Try to deliver to pending_roots
+                                        if let Some((_, response_tx)) = pending_roots.remove(id) {
+                                            if let Some(result) = json_value.get("result") {
+                                                if let Ok(roots_result) = serde_json::from_value(result.clone()) {
+                                                    let _ = response_tx.send(roots_result);
+                                                    continue;
+                                                }
+                                            }
+                                        }
+
+                                        // Try to deliver to elicitations
+                                        if let Some((_, pending)) = elicitations.remove(id) {
+                                            if let Some(result) = json_value.get("result") {
+                                                if let Ok(elicit_result) = serde_json::from_value(result.clone()) {
+                                                    let _ = pending.response_tx.send(elicit_result);
+                                                    continue;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                trace!(
+                                    "Message reader received unmatched text message in session {}",
+                                    session_id_clone
+                                );
+                            }
+                            Some(Ok(Message::Ping(data))) => {
+                                // Auto-respond with pong
+                                if let Some(ref mut writer_guard) = *writer.lock().await {
+                                    if let Ok(()) = writer_guard.send(Message::Pong(data)).await {
+                                        let _ = writer_guard.flush().await;
+                                        trace!(
+                                            "Message reader sent pong in session {}",
+                                            session_id_clone
+                                        );
+                                    }
+                                }
+                            }
+                            Some(Ok(Message::Pong(_))) => {
+                                trace!(
+                                    "Message reader received pong in session {}",
+                                    session_id_clone
+                                );
+                            }
+                            Some(Ok(Message::Close(_))) => {
+                                info!(
+                                    "WebSocket closed in session {}",
+                                    session_id_clone
+                                );
+                                break;
+                            }
+                            Some(Err(e)) => {
+                                error!(
+                                    "WebSocket error in session {}: {}",
+                                    session_id_clone, e
+                                );
+                                break;
+                            }
+                            None => {
+                                info!(
+                                    "WebSocket stream ended for session {}",
+                                    session_id_clone
+                                );
+                                break;
+                            }
+                            _ => {
+                                trace!("Message reader received other frame type in session {}", session_id_clone);
+                            }
+                        }
+                    }
+                }
+            }
+
+            debug!(
+                "✅ Message reader task gracefully terminated for session {}",
+                session_id_clone
+            );
+        })
+    }
+
     /// Spawn keep-alive task to send periodic ping messages
     ///
     /// This task now listens for shutdown signals and terminates gracefully.

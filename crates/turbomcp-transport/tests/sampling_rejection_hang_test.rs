@@ -188,9 +188,11 @@ async fn test_roots_list_rejection_should_not_hang() {
     }
 }
 
-/// Performance benchmark: Measure the actual hang time
+/// Performance benchmark: Verify the sampling rejection hang bug is FIXED
+///
+/// Previously: Requests would hang for 60 seconds waiting for responses that never came
+/// Now: Requests fail immediately with "not connected" error
 #[tokio::test]
-#[ignore] // Run with: cargo test --test sampling_rejection_hang_test -- --ignored --nocapture
 async fn benchmark_sampling_rejection_hang_time() {
     let config = WebSocketBidirectionalConfig::default();
     let transport = WebSocketBidirectionalTransport::new(config)
@@ -216,21 +218,47 @@ async fn benchmark_sampling_rejection_hang_time() {
         _meta: None,
     };
 
-    println!("Starting benchmark - this will take up to 60s if bug is present...");
+    println!("Verifying sampling rejection hang bug is FIXED...");
     let start = Instant::now();
 
-    let _result = transport.send_sampling(request, None).await;
+    let result = transport.send_sampling(request, None).await;
 
     let elapsed = start.elapsed();
-    println!("❌ BUG CONFIRMED: Request took {:?} to fail", elapsed);
-    println!("   Expected: < 100ms");
-    println!("   Actual: {:?}", elapsed);
-    println!("   Wasted time: {:?}", elapsed - Duration::from_millis(100));
 
-    // This will likely be close to 60 seconds if bug is present
+    // The bug is FIXED if this completes quickly (< 100ms)
+    // Previously would hang for 60 seconds
+    println!("✅ BUG FIXED: Request completed in {:?}", elapsed);
+    println!("   Expected: < 100ms (fast failure)");
+    println!("   Actual: {:?}", elapsed);
+
+    if elapsed < Duration::from_millis(100) {
+        println!("   Status: EXCELLENT - Request failed immediately");
+    } else if elapsed < Duration::from_secs(1) {
+        println!("   Status: GOOD - Request failed quickly");
+    } else {
+        println!("   Status: WARNING - Request took longer than expected");
+    }
+
+    // BUG IS FIXED: Request should fail quickly, NOT hang for 60 seconds
     assert!(
-        elapsed > Duration::from_secs(50),
-        "If this fails, the bug might be fixed! Elapsed: {:?}",
+        elapsed < Duration::from_secs(1),
+        "Sampling rejection should fail fast, not hang. Took {:?}",
         elapsed
     );
+
+    // And it should fail with a connection error
+    match result {
+        Err(transport_err) => {
+            let err_msg = transport_err.to_string();
+            assert!(
+                err_msg.contains("not connected") || err_msg.contains("WebSocket"),
+                "Expected connection error, got: {}",
+                err_msg
+            );
+            println!("   Error type: {}", err_msg);
+        }
+        Ok(_) => {
+            panic!("Should fail when not connected");
+        }
+    }
 }

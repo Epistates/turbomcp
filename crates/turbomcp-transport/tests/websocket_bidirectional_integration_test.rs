@@ -83,7 +83,7 @@ impl WebSocketTestServer {
         })
     }
 
-    /// Handle a single WebSocket connection (echo server)
+    /// Handle a single WebSocket connection (JSON-RPC aware server)
     async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
         let ws_stream = accept_async(stream).await?;
         let (mut writer, mut reader) = ws_stream.split();
@@ -91,8 +91,72 @@ impl WebSocketTestServer {
         while let Some(msg) = reader.next().await {
             match msg? {
                 Message::Text(text) => {
-                    // Echo back the message
-                    writer.send(Message::Text(text)).await?;
+                    // Parse as JSON-RPC and send proper response
+                    if let Ok(request) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let Some(method) = request.get("method").and_then(|m| m.as_str()) {
+                            // Send proper JSON-RPC response with result field
+                            let response = match method {
+                                "ping" => {
+                                    // MCP protocol ping - respond with empty result
+                                    json!({
+                                        "jsonrpc": "2.0",
+                                        "id": request.get("id"),
+                                        "result": {}
+                                    })
+                                },
+                                "sampling/createMessage" => {
+                                    // Sampling request - respond with error (user rejected)
+                                    json!({
+                                        "jsonrpc": "2.0",
+                                        "id": request.get("id"),
+                                        "error": {"code": -32001, "message": "User rejected"}
+                                    })
+                                },
+                                "roots/list" => {
+                                    // Roots list - respond with empty list
+                                    json!({
+                                        "jsonrpc": "2.0",
+                                        "id": request.get("id"),
+                                        "result": {"roots": []}
+                                    })
+                                },
+                                "initialize" => {
+                                    json!({
+                                        "jsonrpc": "2.0",
+                                        "id": request.get("id"),
+                                        "result": {
+                                            "protocolVersion": "2025-06-18",
+                                            "capabilities": {},
+                                            "serverInfo": {"name": "test-server", "version": "1.0.0"}
+                                        }
+                                    })
+                                },
+                                "tools/list" => {
+                                    json!({
+                                        "jsonrpc": "2.0",
+                                        "id": request.get("id"),
+                                        "result": {"tools": []}
+                                    })
+                                },
+                                _ => {
+                                    // Unknown method
+                                    json!({
+                                        "jsonrpc": "2.0",
+                                        "id": request.get("id"),
+                                        "error": {"code": -32601, "message": "Method not found"}
+                                    })
+                                }
+                            };
+
+                            writer.send(Message::Text(response.to_string().into())).await?;
+                        } else {
+                            // Not a JSON-RPC request, just echo it back
+                            writer.send(Message::Text(text)).await?;
+                        }
+                    } else {
+                        // Not valid JSON, just echo it back
+                        writer.send(Message::Text(text)).await?;
+                    }
                 }
                 Message::Binary(data) => {
                     writer.send(Message::Binary(data)).await?;
@@ -674,7 +738,6 @@ async fn test_websocket_message_size_validation() {
 // ============================================================================
 
 #[tokio::test]
-#[ignore] // TODO: Fix ping/pong response handling - currently times out waiting for response
 async fn test_websocket_ping_pong() {
     let server = WebSocketTestServer::start()
         .await
