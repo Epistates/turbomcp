@@ -1264,11 +1264,21 @@ async fn test_real_performance_stress_test() {
             if transport.send(init_msg).await.is_ok() {
                 successful_sends += 1;
                 // Read init response
-                if timeout(Duration::from_secs(5), transport.receive())
-                    .await
-                    .is_ok()
-                {
-                    successful_receives += 1;
+                match timeout(Duration::from_secs(5), transport.receive()).await {
+                    Ok(Ok(Some(_msg))) => {
+                        successful_receives += 1;
+                    }
+                    Ok(Ok(None)) => {
+                        // No message available (transport disconnected or channel closed)
+                    }
+                    Ok(Err(e)) => {
+                        // Transport error
+                        eprintln!("   ⚠️ Client {}: receive error: {}", client_id, e);
+                    }
+                    Err(_) => {
+                        // Timeout
+                        eprintln!("   ⚠️ Client {}: receive timeout", client_id);
+                    }
                 }
             }
 
@@ -1288,12 +1298,20 @@ async fn test_real_performance_stress_test() {
                 if transport.send(msg).await.is_ok() {
                     successful_sends += 1;
 
-                    // Try to receive response with short timeout
-                    if timeout(Duration::from_millis(500), transport.receive())
-                        .await
-                        .is_ok()
-                    {
-                        successful_receives += 1;
+                    // Try to receive response with timeout
+                    match timeout(Duration::from_secs(2), transport.receive()).await {
+                        Ok(Ok(Some(_msg))) => {
+                            successful_receives += 1;
+                        }
+                        Ok(Ok(None)) => {
+                            // No message available
+                        }
+                        Ok(Err(_e)) => {
+                            // Transport error - don't spam logs
+                        }
+                        Err(_) => {
+                            // Timeout - this is expected for tools/list if server is slow
+                        }
                     }
                 }
             }
