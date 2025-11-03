@@ -1189,16 +1189,9 @@ except KeyboardInterrupt:
 async fn test_real_performance_stress_test() {
     println!("🚀 REAL Performance Stress Test - Concurrent MCP Message Processing");
 
-    // NOTE: This test is marked #[ignore] because it spawns multiple cargo processes
-    // which takes significant time to compile. To enable: cargo test --ignored --test real_end_to_end_working_examples test_real_performance_stress_test
-    //
-    // TODO: Refactor to:
-    // 1. Start a single hello_world server once
-    // 2. Have all clients connect to the same server instance
-    // 3. Or: Use in-process server instead of subprocess
-    // This would reduce execution time from ~2 minutes to ~2-5 seconds
-
-    println!("🎯 Testing concurrent MCP client performance");
+    // WORLD-CLASS ARCHITECTURE: Start ONE server, multiple clients connect to it
+    // This eliminates race conditions from multiple cargo compilations
+    println!("🎯 Starting shared MCP server (one-time compilation)...");
 
     let num_clients = 2;
     let requests_per_client = 5;
@@ -1207,37 +1200,48 @@ async fn test_real_performance_stress_test() {
     println!("   - Concurrent clients: {}", num_clients);
     println!("   - Requests per client: {}", requests_per_client);
     println!("   - Total requests: {}", num_clients * requests_per_client);
+    println!("   - Architecture: Shared server (world-class reliability)");
+
+    // Start ONE shared server for all clients
+    let server_config = ChildProcessConfig {
+        command: "cargo".to_string(),
+        args: vec![
+            "run".to_string(),
+            "--example".to_string(),
+            "hello_world".to_string(),
+            "--package".to_string(),
+            "turbomcp".to_string(),
+        ],
+        working_directory: None,
+        environment: None,
+        startup_timeout: Duration::from_secs(15), // Generous for compilation
+        shutdown_timeout: Duration::from_secs(2),
+        max_message_size: 1024 * 1024,
+        buffer_size: 8192,
+        kill_on_drop: true,
+    };
+
+    let shared_server = ChildProcessTransport::new(server_config);
+
+    // Connect and wait for server to be ready
+    if let Err(e) = shared_server.connect().await {
+        eprintln!("   ❌ Failed to start shared server: {}", e);
+        panic!("Cannot run performance test without server");
+    }
+
+    println!("   ✅ Shared server started and ready");
 
     let start_time = std::time::Instant::now();
+
+    // Share the server transport across clients using Arc
+    let server_arc = std::sync::Arc::new(shared_server);
     let mut client_tasks = Vec::new();
 
-    // Create multiple concurrent clients connecting to hello_world server
+    // Create multiple concurrent clients using the SAME server
     for client_id in 0..num_clients {
+        let server_clone = Arc::clone(&server_arc);
+
         let task = tokio::spawn(async move {
-            let config = ChildProcessConfig {
-                command: "cargo".to_string(),
-                args: vec![
-                    "run".to_string(),
-                    "--example".to_string(),
-                    "hello_world".to_string(),
-                    "--package".to_string(),
-                    "turbomcp".to_string(),
-                ],
-                working_directory: None,
-                environment: None,
-                startup_timeout: Duration::from_secs(10),
-                shutdown_timeout: Duration::from_secs(2),
-                max_message_size: 1024 * 1024,
-                buffer_size: 8192,
-                kill_on_drop: true,
-            };
-
-            let transport = ChildProcessTransport::new(config);
-            if transport.connect().await.is_err() {
-                println!("   ⚠️ Client {}: Failed to connect", client_id);
-                return (client_id, 0, 0);
-            }
-
             let mut successful_sends = 0;
             let mut successful_receives = 0;
 
@@ -1261,23 +1265,24 @@ async fn test_real_performance_stress_test() {
                 init_request.to_string().into_bytes().into(),
             );
 
-            if transport.send(init_msg).await.is_ok() {
+            if server_clone.send(init_msg).await.is_ok() {
                 successful_sends += 1;
-                // Read init response
-                match timeout(Duration::from_secs(5), transport.receive()).await {
+                // Read init response with generous timeout
+                match timeout(Duration::from_secs(10), server_clone.receive()).await {
                     Ok(Ok(Some(_msg))) => {
                         successful_receives += 1;
                     }
                     Ok(Ok(None)) => {
-                        // No message available (transport disconnected or channel closed)
+                        eprintln!(
+                            "   ⚠️ Client {}: No init response (channel closed)",
+                            client_id
+                        );
                     }
                     Ok(Err(e)) => {
-                        // Transport error
                         eprintln!("   ⚠️ Client {}: receive error: {}", client_id, e);
                     }
                     Err(_) => {
-                        // Timeout
-                        eprintln!("   ⚠️ Client {}: receive timeout", client_id);
+                        eprintln!("   ⚠️ Client {}: init response timeout", client_id);
                     }
                 }
             }
@@ -1295,11 +1300,11 @@ async fn test_real_performance_stress_test() {
                     request.to_string().into_bytes().into(),
                 );
 
-                if transport.send(msg).await.is_ok() {
+                if server_clone.send(msg).await.is_ok() {
                     successful_sends += 1;
 
-                    // Try to receive response with timeout
-                    match timeout(Duration::from_secs(2), transport.receive()).await {
+                    // Receive response with generous timeout (no race conditions now!)
+                    match timeout(Duration::from_secs(5), server_clone.receive()).await {
                         Ok(Ok(Some(_msg))) => {
                             successful_receives += 1;
                         }
@@ -1307,10 +1312,13 @@ async fn test_real_performance_stress_test() {
                             // No message available
                         }
                         Ok(Err(_e)) => {
-                            // Transport error - don't spam logs
+                            // Transport error
                         }
                         Err(_) => {
-                            // Timeout - this is expected for tools/list if server is slow
+                            eprintln!(
+                                "   ⚠️ Client {}: Request {} timeout",
+                                client_id, request_num
+                            );
                         }
                     }
                 }
@@ -1350,12 +1358,16 @@ async fn test_real_performance_stress_test() {
     };
 
     println!("📈 Performance results:");
+    let expected_total = (num_clients * requests_per_client) + num_clients;
+    println!("   ✅ Total sends: {}/{}", total_sends, expected_total);
     println!(
-        "   ✅ Total sends: {}/{}",
-        total_sends,
-        (num_clients * requests_per_client) + num_clients
+        "   ✅ Total receives: {}/{}",
+        total_receives, expected_total
     );
-    println!("   ✅ Total receives: {}", total_receives);
+    println!(
+        "   ✅ Success rate: {:.1}%",
+        (total_receives as f64 / expected_total as f64) * 100.0
+    );
     println!("   ✅ Total time: {:.2}s", elapsed.as_secs_f64());
     println!("   ✅ Throughput: {:.1} msgs/sec", throughput);
     if total_sends > 0 {
@@ -1365,17 +1377,22 @@ async fn test_real_performance_stress_test() {
         );
     }
 
-    // Verify we got good results - at least 50% success rate
-    let expected_sends = (num_clients * requests_per_client) + num_clients; // requests + init
-    assert!(
-        total_sends >= expected_sends / 2,
-        "Should handle majority of requests"
+    // WORLD-CLASS ASSERTION: 100% success rate expected with shared server
+    assert_eq!(
+        total_sends, expected_total,
+        "All sends should succeed with shared server (got {}/{})",
+        total_sends, expected_total
     );
-    assert!(total_receives > 0, "Should receive at least some responses");
+    assert_eq!(
+        total_receives, expected_total,
+        "All receives should succeed with shared server (got {}/{})",
+        total_receives, expected_total
+    );
 
     println!("🎉 REAL Performance Stress Test PASSED!");
+    println!("   ✅ 100% success rate (world-class reliability)");
     println!("   ✅ Concurrent MCP client handling");
-    println!("   ✅ Multiple subprocess management");
+    println!("   ✅ Shared server architecture (no race conditions)");
     println!("   ✅ Stable performance with real servers");
 }
 
