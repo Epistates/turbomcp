@@ -974,7 +974,7 @@ Licensed under the [MIT License](./LICENSE) - Enterprise-friendly open source.
 
 ## Status
 
-TurboMCP v2.1.2 provides:
+TurboMCP v2.1.3 provides:
 
 - Zero known security vulnerabilities with continuous monitoring
 - Performance focus with automated regression detection
@@ -987,7 +987,7 @@ TurboMCP v2.1.2 provides:
 - **NEW**: RFC 9728 Protected Resource Metadata support
 - **NEW**: JWT and JWKS authentication middleware
 
-**Production Status:** TurboMCP 2.1.2 is production-ready with full MCP 2025-06-18 compliance, comprehensive test coverage (1,165+ tests passing), and the complete authentication stack. The API is stable.
+**Production Status:** TurboMCP 2.1.3 is production-ready with full MCP 2025-06-18 compliance, comprehensive test coverage (1,165+ tests passing), and the complete authentication stack. The API is stable.
 
 ---
 
