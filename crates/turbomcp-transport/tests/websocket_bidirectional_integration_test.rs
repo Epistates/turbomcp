@@ -103,7 +103,7 @@ impl WebSocketTestServer {
                                         "id": request.get("id"),
                                         "result": {}
                                     })
-                                },
+                                }
                                 "sampling/createMessage" => {
                                     // Sampling request - respond with error (user rejected)
                                     json!({
@@ -111,7 +111,7 @@ impl WebSocketTestServer {
                                         "id": request.get("id"),
                                         "error": {"code": -32001, "message": "User rejected"}
                                     })
-                                },
+                                }
                                 "roots/list" => {
                                     // Roots list - respond with empty list
                                     json!({
@@ -119,7 +119,7 @@ impl WebSocketTestServer {
                                         "id": request.get("id"),
                                         "result": {"roots": []}
                                     })
-                                },
+                                }
                                 "initialize" => {
                                     json!({
                                         "jsonrpc": "2.0",
@@ -130,14 +130,14 @@ impl WebSocketTestServer {
                                             "serverInfo": {"name": "test-server", "version": "1.0.0"}
                                         }
                                     })
-                                },
+                                }
                                 "tools/list" => {
                                     json!({
                                         "jsonrpc": "2.0",
                                         "id": request.get("id"),
                                         "result": {"tools": []}
                                     })
-                                },
+                                }
                                 _ => {
                                     // Unknown method
                                     json!({
@@ -148,7 +148,9 @@ impl WebSocketTestServer {
                                 }
                             };
 
-                            writer.send(Message::Text(response.to_string().into())).await?;
+                            writer
+                                .send(Message::Text(response.to_string().into()))
+                                .await?;
                         } else {
                             // Not a JSON-RPC request, just echo it back
                             writer.send(Message::Text(text)).await?;

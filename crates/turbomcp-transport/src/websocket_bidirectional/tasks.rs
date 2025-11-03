@@ -63,47 +63,43 @@ impl WebSocketBidirectionalTransport {
                         match msg_result {
                             Some(Ok(Message::Text(text))) => {
                                 // Parse JSON-RPC and route to appropriate handler
-                                if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&text) {
-                                    if let Some(id) = json_value.get("id").and_then(|v| v.as_str()) {
-                                        // Try to deliver to pending_pings
-                                        if let Some((_, response_tx)) = pending_pings.remove(id) {
-                                            if let Some(result) = json_value.get("result") {
-                                                if let Ok(ping_result) = serde_json::from_value(result.clone()) {
-                                                    let _ = response_tx.send(ping_result);
-                                                    continue;
-                                                }
-                                            }
-                                        }
+                                if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&text)
+                                    && let Some(id) = json_value.get("id").and_then(|v| v.as_str())
+                                {
+                                    // Try to deliver to pending_pings
+                                    if let Some((_, response_tx)) = pending_pings.remove(id)
+                                        && let Some(result) = json_value.get("result")
+                                        && let Ok(ping_result) = serde_json::from_value(result.clone())
+                                    {
+                                        let _ = response_tx.send(ping_result);
+                                        continue;
+                                    }
 
-                                        // Try to deliver to pending_samplings
-                                        if let Some((_, response_tx)) = pending_samplings.remove(id) {
-                                            if let Some(result) = json_value.get("result") {
-                                                if let Ok(sampling_result) = serde_json::from_value(result.clone()) {
-                                                    let _ = response_tx.send(sampling_result);
-                                                    continue;
-                                                }
-                                            }
-                                        }
+                                    // Try to deliver to pending_samplings
+                                    if let Some((_, response_tx)) = pending_samplings.remove(id)
+                                        && let Some(result) = json_value.get("result")
+                                        && let Ok(sampling_result) = serde_json::from_value(result.clone())
+                                    {
+                                        let _ = response_tx.send(sampling_result);
+                                        continue;
+                                    }
 
-                                        // Try to deliver to pending_roots
-                                        if let Some((_, response_tx)) = pending_roots.remove(id) {
-                                            if let Some(result) = json_value.get("result") {
-                                                if let Ok(roots_result) = serde_json::from_value(result.clone()) {
-                                                    let _ = response_tx.send(roots_result);
-                                                    continue;
-                                                }
-                                            }
-                                        }
+                                    // Try to deliver to pending_roots
+                                    if let Some((_, response_tx)) = pending_roots.remove(id)
+                                        && let Some(result) = json_value.get("result")
+                                        && let Ok(roots_result) = serde_json::from_value(result.clone())
+                                    {
+                                        let _ = response_tx.send(roots_result);
+                                        continue;
+                                    }
 
-                                        // Try to deliver to elicitations
-                                        if let Some((_, pending)) = elicitations.remove(id) {
-                                            if let Some(result) = json_value.get("result") {
-                                                if let Ok(elicit_result) = serde_json::from_value(result.clone()) {
-                                                    let _ = pending.response_tx.send(elicit_result);
-                                                    continue;
-                                                }
-                                            }
-                                        }
+                                    // Try to deliver to elicitations
+                                    if let Some((_, pending)) = elicitations.remove(id)
+                                        && let Some(result) = json_value.get("result")
+                                        && let Ok(elicit_result) = serde_json::from_value(result.clone())
+                                    {
+                                        let _ = pending.response_tx.send(elicit_result);
+                                        continue;
                                     }
                                 }
                                 trace!(
@@ -113,14 +109,14 @@ impl WebSocketBidirectionalTransport {
                             }
                             Some(Ok(Message::Ping(data))) => {
                                 // Auto-respond with pong
-                                if let Some(ref mut writer_guard) = *writer.lock().await {
-                                    if let Ok(()) = writer_guard.send(Message::Pong(data)).await {
-                                        let _ = writer_guard.flush().await;
-                                        trace!(
-                                            "Message reader sent pong in session {}",
-                                            session_id_clone
-                                        );
-                                    }
+                                if let Some(ref mut writer_guard) = *writer.lock().await
+                                    && let Ok(()) = writer_guard.send(Message::Pong(data)).await
+                                {
+                                    let _ = writer_guard.flush().await;
+                                    trace!(
+                                        "Message reader sent pong in session {}",
+                                        session_id_clone
+                                    );
                                 }
                             }
                             Some(Ok(Message::Pong(_))) => {
