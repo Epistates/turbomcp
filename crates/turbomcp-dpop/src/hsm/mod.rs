@@ -112,7 +112,7 @@ pub enum HsmConfig {
 }
 
 /// PKCS#11 HSM configuration
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 #[cfg_attr(not(feature = "hsm-pkcs11"), derive(Deserialize))]
 pub struct Pkcs11Config {
     /// Path to PKCS#11 library (e.g., "/opt/cloudhsm/lib/libcloudhsm_pkcs11.so")
@@ -155,8 +155,25 @@ pub struct Pkcs11Config {
     pub vendor_config: HashMap<String, String>,
 }
 
+// Manual Debug impl to prevent PIN exposure in logs (Sprint 3.6)
+impl std::fmt::Debug for Pkcs11Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Pkcs11Config")
+            .field("library_path", &self.library_path)
+            .field("slot_id", &self.slot_id)
+            .field("token_label", &self.token_label)
+            .field("user_pin", &"[REDACTED]")
+            .field("so_pin", &self.so_pin.as_ref().map(|_| "[REDACTED]"))
+            .field("pool_config", &self.pool_config)
+            .field("timeouts", &self.timeouts)
+            .field("retry_config", &self.retry_config)
+            .field("vendor_config", &self.vendor_config)
+            .finish()
+    }
+}
+
 /// YubiHSM configuration
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 #[cfg_attr(not(feature = "hsm-yubico"), derive(Deserialize))]
 pub struct YubiHsmConfig {
     /// Connection type (HTTP or USB)
@@ -177,8 +194,21 @@ pub struct YubiHsmConfig {
     /// Operation timeouts
     pub timeouts: TimeoutConfig,
 
-    /// Retry configuration  
+    /// Retry configuration
     pub retry_config: RetryConfig,
+}
+
+// Manual Debug impl to prevent password exposure in logs (Sprint 3.6)
+impl std::fmt::Debug for YubiHsmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("YubiHsmConfig")
+            .field("connector", &self.connector)
+            .field("auth_key_id", &self.auth_key_id)
+            .field("password", &"[REDACTED]")
+            .field("timeouts", &self.timeouts)
+            .field("retry_config", &self.retry_config)
+            .finish()
+    }
 }
 
 /// YubiHSM connector configuration

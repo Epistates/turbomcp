@@ -7,7 +7,7 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::jwk::{AlgorithmParameters, CommonParameters, Jwk, KeyAlgorithm, PublicKeyUse};
 use jsonwebtoken::jwk::{EllipticCurve, EllipticCurveKeyParameters, EllipticCurveKeyType};
-use jsonwebtoken::jwk::{RSAKeyParameters, RSAKeyType};
+// RSA support removed in v2.2.0 due to RUSTSEC-2023-0071 timing vulnerability
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey};
 use p256::SecretKey;
 use p256::pkcs8::EncodePrivateKey;
@@ -18,25 +18,24 @@ use crate::types::{DpopAlgorithm, DpopPrivateKey, DpopPublicKey};
 
 /// Convert DpopAlgorithm to jsonwebtoken Algorithm
 ///
-/// This provides a type-safe mapping between our algorithm enum and jsonwebtoken's.
+/// Only ES256 is supported as of TurboMCP v2.2+
 pub fn algorithm_to_jwt(algorithm: DpopAlgorithm) -> Algorithm {
     match algorithm {
         DpopAlgorithm::ES256 => Algorithm::ES256,
-        DpopAlgorithm::RS256 => Algorithm::RS256,
-        DpopAlgorithm::PS256 => Algorithm::PS256,
     }
 }
 
 /// Convert jsonwebtoken Algorithm to DpopAlgorithm
 ///
-/// Returns error for unsupported algorithms (only ES256, RS256, PS256 allowed for DPoP).
+/// Returns error for unsupported algorithms (only ES256 allowed as of TurboMCP v2.2+)
 pub fn jwt_to_algorithm(algorithm: Algorithm) -> Result<DpopAlgorithm> {
     match algorithm {
         Algorithm::ES256 => Ok(DpopAlgorithm::ES256),
-        Algorithm::RS256 => Ok(DpopAlgorithm::RS256),
-        Algorithm::PS256 => Ok(DpopAlgorithm::PS256),
         other => Err(DpopError::InvalidProofStructure {
-            reason: format!("Unsupported DPoP algorithm: {:?}", other),
+            reason: format!(
+                "Unsupported DPoP algorithm: {:?}. Only ES256 is supported (RSA removed due to RUSTSEC-2023-0071)",
+                other
+            ),
         }),
     }
 }
@@ -46,10 +45,12 @@ pub fn jwt_to_algorithm(algorithm: Algorithm) -> Result<DpopAlgorithm> {
 /// This handles the conversion from our DpopPrivateKey enum to jsonwebtoken's EncodingKey,
 /// including necessary format conversions (SEC1 → PKCS#8 for EC keys).
 ///
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
+///
 /// # Security Note
 ///
 /// For EC keys, we convert from SEC1 format (raw 32 bytes) to PKCS#8 DER format as required
-/// by jsonwebtoken. For RSA keys, they're already in PKCS#8 DER format.
+/// by jsonwebtoken.
 pub fn private_key_to_encoding_key(key: &DpopPrivateKey) -> Result<EncodingKey> {
     match key {
         DpopPrivateKey::EcdsaP256 { key_bytes } => {
@@ -71,10 +72,6 @@ pub fn private_key_to_encoding_key(key: &DpopPrivateKey) -> Result<EncodingKey> 
             // Create EncodingKey from DER bytes
             Ok(EncodingKey::from_ec_der(pkcs8_der.as_bytes()))
         }
-        DpopPrivateKey::Rsa { key_der } => {
-            // RSA key is already in PKCS#8 DER format
-            Ok(EncodingKey::from_rsa_der(key_der))
-        }
     }
 }
 
@@ -82,6 +79,8 @@ pub fn private_key_to_encoding_key(key: &DpopPrivateKey) -> Result<EncodingKey> 
 ///
 /// This creates a RFC 7517 compliant JWK from our DpopPublicKey enum.
 /// The JWK will be embedded in the DPoP proof header per RFC 9449.
+///
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
 ///
 /// # Security Note
 ///
@@ -119,31 +118,6 @@ pub fn public_key_to_jwk(key: &DpopPublicKey) -> Result<Jwk> {
                 }),
             })
         }
-        DpopPublicKey::Rsa { n, e } => {
-            // Base64url encode RSA parameters per RFC 7517
-            let n_b64 = URL_SAFE_NO_PAD.encode(n);
-            let e_b64 = URL_SAFE_NO_PAD.encode(e);
-
-            Ok(Jwk {
-                common: CommonParameters {
-                    public_key_use: Some(PublicKeyUse::Signature),
-                    key_operations: None,
-                    // Note: Could be RS256 or PS256, but we use RS256 as default
-                    // The actual algorithm used is specified in the JWT header
-                    key_algorithm: Some(KeyAlgorithm::RS256),
-                    key_id: None,
-                    x509_url: None,
-                    x509_chain: None,
-                    x509_sha1_fingerprint: None,
-                    x509_sha256_fingerprint: None,
-                },
-                algorithm: AlgorithmParameters::RSA(RSAKeyParameters {
-                    key_type: RSAKeyType::RSA,
-                    n: n_b64,
-                    e: e_b64,
-                }),
-            })
-        }
     }
 }
 
@@ -152,10 +126,11 @@ pub fn public_key_to_jwk(key: &DpopPublicKey) -> Result<Jwk> {
 /// This extracts the public key from a JWK and creates a DecodingKey for signature verification.
 /// Used during DPoP proof validation to verify the signature using the embedded public key.
 ///
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
+///
 /// # Security Note
 ///
 /// This function validates key parameters and only supports P-256 for EC keys.
-/// For RSA keys, jsonwebtoken handles the validation.
 pub fn jwk_to_decoding_key(jwk: &Jwk) -> Result<DecodingKey> {
     match &jwk.algorithm {
         AlgorithmParameters::EllipticCurve(ec_params) => {
@@ -177,17 +152,11 @@ pub fn jwk_to_decoding_key(jwk: &Jwk) -> Result<DecodingKey> {
                 }
             })
         }
-        AlgorithmParameters::RSA(rsa_params) => {
-            // jsonwebtoken provides this built-in for RSA keys
-            // It accepts base64url-encoded n and e parameters
-            DecodingKey::from_rsa_components(&rsa_params.n, &rsa_params.e).map_err(|e| {
-                DpopError::InvalidProofStructure {
-                    reason: format!("Invalid RSA key components: {}", e),
-                }
-            })
-        }
         other => Err(DpopError::InvalidProofStructure {
-            reason: format!("Unsupported JWK algorithm parameters: {:?}", other),
+            reason: format!(
+                "Unsupported JWK algorithm parameters: {:?}. Only ES256 (ECDSA P-256) is supported (RSA removed due to RUSTSEC-2023-0071)",
+                other
+            ),
         }),
     }
 }
@@ -198,24 +167,17 @@ mod tests {
 
     #[test]
     fn test_algorithm_conversion() {
+        // Only ES256 is supported
         assert_eq!(algorithm_to_jwt(DpopAlgorithm::ES256), Algorithm::ES256);
-        assert_eq!(algorithm_to_jwt(DpopAlgorithm::RS256), Algorithm::RS256);
-        assert_eq!(algorithm_to_jwt(DpopAlgorithm::PS256), Algorithm::PS256);
 
         assert_eq!(
             jwt_to_algorithm(Algorithm::ES256).unwrap(),
             DpopAlgorithm::ES256
         );
-        assert_eq!(
-            jwt_to_algorithm(Algorithm::RS256).unwrap(),
-            DpopAlgorithm::RS256
-        );
-        assert_eq!(
-            jwt_to_algorithm(Algorithm::PS256).unwrap(),
-            DpopAlgorithm::PS256
-        );
 
-        // Unsupported algorithms should error
+        // All other algorithms should error (including RSA variants)
+        assert!(jwt_to_algorithm(Algorithm::RS256).is_err());
+        assert!(jwt_to_algorithm(Algorithm::PS256).is_err());
         assert!(jwt_to_algorithm(Algorithm::HS256).is_err());
         assert!(jwt_to_algorithm(Algorithm::HS384).is_err());
     }

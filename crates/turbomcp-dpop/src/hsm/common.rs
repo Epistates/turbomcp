@@ -14,6 +14,8 @@ use tracing::trace;
 /// This implements the canonical JWK thumbprint computation as specified in RFC 7638,
 /// using the exact same logic for both PKCS#11 and YubiHSM backends.
 ///
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
+///
 /// # RFC 7638 Compliance
 ///
 /// - Fields are included in canonical (alphabetical) order
@@ -23,7 +25,7 @@ use tracing::trace;
 /// # Arguments
 ///
 /// * `public_key` - The public key to compute thumbprint for
-/// * `algorithm` - The DPoP algorithm being used
+/// * `algorithm` - The DPoP algorithm being used (must be ES256)
 /// * `backend_name` - Name of HSM backend for tracing
 ///
 /// # Returns
@@ -35,6 +37,7 @@ pub fn compute_jwk_thumbprint(
     backend_name: &str,
 ) -> Result<String> {
     // RFC 7638: Build canonical JWK JSON with required fields only, alphabetically ordered
+    // Only ES256 (ECDSA P-256) is supported
     let canonical_jwk = match (algorithm, public_key) {
         (DpopAlgorithm::ES256, DpopPublicKey::EcdsaP256 { x, y }) => {
             // RFC 7638 Section 3.1: Required fields for EC keys: crv, kty, x, y
@@ -47,20 +50,6 @@ pub fn compute_jwk_thumbprint(
                 r#"{{"crv":"P-256","kty":"EC","x":"{}","y":"{}"}}"#,
                 x_b64, y_b64
             )
-        }
-        (DpopAlgorithm::RS256 | DpopAlgorithm::PS256, DpopPublicKey::Rsa { n, e }) => {
-            // RFC 7638 Section 3.1: Required fields for RSA keys: e, kty, n
-            let e_b64 =
-                base64::prelude::Engine::encode(&base64::prelude::BASE64_URL_SAFE_NO_PAD, e);
-            let n_b64 =
-                base64::prelude::Engine::encode(&base64::prelude::BASE64_URL_SAFE_NO_PAD, n);
-
-            format!(r#"{{"e":"{}","kty":"RSA","n":"{}"}}"#, e_b64, n_b64)
-        }
-        _ => {
-            return Err(DpopError::KeyManagementError {
-                reason: "Mismatched algorithm and public key type for JWK thumbprint".to_string(),
-            });
         }
     };
 
@@ -226,31 +215,5 @@ mod tests {
         assert!(!thumbprint.is_empty());
         // Thumbprint should be base64url encoded (no padding)
         assert!(!thumbprint.contains('='));
-    }
-
-    #[test]
-    fn test_jwk_thumbprint_rsa() {
-        let public_key = DpopPublicKey::Rsa {
-            n: vec![0x01, 0x02, 0x03],
-            e: vec![0x01, 0x00, 0x01], // Common RSA exponent 65537
-        };
-
-        let thumbprint = compute_jwk_thumbprint(&public_key, DpopAlgorithm::RS256, "test").unwrap();
-        assert!(!thumbprint.is_empty());
-        // Thumbprint should be base64url encoded (no padding)
-        assert!(!thumbprint.contains('='));
-    }
-
-    #[test]
-    fn test_jwk_thumbprint_algorithm_mismatch() {
-        let mut x = [0u8; 32];
-        let mut y = [0u8; 32];
-        x[0..3].copy_from_slice(&[0x01, 0x02, 0x03]);
-        y[0..3].copy_from_slice(&[0x04, 0x05, 0x06]);
-
-        let public_key = DpopPublicKey::EcdsaP256 { x, y };
-
-        let result = compute_jwk_thumbprint(&public_key, DpopAlgorithm::RS256, "test");
-        assert!(result.is_err());
     }
 }

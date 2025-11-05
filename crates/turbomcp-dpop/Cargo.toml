@@ -32,7 +32,6 @@ jsonwebtoken = "9.3"
 base64 = "0.22"
 sha2 = "0.10"
 ring = "0.17"
-rsa = { version = "0.9", features = ["sha2"] }
 p256 = { version = "0.13", features = ["ecdsa"] }
 rand = "0.8.5"
 signature = "2.2"

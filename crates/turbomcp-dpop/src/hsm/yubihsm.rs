@@ -15,7 +15,6 @@
 //! ## Supported Operations
 //!
 //! - ECDSA P-256 key generation and signing (ES256)
-//! - RSA 2048/4096 key generation and signing (RS256)
 //! - Key deletion and management
 //! - Device information and statistics
 //!
@@ -45,9 +44,6 @@ use yubihsm::{Client, Connector, Credentials, object};
 
 // Cryptographic parsing imports for proven key extraction
 use p256;
-use rsa::pkcs1::DecodeRsaPublicKey;
-use rsa::pkcs8::DecodePublicKey;
-use rsa::traits::PublicKeyParts;
 
 // Production-grade JWK thumbprint computation using existing dependencies
 
@@ -357,33 +353,6 @@ impl YubiHsmManager {
         Ok((key_id, key_label))
     }
 
-    /// Generate RSA key pair on YubiHSM
-    async fn generate_rsa_key_pair(&self, _algorithm: DpopAlgorithm) -> Result<(u16, String)> {
-        let key_id = self.get_next_key_id()?;
-        let key_label = format!(
-            "dpop_rsa_{}_{}",
-            chrono::Utc::now().timestamp(),
-            uuid::Uuid::new_v4()
-        );
-
-        let client = self.client.read();
-
-        // Generate RSA 2048 key
-        let label = yubihsm::object::Label::from(key_label.as_str());
-        let domains = yubihsm::Domain::DOM1;
-        let capabilities = yubihsm::Capability::SIGN_PKCS;
-        let algorithm = yubihsm::asymmetric::Algorithm::Rsa2048;
-
-        client
-            .generate_asymmetric_key(key_id, label, domains, capabilities, algorithm)
-            .map_err(|e| DpopError::KeyManagementError {
-                reason: format!("Failed to generate RSA key on YubiHSM: {}", e),
-            })?;
-
-        trace!("Generated RSA key: id={}, label={}", key_id, key_label);
-        Ok((key_id, key_label))
-    }
-
     /// Get public key from YubiHSM
     fn get_public_key_bytes(&self, key_id: u16, _algorithm: DpopAlgorithm) -> Result<Vec<u8>> {
         let client = self.client.read();
@@ -412,74 +381,45 @@ impl YubiHsmManager {
     fn parse_public_key_from_bytes(
         &self,
         key_bytes: &[u8],
-        algorithm: DpopAlgorithm,
+        _algorithm: DpopAlgorithm,
     ) -> Result<DpopPublicKey> {
-        match algorithm {
-            DpopAlgorithm::ES256 => {
-                // YubiHSM returns raw EC point data - need to add DER structure if missing
-                let point_data = if key_bytes.starts_with(&[0x04]) {
-                    // Already has uncompressed point prefix
-                    key_bytes
-                } else {
-                    // YubiHSM may return without the 0x04 prefix - add it
-                    return Err(DpopError::KeyManagementError {
-                        reason: "YubiHSM returned unexpected ECDSA key format".to_string(),
-                    });
-                };
+        // Only ES256 is supported
+        // YubiHSM returns raw EC point data - need to add DER structure if missing
+        let point_data = if key_bytes.starts_with(&[0x04]) {
+            // Already has uncompressed point prefix
+            key_bytes
+        } else {
+            // YubiHSM may return without the 0x04 prefix - add it
+            return Err(DpopError::KeyManagementError {
+                reason: "YubiHSM returned unexpected ECDSA key format".to_string(),
+            });
+        };
 
-                if point_data.len() != 65 {
-                    // 1 byte (0x04) + 32 bytes (x) + 32 bytes (y) = 65 bytes for P-256
-                    return Err(DpopError::KeyManagementError {
-                        reason: format!(
-                            "Invalid P-256 point length: expected 65 bytes, got {}",
-                            point_data.len()
-                        ),
-                    });
-                }
+        if point_data.len() != 65 {
+            // 1 byte (0x04) + 32 bytes (x) + 32 bytes (y) = 65 bytes for P-256
+            return Err(DpopError::KeyManagementError {
+                reason: format!(
+                    "Invalid P-256 point length: expected 65 bytes, got {}",
+                    point_data.len()
+                ),
+            });
+        }
 
-                // Extract X and Y coordinates (skip the 0x04 prefix)
-                let mut x = [0u8; 32];
-                let mut y = [0u8; 32];
-                x.copy_from_slice(&point_data[1..33]);
-                y.copy_from_slice(&point_data[33..65]);
+        // Extract X and Y coordinates (skip the 0x04 prefix)
+        let mut x = [0u8; 32];
+        let mut y = [0u8; 32];
+        x.copy_from_slice(&point_data[1..33]);
+        y.copy_from_slice(&point_data[33..65]);
 
-                // Validate the point is on the curve by attempting to create a valid key
-                match p256::PublicKey::from_sec1_bytes(point_data) {
-                    Ok(_) => {
-                        trace!("Successfully validated P-256 public key point");
-                        Ok(DpopPublicKey::EcdsaP256 { x, y })
-                    }
-                    Err(e) => Err(DpopError::KeyManagementError {
-                        reason: format!("Invalid P-256 public key point: {}", e),
-                    }),
-                }
+        // Validate the point is on the curve by attempting to create a valid key
+        match p256::PublicKey::from_sec1_bytes(point_data) {
+            Ok(_) => {
+                trace!("Successfully validated P-256 public key point");
+                Ok(DpopPublicKey::EcdsaP256 { x, y })
             }
-            DpopAlgorithm::RS256 | DpopAlgorithm::PS256 => {
-                // Parse RSA public key from DER/ASN.1 format
-                let rsa_key = match rsa::RsaPublicKey::from_pkcs1_der(key_bytes) {
-                    Ok(key) => key,
-                    Err(_) => {
-                        // Try PKCS#8 format as fallback
-                        rsa::RsaPublicKey::from_public_key_der(key_bytes).map_err(|e| {
-                            DpopError::KeyManagementError {
-                                reason: format!("Failed to parse RSA public key: {}", e),
-                            }
-                        })?
-                    }
-                };
-
-                // Extract modulus (n) and exponent (e)
-                let n = rsa_key.n().to_bytes_be();
-                let e = rsa_key.e().to_bytes_be();
-
-                trace!(
-                    "Successfully parsed RSA public key: n={} bytes, e={} bytes",
-                    n.len(),
-                    e.len()
-                );
-
-                Ok(DpopPublicKey::Rsa { n, e })
-            }
+            Err(e) => Err(DpopError::KeyManagementError {
+                reason: format!("Invalid P-256 public key point: {}", e),
+            }),
         }
     }
 
@@ -488,34 +428,17 @@ impl YubiHsmManager {
         &self,
         key_id: u16,
         data: &[u8],
-        algorithm: DpopAlgorithm,
+        _algorithm: DpopAlgorithm,
     ) -> Result<Vec<u8>> {
         let client = self.client.read();
 
-        match algorithm {
-            DpopAlgorithm::ES256 => {
-                let signature = client.sign_ecdsa_prehash_raw(key_id, data).map_err(|e| {
-                    DpopError::KeyManagementError {
-                        reason: format!("Failed to sign with ECDSA on YubiHSM: {}", e),
-                    }
-                })?;
-                Ok(signature)
+        // Only ES256 is supported
+        let signature = client.sign_ecdsa_prehash_raw(key_id, data).map_err(|e| {
+            DpopError::KeyManagementError {
+                reason: format!("Failed to sign with ECDSA on YubiHSM: {}", e),
             }
-            DpopAlgorithm::RS256 => {
-                // RSA PKCS#1 v1.5 signing requires the 'untested' feature flag in yubihsm crate
-                // which is not enabled by default for production deployments due to API stability
-                Err(DpopError::KeyManagementError {
-                    reason: "RSA PKCS#1 v1.5 signing not supported in this YubiHSM configuration - use ES256 for ECDSA".to_string(),
-                })
-            }
-            DpopAlgorithm::PS256 => {
-                // RSA-PSS signing requires the 'untested' feature flag in yubihsm crate
-                // which is not enabled by default for production deployments due to API stability
-                Err(DpopError::KeyManagementError {
-                    reason: "RSA-PSS signing not supported in this YubiHSM configuration - use ES256 for ECDSA".to_string(),
-                })
-            }
-        }
+        })?;
+        Ok(signature)
     }
 
     /// Parse key ID from key label using proven key discovery
@@ -565,12 +488,8 @@ impl HsmOperations for YubiHsmManager {
 
         self.ensure_connection().await?;
 
-        let (key_id, key_label) = match algorithm {
-            DpopAlgorithm::ES256 => self.generate_ecdsa_key_pair(algorithm).await?,
-            DpopAlgorithm::RS256 | DpopAlgorithm::PS256 => {
-                self.generate_rsa_key_pair(algorithm).await?
-            }
-        };
+        // Only ES256 is supported
+        let (key_id, key_label) = self.generate_ecdsa_key_pair(algorithm).await?;
 
         // Get public key bytes for JWK
         let _public_key_bytes = self.get_public_key_bytes(key_id, algorithm)?;
@@ -593,13 +512,9 @@ impl HsmOperations for YubiHsmManager {
         let public_key_bytes = self.get_public_key_bytes(key_id, algorithm)?;
 
         // For HSM keys, private key material never leaves the HSM - create key references instead
-        let private_key = match algorithm {
-            DpopAlgorithm::ES256 => DpopPrivateKey::EcdsaP256 {
-                key_bytes: [0u8; 32], // HSM reference - actual key stays in hardware
-            },
-            DpopAlgorithm::RS256 | DpopAlgorithm::PS256 => DpopPrivateKey::Rsa {
-                key_der: vec![], // HSM reference - actual key stays in hardware
-            },
+        // Only ES256 is supported
+        let private_key = DpopPrivateKey::EcdsaP256 {
+            key_bytes: [0u8; 32], // HSM reference - actual key stays in hardware
         };
 
         // Parse public key using proven cryptographic libraries
@@ -638,12 +553,8 @@ impl HsmOperations for YubiHsmManager {
         // Parse key ID from label (simplified)
         let key_id = self.parse_key_id_from_label(key_label)?;
 
-        // Determine algorithm from label (simplified)
-        let algorithm = if key_label.contains("_ec_") {
-            DpopAlgorithm::ES256
-        } else {
-            DpopAlgorithm::RS256
-        };
+        // Only ES256 is supported
+        let algorithm = DpopAlgorithm::ES256;
 
         // Sign the data
         let signature = self.sign_data_yubihsm(key_id, data, algorithm)?;
@@ -800,7 +711,6 @@ impl HsmOperations for YubiHsmManager {
 
         let mut max_key_lengths = HashMap::new();
         max_key_lengths.insert(DpopAlgorithm::ES256, 256);
-        max_key_lengths.insert(DpopAlgorithm::RS256, 2048);
 
         Ok(HsmInfo {
             hsm_type: "YubiHSM 2".to_string(),
@@ -808,7 +718,7 @@ impl HsmOperations for YubiHsmManager {
                 "{}.{}.{}",
                 device_info.major_version, device_info.minor_version, device_info.build_version
             ),
-            supported_algorithms: vec![DpopAlgorithm::ES256, DpopAlgorithm::RS256],
+            supported_algorithms: vec![DpopAlgorithm::ES256],
             max_key_lengths,
             capabilities,
             hardware_features: vec![

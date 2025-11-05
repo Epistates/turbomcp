@@ -8,54 +8,45 @@ use std::fmt;
 use std::time::{Duration, SystemTime};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use rsa::traits::PublicKeyParts;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use zeroize::Zeroize;
 
-/// DPoP cryptographic algorithms as defined in RFC 9449
+/// DPoP cryptographic algorithm as defined in RFC 9449
 ///
-/// The specification requires support for RSA and ECDSA algorithms with specific
-/// parameters. This enum provides type-safe algorithm selection.
+/// This implementation uses only ES256 (ECDSA P-256) for maximum security.
+/// RSA algorithms (RS256, PS256) have been removed due to timing attack
+/// vulnerabilities in the rsa crate (RUSTSEC-2023-0071).
+///
+/// ES256 is the recommended algorithm in RFC 9449 and provides:
+/// - Superior security against timing attacks
+/// - Faster performance than RSA
+/// - Smaller key and signature sizes
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DpopAlgorithm {
-    /// RSA with PKCS#1 v1.5 padding and SHA-256 (RFC 7518)
-    #[serde(rename = "RS256")]
-    RS256,
-
     /// Elliptic Curve Digital Signature Algorithm with P-256 curve and SHA-256 (RFC 7518)
+    /// This is the only supported algorithm for DPoP in TurboMCP v2.2+
     #[serde(rename = "ES256")]
     ES256,
-
-    /// RSA with PSS padding and SHA-256 (RFC 7518)  
-    #[serde(rename = "PS256")]
-    PS256,
 }
 
 impl DpopAlgorithm {
     /// Get the algorithm name as specified in RFC 7518
     #[must_use]
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::RS256 => "RS256",
-            Self::ES256 => "ES256",
-            Self::PS256 => "PS256",
-        }
+        "ES256"
     }
 
     /// Get recommended key size for the algorithm
     #[must_use]
     pub fn recommended_key_size(self) -> u32 {
-        match self {
-            Self::RS256 | Self::PS256 => 2048, // RSA-2048 minimum
-            Self::ES256 => 256,                // P-256 curve
-        }
+        256 // P-256 curve
     }
 
     /// Check if algorithm is suitable for production use
     #[must_use]
     pub fn is_production_ready(self) -> bool {
-        // All RFC 9449 required algorithms are implemented
+        // ES256 is production-ready and the recommended algorithm
         true
     }
 }
@@ -185,76 +176,14 @@ impl DpopKeyPair {
             metadata: DpopKeyMetadata::default(),
         })
     }
-
-    /// Generate a new RSA-2048 (RS256) key pair
-    ///
-    /// Convenience method for generating RSA keys.
-    /// For production use with key rotation and management, use `DpopKeyManager`.
-    ///
-    /// # Errors
-    /// Returns error if key generation fails
-    pub fn generate_rs256() -> Result<Self, crate::errors::DpopError> {
-        use rand::rngs::OsRng;
-        use rsa::pkcs8::EncodePrivateKey;
-        use rsa::{RsaPrivateKey, RsaPublicKey};
-        use sha2::{Digest, Sha256};
-
-        let mut rng = OsRng;
-        let bits = 2048;
-        let private_key = RsaPrivateKey::new(&mut rng, bits).map_err(|e| {
-            crate::errors::DpopError::CryptographicError {
-                reason: format!("Failed to generate RSA key: {}", e),
-            }
-        })?;
-        let public_key = RsaPublicKey::from(&private_key);
-
-        let private_key_der = private_key.to_pkcs8_der().map_err(|e| {
-            crate::errors::DpopError::CryptographicError {
-                reason: format!("Failed to encode private key: {}", e),
-            }
-        })?;
-
-        // Extract n and e parameters from the public key
-        let n_bytes = public_key.n().to_bytes_be();
-        let e_bytes = public_key.e().to_bytes_be();
-
-        // Calculate JWK thumbprint per RFC 7638
-        let jwk_json = serde_json::json!({
-            "e": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&e_bytes),
-            "kty": "RSA",
-            "n": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&n_bytes),
-        });
-        let jwk_canonical = jwk_json.to_string();
-        let mut hasher = Sha256::new();
-        hasher.update(jwk_canonical.as_bytes());
-        let thumbprint = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
-
-        Ok(Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            private_key: DpopPrivateKey::Rsa {
-                key_der: private_key_der.as_bytes().to_vec(),
-            },
-            public_key: DpopPublicKey::Rsa {
-                n: n_bytes,
-                e: e_bytes,
-            },
-            thumbprint,
-            algorithm: DpopAlgorithm::RS256,
-            created_at: SystemTime::now(),
-            expires_at: None,
-            metadata: DpopKeyMetadata::default(),
-        })
-    }
 }
 
 /// Private key material for DPoP operations
+///
+/// This implementation only supports ECDSA P-256 keys for maximum security.
+/// RSA support has been removed due to timing attack vulnerabilities (RUSTSEC-2023-0071).
 #[derive(Debug, Clone)]
 pub enum DpopPrivateKey {
-    /// RSA private key
-    Rsa {
-        /// RSA private key in PKCS#8 DER format
-        key_der: Vec<u8>,
-    },
     /// ECDSA P-256 private key
     EcdsaP256 {
         /// P-256 private key in SEC1 format
@@ -265,7 +194,6 @@ pub enum DpopPrivateKey {
 impl Zeroize for DpopPrivateKey {
     fn zeroize(&mut self) {
         match self {
-            Self::Rsa { key_der } => key_der.zeroize(),
             Self::EcdsaP256 { key_bytes } => key_bytes.zeroize(),
         }
     }
@@ -278,15 +206,11 @@ impl Drop for DpopPrivateKey {
 }
 
 /// Public key material for DPoP operations
+///
+/// This implementation only supports ECDSA P-256 keys for maximum security.
+/// RSA support has been removed due to timing attack vulnerabilities (RUSTSEC-2023-0071).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DpopPublicKey {
-    /// RSA public key
-    Rsa {
-        /// RSA modulus (n parameter)
-        n: Vec<u8>,
-        /// RSA public exponent (e parameter)  
-        e: Vec<u8>,
-    },
     /// ECDSA P-256 public key
     EcdsaP256 {
         /// X coordinate of the public key point
@@ -366,23 +290,12 @@ pub struct DpopPayload {
 }
 
 /// JSON Web Key representation for DPoP public keys
+///
+/// This implementation only supports ECDSA P-256 keys for maximum security.
+/// RSA support has been removed due to timing attack vulnerabilities (RUSTSEC-2023-0071).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kty")]
 pub enum DpopJwk {
-    /// RSA public key in JWK format
-    #[serde(rename = "RSA")]
-    Rsa {
-        /// Key usage - always "sig" for DPoP
-        #[serde(rename = "use")]
-        use_: String,
-
-        /// RSA modulus (base64url-encoded)
-        n: String,
-
-        /// RSA public exponent (base64url-encoded)
-        e: String,
-    },
-
     /// Elliptic Curve public key in JWK format
     #[serde(rename = "EC")]
     Ec {
@@ -530,13 +443,15 @@ impl DpopProof {
         }
 
         // Convert jsonwebtoken::Header to our DpopHeader
+        // Only ES256 is supported in TurboMCP v2.2+
         let algorithm = match jwt_header.alg {
             Algorithm::ES256 => DpopAlgorithm::ES256,
-            Algorithm::RS256 => DpopAlgorithm::RS256,
-            Algorithm::PS256 => DpopAlgorithm::PS256,
             other => {
                 return Err(super::DpopError::InvalidProofStructure {
-                    reason: format!("Unsupported DPoP algorithm: {:?}", other),
+                    reason: format!(
+                        "Unsupported DPoP algorithm: {:?}. Only ES256 is supported (RSA removed due to RUSTSEC-2023-0071)",
+                        other
+                    ),
                 });
             }
         };
@@ -677,18 +592,14 @@ pub fn generate_ticket_id() -> TicketId {
 }
 
 /// Compute JWK thumbprint as defined in RFC 7638
+///
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
 pub fn compute_jwk_thumbprint(jwk: &DpopJwk) -> super::Result<String> {
     use sha2::{Digest, Sha256};
 
     // Create canonical JWK representation for thumbprint computation
+    // Only EC keys are supported
     let canonical_jwk = match jwk {
-        DpopJwk::Rsa { n, e, .. } => {
-            serde_json::json!({
-                "e": e,
-                "kty": "RSA",
-                "n": n
-            })
-        }
         DpopJwk::Ec { crv, x, y, .. } => {
             serde_json::json!({
                 "crv": crv,
@@ -733,17 +644,14 @@ fn is_valid_http_uri(uri: &str) -> bool {
 /// This function converts our DpopJwk to a DecodingKey that can be used
 /// with the jsonwebtoken crate for signature verification. This is critical
 /// for proper DPoP security as per RFC 9449 requirements.
+///
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
 fn create_decoding_key_from_jwk(
     jwk: &DpopJwk,
 ) -> Result<jsonwebtoken::DecodingKey, Box<dyn std::error::Error>> {
     use jsonwebtoken::DecodingKey;
 
     match jwk {
-        DpopJwk::Rsa { n, e, .. } => {
-            // Use jsonwebtoken's RSA components method (expects base64url-encoded strings)
-            DecodingKey::from_rsa_components(n, e)
-                .map_err(|e| format!("Failed to create RSA decoding key: {}", e).into())
-        }
         DpopJwk::Ec { x, y, .. } => {
             // Use jsonwebtoken's EC components method (expects base64url-encoded strings)
             DecodingKey::from_ec_components(x, y)
@@ -846,17 +754,9 @@ mod tests {
 
     #[test]
     fn test_dpop_algorithm_properties() {
-        assert_eq!(DpopAlgorithm::RS256.as_str(), "RS256");
         assert_eq!(DpopAlgorithm::ES256.as_str(), "ES256");
-        assert_eq!(DpopAlgorithm::PS256.as_str(), "PS256");
-
-        assert_eq!(DpopAlgorithm::RS256.recommended_key_size(), 2048);
         assert_eq!(DpopAlgorithm::ES256.recommended_key_size(), 256);
-        assert_eq!(DpopAlgorithm::PS256.recommended_key_size(), 2048);
-
-        assert!(DpopAlgorithm::RS256.is_production_ready());
         assert!(DpopAlgorithm::ES256.is_production_ready());
-        assert!(DpopAlgorithm::PS256.is_production_ready());
     }
 
     #[test]

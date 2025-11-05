@@ -148,54 +148,6 @@ impl r2d2::ManageConnection for SessionManager {
 /// Production-grade ASN.1 parsing utilities for PKCS#11 key data
 #[cfg(feature = "hsm-pkcs11")]
 impl Pkcs11HsmManager {
-    /// Parse RSA public key from PKCS#11 using proven ASN.1 parsing
-    ///
-    /// This implementation uses the asn1 crate for secure, standards-compliant parsing
-    /// of RSA SubjectPublicKeyInfo structures as defined in RFC 3279 and RFC 8017.
-    fn parse_rsa_public_key_asn1(&self, der_bytes: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-        // Parse the DER-encoded SubjectPublicKeyInfo structure
-        // SubjectPublicKeyInfo ::= SEQUENCE {
-        //   algorithm         AlgorithmIdentifier,
-        //   subjectPublicKey  BIT STRING
-        // }
-        //
-        // RSAPublicKey ::= SEQUENCE {
-        //   modulus           INTEGER,  -- n
-        //   publicExponent    INTEGER   -- e
-        // }
-
-        asn1::parse(der_bytes, |parser| {
-            parser
-                .read_element::<asn1::Sequence<'_>>()?
-                .parse(|parser| {
-                    // Skip the algorithm identifier sequence
-                    parser.read_element::<asn1::Sequence<'_>>()?;
-
-                    // Extract the subjectPublicKey bit string
-                    let bit_string = parser.read_element::<asn1::BitString<'_>>()?;
-                    let public_key_bytes = bit_string.as_bytes();
-
-                    // Parse the RSAPublicKey sequence from the bit string
-                    asn1::parse(public_key_bytes, |parser| {
-                        parser
-                            .read_element::<asn1::Sequence<'_>>()?
-                            .parse(|parser| {
-                                // Extract modulus (n)
-                                let n_bytes = parser.read_element::<asn1::BigUint<'_>>()?;
-
-                                // Extract public exponent (e)
-                                let e_bytes = parser.read_element::<asn1::BigUint<'_>>()?;
-
-                                Ok((n_bytes.as_bytes().to_vec(), e_bytes.as_bytes().to_vec()))
-                            })
-                    })
-                })
-        })
-        .map_err(|e: ParseError| DpopError::KeyManagementError {
-            reason: format!("ASN.1 parsing error for RSA public key: {}", e),
-        })
-    }
-
     /// Parse EC public key from PKCS#11 using proven ASN.1 parsing
     ///
     /// Handles both compressed and uncompressed EC points according to SEC 1 v2.0
@@ -462,20 +414,11 @@ impl Pkcs11HsmManager {
     /// Generate ECDSA key pair synchronously
     fn generate_ecdsa_key_pair_sync(
         session: &Session,
-        algorithm: DpopAlgorithm,
+        _algorithm: DpopAlgorithm,
     ) -> Result<(ObjectHandle, ObjectHandle, String)> {
         // Define EC curve parameters for P-256
-        let curve_params = match algorithm {
-            DpopAlgorithm::ES256 => {
-                // P-256 curve OID: 1.2.840.10045.3.1.7
-                vec![0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]
-            }
-            _ => {
-                return Err(DpopError::KeyManagementError {
-                    reason: format!("Unsupported ECDSA algorithm: {:?}", algorithm),
-                });
-            }
-        };
+        // P-256 curve OID: 1.2.840.10045.3.1.7
+        let curve_params = vec![0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
 
         // Generate unique key label
         let key_id = format!(
@@ -519,111 +462,24 @@ impl Pkcs11HsmManager {
         Ok((public_handle, private_handle, key_id))
     }
 
-    /// Generate RSA key pair synchronously
-    fn generate_rsa_key_pair_sync(
-        session: &Session,
-        _algorithm: DpopAlgorithm,
-    ) -> Result<(ObjectHandle, ObjectHandle, String)> {
-        // Generate unique key label
-        let key_id = format!(
-            "dpop_rsa_{}_{}",
-            chrono::Utc::now().timestamp(),
-            uuid::Uuid::new_v4()
-        );
-
-        let public_key_template = vec![
-            Attribute::Class(ObjectClass::PUBLIC_KEY),
-            Attribute::KeyType(KeyType::RSA),
-            Attribute::Token(true),
-            Attribute::Verify(true),
-            Attribute::Label(key_id.as_bytes().to_vec()),
-            Attribute::ModulusBits(2048.into()),
-            Attribute::PublicExponent(vec![0x01, 0x00, 0x01]), // 65537
-        ];
-
-        let private_key_template = vec![
-            Attribute::Class(ObjectClass::PRIVATE_KEY),
-            Attribute::KeyType(KeyType::RSA),
-            Attribute::Token(true),
-            Attribute::Private(true),
-            Attribute::Sensitive(true),
-            Attribute::Extractable(false),
-            Attribute::Sign(true),
-            Attribute::Label(key_id.as_bytes().to_vec()),
-        ];
-
-        let mechanism = Mechanism::RsaPkcsKeyPairGen;
-
-        let (public_handle, private_handle) = session
-            .generate_key_pair(&mechanism, &public_key_template, &private_key_template)
-            .map_err(|e| DpopError::KeyManagementError {
-                reason: format!("Failed to generate RSA key pair: {}", e),
-            })?;
-
-        trace!(
-            "Generated RSA key pair: public={:?}, private={:?}",
-            public_handle, private_handle
-        );
-        Ok((public_handle, private_handle, key_id))
-    }
-
     /// Extract public key bytes for JWK
     fn extract_public_key_bytes_sync(
         session: &Session,
         public_handle: ObjectHandle,
-        algorithm: DpopAlgorithm,
+        _algorithm: DpopAlgorithm,
     ) -> Result<Vec<u8>> {
-        match algorithm {
-            DpopAlgorithm::ES256 => {
-                let attributes = session
-                    .get_attributes(public_handle, &[AttributeType::EcPoint])
-                    .map_err(|e| DpopError::KeyManagementError {
-                        reason: format!("Failed to extract EC point: {}", e),
-                    })?;
+        let attributes = session
+            .get_attributes(public_handle, &[AttributeType::EcPoint])
+            .map_err(|e| DpopError::KeyManagementError {
+                reason: format!("Failed to extract EC point: {}", e),
+            })?;
 
-                if let Some(Attribute::EcPoint(point_data)) = attributes.first() {
-                    Ok(point_data.clone())
-                } else {
-                    Err(DpopError::KeyManagementError {
-                        reason: "Failed to extract EC point data".to_string(),
-                    })
-                }
-            }
-            DpopAlgorithm::RS256 | DpopAlgorithm::PS256 => {
-                let attributes = session
-                    .get_attributes(
-                        public_handle,
-                        &[AttributeType::Modulus, AttributeType::PublicExponent],
-                    )
-                    .map_err(|e| DpopError::KeyManagementError {
-                        reason: format!("Failed to extract RSA public key: {}", e),
-                    })?;
-
-                let mut modulus = Vec::new();
-                let mut exponent = Vec::new();
-
-                for attr in attributes {
-                    match attr {
-                        Attribute::Modulus(n) => modulus = n,
-                        Attribute::PublicExponent(e) => exponent = e,
-                        _ => {}
-                    }
-                }
-
-                if modulus.is_empty() || exponent.is_empty() {
-                    return Err(DpopError::KeyManagementError {
-                        reason: "Incomplete RSA public key data".to_string(),
-                    });
-                }
-
-                // Return modulus and exponent as a tuple encoded as bytes
-                let mut result = Vec::new();
-                result.extend_from_slice(&(modulus.len() as u32).to_be_bytes());
-                result.extend_from_slice(&modulus);
-                result.extend_from_slice(&(exponent.len() as u32).to_be_bytes());
-                result.extend_from_slice(&exponent);
-                Ok(result)
-            }
+        if let Some(Attribute::EcPoint(point_data)) = attributes.first() {
+            Ok(point_data.clone())
+        } else {
+            Err(DpopError::KeyManagementError {
+                reason: "Failed to extract EC point data".to_string(),
+            })
         }
     }
 
@@ -654,13 +510,9 @@ impl Pkcs11HsmManager {
         session: &Session,
         private_handle: ObjectHandle,
         data: &[u8],
-        algorithm: DpopAlgorithm,
+        _algorithm: DpopAlgorithm,
     ) -> Result<Vec<u8>> {
-        let mechanism = match algorithm {
-            DpopAlgorithm::ES256 => Mechanism::Ecdsa,
-            DpopAlgorithm::RS256 => Mechanism::RsaPkcs,
-            DpopAlgorithm::PS256 => Mechanism::RsaPkcs, // PSS would be more appropriate but not all HSMs support it
-        };
+        let mechanism = Mechanism::Ecdsa;
 
         let signature = session
             .sign(&mechanism, private_handle, data)
@@ -689,14 +541,8 @@ impl HsmOperations for Pkcs11HsmManager {
                 let session = session_pool.get()?;
 
                 // Generate key pair synchronously
-                let (public_handle, _private_handle, key_id) = match algorithm_clone {
-                    DpopAlgorithm::ES256 => {
-                        Self::generate_ecdsa_key_pair_sync(&session, algorithm_clone)?
-                    }
-                    DpopAlgorithm::RS256 | DpopAlgorithm::PS256 => {
-                        Self::generate_rsa_key_pair_sync(&session, algorithm_clone)?
-                    }
-                };
+                let (public_handle, _private_handle, key_id) =
+                    Self::generate_ecdsa_key_pair_sync(&session, algorithm_clone)?;
 
                 // Extract public key bytes
                 let public_key_bytes =
@@ -726,26 +572,13 @@ impl HsmOperations for Pkcs11HsmManager {
 
         // For HSM keys, create reference structures - private key material never leaves HSM
         // Store key handle/reference information instead of actual key material
-        let private_key = match algorithm {
-            DpopAlgorithm::ES256 => DpopPrivateKey::EcdsaP256 {
-                key_bytes: [0u8; 32], // HSM reference - actual key material secured in hardware
-            },
-            DpopAlgorithm::RS256 | DpopAlgorithm::PS256 => DpopPrivateKey::Rsa {
-                key_der: vec![], // HSM reference - actual key material secured in hardware
-            },
+        let private_key = DpopPrivateKey::EcdsaP256 {
+            key_bytes: [0u8; 32], // HSM reference - actual key material secured in hardware
         };
 
         // Parse public key using proven ASN.1 parsing
-        let public_key = match algorithm {
-            DpopAlgorithm::ES256 => {
-                let (x, y) = self.parse_ec_public_key_asn1(&public_key_bytes)?;
-                DpopPublicKey::EcdsaP256 { x, y }
-            }
-            DpopAlgorithm::RS256 | DpopAlgorithm::PS256 => {
-                let (n, e) = self.parse_rsa_public_key_asn1(&public_key_bytes)?;
-                DpopPublicKey::Rsa { n, e }
-            }
-        };
+        let (x, y) = self.parse_ec_public_key_asn1(&public_key_bytes)?;
+        let public_key = DpopPublicKey::EcdsaP256 { x, y };
 
         // Compute RFC 7638 compliant JWK thumbprint
         let thumbprint = self.compute_jwk_thumbprint(&public_key, algorithm)?;
@@ -788,11 +621,7 @@ impl HsmOperations for Pkcs11HsmManager {
             let private_handle = Self::find_private_key_by_label_sync(&session, &key_id_owned)?;
 
             // Determine algorithm from key (simplified - would need proper detection)
-            let algorithm = if key_id_owned.contains("_ec_") {
-                DpopAlgorithm::ES256
-            } else {
-                DpopAlgorithm::RS256
-            };
+            let algorithm = DpopAlgorithm::ES256;
 
             // Sign the data
             let signature =
@@ -994,7 +823,6 @@ impl HsmOperations for Pkcs11HsmManager {
 
         let mut max_key_lengths = HashMap::new();
         max_key_lengths.insert(DpopAlgorithm::ES256, 256);
-        max_key_lengths.insert(DpopAlgorithm::RS256, 4096);
 
         Ok(HsmInfo {
             hsm_type: "PKCS#11".to_string(),
@@ -1003,7 +831,7 @@ impl HsmOperations for Pkcs11HsmManager {
                 library_info.cryptoki_version().major(),
                 library_info.cryptoki_version().minor()
             ),
-            supported_algorithms: vec![DpopAlgorithm::ES256, DpopAlgorithm::RS256],
+            supported_algorithms: vec![DpopAlgorithm::ES256],
             max_key_lengths,
             capabilities,
             hardware_features: vec![

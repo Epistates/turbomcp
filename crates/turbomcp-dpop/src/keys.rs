@@ -63,14 +63,24 @@ impl DpopKeyManager {
     }
 
     /// Generate a new DPoP key pair
+    ///
+    /// Only ES256 (ECDSA P-256) is supported as of TurboMCP v2.2+
+    /// The algorithm parameter is kept for API compatibility but must be ES256
     pub async fn generate_key_pair(&self, algorithm: DpopAlgorithm) -> Result<DpopKeyPair> {
+        // Validate algorithm (only ES256 supported)
+        if algorithm != DpopAlgorithm::ES256 {
+            return Err(DpopError::CryptographicError {
+                reason: format!(
+                    "Unsupported algorithm: {}. Only ES256 is supported (RSA removed due to RUSTSEC-2023-0071)",
+                    algorithm
+                ),
+            });
+        }
+
         let key_id = Uuid::new_v4().to_string();
         let now = SystemTime::now();
 
-        let (private_key, public_key) = match algorithm {
-            DpopAlgorithm::ES256 => generate_es256_key_pair()?,
-            DpopAlgorithm::RS256 | DpopAlgorithm::PS256 => generate_rsa_key_pair(2048)?,
-        };
+        let (private_key, public_key) = generate_es256_key_pair()?;
 
         let key_pair = DpopKeyPair {
             id: key_id.clone(),
@@ -405,54 +415,14 @@ fn generate_es256_key_pair() -> Result<(DpopPrivateKey, DpopPublicKey)> {
     Ok((private_key, public_key))
 }
 
-/// Generate RSA key pair (for RS256/PS256)
-fn generate_rsa_key_pair(key_size: u32) -> Result<(DpopPrivateKey, DpopPublicKey)> {
-    use rsa::{RsaPrivateKey, RsaPublicKey, pkcs8::EncodePrivateKey, traits::PublicKeyParts};
-
-    // Generate RSA private key
-    let private_key = RsaPrivateKey::new(&mut OsRng, key_size as usize).map_err(|e| {
-        DpopError::CryptographicError {
-            reason: format!("Failed to generate RSA key: {e}"),
-        }
-    })?;
-
-    let public_key: RsaPublicKey = private_key.to_public_key();
-
-    // Encode private key in PKCS#8 DER format
-    let private_key_der = private_key
-        .to_pkcs8_der()
-        .map_err(|e| DpopError::CryptographicError {
-            reason: format!("Failed to encode RSA private key: {e}"),
-        })?
-        .as_bytes()
-        .to_vec();
-
-    let dpop_private_key = DpopPrivateKey::Rsa {
-        key_der: private_key_der,
-    };
-
-    // Extract RSA public key parameters
-    let dpop_public_key = DpopPublicKey::Rsa {
-        n: public_key.n().to_bytes_be(),
-        e: public_key.e().to_bytes_be(),
-    };
-
-    Ok((dpop_private_key, dpop_public_key))
-}
-
 /// Compute JWK thumbprint for a public key
+///
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
 fn compute_thumbprint(public_key: &DpopPublicKey, algorithm: DpopAlgorithm) -> Result<String> {
     use sha2::{Digest, Sha256};
 
-    // Create JWK representation
+    // Create JWK representation - only EC keys supported
     let jwk = match (public_key, algorithm) {
-        (DpopPublicKey::Rsa { n, e }, DpopAlgorithm::RS256 | DpopAlgorithm::PS256) => {
-            serde_json::json!({
-                "kty": "RSA",
-                "n": URL_SAFE_NO_PAD.encode(n),
-                "e": URL_SAFE_NO_PAD.encode(e),
-            })
-        }
         (DpopPublicKey::EcdsaP256 { x, y }, DpopAlgorithm::ES256) => {
             serde_json::json!({
                 "kty": "EC",
@@ -460,11 +430,6 @@ fn compute_thumbprint(public_key: &DpopPublicKey, algorithm: DpopAlgorithm) -> R
                 "x": URL_SAFE_NO_PAD.encode(x),
                 "y": URL_SAFE_NO_PAD.encode(y),
             })
-        }
-        _ => {
-            return Err(DpopError::CryptographicError {
-                reason: "Mismatched key type and algorithm".to_string(),
-            });
         }
     };
 
@@ -842,7 +807,7 @@ mod tests {
     async fn test_key_generation_algorithms() {
         let key_manager = DpopKeyManager::new_memory().await.unwrap();
 
-        // Test ES256
+        // Test ES256 - only supported algorithm
         let es256_key = key_manager
             .generate_key_pair(DpopAlgorithm::ES256)
             .await
@@ -852,14 +817,6 @@ mod tests {
             es256_key.private_key,
             DpopPrivateKey::EcdsaP256 { .. }
         ));
-
-        // Test RS256
-        let rs256_key = key_manager
-            .generate_key_pair(DpopAlgorithm::RS256)
-            .await
-            .unwrap();
-        assert_eq!(rs256_key.algorithm, DpopAlgorithm::RS256);
-        assert!(matches!(rs256_key.private_key, DpopPrivateKey::Rsa { .. }));
     }
 
     #[tokio::test]

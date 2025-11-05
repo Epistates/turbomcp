@@ -6,10 +6,16 @@
 //! ## Core Features
 //!
 //! - ✅ **RFC 9449 Compliance** - Full specification implementation
-//! - ✅ **Cryptographic Security** - RSA, ECDSA P-256, and PSS support
+//! - ✅ **Cryptographic Security** - ES256 (ECDSA P-256) only for maximum security
 //! - ✅ **Token Binding** - Prevents stolen token usage
 //! - ✅ **Replay Protection** - Nonce tracking and timestamp validation
 //! - ✅ **Production Features** - HSM integration, audit logging, key rotation
+//!
+//! ## Security Notice
+//!
+//! **TurboMCP v2.2.0+** removes RSA algorithm support (RS256, PS256) to eliminate
+//! timing attack vulnerabilities (RUSTSEC-2023-0071). Only ES256 (ECDSA P-256) is supported.
+//! ES256 provides superior security, faster performance, and smaller key sizes.
 //!
 //! ## Architecture
 //!

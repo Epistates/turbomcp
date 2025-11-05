@@ -6,13 +6,11 @@
 //! These utilities are designed for testing scenarios only and should never
 //! be used in production code.
 
-use super::{DpopAlgorithm, DpopError, DpopKeyPair, NonceStorage, Result, StorageStats};
+use super::{DpopAlgorithm, DpopKeyPair, NonceStorage, Result, StorageStats};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use p256::ecdsa::{SigningKey, VerifyingKey};
 use p256::elliptic_curve::rand_core::OsRng;
-use ring::rand;
-use ring::rand::SecureRandom;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -160,49 +158,6 @@ impl MockKeyManager {
 
                 Ok(dpop_key)
             }
-            DpopAlgorithm::RS256 | DpopAlgorithm::PS256 => {
-                // For testing, generate a minimal RSA key representation
-                // Note: ring doesn't support RSA key generation, so we simulate it
-                let rng = rand::SystemRandom::new();
-                let mut key_bytes = vec![0u8; 256]; // 2048-bit key simulation
-                rng.fill(&mut key_bytes)
-                    .map_err(|e| DpopError::KeyManagementError {
-                        reason: format!("Failed to generate random bytes: {}", e),
-                    })?;
-
-                let thumbprint = format!("test_rsa_{}", hex::encode(&key_bytes[..8]));
-
-                let dpop_key = DpopKeyPair {
-                    id: thumbprint.clone(),
-                    private_key: super::DpopPrivateKey::Rsa {
-                        key_der: key_bytes.clone(),
-                    },
-                    public_key: super::DpopPublicKey::Rsa {
-                        n: key_bytes[64..192].to_vec(),
-                        e: vec![0x01, 0x00, 0x01], // Standard RSA exponent
-                    },
-                    thumbprint: thumbprint.clone(),
-                    algorithm,
-                    created_at: SystemTime::now(),
-                    expires_at: None,
-                    metadata: super::DpopKeyMetadata::default(),
-                };
-
-                {
-                    let mut keys = self.keys.write().unwrap();
-                    keys.insert(thumbprint, dpop_key.clone());
-                }
-
-                {
-                    let mut stats = self.stats.write().unwrap();
-                    stats.keys_generated += 1;
-                    if let Ok(elapsed) = start_time.elapsed() {
-                        stats.total_test_time += elapsed;
-                    }
-                }
-
-                Ok(dpop_key)
-            }
         }
     }
 
@@ -221,11 +176,7 @@ impl MockKeyManager {
 
         // Create test JWT header
         let header = json!({
-            "alg": match key_pair.algorithm {
-                DpopAlgorithm::ES256 => "ES256",
-                DpopAlgorithm::RS256 => "RS256",
-                DpopAlgorithm::PS256 => "PS256",
-            },
+            "alg": "ES256",
             "typ": "dpop+jwt",
             "jwk": self.create_test_jwk(&key_pair.public_key, &key_pair.algorithm)?
         });
@@ -302,27 +253,17 @@ impl MockKeyManager {
     fn create_test_jwk(
         &self,
         public_key: &super::DpopPublicKey,
-        algorithm: &DpopAlgorithm,
+        _algorithm: &DpopAlgorithm,
     ) -> Result<serde_json::Value> {
-        match (public_key, algorithm) {
-            (super::DpopPublicKey::EcdsaP256 { x, y }, DpopAlgorithm::ES256) => Ok(json!({
+        // Only ES256 with ECDSA P-256 is supported
+        match public_key {
+            super::DpopPublicKey::EcdsaP256 { x, y } => Ok(json!({
                 "kty": "EC",
                 "crv": "P-256",
                 "x": URL_SAFE_NO_PAD.encode(x),
                 "y": URL_SAFE_NO_PAD.encode(y),
                 "use": "sig"
             })),
-            (super::DpopPublicKey::Rsa { n, e }, DpopAlgorithm::RS256 | DpopAlgorithm::PS256) => {
-                Ok(json!({
-                    "kty": "RSA",
-                    "n": URL_SAFE_NO_PAD.encode(n),
-                    "e": URL_SAFE_NO_PAD.encode(e),
-                    "use": "sig"
-                }))
-            }
-            _ => Err(DpopError::CryptographicError {
-                reason: "Public key type does not match algorithm".to_string(),
-            }),
         }
     }
 }

@@ -150,25 +150,14 @@ impl DpopProofGenerator {
         // Create JWK from public key for the DpopHeader
         // Note: This creates our custom DpopJwk for the proof structure
         // The actual JWT signing uses jsonwebtoken::Jwk (created in sign_jwt)
+        // Only ES256 (ECDSA P-256) is supported
         let jwk = match (&key_pair.public_key, key_pair.algorithm) {
-            (DpopPublicKey::Rsa { n, e }, DpopAlgorithm::RS256 | DpopAlgorithm::PS256) => {
-                DpopJwk::Rsa {
-                    use_: "sig".to_string(),
-                    n: URL_SAFE_NO_PAD.encode(n),
-                    e: URL_SAFE_NO_PAD.encode(e),
-                }
-            }
             (DpopPublicKey::EcdsaP256 { x, y }, DpopAlgorithm::ES256) => DpopJwk::Ec {
                 use_: "sig".to_string(),
                 crv: "P-256".to_string(),
                 x: URL_SAFE_NO_PAD.encode(x),
                 y: URL_SAFE_NO_PAD.encode(y),
             },
-            _ => {
-                return Err(DpopError::CryptographicError {
-                    reason: "Mismatched key type and algorithm".to_string(),
-                });
-            }
         };
 
         // Create JWT header
@@ -457,14 +446,14 @@ impl DpopProofGenerator {
         })?;
 
         // 2. Validate algorithm is allowed (whitelist - prevents "none" algorithm attack)
-        const ALLOWED_ALGS: &[jsonwebtoken::Algorithm] = &[
-            jsonwebtoken::Algorithm::ES256,
-            jsonwebtoken::Algorithm::RS256,
-            jsonwebtoken::Algorithm::PS256,
-        ];
+        // Only ES256 is supported as of TurboMCP v2.2+ (RSA removed due to RUSTSEC-2023-0071)
+        const ALLOWED_ALGS: &[jsonwebtoken::Algorithm] = &[jsonwebtoken::Algorithm::ES256];
         if !ALLOWED_ALGS.contains(&header.alg) {
             return Err(DpopError::InvalidProofStructure {
-                reason: format!("Algorithm {:?} not allowed for DPoP", header.alg),
+                reason: format!(
+                    "Algorithm {:?} not allowed for DPoP. Only ES256 is supported (RSA removed due to RUSTSEC-2023-0071)",
+                    header.alg
+                ),
             });
         }
 
