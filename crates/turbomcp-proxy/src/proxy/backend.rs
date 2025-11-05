@@ -178,6 +178,15 @@ pub struct BackendConnector {
     spec: Arc<tokio::sync::Mutex<Option<ServerSpec>>>,
 }
 
+impl std::fmt::Debug for BackendConnector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BackendConnector")
+            .field("config", &self.config)
+            .field("spec", &"<Mutex>")
+            .finish_non_exhaustive()
+    }
+}
+
 impl BackendConnector {
     /// Create a new backend connector
     ///

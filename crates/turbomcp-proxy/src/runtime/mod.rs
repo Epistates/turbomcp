@@ -28,14 +28,14 @@
 //! # }
 //! ```
 
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 use turbomcp_protocol::jsonrpc::{
     JsonRpcError, JsonRpcErrorCode, JsonRpcRequest, JsonRpcResponse, JsonRpcResponsePayload,
     ResponseId,
@@ -44,9 +44,10 @@ use turbomcp_protocol::types::RequestId;
 use turbomcp_protocol::types::{CallToolRequest, GetPromptRequest, ReadResourceRequest};
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
-use crate::config::{BackendConfig, FrontendType};
+use crate::config::{BackendConfig, BackendValidationConfig, FrontendType, SsrfProtection};
 use crate::error::{ProxyError, ProxyResult};
 use crate::proxy::{AtomicMetrics, BackendConnector, BackendTransport, ProxyService};
+use ipnetwork::IpNetwork;
 
 /// Maximum request size in bytes (10 MB)
 pub const MAX_REQUEST_SIZE: usize = 10 * 1024 * 1024;
@@ -80,6 +81,7 @@ pub struct RuntimeProxyBuilder {
     request_size_limit: usize,
     timeout_ms: u64,
     enable_metrics: bool,
+    validation_config: BackendValidationConfig,
 }
 
 impl RuntimeProxyBuilder {
@@ -93,6 +95,7 @@ impl RuntimeProxyBuilder {
             request_size_limit: MAX_REQUEST_SIZE,
             timeout_ms: DEFAULT_TIMEOUT_MS,
             enable_metrics: true,
+            validation_config: BackendValidationConfig::default(),
         }
     }
 
@@ -333,6 +336,45 @@ impl RuntimeProxyBuilder {
         self
     }
 
+    /// Configure backend URL validation and SSRF protection
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Backend validation configuration
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use turbomcp_proxy::runtime::RuntimeProxyBuilder;
+    /// # use turbomcp_proxy::config::{BackendValidationConfig, SsrfProtection};
+    /// # use ipnetwork::IpNetwork;
+    /// # use std::str::FromStr;
+    /// # async fn example() -> turbomcp_proxy::ProxyResult<()> {
+    /// // Allow connections to specific private network
+    /// let validation = BackendValidationConfig {
+    ///     ssrf_protection: SsrfProtection::Balanced {
+    ///         allowed_private_networks: vec![
+    ///             IpNetwork::from_str("10.0.0.0/8").unwrap(),
+    ///         ],
+    ///     },
+    ///     ..Default::default()
+    /// };
+    ///
+    /// let proxy = RuntimeProxyBuilder::new()
+    ///     .with_websocket_backend("ws://10.0.1.5:8080")
+    ///     .with_http_frontend("127.0.0.1:3000")
+    ///     .with_backend_validation(validation)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn with_backend_validation(mut self, config: BackendValidationConfig) -> Self {
+        self.validation_config = config;
+        self
+    }
+
     /// Build and validate the runtime proxy
     ///
     /// # Errors
@@ -373,7 +415,7 @@ impl RuntimeProxyBuilder {
 
         // Validate security constraints
         Self::validate_command(backend_config)?;
-        Self::validate_url(backend_config)?;
+        Self::validate_url(backend_config, &self.validation_config)?;
         Self::validate_working_dir(backend_config)?;
 
         // Take ownership after validation
@@ -443,66 +485,256 @@ impl RuntimeProxyBuilder {
     }
 
     /// Validate URL for SSRF protection (SECURITY CRITICAL)
-    fn validate_url(config: &BackendConfig) -> ProxyResult<()> {
-        if let BackendConfig::Http { url, .. } = config {
-            let parsed = url::Url::parse(url).map_err(|e| {
-                ProxyError::configuration_with_key(format!("Invalid URL: {e}"), "url")
-            })?;
+    ///
+    /// Validates both HTTP and WebSocket URLs against SSRF protection rules.
+    /// Blocks private IPs, cloud metadata endpoints, and validates schemes.
+    fn validate_url(
+        config: &BackendConfig,
+        validation_config: &BackendValidationConfig,
+    ) -> ProxyResult<()> {
+        // Extract URL based on backend type
+        let (BackendConfig::Http { url: url_str, .. } | BackendConfig::WebSocket { url: url_str }) =
+            config
+        else {
+            return Ok(()); // Other backend types don't use URLs
+        };
 
-            // Require HTTPS except for localhost
-            if parsed.scheme() != "https" {
-                let host = parsed.host_str().unwrap_or("");
-                if !is_localhost(host) {
-                    return Err(ProxyError::configuration_with_key(
-                        format!(
-                            "HTTPS required for non-localhost URLs. Got: {scheme}",
-                            scheme = parsed.scheme()
-                        ),
-                        "url",
-                    ));
-                }
-            }
+        eprintln!("[DEBUG] Validating URL: {url_str}");
 
-            // Block private IP ranges and metadata endpoints
-            if let Some(host) = parsed.host_str() {
-                Self::validate_host(host)?;
-            }
-        }
-        Ok(())
-    }
+        let parsed = url::Url::parse(url_str)
+            .map_err(|e| ProxyError::configuration_with_key(format!("Invalid URL: {e}"), "url"))?;
 
-    /// Validate host is not private/metadata (SECURITY CRITICAL)
-    fn validate_host(host: &str) -> ProxyResult<()> {
-        // Block AWS metadata endpoint
-        if host == "169.254.169.254" {
-            return Err(ProxyError::configuration_with_key(
-                "AWS metadata endpoint not allowed",
-                "url",
-            ));
-        }
+        eprintln!("[DEBUG] Parsed host: {:?}", parsed.host_str());
 
-        // Block GCP metadata endpoint
-        if host == "metadata.google.internal" || host == "169.254.169.254" {
-            return Err(ProxyError::configuration_with_key(
-                "GCP metadata endpoint not allowed",
-                "url",
-            ));
-        }
-
-        // Parse IP address and check for private ranges
-        if let Ok(ip) = host.parse::<Ipv4Addr>()
-            && (ip.is_private() || ip.is_loopback() || ip.is_link_local())
+        // Validate scheme is allowed
+        if !validation_config
+            .allowed_schemes
+            .contains(&parsed.scheme().to_string())
         {
-            // Allow localhost/loopback explicitly
-            if !ip.is_loopback() {
+            return Err(ProxyError::configuration_with_key(
+                format!(
+                    "Scheme '{}' not allowed. Allowed schemes: {}",
+                    parsed.scheme(),
+                    validation_config.allowed_schemes.join(", ")
+                ),
+                "url",
+            ));
+        }
+
+        // Require secure protocols (HTTPS/WSS) except for localhost
+        if parsed.scheme() == "http" || parsed.scheme() == "ws" {
+            let host = parsed.host_str().unwrap_or("");
+            if !is_localhost(host) {
+                let secure_scheme = if parsed.scheme() == "http" {
+                    "https"
+                } else {
+                    "wss"
+                };
                 return Err(ProxyError::configuration_with_key(
-                    format!("Private IP address not allowed: {ip}"),
+                    format!(
+                        "Secure protocol required for non-localhost URLs. Use {} instead of {}",
+                        secure_scheme,
+                        parsed.scheme()
+                    ),
                     "url",
                 ));
             }
         }
 
+        // Apply SSRF protection based on configuration
+        if let Some(host) = parsed.host_str() {
+            Self::validate_host(host, validation_config)?;
+        }
+
         Ok(())
+    }
+
+    /// Validate host is not private/metadata based on SSRF protection level (SECURITY CRITICAL)
+    fn validate_host(host: &str, validation_config: &BackendValidationConfig) -> ProxyResult<()> {
+        // Check custom blocklist first
+        if validation_config.blocked_hosts.contains(&host.to_string()) {
+            return Err(ProxyError::configuration_with_key(
+                format!("Host '{host}' is blocked by custom blocklist"),
+                "url",
+            ));
+        }
+
+        // Apply SSRF protection based on configuration
+        match &validation_config.ssrf_protection {
+            SsrfProtection::Disabled => {
+                warn!("SSRF protection disabled for host: {}", host);
+                Ok(())
+            }
+            SsrfProtection::Strict => Self::validate_host_strict(host),
+            SsrfProtection::Balanced {
+                allowed_private_networks,
+            } => Self::validate_host_balanced(host, allowed_private_networks),
+        }
+    }
+
+    /// Strict SSRF validation - blocks all private networks
+    fn validate_host_strict(host: &str) -> ProxyResult<()> {
+        eprintln!("[DEBUG] Validating host (strict): '{host}'");
+
+        // Block well-known cloud metadata endpoints
+        if Self::is_cloud_metadata_endpoint(host) {
+            return Err(ProxyError::configuration_with_key(
+                format!(
+                    "Cloud metadata endpoint blocked: {host}. \
+                    For internal proxies, use SsrfProtection::Balanced with allowed networks."
+                ),
+                "url",
+            ));
+        }
+
+        // Strip brackets from IPv6 addresses (URL format uses [::1])
+        let host_without_brackets = host.trim_start_matches('[').trim_end_matches(']');
+
+        // Try parsing as IPv4
+        if let Ok(ip) = host_without_brackets.parse::<Ipv4Addr>() {
+            eprintln!("[DEBUG] Parsed as IPv4: {ip}");
+            if ip.is_loopback() {
+                return Ok(()); // Localhost is always allowed
+            }
+            if ip.is_private() || ip.is_link_local() {
+                return Err(ProxyError::configuration_with_key(
+                    format!(
+                        "Private IPv4 address blocked: {ip}. \
+                        For internal proxies, configure:\n  \
+                        SsrfProtection::Balanced {{ \
+                        allowed_private_networks: vec![IpNetwork::from_str(\"10.0.0.0/8\")?] }}"
+                    ),
+                    "url",
+                ));
+            }
+            return Ok(());
+        }
+
+        // Try parsing as IPv6
+        eprintln!("[DEBUG] Attempting to parse '{host_without_brackets}' as IPv6");
+        if let Ok(ip) = host_without_brackets.parse::<Ipv6Addr>() {
+            eprintln!("[DEBUG] Parsed as IPv6: {ip}");
+            if ip.is_loopback() {
+                return Ok(()); // Localhost is always allowed
+            }
+            let is_private = Self::is_private_ipv6(&ip);
+            eprintln!("[DEBUG] Is private IPv6: {is_private}");
+            if is_private {
+                return Err(ProxyError::configuration_with_key(
+                    format!(
+                        "Private IPv6 address blocked: {ip}. \
+                        For internal proxies, configure:\n  \
+                        SsrfProtection::Balanced {{ \
+                        allowed_private_networks: vec![IpNetwork::from_str(\"fc00::/7\")?] }}"
+                    ),
+                    "url",
+                ));
+            }
+            return Ok(());
+        }
+
+        // Hostname - warn about potential DNS rebinding
+        warn!(
+            "Hostname validation ({}): DNS resolution not performed. \
+            Consider using IP addresses for stricter SSRF protection.",
+            host
+        );
+
+        Ok(())
+    }
+
+    /// Balanced SSRF validation - allows specific private networks
+    fn validate_host_balanced(host: &str, allowed_networks: &[IpNetwork]) -> ProxyResult<()> {
+        // Always block cloud metadata endpoints, even in balanced mode
+        if Self::is_cloud_metadata_endpoint(host) {
+            return Err(ProxyError::configuration_with_key(
+                format!("Cloud metadata endpoint blocked: {host}"),
+                "url",
+            ));
+        }
+
+        // Strip brackets from IPv6 addresses (URL format uses [::1])
+        let host_without_brackets = host.trim_start_matches('[').trim_end_matches(']');
+
+        // Parse as IP address
+        let ip = if let Ok(ipv4) = host_without_brackets.parse::<Ipv4Addr>() {
+            IpAddr::V4(ipv4)
+        } else if let Ok(ipv6) = host_without_brackets.parse::<Ipv6Addr>() {
+            IpAddr::V6(ipv6)
+        } else {
+            // Hostname - warn about DNS rebinding
+            warn!(
+                "Hostname validation ({}): DNS resolution not performed. \
+                Consider using IP addresses for stricter SSRF protection.",
+                host
+            );
+            return Ok(());
+        };
+
+        // Loopback always allowed
+        match ip {
+            IpAddr::V4(ipv4) if ipv4.is_loopback() => return Ok(()),
+            IpAddr::V6(ipv6) if ipv6.is_loopback() => return Ok(()),
+            _ => {}
+        }
+
+        // Check if IP is private
+        let is_private = match ip {
+            IpAddr::V4(ipv4) => ipv4.is_private() || ipv4.is_link_local(),
+            IpAddr::V6(ipv6) => Self::is_private_ipv6(&ipv6),
+        };
+
+        if is_private {
+            // Check if it's in the allowed networks using ipnetwork's built-in contains
+            if allowed_networks.iter().any(|net| net.contains(ip)) {
+                debug!("Private IP {} allowed by configured network", ip);
+                return Ok(());
+            }
+
+            return Err(ProxyError::configuration_with_key(
+                format!(
+                    "Private IP {ip} not in allowed networks. Allowed networks: {allowed_networks:?}"
+                ),
+                "url",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Check if hostname is a known cloud metadata endpoint
+    fn is_cloud_metadata_endpoint(host: &str) -> bool {
+        // AWS/GCP metadata (IPv4 link-local)
+        if host == "169.254.169.254" {
+            return true;
+        }
+
+        // Azure metadata (specific IP)
+        if host == "168.63.129.16" {
+            return true;
+        }
+
+        // GCP metadata hostname
+        if host == "metadata.google.internal" || host == "metadata" {
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if IPv6 address is private/internal
+    fn is_private_ipv6(ip: &Ipv6Addr) -> bool {
+        // Unique local addresses (ULA) - fc00::/7
+        if ip.segments()[0] & 0xfe00 == 0xfc00 {
+            return true;
+        }
+
+        // Link-local addresses - fe80::/10
+        if ip.segments()[0] & 0xffc0 == 0xfe80 {
+            return true;
+        }
+
+        false
     }
 
     /// Validate working directory (path traversal protection)
@@ -556,6 +788,7 @@ fn is_localhost(host: &str) -> bool {
 /// Runtime proxy instance
 ///
 /// Manages the proxy lifecycle, routing requests between frontend and backend.
+#[derive(Debug)]
 pub struct RuntimeProxy {
     /// Backend connector
     backend: BackendConnector,
@@ -1119,8 +1352,9 @@ mod tests {
             url: "http://api.example.com".to_string(),
             auth_token: None,
         };
+        let validation_config = BackendValidationConfig::default();
 
-        let result = RuntimeProxyBuilder::validate_url(&config);
+        let result = RuntimeProxyBuilder::validate_url(&config, &validation_config);
         assert!(result.is_err());
     }
 
@@ -1130,8 +1364,9 @@ mod tests {
             url: "http://localhost:3000".to_string(),
             auth_token: None,
         };
+        let validation_config = BackendValidationConfig::default();
 
-        assert!(RuntimeProxyBuilder::validate_url(&config).is_ok());
+        assert!(RuntimeProxyBuilder::validate_url(&config, &validation_config).is_ok());
     }
 
     #[test]
@@ -1140,30 +1375,40 @@ mod tests {
             url: "https://api.example.com".to_string(),
             auth_token: None,
         };
+        let validation_config = BackendValidationConfig::default();
 
-        assert!(RuntimeProxyBuilder::validate_url(&config).is_ok());
+        assert!(RuntimeProxyBuilder::validate_url(&config, &validation_config).is_ok());
     }
 
     #[test]
     fn test_validate_host_blocks_metadata() {
+        let validation_config = BackendValidationConfig::default();
+
         // AWS metadata endpoint
-        assert!(RuntimeProxyBuilder::validate_host("169.254.169.254").is_err());
+        assert!(RuntimeProxyBuilder::validate_host("169.254.169.254", &validation_config).is_err());
 
         // GCP metadata endpoint
-        assert!(RuntimeProxyBuilder::validate_host("metadata.google.internal").is_err());
+        assert!(
+            RuntimeProxyBuilder::validate_host("metadata.google.internal", &validation_config)
+                .is_err()
+        );
     }
 
     #[test]
     fn test_validate_host_blocks_private_ips() {
+        let validation_config = BackendValidationConfig::default();
+
         // Private IP ranges
-        assert!(RuntimeProxyBuilder::validate_host("192.168.1.1").is_err());
-        assert!(RuntimeProxyBuilder::validate_host("10.0.0.1").is_err());
-        assert!(RuntimeProxyBuilder::validate_host("172.16.0.1").is_err());
+        assert!(RuntimeProxyBuilder::validate_host("192.168.1.1", &validation_config).is_err());
+        assert!(RuntimeProxyBuilder::validate_host("10.0.0.1", &validation_config).is_err());
+        assert!(RuntimeProxyBuilder::validate_host("172.16.0.1", &validation_config).is_err());
     }
 
     #[test]
     fn test_validate_host_allows_loopback() {
-        assert!(RuntimeProxyBuilder::validate_host("127.0.0.1").is_ok());
+        let validation_config = BackendValidationConfig::default();
+
+        assert!(RuntimeProxyBuilder::validate_host("127.0.0.1", &validation_config).is_ok());
     }
 
     #[test]
