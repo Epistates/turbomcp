@@ -296,6 +296,73 @@ impl RequestContext {
     pub fn server_to_client(&self) -> Option<&Arc<dyn ServerToClientRequests>> {
         self.server_to_client.as_ref()
     }
+
+    /// Returns all HTTP headers from the request, if available.
+    ///
+    /// Headers are automatically extracted by HTTP and WebSocket transports and stored
+    /// in the context metadata. Returns `None` if not using an HTTP-based transport
+    /// or if headers were not extracted.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_protocol::RequestContext;
+    /// # let ctx = RequestContext::new();
+    /// if let Some(headers) = ctx.headers() {
+    ///     for (name, value) in headers.iter() {
+    ///         println!("{}: {}", name, value);
+    ///     }
+    /// }
+    /// ```
+    #[must_use]
+    pub fn headers(&self) -> Option<HashMap<String, String>> {
+        self.get_metadata("http_headers")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+
+    /// Returns a specific HTTP header value by name (case-insensitive).
+    ///
+    /// This method performs case-insensitive header lookup, as per HTTP specification.
+    /// Returns `None` if the header is not present or if not using an HTTP-based transport.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_protocol::RequestContext;
+    /// # let ctx = RequestContext::new();
+    /// if let Some(user_agent) = ctx.header("user-agent") {
+    ///     println!("User-Agent: {}", user_agent);
+    /// }
+    /// ```
+    #[must_use]
+    pub fn header(&self, name: &str) -> Option<String> {
+        let headers = self.headers()?;
+        let name_lower = name.to_lowercase();
+
+        // HTTP headers are case-insensitive, so we need to search with lowercase comparison
+        headers
+            .iter()
+            .find(|(key, _)| key.to_lowercase() == name_lower)
+            .map(|(_, value)| value.clone())
+    }
+
+    /// Returns the transport type used for this request.
+    ///
+    /// Common transport types include: "http", "websocket", "stdio", "tcp", "unix".
+    /// Returns `None` if transport metadata is not set.
+    ///
+    /// # Example
+    /// ```
+    /// # use turbomcp_protocol::RequestContext;
+    /// # let ctx = RequestContext::new();
+    /// if let Some(transport) = ctx.transport() {
+    ///     println!("Request received via: {}", transport);
+    /// }
+    /// ```
+    #[must_use]
+    pub fn transport(&self) -> Option<String> {
+        self.get_metadata("transport")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    }
 }
 
 impl Default for RequestContext {
@@ -445,5 +512,100 @@ impl RequestContextExt for RequestContext {
                 _ => super::client::ClientId::Header(id.clone()), // Default to header for "header" and unknown methods
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_headers_returns_none_when_not_set() {
+        let ctx = RequestContext::new();
+        assert!(ctx.headers().is_none());
+    }
+
+    #[test]
+    fn test_headers_returns_headers_when_set() {
+        let mut headers_map = HashMap::new();
+        headers_map.insert("user-agent".to_string(), "Test-Agent/1.0".to_string());
+        headers_map.insert("content-type".to_string(), "application/json".to_string());
+
+        let headers_json = serde_json::to_value(&headers_map).unwrap();
+        let ctx = RequestContext::new()
+            .with_metadata("http_headers", headers_json);
+
+        let headers = ctx.headers();
+        assert!(headers.is_some());
+
+        let headers = headers.unwrap();
+        assert_eq!(headers.len(), 2);
+        assert_eq!(headers.get("user-agent"), Some(&"Test-Agent/1.0".to_string()));
+        assert_eq!(headers.get("content-type"), Some(&"application/json".to_string()));
+    }
+
+    #[test]
+    fn test_header_case_insensitive_lookup() {
+        let mut headers_map = HashMap::new();
+        headers_map.insert("User-Agent".to_string(), "Test-Agent/1.0".to_string());
+        headers_map.insert("Content-Type".to_string(), "application/json".to_string());
+
+        let headers_json = serde_json::to_value(&headers_map).unwrap();
+        let ctx = RequestContext::new()
+            .with_metadata("http_headers", headers_json);
+
+        // Test case-insensitive lookup
+        assert_eq!(ctx.header("user-agent"), Some("Test-Agent/1.0".to_string()));
+        assert_eq!(ctx.header("USER-AGENT"), Some("Test-Agent/1.0".to_string()));
+        assert_eq!(ctx.header("User-Agent"), Some("Test-Agent/1.0".to_string()));
+        assert_eq!(ctx.header("content-type"), Some("application/json".to_string()));
+        assert_eq!(ctx.header("CONTENT-TYPE"), Some("application/json".to_string()));
+    }
+
+    #[test]
+    fn test_header_returns_none_when_not_found() {
+        let mut headers_map = HashMap::new();
+        headers_map.insert("user-agent".to_string(), "Test-Agent/1.0".to_string());
+
+        let headers_json = serde_json::to_value(&headers_map).unwrap();
+        let ctx = RequestContext::new()
+            .with_metadata("http_headers", headers_json);
+
+        assert_eq!(ctx.header("x-custom-header"), None);
+    }
+
+    #[test]
+    fn test_header_returns_none_when_headers_not_set() {
+        let ctx = RequestContext::new();
+        assert_eq!(ctx.header("user-agent"), None);
+    }
+
+    #[test]
+    fn test_transport_returns_none_when_not_set() {
+        let ctx = RequestContext::new();
+        assert!(ctx.transport().is_none());
+    }
+
+    #[test]
+    fn test_transport_returns_transport_type() {
+        let ctx = RequestContext::new()
+            .with_metadata("transport", "http");
+
+        assert_eq!(ctx.transport(), Some("http".to_string()));
+    }
+
+    #[test]
+    fn test_multiple_transport_types() {
+        let http_ctx = RequestContext::new()
+            .with_metadata("transport", "http");
+        assert_eq!(http_ctx.transport(), Some("http".to_string()));
+
+        let ws_ctx = RequestContext::new()
+            .with_metadata("transport", "websocket");
+        assert_eq!(ws_ctx.transport(), Some("websocket".to_string()));
+
+        let stdio_ctx = RequestContext::new()
+            .with_metadata("transport", "stdio");
+        assert_eq!(stdio_ctx.transport(), Some("stdio".to_string()));
     }
 }

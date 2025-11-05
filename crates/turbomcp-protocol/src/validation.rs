@@ -314,7 +314,19 @@ impl ProtocolValidator {
     pub fn validate_resource(&self, resource: &Resource) -> ValidationResult {
         let mut ctx = ValidationContext::new();
 
-        // Validate URI
+        // Validate URI length (defense-in-depth before regex)
+        if resource.uri.len() > self.rules.max_string_length {
+            ctx.add_error(
+                "RESOURCE_URI_TOO_LONG",
+                format!(
+                    "Resource URI exceeds maximum length of {}",
+                    self.rules.max_string_length
+                ),
+                Some("uri".to_string()),
+            );
+        }
+
+        // Validate URI format
         if !self.rules.uri_regex().is_match(&resource.uri) {
             ctx.add_error(
                 "RESOURCE_INVALID_URI",

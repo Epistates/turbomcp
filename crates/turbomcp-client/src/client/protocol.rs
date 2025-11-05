@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcVersion};
 use turbomcp_protocol::{Error, Result};
-use turbomcp_transport::{Transport, TransportMessage};
+use turbomcp_transport::{Transport, TransportConfig, TransportMessage};
 
 use super::dispatcher::MessageDispatcher;
 
@@ -56,6 +56,8 @@ pub(super) struct ProtocolClient<T: Transport> {
     transport: Arc<T>,
     dispatcher: Arc<MessageDispatcher>,
     next_id: AtomicU64,
+    /// Transport configuration for timeout enforcement (v2.2.0+)
+    config: TransportConfig,
 }
 
 impl<T: Transport + 'static> ProtocolClient<T> {
@@ -70,6 +72,23 @@ impl<T: Transport + 'static> ProtocolClient<T> {
             transport,
             dispatcher,
             next_id: AtomicU64::new(1),
+            config: TransportConfig::default(), // Use default timeout config
+        }
+    }
+
+    /// Create a new protocol client with custom transport configuration
+    ///
+    /// This allows setting custom timeouts and limits.
+    #[allow(dead_code)] // May be used in future
+    pub(super) fn with_config(transport: T, config: TransportConfig) -> Self {
+        let transport = Arc::new(transport);
+        let dispatcher = MessageDispatcher::new(transport.clone());
+
+        Self {
+            transport,
+            dispatcher,
+            next_id: AtomicU64::new(1),
+            config,
         }
     }
 
@@ -119,6 +138,31 @@ impl<T: Transport + 'static> ProtocolClient<T> {
         method: &str,
         params: Option<serde_json::Value>,
     ) -> Result<R> {
+        // Wrap the entire operation in total timeout (if configured)
+        let operation = self.request_inner(method, params);
+
+        if let Some(total_timeout) = self.config.timeouts.total {
+            match tokio::time::timeout(total_timeout, operation).await {
+                Ok(result) => result,
+                Err(_) => {
+                    let err = turbomcp_transport::TransportError::TotalTimeout {
+                        operation: format!("{}()", method),
+                        timeout: total_timeout,
+                    };
+                    Err(Error::transport(err.to_string()))
+                }
+            }
+        } else {
+            operation.await
+        }
+    }
+
+    /// Inner request implementation without total timeout wrapper
+    async fn request_inner<R: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        params: Option<serde_json::Value>,
+    ) -> Result<R> {
         // Generate unique request ID
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request_id = turbomcp_protocol::MessageId::from(id.to_string());
@@ -149,11 +193,25 @@ impl<T: Transport + 'static> ProtocolClient<T> {
             .await
             .map_err(|e| Error::transport(format!("Transport send failed: {e}")))?;
 
-        // Step 3: Wait for response via oneshot channel
+        // Step 3: Wait for response via oneshot channel with request timeout
         // The dispatcher's background task will send the response when it arrives
-        let response = response_receiver
-            .await
-            .map_err(|_| Error::transport("Response channel closed".to_string()))?;
+        let response = if let Some(request_timeout) = self.config.timeouts.request {
+            match tokio::time::timeout(request_timeout, response_receiver).await {
+                Ok(Ok(response)) => response,
+                Ok(Err(_)) => return Err(Error::transport("Response channel closed".to_string())),
+                Err(_) => {
+                    let err = turbomcp_transport::TransportError::RequestTimeout {
+                        operation: format!("{}()", method),
+                        timeout: request_timeout,
+                    };
+                    return Err(Error::transport(err.to_string()));
+                }
+            }
+        } else {
+            response_receiver
+                .await
+                .map_err(|_| Error::transport("Response channel closed".to_string()))?
+        };
 
         // Handle JSON-RPC errors
         if let Some(error) = response.error() {
