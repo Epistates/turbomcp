@@ -54,6 +54,10 @@ pub enum CliError {
     #[error("Feature not supported: {0}")]
     NotSupported(String),
 
+    /// Security validation error (path traversal, invalid filenames, etc.)
+    #[error("Security validation failed: {reason}\n{details}")]
+    SecurityViolation { reason: String, details: String },
+
     /// Generic error
     #[error("{0}")]
     Other(String),
@@ -96,6 +100,7 @@ impl CliError {
             Self::Io(_) => ErrorCategory::System,
             Self::Config(_) => ErrorCategory::Config,
             Self::NotSupported(_) => ErrorCategory::NotSupported,
+            Self::SecurityViolation { .. } => ErrorCategory::Security,
             _ => ErrorCategory::Other,
         }
     }
@@ -112,6 +117,7 @@ pub enum ErrorCategory {
     System,
     Config,
     NotSupported,
+    Security,
     Other,
 }
 
@@ -126,6 +132,7 @@ impl fmt::Display for ErrorCategory {
             Self::System => write!(f, "System"),
             Self::Config => write!(f, "Configuration"),
             Self::NotSupported => write!(f, "Not Supported"),
+            Self::Security => write!(f, "Security"),
             Self::Other => write!(f, "Error"),
         }
     }

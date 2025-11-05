@@ -3,6 +3,7 @@
 use crate::cli::*;
 use crate::error::{CliError, CliResult};
 use crate::formatter::Formatter;
+use crate::path_security;
 use crate::transport::create_client;
 use std::collections::HashMap;
 
@@ -102,20 +103,50 @@ impl CommandExecutor {
                 client.initialize().await?;
                 let tools = client.list_tools().await?;
 
+                // Create output directory (must exist for path validation)
                 std::fs::create_dir_all(&output)?;
 
-                for tool in tools {
-                    let filename = format!("{}.json", tool.name);
-                    let filepath = output.join(filename);
-                    let schema = serde_json::to_string_pretty(&tool.input_schema)?;
-                    std::fs::write(&filepath, schema)?;
+                let mut exported_count = 0;
+                let mut skipped_count = 0;
 
-                    if self.verbose {
-                        println!("Exported: {}", filepath.display());
+                for tool in tools {
+                    // Sanitize tool name and construct safe output path
+                    // This prevents path traversal attacks from malicious servers
+                    match path_security::safe_output_path(&output, &tool.name, "json") {
+                        Ok(filepath) => {
+                            let schema = serde_json::to_string_pretty(&tool.input_schema)?;
+                            std::fs::write(&filepath, schema)?;
+
+                            if self.verbose {
+                                println!("Exported: {}", filepath.display());
+                            }
+                            exported_count += 1;
+                        }
+                        Err(e) => {
+                            // Log security violation but continue processing other tools
+                            eprintln!("Warning: Skipped tool '{}': {}", tool.name, e);
+                            skipped_count += 1;
+                        }
                     }
                 }
 
-                println!("✓ Exported schemas to: {}", output.display());
+                if exported_count > 0 {
+                    println!(
+                        "✓ Exported {} schema{} to: {}",
+                        exported_count,
+                        if exported_count == 1 { "" } else { "s" },
+                        output.display()
+                    );
+                }
+
+                if skipped_count > 0 {
+                    println!(
+                        "⚠ Skipped {} tool{} due to invalid names",
+                        skipped_count,
+                        if skipped_count == 1 { "" } else { "s" }
+                    );
+                }
+
                 Ok(())
             }
         }

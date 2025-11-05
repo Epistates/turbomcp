@@ -47,6 +47,7 @@ pub mod cli;
 pub mod error;
 pub mod executor;
 pub mod formatter;
+pub mod path_security;
 pub mod prelude;
 pub mod transport;
 
