@@ -103,7 +103,7 @@ pub struct UserInfo {
 }
 
 /// Token information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TokenInfo {
     /// Access token
     pub access_token: String,
@@ -115,6 +115,22 @@ pub struct TokenInfo {
     pub expires_in: Option<u64>,
     /// Token scope
     pub scope: Option<String>,
+}
+
+// Manual Debug impl to prevent token exposure in logs (Sprint 3.6)
+impl std::fmt::Debug for TokenInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TokenInfo")
+            .field("access_token", &"[REDACTED]")
+            .field("token_type", &self.token_type)
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("expires_in", &self.expires_in)
+            .field("scope", &self.scope)
+            .finish()
+    }
 }
 
 /// Authentication provider trait
@@ -146,7 +162,7 @@ pub trait AuthProvider: Send + Sync + std::fmt::Debug {
 }
 
 /// Authentication credentials
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum AuthCredentials {
     /// Username and password
     UsernamePassword {
@@ -179,6 +195,36 @@ pub enum AuthCredentials {
     },
 }
 
+// Manual Debug impl to prevent credential exposure in logs (Sprint 3.6)
+impl std::fmt::Debug for AuthCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthCredentials::UsernamePassword { username, .. } => f
+                .debug_struct("AuthCredentials::UsernamePassword")
+                .field("username", username)
+                .field("password", &"[REDACTED]")
+                .finish(),
+            AuthCredentials::ApiKey { .. } => f
+                .debug_struct("AuthCredentials::ApiKey")
+                .field("key", &"[REDACTED]")
+                .finish(),
+            AuthCredentials::OAuth2Code { state, .. } => f
+                .debug_struct("AuthCredentials::OAuth2Code")
+                .field("code", &"[REDACTED]")
+                .field("state", state)
+                .finish(),
+            AuthCredentials::JwtToken { .. } => f
+                .debug_struct("AuthCredentials::JwtToken")
+                .field("token", &"[REDACTED]")
+                .finish(),
+            AuthCredentials::Custom { .. } => f
+                .debug_struct("AuthCredentials::Custom")
+                .field("data", &"[REDACTED]")
+                .finish(),
+        }
+    }
+}
+
 /// Secure token storage abstraction
 #[async_trait]
 pub trait TokenStorage: Send + Sync + std::fmt::Debug {
@@ -202,7 +248,7 @@ pub trait TokenStorage: Send + Sync + std::fmt::Debug {
 }
 
 /// Secure access token with metadata
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AccessToken {
     /// The actual token
     pub(crate) token: String,
@@ -212,6 +258,18 @@ pub struct AccessToken {
     pub(crate) scopes: Vec<String>,
     /// Provider metadata
     pub(crate) metadata: HashMap<String, serde_json::Value>,
+}
+
+// Manual Debug impl to prevent token exposure in logs (Sprint 3.6)
+impl std::fmt::Debug for AccessToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccessToken")
+            .field("token", &"[REDACTED]")
+            .field("expires_at", &self.expires_at)
+            .field("scopes", &self.scopes)
+            .field("metadata", &self.metadata)
+            .finish()
+    }
 }
 
 impl AccessToken {

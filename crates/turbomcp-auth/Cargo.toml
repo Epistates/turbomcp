@@ -50,6 +50,10 @@ uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
 # Secret management
 secrecy = { version = "0.8.0", features = ["serde"] }
 
+# Cryptography (Sprint 2: API key constant-time comparison)
+subtle = "2.6"          # Constant-time comparison for timing attack resistance
+blake3 = "1.5"          # Fast cryptographic hashing for API keys
+
 # HTTP client for OAuth flows
 reqwest = { version = "0.12", features = ["json"] }
 

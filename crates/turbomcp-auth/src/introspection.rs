@@ -39,7 +39,7 @@ use std::collections::HashMap;
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 /// Token introspection request per RFC 7662 Section 2.1
-#[derive(Debug, Clone, Serialize)]
+#[derive(Clone, Serialize)]
 pub struct IntrospectionRequest {
     /// The token to introspect (REQUIRED)
     pub token: String,
@@ -47,6 +47,16 @@ pub struct IntrospectionRequest {
     /// Hint about token type (access_token or refresh_token)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_type_hint: Option<String>,
+}
+
+// Manual Debug impl to prevent token exposure in logs (Sprint 3.6)
+impl std::fmt::Debug for IntrospectionRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IntrospectionRequest")
+            .field("token", &"[REDACTED]")
+            .field("token_type_hint", &self.token_type_hint)
+            .finish()
+    }
 }
 
 /// Token introspection response per RFC 7662 Section 2.2
@@ -128,7 +138,7 @@ pub struct IntrospectionResponse {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct IntrospectionClient {
     /// Introspection endpoint URL
     endpoint: String,
@@ -141,6 +151,21 @@ pub struct IntrospectionClient {
 
     /// HTTP client
     http_client: reqwest::Client,
+}
+
+// Manual Debug impl to prevent client_secret exposure in logs (Sprint 3.6)
+impl std::fmt::Debug for IntrospectionClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IntrospectionClient")
+            .field("endpoint", &self.endpoint)
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("http_client", &"<reqwest::Client>")
+            .finish()
+    }
 }
 
 impl IntrospectionClient {

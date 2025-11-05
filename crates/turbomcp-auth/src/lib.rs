@@ -102,6 +102,7 @@
 //! - **RFC 9728** - OAuth 2.0 Protected Resource Metadata
 
 // Submodules
+pub mod api_key_validation; // Sprint 2.3: Constant-time API key validation
 pub mod config;
 pub mod context;
 pub mod introspection;

@@ -1,6 +1,11 @@
 //! API Key Authentication Provider
 //!
 //! Simple API key-based authentication for service-to-service communication.
+//!
+//! ## Security
+//!
+//! This provider uses constant-time comparison to prevent timing attacks on API keys.
+//! See [`crate::api_key_validation`] for implementation details.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -8,6 +13,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
+use super::super::api_key_validation::validate_api_key;
 use super::super::config::AuthProviderType;
 use super::super::context::AuthContext;
 use super::super::types::{AuthCredentials, AuthProvider, TokenInfo, UserInfo};
@@ -62,7 +68,20 @@ impl AuthProvider for ApiKeyProvider {
         match credentials {
             AuthCredentials::ApiKey { key } => {
                 let api_keys = self.api_keys.read().await;
-                if let Some(user_info) = api_keys.get(&key) {
+
+                // Use constant-time comparison to prevent timing attacks
+                // Instead of HashMap::get (which uses string equality), we iterate
+                // and use secure comparison for each key
+                let mut matched_user_info: Option<UserInfo> = None;
+
+                for (stored_key, user_info) in api_keys.iter() {
+                    if validate_api_key(&key, stored_key) {
+                        matched_user_info = Some(user_info.clone());
+                        break;
+                    }
+                }
+
+                if let Some(user_info) = matched_user_info {
                     let token = TokenInfo {
                         access_token: key,
                         token_type: "ApiKey".to_string(),
@@ -115,9 +134,14 @@ impl AuthProvider for ApiKeyProvider {
 
     async fn get_user_info(&self, token: &str) -> McpResult<UserInfo> {
         let api_keys = self.api_keys.read().await;
-        api_keys
-            .get(token)
-            .cloned()
-            .ok_or_else(|| McpError::internal("Invalid API key".to_string()))
+
+        // Use constant-time comparison to prevent timing attacks
+        for (stored_key, user_info) in api_keys.iter() {
+            if validate_api_key(token, stored_key) {
+                return Ok(user_info.clone());
+            }
+        }
+
+        Err(McpError::internal("Invalid API key".to_string()))
     }
 }
