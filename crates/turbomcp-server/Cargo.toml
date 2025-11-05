@@ -39,12 +39,21 @@ config = { version = "0.15", default-features = true }
 # Middleware dependencies (optional - only needed for HTTP/advanced features)
 tower = { workspace = true }  # Core abstraction layer (uses workspace 0.5.2)
 tower-http = { workspace = true, optional = true }
-tower_governor = { version = "0.7", optional = true }
+governor = { version = "0.10.1", optional = true }  # Sprint 3.2: GCRA rate limiting
+tower_governor = { version = "0.8.0", optional = true }  # Sprint 3.2: Tower integration
+tower-sessions = { version = "0.13", optional = true }  # Sprint 2: Session management
 jsonwebtoken = { version = "10.1", features = ["aws_lc_rs"], optional = true }
 secrecy = { version = "0.8", features = ["serde"], optional = true }
 http = { version = "1.0" }  # Core HTTP types for Service abstraction (lightweight)
 axum = { version = "0.8.4", optional = true, features = ["ws", "json"] }
 async-stream = { version = "0.3", optional = true }
+
+# Security (Sprint 2)
+syn = { version = "2", features = ["parsing", "full"], optional = true }  # Handler name validation
+
+# Input Validation (Sprint 3.4)
+garde = { version = "0.22", optional = true, features = ["email", "url", "credit-card", "phone-number"] }
+axum-valid = { version = "0.24", optional = true, features = ["garde"], default-features = false }
 
 # Observability dependencies
 once_cell = "1.19"
@@ -62,11 +71,14 @@ default = ["stdio"]
 # Core capabilities (minimal by default)
 auth = ["dep:turbomcp-auth", "dep:jsonwebtoken", "dep:secrecy"]
 dpop = ["auth", "turbomcp-auth/dpop"]
+sessions = ["middleware", "dep:tower-sessions"]  # Sprint 2: Session management
+security = ["dep:syn"]  # Sprint 2: Handler name validation
+input-validation = ["http", "dep:garde", "dep:axum-valid"]  # Sprint 3.4: Input validation
 health-checks = []
 hot-reload = []
 metrics = []
 middleware = ["dep:tower-http"]  # tower and http are now core deps
-rate-limiting = ["middleware", "dep:tower_governor"]
+rate-limiting = ["middleware", "dep:governor", "dep:tower_governor"]
 graceful-shutdown = []
 observability = []
 # Transport features (progressive enhancement)
@@ -77,4 +89,4 @@ tcp = ["dep:turbomcp-transport", "turbomcp-transport/tcp"]
 unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
 # Convenience feature bundles
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]
-full = ["all-transports", "auth", "dpop", "health-checks", "metrics", "middleware", "rate-limiting", "graceful-shutdown"]
+full = ["all-transports", "auth", "dpop", "sessions", "security", "input-validation", "health-checks", "metrics", "middleware", "rate-limiting", "graceful-shutdown"]
