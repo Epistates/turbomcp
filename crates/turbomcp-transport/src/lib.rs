@@ -203,7 +203,7 @@ pub use bidirectional::{
 pub use core::{
     BidirectionalTransport, StreamingTransport, Transport, TransportCapabilities, TransportConfig,
     TransportError, TransportEvent, TransportMessage, TransportMetrics, TransportResult,
-    TransportState, TransportType,
+    TransportState, TransportType, validate_request_size, validate_response_size,
 };
 
 // Re-export server transport functionality
@@ -238,7 +238,7 @@ pub use unix::UnixTransport;
 pub use child_process::{ChildProcessConfig, ChildProcessTransport};
 
 // Re-export utilities
-pub use config::TransportConfigBuilder;
+pub use config::{LimitsConfig, TransportConfigBuilder};
 pub use resilience::{
     CircuitBreakerConfig, CircuitBreakerStats, CircuitState, HealthCheckConfig, HealthInfo,
     HealthStatus, RetryConfig, TurboTransport,

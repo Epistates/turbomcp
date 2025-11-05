@@ -50,6 +50,75 @@ pub enum TransportError {
     #[error("Operation timed out")]
     Timeout,
 
+    /// Connection establishment timed out.
+    ///
+    /// This error occurs when the TCP/TLS handshake takes too long to complete.
+    /// Consider checking network connectivity or increasing the connect timeout.
+    #[error(
+        "Connection timed out after {timeout:?} for operation: {operation}. \
+         If this is expected, increase the timeout with \
+         `TimeoutConfig {{ connect: Duration::from_secs({}) }}`",
+        timeout.as_secs() * 2
+    )]
+    ConnectionTimeout {
+        /// The operation that timed out
+        operation: String,
+        /// The timeout duration that was exceeded
+        timeout: Duration,
+    },
+
+    /// Single request timed out.
+    ///
+    /// This error occurs when a single request-response cycle takes too long.
+    /// For slow operations like LLM sampling, consider using `TimeoutConfig::patient()`.
+    #[error(
+        "Request timed out after {timeout:?} for operation: {operation}. \
+         If this is expected, increase the timeout with \
+         `TimeoutConfig {{ request: Some(Duration::from_secs({})) }}` \
+         or use `TimeoutConfig::patient()` for slow operations",
+        timeout.as_secs() * 2
+    )]
+    RequestTimeout {
+        /// The operation that timed out
+        operation: String,
+        /// The timeout duration that was exceeded
+        timeout: Duration,
+    },
+
+    /// Total operation timed out (including retries).
+    ///
+    /// This error occurs when the entire operation, including all retries,
+    /// takes too long. This timeout is broader than request timeout.
+    #[error(
+        "Total operation timed out after {timeout:?} for operation: {operation}. \
+         This includes retries. If this is expected, increase the timeout with \
+         `TimeoutConfig {{ total: Some(Duration::from_secs({})) }}`",
+        timeout.as_secs() * 2
+    )]
+    TotalTimeout {
+        /// The operation that timed out
+        operation: String,
+        /// The timeout duration that was exceeded
+        timeout: Duration,
+    },
+
+    /// Read operation timed out (streaming).
+    ///
+    /// This error occurs when reading a chunk from a streaming response takes too long.
+    /// For slow streaming operations, consider using `TimeoutConfig::patient()`.
+    #[error(
+        "Read timed out after {timeout:?} while streaming response for operation: {operation}. \
+         If this is expected, increase the timeout with \
+         `TimeoutConfig {{ read: Some(Duration::from_secs({})) }}`",
+        timeout.as_secs() * 2
+    )]
+    ReadTimeout {
+        /// The operation that timed out
+        operation: String,
+        /// The timeout duration that was exceeded
+        timeout: Duration,
+    },
+
     /// The transport was configured with invalid parameters.
     #[error("Configuration error: {0}")]
     ConfigurationError(String),
@@ -73,6 +142,44 @@ pub enum TransportError {
     /// An unexpected internal error occurred.
     #[error("Internal error: {0}")]
     Internal(String),
+
+    /// Request size exceeds the configured maximum limit.
+    ///
+    /// This error protects against memory exhaustion attacks by rejecting
+    /// requests that are too large. If you need to send larger requests,
+    /// increase the limit with `LimitsConfig::max_request_size`.
+    #[error(
+        "Request size ({size} bytes) exceeds maximum allowed ({max} bytes). \
+         If this is expected, increase the limit with \
+         `LimitsConfig {{ max_request_size: Some({}) }}` or use `LimitsConfig::unlimited()` \
+         if running behind an API gateway.",
+        size
+    )]
+    RequestTooLarge {
+        /// The actual size of the request in bytes
+        size: usize,
+        /// The maximum allowed size in bytes
+        max: usize,
+    },
+
+    /// Response size exceeds the configured maximum limit.
+    ///
+    /// This error protects against memory exhaustion attacks by rejecting
+    /// responses that are too large. If you need to receive larger responses,
+    /// increase the limit with `LimitsConfig::max_response_size`.
+    #[error(
+        "Response size ({size} bytes) exceeds maximum allowed ({max} bytes). \
+         If this is expected, increase the limit with \
+         `LimitsConfig {{ max_response_size: Some({}) }}` or use `LimitsConfig::unlimited()` \
+         if running behind an API gateway.",
+        size
+    )]
+    ResponseTooLarge {
+        /// The actual size of the response in bytes
+        size: usize,
+        /// The maximum allowed size in bytes
+        max: usize,
+    },
 }
 
 /// Enumerates the types of transports supported by the system.
@@ -168,6 +275,29 @@ pub struct TransportConfig {
 
     /// The preferred compression algorithm to use.
     pub compression_algorithm: Option<String>,
+
+    /// Size limits for requests and responses (v2.2.0+).
+    ///
+    /// By default, enforces 10MB response limit and 1MB request limit
+    /// to prevent memory exhaustion attacks.
+    #[serde(default)]
+    pub limits: crate::config::LimitsConfig,
+
+    /// Timeout configuration for operations (v2.2.0+).
+    ///
+    /// By default, enforces balanced timeouts (30s connect, 60s request, 120s total)
+    /// to prevent hanging requests and resource exhaustion.
+    #[serde(default)]
+    pub timeouts: crate::config::TimeoutConfig,
+
+    /// TLS/HTTPS configuration (v2.2.0+).
+    ///
+    /// By default, uses TLS 1.2 for backward compatibility in v2.2.0.
+    /// Use `TlsConfig::modern()` for TLS 1.3 (recommended).
+    ///
+    /// This configuration applies to HTTP and WebSocket transports.
+    #[serde(default)]
+    pub tls: crate::config::TlsConfig,
 
     /// A map for any other custom configuration.
     pub custom: HashMap<String, serde_json::Value>,
@@ -652,6 +782,9 @@ impl Default for TransportConfig {
             max_connections: None,
             compression: false,
             compression_algorithm: None,
+            limits: crate::config::LimitsConfig::default(),
+            timeouts: crate::config::TimeoutConfig::default(),
+            tls: crate::config::TlsConfig::default(),
             custom: HashMap::new(),
         }
     }
@@ -800,6 +933,78 @@ impl From<serde_json::Error> for TransportError {
     fn from(err: serde_json::Error) -> Self {
         Self::SerializationFailed(err.to_string())
     }
+}
+
+/// Validates that a request message size does not exceed the configured limit.
+///
+/// # Arguments
+///
+/// * `size` - The size of the request payload in bytes
+/// * `limits` - The limits configuration to check against
+///
+/// # Returns
+///
+/// `Ok(())` if the size is within limits or no limit is set, otherwise `Err(TransportError::RequestTooLarge)`
+///
+/// # Example
+///
+/// ```
+/// use turbomcp_transport::core::validate_request_size;
+/// use turbomcp_transport::config::LimitsConfig;
+///
+/// let limits = LimitsConfig::default();
+/// assert!(validate_request_size(1000, &limits).is_ok());
+/// assert!(validate_request_size(10 * 1024 * 1024, &limits).is_err());
+/// ```
+pub fn validate_request_size(
+    size: usize,
+    limits: &crate::config::LimitsConfig,
+) -> TransportResult<()> {
+    if let Some(max_size) = limits.max_request_size
+        && size > max_size
+    {
+        return Err(TransportError::RequestTooLarge {
+            size,
+            max: max_size,
+        });
+    }
+    Ok(())
+}
+
+/// Validates that a response message size does not exceed the configured limit.
+///
+/// # Arguments
+///
+/// * `size` - The size of the response payload in bytes
+/// * `limits` - The limits configuration to check against
+///
+/// # Returns
+///
+/// `Ok(())` if the size is within limits or no limit is set, otherwise `Err(TransportError::ResponseTooLarge)`
+///
+/// # Example
+///
+/// ```
+/// use turbomcp_transport::core::validate_response_size;
+/// use turbomcp_transport::config::LimitsConfig;
+///
+/// let limits = LimitsConfig::default();
+/// assert!(validate_response_size(1000, &limits).is_ok());
+/// assert!(validate_response_size(50 * 1024 * 1024, &limits).is_err());
+/// ```
+pub fn validate_response_size(
+    size: usize,
+    limits: &crate::config::LimitsConfig,
+) -> TransportResult<()> {
+    if let Some(max_size) = limits.max_response_size
+        && size > max_size
+    {
+        return Err(TransportError::ResponseTooLarge {
+            size,
+            max: max_size,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

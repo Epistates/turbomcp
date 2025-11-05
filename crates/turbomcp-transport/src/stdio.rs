@@ -216,12 +216,30 @@ impl StdioTransport {
             let sender = tx;
             let event_emitter = self.event_emitter.clone();
             let metrics = self.metrics.clone();
+            let config = self.config.clone();
 
             let task_handle = tokio::spawn(async move {
                 while let Some(result) = stdin_reader.next().await {
                     match result {
                         Ok(line) => {
                             trace!("Received line: {}", line);
+
+                            // Validate response size against configured limits (v2.2.0+)
+                            let size = line.len();
+                            let limits = {
+                                let cfg = config.lock().expect("config mutex poisoned");
+                                cfg.limits.clone()
+                            };
+
+                            if let Err(e) = crate::core::validate_response_size(size, &limits) {
+                                error!("Response size validation failed: {}", e);
+                                event_emitter.emit_error(
+                                    e.clone(),
+                                    Some("response size validation".to_string()),
+                                );
+                                // Skip this message but continue processing
+                                continue;
+                            }
 
                             match Self::parse_message(&line) {
                                 Ok(message) => {
@@ -407,6 +425,10 @@ impl Transport for StdioTransport {
 
         let json_line = Self::serialize_message(&message)?;
         let size = json_line.len();
+
+        // Validate request size against configured limits (v2.2.0+)
+        let config = self.config.lock().expect("config mutex poisoned").clone();
+        crate::core::validate_request_size(size, &config.limits)?;
 
         let mut stdout_writer = self.stdout_writer.lock().await;
         if let Some(writer) = stdout_writer.as_mut() {

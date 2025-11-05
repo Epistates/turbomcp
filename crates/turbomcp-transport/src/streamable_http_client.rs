@@ -118,6 +118,12 @@ pub struct StreamableHttpClientConfig {
 
     /// Protocol version to use
     pub protocol_version: String,
+
+    /// Size limits for requests and responses (v2.2.0+)
+    pub limits: crate::config::LimitsConfig,
+
+    /// TLS/HTTPS configuration (v2.2.0+)
+    pub tls: crate::config::TlsConfig,
 }
 
 impl Default for StreamableHttpClientConfig {
@@ -131,6 +137,8 @@ impl Default for StreamableHttpClientConfig {
             headers: HashMap::new(),
             user_agent: format!("TurboMCP-Client/{}", env!("CARGO_PKG_VERSION")),
             protocol_version: "2025-06-18".to_string(),
+            limits: crate::config::LimitsConfig::default(),
+            tls: crate::config::TlsConfig::default(),
         }
     }
 }
@@ -181,11 +189,60 @@ impl StreamableHttpClientTransport {
         let (response_tx, response_rx) = mpsc::channel(100);
         let (event_emitter, _) = TransportEventEmitter::new();
 
-        let http_client = HttpClient::builder()
+        // Emit deprecation warning if TLS 1.2 is configured
+        if config.tls.is_deprecated() {
+            warn!(
+                "TLS 1.2 is deprecated and will be removed in v3.0.0. \
+                 Consider upgrading to TLS 1.3 with `TlsConfig::modern()`. \
+                 See https://turbomcp.org/docs/security/tls for migration guide."
+            );
+        }
+
+        // Emit insecurity warning if certificate validation is disabled
+        if config.tls.is_insecure() {
+            warn!(
+                "Certificate validation is disabled. This is insecure and should only be used \
+                 for testing or in secure mTLS mesh environments. \
+                 See https://turbomcp.org/docs/security/tls#certificate-validation"
+            );
+        }
+
+        // Build HTTP client with TLS configuration
+        let mut client_builder = HttpClient::builder()
             .timeout(config.timeout)
-            .user_agent(&config.user_agent)
-            .build()
-            .expect("Failed to build HTTP client");
+            .user_agent(&config.user_agent);
+
+        // Configure TLS version
+        client_builder = match config.tls.min_version {
+            #[allow(deprecated)]
+            crate::config::TlsVersion::Tls12 => {
+                client_builder.min_tls_version(reqwest::tls::Version::TLS_1_2)
+            }
+            crate::config::TlsVersion::Tls13 => {
+                client_builder.min_tls_version(reqwest::tls::Version::TLS_1_3)
+            }
+        };
+
+        // Configure certificate validation
+        if !config.tls.validate_certificates {
+            client_builder = client_builder.danger_accept_invalid_certs(true);
+        }
+
+        // Add custom CA certificates if provided
+        if let Some(ca_certs) = &config.tls.custom_ca_certs {
+            for cert_bytes in ca_certs {
+                // Try to parse as PEM or DER
+                if let Ok(cert) = reqwest::Certificate::from_pem(cert_bytes) {
+                    client_builder = client_builder.add_root_certificate(cert);
+                } else if let Ok(cert) = reqwest::Certificate::from_der(cert_bytes) {
+                    client_builder = client_builder.add_root_certificate(cert);
+                } else {
+                    warn!("Failed to parse custom CA certificate, skipping");
+                }
+            }
+        }
+
+        let http_client = client_builder.build().expect("Failed to build HTTP client");
 
         Self {
             config,
@@ -617,6 +674,9 @@ impl Transport for StreamableHttpClientTransport {
     async fn send(&self, message: TransportMessage) -> TransportResult<()> {
         debug!("Sending message via HTTP POST");
 
+        // Validate request size against configured limits (v2.2.0+)
+        crate::core::validate_request_size(message.payload.len(), &self.config.limits)?;
+
         // Get message endpoint (discovered or default)
         let url = self.get_message_endpoint_url().await;
 
@@ -679,6 +739,9 @@ impl Transport for StreamableHttpClientTransport {
                 .bytes()
                 .await
                 .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
+
+            // Validate response size against configured limits (v2.2.0+)
+            crate::core::validate_response_size(response_bytes.len(), &self.config.limits)?;
 
             let response_message =
                 TransportMessage::new(MessageId::from("http-response".to_string()), response_bytes);
