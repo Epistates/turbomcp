@@ -204,14 +204,32 @@ impl RequestRouter {
     /// - Router provides factory but doesn't modify contexts
     /// - Follows Single Responsibility Principle
     ///
+    /// **HTTP Header Propagation**: Pass headers from HTTP/WebSocket transports
+    /// to include them in context metadata as "http_headers".
+    ///
+    /// # Arguments
+    ///
+    /// * `headers` - Optional HTTP headers from the transport layer
+    ///
     /// # Example
     /// ```rust,ignore
-    /// let ctx = router.create_context();
+    /// let ctx = router.create_context(Some(headers));
     /// let response = router.route(request, ctx).await;
     /// ```
     #[must_use]
-    pub fn create_context(&self) -> RequestContext {
-        RequestContext::new().with_server_to_client(Arc::clone(&self.server_to_client))
+    pub fn create_context(&self, headers: Option<HashMap<String, String>>) -> RequestContext {
+        let mut ctx =
+            RequestContext::new().with_server_to_client(Arc::clone(&self.server_to_client));
+
+        // Add HTTP headers to context if provided
+        if let Some(headers) = headers
+            && let Ok(headers_json) = serde_json::to_value(&headers)
+        {
+            ctx = ctx.with_metadata("http_headers", headers_json);
+            ctx = ctx.with_metadata("transport", "http");
+        }
+
+        ctx
     }
 
     /// Route a JSON-RPC request to the appropriate handler
@@ -468,7 +486,8 @@ impl turbomcp_protocol::JsonRpcHandler for RequestRouter {
 
         // Create properly configured context with server-to-client capabilities
         // Note: For authenticated HTTP requests, middleware should add auth info via with_* methods
-        let ctx = self.create_context();
+        // For HTTP requests with headers, use the HTTP-specific entry point that passes headers
+        let ctx = self.create_context(None);
 
         // Route the request through the standard routing system
         let response = self.route(req, ctx).await;

@@ -532,16 +532,21 @@ mod tests {
         headers_map.insert("content-type".to_string(), "application/json".to_string());
 
         let headers_json = serde_json::to_value(&headers_map).unwrap();
-        let ctx = RequestContext::new()
-            .with_metadata("http_headers", headers_json);
+        let ctx = RequestContext::new().with_metadata("http_headers", headers_json);
 
         let headers = ctx.headers();
         assert!(headers.is_some());
 
         let headers = headers.unwrap();
         assert_eq!(headers.len(), 2);
-        assert_eq!(headers.get("user-agent"), Some(&"Test-Agent/1.0".to_string()));
-        assert_eq!(headers.get("content-type"), Some(&"application/json".to_string()));
+        assert_eq!(
+            headers.get("user-agent"),
+            Some(&"Test-Agent/1.0".to_string())
+        );
+        assert_eq!(
+            headers.get("content-type"),
+            Some(&"application/json".to_string())
+        );
     }
 
     #[test]
@@ -551,15 +556,20 @@ mod tests {
         headers_map.insert("Content-Type".to_string(), "application/json".to_string());
 
         let headers_json = serde_json::to_value(&headers_map).unwrap();
-        let ctx = RequestContext::new()
-            .with_metadata("http_headers", headers_json);
+        let ctx = RequestContext::new().with_metadata("http_headers", headers_json);
 
         // Test case-insensitive lookup
         assert_eq!(ctx.header("user-agent"), Some("Test-Agent/1.0".to_string()));
         assert_eq!(ctx.header("USER-AGENT"), Some("Test-Agent/1.0".to_string()));
         assert_eq!(ctx.header("User-Agent"), Some("Test-Agent/1.0".to_string()));
-        assert_eq!(ctx.header("content-type"), Some("application/json".to_string()));
-        assert_eq!(ctx.header("CONTENT-TYPE"), Some("application/json".to_string()));
+        assert_eq!(
+            ctx.header("content-type"),
+            Some("application/json".to_string())
+        );
+        assert_eq!(
+            ctx.header("CONTENT-TYPE"),
+            Some("application/json".to_string())
+        );
     }
 
     #[test]
@@ -568,8 +578,7 @@ mod tests {
         headers_map.insert("user-agent".to_string(), "Test-Agent/1.0".to_string());
 
         let headers_json = serde_json::to_value(&headers_map).unwrap();
-        let ctx = RequestContext::new()
-            .with_metadata("http_headers", headers_json);
+        let ctx = RequestContext::new().with_metadata("http_headers", headers_json);
 
         assert_eq!(ctx.header("x-custom-header"), None);
     }
@@ -588,24 +597,20 @@ mod tests {
 
     #[test]
     fn test_transport_returns_transport_type() {
-        let ctx = RequestContext::new()
-            .with_metadata("transport", "http");
+        let ctx = RequestContext::new().with_metadata("transport", "http");
 
         assert_eq!(ctx.transport(), Some("http".to_string()));
     }
 
     #[test]
     fn test_multiple_transport_types() {
-        let http_ctx = RequestContext::new()
-            .with_metadata("transport", "http");
+        let http_ctx = RequestContext::new().with_metadata("transport", "http");
         assert_eq!(http_ctx.transport(), Some("http".to_string()));
 
-        let ws_ctx = RequestContext::new()
-            .with_metadata("transport", "websocket");
+        let ws_ctx = RequestContext::new().with_metadata("transport", "websocket");
         assert_eq!(ws_ctx.transport(), Some("websocket".to_string()));
 
-        let stdio_ctx = RequestContext::new()
-            .with_metadata("transport", "stdio");
+        let stdio_ctx = RequestContext::new().with_metadata("transport", "stdio");
         assert_eq!(stdio_ctx.transport(), Some("stdio".to_string()));
     }
 }

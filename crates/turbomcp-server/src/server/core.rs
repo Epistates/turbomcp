@@ -39,6 +39,63 @@ pub(crate) fn should_log_for_stdio() -> bool {
     std::env::var("TURBOMCP_FORCE_LOGGING").is_ok()
 }
 
+/// Wrapper that holds router + headers and implements JsonRpcHandler
+/// This allows us to pass headers to create_context without storing them on the router.
+/// Used by both HTTP and WebSocket transports.
+#[cfg(any(feature = "http", feature = "websocket"))]
+struct HttpHandlerWithHeaders {
+    router: crate::routing::RequestRouter,
+    headers: Option<std::collections::HashMap<String, String>>,
+}
+
+#[cfg(any(feature = "http", feature = "websocket"))]
+#[async_trait::async_trait]
+impl turbomcp_protocol::JsonRpcHandler for HttpHandlerWithHeaders {
+    async fn handle_request(&self, req_value: serde_json::Value) -> serde_json::Value {
+        use turbomcp_protocol::jsonrpc::JsonRpcRequest;
+
+        // Parse the request
+        let req: JsonRpcRequest = match serde_json::from_value(req_value) {
+            Ok(r) => r,
+            Err(e) => {
+                return serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32700,
+                        "message": format!("Parse error: {}", e)
+                    },
+                    "id": null
+                });
+            }
+        };
+
+        // Create context with headers
+        let ctx = self.router.create_context(self.headers.clone());
+
+        // Route the request
+        let response = self.router.route(req, ctx).await;
+
+        // Serialize response
+        match serde_json::to_value(&response) {
+            Ok(v) => v,
+            Err(e) => {
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32603,
+                        "message": format!("Internal error: failed to serialize response: {}", e)
+                    },
+                    "id": response.id
+                })
+            }
+        }
+    }
+
+    fn server_info(&self) -> turbomcp_protocol::ServerInfo {
+        self.router.server_info()
+    }
+}
+
 /// Main MCP server following the Axum/Tower Clone pattern
 ///
 /// ## Sharing Pattern
@@ -726,32 +783,52 @@ impl McpServer {
         let pending_for_factory = Arc::clone(&pending_requests);
         let router_for_factory = Arc::clone(&router);
 
-        let handler_factory = move |session_id: Option<String>| {
-            let session_id = session_id.unwrap_or_else(|| {
-                let new_id = uuid::Uuid::new_v4().to_string();
-                tracing::warn!(
-                    "⚠️ Factory generating random session ID (no session ID provided): {}",
+        // Create a wrapper that converts headers and delegates to router
+        // This is cleaner than storing headers on the router itself
+        let handler_factory =
+            move |session_id: Option<String>, headers: Option<axum::http::HeaderMap>| {
+                let session_id = session_id.unwrap_or_else(|| {
+                    let new_id = uuid::Uuid::new_v4().to_string();
+                    tracing::warn!(
+                        "⚠️ Factory generating random session ID (no session ID provided): {}",
+                        new_id
+                    );
                     new_id
+                });
+
+                tracing::debug!("Factory creating handler for session: {}", session_id);
+
+                // Create session-specific HTTP dispatcher (now local to turbomcp-server!)
+                let dispatcher = crate::runtime::http::HttpDispatcher::new(
+                    session_id,
+                    Arc::clone(&sessions_for_factory),
+                    Arc::clone(&pending_for_factory),
                 );
-                new_id
-            });
 
-            tracing::debug!("Factory creating handler for session: {}", session_id);
+                // Clone the base router and configure with session-specific dispatcher
+                // CRITICAL: set_server_request_dispatcher also recreates server_to_client adapter
+                let mut session_router = (*router_for_factory).clone();
+                session_router.set_server_request_dispatcher(dispatcher);
 
-            // Create session-specific HTTP dispatcher (now local to turbomcp-server!)
-            let dispatcher = crate::runtime::http::HttpDispatcher::new(
-                session_id,
-                Arc::clone(&sessions_for_factory),
-                Arc::clone(&pending_for_factory),
-            );
+                // Convert HeaderMap to HashMap<String, String> for passing to create_context
+                let headers_map = headers.map(|header_map| {
+                    header_map
+                        .iter()
+                        .filter_map(|(name, value)| {
+                            value
+                                .to_str()
+                                .ok()
+                                .map(|v| (name.to_string(), v.to_string()))
+                        })
+                        .collect()
+                });
 
-            // Clone the base router and configure with session-specific dispatcher
-            // CRITICAL: set_server_request_dispatcher also recreates server_to_client adapter
-            let mut session_router = (*router_for_factory).clone();
-            session_router.set_server_request_dispatcher(dispatcher);
-
-            session_router
-        };
+                // Create wrapper that passes headers to create_context
+                HttpHandlerWithHeaders {
+                    router: session_router,
+                    headers: headers_map,
+                }
+            };
 
         info!(
             server_name = %server_info.name,
@@ -899,7 +976,8 @@ impl McpServer {
         // This is the unified architecture - transport layer handles WebSocket mechanics,
         // server layer provides MCP-specific handler logic
         let handler_factory =
-            move |transport_dispatcher: turbomcp_transport::axum::WebSocketDispatcher| {
+            move |transport_dispatcher: turbomcp_transport::axum::WebSocketDispatcher,
+                  headers: Option<std::collections::HashMap<String, String>>| {
                 // Wrap transport dispatcher with server layer adapter
                 let server_dispatcher =
                     crate::routing::WebSocketDispatcherAdapter::new(transport_dispatcher);
@@ -908,8 +986,12 @@ impl McpServer {
                 let mut connection_router = router.clone();
                 connection_router.set_server_request_dispatcher(server_dispatcher);
 
-                // Return as JsonRpcHandler trait object
-                Arc::new(connection_router) as Arc<dyn turbomcp_protocol::JsonRpcHandler>
+                // Create wrapper that passes headers to create_context
+                // We can reuse HttpHandlerWithHeaders since it's generic
+                Arc::new(HttpHandlerWithHeaders {
+                    router: connection_router,
+                    headers,
+                }) as Arc<dyn turbomcp_protocol::JsonRpcHandler>
             };
 
         info!(

@@ -27,10 +27,15 @@ use crate::tower::SessionInfo;
 ///
 /// The factory receives:
 /// - `WebSocketDispatcher`: For server→client requests
+/// - `Option<HashMap<String, String>>`: Optional HTTP headers from the WebSocket upgrade request
 ///
 /// And returns:
 /// - `Arc<dyn JsonRpcHandler>`: Handler for this specific connection
-pub type HandlerFactory = Arc<dyn Fn(WebSocketDispatcher) -> Arc<dyn JsonRpcHandler> + Send + Sync>;
+pub type HandlerFactory = Arc<
+    dyn Fn(WebSocketDispatcher, Option<HashMap<String, String>>) -> Arc<dyn JsonRpcHandler>
+        + Send
+        + Sync,
+>;
 
 /// Application state for factory-based WebSocket handler
 #[derive(Clone)]
@@ -51,7 +56,10 @@ impl WebSocketFactoryState {
     /// Create new factory state
     pub fn new<F>(factory: F) -> Self
     where
-        F: Fn(WebSocketDispatcher) -> Arc<dyn JsonRpcHandler> + Send + Sync + 'static,
+        F: Fn(WebSocketDispatcher, Option<HashMap<String, String>>) -> Arc<dyn JsonRpcHandler>
+            + Send
+            + Sync
+            + 'static,
     {
         Self {
             handler_factory: Arc::new(factory),
@@ -101,8 +109,15 @@ async fn handle_websocket_with_factory(
     // Create WebSocket dispatcher for server→client requests
     let dispatcher = WebSocketDispatcher::new(outbound_tx.clone(), pending_requests.clone());
 
-    // Call factory to create connection-specific handler
-    let handler = (factory_state.handler_factory)(dispatcher);
+    // Extract headers from session metadata
+    let headers = if !session.metadata.is_empty() {
+        Some(session.metadata.clone())
+    } else {
+        None
+    };
+
+    // Call factory to create connection-specific handler with headers
+    let handler = (factory_state.handler_factory)(dispatcher, headers);
 
     info!("Factory created handler for session: {}", session.id);
 
