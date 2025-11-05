@@ -57,6 +57,8 @@ utoipa-swagger-ui = { version = "7.0", features = ["axum"], optional = true }
 handlebars = { version = "6.0", optional = true }
 convert_case = { version = "0.6", optional = true }
 chrono = { version = "0.4", optional = true }
+syn = { version = "2", features = ["parsing", "full"], optional = true }
+proc-macro2 = { version = "1", optional = true }
 
 # Schema generation (optional)
 schemars = { version = "1.0", optional = true }
@@ -70,6 +72,7 @@ uuid = { version = "1.6", features = ["v4"] }
 tracing = "0.1"
 thiserror = "2.0"
 url = "2.5"
+ipnetwork = "0.20"
 
 # Security
 secrecy = "0.10"
@@ -88,7 +91,7 @@ default = ["cli", "runtime", "introspection"]
 # Core features
 introspection = []
 runtime = ["axum", "tower", "tower-http", "reqwest", "tokio-tungstenite"]
-codegen = ["handlebars", "convert_case", "chrono"]
+codegen = ["handlebars", "convert_case", "chrono", "syn", "proc-macro2"]
 schema = ["schemars"]
 auth = ["dep:turbomcp-auth", "dep:jsonwebtoken"]
 

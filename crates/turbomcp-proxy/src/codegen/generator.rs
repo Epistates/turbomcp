@@ -13,6 +13,7 @@ use super::context::{
     CargoContext, MainContext, PromptDefinition, PromptEnumVariant, ProxyContext,
     ResourceDefinition, ResourceEnumVariant, ToolDefinition, ToolEnumVariant, TypesContext,
 };
+use super::sanitize::{sanitize_identifier, sanitize_string_literal, sanitize_uri};
 use super::template_engine::TemplateEngine;
 use super::type_generator::TypeGenerator;
 
@@ -182,22 +183,46 @@ impl RustCodeGenerator {
     }
 
     /// Build proxy.rs context
+    #[allow(clippy::too_many_lines)]
     fn build_proxy_context(&mut self, config: &GenConfig) -> ProxyContext {
         let tools = self
             .spec
             .tools
             .iter()
-            .map(|tool| {
-                // Generate type names for input/output
-                let input_type_name = format!("{}Input", tool.name.to_case(Case::Pascal));
-                let output_type_name = format!("{}Output", tool.name.to_case(Case::Pascal));
+            .filter_map(|tool| {
+                // Convert to snake_case first (handles dashes, spaces, etc.)
+                let snake_case_name = tool.name.to_case(Case::Snake);
 
-                ToolDefinition {
-                    name: tool.name.clone(),
-                    description: tool.description.clone(),
+                // Sanitize tool name - skip tools with invalid names
+                let sanitized_name = match sanitize_identifier(&snake_case_name) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping tool '{}': Invalid converted name '{}': {}",
+                            tool.name,
+                            snake_case_name,
+                            e
+                        );
+                        return None;
+                    }
+                };
+
+                // Generate type names for input/output
+                let input_type_name = format!("{}Input", sanitized_name.to_case(Case::Pascal));
+                let output_type_name = format!("{}Output", sanitized_name.to_case(Case::Pascal));
+
+                // Sanitize description
+                let description = tool
+                    .description
+                    .as_ref()
+                    .map(|d| sanitize_string_literal(d));
+
+                Some(ToolDefinition {
+                    name: sanitized_name,
+                    description,
                     input_type: Some(input_type_name),
                     output_type: tool.output_schema.as_ref().map(|_| output_type_name),
-                }
+                })
             })
             .collect();
 
@@ -205,21 +230,54 @@ impl RustCodeGenerator {
             .spec
             .resources
             .iter()
-            .map(|resource| {
+            .filter_map(|resource| {
+                // Sanitize URI first
+                let sanitized_uri = match sanitize_uri(&resource.uri) {
+                    Ok(uri) => uri,
+                    Err(e) => {
+                        tracing::warn!("Skipping resource '{}': {}", resource.uri, e);
+                        return None;
+                    }
+                };
+
                 // Derive name from URI (last segment)
-                let name = resource
+                let derived_name = resource
                     .uri
                     .split('/')
                     .next_back()
                     .unwrap_or(&resource.uri)
                     .to_case(Case::Snake);
 
-                ResourceDefinition {
-                    name,
-                    uri: resource.uri.clone(),
-                    description: resource.description.clone(),
-                    mime_type: resource.mime_type.clone(),
-                }
+                // Sanitize derived name
+                let sanitized_name = match sanitize_identifier(&derived_name) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping resource '{}': Invalid derived name '{}': {}",
+                            resource.uri,
+                            derived_name,
+                            e
+                        );
+                        return None;
+                    }
+                };
+
+                // Sanitize description and MIME type
+                let description = resource
+                    .description
+                    .as_ref()
+                    .map(|d| sanitize_string_literal(d));
+                let mime_type = resource
+                    .mime_type
+                    .as_ref()
+                    .map(|m| sanitize_string_literal(m));
+
+                Some(ResourceDefinition {
+                    name: sanitized_name,
+                    uri: sanitized_uri,
+                    description,
+                    mime_type,
+                })
             })
             .collect();
 
@@ -227,12 +285,35 @@ impl RustCodeGenerator {
             .spec
             .prompts
             .iter()
-            .map(|prompt| {
-                PromptDefinition {
-                    name: prompt.name.clone(),
-                    description: prompt.description.clone(),
+            .filter_map(|prompt| {
+                // Convert to snake_case first (handles dashes, spaces, etc.)
+                let snake_case_name = prompt.name.to_case(Case::Snake);
+
+                // Sanitize prompt name
+                let sanitized_name = match sanitize_identifier(&snake_case_name) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping prompt '{}': Invalid converted name '{}': {}",
+                            prompt.name,
+                            snake_case_name,
+                            e
+                        );
+                        return None;
+                    }
+                };
+
+                // Sanitize description
+                let description = prompt
+                    .description
+                    .as_ref()
+                    .map(|d| sanitize_string_literal(d));
+
+                Some(PromptDefinition {
+                    name: sanitized_name,
+                    description,
                     arguments: None, // TODO: Extract from arguments schema
-                }
+                })
             })
             .collect();
 
@@ -247,29 +328,53 @@ impl RustCodeGenerator {
     }
 
     /// Build types.rs context
+    #[allow(clippy::too_many_lines)]
     fn build_types_context(&mut self) -> TypesContext {
         // Generate type definitions from tool schemas
         let mut type_definitions = Vec::new();
 
         for tool in &self.spec.tools {
+            // Convert to snake_case first (handles dashes, spaces, etc.)
+            let snake_case_name = tool.name.to_case(Case::Snake);
+
+            // Sanitize tool name - skip tools with invalid names
+            let sanitized_name = match sanitize_identifier(&snake_case_name) {
+                Ok(name) => name,
+                Err(e) => {
+                    tracing::warn!(
+                        "Skipping type generation for tool '{}': Invalid converted name '{}': {}",
+                        tool.name,
+                        snake_case_name,
+                        e
+                    );
+                    continue;
+                }
+            };
+
             // Generate input type
-            let input_type_name = format!("{}Input", tool.name.to_case(Case::Pascal));
+            let input_type_name = format!("{}Input", sanitized_name.to_case(Case::Pascal));
 
             // Convert input_schema to serde_json::Value for type generation
             let input_schema_value = serde_json::to_value(&tool.input_schema)
                 .unwrap_or(serde_json::json!({"type": "object", "properties": {}}));
 
+            // Sanitize description
+            let sanitized_description = tool
+                .description
+                .as_ref()
+                .map(|d| sanitize_string_literal(d));
+
             if let Ok(type_def) = self.type_generator.generate_type_from_schema(
                 &input_type_name,
                 &input_schema_value,
-                tool.description.clone(),
+                sanitized_description,
             ) {
                 type_definitions.push(type_def);
             }
 
             // Generate output type if schema exists
             if let Some(ref output_schema) = tool.output_schema {
-                let output_type_name = format!("{}Output", tool.name.to_case(Case::Pascal));
+                let output_type_name = format!("{}Output", sanitized_name.to_case(Case::Pascal));
                 let output_schema_value = serde_json::to_value(output_schema)
                     .unwrap_or(serde_json::json!({"type": "object", "properties": {}}));
 
@@ -288,16 +393,33 @@ impl RustCodeGenerator {
             .spec
             .tools
             .iter()
-            .map(|tool| {
+            .filter_map(|tool| {
+                // Convert to snake_case first (handles dashes, spaces, etc.)
+                let snake_case_name = tool.name.to_case(Case::Snake);
+
+                // Sanitize tool name - skip tools with invalid names
+                let sanitized_name = match sanitize_identifier(&snake_case_name) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping enum variant for tool '{}': Invalid converted name '{}': {}",
+                            tool.name,
+                            snake_case_name,
+                            e
+                        );
+                        return None;
+                    }
+                };
+
                 let input_schema_value = serde_json::to_value(&tool.input_schema)
                     .unwrap_or(serde_json::json!({"type": "object", "properties": {}}));
 
-                ToolEnumVariant {
-                    name: tool.name.clone(),
+                Some(ToolEnumVariant {
+                    name: sanitized_name,
                     params: self
                         .type_generator
                         .generate_params_from_schema(&input_schema_value),
-                }
+                })
             })
             .collect();
 
@@ -306,18 +428,46 @@ impl RustCodeGenerator {
             .spec
             .resources
             .iter()
-            .map(|resource| {
-                let name = resource
+            .filter_map(|resource| {
+                // Sanitize URI first
+                let sanitized_uri = match sanitize_uri(&resource.uri) {
+                    Ok(uri) => uri,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping enum variant for resource '{}': {}",
+                            resource.uri,
+                            e
+                        );
+                        return None;
+                    }
+                };
+
+                // Derive name from URI (last segment)
+                let derived_name = resource
                     .uri
                     .split('/')
                     .next_back()
                     .unwrap_or(&resource.uri)
                     .to_case(Case::Snake);
 
-                ResourceEnumVariant {
-                    name,
-                    uri: resource.uri.clone(),
-                }
+                // Sanitize derived name
+                let sanitized_name = match sanitize_identifier(&derived_name) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping enum variant for resource '{}': Invalid derived name '{}': {}",
+                            resource.uri,
+                            derived_name,
+                            e
+                        );
+                        return None;
+                    }
+                };
+
+                Some(ResourceEnumVariant {
+                    name: sanitized_name,
+                    uri: sanitized_uri,
+                })
             })
             .collect();
 
@@ -326,8 +476,27 @@ impl RustCodeGenerator {
             .spec
             .prompts
             .iter()
-            .map(|prompt| PromptEnumVariant {
-                name: prompt.name.clone(),
+            .filter_map(|prompt| {
+                // Convert to snake_case first (handles dashes, spaces, etc.)
+                let snake_case_name = prompt.name.to_case(Case::Snake);
+
+                // Sanitize prompt name
+                let sanitized_name = match sanitize_identifier(&snake_case_name) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        tracing::warn!(
+                            "Skipping enum variant for prompt '{}': Invalid converted name '{}': {}",
+                            prompt.name,
+                            snake_case_name,
+                            e
+                        );
+                        return None;
+                    }
+                };
+
+                Some(PromptEnumVariant {
+                    name: sanitized_name,
+                })
             })
             .collect();
 

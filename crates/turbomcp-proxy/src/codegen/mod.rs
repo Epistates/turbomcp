@@ -15,6 +15,9 @@ pub mod generator;
 #[cfg(feature = "codegen")]
 pub mod type_generator;
 
+#[cfg(feature = "codegen")]
+pub mod sanitize;
+
 // Re-export main types
 #[cfg(feature = "codegen")]
 pub use generator::{BackendType, FrontendType, GenConfig, GeneratedProject, RustCodeGenerator};
@@ -30,6 +33,11 @@ pub use template_engine::TemplateEngine;
 
 #[cfg(feature = "codegen")]
 pub use type_generator::TypeGenerator;
+
+#[cfg(feature = "codegen")]
+pub use sanitize::{
+    is_rust_keyword, sanitize_identifier, sanitize_string_literal, sanitize_type, sanitize_uri,
+};
 
 // Placeholder for when codegen feature is not enabled
 #[cfg(not(feature = "codegen"))]

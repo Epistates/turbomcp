@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 
 use super::context::{FieldDefinition, ParamDefinition, TypeDefinition};
+use super::sanitize::{sanitize_identifier, sanitize_string_literal, sanitize_type};
 use crate::error::{ProxyError, ProxyResult};
 
 /// Type generator for converting JSON Schemas to Rust types
@@ -28,16 +29,24 @@ impl TypeGenerator {
     /// Convert a JSON Schema to a Rust type name
     ///
     /// Returns the Rust type string (e.g., "String", "Vec<i64>", "`CustomType`")
-    #[must_use]
-    pub fn schema_to_rust_type(&self, schema: &Value, type_name_hint: Option<&str>) -> String {
+    ///
+    /// # Errors
+    ///
+    /// Returns `ProxyError` if the generated type is invalid.
+    pub fn schema_to_rust_type(
+        &self,
+        schema: &Value,
+        type_name_hint: Option<&str>,
+    ) -> ProxyResult<String> {
         // Handle references
         if let Some(ref_str) = schema.get("$ref").and_then(|v| v.as_str()) {
             // Extract type name from $ref (e.g., "#/definitions/MyType" -> "MyType")
-            return ref_str
+            let type_name = ref_str
                 .split('/')
                 .next_back()
                 .unwrap_or("Value")
                 .to_case(Case::Pascal);
+            return sanitize_type(&type_name);
         }
 
         // Handle type field
@@ -46,12 +55,12 @@ impl TypeGenerator {
             .and_then(|v| v.as_str())
             .unwrap_or("object");
 
-        match type_str {
+        let rust_type = match type_str {
             "string" => Self::handle_string_type(schema),
             "number" => "f64".to_string(),
             "integer" => Self::handle_integer_type(schema),
             "boolean" => "bool".to_string(),
-            "array" => self.handle_array_type(schema),
+            "array" => self.handle_array_type(schema)?,
             "object" => {
                 // For object types, we either reference a named type or use Value
                 if let Some(name) = type_name_hint {
@@ -62,7 +71,9 @@ impl TypeGenerator {
             }
             "null" => "()".to_string(),
             _ => "serde_json::Value".to_string(),
-        }
+        };
+
+        sanitize_type(&rust_type)
     }
 
     /// Generate a `TypeDefinition` from a JSON Schema object
@@ -78,14 +89,17 @@ impl TypeGenerator {
     ) -> ProxyResult<TypeDefinition> {
         let type_name = name.to_case(Case::Pascal);
 
+        // Sanitize type name
+        let sanitized_type_name = sanitize_identifier(&type_name)?;
+
         // Check for duplicate
-        if self.generated_types.contains(&type_name) {
+        if self.generated_types.contains(&sanitized_type_name) {
             return Err(ProxyError::codegen(format!(
-                "Type {type_name} already generated"
+                "Type {sanitized_type_name} already generated"
             )));
         }
 
-        self.generated_types.insert(type_name.clone());
+        self.generated_types.insert(sanitized_type_name.clone());
 
         // Extract properties
         let properties = schema
@@ -107,17 +121,34 @@ impl TypeGenerator {
         // Generate fields
         let mut fields = Vec::new();
         for (field_name, field_schema) in properties {
+            // Sanitize field name
+            let snake_case_name = field_name.to_case(Case::Snake);
+            let sanitized_field_name = match sanitize_identifier(&snake_case_name) {
+                Ok(name) => name,
+                Err(e) => {
+                    tracing::warn!(
+                        "Skipping field '{}' in type '{}': {}",
+                        field_name,
+                        sanitized_type_name,
+                        e
+                    );
+                    continue;
+                }
+            };
+
             let rust_type = self.schema_to_rust_type(
                 field_schema,
                 Some(&format!("{}{}", name, field_name.to_case(Case::Pascal))),
-            );
+            )?;
+
+            // Sanitize field description
             let field_description = field_schema
                 .get("description")
                 .and_then(|v| v.as_str())
-                .map(String::from);
+                .map(sanitize_string_literal);
 
             fields.push(FieldDefinition {
-                name: field_name.to_case(Case::Snake),
+                name: sanitized_field_name,
                 rust_type,
                 optional: !required.contains(field_name),
                 description: field_description,
@@ -125,7 +156,7 @@ impl TypeGenerator {
         }
 
         Ok(TypeDefinition {
-            name: type_name,
+            name: sanitized_type_name,
             description,
             rename: None,
             fields,
@@ -151,13 +182,31 @@ impl TypeGenerator {
 
         properties
             .iter()
-            .map(|(name, prop_schema)| {
-                let rust_type = self.schema_to_rust_type(prop_schema, None);
-                ParamDefinition {
-                    name: name.to_case(Case::Snake),
+            .filter_map(|(name, prop_schema)| {
+                // Sanitize parameter name
+                let snake_case_name = name.to_case(Case::Snake);
+                let sanitized_name = match sanitize_identifier(&snake_case_name) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        tracing::warn!("Skipping parameter '{}': {}", name, e);
+                        return None;
+                    }
+                };
+
+                // Get rust type (if this fails, skip the parameter)
+                let rust_type = match self.schema_to_rust_type(prop_schema, None) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::warn!("Skipping parameter '{}': {}", name, e);
+                        return None;
+                    }
+                };
+
+                Some(ParamDefinition {
+                    name: sanitized_name,
                     rust_type,
                     optional: !required.contains(name),
-                }
+                })
             })
             .collect()
     }
@@ -188,14 +237,14 @@ impl TypeGenerator {
         }
     }
 
-    fn handle_array_type(&self, schema: &Value) -> String {
+    fn handle_array_type(&self, schema: &Value) -> ProxyResult<String> {
         let items = schema.get("items");
 
         if let Some(items_schema) = items {
-            let item_type = self.schema_to_rust_type(items_schema, None);
-            format!("Vec<{item_type}>")
+            let item_type = self.schema_to_rust_type(items_schema, None)?;
+            Ok(format!("Vec<{item_type}>"))
         } else {
-            "Vec<serde_json::Value>".to_string()
+            Ok("Vec<serde_json::Value>".to_string())
         }
     }
 }
@@ -216,19 +265,27 @@ mod tests {
         let type_gen = TypeGenerator::new();
 
         assert_eq!(
-            type_gen.schema_to_rust_type(&json!({"type": "string"}), None),
+            type_gen
+                .schema_to_rust_type(&json!({"type": "string"}), None)
+                .unwrap(),
             "String"
         );
         assert_eq!(
-            type_gen.schema_to_rust_type(&json!({"type": "number"}), None),
+            type_gen
+                .schema_to_rust_type(&json!({"type": "number"}), None)
+                .unwrap(),
             "f64"
         );
         assert_eq!(
-            type_gen.schema_to_rust_type(&json!({"type": "integer"}), None),
+            type_gen
+                .schema_to_rust_type(&json!({"type": "integer"}), None)
+                .unwrap(),
             "i64"
         );
         assert_eq!(
-            type_gen.schema_to_rust_type(&json!({"type": "boolean"}), None),
+            type_gen
+                .schema_to_rust_type(&json!({"type": "boolean"}), None)
+                .unwrap(),
             "bool"
         );
     }
@@ -242,7 +299,10 @@ mod tests {
             "items": {"type": "string"}
         });
 
-        assert_eq!(type_gen.schema_to_rust_type(&schema, None), "Vec<String>");
+        assert_eq!(
+            type_gen.schema_to_rust_type(&schema, None).unwrap(),
+            "Vec<String>"
+        );
     }
 
     #[test]
@@ -257,7 +317,10 @@ mod tests {
             }
         });
 
-        assert_eq!(type_gen.schema_to_rust_type(&schema, None), "Vec<Vec<i64>>");
+        assert_eq!(
+            type_gen.schema_to_rust_type(&schema, None).unwrap(),
+            "Vec<Vec<i64>>"
+        );
     }
 
     #[test]
@@ -265,11 +328,15 @@ mod tests {
         let type_gen = TypeGenerator::new();
 
         assert_eq!(
-            type_gen.schema_to_rust_type(&json!({"type": "integer", "format": "int32"}), None),
+            type_gen
+                .schema_to_rust_type(&json!({"type": "integer", "format": "int32"}), None)
+                .unwrap(),
             "i32"
         );
         assert_eq!(
-            type_gen.schema_to_rust_type(&json!({"type": "integer", "format": "int64"}), None),
+            type_gen
+                .schema_to_rust_type(&json!({"type": "integer", "format": "int64"}), None)
+                .unwrap(),
             "i64"
         );
     }
