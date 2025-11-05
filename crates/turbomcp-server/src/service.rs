@@ -228,7 +228,7 @@ impl Service<Request<Bytes>> for McpService {
                         .map(|(name, value)| (name.clone(), value.clone()))
                         .collect();
 
-                    let ctx = router.create_context(Some(headers_map));
+                    let ctx = router.create_context(Some(headers_map), Some("http"));
 
                     let service = McpService::new(registry, router, metrics);
                     service.process_jsonrpc(message, ctx).await

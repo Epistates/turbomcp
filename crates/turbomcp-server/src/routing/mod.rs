@@ -210,14 +210,23 @@ impl RequestRouter {
     /// # Arguments
     ///
     /// * `headers` - Optional HTTP headers from the transport layer
+    /// * `transport` - Optional transport type ("http", "websocket", etc.). Defaults to "http" if headers are provided.
     ///
     /// # Example
     /// ```rust,ignore
-    /// let ctx = router.create_context(Some(headers));
+    /// // HTTP transport
+    /// let ctx = router.create_context(Some(headers), None);
+    ///
+    /// // WebSocket transport
+    /// let ctx = router.create_context(Some(headers), Some("websocket"));
     /// let response = router.route(request, ctx).await;
     /// ```
     #[must_use]
-    pub fn create_context(&self, headers: Option<HashMap<String, String>>) -> RequestContext {
+    pub fn create_context(
+        &self,
+        headers: Option<HashMap<String, String>>,
+        transport: Option<&str>,
+    ) -> RequestContext {
         let mut ctx =
             RequestContext::new().with_server_to_client(Arc::clone(&self.server_to_client));
 
@@ -226,7 +235,9 @@ impl RequestRouter {
             && let Ok(headers_json) = serde_json::to_value(&headers)
         {
             ctx = ctx.with_metadata("http_headers", headers_json);
-            ctx = ctx.with_metadata("transport", "http");
+            // Set transport type (default to "http" if not specified)
+            let transport_type = transport.unwrap_or("http");
+            ctx = ctx.with_metadata("transport", transport_type);
         }
 
         ctx
@@ -487,7 +498,7 @@ impl turbomcp_protocol::JsonRpcHandler for RequestRouter {
         // Create properly configured context with server-to-client capabilities
         // Note: For authenticated HTTP requests, middleware should add auth info via with_* methods
         // For HTTP requests with headers, use the HTTP-specific entry point that passes headers
-        let ctx = self.create_context(None);
+        let ctx = self.create_context(None, None);
 
         // Route the request through the standard routing system
         let response = self.route(req, ctx).await;

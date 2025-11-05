@@ -46,6 +46,7 @@ pub(crate) fn should_log_for_stdio() -> bool {
 struct HttpHandlerWithHeaders {
     router: crate::routing::RequestRouter,
     headers: Option<std::collections::HashMap<String, String>>,
+    transport: &'static str,
 }
 
 #[cfg(any(feature = "http", feature = "websocket"))]
@@ -69,8 +70,10 @@ impl turbomcp_protocol::JsonRpcHandler for HttpHandlerWithHeaders {
             }
         };
 
-        // Create context with headers
-        let ctx = self.router.create_context(self.headers.clone());
+        // Create context with headers and transport type
+        let ctx = self
+            .router
+            .create_context(self.headers.clone(), Some(self.transport));
 
         // Route the request
         let response = self.router.route(req, ctx).await;
@@ -823,10 +826,11 @@ impl McpServer {
                         .collect()
                 });
 
-                // Create wrapper that passes headers to create_context
+                // Create wrapper that passes headers to create_context (HTTP transport)
                 HttpHandlerWithHeaders {
                     router: session_router,
                     headers: headers_map,
+                    transport: "http",
                 }
             };
 
@@ -986,11 +990,12 @@ impl McpServer {
                 let mut connection_router = router.clone();
                 connection_router.set_server_request_dispatcher(server_dispatcher);
 
-                // Create wrapper that passes headers to create_context
+                // Create wrapper that passes headers to create_context (WebSocket transport)
                 // We can reuse HttpHandlerWithHeaders since it's generic
                 Arc::new(HttpHandlerWithHeaders {
                     router: connection_router,
                     headers,
+                    transport: "websocket",
                 }) as Arc<dyn turbomcp_protocol::JsonRpcHandler>
             };
 

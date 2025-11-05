@@ -514,3 +514,228 @@ async fn test_websocket_custom_path() {
     write.send(Message::Close(None)).await.ok();
     server_task.abort();
 }
+/// Test WebSocket header propagation with custom headers
+///
+/// This test validates that custom headers sent during WebSocket upgrade
+/// are properly propagated through the context to tool handlers.
+///
+/// ## Test Coverage
+/// - ✅ Custom headers in WebSocket upgrade request
+/// - ✅ Headers accessible via ctx.headers()
+/// - ✅ Individual header access via ctx.header()
+/// - ✅ Transport type detection (websocket)
+/// - ✅ Multiple custom headers
+/// - ✅ Case-insensitive header lookup
+#[tokio::test]
+#[cfg(feature = "websocket")]
+async fn test_websocket_header_propagation_comprehensive() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    // Create test server with header inspection tool
+    #[derive(Clone)]
+    struct HeaderTestServer;
+
+    #[server(
+        name = "WebSocket Header Test Server",
+        version = "1.0.0",
+        description = "Server for testing header propagation"
+    )]
+    impl HeaderTestServer {
+        fn new() -> Self {
+            Self
+        }
+
+        #[tool("Get connection information including headers")]
+        async fn connection_info(&self, ctx: Context) -> McpResult<String> {
+            let mut info = String::new();
+
+            // Get transport type
+            if let Some(transport) = ctx.transport() {
+                info.push_str(&format!("Transport: {}\n\n", transport));
+            }
+
+            // Get all headers
+            if let Some(headers) = ctx.headers() {
+                info.push_str("WebSocket Upgrade Headers:\n");
+                for (name, value) in headers.iter() {
+                    info.push_str(&format!("  {}: {}\n", name, value));
+                }
+            } else {
+                info.push_str("Headers: None\n");
+            }
+
+            // Get specific headers (case-insensitive)
+            info.push_str("\nSpecific Headers:\n");
+            if let Some(user_agent) = ctx.header("user-agent") {
+                info.push_str(&format!("  User-Agent: {}\n", user_agent));
+            }
+            if let Some(custom1) = ctx.header("x-custom-header-1") {
+                info.push_str(&format!("  X-Custom-Header-1: {}\n", custom1));
+            }
+            if let Some(custom2) = ctx.header("x-test-value") {
+                info.push_str(&format!("  X-Test-Value: {}\n", custom2));
+            }
+
+            // Add request metadata
+            info.push_str(&format!("\nRequest ID: {}\n", ctx.request_id()));
+
+            Ok(info)
+        }
+    }
+
+    let server = HeaderTestServer::new();
+
+    // Start WebSocket server in background
+    let server_task = tokio::spawn(async move {
+        server
+            .run_websocket("127.0.0.1:19099")
+            .await
+            .expect("Server failed");
+    });
+
+    // Give server time to start
+    sleep(Duration::from_millis(500)).await;
+
+    // Create WebSocket connection with custom headers using IntoClientRequest
+    let url = "ws://127.0.0.1:19099/ws";
+    let mut request = url.into_client_request().expect("Failed to create request");
+
+    // Add custom headers
+    let headers = request.headers_mut();
+    headers.insert("User-Agent", "TurboMCP-Test-Client/1.0".parse().unwrap());
+    headers.insert("X-Custom-Header-1", "test-value-123".parse().unwrap());
+    headers.insert("X-Test-Value", "comprehensive-test".parse().unwrap());
+    headers.insert("X-Session-Id", "test-session-456".parse().unwrap());
+
+    let (ws_stream, _) = connect_async(request)
+        .await
+        .expect("Failed to connect with custom headers");
+
+    let (mut write, mut read) = ws_stream.split();
+
+    // Test 1: Initialize
+    let init_request = json!({
+        "jsonrpc": "2.0",
+        "id": "init-headers",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "header-test-client", "version": "1.0.0"}
+        }
+    });
+
+    write
+        .send(Message::Text(init_request.to_string().into()))
+        .await
+        .expect("Failed to send initialize");
+
+    let response = timeout(Duration::from_secs(5), read.next())
+        .await
+        .expect("Initialize timeout")
+        .expect("No response")
+        .expect("Read error");
+
+    if let Message::Text(text) = response {
+        let json: Value = serde_json::from_str(&text).expect("Invalid JSON");
+        assert_eq!(json["id"], "init-headers");
+        assert!(json["result"].is_object(), "Initialize should succeed");
+    } else {
+        panic!("Expected text message");
+    }
+
+    // Test 2: Call connection_info tool to check header propagation
+    let tool_request = json!({
+        "jsonrpc": "2.0",
+        "id": "tool-headers",
+        "method": "tools/call",
+        "params": {
+            "name": "connection_info",
+            "arguments": {}
+        }
+    });
+
+    write
+        .send(Message::Text(tool_request.to_string().into()))
+        .await
+        .expect("Failed to send tool call");
+
+    let response = timeout(Duration::from_secs(5), read.next())
+        .await
+        .expect("Tool call timeout")
+        .expect("No response")
+        .expect("Read error");
+
+    if let Message::Text(text) = response {
+        let json: Value = serde_json::from_str(&text).expect("Invalid JSON");
+        assert_eq!(json["id"], "tool-headers");
+
+        let result = &json["result"];
+        assert!(result.is_object(), "Tool should return result");
+
+        let content = &result["content"];
+        assert!(content.is_array(), "Content should be array");
+        assert!(content[0]["type"] == "text", "First content should be text");
+
+        let info_text = content[0]["text"].as_str().expect("Text should be string");
+
+        // Verify transport type
+        assert!(
+            info_text.contains("Transport: websocket"),
+            "Should indicate websocket transport, got: {}",
+            info_text
+        );
+
+        // Verify headers are present
+        assert!(
+            info_text.contains("WebSocket Upgrade Headers:"),
+            "Should contain headers section, got: {}",
+            info_text
+        );
+
+        // Verify specific custom headers (case-insensitive check)
+        assert!(
+            info_text
+                .to_lowercase()
+                .contains("x-custom-header-1: test-value-123")
+                || info_text.contains("X-Custom-Header-1: test-value-123"),
+            "Should contain custom header 1, got: {}",
+            info_text
+        );
+
+        assert!(
+            info_text
+                .to_lowercase()
+                .contains("x-test-value: comprehensive-test")
+                || info_text.contains("X-Test-Value: comprehensive-test"),
+            "Should contain test value header, got: {}",
+            info_text
+        );
+
+        // Verify user agent is propagated
+        assert!(
+            info_text.contains("User-Agent: TurboMCP-Test-Client/1.0")
+                || info_text
+                    .to_lowercase()
+                    .contains("user-agent: turbomcp-test-client/1.0"),
+            "Should contain user agent, got: {}",
+            info_text
+        );
+
+        // Additional verification: Headers should NOT be None
+        assert!(
+            !info_text.contains("Headers: None"),
+            "Headers should not be None, got: {}",
+            info_text
+        );
+
+        println!("✅ WebSocket header propagation test passed!");
+        println!("Connection info received:\n{}", info_text);
+    } else {
+        panic!("Expected text message");
+    }
+
+    // Cleanup
+    write.send(Message::Close(None)).await.ok();
+    server_task.abort();
+}
