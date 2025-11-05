@@ -71,7 +71,6 @@ tokio-test = "0.4"
 tempfile = "3.0"
 wiremock = "0.6"
 proptest = "1.5"
-rsa = { version = "0.9", features = ["sha2"] }
 rand = "0.8"
 
 [features]

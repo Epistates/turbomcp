@@ -133,31 +133,6 @@ pub fn generate_test_jwt(
     encode(&header, &claims, &key).expect("Failed to encode test JWT")
 }
 
-/// Generate a test RSA key pair (PEM format) for testing
-pub fn generate_test_rsa_keypair() -> (Vec<u8>, Vec<u8>) {
-    use rsa::pkcs8::LineEnding;
-    use rsa::{RsaPrivateKey, pkcs8::EncodePrivateKey, pkcs8::EncodePublicKey};
-
-    let mut rng = rand::thread_rng();
-    let bits = 2048;
-    let private_key = RsaPrivateKey::new(&mut rng, bits).expect("Failed to generate RSA key");
-    let public_key = private_key.to_public_key();
-
-    let private_pem = private_key
-        .to_pkcs8_pem(LineEnding::LF)
-        .expect("Failed to encode private key")
-        .as_bytes()
-        .to_vec();
-
-    let public_pem = public_key
-        .to_public_key_pem(LineEnding::LF)
-        .expect("Failed to encode public key")
-        .as_bytes()
-        .to_vec();
-
-    (private_pem, public_pem)
-}
-
 /// Get current Unix timestamp
 pub fn current_timestamp() -> u64 {
     SystemTime::now()
