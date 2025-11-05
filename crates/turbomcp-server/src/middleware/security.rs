@@ -1,7 +1,42 @@
-//! Security middleware using tower-http for CORS, security headers, and protection
+//! Security middleware using tower-http for CORS, security headers, and protection (Sprint 3.3)
 //!
 //! This middleware provides comprehensive security features including CORS handling,
 //! security headers, and protection against common web vulnerabilities.
+//!
+//! ## CORS Security (Sprint 3.3 Hardening)
+//!
+//! ### Critical OWASP Rules Enforced
+//!
+//! 1. **Wildcard + Credentials = FORBIDDEN**
+//!    - OWASP: Cannot use `Access-Control-Allow-Origin: *` with `Access-Control-Allow-Credentials: true`
+//!    - Browsers will block such requests
+//!    - Our implementation validates and panics if this combination is configured
+//!
+//! 2. **Null Origin Protection**
+//!    - OWASP: Attackers can send `Origin: null` to bypass validation
+//!    - Never allow `null` as an origin
+//!
+//! 3. **Explicit Allow-Lists Only**
+//!    - OWASP: Use explicit allow-lists, never wildcards in production
+//!    - `CorsOrigins::Any` is ONLY for development/testing
+//!    - Production MUST use `CorsConfig::strict()` or `production_safe()`
+//!
+//! ### Usage
+//!
+//! ```rust,ignore
+//! // ✅ CORRECT: Strict production configuration
+//! let cors = CorsConfig::strict()
+//!     .with_origins(vec!["https://app.example.com".to_string()])
+//!     .with_credentials(true);  // Safe with explicit origins
+//!
+//! // ⚠️ INSECURE: Development only
+//! let cors = CorsConfig::default();  // Uses Any - NEVER use in production
+//!
+//! // ❌ PANIC: This will panic at runtime (credentials + wildcard)
+//! let cors = CorsConfig::default()
+//!     .allow_any_origin()
+//!     .with_credentials(true);  // PANIC: Invalid combination
+//! ```
 
 use std::time::Duration;
 
@@ -96,6 +131,33 @@ impl Default for CorsConfig {
 }
 
 impl CorsConfig {
+    /// Strict CORS configuration for high-security production environments (Sprint 3.3)
+    ///
+    /// This is the MOST secure CORS configuration:
+    /// - NO origins allowed by default (must be explicitly configured)
+    /// - Only GET and POST methods (most common, least risk)
+    /// - Minimal headers (Content-Type, Accept only)
+    /// - NO credentials allowed by default
+    /// - Short preflight cache (5 minutes)
+    ///
+    /// # Example
+    /// ```rust
+    /// use turbomcp_server::middleware::security::CorsConfig;
+    ///
+    /// let cors = CorsConfig::strict()
+    ///     .with_origins(vec!["https://app.example.com".to_string()]);
+    /// ```
+    pub fn strict() -> Self {
+        Self {
+            allowed_origins: CorsOrigins::List(vec![]), // Must be explicitly configured
+            allowed_methods: vec![Method::GET, Method::POST], // Most restrictive
+            allowed_headers: vec![header::CONTENT_TYPE, header::ACCEPT],
+            exposed_headers: vec![],
+            max_age: Some(Duration::from_secs(300)), // 5 minutes (short cache)
+            allow_credentials: false,
+        }
+    }
+
     /// Production-safe CORS configuration
     ///
     /// Starts with NO allowed origins - you must explicitly configure them.
@@ -115,15 +177,97 @@ impl CorsConfig {
         }
     }
 
+    /// Development configuration with localhost origins
+    ///
+    /// Allows common localhost development origins with HTTP and various ports.
+    /// Still more secure than `Any` as it restricts to localhost only.
+    ///
+    /// ⚠️ **Development Only** - Do not use in production
+    pub fn development_localhost() -> Self {
+        Self {
+            allowed_origins: CorsOrigins::List(vec![
+                "http://localhost:3000".to_string(),
+                "http://localhost:5173".to_string(), // Vite default
+                "http://localhost:8080".to_string(),
+                "http://127.0.0.1:3000".to_string(),
+                "http://127.0.0.1:5173".to_string(),
+                "http://127.0.0.1:8080".to_string(),
+            ]),
+            allow_credentials: true, // Safe with explicit origins
+            ..Self::default()
+        }
+    }
+
     /// Set allowed origins
+    ///
+    /// Validates that origins are not "null" (OWASP security rule).
+    ///
+    /// # Panics
+    /// Panics if any origin is "null" (security violation)
     pub fn with_origins(mut self, origins: Vec<String>) -> Self {
+        // OWASP: Never allow "null" as an origin (attacker can set Origin: null)
+        for origin in &origins {
+            if origin.to_lowercase() == "null" {
+                panic!(
+                    "SECURITY VIOLATION: Cannot allow 'null' as CORS origin (OWASP). Remove 'null' from allowed origins."
+                );
+            }
+        }
         self.allowed_origins = CorsOrigins::List(origins);
         self
     }
 
     /// Allow any origin (⚠️ INSECURE - development only)
+    ///
+    /// # Panics
+    /// Panics if `allow_credentials` is true (OWASP security violation)
     pub fn allow_any_origin(mut self) -> Self {
+        // OWASP CRITICAL: Cannot use wildcard with credentials
+        if self.allow_credentials {
+            panic!(
+                "SECURITY VIOLATION: Cannot use CORS wildcard (*) with credentials (OWASP). Set allow_credentials=false or use explicit origins."
+            );
+        }
         self.allowed_origins = CorsOrigins::Any;
+        self
+    }
+
+    /// Enable credentials (cookies, authorization headers)
+    ///
+    /// # Panics
+    /// Panics if `allowed_origins` is `Any` (OWASP security violation)
+    pub fn with_credentials(mut self, allow: bool) -> Self {
+        // OWASP CRITICAL: Cannot use credentials with wildcard origin
+        if allow && matches!(self.allowed_origins, CorsOrigins::Any) {
+            panic!(
+                "SECURITY VIOLATION: Cannot use CORS wildcard (*) with credentials (OWASP). Set explicit origins first."
+            );
+        }
+        self.allow_credentials = allow;
+        self
+    }
+
+    /// Set allowed methods
+    pub fn with_methods(mut self, methods: Vec<Method>) -> Self {
+        self.allowed_methods = methods;
+        self
+    }
+
+    /// Set allowed headers
+    pub fn with_headers(mut self, headers: Vec<HeaderName>) -> Self {
+        self.allowed_headers = headers;
+        self
+    }
+
+    /// Set exposed headers
+    pub fn with_exposed_headers(mut self, headers: Vec<HeaderName>) -> Self {
+        self.exposed_headers = headers;
+        self
+    }
+
+    /// Set preflight cache duration
+    pub fn with_max_age(mut self, duration: Duration) -> Self {
+        self.max_age = Some(duration);
         self
     }
 }
@@ -344,5 +488,130 @@ mod tests {
         }
 
         assert_eq!(hsts_value, "max-age=31536000; includeSubDomains; preload");
+    }
+
+    // Sprint 3.3: CORS Security Tests
+
+    #[test]
+    fn test_strict_cors_config() {
+        let cors = CorsConfig::strict();
+
+        // Verify strict defaults
+        assert!(matches!(cors.allowed_origins, CorsOrigins::List(ref v) if v.is_empty()));
+        assert_eq!(cors.allowed_methods.len(), 2); // Only GET and POST
+        assert!(cors.allowed_methods.contains(&Method::GET));
+        assert!(cors.allowed_methods.contains(&Method::POST));
+        assert_eq!(cors.allowed_headers.len(), 2); // Only Content-Type and Accept
+        assert!(cors.exposed_headers.is_empty());
+        assert_eq!(cors.max_age, Some(Duration::from_secs(300))); // 5 minutes
+        assert!(!cors.allow_credentials);
+    }
+
+    #[test]
+    fn test_development_localhost_config() {
+        let cors = CorsConfig::development_localhost();
+
+        // Verify localhost origins are included
+        if let CorsOrigins::List(origins) = cors.allowed_origins {
+            assert!(origins.contains(&"http://localhost:3000".to_string()));
+            assert!(origins.contains(&"http://localhost:5173".to_string())); // Vite
+            assert!(origins.contains(&"http://127.0.0.1:3000".to_string()));
+            assert_eq!(origins.len(), 6);
+        } else {
+            panic!("Expected CorsOrigins::List");
+        }
+
+        assert!(cors.allow_credentials); // Safe with explicit origins
+    }
+
+    #[test]
+    fn test_with_origins_valid() {
+        let cors = CorsConfig::strict().with_origins(vec!["https://app.example.com".to_string()]);
+
+        if let CorsOrigins::List(origins) = cors.allowed_origins {
+            assert_eq!(origins.len(), 1);
+            assert_eq!(origins[0], "https://app.example.com");
+        } else {
+            panic!("Expected CorsOrigins::List");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "SECURITY VIOLATION: Cannot allow 'null' as CORS origin")]
+    fn test_null_origin_rejected() {
+        // OWASP: Never allow "null" as origin
+        CorsConfig::strict().with_origins(vec!["null".to_string()]);
+    }
+
+    #[test]
+    #[should_panic(expected = "SECURITY VIOLATION: Cannot allow 'null' as CORS origin")]
+    fn test_null_origin_rejected_mixed_case() {
+        // Case-insensitive "null" rejection
+        CorsConfig::strict().with_origins(vec![
+            "https://app.example.com".to_string(),
+            "NULL".to_string(),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "SECURITY VIOLATION: Cannot use CORS wildcard (*) with credentials")]
+    fn test_wildcard_with_credentials_rejected() {
+        // OWASP CRITICAL: wildcard + credentials = FORBIDDEN
+        CorsConfig::default().with_credentials(true); // Default uses Any, this should panic
+    }
+
+    #[test]
+    #[should_panic(expected = "SECURITY VIOLATION: Cannot use CORS wildcard (*) with credentials")]
+    fn test_allow_any_origin_with_credentials_rejected() {
+        // OWASP CRITICAL: Cannot enable wildcard when credentials are set
+        CorsConfig::strict()
+            .with_credentials(true)
+            .allow_any_origin(); // This should panic
+    }
+
+    #[test]
+    fn test_credentials_with_explicit_origins_allowed() {
+        // This is SAFE: credentials + explicit origins
+        let cors = CorsConfig::strict()
+            .with_origins(vec!["https://app.example.com".to_string()])
+            .with_credentials(true);
+
+        assert!(cors.allow_credentials);
+    }
+
+    #[test]
+    fn test_wildcard_without_credentials_allowed() {
+        // This is SAFE: wildcard without credentials
+        let cors = CorsConfig::strict().allow_any_origin();
+
+        assert!(matches!(cors.allowed_origins, CorsOrigins::Any));
+        assert!(!cors.allow_credentials);
+    }
+
+    #[test]
+    fn test_cors_builder_pattern() {
+        let cors = CorsConfig::strict()
+            .with_origins(vec!["https://app.example.com".to_string()])
+            .with_methods(vec![Method::GET, Method::POST, Method::PUT])
+            .with_headers(vec![header::CONTENT_TYPE, header::AUTHORIZATION])
+            .with_exposed_headers(vec![HeaderName::from_static("x-request-id")])
+            .with_max_age(Duration::from_secs(600))
+            .with_credentials(true);
+
+        assert!(cors.allow_credentials);
+        assert_eq!(cors.allowed_methods.len(), 3);
+        assert_eq!(cors.max_age, Some(Duration::from_secs(600)));
+    }
+
+    #[test]
+    fn test_production_safe_requires_explicit_origins() {
+        let cors = CorsConfig::production_safe();
+
+        // Should start with empty list
+        if let CorsOrigins::List(origins) = cors.allowed_origins {
+            assert!(origins.is_empty());
+        } else {
+            panic!("Expected CorsOrigins::List");
+        }
     }
 }

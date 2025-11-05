@@ -2,6 +2,13 @@
 //!
 //! This middleware implements sophisticated rate limiting using the Generic Cell Rate Algorithm (GCRA)
 //! through the tower-governor crate. It supports both global and per-client rate limiting.
+//!
+//! ## Security (Sprint 3.2)
+//!
+//! - Per-IP rate limiting with X-Forwarded-For support
+//! - Rate limit headers (X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset)
+//! - Retry-After header when rate limited
+//! - Latest versions: governor 0.10.1 + tower-governor 0.8.0
 
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -155,6 +162,61 @@ impl RateLimitLayer {
             .map(|b| b.get())
             .unwrap_or(self.requests_per_second() as u32)
     }
+
+    /// Get the rate limiting configuration ready for tower-governor integration (Sprint 3.2)
+    ///
+    /// This returns the configuration parameters needed to build a GovernorLayer manually.
+    /// Due to tower-governor 0.8.0's complex generic types, users should construct
+    /// the layer directly using these parameters.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use turbomcp_server::middleware::RateLimitConfig;
+    /// use tower_governor::{GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor};
+    /// use std::sync::Arc;
+    ///
+    /// let config = RateLimitConfig::new(100); // 100 requests per minute
+    /// let layer_config = config.get_config();
+    ///
+    /// // Build the governor config directly
+    /// let governor_conf = Arc::new(
+    ///     GovernorConfigBuilder::default()
+    ///         .per_second(layer_config.requests_per_second.get())
+    ///         .burst_size(layer_config.burst_size.get())
+    ///         .key_extractor(SmartIpKeyExtractor)
+    ///         .use_headers()
+    ///         .finish()
+    ///         .unwrap()
+    /// );
+    ///
+    /// // Create the layer
+    /// let rate_limit_layer = tower_governor::GovernorLayer::new(governor_conf);
+    ///
+    /// // Use with Axum:
+    /// let app = Router::new()
+    ///     .route("/api/tools", get(list_tools))
+    ///     .layer(rate_limit_layer);
+    ///
+    /// // CRITICAL: Use this server setup for IP extraction
+    /// let server = axum::Server::bind(&addr)
+    ///     .serve(app.into_make_service_with_connect_info::<SocketAddr>());
+    /// ```
+    ///
+    /// # Best Practices (from Sprint 3.2 implementation plan)
+    ///
+    /// 1. ⚠️ **Server Config**: MUST use `.into_make_service_with_connect_info::<SocketAddr>()`
+    /// 2. ✅ **Headers**: Use `.use_headers()` for X-RateLimit-* headers
+    /// 3. ✅ **Smart IP**: SmartIpKeyExtractor handles X-Forwarded-For, X-Real-IP, CF-Connecting-IP
+    /// 4. ✅ **GCRA Algorithm**: Uses Generic Cell Rate Algorithm (most efficient)
+    pub fn requests_per_second_nonzero(&self) -> NonZeroU32 {
+        NonZeroU32::new(self.requests_per_second() as u32).unwrap_or(NonZeroU32::new(1).unwrap())
+    }
+
+    /// Get burst size as NonZeroU32 for governor
+    pub fn burst_size_nonzero(&self) -> NonZeroU32 {
+        NonZeroU32::new(self.burst_size()).unwrap_or(NonZeroU32::new(1).unwrap())
+    }
 }
 
 // Note: We use SmartIpKeyExtractor from tower-governor which automatically:
@@ -210,5 +272,83 @@ mod tests {
         assert_eq!(config.limits.requests_per_period.get(), 200);
         assert_eq!(config.limits.period, Duration::from_secs(30));
         assert_eq!(config.limits.burst_size.unwrap().get(), 20);
+    }
+
+    #[test]
+    fn test_rate_limit_layer_helpers() {
+        let config = RateLimitConfig::new(60); // 60 requests per minute = 1 per second
+        let layer = RateLimitLayer::new(config);
+
+        assert!(layer.is_enabled());
+        assert_eq!(layer.requests_per_second(), 1);
+        assert_eq!(layer.burst_size(), 6); // 60/10 = 6
+    }
+
+    #[test]
+    fn test_requests_per_second_nonzero() {
+        let config = RateLimitConfig::new(60); // 60 per minute = 1 per second
+        let layer = RateLimitLayer::new(config);
+
+        assert_eq!(layer.requests_per_second_nonzero().get(), 1);
+    }
+
+    #[test]
+    fn test_burst_size_nonzero() {
+        let config = RateLimitConfig::new(100);
+        let layer = RateLimitLayer::new(config);
+
+        assert_eq!(layer.burst_size_nonzero().get(), 10); // 100/10 = 10
+    }
+
+    #[test]
+    #[cfg(feature = "rate-limiting")]
+    fn test_governor_config_strict() {
+        use tower_governor::{governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor};
+
+        let config = RateLimitConfig::strict();
+        let layer = RateLimitLayer::new(config);
+
+        // Verify we can build a valid governor config using our helpers
+        let governor_conf = GovernorConfigBuilder::default()
+            .per_second(layer.requests_per_second())
+            .burst_size(layer.burst_size())
+            .key_extractor(SmartIpKeyExtractor)
+            .use_headers()
+            .finish();
+
+        assert!(
+            governor_conf.is_some(),
+            "Governor config should build successfully"
+        );
+
+        // Verify rate limiting parameters
+        assert_eq!(layer.requests_per_second(), 1); // 30 per 60 seconds = 0.5, clamped to min 1
+        assert_eq!(layer.burst_size(), 5);
+    }
+
+    #[test]
+    #[cfg(feature = "rate-limiting")]
+    fn test_governor_config_permissive() {
+        use tower_governor::{governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor};
+
+        let config = RateLimitConfig::permissive();
+        let layer = RateLimitLayer::new(config);
+
+        // Verify we can build a valid governor config using our helpers
+        let governor_conf = GovernorConfigBuilder::default()
+            .per_second(layer.requests_per_second())
+            .burst_size(layer.burst_size())
+            .key_extractor(SmartIpKeyExtractor)
+            .use_headers()
+            .finish();
+
+        assert!(
+            governor_conf.is_some(),
+            "Governor config should build successfully"
+        );
+
+        // Verify rate limiting parameters
+        assert_eq!(layer.requests_per_second(), 16); // 1000 per 60 seconds = 16 per second
+        assert_eq!(layer.burst_size(), 100);
     }
 }
