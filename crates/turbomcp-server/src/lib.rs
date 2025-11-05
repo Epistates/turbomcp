@@ -122,6 +122,20 @@
     clippy::default_trait_access  // Default::default() is sometimes clearer
 )]
 
+// Sprint 2.7: Compile-time security warnings for dangerous feature combinations
+//
+// Note: These are placeholder warnings for future security features:
+// - dpop-ed25519: EdDSA-based DPoP (more secure than RS256)
+// - tls: TLS/HTTPS support (recommended for production HTTP servers)
+//
+// When these features are added, uncomment the checks below:
+//
+// #[cfg(all(feature = "dpop", not(feature = "dpop-ed25519")))]
+// compile_error!("DPoP should use EdDSA or ES256, not RS256");
+//
+// #[cfg(all(feature = "http", not(feature = "tls")))]
+// const _HTTP_TLS_WARNING: () = ();
+
 /// Server name
 pub const SERVER_NAME: &str = "turbomcp-server";
 /// Server version
@@ -131,7 +145,9 @@ pub mod capabilities;
 pub mod config;
 pub mod elicitation;
 pub mod error;
-pub mod handlers;
+pub mod error_sanitization; // Sprint 3.1: Error message sanitization
+pub mod handler_validation;
+pub mod handlers; // Sprint 2.4: Handler name injection prevention
 // Temporarily disabled - compile-time routing replaces these
 // #[cfg(feature = "http")]
 // pub mod http_server;
@@ -144,6 +160,7 @@ pub mod registry;
 pub mod routing;
 pub mod runtime;
 pub mod sampling;
+pub mod security_checks; // Sprint 2.6: Runtime security validation
 pub mod server;
 pub mod service;
 pub mod timeout;

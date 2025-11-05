@@ -663,6 +663,9 @@ impl McpServer {
         use std::collections::HashMap;
         use tokio::sync::{Mutex, RwLock};
 
+        // Sprint 2.6: Check for insecure 0.0.0.0 binding
+        crate::security_checks::check_binding_security(&addr);
+
         info!("Starting MCP server with HTTP transport");
 
         self.lifecycle.start().await;
@@ -866,6 +869,9 @@ impl McpServer {
         use turbomcp_transport::axum::{WebSocketFactoryState, websocket_handler_with_factory};
         use turbomcp_transport::tower::SessionInfo;
 
+        // Sprint 2.6: Check for insecure 0.0.0.0 binding
+        crate::security_checks::check_binding_security(&addr);
+
         info!("Starting MCP server with WebSocket transport");
         info!(config = ?config, "WebSocket configuration");
 
@@ -986,6 +992,9 @@ impl McpServer {
         addr: A,
     ) -> ServerResult<()> {
         use turbomcp_transport::TcpTransport;
+
+        // Sprint 2.6: Check for insecure 0.0.0.0 binding
+        crate::security_checks::check_binding_security(&addr);
 
         // Start performance monitoring for TCP server
         let _perf_span = info_span!("server.run", transport = "tcp").entered();
