@@ -226,6 +226,9 @@ impl HandlerRegistry {
     {
         let name = name.into();
 
+        // Sprint 2.4: Validate handler name to prevent injection attacks
+        crate::handler_validation::validate_handler_name(&name)?;
+
         // Check limits
         if self.tools.len() >= self.config.read().max_handlers_per_type {
             return Err(ServerError::handler(format!(
@@ -273,6 +276,9 @@ impl HandlerRegistry {
         P: PromptHandler + 'static,
     {
         let name = name.into();
+
+        // Sprint 2.4: Validate handler name to prevent injection attacks
+        crate::handler_validation::validate_handler_name(&name)?;
 
         // Check limits
         if self.prompts.len() >= self.config.read().max_handlers_per_type {
@@ -322,6 +328,10 @@ impl HandlerRegistry {
     {
         let name = name.into();
 
+        // Note: Resources use URIs (e.g., "stdio://test", "docs://list") which may contain
+        // special characters like "://" that are not valid Rust identifiers.
+        // Therefore, we do NOT validate resource names like we do for tools/prompts/sampling/logging.
+
         // Check limits
         if self.resources.len() >= self.config.read().max_handlers_per_type {
             return Err(ServerError::handler(format!(
@@ -367,6 +377,9 @@ impl HandlerRegistry {
     {
         let name = name.into();
 
+        // Sprint 2.4: Validate handler name to prevent injection attacks
+        crate::handler_validation::validate_handler_name(&name)?;
+
         // Check limits
         if self.sampling.len() >= self.config.read().max_handlers_per_type {
             return Err(ServerError::handler(format!(
@@ -405,6 +418,9 @@ impl HandlerRegistry {
         L: LoggingHandler + 'static,
     {
         let name = name.into();
+
+        // Sprint 2.4: Validate handler name to prevent injection attacks
+        crate::handler_validation::validate_handler_name(&name)?;
 
         // Check limits
         if self.logging.len() >= self.config.read().max_handlers_per_type {
