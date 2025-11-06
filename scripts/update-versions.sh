@@ -1,10 +1,16 @@
 #!/bin/bash
 
-# TurboMCP Version Update Script
+# TurboMCP Version Update Script (Improved)
 # Updates all version numbers across the workspace
 #
+# Improvements:
+# - Cross-platform sed compatibility (macOS + Linux)
+# - Removed test file scanning (tests use env!("CARGO_PKG_VERSION"))
+# - Better error handling and validation
+# - Crate order aligned with dependencies
+#
 # Usage:
-#   VERSION=2.0.0-rc.2 ./scripts/update-versions.sh
+#   VERSION=2.2.1 ./scripts/update-versions-improved.sh
 
 set -euo pipefail
 
@@ -18,17 +24,17 @@ NC='\033[0m' # No Color
 # Configuration
 NEW_VERSION=${VERSION:-""}
 
-# Crate list
+# Crate list (in dependency order for consistency)
 CRATES=(
-    "turbomcp-protocol"
-    "turbomcp-dpop"
-    "turbomcp-macros"
-    "turbomcp-auth"
-    "turbomcp-transport"
-    "turbomcp-server"
-    "turbomcp-client"
-    "turbomcp-cli"
-    "turbomcp"
+    "turbomcp-protocol"   # No internal deps
+    "turbomcp-dpop"       # No internal deps
+    "turbomcp-auth"       # Depends on protocol, dpop
+    "turbomcp-transport"  # Depends on protocol, auth
+    "turbomcp-macros"     # Depends on protocol, transport
+    "turbomcp-server"     # Depends on protocol, macros, transport, auth
+    "turbomcp-client"     # Depends on protocol, transport
+    "turbomcp-cli"        # Depends on client, transport, protocol
+    "turbomcp"            # Main SDK - depends on all
 )
 
 print_section() {
@@ -48,19 +54,43 @@ print_error() {
     echo -e "${RED}❌ $1${NC}"
 }
 
+# Cross-platform sed in-place editing
+# Usage: sed_inplace "s/pattern/replacement/" file
+sed_inplace() {
+    local pattern="$1"
+    local file="$2"
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS requires empty string after -i
+        sed -i '' "$pattern" "$file"
+    else
+        # Linux/Unix standard syntax
+        sed -i "$pattern" "$file"
+    fi
+}
+
 # Check if we're in the right directory
 if [ ! -f "Cargo.toml" ] || [ ! -d "crates" ]; then
     print_error "Must be run from the turbomcp workspace root"
     exit 1
 fi
 
-echo -e "${BLUE}🔄 TurboMCP Version Update${NC}"
-echo -e "${BLUE}==========================${NC}"
+echo -e "${BLUE}🔄 TurboMCP Version Update (Improved)${NC}"
+echo -e "${BLUE}=====================================${NC}"
 echo ""
 
-# Get current version if new version not specified
+# Get current version BEFORE any modifications
+CURRENT_VERSION=$(grep '^version = ' "crates/turbomcp-protocol/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
+
+if [ -z "$CURRENT_VERSION" ]; then
+    print_error "Could not detect current version from turbomcp-protocol/Cargo.toml"
+    exit 1
+fi
+
+echo "Current version: $CURRENT_VERSION"
+
+# Get new version if not specified
 if [ -z "$NEW_VERSION" ]; then
-    CURRENT_VERSION=$(grep '^version = ' "crates/turbomcp-protocol/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
     print_error "No version specified. Current version is: $CURRENT_VERSION"
     echo ""
     echo "Usage: VERSION=2.0.0-rc.2 $0"
@@ -74,11 +104,22 @@ if ! echo "$NEW_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?$'; th
     exit 1
 fi
 
+# Check if version is changing
+if [ "$CURRENT_VERSION" = "$NEW_VERSION" ]; then
+    print_warning "New version ($NEW_VERSION) is same as current version ($CURRENT_VERSION)"
+    read -p "Continue anyway? (yes/no): " -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+        print_warning "Update cancelled"
+        exit 0
+    fi
+fi
+
 echo "New version: $NEW_VERSION"
 echo ""
 
 # Confirm before proceeding
-read -p "Update all crates to version $NEW_VERSION? (yes/no): " -r
+read -p "Update all crates from $CURRENT_VERSION to $NEW_VERSION? (yes/no): " -r
 echo
 
 if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
@@ -89,93 +130,79 @@ fi
 # Step 1: Update crate Cargo.toml files
 print_section "Step 1: Updating Crate Versions"
 
+crates_updated=0
+crates_failed=0
+
 for crate in "${CRATES[@]}"; do
     cargo_toml="crates/$crate/Cargo.toml"
 
     if [ ! -f "$cargo_toml" ]; then
         print_error "Missing: $cargo_toml"
+        crates_failed=$((crates_failed + 1))
         continue
     fi
 
     # Update the version line
-    sed -i '' "s/^version = \".*\"/version = \"$NEW_VERSION\"/" "$cargo_toml"
+    sed_inplace "s/^version = \".*\"/version = \"$NEW_VERSION\"/" "$cargo_toml"
 
-    # Update internal dependencies
+    # Update internal dependencies (handles both "{ version = ..." and "{ path = ..., version = ...")
     for dep_crate in "${CRATES[@]}"; do
         if [ "$crate" != "$dep_crate" ]; then
-            sed -i '' "s/^$dep_crate = { version = \"[^\"]*\"/$dep_crate = { version = \"$NEW_VERSION\"/" "$cargo_toml" || true
+            # Pattern 1: { version = "..." } format
+            sed_inplace "s/^$dep_crate = { version = \"[^\"]*\"/$dep_crate = { version = \"$NEW_VERSION\"/" "$cargo_toml" || true
+            # Pattern 2: { path = "...", version = "..." } format
+            sed_inplace "s/\(^$dep_crate = { .*\)version = \"[^\"]*\"/\1version = \"$NEW_VERSION\"/" "$cargo_toml" || true
         fi
     done
 
     print_status "Updated $crate"
+    crates_updated=$((crates_updated + 1))
 done
+
+echo ""
+echo "Updated $crates_updated crates"
+
+if [ $crates_failed -gt 0 ]; then
+    print_error "Failed to update $crates_failed crates"
+    exit 1
+fi
 
 echo ""
 
 # Step 2: Update workspace Cargo.toml
 print_section "Step 2: Updating Workspace Dependencies"
 
-sed -i '' "s/turbomcp = { version = \"[^\"]*\"/turbomcp = { version = \"$NEW_VERSION\"/" Cargo.toml
-sed -i '' "s/turbomcp-protocol = { version = \"[^\"]*\"/turbomcp-protocol = { version = \"$NEW_VERSION\"/" Cargo.toml
-sed -i '' "s/turbomcp-transport = { version = \"[^\"]*\"/turbomcp-transport = { version = \"$NEW_VERSION\"/" Cargo.toml
-sed -i '' "s/turbomcp-client = { version = \"[^\"]*\"/turbomcp-client = { version = \"$NEW_VERSION\"/" Cargo.toml
-sed -i '' "s/turbomcp-server = { version = \"[^\"]*\"/turbomcp-server = { version = \"$NEW_VERSION\"/" Cargo.toml
-sed -i '' "s/turbomcp-macros = { version = \"[^\"]*\"/turbomcp-macros = { version = \"$NEW_VERSION\"/" Cargo.toml
-sed -i '' "s/turbomcp-cli = { version = \"[^\"]*\"/turbomcp-cli = { version = \"$NEW_VERSION\"/" Cargo.toml
+workspace_toml="Cargo.toml"
+
+# Update all internal crate references in workspace dependencies
+for crate in "${CRATES[@]}"; do
+    sed_inplace "s/^$crate = { version = \"[^\"]*\"/$crate = { version = \"$NEW_VERSION\"/" "$workspace_toml"
+done
 
 print_status "Updated workspace Cargo.toml"
 echo ""
 
-# Step 3: Find and update test files with hardcoded versions
-print_section "Step 3: Updating Hardcoded Versions in Tests"
+# Step 3: Verify changes
+print_section "Step 3: Verifying Changes"
 
-# Get current version to know what to replace
-CURRENT_VERSION=$(grep '^version = ' "crates/turbomcp-protocol/Cargo.toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
+verification_failed=0
 
-test_files_updated=0
+for crate in "${CRATES[@]}"; do
+    cargo_toml="crates/$crate/Cargo.toml"
+    actual_version=$(grep '^version = ' "$cargo_toml" | head -1 | sed 's/version = "\(.*\)"/\1/')
 
-# Find test files more broadly (includes tests.rs, test.rs, config.rs, etc.)
-for test_file in $(find crates/*/src crates/*/tests -name "*.rs" -type f 2>/dev/null | grep -E "(test|config)"); do
-    # Check if file contains the OLD version in version-related assertions/configs
-    # Only update lines that check DEFAULT values (not lines setting custom versions)
-    if grep -qE "(assert.*version|DEFAULT_VERSION|SERVER_VERSION).*\"$CURRENT_VERSION\"" "$test_file" && \
-       ! grep -qE "\.version\(\"$CURRENT_VERSION\"\)|version:.*\"$CURRENT_VERSION\".*to_string" "$test_file"; then
-        # Create a temporary file for targeted replacement
-        temp_file="${test_file}.tmp"
-        
-        # Only replace versions in lines that look like DEFAULT version checks (not custom version setters)
-        awk -v old="$CURRENT_VERSION" -v new="$NEW_VERSION" '
-        {
-            # Only replace on lines that check the default version (skip lines setting custom versions)
-            if ($0 ~ /(assert.*version|DEFAULT_VERSION|SERVER_VERSION)/ && \
-                $0 !~ /\.version\(|version:.*to_string/) {
-                gsub("\"" old "\"", "\"" new "\"")
-            }
-            print
-        }' "$test_file" > "$temp_file"
-        
-        # Count actual changes
-        count=$(diff "$test_file" "$temp_file" | grep -c "^<" || true)
-        
-        if [ "$count" -gt 0 ]; then
-            mv "$temp_file" "$test_file"
-            relative_path=$(echo "$test_file" | sed 's|.*/crates/|crates/|')
-            print_status "Updated $count occurrence(s) in $relative_path"
-            test_files_updated=$((test_files_updated + 1))
-        else
-            rm -f "$temp_file"
-        fi
+    if [ "$actual_version" != "$NEW_VERSION" ]; then
+        print_error "$crate: Expected version $NEW_VERSION, got $actual_version"
+        verification_failed=$((verification_failed + 1))
     fi
 done
 
-echo ""
-if [ $test_files_updated -eq 0 ]; then
-    print_status "No hardcoded versions found in test files"
-else
-    print_status "Updated $test_files_updated test file(s) with version changes"
-    print_warning "Review changes to ensure no unintended replacements"
+if [ $verification_failed -gt 0 ]; then
+    print_error "Verification failed for $verification_failed crates"
+    exit 1
 fi
 
+print_status "All crate versions verified"
 echo ""
 
 # Step 4: Update Cargo.lock
@@ -184,27 +211,57 @@ print_section "Step 4: Updating Cargo.lock"
 if cargo update --workspace --quiet; then
     print_status "Cargo.lock updated"
 else
-    print_warning "Failed to update Cargo.lock - you may need to run 'cargo update' manually"
-fi
-
-echo ""
-
-# Final verification
-print_section "Verification"
-
-echo "Running version consistency check..."
-if ./scripts/check-versions.sh; then
-    print_status "Version update successful!"
-else
-    print_error "Version consistency check failed - manual review required"
+    print_error "Failed to update Cargo.lock"
+    echo "You may need to run 'cargo update --workspace' manually"
     exit 1
 fi
 
 echo ""
+
+# Step 5: Run version consistency check
+print_section "Step 5: Running Version Consistency Check"
+
+if [ -f "./scripts/check-versions.sh" ]; then
+    if VERSION="$NEW_VERSION" ./scripts/check-versions.sh; then
+        print_status "Version consistency check passed"
+    else
+        print_error "Version consistency check failed"
+        echo ""
+        echo "Please review the errors above and fix manually"
+        exit 1
+    fi
+else
+    print_warning "check-versions.sh not found - skipping consistency check"
+fi
+
+echo ""
+
+# Step 6: Quick compilation check
+print_section "Step 6: Quick Compilation Check"
+
+echo "Running 'cargo check' to verify changes..."
+if cargo check --workspace --quiet 2>&1 | head -20; then
+    print_status "Workspace compiles successfully"
+else
+    print_error "Compilation failed after version update"
+    echo ""
+    echo "Please review errors and fix manually"
+    exit 1
+fi
+
+echo ""
+
+# Final summary
+print_section "✅ Version Update Complete"
+echo "Updated: $CURRENT_VERSION → $NEW_VERSION"
+echo "Crates: ${#CRATES[@]} crates updated"
+echo ""
 print_status "🎉 All versions updated to $NEW_VERSION"
 echo ""
-echo "Next steps:"
+echo -e "${BLUE}Next steps:${NC}"
 echo "1. Review changes: git diff"
-echo "2. Test build: cargo check --workspace"
-echo "3. Run tests: cargo test --workspace --lib"
+echo "2. Run tests: cargo test --workspace --lib"
+echo "3. Run full checks: ./scripts/prepare-release.sh"
 echo "4. Commit changes: git add -A && git commit -m 'chore: bump version to $NEW_VERSION'"
+echo ""
+echo -e "${YELLOW}Note:${NC} Tests use env!(\"CARGO_PKG_VERSION\") - no manual test updates needed"
