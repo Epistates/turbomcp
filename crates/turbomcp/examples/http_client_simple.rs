@@ -77,11 +77,11 @@ async fn main() -> Result<()> {
     let mut args = HashMap::new();
     args.insert("message".to_string(), serde_json::json!("Hello HTTP!"));
     let result = client.call_tool("echo", Some(args)).await?;
-    println!("  → echo: {}", result);
+    println!("  → echo: {:?}", result);
 
     // Call info tool
     let result = client.call_tool("info", None).await?;
-    println!("  → info: {}", result);
+    println!("  → info: {:?}", result);
 
     println!("\n✅ Demo complete!\n");
     Ok(())

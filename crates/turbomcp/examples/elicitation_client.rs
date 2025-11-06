@@ -81,12 +81,12 @@ async fn main() -> Result<()> {
     // Test 1: Get user name
     tracing::info!("\n📞 Test 1: Calling get_user_name...");
     let result = client.call_tool("get_user_name", None).await?;
-    tracing::info!("📝 Result:\n{}", result);
+    tracing::info!("📝 Result:\n{:?}", result);
 
     // Test 2: Configure model
     tracing::info!("\n📞 Test 2: Calling configure_model...");
     let result = client.call_tool("configure_model", None).await?;
-    tracing::info!("📝 Result:\n{}", result);
+    tracing::info!("📝 Result:\n{:?}", result);
 
     tracing::info!("\n✅ Demo complete!");
 

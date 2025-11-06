@@ -175,7 +175,7 @@ testcontainers = "0.25.0"
 doc-comment = "0.3"
 
 # Workspace dependencies are defined below
-# Internal crate dependencies - 2.2.0 (with default-features = false for granular control)
+# Internal crate dependencies - 2.2.1 (with default-features = false for granular control)
 turbomcp = { version = "2.2.1", path = "crates/turbomcp" }
 # turbomcp-core merged into turbomcp-protocol in v2.0.0
 turbomcp-protocol = { version = "2.2.1", path = "crates/turbomcp-protocol", default-features = false }
@@ -184,7 +184,7 @@ turbomcp-client = { version = "2.2.1", path = "crates/turbomcp-client", default-
 turbomcp-server = { version = "2.2.1", path = "crates/turbomcp-server", default-features = false }
 turbomcp-macros = { version = "2.2.1", path = "crates/turbomcp-macros", default-features = false }
 turbomcp-cli = { version = "2.2.1", path = "crates/turbomcp-cli", default-features = false }
-# turbomcp-dpop = { version = "2.2.0", path = "crates/turbomcp-dpop" }  # Available as optional feature
+# turbomcp-dpop = { version = "2.2.1", path = "crates/turbomcp-dpop" }  # Available as optional feature
 
 [profile.dev]
 opt-level = 1
