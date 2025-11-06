@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-server"
-version = "2.2.1"
+version = "2.2.2"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Fast MCP server implementation with middleware, routing, and lifecycle management"

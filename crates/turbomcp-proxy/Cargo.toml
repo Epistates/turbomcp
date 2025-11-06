@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-proxy"
-version = "2.2.1"
+version = "2.2.2"
 edition = "2024"
 authors = ["TurboMCP Team"]
 description = "Universal MCP adapter/generator - introspection, proxying, and code generation for any MCP server"

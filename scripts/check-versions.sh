@@ -26,6 +26,7 @@ CRATES=(
     "turbomcp-client"
     "turbomcp-cli"
     "turbomcp"
+    "turbomcp-proxy"
 )
 
 print_section() {

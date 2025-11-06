@@ -200,20 +200,74 @@ pub struct Implementation {
     pub version: String,
 }
 
-/// General annotations that can be attached to various MCP objects
+/// Optional metadata hints that can be attached to MCP objects.
+///
+/// **Important**: Per the MCP specification, annotations are **weak hints only**.
+/// Clients MAY ignore these entirely. They should never be used for security
+/// decisions or to make assumptions about actual behavior.
+///
+/// # Standard Fields
+///
+/// - **`audience`**: Role-based filtering hint. Values should be `"user"` or `"assistant"`
+///   (corresponding to [`Role`]). Clients can use this to filter content presentation.
+///
+/// - **`priority`**: Subjective importance hint (numeric). Clients often ignore this.
+///   No standard range is defined by the MCP spec.
+///
+/// - **`lastModified`**: ISO 8601 timestamp (e.g., `"2025-11-06T10:30:00Z"`).
+///   The most reliably useful field - indicates freshness for caching.
+///
+/// - **`custom`**: Application-specific extensions. Preserved but rarely interpreted.
+///
+/// # Usage Notes
+///
+/// Annotations are optional on:
+/// - Content blocks (text, image, audio, resource links)
+/// - Resources
+/// - Prompts
+///
+/// For tools, use [`ToolAnnotations`] which includes additional hints like
+/// `destructive_hint`, `read_only_hint`, etc. However, the MCP spec warns:
+/// *"Clients should never make tool use decisions based on ToolAnnotations
+/// received from untrusted servers."*
+///
+/// # Example
+///
+/// ```rust
+/// use turbomcp_protocol::types::Annotations;
+///
+/// // Minimal usage (most common)
+/// let annotations = Annotations {
+///     last_modified: Some("2025-11-06T10:00:00Z".to_string()),
+///     ..Default::default()
+/// };
+///
+/// // With audience filtering
+/// let annotations = Annotations {
+///     audience: Some(vec!["user".to_string()]),
+///     last_modified: Some("2025-11-06T10:00:00Z".to_string()),
+///     ..Default::default()
+/// };
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct Annotations {
-    /// Audience-specific hints or information
+    /// Role-based audience hint. Per MCP spec, values should be "user" or "assistant".
+    ///
+    /// **Note**: This is a weak hint. Clients may ignore it entirely.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audience: Option<Vec<String>>,
-    /// Priority level for ordering or importance
+    /// Subjective priority hint (numeric). No standard range defined.
+    ///
+    /// **Note**: This is a weak hint. Clients often ignore this field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<f64>,
-    /// The moment the resource was last modified, as an ISO 8601 formatted string
+    /// ISO 8601 timestamp of last modification (e.g., "2025-11-06T10:30:00Z").
+    ///
+    /// Most reliably useful field for cache invalidation and freshness display.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "lastModified")]
     pub last_modified: Option<String>,
-    /// Additional custom annotations
+    /// Application-specific extensions. Preserved by clients but rarely interpreted.
     #[serde(flatten)]
     pub custom: HashMap<String, serde_json::Value>,
 }

@@ -52,7 +52,33 @@ pub enum ContentBlock {
     Resource(EmbeddedResource),
 }
 
-/// Compatibility alias for the old Content enum
+/// Backward compatibility alias for `ContentBlock`.
+///
+/// The MCP specification originally named this type `Content`, but later renamed it to
+/// `ContentBlock` for clarity. This alias exists to maintain backward compatibility with
+/// code written against earlier versions of the TurboMCP SDK.
+///
+/// **For new code**, prefer using `ContentBlock` directly as it matches the current
+/// MCP specification terminology.
+///
+/// # Example
+///
+/// ```rust
+/// use turbomcp_protocol::types::{Content, ContentBlock, TextContent};
+///
+/// // Both are equivalent:
+/// let content_old: Content = ContentBlock::Text(TextContent {
+///     text: "Hello".to_string(),
+///     annotations: None,
+///     meta: None,
+/// });
+///
+/// let content_new: ContentBlock = ContentBlock::Text(TextContent {
+///     text: "Hello".to_string(),
+///     annotations: None,
+///     meta: None,
+/// });
+/// ```
 pub type Content = ContentBlock;
 
 /// Text content per MCP 2025-06-18 specification

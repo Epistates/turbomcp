@@ -7,9 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## Fixed
-### Provide full and raw access to JSON RPC tool call result
- - ** Fixed `Client::call_tool()` to return complete `CallToolResult` instead of only the first content block. Previously, the method discarded all subsequent content blocks, `structured_content`, and `_meta` fields, causing data loss.
+## [2.2.2] - 2025-11-06
+
+### Added
+
+#### CallToolResult Convenience Methods
+Added four ergonomic helper methods to `CallToolResult` for common operations:
+- `all_text()` - Concatenates all text content blocks with newlines
+- `first_text()` - Returns the first text block (common pattern for simple tools)
+- `has_error()` - Checks error status with sensible default (treats `None` as `false`)
+- `to_display_string()` - Creates user-friendly formatted output including ResourceLink metadata
+
+**Impact**: Significantly reduces boilerplate for integrators working with tool results.
+
+**Files Modified**: `crates/turbomcp-protocol/src/types/tools.rs:349-548`
+
+#### New Examples
+- **`structured_output.rs`** - Comprehensive guide showing when/how to use `structured_content` with `output_schema`, including best practices for backward compatibility
+- **`resource_links.rs`** - Demonstrates proper ResourceLink usage with all metadata fields (description, mime_type, size) and explains their importance per MCP spec
+
+**Files Added**:
+- `crates/turbomcp/examples/structured_output.rs`
+- `crates/turbomcp/examples/resource_links.rs`
+
+### Fixed
+
+#### Annotations Documentation Corrections
+- **Fixed `audience` field bug**: Corrected documentation to reflect MCP spec requirement that audience values should be `"user"` or `"assistant"` only (not arbitrary strings like "developer", "admin", "llm")
+- **Added MCP spec warnings**: Both `Annotations` and `ToolAnnotations` now include critical warnings from the MCP specification:
+  - *"Annotations are weak hints only"*
+  - *"Clients should never make tool use decisions based on ToolAnnotations received from untrusted servers"*
+- **Honest assessment**: Documentation now accurately reflects that most annotation fields are subjective and "often ignored by clients", with `lastModified` being the most reliably useful field
+
+**Files Modified**:
+- `crates/turbomcp-protocol/src/types/core.rs:203-273` (Annotations)
+- `crates/turbomcp-protocol/src/types/tools.rs:11-58` (ToolAnnotations)
+
+### Improved
+
+#### Enhanced Field Documentation
+Added comprehensive inline documentation for previously ambiguous `CallToolResult` fields:
+- **`is_error`**: Clarified that when `true`, ALL content blocks should be treated as error information
+- **`structured_content`**: Documented schema-validated JSON usage and backward compatibility pattern
+- **`_meta`**: Explained this is for client-internal data that should NOT be exposed to LLMs
+
+**File Modified**: `crates/turbomcp-protocol/src/types/tools.rs:324-346`
+
+#### Content Type Alias Clarification
+Added detailed documentation explaining that `Content` is a backward compatibility alias for `ContentBlock`:
+- Explains the rename from `Content` to `ContentBlock` in the MCP specification
+- Recommends using `ContentBlock` directly in new code
+- Includes examples showing equivalence
+
+**File Modified**: `crates/turbomcp-protocol/src/types/content.rs:55-82`
+
+### Documentation
+
+#### Integration Guidance
+Created comprehensive documentation for integrators (based on Rig feedback):
+- `RIG_INTEGRATION_IMPROVEMENTS.md` - Detailed analysis of real improvements vs integration misunderstandings
+- `IMPROVEMENTS_COMPLETE.md` - Complete summary of all v2.2.2 work
+
+**Key Clarifications for Integrators**:
+1. **`turbomcp_tools()` helper**: This is the integrator's responsibility to implement using `client.list_tools()` (standard MCP API)
+2. **ResourceLink metadata**: TurboMCP provides ALL fields (name, title, uri, description, mime_type, size, annotations, meta). The MCP spec explicitly states `description` is "for improving LLM understanding" - integrators should use it, not discard it
+
+## [2.2.1] - 2025-11-05
+
+### Fixed
+#### Provide full and raw access to JSON RPC tool call result
+ - **Fixed `Client::call_tool()` to return complete `CallToolResult`** instead of only the first content block. Previously, the method discarded all subsequent content blocks, `structured_content`, and `_meta` fields, causing data loss.
   - **Breaking Change**: `call_tool()` return type changed from `Result<serde_json::Value>` to `Result<CallToolResult>`
   - **Migration**: Callers need to serialize the result if JSON is required: `serde_json::to_value(result)?`
   - **Impact**: CLI and proxy adapters updated to handle new return type

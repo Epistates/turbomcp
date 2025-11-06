@@ -32,6 +32,7 @@ CRATES=(
     "turbomcp-client"     # Depends on protocol, transport
     "turbomcp-cli"        # Depends on client, transport, protocol
     "turbomcp"            # Main SDK - depends on all
+    "turbomcp-proxy"      # Consumer-only - depends on protocol, transport, client, server (optional), auth (optional)
 )
 
 print_section() {

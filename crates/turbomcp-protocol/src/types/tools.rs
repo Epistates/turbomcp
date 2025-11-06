@@ -8,38 +8,51 @@ use std::collections::HashMap;
 
 use super::{content::ContentBlock, core::Cursor};
 
-/// Provides additional, optional metadata about a tool.
+/// Optional metadata hints about a tool's behavior.
 ///
-/// These annotations offer hints to clients and LLMs about the tool's behavior,
-/// helping them make more informed decisions about when and how to use the tool.
+/// **Critical Warning** (from MCP spec):
+/// > "All properties in ToolAnnotations are **hints**. They are not guaranteed to
+/// > provide a faithful description of tool behavior. **Clients should never make
+/// > tool use decisions based on ToolAnnotations received from untrusted servers.**"
+///
+/// These fields are useful for UI display and general guidance, but should never
+/// be trusted for security decisions or behavioral assumptions.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolAnnotations {
-    /// A user-friendly title for the tool, which may be used in UIs instead of the programmatic `name`.
+    /// A user-friendly title for display in UIs (hint only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Specifies the intended audience for the tool (e.g., "developer", "admin").
+    /// Role-based audience hint. Per spec, should be `"user"` or `"assistant"` (hint only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audience: Option<Vec<String>>,
-    /// A numeric value indicating the tool's priority, useful for sorting or ranking.
+    /// Subjective priority for UI sorting (hint only, often ignored).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<f64>,
-    /// If `true`, hints that the tool may perform destructive actions (e.g., deleting data).
+    /// **Hint** that the tool may perform destructive actions (e.g., deleting data).
+    ///
+    /// Do not trust this for security decisions. Default: `true` if not specified.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "destructiveHint")]
     pub destructive_hint: Option<bool>,
-    /// If `true`, hints that calling the tool multiple times with the same arguments will not have additional effects.
+    /// **Hint** that repeated calls with same args have no additional effects.
+    ///
+    /// Useful for retry logic, but verify actual behavior. Default: `false` if not specified.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "idempotentHint")]
     pub idempotent_hint: Option<bool>,
-    /// If `true`, hints that the tool may interact with external systems or the real world.
+    /// **Hint** that the tool may interact with external systems or the real world.
+    ///
+    /// Do not trust this for sandboxing decisions. Default: `true` if not specified.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "openWorldHint")]
     pub open_world_hint: Option<bool>,
-    /// If `true`, hints that the tool does not modify any state and only reads data.
+    /// **Hint** that the tool does not modify state (read-only).
+    ///
+    /// Do not trust this for security decisions. Default: `false` if not specified.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "readOnlyHint")]
     pub read_only_hint: Option<bool>,
-    /// A map for any other custom annotations not defined in the specification.
+    /// Custom application-specific hints.
     #[serde(flatten)]
     pub custom: HashMap<String, serde_json::Value>,
 }
@@ -322,12 +335,237 @@ pub struct CallToolResult {
     /// The output of the tool, typically as a series of text or other content blocks. This is required.
     pub content: Vec<ContentBlock>,
     /// An optional boolean indicating whether the tool execution resulted in an error.
+    ///
+    /// When `is_error` is `true`, all content blocks should be treated as error information.
+    /// The error message may span multiple text blocks for structured error reporting.
     #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
     /// Optional structured output from the tool, conforming to its `output_schema`.
+    ///
+    /// When present, this contains schema-validated JSON output that clients can parse
+    /// and use programmatically. Tools that return structured content SHOULD also include
+    /// the serialized JSON in a TextContent block for backward compatibility with clients
+    /// that don't support structured output.
+    ///
+    /// See [`Tool::output_schema`] for defining the expected structure.
     #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
     pub structured_content: Option<serde_json::Value>,
     /// Optional metadata for the result.
+    ///
+    /// This field is for client applications and tools to pass additional context that
+    /// should NOT be exposed to LLMs. Examples include tracking IDs, performance metrics,
+    /// cache status, or internal state information.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
+}
+
+impl CallToolResult {
+    /// Extracts and concatenates all text content from the result.
+    ///
+    /// This is useful for simple text-only tools or when you want to present
+    /// all textual output as a single string.
+    ///
+    /// # Returns
+    ///
+    /// A single string containing all text blocks concatenated with newlines.
+    /// Returns an empty string if there are no text blocks.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_protocol::types::{CallToolResult, ContentBlock, TextContent};
+    ///
+    /// let result = CallToolResult {
+    ///     content: vec![
+    ///         ContentBlock::Text(TextContent {
+    ///             text: "Line 1".to_string(),
+    ///             annotations: None,
+    ///             meta: None,
+    ///         }),
+    ///         ContentBlock::Text(TextContent {
+    ///             text: "Line 2".to_string(),
+    ///             annotations: None,
+    ///             meta: None,
+    ///         }),
+    ///     ],
+    ///     is_error: None,
+    ///     structured_content: None,
+    ///     _meta: None,
+    /// };
+    ///
+    /// assert_eq!(result.all_text(), "Line 1\nLine 2");
+    /// ```
+    pub fn all_text(&self) -> String {
+        self.content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Returns the text content of the first text block, if any.
+    ///
+    /// This is a common pattern for simple tools that return a single text response.
+    ///
+    /// # Returns
+    ///
+    /// `Some(&str)` if the first content block is text, `None` otherwise.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_protocol::types::{CallToolResult, ContentBlock, TextContent};
+    ///
+    /// let result = CallToolResult {
+    ///     content: vec![
+    ///         ContentBlock::Text(TextContent {
+    ///             text: "Hello, world!".to_string(),
+    ///             annotations: None,
+    ///             meta: None,
+    ///         }),
+    ///     ],
+    ///     is_error: None,
+    ///     structured_content: None,
+    ///     _meta: None,
+    /// };
+    ///
+    /// assert_eq!(result.first_text(), Some("Hello, world!"));
+    /// ```
+    pub fn first_text(&self) -> Option<&str> {
+        self.content.first().and_then(|block| match block {
+            ContentBlock::Text(text) => Some(text.text.as_str()),
+            _ => None,
+        })
+    }
+
+    /// Checks if the tool execution resulted in an error.
+    ///
+    /// # Returns
+    ///
+    /// `true` if `is_error` is explicitly set to `true`, `false` otherwise
+    /// (including when `is_error` is `None`).
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_protocol::types::CallToolResult;
+    ///
+    /// let success_result = CallToolResult {
+    ///     content: vec![],
+    ///     is_error: Some(false),
+    ///     structured_content: None,
+    ///     _meta: None,
+    /// };
+    /// assert!(!success_result.has_error());
+    ///
+    /// let error_result = CallToolResult {
+    ///     content: vec![],
+    ///     is_error: Some(true),
+    ///     structured_content: None,
+    ///     _meta: None,
+    /// };
+    /// assert!(error_result.has_error());
+    ///
+    /// let unspecified_result = CallToolResult {
+    ///     content: vec![],
+    ///     is_error: None,
+    ///     structured_content: None,
+    ///     _meta: None,
+    /// };
+    /// assert!(!unspecified_result.has_error());
+    /// ```
+    pub fn has_error(&self) -> bool {
+        self.is_error.unwrap_or(false)
+    }
+
+    /// Creates a user-friendly display string for the tool result.
+    ///
+    /// This method provides a formatted representation suitable for logging,
+    /// debugging, or displaying to end users. It handles multiple content types
+    /// and includes structured content and error information when present.
+    ///
+    /// # Returns
+    ///
+    /// A formatted string representing the tool result.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_protocol::types::{CallToolResult, ContentBlock, TextContent};
+    ///
+    /// let result = CallToolResult {
+    ///     content: vec![
+    ///         ContentBlock::Text(TextContent {
+    ///             text: "Operation completed".to_string(),
+    ///             annotations: None,
+    ///             meta: None,
+    ///         }),
+    ///     ],
+    ///     is_error: Some(false),
+    ///     structured_content: None,
+    ///     _meta: None,
+    /// };
+    ///
+    /// let display = result.to_display_string();
+    /// assert!(display.contains("Operation completed"));
+    /// ```
+    pub fn to_display_string(&self) -> String {
+        let mut parts = Vec::new();
+
+        // Add error indicator if present
+        if self.has_error() {
+            parts.push("ERROR:".to_string());
+        }
+
+        // Process content blocks
+        for (i, block) in self.content.iter().enumerate() {
+            match block {
+                ContentBlock::Text(text) => {
+                    parts.push(text.text.clone());
+                }
+                ContentBlock::Image(img) => {
+                    parts.push(format!(
+                        "[Image: {} bytes, type: {}]",
+                        img.data.len(),
+                        img.mime_type
+                    ));
+                }
+                ContentBlock::Audio(audio) => {
+                    parts.push(format!(
+                        "[Audio: {} bytes, type: {}]",
+                        audio.data.len(),
+                        audio.mime_type
+                    ));
+                }
+                ContentBlock::ResourceLink(link) => {
+                    let desc = link.description.as_deref().unwrap_or("");
+                    let mime = link
+                        .mime_type
+                        .as_deref()
+                        .map(|m| format!(" [{}]", m))
+                        .unwrap_or_default();
+                    parts.push(format!(
+                        "[Resource: {}{}{}{}]",
+                        link.name,
+                        mime,
+                        if !desc.is_empty() { ": " } else { "" },
+                        desc
+                    ));
+                }
+                ContentBlock::Resource(_resource) => {
+                    parts.push(format!("[Embedded Resource #{}]", i + 1));
+                }
+            }
+        }
+
+        // Add structured content indicator if present
+        if self.structured_content.is_some() {
+            parts.push("[Includes structured output]".to_string());
+        }
+
+        parts.join("\n")
+    }
 }

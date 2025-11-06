@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp"
-version = "2.2.1"
+version = "2.2.2"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Rust SDK for Model Context Protocol (MCP) with OAuth 2.1 compliance, ergonomic macros and SIMD acceleration"
