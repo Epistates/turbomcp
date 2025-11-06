@@ -1,5 +1,6 @@
 //! Server configuration tests - comprehensive coverage for normal and edge cases
 use super::*;
+use crate::SERVER_VERSION;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -14,7 +15,7 @@ fn test_server_config_default() {
     let config = ServerConfig::default();
 
     assert_eq!(config.name, "turbomcp-server");
-    assert_eq!(config.version, "2.2.0");
+    assert_eq!(config.version, SERVER_VERSION);
     assert_eq!(
         config.description,
         Some("Next generation MCP server".to_string())
@@ -229,7 +230,7 @@ fn test_builder_partial_configuration() {
     assert_eq!(config.port, 9000);
 
     // Should retain defaults for non-configured values
-    assert_eq!(config.version, "2.2.0");
+    assert_eq!(config.version, SERVER_VERSION);
     assert_eq!(config.bind_address, "127.0.0.1");
     assert!(!config.enable_tls);
 }

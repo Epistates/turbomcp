@@ -90,7 +90,11 @@ impl<T: Transport + 'static> ProxyClient for ConcreteProxyClient<T> {
     ) -> ClientFuture<'_, Value> {
         let client = self.client.clone();
         let name = name.to_string();
-        Box::pin(async move { client.call_tool(&name, arguments).await })
+        Box::pin(async move {
+            let result = client.call_tool(&name, arguments).await?;
+            // Serialize CallToolResult to JSON for proxy transport
+            Ok(serde_json::to_value(result)?)
+        })
     }
 
     fn read_resource(&self, uri: &str) -> ClientFuture<'_, ReadResourceResult> {

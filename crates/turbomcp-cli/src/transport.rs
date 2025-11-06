@@ -78,18 +78,21 @@ impl UnifiedClient {
         name: &str,
         arguments: Option<HashMap<String, serde_json::Value>>,
     ) -> CliResult<serde_json::Value> {
-        match &self.inner {
+        let result = match &self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => Ok(client.call_tool(name, arguments).await?),
+            ClientInner::Stdio(client) => client.call_tool(name, arguments).await?,
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => Ok(client.call_tool(name, arguments).await?),
+            ClientInner::Tcp(client) => client.call_tool(name, arguments).await?,
             #[cfg(feature = "unix")]
-            ClientInner::Unix(client) => Ok(client.call_tool(name, arguments).await?),
+            ClientInner::Unix(client) => client.call_tool(name, arguments).await?,
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => Ok(client.call_tool(name, arguments).await?),
+            ClientInner::Http(client) => client.call_tool(name, arguments).await?,
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => Ok(client.call_tool(name, arguments).await?),
-        }
+            ClientInner::WebSocket(client) => client.call_tool(name, arguments).await?,
+        };
+
+        // Serialize CallToolResult to JSON for CLI display
+        Ok(serde_json::to_value(result)?)
     }
 
     pub async fn list_resources(&self) -> CliResult<Vec<turbomcp_protocol::types::Resource>> {

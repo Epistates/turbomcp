@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
-use turbomcp_protocol::types::{CallToolRequest, CallToolResult, Content, ListToolsResult, Tool};
+use turbomcp_protocol::types::{CallToolRequest, CallToolResult, ListToolsResult, Tool};
 use turbomcp_protocol::{Error, Result};
 
 use crate::with_plugins;
@@ -82,7 +82,8 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
 
     /// Call a tool on the server
     ///
-    /// Executes a tool on the server with the provided arguments.
+    /// Executes a tool on the server with the provided arguments and returns
+    /// the complete MCP `CallToolResult`.
     ///
     /// # Arguments
     ///
@@ -91,13 +92,20 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     ///
     /// # Returns
     ///
-    /// Returns the result of the tool execution.
+    /// Returns the complete `CallToolResult` with:
+    /// - `content: Vec<ContentBlock>` - All content blocks (text, image, resource, audio, etc.)
+    /// - `is_error: Option<bool>` - Whether the tool execution resulted in an error
+    /// - `structured_content: Option<serde_json::Value>` - Schema-validated structured output
+    /// - `_meta: Option<serde_json::Value>` - Metadata for client applications (not exposed to LLMs)
     ///
     /// # Examples
+    ///
+    /// ## Basic Usage
     ///
     /// ```rust,no_run
     /// # use turbomcp_client::Client;
     /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # use turbomcp_protocol::types::Content;
     /// # use std::collections::HashMap;
     /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut client = Client::new(StdioTransport::new());
@@ -107,7 +115,69 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// args.insert("input".to_string(), serde_json::json!("test"));
     ///
     /// let result = client.call_tool("my_tool", Some(args)).await?;
-    /// println!("Tool result: {:?}", result);
+    ///
+    /// // Access all content blocks
+    /// for content in &result.content {
+    ///     match content {
+    ///         Content::Text(text) => println!("Text: {}", text.text),
+    ///         Content::Image(image) => println!("Image: {}", image.mime_type),
+    ///         _ => {}
+    ///     }
+    /// }
+    ///
+    /// // Check for errors
+    /// if result.is_error.unwrap_or(false) {
+    ///     eprintln!("Tool execution failed");
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Structured Output (Schema Validation)
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # use serde::Deserialize;
+    /// # use std::collections::HashMap;
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
+    /// # #[derive(Deserialize)]
+    /// # struct WeatherData {
+    /// #     temperature: f64,
+    /// #     conditions: String,
+    /// # }
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// let result = client.call_tool("get_weather", None).await?;
+    ///
+    /// // Access schema-validated structured output
+    /// if let Some(structured) = result.structured_content {
+    ///     let weather: WeatherData = serde_json::from_value(structured)?;
+    ///     println!("Temperature: {}°C", weather.temperature);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Metadata Access
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_client::Client;
+    /// # use turbomcp_transport::stdio::StdioTransport;
+    /// # use std::collections::HashMap;
+    /// # async fn example() -> turbomcp_protocol::Result<()> {
+    /// let mut client = Client::new(StdioTransport::new());
+    /// client.initialize().await?;
+    ///
+    /// let result = client.call_tool("query_database", None).await?;
+    ///
+    /// // Access metadata (tracking IDs, performance metrics, etc.)
+    /// if let Some(meta) = result._meta {
+    ///     if let Some(query_id) = meta.get("query_id") {
+    ///         println!("Query ID: {}", query_id);
+    ///     }
+    /// }
     /// # Ok(())
     /// # }
     /// ```
@@ -115,12 +185,11 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         &self,
         name: &str,
         arguments: Option<HashMap<String, serde_json::Value>>,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<CallToolResult> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // 🎉 TurboMCP v1.0.7: Clean plugin execution with macro!
         let request_data = CallToolRequest {
             name: name.to_string(),
             arguments: Some(arguments.unwrap_or_default()),
@@ -135,44 +204,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
                 .request("tools/call", Some(serde_json::to_value(&request_data)?))
                 .await?;
 
-            Ok(self.extract_tool_content(&result))
+            Ok(result) // Return full CallToolResult - MCP spec compliant!
         })
-    }
-
-    /// Helper method to extract content from CallToolResult
-    fn extract_tool_content(&self, response: &CallToolResult) -> serde_json::Value {
-        // Extract content from response - for simplicity, return the first text content
-        if let Some(content) = response.content.first() {
-            match content {
-                Content::Text(text_content) => serde_json::json!({
-                    "text": text_content.text,
-                    "is_error": response.is_error.unwrap_or(false)
-                }),
-                Content::Image(image_content) => serde_json::json!({
-                    "image": image_content.data,
-                    "mime_type": image_content.mime_type,
-                    "is_error": response.is_error.unwrap_or(false)
-                }),
-                Content::Resource(resource_content) => serde_json::json!({
-                    "resource": resource_content.resource,
-                    "annotations": resource_content.annotations,
-                    "is_error": response.is_error.unwrap_or(false)
-                }),
-                Content::Audio(audio_content) => serde_json::json!({
-                    "audio": audio_content.data,
-                    "mime_type": audio_content.mime_type,
-                    "is_error": response.is_error.unwrap_or(false)
-                }),
-                Content::ResourceLink(resource_link) => serde_json::json!({
-                    "resource_uri": resource_link.uri,
-                    "is_error": response.is_error.unwrap_or(false)
-                }),
-            }
-        } else {
-            serde_json::json!({
-                "message": "No content returned",
-                "is_error": response.is_error.unwrap_or(false)
-            })
-        }
     }
 }

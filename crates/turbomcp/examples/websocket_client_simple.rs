@@ -74,7 +74,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let mut args = HashMap::new();
         args.insert("message".to_string(), serde_json::json!("Hello WebSocket!"));
         let result = client.call_tool("echo", Some(args)).await?;
-        println!("  → echo: {}", result);
+        println!("  → echo: {:?}", result);
     }
 
     // Call add tool if available
@@ -83,7 +83,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         args.insert("a".to_string(), serde_json::json!(15));
         args.insert("b".to_string(), serde_json::json!(27));
         let result = client.call_tool("add", Some(args)).await?;
-        println!("  → add: {}", result);
+        println!("  → add: {:?}", result);
     }
 
     println!("\n✅ Demo complete!\n");
