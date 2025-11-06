@@ -18,7 +18,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 DRY_RUN=${DRY_RUN:-true}
-WAIT_TIME=${WAIT_TIME:-30}  # Seconds to wait between publishes
+WAIT_TIME=${WAIT_TIME:-10}  # Seconds to wait between publishes
 VERSION=${VERSION:-""}       # Will be auto-detected if not set
 
 # Crate publish order (dependencies first)
