@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## Fixed
+### Provide full and raw access to JSON RPC tool call result
+ - ** Fixed `Client::call_tool()` to return complete `CallToolResult` instead of only the first content block. Previously, the method discarded all subsequent content blocks, `structured_content`, and `_meta` fields, causing data loss.
+  - **Breaking Change**: `call_tool()` return type changed from `Result<serde_json::Value>` to `Result<CallToolResult>`
+  - **Migration**: Callers need to serialize the result if JSON is required: `serde_json::to_value(result)?`
+  - **Impact**: CLI and proxy adapters updated to handle new return type
+  - **Files Modified**: `turbomcp-client/src/client/operations/tools.rs:154`, `turbomcp-cli/src/transport.rs`, `turbomcp-proxy/src/proxy/backend.rs`
+- **Version Script**: Fixed `update-versions.sh` to correctly update inline dependency format (`{ path = "...", version = "..." }`) in `turbomcp-cli/Cargo.toml`. The script now uses explicit regex pattern matching for inline dependencies instead of greedy wildcards.
+
 ## [2.2.0] - 2025-11-05
 
 ### 🔐 Major Security Release: Sprint 0 & Sprint 1 Complete

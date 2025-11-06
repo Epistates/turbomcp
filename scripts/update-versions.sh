@@ -1,16 +1,16 @@
 #!/bin/bash
 
-# TurboMCP Version Update Script (Improved)
+# TurboMCP Version Update Script
 # Updates all version numbers across the workspace
 #
-# Improvements:
+# Features:
 # - Cross-platform sed compatibility (macOS + Linux)
 # - Removed test file scanning (tests use env!("CARGO_PKG_VERSION"))
 # - Better error handling and validation
 # - Crate order aligned with dependencies
 #
 # Usage:
-#   VERSION=2.2.1 ./scripts/update-versions-improved.sh
+#   VERSION=2.2.1 ./scripts/update-versions.sh
 
 set -euo pipefail
 
@@ -150,8 +150,8 @@ for crate in "${CRATES[@]}"; do
         if [ "$crate" != "$dep_crate" ]; then
             # Pattern 1: { version = "..." } format
             sed_inplace "s/^$dep_crate = { version = \"[^\"]*\"/$dep_crate = { version = \"$NEW_VERSION\"/" "$cargo_toml" || true
-            # Pattern 2: { path = "...", version = "..." } format
-            sed_inplace "s/\(^$dep_crate = { .*\)version = \"[^\"]*\"/\1version = \"$NEW_VERSION\"/" "$cargo_toml" || true
+            # Pattern 2: { path = "...", version = "..." } format (explicit match for inline style)
+            sed_inplace "s/^\($dep_crate = { path = \"[^\"]*\", \)version = \"[^\"]*\"/\1version = \"$NEW_VERSION\"/" "$cargo_toml" || true
         fi
     done
 
