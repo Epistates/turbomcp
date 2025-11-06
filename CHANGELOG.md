@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.2.0] - 2025-11-04
+## [2.2.0] - 2025-11-05
 
 ### 🔐 Major Security Release: Sprint 0 & Sprint 1 Complete
 

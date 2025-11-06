@@ -536,7 +536,7 @@ cargo run --example elicitation_interactive_client
 Enable features in `Cargo.toml`:
 ```toml
 [dependencies]
-turbomcp-client = { version = "2.0.4", features = ["tcp", "websocket"] }
+turbomcp-client = { version = "2.2.0", features = ["tcp", "websocket"] }
 ```
 
 ## Architecture
