@@ -146,13 +146,15 @@ for crate in "${CRATES[@]}"; do
     # Update the version line
     sed_inplace "s/^version = \".*\"/version = \"$NEW_VERSION\"/" "$cargo_toml"
 
-    # Update internal dependencies (handles both "{ version = ..." and "{ path = ..., version = ...")
+    # Update internal dependencies (handles multiple formats with optional flags)
     for dep_crate in "${CRATES[@]}"; do
         if [ "$crate" != "$dep_crate" ]; then
-            # Pattern 1: { version = "..." } format
-            sed_inplace "s/^$dep_crate = { version = \"[^\"]*\"/$dep_crate = { version = \"$NEW_VERSION\"/" "$cargo_toml" || true
-            # Pattern 2: { path = "...", version = "..." } format (explicit match for inline style)
+            # Pattern 1: Single-line with path first: { path = "...", version = "..." } with optional flags
             sed_inplace "s/^\($dep_crate = { path = \"[^\"]*\", \)version = \"[^\"]*\"/\1version = \"$NEW_VERSION\"/" "$cargo_toml" || true
+            # Pattern 2: Single-line with version first: { version = "...", ... }
+            sed_inplace "s/^$dep_crate = { version = \"[^\"]*\"/$dep_crate = { version = \"$NEW_VERSION\"/" "$cargo_toml" || true
+            # Pattern 3: Multiline with version on separate line (for readability)
+            sed_inplace "/^$dep_crate = {/,/^}/s/version = \"[^\"]*\"/version = \"$NEW_VERSION\"/" "$cargo_toml" || true
         fi
     done
 

@@ -55,7 +55,7 @@ tracing = { workspace = true }
 metrics = { workspace = true, optional = true }
 
 # Authentication (optional)
-turbomcp-auth = { version = "2.2.1", path = "../turbomcp-auth", optional = true }
+turbomcp-auth = { version = "2.2.2", path = "../turbomcp-auth", optional = true }
 jsonwebtoken = { version = "9.3", optional = true }
 base64 = { version = "0.22", optional = true }
 

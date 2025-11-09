@@ -1,4 +1,4 @@
-//! Integration prelude for LLM framework integrations (Rig, Langchain, etc.)
+//! Integration prelude for LLM framework integrations (Langchain, etc.)
 //!
 //! This module provides a comprehensive re-export of types commonly needed when
 //! integrating MCP clients with LLM frameworks. It includes everything from the

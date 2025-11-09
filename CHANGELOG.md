@@ -61,16 +61,6 @@ Added detailed documentation explaining that `Content` is a backward compatibili
 
 **File Modified**: `crates/turbomcp-protocol/src/types/content.rs:55-82`
 
-### Documentation
-
-#### Integration Guidance
-Created comprehensive documentation for integrators (based on Rig feedback):
-- `RIG_INTEGRATION_IMPROVEMENTS.md` - Detailed analysis of real improvements vs integration misunderstandings
-- `IMPROVEMENTS_COMPLETE.md` - Complete summary of all v2.2.2 work
-
-**Key Clarifications for Integrators**:
-1. **`turbomcp_tools()` helper**: This is the integrator's responsibility to implement using `client.list_tools()` (standard MCP API)
-2. **ResourceLink metadata**: TurboMCP provides ALL fields (name, title, uri, description, mime_type, size, annotations, meta). The MCP spec explicitly states `description` is "for improving LLM understanding" - integrators should use it, not discard it
 
 ## [2.2.1] - 2025-11-05
 
