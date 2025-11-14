@@ -28,7 +28,7 @@
 - **🔧 Tool Management** - List, call, and export tool schemas
 - **📦 Resource Access** - List, read, and subscribe to MCP resources
 - **💬 Prompt Operations** - List and execute prompts with arguments
-- **🌐 Multi-Transport** - STDIO (child process), TCP, Unix sockets (HTTP/WS coming soon)
+- **🌐 Multi-Transport** - STDIO (child process), TCP, Unix sockets, HTTP SSE, WebSocket
 - **🚀 Smart Auto-Detection** - Automatically detects transport from URL format
 - **🎨 Rich Output** - Human, JSON, YAML, and table formats with colored output
 - **🛡️ Built on Core Libraries** - Uses `turbomcp-client` and `turbomcp-transport`
@@ -43,7 +43,7 @@
 cargo install turbomcp-cli
 
 # Install specific version
-cargo install turbomcp-cli --version 2.0.0
+cargo install turbomcp-cli --version 2.2.2
 ```
 
 ### From Source

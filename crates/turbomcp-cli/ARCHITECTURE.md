@@ -183,32 +183,32 @@ turbomcp-cli -c prod prompts get user-preferences
 turbomcp-cli tools export --output schemas/ --format json
 ```
 
-## Implementation Plan
+## Implementation Status
 
-### Phase 1: Core Refactor
-- [ ] Remove custom transport implementations
-- [ ] Integrate turbomcp-client properly
-- [ ] Implement transport factory with auto-detection
-- [ ] Add basic error handling framework
+### Phase 1: Core Refactor ✅ COMPLETE
+- [x] Remove custom transport implementations
+- [x] Integrate turbomcp-client properly
+- [x] Implement transport factory with auto-detection
+- [x] Add basic error handling framework
 
-### Phase 2: Complete Commands
-- [ ] Add all resource commands
-- [ ] Add all prompt commands
-- [ ] Add completion commands
-- [ ] Add server management commands
+### Phase 2: Complete Commands ✅ COMPLETE
+- [x] Add all resource commands (list, read, templates, subscribe, unsubscribe)
+- [x] Add all prompt commands (list, get, schema)
+- [x] Add completion commands (get with prompt/resource refs)
+- [x] Add server management commands (info, ping, log-level, roots)
 
-### Phase 3: UX Enhancement
-- [ ] Multiple output formats
-- [ ] Colored output with `owo-colors`
-- [ ] Table formatting with `comfy-table`
-- [ ] Progress indicators with `indicatif`
+### Phase 3: UX Enhancement ✅ COMPLETE
+- [x] Multiple output formats (human, json, yaml, table, compact)
+- [x] Colored output with `owo-colors`
+- [x] Table formatting with `comfy-table`
+- [x] Progress indicators with `indicatif`
 
-### Phase 4: Configuration
-- [ ] Config file support
-- [ ] Connection presets
-- [ ] Environment variable expansion
+### Phase 4: Configuration 🚧 PARTIAL
+- [x] Config file support (Connection struct uses config crate)
+- [x] Connection presets (--connection flag implemented)
+- [x] Environment variable expansion (MCP_URL, MCP_COMMAND, MCP_AUTH supported)
 
-### Phase 5: Advanced Features
+### Phase 5: Advanced Features ⏳ TODO
 - [ ] Interactive mode
 - [ ] Batch operations
 - [ ] Scripting support
