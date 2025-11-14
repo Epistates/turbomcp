@@ -38,7 +38,6 @@ turbomcp-transport = { version = "2.2.2", path = "../turbomcp-transport", option
 tokio = { workspace = true }
 async-trait = "0.1"
 trybuild = "1.0"
-turbomcp = { version = "2.2.2", path = "../turbomcp", features = ["http", "tcp", "unix"] }
 
 [features]
 default = []

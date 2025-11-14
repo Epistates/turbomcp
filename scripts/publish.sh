@@ -104,6 +104,35 @@ for crate in "${CRATES[@]}"; do
 done
 
 print_status "All ${#CRATES[@]} crates found"
+
+# Run workspace tests to ensure everything works before publishing
+if [ "$DRY_RUN" = "false" ]; then
+    echo ""
+    print_section "Running Workspace Tests"
+    if cargo test --workspace --all-features --quiet 2>&1 | tail -20; then
+        print_status "All tests passed"
+    else
+        print_error "Tests failed - refusing to publish"
+        print_error "Fix failing tests before publishing"
+        exit 1
+    fi
+fi
+
+# Check for uncommitted changes
+if [ "$DRY_RUN" = "false" ]; then
+    if ! git diff-index --quiet HEAD --; then
+        print_warning "Uncommitted changes detected"
+        read -p "Continue anyway? (yes/no): " -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+            print_warning "Publish cancelled - commit changes first"
+            exit 1
+        fi
+    else
+        print_status "No uncommitted changes"
+    fi
+fi
+
 echo ""
 
 # Show publish order
