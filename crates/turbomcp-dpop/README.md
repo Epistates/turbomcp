@@ -5,11 +5,15 @@ RFC 9449 compliant DPoP (Demonstrating Proof-of-Possession) implementation for O
 ## Features
 
 - **RFC 9449 Compliance** - Full specification implementation
-- **Cryptographic Security** - RSA, ECDSA P-256, and PSS support
+- **Cryptographic Security** - ES256 (ECDSA P-256) only for maximum security
 - **Token Binding** - Prevents stolen token usage
 - **Replay Protection** - Nonce tracking and timestamp validation
 - **HSM Support** - PKCS#11 and YubiHSM integration
 - **Redis Storage** - Distributed nonce tracking
+
+## Security Notice
+
+**v2.2.0+** removes RSA algorithm support (RS256, PS256) to eliminate timing attack vulnerabilities (RUSTSEC-2023-0071). Only ES256 (ECDSA P-256) is supported for superior security, faster performance, and smaller key sizes.
 
 ## Usage
 
