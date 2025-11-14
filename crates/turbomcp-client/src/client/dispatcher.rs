@@ -426,11 +426,14 @@ impl MessageDispatcher {
                 }
             }
 
+            // Allow deprecated for defensive pattern matching on batch types
+            // These exist only for defensive deserialization per MCP 2025-06-18 spec
+            #[allow(deprecated)]
             JsonRpcMessage::RequestBatch(_)
             | JsonRpcMessage::ResponseBatch(_)
             | JsonRpcMessage::MessageBatch(_) => {
-                // Batch operations not yet supported
-                tracing::debug!("Received batch message (not yet supported)");
+                // Batch operations not supported per MCP 2025-06-18 specification
+                tracing::debug!("Received batch message (not supported per MCP specification)");
             }
         }
 

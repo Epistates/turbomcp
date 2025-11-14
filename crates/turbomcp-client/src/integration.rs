@@ -19,13 +19,13 @@
 //! // - All handler types for server-initiated requests
 //! // - Plugin system for middleware and metrics
 //!
-//! pub fn register_mcp_tool<T: Transport + 'static>(
-//!     agent_builder: AgentBuilder,
+//! // Example: Generic function that works with any transport type
+//! pub fn process_tool_with_client<T: Transport + 'static>(
 //!     tool: Tool,
 //!     client: Client<T>,
-//! ) -> AgentBuilder {
+//! ) {
 //!     // Integration code here
-//!     agent_builder
+//!     println!("Tool name: {}", tool.name);
 //! }
 //! ```
 
