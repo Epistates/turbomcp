@@ -1009,6 +1009,34 @@ cargo run --example 10_http_server
 | `all-transports` | Enable all transport protocols | ✅ |
 | `minimal` | Minimal build (STDIO only) | ❌ |
 
+### Important: Minimum Feature Requirements
+
+When using `default-features = false`, you must explicitly enable at least one transport feature to have a functional MCP server. The available transport features are:
+
+- `stdio` - STDIO transport (included in default features)
+- `http` - HTTP/SSE transport
+- `websocket` - WebSocket transport
+- `tcp` - TCP transport
+- `unix` - Unix socket transport
+
+**Example configurations:**
+
+```toml
+# Minimal STDIO-only server
+[dependencies]
+turbomcp = { version = "2.1", default-features = false, features = ["stdio"] }
+
+# HTTP-only server
+[dependencies]
+turbomcp = { version = "2.1", default-features = false, features = ["http"] }
+
+# Multiple transports without default features
+[dependencies]
+turbomcp = { version = "2.1", default-features = false, features = ["stdio", "http", "websocket"] }
+```
+
+Without at least one transport feature enabled, the server will not be able to communicate using the MCP protocol.
+
 ## Development
 
 ### Building
