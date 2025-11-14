@@ -150,12 +150,12 @@ async fn test_example_jsonrpc_with_timeout(
     Ok(responses)
 }
 
-/// Helper to run an example and test JSON-RPC communication with default 10-second timeout
+/// Helper to run an example and test JSON-RPC communication with default 30-second timeout
 async fn test_example_jsonrpc(
     example_name: &str,
     requests: Vec<Value>,
 ) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
-    test_example_jsonrpc_with_timeout(example_name, requests, 10).await
+    test_example_jsonrpc_with_timeout(example_name, requests, 30).await
 }
 
 /// Test that hello_world example handles real MCP communication

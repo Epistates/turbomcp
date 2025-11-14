@@ -80,12 +80,17 @@ impl RealProductionMcpServer {
 
     #[tool("Get detailed server status")]
     async fn get_status(&self) -> McpResult<Value> {
-        let count = *self.request_count.read().await;
+        // Increment counter to count this status request itself
+        let mut count = self.request_count.write().await;
+        *count += 1;
+        let current_count = *count;
+        drop(count); // Release write lock
+
         Ok(json!({
             "server_name": self.name,
             "server_version": self.version,
             "port": self.port,
-            "requests_handled": count,
+            "requests_handled": current_count,
             "status": "healthy",
             "uptime": "running",
             "transport": "working"
