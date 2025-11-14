@@ -148,7 +148,9 @@ pub fn validate_output_path(base_dir: &Path, requested_path: &str) -> CliResult<
 /// ```
 /// # use turbomcp_cli::path_security::sanitize_filename;
 /// assert_eq!(sanitize_filename("my_tool")?, "my_tool");
-/// assert_eq!(sanitize_filename("my/tool/../bad")?, "mytool.bad");
+/// assert_eq!(sanitize_filename("my-file.txt")?, "my-file.txt");
+/// // Paths with ".." are rejected for security
+/// assert!(sanitize_filename("my/tool/../bad").is_err());
 /// # Ok::<(), turbomcp_cli::error::CliError>(())
 /// ```
 pub fn sanitize_filename(name: &str) -> CliResult<String> {
