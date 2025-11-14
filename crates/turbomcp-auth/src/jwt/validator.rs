@@ -334,7 +334,7 @@ impl JwtValidator {
 /// # Example
 ///
 /// ```rust,no_run
-/// # use turbomcp_auth::jwt::MultiIssuerValidator;
+/// # use turbomcp_auth::jwt::validator::MultiIssuerValidator;
 /// # tokio_test::block_on(async {
 /// let mut validator = MultiIssuerValidator::new("https://mcp.example.com".to_string());
 ///
@@ -343,6 +343,7 @@ impl JwtValidator {
 /// validator.add_issuer("https://login.microsoftonline.com".to_string());
 ///
 /// // Validate token (issuer auto-detected from JWT)
+/// # let token = "example.jwt.token";
 /// let result = validator.validate(token).await?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # });

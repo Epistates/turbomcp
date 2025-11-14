@@ -11,12 +11,18 @@
 //! ## Stateless Authentication Flow
 //!
 //! ```rust,no_run
-//! # use turbomcp_auth::{AuthManager, AuthCredentials, config::AuthConfig};
+//! # use turbomcp_auth::{AuthManager, AuthCredentials, config::{AuthConfig, AuthorizationConfig}};
+//! # use std::collections::HashMap;
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! # let config = AuthConfig {
 //! #     enabled: true,
 //! #     providers: vec![],
-//! #     authorization: Default::default(),
+//! #     authorization: AuthorizationConfig {
+//! #         rbac_enabled: false,
+//! #         default_roles: vec![],
+//! #         inheritance_rules: HashMap::new(),
+//! #         resource_permissions: HashMap::new(),
+//! #     },
 //! # };
 //! # let manager = AuthManager::new(config);
 //! # let credentials = AuthCredentials::ApiKey { key: "test".to_string() };
@@ -102,12 +108,18 @@ impl AuthManager {
     /// # Example
     ///
     /// ```rust,no_run
-    /// # use turbomcp_auth::{AuthManager, AuthCredentials, config::AuthConfig};
+    /// # use turbomcp_auth::{AuthManager, AuthCredentials, config::{AuthConfig, AuthorizationConfig}};
+    /// # use std::collections::HashMap;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let config = AuthConfig {
     /// #     enabled: true,
     /// #     providers: vec![],
-    /// #     authorization: Default::default(),
+    /// #     authorization: AuthorizationConfig {
+    /// #         rbac_enabled: false,
+    /// #         default_roles: vec![],
+    /// #         inheritance_rules: HashMap::new(),
+    /// #         resource_permissions: HashMap::new(),
+    /// #     },
     /// # };
     /// # let manager = AuthManager::new(config);
     /// let credentials = AuthCredentials::ApiKey {
