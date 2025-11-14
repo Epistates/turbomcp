@@ -538,10 +538,13 @@ impl CustomProtocolHandler {
 
 ```bash
 # Build with all features
-cargo build --features validation,extensions,batch
+cargo build --all-features
 
-# Build minimal (no validation)
-cargo build --no-default-features
+# Build minimal (std only)
+cargo build --no-default-features --features std
+
+# Build with specific features
+cargo build --features simd,messagepack,tracing,metrics
 ```
 
 ### Testing
@@ -550,21 +553,21 @@ cargo build --no-default-features
 # Run protocol compliance tests
 cargo test
 
-# Test with all message types
-cargo test --features extensions
+# Test with all features enabled
+cargo test --all-features
 
 # Validate against MCP specification
-cargo test test_mcp_compliance
+cargo test mcp_compliance
 ```
 
 ### Schema Validation
 
 ```bash
-# Generate JSON schemas from Rust types
-cargo run --example generate_schemas
+# Run validation tests
+cargo test validation
 
-# Validate example messages
-cargo test test_message_validation
+# Run message validation tests
+cargo test message_validation
 ```
 
 ## Related Crates
