@@ -116,8 +116,9 @@ impl<E: std::error::Error> std::error::Error for SanitizedError<E> {
 /// ```
 /// use turbomcp_server::error_sanitization::sanitize_error_message;
 ///
+/// // Note: Paths with "secret" keyword will trigger secret sanitization
 /// assert_eq!(
-///     sanitize_error_message("File not found: /etc/secrets/key.txt"),
+///     sanitize_error_message("File not found: /etc/config/app.txt"),
 ///     "File not found: [PATH]"
 /// );
 ///

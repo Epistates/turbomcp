@@ -23,12 +23,27 @@ use tracing::warn;
 /// ### Production Deployment (NEVER use 0.0.0.0 without these)
 ///
 /// 1. **Enable Authentication**:
-///    ```rust
+///    ```rust,ignore
 ///    use turbomcp_server::ServerBuilder;
+///    use turbomcp_server::middleware::{MiddlewareStack, AuthConfig};
+///    use secrecy::Secret;
+///    use jsonwebtoken::Algorithm;
+///
+///    // Configure middleware with authentication
+///    let auth_config = AuthConfig {
+///        secret: Secret::new("your-secret-key".to_string()),
+///        algorithm: Algorithm::HS256,
+///        issuer: None,
+///        audience: None,
+///        leeway: 60,
+///        validate_exp: true,
+///        validate_nbf: true,
+///    };
+///    let middleware = MiddlewareStack::new()
+///        .with_auth(auth_config); // ✅ Required for 0.0.0.0
 ///
 ///    let server = ServerBuilder::new()
 ///        .name("MyServer")
-///        .with_auth(auth_provider) // ✅ Required for 0.0.0.0
 ///        .build();
 ///    ```
 ///
