@@ -229,6 +229,8 @@ pub use types::{
 // Note: types module is already declared as `pub mod types;` above
 // Users access other types via turbomcp_protocol::types::Tool, etc.
 
+// Allow deprecated on re-export - users importing JsonRpcBatch will still get deprecation warnings
+#[allow(deprecated)]
 pub use jsonrpc::{
     JsonRpcBatch, JsonRpcError, JsonRpcErrorCode, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, JsonRpcVersion,

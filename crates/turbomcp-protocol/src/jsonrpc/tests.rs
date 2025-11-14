@@ -1,4 +1,9 @@
 //! Comprehensive tests
+//!
+//! Note: Some tests cover deprecated batch functionality for defensive deserialization.
+//! These tests ensure batch types work correctly even though they're not supported by MCP 2025-06-18.
+#![allow(deprecated)]
+
 use super::*;
 
 use serde_json::json;

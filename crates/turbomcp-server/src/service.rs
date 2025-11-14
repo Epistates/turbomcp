@@ -114,42 +114,51 @@ impl McpService {
                     id: ResponseId::null(),
                 })
             }
+            // Allow deprecated for defensive pattern matching on batch types
+            // These exist only to return proper errors per MCP 2025-06-18 spec
+            #[allow(deprecated)]
             JsonRpcMessage::RequestBatch(_) => {
-                warn!("Received JSON-RPC request batch (not yet supported)");
+                warn!("Received JSON-RPC request batch (not supported per MCP 2025-06-18)");
                 Some(JsonRpcResponse {
                     jsonrpc: JsonRpcVersion,
                     payload: JsonRpcResponsePayload::Error {
                         error: JsonRpcError {
                             code: -32601,
-                            message: "Batch requests are not yet supported".to_string(),
+                            message: "Batch requests are not supported per MCP specification"
+                                .to_string(),
                             data: None,
                         },
                     },
                     id: ResponseId::null(),
                 })
             }
+            #[allow(deprecated)]
             JsonRpcMessage::ResponseBatch(_) => {
-                warn!("Received JSON-RPC response batch (unexpected)");
+                warn!(
+                    "Received JSON-RPC response batch (unexpected, not supported per MCP 2025-06-18)"
+                );
                 Some(JsonRpcResponse {
                     jsonrpc: JsonRpcVersion,
                     payload: JsonRpcResponsePayload::Error {
                         error: JsonRpcError {
                             code: -32600,
-                            message: "Invalid request: unexpected response batch".to_string(),
+                            message: "Invalid request: response batches not supported per MCP specification".to_string(),
                             data: None,
                         },
                     },
                     id: ResponseId::null(),
                 })
             }
+            #[allow(deprecated)]
             JsonRpcMessage::MessageBatch(_) => {
-                warn!("Received JSON-RPC message batch (not yet supported)");
+                warn!("Received JSON-RPC message batch (not supported per MCP 2025-06-18)");
                 Some(JsonRpcResponse {
                     jsonrpc: JsonRpcVersion,
                     payload: JsonRpcResponsePayload::Error {
                         error: JsonRpcError {
                             code: -32601,
-                            message: "Message batches are not yet supported".to_string(),
+                            message: "Message batches are not supported per MCP specification"
+                                .to_string(),
                             data: None,
                         },
                     },

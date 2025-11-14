@@ -135,8 +135,18 @@ pub struct JsonRpcError {
 }
 
 /// JSON-RPC batch request/response
+///
+/// **IMPORTANT**: JSON-RPC batching is NOT supported in MCP 2025-06-18 specification.
+/// This type exists only for defensive deserialization and will return errors if used.
+/// Per MCP spec changelog (PR #416), batch support was explicitly removed.
+///
+/// Do not use this type in new code. It will be removed in a future version.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
+#[deprecated(
+    since = "2.2.3",
+    note = "JSON-RPC batching removed from MCP 2025-06-18 spec (PR #416). This type exists only for defensive handling and will be removed."
+)]
 pub struct JsonRpcBatch<T> {
     /// Batch items
     pub items: Vec<T>,
@@ -215,20 +225,39 @@ impl From<i32> for JsonRpcErrorCode {
 }
 
 /// JSON-RPC message type (union of request, response, notification)
+///
+/// **MCP 2025-06-18 Compliance Note:**
+/// Batch variants exist only for defensive deserialization and are NOT supported
+/// per MCP specification (PR #416 removed batch support). They will return errors if encountered.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum JsonRpcMessage {
-    /// Request message
+    /// Request message (MCP-compliant)
     Request(JsonRpcRequest),
-    /// Response message
+    /// Response message (MCP-compliant)
     Response(JsonRpcResponse),
-    /// Notification message
+    /// Notification message (MCP-compliant)
     Notification(JsonRpcNotification),
-    /// Batch of messages
+    /// Batch of messages (NOT SUPPORTED - defensive deserialization only)
+    ///
+    /// **Deprecated**: MCP 2025-06-18 removed batch support.
+    /// This variant exists only to return proper errors if batches are received.
+    #[deprecated(since = "2.2.3", note = "Batching removed from MCP spec")]
+    #[allow(deprecated)] // Internal use of deprecated batch type for defensive deserialization
     RequestBatch(JsonRpcBatch<JsonRpcRequest>),
-    /// Batch of responses
+    /// Batch of responses (NOT SUPPORTED - defensive deserialization only)
+    ///
+    /// **Deprecated**: MCP 2025-06-18 removed batch support.
+    /// This variant exists only to return proper errors if batches are received.
+    #[deprecated(since = "2.2.3", note = "Batching removed from MCP spec")]
+    #[allow(deprecated)] // Internal use of deprecated batch type for defensive deserialization
     ResponseBatch(JsonRpcBatch<JsonRpcResponse>),
-    /// Mixed batch
+    /// Mixed batch (NOT SUPPORTED - defensive deserialization only)
+    ///
+    /// **Deprecated**: MCP 2025-06-18 removed batch support.
+    /// This variant exists only to return proper errors if batches are received.
+    #[deprecated(since = "2.2.3", note = "Batching removed from MCP spec")]
+    #[allow(deprecated)] // Internal use of deprecated batch type for defensive deserialization
     MessageBatch(JsonRpcBatch<JsonRpcMessage>),
 }
 
@@ -377,6 +406,9 @@ impl JsonRpcNotification {
     }
 }
 
+// Allow deprecated warnings for internal implementation of deprecated batch types
+// External users will still see deprecation warnings, but implementation won't spam warnings
+#[allow(deprecated)]
 impl<T> JsonRpcBatch<T> {
     /// Create a new batch
     pub fn new(items: Vec<T>) -> Self {
@@ -409,6 +441,7 @@ impl<T> JsonRpcBatch<T> {
     }
 }
 
+#[allow(deprecated)]
 impl<T> IntoIterator for JsonRpcBatch<T> {
     type Item = T;
     type IntoIter = std::vec::IntoIter<T>;
@@ -418,6 +451,7 @@ impl<T> IntoIterator for JsonRpcBatch<T> {
     }
 }
 
+#[allow(deprecated)]
 impl<T> From<Vec<T>> for JsonRpcBatch<T> {
     fn from(items: Vec<T>) -> Self {
         Self::new(items)
@@ -456,6 +490,7 @@ pub mod utils {
 }
 
 #[cfg(test)]
+#[allow(deprecated)] // Tests cover deprecated batch functionality for defensive deserialization
 mod tests {
     use super::*;
     use serde_json::json;
