@@ -294,8 +294,8 @@ impl From<ring::error::Unspecified> for DpopError {
     }
 }
 
-// Error conversion for r2d2 session pool
-#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
+// Error conversion for r2d2 session pool (only used by PKCS#11)
+#[cfg(feature = "hsm-pkcs11")]
 impl From<r2d2::Error> for DpopError {
     fn from(err: r2d2::Error) -> Self {
         Self::InternalError {

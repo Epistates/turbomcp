@@ -376,6 +376,7 @@ impl DpopValidator {
         token: &str,
     ) -> crate::Result<()> {
         use sha2::{Digest, Sha256};
+        use subtle::ConstantTimeEq;
 
         // Compute expected ath claim
         let mut hasher = Sha256::new();
@@ -383,14 +384,11 @@ impl DpopValidator {
         let hash = hasher.finalize();
         let expected_ath = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hash);
 
-        // Check ath claim matches
+        // Check ath claim matches using constant-time comparison to prevent timing attacks
         match &proof.payload.ath {
-            Some(ath) if ath == &expected_ath => Ok(()),
-            Some(ath) => Err(crate::errors::DpopError::AccessTokenHashFailed {
-                reason: format!(
-                    "Access token hash mismatch: expected '{}', got '{}'",
-                    expected_ath, ath
-                ),
+            Some(ath) if ath.as_bytes().ct_eq(expected_ath.as_bytes()).into() => Ok(()),
+            Some(_) => Err(crate::errors::DpopError::AccessTokenHashFailed {
+                reason: "Access token hash mismatch".to_string(),
             }),
             None => Err(crate::errors::DpopError::AccessTokenHashFailed {
                 reason: "Missing ath claim for access token binding".to_string(),
