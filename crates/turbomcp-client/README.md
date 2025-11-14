@@ -512,15 +512,20 @@ match client.call_tool("my_tool", None).await {
 
 ## Examples
 
-See the `examples/` directory for complete working examples:
+For working client examples, see the parent `turbomcp` crate examples:
 
-- **`sampling_client.rs`** - Client with server-initiated sampling protocol
-- **`elicitation_interactive_client.rs`** - Interactive elicitation handling
+- **`elicitation_client.rs`** - Interactive elicitation handling
+- **`basic_client.rs`** - Basic client usage
+- **`stdio_client.rs`** - STDIO transport example
+- **`tcp_client.rs`** - TCP transport example
+- **`http_client_simple.rs`** - HTTP transport example
+- **`websocket_client_simple.rs`** - WebSocket transport example
 
-Run examples:
+Run examples from the workspace root:
 ```bash
-cargo run --example sampling_client --features websocket
-cargo run --example elicitation_interactive_client
+cargo run --example elicitation_client
+cargo run --example basic_client
+cargo run --example stdio_client
 ```
 
 ## Feature Flags
