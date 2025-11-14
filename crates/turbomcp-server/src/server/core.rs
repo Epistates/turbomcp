@@ -566,8 +566,8 @@ impl McpServer {
     ///         .build();
     ///
     ///     let config = StreamableHttpConfigBuilder::new()
-    ///         .without_rate_limit()  // For benchmarking
-    ///         .allow_any_origin(true)  // Enable CORS
+    ///         .with_bind_address("127.0.0.1:3000")
+    ///         .allow_any_origin(true)  // Enable CORS for development
     ///         .build();
     ///
     ///     server.run_http_with_config("127.0.0.1:3000", config).await?;
@@ -655,21 +655,22 @@ impl McpServer {
     ///
     /// # Examples
     ///
-    /// ## Benchmarking configuration (no rate limits)
+    /// ## Custom configuration example
     /// ```no_run
     /// use turbomcp_server::ServerBuilder;
     /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// use std::time::Duration;
     ///
     /// #[tokio::main]
     /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ///     let server = ServerBuilder::new()
-    ///         .name("benchmark-server")
+    ///         .name("custom-server")
     ///         .version("1.0.0")
     ///         .build();
     ///
     ///     let config = StreamableHttpConfigBuilder::new()
     ///         .with_bind_address("127.0.0.1:3000")
-    ///         .without_rate_limit()  // Disable rate limiting
+    ///         .with_rate_limit(1000, Duration::from_secs(60))  // 1000 req/min
     ///         .build();
     ///
     ///     server.run_http_with_config("127.0.0.1:3000", config).await?;
@@ -792,8 +793,8 @@ impl McpServer {
             move |session_id: Option<String>, headers: Option<axum::http::HeaderMap>| {
                 let session_id = session_id.unwrap_or_else(|| {
                     let new_id = uuid::Uuid::new_v4().to_string();
-                    tracing::warn!(
-                        "⚠️ Factory generating random session ID (no session ID provided): {}",
+                    tracing::debug!(
+                        "HTTP POST without session ID - generating ephemeral ID for request: {}",
                         new_id
                     );
                     new_id
@@ -926,8 +927,9 @@ impl McpServer {
     ///         .build();
     ///
     ///     let config = WebSocketServerConfig {
-    ///         bind_addr: "0.0.0.0:8080".to_string(),
+    ///         bind_addr: "127.0.0.1:8080".to_string(),
     ///         endpoint_path: "/custom/ws".to_string(),
+    ///         max_concurrent_requests: 100,
     ///     };
     ///
     ///     server.run_websocket_with_config("127.0.0.1:8080", config).await?;
