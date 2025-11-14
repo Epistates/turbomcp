@@ -80,7 +80,7 @@ redis-storage = ["dep:redis"]
 
 # HSM backends
 hsm-pkcs11 = ["dep:cryptoki", "dep:r2d2", "dep:secrecy", "dep:parking_lot", "dep:asn1"]
-hsm-yubico = ["dep:yubihsm", "dep:secrecy"]
+hsm-yubico = ["dep:yubihsm", "dep:secrecy", "dep:parking_lot"]
 hsm = ["hsm-pkcs11", "hsm-yubico"]
 
 # Test utilities
