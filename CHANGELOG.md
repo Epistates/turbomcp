@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.2.2] - 2025-11-06
+## [2.2.2] - 2025-11-13
 
 ### Added
 
@@ -20,17 +20,38 @@ Added four ergonomic helper methods to `CallToolResult` for common operations:
 
 **Impact**: Significantly reduces boilerplate for integrators working with tool results.
 
-**Files Modified**: `crates/turbomcp-protocol/src/types/tools.rs:349-548`
-
 #### New Examples
 - **`structured_output.rs`** - Comprehensive guide showing when/how to use `structured_content` with `output_schema`, including best practices for backward compatibility
 - **`resource_links.rs`** - Demonstrates proper ResourceLink usage with all metadata fields (description, mime_type, size) and explains their importance per MCP spec
 
-**Files Added**:
-- `crates/turbomcp/examples/structured_output.rs`
-- `crates/turbomcp/examples/resource_links.rs`
+#### Improved Documentation
+- **Feature Requirements Guide**: Added clear documentation explaining minimum feature requirements when using `default-features = false`
+  - Documents that at least one transport feature (stdio, http, websocket, tcp, unix) must be enabled
+  - Provides practical example configurations for common use cases
+  - Helps users avoid build errors when customizing feature flags
 
 ### Fixed
+
+#### HTTP Session Logging Severity
+- **Fixed**: Reduced log noise for stateless HTTP clients
+  - **Issue**: Every HTTP POST request without a session ID logged a WARN message, even though this is normal and spec-compliant behavior
+  - **Impact**: LM Studio and other stateless clients no longer generate excessive warnings
+  - **Change**: Session ID generation for stateless requests now logs at DEBUG level instead of WARN
+  - **Benefit**: Cleaner production logs, WARN level reserved for actual problems
+  - **Spec Compliance**: Correctly treats session IDs as optional per MCP 2025-06-18 specification
+
+#### Unix Socket Transport Compilation
+- **Fixed**: Unix socket transport now compiles correctly when used independently
+  - **Issue**: Missing `fs` feature in tokio dependency prevented Unix socket cleanup operations
+  - **Impact**: Unix socket transport can now be used standalone or in combination with other transports
+  - **Benefit**: Enables cleaner builds with only the transports you need
+
+#### MCP 2025-06-18 Specification Compliance
+- **Enhanced**: JSON-RPC batching properly deprecated per MCP specification
+  - **Background**: MCP 2025-06-18 spec explicitly removed JSON-RPC batch support (PR #416)
+  - **Action**: Added deprecation notices and clear warnings to batch-related types
+  - **Impact**: Code remains backward compatible while guiding users toward spec-compliant patterns
+  - **Note**: Batch types exist only for defensive deserialization and will be removed in future versions
 
 #### Annotations Documentation Corrections
 - **Fixed `audience` field bug**: Corrected documentation to reflect MCP spec requirement that audience values should be `"user"` or `"assistant"` only (not arbitrary strings like "developer", "admin", "llm")
