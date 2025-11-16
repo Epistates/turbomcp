@@ -23,6 +23,9 @@ use crate::axum::router::AxumMcpExt;
 use crate::axum::service::{McpAppState, McpService};
 use crate::tower::{SessionInfo, SessionManager};
 
+#[cfg(any(feature = "auth", feature = "jwt-validation"))]
+use crate::axum::middleware::authentication_middleware;
+
 /// Session middleware - adds session tracking to all requests
 async fn session_middleware(
     mut request: axum::extract::Request,
@@ -75,11 +78,22 @@ where
         // 3. Response compression (reduce bandwidth)
         .layer(CompressionLayer::new());
 
-    router
+    let mut router = router
         // Apply tower middleware stack
         .layer(middleware_stack)
         // Apply session tracking middleware (adds SessionInfo to extensions)
-        .layer(middleware::from_fn(session_middleware))
+        .layer(middleware::from_fn(session_middleware));
+
+    // Apply authentication middleware if configured (CRITICAL SECURITY FIX)
+    #[cfg(any(feature = "auth", feature = "jwt-validation"))]
+    if let Some(auth_config) = &config.auth {
+        router = router.layer(middleware::from_fn_with_state(
+            auth_config.clone(),
+            authentication_middleware,
+        ));
+    }
+
+    router
 }
 
 impl<S> AxumMcpExt for Router<S>

@@ -1,10 +1,6 @@
 //! Basic MCP middleware for session management
 
-use axum::{
-    http::StatusCode,
-    middleware::Next,
-    response::Response,
-};
+use axum::{http::StatusCode, middleware::Next, response::Response};
 use tracing::trace;
 
 use crate::axum::handlers::SessionInfo;
@@ -30,11 +26,11 @@ pub async fn mcp_middleware(
         }
     };
 
-    trace!("Processing request for session: {}", session.session_id);
+    trace!("Processing request for session: {}", session.id);
 
     // Continue processing
     let response = next.run(request).await;
 
-    trace!("Request completed for session: {}", session.session_id);
+    trace!("Request completed for session: {}", session.id);
     Ok(response)
 }

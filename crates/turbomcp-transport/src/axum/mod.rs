@@ -11,6 +11,7 @@
 pub mod auth_router;
 pub mod config;
 pub mod handlers;
+pub mod middleware;
 pub mod query;
 pub mod router;
 pub mod service;

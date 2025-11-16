@@ -22,10 +22,10 @@ use turbomcp_auth::server::WwwAuthenticateBuilder;
 use crate::axum::config::{JwtAlgorithm, JwtConfig};
 
 #[cfg(feature = "jwt-validation")]
-use crate::axum::middleware::jwks::{JwksCache, JwksError};
+use crate::axum::middleware::jwks::JwksCache;
 
 #[cfg(feature = "jwt-validation")]
-use jsonwebtoken::{decode, Algorithm, DecodingKey, TokenData, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 
 #[cfg(feature = "jwt-validation")]
 use serde::{Deserialize, Serialize};
@@ -63,10 +63,10 @@ impl AuthError {
         #[cfg(feature = "auth")]
         let www_authenticate = metadata_uri.map(|uri| {
             let mut builder = WwwAuthenticateBuilder::new(uri.to_string());
-            if let Some(s) = scope {
-                if !s.is_empty() {
-                    builder = builder.with_scope(s.to_string());
-                }
+            if let Some(s) = scope
+                && !s.is_empty()
+            {
+                builder = builder.with_scope(s.to_string());
             }
             builder.build()
         });
@@ -100,10 +100,10 @@ impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let mut resp = (self.status, axum::Json(self.body)).into_response();
 
-        if let Some(header_value) = self.www_authenticate {
-            if let Ok(value) = header::HeaderValue::from_str(&header_value) {
-                resp.headers_mut().insert(header::WWW_AUTHENTICATE, value);
-            }
+        if let Some(header_value) = self.www_authenticate
+            && let Ok(value) = header::HeaderValue::from_str(&header_value)
+        {
+            resp.headers_mut().insert(header::WWW_AUTHENTICATE, value);
         }
 
         resp
@@ -208,8 +208,7 @@ async fn validate_jwt_token(token: &str, jwt_config: &JwtConfig) -> Result<JwtCl
     } else if let Some(jwks_uri) = &jwt_config.jwks_uri {
         // Asymmetric key (RS256/ES256/etc.) - fetch from JWKS
         // Extract kid from token header
-        let kid = extract_kid_from_token(token)
-            .ok_or(StatusCode::UNAUTHORIZED)?;
+        let kid = extract_kid_from_token(token).ok_or(StatusCode::UNAUTHORIZED)?;
 
         // Get or create JWKS cache for this provider
         let jwks_cache = get_jwks_cache(jwks_uri);
@@ -229,11 +228,10 @@ async fn validate_jwt_token(token: &str, jwt_config: &JwtConfig) -> Result<JwtCl
     };
 
     // Decode and validate token
-    let token_data = decode::<JwtClaims>(token, &decoding_key, &validation)
-        .map_err(|e| {
-            tracing::debug!(error = %e, "JWT validation failed");
-            StatusCode::UNAUTHORIZED
-        })?;
+    let token_data = decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| {
+        tracing::debug!(error = %e, "JWT validation failed");
+        StatusCode::UNAUTHORIZED
+    })?;
 
     Ok(token_data.claims)
 }
@@ -263,7 +261,7 @@ pub async fn authentication_middleware(
     State(auth_config): State<AuthConfig>,
     mut request: axum::http::Request<axum::body::Body>,
     next: Next,
-) -> Result<Response, AuthError> {
+) -> Response {
     let metadata_uri = auth_config.resource_metadata_uri.as_deref();
     let scope = if !auth_config.required_scopes.is_empty() {
         Some(auth_config.required_scopes.join(" "))
@@ -276,9 +274,12 @@ pub async fn authentication_middleware(
     if let Some(jwt_config) = &auth_config.jwt {
         if let Some(token) = extract_bearer_token(&request) {
             // Step 1: Validate JWT signature and claims
-            let claims = validate_jwt_token(&token, jwt_config)
-                .await
-                .map_err(|_| AuthError::unauthorized(metadata_uri, scope.as_deref()))?;
+            let claims = match validate_jwt_token(&token, jwt_config).await {
+                Ok(c) => c,
+                Err(_) => {
+                    return AuthError::unauthorized(metadata_uri, scope.as_deref()).into_response();
+                }
+            };
 
             // Step 2: Optional introspection for real-time revocation checking
             #[cfg(feature = "auth")]
@@ -294,24 +295,25 @@ pub async fn authentication_middleware(
                     jwt_config.introspection_client_secret.clone(),
                 );
 
-                let is_active = client
-                    .is_token_active(&token)
-                    .await
-                    .map_err(|e| {
+                let is_active = match client.is_token_active(&token).await {
+                    Ok(active) => active,
+                    Err(e) => {
                         tracing::error!(error = %e, "Token introspection failed");
-                        AuthError::unauthorized(metadata_uri, scope.as_deref())
-                    })?;
+                        return AuthError::unauthorized(metadata_uri, scope.as_deref())
+                            .into_response();
+                    }
+                };
 
                 if !is_active {
                     tracing::warn!(token = %token, "Token revoked per introspection");
-                    return Err(AuthError::unauthorized(metadata_uri, scope.as_deref()));
+                    return AuthError::unauthorized(metadata_uri, scope.as_deref()).into_response();
                 }
             }
 
             // Add authenticated user context to request extensions
             request.extensions_mut().insert(claims);
         } else if auth_config.enabled {
-            return Err(AuthError::unauthorized(metadata_uri, scope.as_deref()));
+            return AuthError::unauthorized(metadata_uri, scope.as_deref()).into_response();
         }
     }
 
@@ -319,13 +321,17 @@ pub async fn authentication_middleware(
     if let Some(api_key_header) = &auth_config.api_key_header {
         if let Some(provided_key) = request.headers().get(api_key_header) {
             // Validate API key format
-            let key_str = provided_key
-                .to_str()
-                .map_err(|_| AuthError::bad_request("Invalid API key header"))?;
+            let key_str = match provided_key.to_str() {
+                Ok(s) => s,
+                Err(_) => return AuthError::bad_request("Invalid API key header").into_response(),
+            };
 
             if key_str.is_empty() {
-                return Err(AuthError::unauthorized(metadata_uri, scope.as_deref()));
+                return AuthError::unauthorized(metadata_uri, scope.as_deref()).into_response();
             }
+
+            // Clone the key string to drop the immutable borrow before we need mutable access
+            let key_string = key_str.to_string();
 
             // IMPORTANT: This middleware performs basic format validation only.
             //
@@ -340,27 +346,27 @@ pub async fn authentication_middleware(
             // Application layer handles business logic (which keys are valid, rate limits, etc.)
 
             // Add API key to request extensions for application-layer validation
-            request.extensions_mut().insert(key_str.to_string());
+            request.extensions_mut().insert(key_string);
             tracing::debug!("API key header found, delegating validation to application layer");
         } else if auth_config.enabled && auth_config.jwt.is_none() {
             // Only require API key if JWT is not configured
-            return Err(AuthError::unauthorized(metadata_uri, scope.as_deref()));
+            return AuthError::unauthorized(metadata_uri, scope.as_deref()).into_response();
         }
     }
 
     // Continue processing
-    Ok(next.run(request).await)
+    next.run(request).await
 }
 
 #[cfg(all(test, feature = "jwt-validation"))]
 mod tests {
     use super::*;
-    use jsonwebtoken::{encode, EncodingKey, Header};
+    use jsonwebtoken::{EncodingKey, Header, encode};
 
-    #[test]
-    fn test_jwt_validation_hs256() {
+    #[tokio::test]
+    async fn test_jwt_validation_hs256() {
         let secret = "test-secret";
-        let mut claims = JwtClaims {
+        let claims = JwtClaims {
             sub: "user123".to_string(),
             exp: Some((chrono::Utc::now() + chrono::Duration::hours(1)).timestamp() as u64),
             nbf: None,
@@ -388,15 +394,15 @@ mod tests {
         };
 
         // Validate
-        let result = validate_jwt_token(&token, &jwt_config);
+        let result = validate_jwt_token(&token, &jwt_config).await;
         assert!(result.is_ok());
 
         let validated_claims = result.unwrap();
         assert_eq!(validated_claims.sub, "user123");
     }
 
-    #[test]
-    fn test_jwt_validation_expired() {
+    #[tokio::test]
+    async fn test_jwt_validation_expired() {
         let secret = "test-secret";
         let claims = JwtClaims {
             sub: "user123".to_string(),
@@ -424,12 +430,12 @@ mod tests {
         };
 
         // Validate (should fail due to expiration)
-        let result = validate_jwt_token(&token, &jwt_config);
+        let result = validate_jwt_token(&token, &jwt_config).await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_jwt_validation_invalid_audience() {
+    #[tokio::test]
+    async fn test_jwt_validation_invalid_audience() {
         let secret = "test-secret";
         let claims = JwtClaims {
             sub: "user123".to_string(),
@@ -458,7 +464,7 @@ mod tests {
         };
 
         // Validate (should fail due to audience mismatch)
-        let result = validate_jwt_token(&token, &jwt_config);
+        let result = validate_jwt_token(&token, &jwt_config).await;
         assert!(result.is_err());
     }
 }

@@ -7,7 +7,7 @@ use axum::{
     response::Response,
 };
 
-use crate::axum::config::{SecurityConfig, FrameOptions};
+use crate::axum::config::{FrameOptions, SecurityConfig};
 
 /// Security headers middleware - applies comprehensive security headers
 ///

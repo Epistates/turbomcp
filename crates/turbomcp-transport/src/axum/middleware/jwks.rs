@@ -8,6 +8,7 @@
 //!
 //! Supports RSA (RS256/384/512) and ECDSA (ES256/384) algorithms.
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::DecodingKey;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -19,21 +20,33 @@ use tracing::{debug, error, info, warn};
 /// JWKS fetch error
 #[derive(Debug, thiserror::Error)]
 pub enum JwksError {
+    /// HTTP request to JWKS endpoint failed
     #[error("HTTP request failed: {0}")]
     HttpError(#[from] reqwest::Error),
 
+    /// JWKS response was invalid or malformed
     #[error("Invalid JWKS response: {0}")]
     InvalidResponse(String),
 
+    /// Requested key ID not found in JWKS
     #[error("Key not found: {kid}")]
-    KeyNotFound { kid: String },
+    KeyNotFound {
+        /// The key ID that was not found
+        kid: String,
+    },
 
+    /// Key type is not supported (only RSA and EC are supported)
     #[error("Unsupported key type: {kty}")]
-    UnsupportedKeyType { kty: String },
+    UnsupportedKeyType {
+        /// The unsupported key type
+        kty: String,
+    },
 
+    /// Key format is invalid or incomplete
     #[error("Invalid key format: {0}")]
     InvalidKeyFormat(String),
 
+    /// Base64 decoding of key parameters failed
     #[error("Base64 decode error: {0}")]
     Base64Error(#[from] base64::DecodeError),
 }
@@ -104,8 +117,8 @@ impl Jwk {
             .ok_or_else(|| JwksError::InvalidKeyFormat("RSA key missing 'e' parameter".into()))?;
 
         // Decode base64url (RFC 4648 §5 - URL-safe base64 without padding)
-        let n_bytes = base64::decode_config(n, base64::URL_SAFE_NO_PAD)?;
-        let e_bytes = base64::decode_config(e, base64::URL_SAFE_NO_PAD)?;
+        let _n_bytes = URL_SAFE_NO_PAD.decode(n)?;
+        let _e_bytes = URL_SAFE_NO_PAD.decode(e)?;
 
         // Convert to DecodingKey using RSA components
         DecodingKey::from_rsa_components(n, e)
@@ -168,6 +181,16 @@ pub struct JwksCache {
 
     /// Cache TTL (default: 1 hour)
     ttl: Duration,
+}
+
+impl std::fmt::Debug for JwksCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JwksCache")
+            .field("uri", &self.uri)
+            .field("ttl", &self.ttl)
+            .field("cache", &"<cached keys>")
+            .finish()
+    }
 }
 
 impl JwksCache {
@@ -281,9 +304,10 @@ impl JwksCache {
 
         let mut keys = HashMap::new();
         for jwk in jwk_set.keys {
-            let key_id = jwk.kid.clone().unwrap_or_else(|| {
-                format!("synthetic_{}", fastrand::u64(..))
-            });
+            let key_id = jwk
+                .kid
+                .clone()
+                .unwrap_or_else(|| format!("synthetic_{}", fastrand::u64(..)));
 
             if let Ok(key) = jwk.to_decoding_key() {
                 keys.insert(key_id, key);
@@ -346,7 +370,11 @@ mod tests {
     fn test_jwk_rsa_parsing() {
         let jwk = example_rsa_jwk();
         let result = jwk.to_decoding_key();
-        assert!(result.is_ok(), "Failed to parse RSA JWK: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Failed to parse RSA JWK: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -371,8 +399,7 @@ mod tests {
         };
 
         let result = jwk.to_decoding_key();
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), JwksError::UnsupportedKeyType { .. }));
+        assert!(matches!(result, Err(JwksError::UnsupportedKeyType { .. })));
     }
 
     #[test]
@@ -390,8 +417,7 @@ mod tests {
         };
 
         let result = jwk.to_decoding_key();
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), JwksError::InvalidKeyFormat(_)));
+        assert!(matches!(result, Err(JwksError::InvalidKeyFormat(_))));
     }
 
     #[test]
@@ -409,8 +435,7 @@ mod tests {
         };
 
         let result = jwk.to_decoding_key();
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), JwksError::InvalidKeyFormat(_)));
+        assert!(matches!(result, Err(JwksError::InvalidKeyFormat(_))));
     }
 
     #[test]
@@ -451,7 +476,7 @@ mod tests {
         let cached = CachedJwks {
             keys,
             fetched_at: Instant::now() - Duration::from_secs(7200), // 2 hours ago
-            ttl: Duration::from_secs(3600), // 1 hour TTL
+            ttl: Duration::from_secs(3600),                         // 1 hour TTL
         };
 
         assert!(cached.is_expired());
@@ -481,10 +506,8 @@ mod tests {
     #[tokio::test]
     async fn test_jwks_cache_with_custom_ttl() {
         let ttl = Duration::from_secs(1800); // 30 minutes
-        let cache = JwksCache::with_ttl(
-            "https://example.com/.well-known/jwks.json".to_string(),
-            ttl,
-        );
+        let cache =
+            JwksCache::with_ttl("https://example.com/.well-known/jwks.json".to_string(), ttl);
         assert_eq!(cache.ttl, ttl);
     }
 
