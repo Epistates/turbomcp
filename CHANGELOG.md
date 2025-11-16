@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.3] - 2025-11-16
+
+### Added
+
+#### New Middleware Architecture
+- Refactored authentication, JWKS, and rate limiting middleware for enhanced modularity
+- Separated concerns between MCP protocol handling and HTTP-specific middleware
+- Improved middleware composition for better testability and reusability
+
+#### Proxy Code Generation Enhancements
+- Updated Handlebars templates for improved code generation
+- Enhanced `Cargo.toml.hbs` template with updated dependency versions
+- Improved `main.rs.hbs` template for main module generation
+- Enhanced `proxy.rs.hbs` template with better proxy module generation
+- Updated `types.rs.hbs` template for improved type definitions
+
+### Changed
+
+#### Dependency Updates
+- Updated all internal crate version references to 2.2.3 for consistency across workspace
+- Updated turbomcp-proxy to 2.2.3
+
+### Improved
+
+#### Security Middleware
+- Enhanced security middleware configuration options
+- Improved rate limiting middleware integration
+- Better error handling in authentication middleware
+
+#### Code Generation
+- Improved template structure for better maintainability
+- Enhanced code generation for client and server scaffolding
+
 ## [2.2.2] - 2025-11-13
 
 ### Added
