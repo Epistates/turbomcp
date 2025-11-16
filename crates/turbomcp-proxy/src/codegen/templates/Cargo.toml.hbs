@@ -24,7 +24,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # HTTP server (conditional on frontend type)
 {{#if (eq frontend_type "HTTP")}}
-axum = { version = "0.7", features = ["json"] }
+axum = { version = "0.8", features = ["json"] }
+http = "1.0"
+tower = "0.5"
 {{/if}}
 
 {{#if additional_dependencies}}

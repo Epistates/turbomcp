@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use serde_json::Value;
 use turbomcp_client::Client;
-use turbomcp_transport::{ChildProcessTransport, Transport};
+use turbomcp_transport::ChildProcessTransport;
 
 /// Proxy router that forwards MCP requests to the backend server
 pub struct ProxyRouter {
@@ -74,8 +74,12 @@ impl ProxyRouter {
         let result = self.backend.call_tool("{{this.name}}", arguments).await
             .map_err(|e| format!("Backend call failed for {{this.name}}: {}", e))?;
 
+        // Convert result to JSON
+        let result_json = serde_json::to_value(&result)
+            .map_err(|e| format!("Failed to serialize tool result: {}", e))?;
+
         tracing::debug!(tool = "{{this.name}}", "Tool call successful");
-        Ok(result)
+        Ok(result_json)
     }
 
     {{/each}}

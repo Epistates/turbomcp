@@ -11,7 +11,7 @@ mod types;
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio;
-use turbomcp_client::Client;
+use turbomcp_client::{Client, Transport};
 use turbomcp_transport::{ChildProcessTransport, ChildProcessConfig};
 use tracing::{info, error, debug};
 
@@ -102,17 +102,18 @@ async fn init_backend() -> Result<Arc<Client<ChildProcessTransport>>, Box<dyn st
 }
 
 {{#if (eq frontend_type "HTTP")}}
+use axum::{
+    Router,
+    routing::post,
+    extract::State,
+    Json,
+    response::{IntoResponse, Response},
+};
+use http::StatusCode;
+use serde_json::{json, Value};
+
 /// Start HTTP frontend server
 async fn start_http_frontend(router: Arc<ProxyRouter>) -> Result<(), Box<dyn std::error::Error>> {
-    use axum::{
-        Router,
-        routing::post,
-        extract::State,
-        Json,
-        response::{IntoResponse, Response},
-        http::StatusCode,
-    };
-    use serde_json::{json, Value};
 
     let bind_addr = std::env::var("BIND_ADDR")
         .unwrap_or_else(|_| "127.0.0.1:3000".to_string());

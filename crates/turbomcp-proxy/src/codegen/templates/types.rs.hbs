@@ -54,6 +54,8 @@ impl Tool {
             {{#each tool_enums}}
             Tool::{{pascal_case this.name}} { .. } => "{{this.name}}",
             {{/each}}
+            #[allow(unreachable_patterns)]
+            _ => unreachable!("All Tool variants are handled"),
         }
     }
 
@@ -78,6 +80,8 @@ impl Resource {
             {{#each resource_enums}}
             Resource::{{pascal_case this.name}} => "{{this.uri}}",
             {{/each}}
+            #[allow(unreachable_patterns)]
+            _ => unreachable!("All Resource variants are handled"),
         }
     }
 }
@@ -97,6 +101,8 @@ impl Prompt {
             {{#each prompt_enums}}
             Prompt::{{pascal_case this.name}} => "{{this.name}}",
             {{/each}}
+            #[allow(unreachable_patterns)]
+            _ => unreachable!("All Prompt variants are handled"),
         }
     }
 }
