@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-proxy"
-version = "2.2.2"
+version = "2.2.3"
 edition = "2024"
 authors = ["TurboMCP Team"]
 description = "Universal MCP adapter/generator - introspection, proxying, and code generation for any MCP server"
@@ -15,11 +15,11 @@ workspace = true
 
 [dependencies]
 # TurboMCP (consumer-only - we only depend ON these, nothing depends on us)
-turbomcp-protocol = { path = "../turbomcp-protocol", version = "2.2.2" }
-turbomcp-transport = { path = "../turbomcp-transport", version = "2.2.2", features = ["http", "tcp", "unix", "websocket", "jwt-validation"] }
-turbomcp-client = { path = "../turbomcp-client", version = "2.2.2" }
-turbomcp-server = { path = "../turbomcp-server", version = "2.2.2", optional = true }
-turbomcp-auth = { path = "../turbomcp-auth", version = "2.2.2", optional = true }
+turbomcp-protocol = { path = "../turbomcp-protocol", version = "2.2.3" }
+turbomcp-transport = { path = "../turbomcp-transport", version = "2.2.3", features = ["http", "tcp", "unix", "websocket"] }
+turbomcp-client = { path = "../turbomcp-client", version = "2.2.3" }
+turbomcp-server = { path = "../turbomcp-server", version = "2.2.3", optional = true }
+turbomcp-auth = { path = "../turbomcp-auth", version = "2.2.3", optional = true }
 
 # Async runtime
 tokio = { version = "1.47", features = ["full"] }
@@ -90,10 +90,10 @@ default = ["cli", "runtime", "introspection"]
 
 # Core features
 introspection = []
-runtime = ["axum", "tower", "tower-http", "reqwest", "tokio-tungstenite"]
+runtime = ["axum", "tower", "tower-http", "reqwest", "tokio-tungstenite", "auth"]
 codegen = ["handlebars", "convert_case", "chrono", "syn", "proc-macro2"]
 schema = ["schemars"]
-auth = ["dep:turbomcp-auth", "dep:jsonwebtoken"]
+auth = ["dep:turbomcp-auth", "dep:jsonwebtoken", "turbomcp-transport/auth", "turbomcp-transport/jwt-validation"]
 
 # Adapters (Phase 6)
 rest = ["utoipa", "utoipa-swagger-ui", "axum", "tower", "tower-http"]
