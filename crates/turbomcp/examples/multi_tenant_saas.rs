@@ -27,6 +27,7 @@
 //! ```
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use tower::ServiceBuilder;
 use turbomcp::{Context, McpResult, server, tool};
 use turbomcp_server::TenantContextExt; // Extension trait for tenant methods
@@ -40,14 +41,15 @@ use turbomcp_server::middleware::tenancy::{
 };
 
 /// Example MCP server with multi-tenant support
-#[server(name = "multi-tenant-saas", version = "1.0.0")]
+#[derive(Clone)]
 struct MultiTenantServer {
     /// Tenant configuration provider
-    tenant_config: Box<dyn TenantConfigProvider>,
+    tenant_config: Arc<StaticTenantConfigProvider>,
     /// Multi-tenant metrics tracker
-    metrics: MultiTenantMetrics,
+    metrics: Arc<MultiTenantMetrics>,
 }
 
+#[server(name = "multi-tenant-saas", version = "1.0.0")]
 impl MultiTenantServer {
     /// Create a new multi-tenant server with configuration
     async fn new() -> McpResult<Self> {
@@ -128,10 +130,10 @@ impl MultiTenantServer {
             },
         );
 
-        let tenant_config = Box::new(StaticTenantConfigProvider::new(tenant_configs));
+        let tenant_config = Arc::new(StaticTenantConfigProvider::new(tenant_configs));
 
         // Initialize multi-tenant metrics with max 1000 tenants
-        let metrics = MultiTenantMetrics::new(1000);
+        let metrics = Arc::new(MultiTenantMetrics::new(1000));
 
         Ok(Self {
             tenant_config,
@@ -151,12 +153,14 @@ impl MultiTenantServer {
             let config = self.tenant_config.get_config(tenant_id).await;
 
             // Record tenant metric
-            self.metrics.record_tool_called(tenant_id, "hello").await;
+            self.metrics.record_request(tenant_id);
 
             let plan = config
+                .as_ref()
                 .and_then(|c| c.metadata.get("plan"))
                 .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
+                .unwrap_or("unknown")
+                .to_string();
 
             format!(" (Tenant: {tenant_id}, Plan: {plan})")
         } else {
@@ -175,33 +179,35 @@ impl MultiTenantServer {
         let tenant_id = ctx.request.require_tenant()?;
 
         // Record metric
-        self.metrics
-            .record_tool_called(tenant_id, "get_usage")
-            .await;
+        self.metrics.record_request(tenant_id);
 
         // Get tenant metrics
-        let stats = self.metrics.get_tenant_stats(tenant_id).await;
+        let stats = self.metrics.get_tenant_metrics(tenant_id);
 
         // Get tenant configuration
         let config = self.tenant_config.get_config(tenant_id).await;
 
+        let plan = config
+            .as_ref()
+            .and_then(|c| c.metadata.get("plan"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        let rate_limit = config.as_ref().and_then(|c| c.rate_limit_per_second);
+        let max_concurrent = config.as_ref().and_then(|c| c.max_concurrent_requests);
+
         Ok(serde_json::json!({
             "tenant_id": tenant_id,
-            "plan": config
-                .and_then(|c| c.metadata.get("plan"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown"),
+            "plan": plan,
             "requests": {
-                "total": stats.as_ref().map(|s| s.requests_total).unwrap_or(0),
-                "successful": stats.as_ref().map(|s| s.requests_successful).unwrap_or(0),
-                "failed": stats.as_ref().map(|s| s.requests_failed).unwrap_or(0),
-            },
-            "tools": {
-                "calls": stats.as_ref().map(|s| s.tools_called).unwrap_or(0),
+                "total": stats.as_ref().map(|s| s.requests_total()).unwrap_or(0),
+                "successful": stats.as_ref().map(|s| s.requests_successful()).unwrap_or(0),
+                "failed": stats.as_ref().map(|s| s.requests_failed()).unwrap_or(0),
             },
             "limits": {
-                "rate_limit_per_second": config.as_ref().and_then(|c| c.rate_limit_per_second),
-                "max_concurrent": config.as_ref().and_then(|c| c.max_concurrent_requests),
+                "rate_limit_per_second": rate_limit,
+                "max_concurrent": max_concurrent,
             }
         }))
     }
@@ -215,20 +221,20 @@ impl MultiTenantServer {
         let tenant_id = ctx.request.require_tenant()?;
 
         // Record metric
-        self.metrics
-            .record_tool_called(tenant_id, "expensive_operation")
-            .await;
+        self.metrics.record_request(tenant_id);
 
         // Check tenant plan
         let config = self.tenant_config.get_config(tenant_id).await;
         let plan = config
+            .as_ref()
             .and_then(|c| c.metadata.get("plan"))
             .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
+            .unwrap_or("unknown")
+            .to_string();
 
         if plan != "enterprise" {
-            return Err(turbomcp::McpError::invalid_params(
-                "This operation requires an enterprise plan",
+            return Err(turbomcp::McpError::Tool(
+                "This operation requires an enterprise plan".to_string(),
             ));
         }
 
@@ -243,7 +249,7 @@ impl MultiTenantServer {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
@@ -299,7 +305,7 @@ async fn main() -> anyhow::Result<()> {
     // your HTTP server setup (e.g., using axum::serve with the middleware).
 
     // For now, just start the HTTP server normally
-    server.http("localhost:3000").await?;
+    server.run_http("localhost:3000").await?;
 
     Ok(())
 }

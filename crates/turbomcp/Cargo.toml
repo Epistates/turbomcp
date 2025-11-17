@@ -86,6 +86,7 @@ turbomcp-client = { version = "2.2.4", path = "../turbomcp-client" }
 tokio-tungstenite = "0.28.0"
 proptest = "1.5"
 oauth2 = { version = "5.0", default-features = false, features = ["reqwest"] }  # Required for oauth_integration_tests.rs
+tower = { workspace = true }  # Required for multi_tenant_saas.rs example
 
 # Example configurations with required features
 # Server examples
