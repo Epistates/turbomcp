@@ -26,6 +26,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::warn;
 use turbomcp_protocol::RequestContext;
+
+#[cfg(feature = "multi-tenancy")]
+use crate::tenant_context::TenantContextExt;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
     types::{
@@ -211,14 +214,15 @@ impl RequestRouter {
     ///
     /// * `headers` - Optional HTTP headers from the transport layer
     /// * `transport` - Optional transport type ("http", "websocket", etc.). Defaults to "http" if headers are provided.
+    /// * `tenant_id` - Optional tenant identifier for multi-tenant deployments. Extracted by `TenantExtractionLayer` middleware.
     ///
     /// # Example
     /// ```rust,ignore
-    /// // HTTP transport
-    /// let ctx = router.create_context(Some(headers), None);
+    /// // Single-tenant HTTP (tenant_id = None)
+    /// let ctx = router.create_context(Some(headers), None, None);
     ///
-    /// // WebSocket transport
-    /// let ctx = router.create_context(Some(headers), Some("websocket"));
+    /// // Multi-tenant WebSocket (with tenant ID from middleware)
+    /// let ctx = router.create_context(Some(headers), Some("websocket"), Some("acme-corp".to_string()));
     /// let response = router.route(request, ctx).await;
     /// ```
     #[must_use]
@@ -226,9 +230,18 @@ impl RequestRouter {
         &self,
         headers: Option<HashMap<String, String>>,
         transport: Option<&str>,
+        tenant_id: Option<String>,
     ) -> RequestContext {
         let mut ctx =
             RequestContext::new().with_server_to_client(Arc::clone(&self.server_to_client));
+
+        // Set tenant ID if provided (multi-tenant deployments)
+        #[cfg(feature = "multi-tenancy")]
+        if let Some(tenant_id) = tenant_id {
+            ctx = ctx.with_tenant(tenant_id);
+        }
+        #[cfg(not(feature = "multi-tenancy"))]
+        let _ = tenant_id; // Suppress unused warning when feature disabled
 
         // Add HTTP headers to context if provided
         if let Some(headers) = headers
@@ -498,7 +511,7 @@ impl turbomcp_protocol::JsonRpcHandler for RequestRouter {
         // Create properly configured context with server-to-client capabilities
         // Note: For authenticated HTTP requests, middleware should add auth info via with_* methods
         // For HTTP requests with headers, use the HTTP-specific entry point that passes headers
-        let ctx = self.create_context(None, None);
+        let ctx = self.create_context(None, None, None);
 
         // Route the request through the standard routing system
         let response = self.route(req, ctx).await;
