@@ -71,9 +71,11 @@ impl turbomcp_protocol::JsonRpcHandler for HttpHandlerWithHeaders {
         };
 
         // Create context with headers and transport type
+        // Note: tenant_id is None here as HttpHandlerWithHeaders is used by transports
+        // that don't go through the Tower middleware stack with TenantExtractionLayer
         let ctx = self
             .router
-            .create_context(self.headers.clone(), Some(self.transport));
+            .create_context(self.headers.clone(), Some(self.transport), None);
 
         // Route the request
         let response = self.router.route(req, ctx).await;

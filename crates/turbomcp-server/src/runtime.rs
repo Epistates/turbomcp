@@ -363,7 +363,7 @@ pub async fn run_stdio_bidirectional(
                     // ✅ Spawn request handler and store handle in JoinSet
                     tasks.spawn(async move {
                         // Create properly configured context with server-to-client capabilities
-                        let ctx = router.create_context(None, None);
+                        let ctx = router.create_context(None, None, None);
                         let response = router.route(request, ctx).await;
 
                         if let Ok(json) = serde_json::to_string(&response) {
@@ -793,7 +793,7 @@ where
 
                     tokio::spawn(async move {
                         // Create properly configured context with server-to-client capabilities
-                        let ctx = router.create_context(None, None);
+                        let ctx = router.create_context(None, None, None);
                         let response = router.route(request, ctx).await;
 
                         // Send response back via transport

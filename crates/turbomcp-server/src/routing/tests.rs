@@ -39,7 +39,7 @@ impl RouteHandler for SimpleRouteHandler {
 // Helper to create request context using router factory
 // This ensures contexts have server-to-client capabilities configured
 fn create_test_context(router: &RequestRouter) -> RequestContext {
-    router.create_context(None, None)
+    router.create_context(None, None, None)
 }
 
 // ============================================================================
@@ -484,7 +484,7 @@ async fn test_router_different_configurations() {
             params: None,
         };
 
-        let ctx = router.create_context(None, None);
+        let ctx = router.create_context(None, None, None);
 
         let response = router.route(request, ctx).await;
         assert_eq!(response.jsonrpc, JsonRpcVersion);
