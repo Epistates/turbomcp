@@ -142,7 +142,7 @@ clap_complete = "4.4"
 ring = "0.17"
 base64 = "0.22"
 uuid = { version = "1.6", features = ["v4", "serde"] }
-jsonwebtoken = "9.2"
+jsonwebtoken = { version = "10.1", features = ["aws_lc_rs"] }
 
 # Time and date handling
 chrono = { version = "0.4", features = ["serde"] }
@@ -176,15 +176,15 @@ doc-comment = "0.3"
 
 # Workspace dependencies are defined below
 # Internal crate dependencies - 2.2.3 (with default-features = false for granular control)
-turbomcp = { version = "2.2.3", path = "crates/turbomcp" }
+turbomcp = { version = "2.2.4", path = "crates/turbomcp" }
 # turbomcp-core merged into turbomcp-protocol in v2.0.0
-turbomcp-protocol = { version = "2.2.3", path = "crates/turbomcp-protocol", default-features = false }
-turbomcp-transport = { version = "2.2.3", path = "crates/turbomcp-transport", default-features = false }
-turbomcp-client = { version = "2.2.3", path = "crates/turbomcp-client", default-features = false }
-turbomcp-server = { version = "2.2.3", path = "crates/turbomcp-server", default-features = false }
-turbomcp-macros = { version = "2.2.3", path = "crates/turbomcp-macros", default-features = false }
-turbomcp-cli = { version = "2.2.3", path = "crates/turbomcp-cli", default-features = false }
-# turbomcp-dpop = { version = "2.2.3", path = "crates/turbomcp-dpop" }  # Available as optional feature
+turbomcp-protocol = { version = "2.2.4", path = "crates/turbomcp-protocol", default-features = false }
+turbomcp-transport = { version = "2.2.4", path = "crates/turbomcp-transport", default-features = false }
+turbomcp-client = { version = "2.2.4", path = "crates/turbomcp-client", default-features = false }
+turbomcp-server = { version = "2.2.4", path = "crates/turbomcp-server", default-features = false }
+turbomcp-macros = { version = "2.2.4", path = "crates/turbomcp-macros", default-features = false }
+turbomcp-cli = { version = "2.2.4", path = "crates/turbomcp-cli", default-features = false }
+# turbomcp-dpop = { version = "2.2.4", path = "crates/turbomcp-dpop" }  # Available as optional feature
 
 [profile.dev]
 opt-level = 1

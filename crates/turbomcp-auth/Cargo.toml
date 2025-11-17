@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-auth"
-version = "2.2.3"
+version = "2.2.4"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "OAuth 2.1 and authentication for TurboMCP with MCP protocol compliance"
@@ -26,13 +26,11 @@ thiserror = "2.0.16"
 tracing = "0.1"
 
 # OAuth 2.1 dependencies
-# NOTE: oauth2 4.4 depends on reqwest 0.11, workspace uses 0.12
-# This creates duplicate compilation of HTTP libraries (~50GB of the 125GB target bloat)
-# Migration to oauth2 5.0 would fix this but requires major API refactoring (typestate system)
+# oauth2 5.0 uses reqwest 0.12 (matches workspace), eliminating duplicate HTTP dependencies
+# Typestate system ensures endpoint configuration at compile time
 # See: https://github.com/ramosbugs/oauth2-rs/blob/main/UPGRADE.md
-# TODO v3.0.0: Migrate to oauth2 5.0 for reqwest 0.12 native support
-oauth2 = "4.4.2"
-jsonwebtoken = "9.3"              # JWT validation and signing (industry standard)
+oauth2 = { version = "5.0", default-features = false, features = ["reqwest"] }
+jsonwebtoken = { workspace = true }  # JWT validation and signing (industry standard)
 base64 = "0.22"
 sha2 = "0.10"
 urlencoding = "2.1"
@@ -61,10 +59,10 @@ reqwest = { version = "0.12", features = ["json"] }
 once_cell = "1.19"
 
 # Internal dependencies
-turbomcp-protocol = { version = "2.2.3", path = "../turbomcp-protocol" }
+turbomcp-protocol = { version = "2.2.4", path = "../turbomcp-protocol" }
 
 # Optional: DPoP support
-turbomcp-dpop = { version = "2.2.3", path = "../turbomcp-dpop", optional = true }
+turbomcp-dpop = { version = "2.2.4", path = "../turbomcp-dpop", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

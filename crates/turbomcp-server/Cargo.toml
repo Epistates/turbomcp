@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-server"
-version = "2.2.3"
+version = "2.2.4"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Fast MCP server implementation with middleware, routing, and lifecycle management"
@@ -13,10 +13,10 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
-turbomcp-protocol = { version = "2.2.3", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "2.2.3", path = "../turbomcp-transport", optional = true }
-turbomcp-macros = { version = "2.2.3", path = "../turbomcp-macros" }
-turbomcp-auth = { version = "2.2.3", path = "../turbomcp-auth", optional = true }
+turbomcp-protocol = { version = "2.2.4", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "2.2.4", path = "../turbomcp-transport", optional = true }
+turbomcp-macros = { version = "2.2.4", path = "../turbomcp-macros" }
+turbomcp-auth = { version = "2.2.4", path = "../turbomcp-auth", optional = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -42,7 +42,7 @@ tower-http = { workspace = true, optional = true }
 governor = { version = "0.10.1", optional = true }  # Sprint 3.2: GCRA rate limiting
 tower_governor = { version = "0.8.0", optional = true }  # Sprint 3.2: Tower integration
 tower-sessions = { version = "0.13", optional = true }  # Sprint 2: Session management
-jsonwebtoken = { version = "10.1", features = ["aws_lc_rs"], optional = true }
+jsonwebtoken = { workspace = true, optional = true }
 secrecy = { version = "0.8", features = ["serde"], optional = true }
 http = { version = "1.0" }  # Core HTTP types for Service abstraction (lightweight)
 axum = { version = "0.8.4", optional = true, features = ["ws", "json"] }
@@ -70,12 +70,13 @@ dpop = ["auth", "turbomcp-auth/dpop"]
 sessions = ["middleware", "dep:tower-sessions"]  # Sprint 2: Session management
 security = ["dep:syn"]  # Sprint 2: Handler name validation
 input-validation = ["http", "dep:garde", "dep:axum-valid"]  # Sprint 3.4: Input validation
+multi-tenancy = ["middleware"]  # Multi-tenant SaaS support with tenant extraction
 health-checks = []
 hot-reload = []
 metrics = []
 middleware = ["dep:tower-http"]  # tower and http are now core deps
 rate-limiting = ["middleware", "dep:governor", "dep:tower_governor"]
-graceful-shutdown = []
+graceful-shutdown = []  # DEPRECATED: Graceful shutdown is now always enabled as core functionality
 observability = []
 # Transport features (progressive enhancement)
 stdio = ["dep:turbomcp-transport", "turbomcp-transport/stdio"]
@@ -85,4 +86,4 @@ tcp = ["dep:turbomcp-transport", "turbomcp-transport/tcp"]
 unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
 # Convenience feature bundles
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]
-full = ["all-transports", "auth", "dpop", "sessions", "security", "input-validation", "health-checks", "metrics", "middleware", "rate-limiting", "graceful-shutdown"]
+full = ["all-transports", "auth", "dpop", "sessions", "security", "input-validation", "multi-tenancy", "health-checks", "metrics", "middleware", "rate-limiting"]
