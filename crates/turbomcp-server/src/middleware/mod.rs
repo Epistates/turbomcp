@@ -26,6 +26,8 @@ pub mod input_validation;
 #[cfg(feature = "rate-limiting")]
 pub mod rate_limit;
 pub mod security;
+#[cfg(feature = "multi-tenancy")]
+pub mod tenancy;
 pub mod timeout;
 pub mod validation;
 
@@ -38,6 +40,12 @@ pub use input_validation::{Garde, Validate, patterns, validators};
 #[cfg(feature = "rate-limiting")]
 pub use rate_limit::{RateLimitConfig, RateLimitLayer};
 pub use security::{SecurityConfig, SecurityLayer};
+#[cfg(feature = "multi-tenancy")]
+pub use tenancy::{
+    ApiKeyTenantExtractor, CompositeTenantExtractor, HeaderTenantExtractor,
+    SubdomainTenantExtractor, TenantExtractionLayer, TenantExtractionService, TenantExtractor,
+    TenantId,
+};
 pub use timeout::{TimeoutConfig, TimeoutLayer};
 pub use validation::{ValidationConfig, ValidationLayer};
 
