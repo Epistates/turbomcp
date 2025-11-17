@@ -396,11 +396,11 @@ use turbomcp_transport::streamable_http_v2::{StreamableHttpConfig, StreamableHtt
 /// Application state for the HTTP server with bidirectional support
 struct HttpAppState<F, H>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H + Send + Sync + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     /// Factory function that creates handlers with session-specific dispatchers
-    /// Now accepts optional HTTP headers for propagation to RequestContext
+    /// Now accepts optional HTTP headers and tenant_id for propagation to RequestContext
     handler_factory: Arc<F>,
     /// Shared sessions map for SSE broadcasting
     sessions: SessionsMap,
@@ -416,7 +416,7 @@ where
 
 impl<F, H> Clone for HttpAppState<F, H>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H + Send + Sync + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
@@ -456,7 +456,7 @@ pub async fn run_http<F, H>(
     path: String,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H + Send + Sync + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     // Create transport configuration
@@ -477,7 +477,7 @@ where
     };
 
     // Get server info from a temporary handler instance
-    let temp_handler = (state.handler_factory)(None, None);
+    let temp_handler = (state.handler_factory)(None, None, None);
     let server_info = temp_handler.server_info();
 
     // Create router with custom handlers
@@ -514,15 +514,23 @@ where
 async fn mcp_post_handler<F, H>(
     State(state): State<HttpAppState<F, H>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    #[cfg(feature = "multi-tenancy")]
+    tenant_id_ext: Option<axum::extract::Extension<crate::middleware::tenancy::TenantId>>,
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Result<impl IntoResponse, StatusCode>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H + Send + Sync + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     // Security validation
     validate_security(&state, &headers, addr.ip())?;
+
+    // Extract tenant ID from request extensions (if TenantExtractionLayer was applied)
+    #[cfg(feature = "multi-tenancy")]
+    let tenant_id = tenant_id_ext.map(|ext| ext.0.as_str().to_string());
+    #[cfg(not(feature = "multi-tenancy"))]
+    let tenant_id: Option<String> = None;
 
     // Extract session ID from header
     let session_id = headers
@@ -562,15 +570,15 @@ where
         && matches!(message, JsonRpcMessage::Notification(_))
     {
         // Process the notification but don't send a response
-        let handler = (state.handler_factory)(session_id.clone(), Some(headers.clone()));
+        let handler = (state.handler_factory)(session_id.clone(), Some(headers.clone()), tenant_id.clone());
         let _ = handler.handle_request(request).await;
 
         // Return 204 No Content per JSON-RPC 2.0 spec
         return Ok((StatusCode::NO_CONTENT, Json(serde_json::json!({}))));
     }
 
-    // This is a regular client request - create handler with session context and HTTP headers
-    let handler = (state.handler_factory)(session_id.clone(), Some(headers));
+    // This is a regular client request - create handler with session context, HTTP headers, and tenant ID
+    let handler = (state.handler_factory)(session_id.clone(), Some(headers), tenant_id);
 
     // Handle the request
     let response_value = handler.handle_request(request).await;
@@ -586,7 +594,7 @@ async fn mcp_get_handler<F, H>(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H + Send + Sync + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     // Security validation
@@ -695,7 +703,7 @@ async fn mcp_delete_handler<F, H>(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H + Send + Sync + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     // Extract session ID
@@ -717,7 +725,7 @@ fn validate_security<F, H>(
     client_ip: std::net::IpAddr,
 ) -> Result<(), StatusCode>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H + Send + Sync + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     // Convert Axum headers to transport security headers

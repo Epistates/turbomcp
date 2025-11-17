@@ -39,14 +39,15 @@ pub(crate) fn should_log_for_stdio() -> bool {
     std::env::var("TURBOMCP_FORCE_LOGGING").is_ok()
 }
 
-/// Wrapper that holds router + headers and implements JsonRpcHandler
-/// This allows us to pass headers to create_context without storing them on the router.
+/// Wrapper that holds router + headers + tenant_id and implements JsonRpcHandler
+/// This allows us to pass headers and tenant info to create_context without storing them on the router.
 /// Used by both HTTP and WebSocket transports.
 #[cfg(any(feature = "http", feature = "websocket"))]
 struct HttpHandlerWithHeaders {
     router: crate::routing::RequestRouter,
     headers: Option<std::collections::HashMap<String, String>>,
     transport: &'static str,
+    tenant_id: Option<String>,
 }
 
 #[cfg(any(feature = "http", feature = "websocket"))]
@@ -70,12 +71,14 @@ impl turbomcp_protocol::JsonRpcHandler for HttpHandlerWithHeaders {
             }
         };
 
-        // Create context with headers and transport type
-        // Note: tenant_id is None here as HttpHandlerWithHeaders is used by transports
-        // that don't go through the Tower middleware stack with TenantExtractionLayer
-        let ctx = self
-            .router
-            .create_context(self.headers.clone(), Some(self.transport), None);
+        // Create context with headers, transport type, and tenant_id
+        // tenant_id is extracted from request extensions by the HTTP/WebSocket handlers
+        // if TenantExtractionLayer middleware was applied
+        let ctx = self.router.create_context(
+            self.headers.clone(),
+            Some(self.transport),
+            self.tenant_id.clone(),
+        );
 
         // Route the request
         let response = self.router.route(req, ctx).await;
@@ -791,8 +794,9 @@ impl McpServer {
 
         // Create a wrapper that converts headers and delegates to router
         // This is cleaner than storing headers on the router itself
-        let handler_factory =
-            move |session_id: Option<String>, headers: Option<axum::http::HeaderMap>| {
+        let handler_factory = move |session_id: Option<String>,
+                                      headers: Option<axum::http::HeaderMap>,
+                                      tenant_id: Option<String>| {
                 let session_id = session_id.unwrap_or_else(|| {
                     let new_id = uuid::Uuid::new_v4().to_string();
                     tracing::debug!(
@@ -829,11 +833,12 @@ impl McpServer {
                         .collect()
                 });
 
-                // Create wrapper that passes headers to create_context (HTTP transport)
+                // Create wrapper that passes headers and tenant_id to create_context (HTTP transport)
                 HttpHandlerWithHeaders {
                     router: session_router,
                     headers: headers_map,
                     transport: "http",
+                    tenant_id,
                 }
             };
 
@@ -985,7 +990,8 @@ impl McpServer {
         // server layer provides MCP-specific handler logic
         let handler_factory =
             move |transport_dispatcher: turbomcp_transport::axum::WebSocketDispatcher,
-                  headers: Option<std::collections::HashMap<String, String>>| {
+                  headers: Option<std::collections::HashMap<String, String>>,
+                  tenant_id: Option<String>| {
                 // Wrap transport dispatcher with server layer adapter
                 let server_dispatcher =
                     crate::routing::WebSocketDispatcherAdapter::new(transport_dispatcher);
@@ -994,12 +1000,13 @@ impl McpServer {
                 let mut connection_router = router.clone();
                 connection_router.set_server_request_dispatcher(server_dispatcher);
 
-                // Create wrapper that passes headers to create_context (WebSocket transport)
+                // Create wrapper that passes headers and tenant_id to create_context (WebSocket transport)
                 // We can reuse HttpHandlerWithHeaders since it's generic
                 Arc::new(HttpHandlerWithHeaders {
                     router: connection_router,
                     headers,
                     transport: "websocket",
+                    tenant_id,
                 }) as Arc<dyn turbomcp_protocol::JsonRpcHandler>
             };
 
