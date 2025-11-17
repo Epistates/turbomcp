@@ -37,10 +37,9 @@ use tokio::sync::RwLock;
 use turbomcp::prelude::*;
 
 // Multi-tenancy features require the multi-tenancy feature flag
-#[cfg(feature = "multi-tenancy")]
 use turbomcp_server::{
     TenantContextExt, // Extension trait for tenant context methods
-    config::multi_tenant::{StaticTenantConfigProvider, TenantConfig},
+    config::multi_tenant::{StaticTenantConfigProvider, TenantConfig, TenantConfigProvider},
     metrics::multi_tenant::MultiTenantMetrics,
     middleware::tenancy::{
         ApiKeyTenantExtractor, CompositeTenantExtractor, HeaderTenantExtractor, TenantId,
@@ -60,14 +59,12 @@ struct Resource {
 #[derive(Clone)]
 struct MultiTenantServer {
     /// Per-tenant configuration provider
-    #[cfg(feature = "multi-tenancy")]
     tenant_configs: Arc<StaticTenantConfigProvider>,
 
     /// Simulated resource database (in production, use PostgreSQL with RLS)
     resources: Arc<RwLock<HashMap<String, Resource>>>,
 
     /// Multi-tenant metrics tracker
-    #[cfg(feature = "multi-tenancy")]
     metrics: Arc<MultiTenantMetrics>,
 }
 
@@ -85,16 +82,13 @@ impl MultiTenantServer {
     async fn get_resource(
         &self,
         ctx: Context,
-        #[description("Resource ID to retrieve")] resource_id: String,
+        resource_id: String,
     ) -> McpResult<String> {
         // CRITICAL: Extract and validate tenant ID
-        #[cfg(feature = "multi-tenancy")]
         let tenant_id = ctx
+            .request
             .require_tenant()
             .map_err(|e| mcp_error!("Tenant authentication required: {}", e))?;
-
-        #[cfg(not(feature = "multi-tenancy"))]
-        let tenant_id = "default";
 
         // Retrieve the resource
         let resources = self.resources.read().await;
@@ -103,16 +97,9 @@ impl MultiTenantServer {
             .ok_or_else(|| mcp_error!("Resource not found: {}", resource_id))?;
 
         // CRITICAL: Validate tenant owns this resource
-        #[cfg(feature = "multi-tenancy")]
-        ctx.validate_tenant_ownership(&resource.tenant_id)
+        ctx.request
+            .validate_tenant_ownership(&resource.tenant_id)
             .map_err(|e| mcp_error!("Access denied: {}", e))?;
-
-        #[cfg(not(feature = "multi-tenancy"))]
-        if resource.tenant_id != tenant_id {
-            return Err(mcp_error!(
-                "Access denied: resource belongs to another tenant"
-            ));
-        }
 
         Ok(format!(
             "Resource: {} (Name: {}, Data: {})",
@@ -125,29 +112,25 @@ impl MultiTenantServer {
     async fn create_resource(
         &self,
         ctx: Context,
-        #[description("Resource name")] name: String,
-        #[description("Resource data")] data: String,
+        name: String,
+        data: String,
     ) -> McpResult<String> {
         // Extract tenant ID (all resources are tenant-scoped)
-        #[cfg(feature = "multi-tenancy")]
         let tenant_id = ctx
+            .request
             .require_tenant()
             .map_err(|e| mcp_error!("Tenant authentication required: {}", e))?;
 
-        #[cfg(not(feature = "multi-tenancy"))]
-        let tenant_id = "default";
-
         // Check if tenant is allowed to create resources
-        #[cfg(feature = "multi-tenancy")]
         if let Some(config) = self.tenant_configs.get_config(tenant_id).await {
             if !config.is_tool_enabled("create_resource") {
-                return Err(mcp_error!(
-                    "Creating resources is not enabled for your subscription plan"
+                return Err(McpError::Tool(
+                    "Creating resources is not enabled for your subscription plan".to_string()
                 ));
             }
 
             if !config.is_active() {
-                return Err(mcp_error!("Account is suspended. Please contact support."));
+                return Err(McpError::Tool("Account is suspended. Please contact support.".to_string()));
             }
         }
 
@@ -167,12 +150,9 @@ impl MultiTenantServer {
         resources.insert(resource_id.clone(), resource);
 
         // Record metrics
-        #[cfg(feature = "multi-tenancy")]
-        {
-            self.metrics.record_request(tenant_id);
-            self.metrics
-                .record_request_success(tenant_id, std::time::Duration::from_millis(10));
-        }
+        self.metrics.record_request(tenant_id);
+        self.metrics
+            .record_request_success(tenant_id, std::time::Duration::from_millis(10));
 
         Ok(format!(
             "Created resource {} for tenant {}",
@@ -184,13 +164,10 @@ impl MultiTenantServer {
     #[tool("List all resources owned by your tenant")]
     async fn list_resources(&self, ctx: Context) -> McpResult<Vec<String>> {
         // Extract tenant ID
-        #[cfg(feature = "multi-tenancy")]
         let tenant_id = ctx
+            .request
             .require_tenant()
             .map_err(|e| mcp_error!("Tenant authentication required: {}", e))?;
-
-        #[cfg(not(feature = "multi-tenancy"))]
-        let tenant_id = "default";
 
         // Filter resources by tenant ownership
         let resources = self.resources.read().await;
@@ -204,10 +181,10 @@ impl MultiTenantServer {
     }
 
     /// Get tenant-specific metrics (admin tool)
-    #[cfg(feature = "multi-tenancy")]
     #[tool("Get metrics for your tenant")]
     async fn get_tenant_metrics(&self, ctx: Context) -> McpResult<String> {
         let tenant_id = ctx
+            .request
             .require_tenant()
             .map_err(|e| mcp_error!("Tenant authentication required: {}", e))?;
 
@@ -226,10 +203,10 @@ impl MultiTenantServer {
     }
 
     /// Get tenant configuration (admin tool)
-    #[cfg(feature = "multi-tenancy")]
     #[tool("Get your tenant configuration")]
     async fn get_tenant_config(&self, ctx: Context) -> McpResult<String> {
         let tenant_id = ctx
+            .request
             .require_tenant()
             .map_err(|e| mcp_error!("Tenant authentication required: {}", e))?;
 
@@ -260,7 +237,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 Starting multi-tenant MCP server...");
 
     // Set up per-tenant configurations
-    #[cfg(feature = "multi-tenancy")]
     let tenant_configs = {
         let mut configs = HashMap::new();
 
@@ -329,10 +305,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create server instance
     let server = MultiTenantServer {
-        #[cfg(feature = "multi-tenancy")]
         tenant_configs: Arc::new(tenant_configs),
         resources: Arc::new(RwLock::new(initial_resources)),
-        #[cfg(feature = "multi-tenancy")]
         metrics: Arc::new(MultiTenantMetrics::new(1000)), // Track up to 1000 tenants
     };
 
@@ -343,49 +317,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   - suspended-corp (Suspended)");
     println!();
 
-    #[cfg(feature = "multi-tenancy")]
-    {
-        // Create composite tenant extractor (tries multiple strategies)
-        let tenant_extractor = CompositeTenantExtractor::new(vec![
-            // 1. Try X-Tenant-ID header first (explicit tenant)
-            Box::new(HeaderTenantExtractor::new("X-Tenant-ID")),
-            // 2. Try extracting from API key: sk_tenant_secret
-            Box::new(ApiKeyTenantExtractor::new('_', 1).with_prefix("sk_")),
-            // 3. Try subdomain (if running behind a domain)
-            // Box::new(SubdomainTenantExtractor::new("api.example.com")),
-        ]);
+    // Create composite tenant extractor (tries multiple strategies)
+    let _tenant_extractor = CompositeTenantExtractor::new(vec![
+        // 1. Try X-Tenant-ID header first (explicit tenant)
+        Box::new(HeaderTenantExtractor::new("X-Tenant-ID")),
+        // 2. Try extracting from API key: sk_tenant_secret
+        Box::new(ApiKeyTenantExtractor::new('_', 1).with_prefix("sk_")),
+        // 3. Try subdomain (if running behind a domain)
+        // Box::new(SubdomainTenantExtractor::new("api.example.com")),
+    ]);
 
-        println!("🔐 Tenant extraction enabled:");
-        println!("   1. X-Tenant-ID header");
-        println!("   2. API key prefix (sk_tenant_secret)");
-        println!("   3. Subdomain (if configured)");
-        println!();
-        println!("💡 Example requests:");
-        println!("   curl -H 'X-Tenant-ID: acme-corp' http://localhost:3000/mcp/v1");
-        println!("   curl -H 'Authorization: sk_acme-corp_secret' http://localhost:3000/mcp/v1");
-        println!();
+    println!("🔐 Tenant extraction enabled:");
+    println!("   1. X-Tenant-ID header");
+    println!("   2. API key prefix (sk_tenant_secret)");
+    println!("   3. Subdomain (if configured)");
+    println!();
+    println!("💡 Example requests:");
+    println!("   curl -H 'X-Tenant-ID: acme-corp' http://localhost:3000/mcp/v1");
+    println!("   curl -H 'Authorization: sk_acme-corp_secret' http://localhost:3000/mcp/v1");
+    println!();
 
-        // Run HTTP server with tenant extraction middleware
-        println!("🌐 Starting HTTP server on http://localhost:3000");
-        println!("   Ready to accept multi-tenant requests!");
-        println!();
+    // Run HTTP server with tenant extraction middleware
+    println!("🌐 Starting HTTP server on http://localhost:3000");
+    println!("   Ready to accept multi-tenant requests!");
+    println!();
 
-        // Note: This is a placeholder - actual HTTP server integration would go here
-        // For now, demonstrate STDIO mode with tenant context
-        println!("⚠️  HTTP multi-tenant mode requires additional HTTP transport setup");
-        println!("   Running in STDIO mode for demonstration...");
-        server.run_stdio().await?;
-    }
-
-    #[cfg(not(feature = "multi-tenancy"))]
-    {
-        println!("⚠️  Multi-tenancy features not enabled");
-        println!(
-            "   Run with: cargo run --example multi_tenant_server --features full,multi-tenancy"
-        );
-        println!();
-        server.run_stdio().await?;
-    }
+    // Note: This is a placeholder - actual HTTP server integration would go here
+    // For now, demonstrate STDIO mode with tenant context
+    println!("⚠️  HTTP multi-tenant mode requires additional HTTP transport setup");
+    println!("   Running in STDIO mode for demonstration...");
+    server.run_stdio().await?;
 
     Ok(())
 }
