@@ -468,6 +468,62 @@ where
         + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
+    run_http_with_middleware(handler_factory, sessions, pending_requests, addr, path, None).await
+}
+
+/// Run MCP HTTP server with full bidirectional support and optional Tower middleware
+///
+/// This function extends `run_http` with support for Tower middleware layers, enabling
+/// features like multi-tenancy, authentication, rate limiting, logging, etc.
+///
+/// # Type Parameters
+///
+/// * `F` - Factory function that creates handlers
+/// * `H` - Handler type that implements `JsonRpcHandler`
+///
+/// # Arguments
+///
+/// * `handler_factory` - Function that creates handlers with session-specific context
+/// * `sessions` - Shared sessions map for SSE broadcasting
+/// * `pending_requests` - Shared pending requests map for response correlation
+/// * `addr` - Bind address (e.g., "127.0.0.1:3000")
+/// * `path` - MCP endpoint path (e.g., "/mcp")
+/// * `middleware_fn` - Optional function that transforms the router by adding middleware layers
+///
+/// # Example: Multi-Tenancy Middleware
+///
+/// ```rust,ignore
+/// use turbomcp_server::middleware::tenancy::{HeaderTenantExtractor, TenantExtractionLayer};
+/// use tower::ServiceBuilder;
+///
+/// let tenant_extractor = HeaderTenantExtractor::new("X-Tenant-ID");
+/// let middleware = ServiceBuilder::new()
+///     .layer(TenantExtractionLayer::new(tenant_extractor));
+///
+/// run_http_with_middleware(
+///     handler_factory,
+///     sessions,
+///     pending,
+///     "127.0.0.1:3000".to_string(),
+///     "/mcp".to_string(),
+///     Some(Box::new(move |router| router.layer(middleware))),
+/// ).await?;
+/// ```
+pub async fn run_http_with_middleware<F, H>(
+    handler_factory: F,
+    sessions: SessionsMap,
+    pending_requests: PendingRequestsMap,
+    addr: String,
+    path: String,
+    middleware_fn: Option<Box<dyn FnOnce(Router) -> Router + Send>>,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H
+        + Send
+        + Sync
+        + 'static,
+    H: JsonRpcHandler + Send + Sync + 'static,
+{
     // Create transport configuration
     let config = StreamableHttpConfigBuilder::new()
         .with_bind_address(addr.clone())
@@ -489,8 +545,8 @@ where
     let temp_handler = (state.handler_factory)(None, None, None);
     let server_info = temp_handler.server_info();
 
-    // Create router with custom handlers
-    let app = Router::new()
+    // Create router with custom handlers and attach state
+    let mut app = Router::new()
         .route(
             &config.endpoint_path,
             post(mcp_post_handler::<F, H>)
@@ -498,6 +554,12 @@ where
                 .delete(mcp_delete_handler::<F, H>),
         )
         .with_state(state);
+
+    // Apply middleware if provided (e.g., for multi-tenancy, authentication, etc.)
+    // Middleware must be compatible with Router after state attachment
+    if let Some(middleware) = middleware_fn {
+        app = middleware(app);
+    }
 
     // Bind to address
     let listener = tokio::net::TcpListener::bind(&addr).await?;

@@ -37,8 +37,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use bytes::Bytes;
-use http::{HeaderMap, Request, Response};
+use http::{HeaderMap, Request};
 use tower::{Layer, Service};
 use tracing::debug;
 
@@ -84,6 +83,18 @@ pub trait TenantExtractor: Send + Sync {
     /// Default implementation accepts any non-empty string.
     fn validate(&self, tenant_id: &str) -> bool {
         !tenant_id.is_empty()
+    }
+}
+
+// Blanket implementation for Arc<T> where T: TenantExtractor
+// This allows TenantExtractor to work with Arc-wrapped extractors for cloning
+impl<T: TenantExtractor> TenantExtractor for std::sync::Arc<T> {
+    fn extract(&self, headers: &HeaderMap) -> Option<String> {
+        (**self).extract(headers)
+    }
+
+    fn validate(&self, tenant_id: &str) -> bool {
+        (**self).validate(tenant_id)
     }
 }
 
@@ -471,12 +482,15 @@ where
     }
 }
 
-impl<S, E> Service<Request<Bytes>> for TenantExtractionService<S, E>
+// Implementation for generic Request (works with any body type, including axum::body::Body)
+impl<S, E, B> Service<Request<B>> for TenantExtractionService<S, E>
 where
-    S: Service<Request<Bytes>, Response = Response<Bytes>> + Clone + Send + 'static,
+    S: Service<Request<B>> + Clone + Send + 'static,
+    S::Response: Send,
     S::Future: Send + 'static,
     S::Error: Send,
     E: TenantExtractor + 'static,
+    B: Send + 'static,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -486,7 +500,7 @@ where
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, mut req: Request<Bytes>) -> Self::Future {
+    fn call(&mut self, mut req: Request<B>) -> Self::Future {
         let extractor = Arc::clone(&self.extractor);
         let mut inner = self.inner.clone();
 

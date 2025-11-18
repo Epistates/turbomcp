@@ -869,6 +869,177 @@ impl McpServer {
         Ok(())
     }
 
+    /// Run server with HTTP transport and Tower middleware
+    ///
+    /// This method enables advanced features like multi-tenancy, authentication, rate limiting,
+    /// and other cross-cutting concerns by allowing you to apply Tower middleware layers to the
+    /// HTTP router.
+    ///
+    /// # Multi-Tenancy Example
+    ///
+    /// ```no_run
+    /// use turbomcp_server::ServerBuilder;
+    /// use turbomcp_server::middleware::tenancy::{HeaderTenantExtractor, TenantExtractionLayer};
+    /// use tower::ServiceBuilder;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let server = ServerBuilder::new()
+    ///         .name("multi-tenant-server")
+    ///         .version("1.0.0")
+    ///         .build();
+    ///
+    ///     // Create tenant extractor middleware
+    ///     let tenant_extractor = HeaderTenantExtractor::new("X-Tenant-ID");
+    ///     let middleware = ServiceBuilder::new()
+    ///         .layer(TenantExtractionLayer::new(tenant_extractor));
+    ///
+    ///     // Run server with middleware
+    ///     server.run_http_with_middleware(
+    ///         "127.0.0.1:3000",
+    ///         Box::new(move |router| router.layer(middleware))
+    ///     ).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Authentication Example
+    ///
+    /// ```no_run
+    /// use turbomcp_server::ServerBuilder;
+    /// use tower::ServiceBuilder;
+    /// use tower_http::auth::RequireAuthorizationLayer;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let server = ServerBuilder::new()
+    ///     .name("auth-server")
+    ///     .version("1.0.0")
+    ///     .build();
+    ///
+    /// // Add bearer token authentication
+    /// let middleware = ServiceBuilder::new()
+    ///     .layer(RequireAuthorizationLayer::bearer("secret-token"));
+    ///
+    /// server.run_http_with_middleware(
+    ///     "127.0.0.1:3000",
+    ///     Box::new(move |router| router.layer(middleware))
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "http")]
+    #[tracing::instrument(skip(self, middleware_fn), fields(
+        transport = "http",
+        service_name = %self.config.name,
+        service_version = %self.config.version,
+        addr = ?addr
+    ))]
+    pub async fn run_http_with_middleware<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
+        self,
+        addr: A,
+        middleware_fn: Box<dyn FnOnce(axum::Router) -> axum::Router + Send>,
+    ) -> ServerResult<()> {
+        use std::collections::HashMap;
+        use tokio::sync::{Mutex, RwLock};
+
+        // Sprint 2.6: Check for insecure 0.0.0.0 binding
+        crate::security_checks::check_binding_security(&addr);
+
+        info!("Starting MCP server with HTTP transport and custom middleware");
+
+        self.lifecycle.start().await;
+
+        // Resolve address to string
+        let socket_addr = addr
+            .to_socket_addrs()
+            .map_err(|e| crate::ServerError::configuration(format!("Invalid address: {}", e)))?
+            .next()
+            .ok_or_else(|| crate::ServerError::configuration("No address resolved"))?;
+
+        info!("Resolved address: {}", socket_addr);
+
+        // BIDIRECTIONAL HTTP SETUP
+        let sessions = Arc::new(RwLock::new(HashMap::new()));
+        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
+        let router = self.router.clone();
+
+        // Factory pattern for session-specific handlers
+        let sessions_for_factory = Arc::clone(&sessions);
+        let pending_for_factory = Arc::clone(&pending_requests);
+        let router_for_factory = Arc::clone(&router);
+
+        let handler_factory = move |session_id: Option<String>,
+                                    headers: Option<axum::http::HeaderMap>,
+                                    tenant_id: Option<String>| {
+            let session_id = session_id.unwrap_or_else(|| {
+                let new_id = uuid::Uuid::new_v4().to_string();
+                tracing::debug!(
+                    "HTTP POST without session ID - generating ephemeral ID for request: {}",
+                    new_id
+                );
+                new_id
+            });
+
+            tracing::debug!("Factory creating handler for session: {}", session_id);
+
+            let dispatcher = crate::runtime::http::HttpDispatcher::new(
+                session_id,
+                Arc::clone(&sessions_for_factory),
+                Arc::clone(&pending_for_factory),
+            );
+
+            let mut session_router = (*router_for_factory).clone();
+            session_router.set_server_request_dispatcher(dispatcher);
+
+            let headers_map = headers.map(|header_map| {
+                header_map
+                    .iter()
+                    .filter_map(|(name, value)| {
+                        value
+                            .to_str()
+                            .ok()
+                            .map(|v| (name.to_string(), v.to_string()))
+                    })
+                    .collect()
+            });
+
+            HttpHandlerWithHeaders {
+                router: session_router,
+                headers: headers_map,
+                transport: "http",
+                tenant_id,
+            }
+        };
+
+        info!(
+            server_name = %self.config.name,
+            server_version = %self.config.version,
+            bind_addr = %socket_addr,
+            "HTTP server starting with custom middleware and bidirectional support"
+        );
+
+        // Use run_http_with_middleware function
+        use crate::runtime::http::run_http_with_middleware;
+        run_http_with_middleware(
+            handler_factory,
+            sessions,
+            pending_requests,
+            socket_addr.to_string(),
+            "/mcp".to_string(), // Default endpoint path
+            Some(middleware_fn),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "HTTP server with middleware failed");
+            crate::ServerError::handler(e.to_string())
+        })?;
+
+        info!("HTTP server shutdown complete");
+        Ok(())
+    }
+
     /// Run server with WebSocket transport (full bidirectional support)
     ///
     /// This provides a simple API for WebSocket servers with sensible defaults:

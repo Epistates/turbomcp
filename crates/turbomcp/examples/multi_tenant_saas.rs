@@ -28,7 +28,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tower::ServiceBuilder;
 use turbomcp::{Context, McpResult, server, tool};
 use turbomcp_server::TenantContextExt; // Extension trait for tenant methods
 use turbomcp_server::config::multi_tenant::{
@@ -262,31 +261,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Configure tenant extraction middleware
     // Try multiple strategies: header first, then subdomain
-    let tenant_extractor = CompositeTenantExtractor::new(vec![
+    let tenant_extractor = Arc::new(CompositeTenantExtractor::new(vec![
         Box::new(HeaderTenantExtractor::new("X-Tenant-ID")),
         Box::new(SubdomainTenantExtractor::new("localhost")),
-    ]);
+    ]));
 
     // Build HTTP server with tenant extraction middleware
     tracing::info!("Configuring tenant extraction middleware...");
     tracing::info!("  - Header: X-Tenant-ID");
     tracing::info!("  - Subdomain: <tenant>.localhost:3000");
 
-    // Add tenant extraction middleware to the HTTP service
-    let _middleware = ServiceBuilder::new().layer(TenantExtractionLayer::new(tenant_extractor));
+    // Build tenant extraction middleware layer
+    let tenant_layer = TenantExtractionLayer::new(Arc::clone(&tenant_extractor));
 
     // Start HTTP server
     tracing::info!("Starting HTTP server on http://localhost:3000");
     tracing::info!("\nExample requests:");
     tracing::info!("  # Using header:");
-    tracing::info!("  curl -X POST http://localhost:3000 \\");
+    tracing::info!("  curl -X POST http://localhost:3000/mcp \\");
     tracing::info!("    -H 'Content-Type: application/json' \\");
     tracing::info!("    -H 'X-Tenant-ID: acme-corp' \\");
     tracing::info!(
         "    -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"hello\",\"arguments\":{{\"name\":\"World\"}}}}}}'"
     );
     tracing::info!("\n  # Using subdomain (configure /etc/hosts):");
-    tracing::info!("  curl -X POST http://acme-corp.localhost:3000 \\");
+    tracing::info!("  curl -X POST http://acme-corp.localhost:3000/mcp \\");
     tracing::info!("    -H 'Content-Type: application/json' \\");
     tracing::info!(
         "    -d '{{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{{\"name\":\"get_usage\"}}}}'"
@@ -295,17 +294,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("  - acme-corp (enterprise plan)");
     tracing::info!("  - startup-inc (starter plan)");
     tracing::info!("  - demo (demo plan - expires 2025-12-31)");
+    tracing::info!("\n✅ Multi-tenancy middleware is ACTIVE - X-Tenant-ID headers will be extracted!");
 
-    // Note: To actually apply the middleware to the HTTP server, you would need to:
-    // 1. Get the HTTP service from server.http()
-    // 2. Wrap it with middleware.service(http_service)
-    // 3. Serve the wrapped service
-    //
-    // This is a simplified example. In production, you would integrate this with
-    // your HTTP server setup (e.g., using axum::serve with the middleware).
-
-    // For now, just start the HTTP server normally
-    server.run_http("localhost:3000").await?;
+    // Run HTTP server with tenant extraction middleware
+    // This applies the middleware to the router, enabling automatic tenant extraction
+    server
+        .run_http_with_middleware("localhost:3000", Box::new(move |router| {
+            router.layer(tenant_layer)
+        }))
+        .await?;
 
     Ok(())
 }
