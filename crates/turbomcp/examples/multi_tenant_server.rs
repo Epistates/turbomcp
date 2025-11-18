@@ -41,9 +41,7 @@ use turbomcp_server::{
     TenantContextExt, // Extension trait for tenant context methods
     config::multi_tenant::{StaticTenantConfigProvider, TenantConfig, TenantConfigProvider},
     metrics::multi_tenant::MultiTenantMetrics,
-    middleware::tenancy::{
-        ApiKeyTenantExtractor, CompositeTenantExtractor, HeaderTenantExtractor,
-    },
+    middleware::tenancy::{ApiKeyTenantExtractor, CompositeTenantExtractor, HeaderTenantExtractor},
 };
 
 /// Simulated resource storage with tenant ownership
