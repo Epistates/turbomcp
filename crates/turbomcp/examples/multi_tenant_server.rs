@@ -42,7 +42,7 @@ use turbomcp_server::{
     config::multi_tenant::{StaticTenantConfigProvider, TenantConfig, TenantConfigProvider},
     metrics::multi_tenant::MultiTenantMetrics,
     middleware::tenancy::{
-        ApiKeyTenantExtractor, CompositeTenantExtractor, HeaderTenantExtractor, TenantId,
+        ApiKeyTenantExtractor, CompositeTenantExtractor, HeaderTenantExtractor,
     },
 };
 
@@ -81,21 +81,16 @@ impl MultiTenantServer {
     #[tool("Get a resource by ID (validates tenant ownership)")]
     async fn get_resource(&self, ctx: Context, resource_id: String) -> McpResult<String> {
         // CRITICAL: Extract and validate tenant ID
-        let tenant_id = ctx
-            .request
-            .require_tenant()
-            .map_err(|e| mcp_error!("Tenant authentication required: {}", e))?;
+        let _tenant_id = ctx.request.require_tenant()?;
 
         // Retrieve the resource
         let resources = self.resources.read().await;
         let resource = resources
             .get(&resource_id)
-            .ok_or_else(|| mcp_error!("Resource not found: {}", resource_id))?;
+            .ok_or_else(|| McpError::Tool(format!("Resource not found: {}", resource_id)))?;
 
         // CRITICAL: Validate tenant owns this resource
-        ctx.request
-            .validate_tenant_ownership(&resource.tenant_id)
-            .map_err(|e| mcp_error!("Access denied: {}", e))?;
+        ctx.request.validate_tenant_ownership(&resource.tenant_id)?;
 
         Ok(format!(
             "Resource: {} (Name: {}, Data: {})",
@@ -107,10 +102,7 @@ impl MultiTenantServer {
     #[tool("Create a resource (automatically scoped to your tenant)")]
     async fn create_resource(&self, ctx: Context, name: String, data: String) -> McpResult<String> {
         // Extract tenant ID (all resources are tenant-scoped)
-        let tenant_id = ctx
-            .request
-            .require_tenant()
-            .map_err(|e| mcp_error!("Tenant authentication required: {}", e))?;
+        let tenant_id = ctx.request.require_tenant()?;
 
         // Check if tenant is allowed to create resources
         if let Some(config) = self.tenant_configs.get_config(tenant_id).await {
@@ -157,10 +149,7 @@ impl MultiTenantServer {
     #[tool("List all resources owned by your tenant")]
     async fn list_resources(&self, ctx: Context) -> McpResult<Vec<String>> {
         // Extract tenant ID
-        let tenant_id = ctx
-            .request
-            .require_tenant()
-            .map_err(|e| mcp_error!("Tenant authentication required: {}", e))?;
+        let tenant_id = ctx.request.require_tenant()?;
 
         // Filter resources by tenant ownership
         let resources = self.resources.read().await;
@@ -176,10 +165,7 @@ impl MultiTenantServer {
     /// Get tenant-specific metrics (admin tool)
     #[tool("Get metrics for your tenant")]
     async fn get_tenant_metrics(&self, ctx: Context) -> McpResult<String> {
-        let tenant_id = ctx
-            .request
-            .require_tenant()
-            .map_err(|e| mcp_error!("Tenant authentication required: {}", e))?;
+        let tenant_id = ctx.request.require_tenant()?;
 
         if let Some(metrics) = self.metrics.get_tenant_metrics(tenant_id) {
             Ok(format!(
@@ -198,10 +184,7 @@ impl MultiTenantServer {
     /// Get tenant configuration (admin tool)
     #[tool("Get your tenant configuration")]
     async fn get_tenant_config(&self, ctx: Context) -> McpResult<String> {
-        let tenant_id = ctx
-            .request
-            .require_tenant()
-            .map_err(|e| mcp_error!("Tenant authentication required: {}", e))?;
+        let tenant_id = ctx.request.require_tenant()?;
 
         if let Some(config) = self.tenant_configs.get_config(tenant_id).await {
             Ok(format!(
@@ -258,7 +241,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 enabled_tools: None,
                 disabled_tools: None,
                 tool_timeout_ms: Some(10000),
-                max_request_body_size: Some(1 * 1024 * 1024), // 1MB
+                max_request_body_size: Some(1024 * 1024), // 1MB
                 metadata: HashMap::new(),
             },
         );

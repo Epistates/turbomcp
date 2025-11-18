@@ -273,7 +273,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("  - Subdomain: <tenant>.localhost:3000");
 
     // Add tenant extraction middleware to the HTTP service
-    let middleware = ServiceBuilder::new().layer(TenantExtractionLayer::new(tenant_extractor));
+    let _middleware = ServiceBuilder::new().layer(TenantExtractionLayer::new(tenant_extractor));
 
     // Start HTTP server
     tracing::info!("Starting HTTP server on http://localhost:3000");
