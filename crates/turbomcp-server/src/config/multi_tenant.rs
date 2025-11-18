@@ -87,10 +87,10 @@ impl TenantConfig {
     /// - disabled_tools takes precedence
     pub fn is_tool_enabled(&self, tool_name: &str) -> bool {
         // Check disabled list first (takes precedence)
-        if let Some(disabled) = &self.disabled_tools {
-            if disabled.contains(tool_name) {
-                return false;
-            }
+        if let Some(disabled) = &self.disabled_tools
+            && disabled.contains(tool_name)
+        {
+            return false;
         }
 
         // Check enabled list

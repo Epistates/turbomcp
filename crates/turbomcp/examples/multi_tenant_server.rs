@@ -79,11 +79,7 @@ impl MultiTenantServer {
     /// This demonstrates the critical security pattern: always validate tenant ownership
     /// before accessing resources.
     #[tool("Get a resource by ID (validates tenant ownership)")]
-    async fn get_resource(
-        &self,
-        ctx: Context,
-        resource_id: String,
-    ) -> McpResult<String> {
+    async fn get_resource(&self, ctx: Context, resource_id: String) -> McpResult<String> {
         // CRITICAL: Extract and validate tenant ID
         let tenant_id = ctx
             .request
@@ -109,12 +105,7 @@ impl MultiTenantServer {
 
     /// Create a new resource scoped to the requesting tenant
     #[tool("Create a resource (automatically scoped to your tenant)")]
-    async fn create_resource(
-        &self,
-        ctx: Context,
-        name: String,
-        data: String,
-    ) -> McpResult<String> {
+    async fn create_resource(&self, ctx: Context, name: String, data: String) -> McpResult<String> {
         // Extract tenant ID (all resources are tenant-scoped)
         let tenant_id = ctx
             .request
@@ -125,12 +116,14 @@ impl MultiTenantServer {
         if let Some(config) = self.tenant_configs.get_config(tenant_id).await {
             if !config.is_tool_enabled("create_resource") {
                 return Err(McpError::Tool(
-                    "Creating resources is not enabled for your subscription plan".to_string()
+                    "Creating resources is not enabled for your subscription plan".to_string(),
                 ));
             }
 
             if !config.is_active() {
-                return Err(McpError::Tool("Account is suspended. Please contact support.".to_string()));
+                return Err(McpError::Tool(
+                    "Account is suspended. Please contact support.".to_string(),
+                ));
             }
         }
 

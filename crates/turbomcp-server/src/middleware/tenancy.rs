@@ -348,7 +348,6 @@ impl TenantExtractor for SubdomainTenantExtractor {
 ///
 /// **Security Note**: This example doesn't validate JWT signatures. In production,
 /// you should validate JWTs in your authentication middleware before tenant extraction.
-
 /// Composite tenant extractor - tries multiple strategies in order
 ///
 /// Useful when you need to support multiple tenant identification methods.
@@ -386,10 +385,10 @@ impl CompositeTenantExtractor {
 impl TenantExtractor for CompositeTenantExtractor {
     fn extract(&self, headers: &HeaderMap) -> Option<String> {
         for extractor in &self.extractors {
-            if let Some(tenant_id) = extractor.extract(headers) {
-                if extractor.validate(&tenant_id) {
-                    return Some(tenant_id);
-                }
+            if let Some(tenant_id) = extractor.extract(headers)
+                && extractor.validate(&tenant_id)
+            {
+                return Some(tenant_id);
             }
         }
         None

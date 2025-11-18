@@ -33,7 +33,11 @@ use crate::tower::SessionInfo;
 /// And returns:
 /// - `Arc<dyn JsonRpcHandler>`: Handler for this specific connection
 pub type HandlerFactory = Arc<
-    dyn Fn(WebSocketDispatcher, Option<HashMap<String, String>>, Option<String>) -> Arc<dyn JsonRpcHandler>
+    dyn Fn(
+            WebSocketDispatcher,
+            Option<HashMap<String, String>>,
+            Option<String>,
+        ) -> Arc<dyn JsonRpcHandler>
         + Send
         + Sync,
 >;
@@ -57,7 +61,11 @@ impl WebSocketFactoryState {
     /// Create new factory state
     pub fn new<F>(factory: F) -> Self
     where
-        F: Fn(WebSocketDispatcher, Option<HashMap<String, String>>, Option<String>) -> Arc<dyn JsonRpcHandler>
+        F: Fn(
+                WebSocketDispatcher,
+                Option<HashMap<String, String>>,
+                Option<String>,
+            ) -> Arc<dyn JsonRpcHandler>
             + Send
             + Sync
             + 'static,
@@ -92,7 +100,9 @@ pub async fn websocket_handler_with_factory(
     // to avoid circular dependencies between turbomcp-transport and turbomcp-server.
     let tenant_id: Option<String> = None;
 
-    ws.on_upgrade(move |socket| handle_websocket_with_factory(socket, factory_state, session, tenant_id))
+    ws.on_upgrade(move |socket| {
+        handle_websocket_with_factory(socket, factory_state, session, tenant_id)
+    })
 }
 
 /// Handle WebSocket connection using factory pattern

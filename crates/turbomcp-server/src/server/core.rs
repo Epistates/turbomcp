@@ -795,52 +795,52 @@ impl McpServer {
         // Create a wrapper that converts headers and delegates to router
         // This is cleaner than storing headers on the router itself
         let handler_factory = move |session_id: Option<String>,
-                                      headers: Option<axum::http::HeaderMap>,
-                                      tenant_id: Option<String>| {
-                let session_id = session_id.unwrap_or_else(|| {
-                    let new_id = uuid::Uuid::new_v4().to_string();
-                    tracing::debug!(
-                        "HTTP POST without session ID - generating ephemeral ID for request: {}",
-                        new_id
-                    );
+                                    headers: Option<axum::http::HeaderMap>,
+                                    tenant_id: Option<String>| {
+            let session_id = session_id.unwrap_or_else(|| {
+                let new_id = uuid::Uuid::new_v4().to_string();
+                tracing::debug!(
+                    "HTTP POST without session ID - generating ephemeral ID for request: {}",
                     new_id
-                });
-
-                tracing::debug!("Factory creating handler for session: {}", session_id);
-
-                // Create session-specific HTTP dispatcher (now local to turbomcp-server!)
-                let dispatcher = crate::runtime::http::HttpDispatcher::new(
-                    session_id,
-                    Arc::clone(&sessions_for_factory),
-                    Arc::clone(&pending_for_factory),
                 );
+                new_id
+            });
 
-                // Clone the base router and configure with session-specific dispatcher
-                // CRITICAL: set_server_request_dispatcher also recreates server_to_client adapter
-                let mut session_router = (*router_for_factory).clone();
-                session_router.set_server_request_dispatcher(dispatcher);
+            tracing::debug!("Factory creating handler for session: {}", session_id);
 
-                // Convert HeaderMap to HashMap<String, String> for passing to create_context
-                let headers_map = headers.map(|header_map| {
-                    header_map
-                        .iter()
-                        .filter_map(|(name, value)| {
-                            value
-                                .to_str()
-                                .ok()
-                                .map(|v| (name.to_string(), v.to_string()))
-                        })
-                        .collect()
-                });
+            // Create session-specific HTTP dispatcher (now local to turbomcp-server!)
+            let dispatcher = crate::runtime::http::HttpDispatcher::new(
+                session_id,
+                Arc::clone(&sessions_for_factory),
+                Arc::clone(&pending_for_factory),
+            );
 
-                // Create wrapper that passes headers and tenant_id to create_context (HTTP transport)
-                HttpHandlerWithHeaders {
-                    router: session_router,
-                    headers: headers_map,
-                    transport: "http",
-                    tenant_id,
-                }
-            };
+            // Clone the base router and configure with session-specific dispatcher
+            // CRITICAL: set_server_request_dispatcher also recreates server_to_client adapter
+            let mut session_router = (*router_for_factory).clone();
+            session_router.set_server_request_dispatcher(dispatcher);
+
+            // Convert HeaderMap to HashMap<String, String> for passing to create_context
+            let headers_map = headers.map(|header_map| {
+                header_map
+                    .iter()
+                    .filter_map(|(name, value)| {
+                        value
+                            .to_str()
+                            .ok()
+                            .map(|v| (name.to_string(), v.to_string()))
+                    })
+                    .collect()
+            });
+
+            // Create wrapper that passes headers and tenant_id to create_context (HTTP transport)
+            HttpHandlerWithHeaders {
+                router: session_router,
+                headers: headers_map,
+                transport: "http",
+                tenant_id,
+            }
+        };
 
         info!(
             server_name = %server_info.name,

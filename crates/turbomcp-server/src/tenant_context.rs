@@ -127,9 +127,7 @@ impl TenantContextExt for RequestContext {
     }
 
     fn tenant(&self) -> Option<&str> {
-        self.metadata
-            .get(TENANT_ID_KEY)
-            .and_then(|v| v.as_str())
+        self.metadata.get(TENANT_ID_KEY).and_then(|v| v.as_str())
     }
 
     fn require_tenant(&self) -> Result<&str> {
@@ -138,7 +136,6 @@ impl TenantContextExt for RequestContext {
                 turbomcp_protocol::ErrorKind::ResourceAccessDenied,
                 "This operation requires a tenant ID. Multi-tenant authentication is not configured.",
             )
-            .into()
         })
     }
 
@@ -147,8 +144,7 @@ impl TenantContextExt for RequestContext {
             None => Err(Error::new(
                 turbomcp_protocol::ErrorKind::ResourceAccessDenied,
                 "Tenant ID not found in request context. Multi-tenant authentication required.",
-            )
-            .into()),
+            )),
             Some(tenant_id) if tenant_id == resource_tenant_id => Ok(()),
             Some(tenant_id) => Err(Error::new(
                 turbomcp_protocol::ErrorKind::ResourceAccessDenied,
@@ -158,8 +154,7 @@ impl TenantContextExt for RequestContext {
                 ),
             )
             .with_context("request_tenant_id", tenant_id.to_string())
-            .with_context("resource_tenant_id", resource_tenant_id.to_string())
-            .into()),
+            .with_context("resource_tenant_id", resource_tenant_id.to_string())),
         }
     }
 }
