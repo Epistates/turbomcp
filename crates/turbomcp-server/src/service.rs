@@ -184,8 +184,17 @@ impl Service<Request<Bytes>> for McpService {
         let metrics = Arc::clone(&self.metrics);
 
         Box::pin(async move {
-            // Extract headers before consuming the request
+            // Extract headers and extensions before consuming the request
             let (parts, body) = req.into_parts();
+
+            // Extract tenant ID from request extensions (if multi-tenancy middleware is configured)
+            #[cfg(feature = "multi-tenancy")]
+            let tenant_id = parts
+                .extensions
+                .get::<crate::middleware::TenantId>()
+                .map(|t| t.0.clone());
+            #[cfg(not(feature = "multi-tenancy"))]
+            let tenant_id: Option<String> = None;
 
             // Convert headers to a HashMap for metadata
             let headers: std::collections::HashMap<String, String> = parts
@@ -237,7 +246,8 @@ impl Service<Request<Bytes>> for McpService {
                         .map(|(name, value)| (name.clone(), value.clone()))
                         .collect();
 
-                    let ctx = router.create_context(Some(headers_map), Some("http"));
+                    let ctx =
+                        router.create_context(Some(headers_map), Some("http"), tenant_id.clone());
 
                     let service = McpService::new(registry, router, metrics);
                     service.process_jsonrpc(message, ctx).await

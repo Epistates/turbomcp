@@ -28,11 +28,16 @@ use crate::tower::SessionInfo;
 /// The factory receives:
 /// - `WebSocketDispatcher`: For server→client requests
 /// - `Option<HashMap<String, String>>`: Optional HTTP headers from the WebSocket upgrade request
+/// - `Option<String>`: Optional tenant ID extracted from request (multi-tenancy support)
 ///
 /// And returns:
 /// - `Arc<dyn JsonRpcHandler>`: Handler for this specific connection
 pub type HandlerFactory = Arc<
-    dyn Fn(WebSocketDispatcher, Option<HashMap<String, String>>) -> Arc<dyn JsonRpcHandler>
+    dyn Fn(
+            WebSocketDispatcher,
+            Option<HashMap<String, String>>,
+            Option<String>,
+        ) -> Arc<dyn JsonRpcHandler>
         + Send
         + Sync,
 >;
@@ -56,7 +61,11 @@ impl WebSocketFactoryState {
     /// Create new factory state
     pub fn new<F>(factory: F) -> Self
     where
-        F: Fn(WebSocketDispatcher, Option<HashMap<String, String>>) -> Arc<dyn JsonRpcHandler>
+        F: Fn(
+                WebSocketDispatcher,
+                Option<HashMap<String, String>>,
+                Option<String>,
+            ) -> Arc<dyn JsonRpcHandler>
             + Send
             + Sync
             + 'static,
@@ -86,7 +95,14 @@ pub async fn websocket_handler_with_factory(
         session.id
     );
 
-    ws.on_upgrade(move |socket| handle_websocket_with_factory(socket, factory_state, session))
+    // TODO: For multi-tenancy support, tenant_id could be extracted from session metadata
+    // or passed via custom headers. For now, WebSocket doesn't extract tenant directly
+    // to avoid circular dependencies between turbomcp-transport and turbomcp-server.
+    let tenant_id: Option<String> = None;
+
+    ws.on_upgrade(move |socket| {
+        handle_websocket_with_factory(socket, factory_state, session, tenant_id)
+    })
 }
 
 /// Handle WebSocket connection using factory pattern
@@ -94,6 +110,7 @@ async fn handle_websocket_with_factory(
     socket: WebSocket,
     factory_state: WebSocketFactoryState,
     session: SessionInfo,
+    tenant_id: Option<String>,
 ) {
     let (ws_sender, ws_receiver) = socket.split();
 
@@ -116,8 +133,8 @@ async fn handle_websocket_with_factory(
         None
     };
 
-    // Call factory to create connection-specific handler with headers
-    let handler = (factory_state.handler_factory)(dispatcher, headers);
+    // Call factory to create connection-specific handler with headers and tenant_id
+    let handler = (factory_state.handler_factory)(dispatcher, headers, tenant_id);
 
     info!("Factory created handler for session: {}", session.id);
 

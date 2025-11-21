@@ -9,18 +9,47 @@ Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and 
 ## Table of Contents
 
 - [Overview](#overview)
+  - [MCP Version Support](#mcp-version-support)
 - [Key Features](#key-features)
+- [Version Selection Guide](#version-selection-guide)
+  - [Choosing the Right MCP Version](#choosing-the-right-mcp-version)
+  - [Feature-by-Feature Selection](#feature-by-feature-selection)
+  - [Runtime Version Negotiation](#runtime-version-negotiation)
+  - [Migration Path](#migration-path)
 - [Architecture](#architecture)
 - [MCP Message Types](#mcp-message-types)
 - [Usage](#usage)
 - [Message Flow](#message-flow)
 - [Feature Flags](#feature-flags)
+  - [MCP 2025-11-25 Draft Features](#mcp-2025-11-25-draft-specification-features)
 - [Supported MCP Methods](#supported-mcp-methods)
 - [Integration](#integration)
 
 ## Overview
 
 `turbomcp-protocol` provides a specification-compliant implementation of the Model Context Protocol (MCP). This crate handles protocol-level concerns including message formatting, capability negotiation, and runtime validation.
+
+### MCP Version Support
+
+TurboMCP supports multiple MCP specification versions through feature flags:
+
+| Spec Version | Status | Feature Flag | Description |
+|--------------|--------|--------------|-------------|
+| **MCP 2025-06-18** | ✅ Stable | (default) | Current stable specification |
+| **MCP 2025-11-25** | 🚧 Draft | `mcp-draft` | Draft specification with experimental features |
+
+**Quick Start:**
+```toml
+# Stable (MCP 2025-06-18) - Production ready
+[dependencies]
+turbomcp-protocol = "2.2"
+
+# Draft (MCP 2025-11-25) - Experimental features
+[dependencies]
+turbomcp-protocol = { version = "2.2", features = ["mcp-draft"] }
+```
+
+See [Version Selection Guide](#version-selection-guide) for detailed guidance.
 
 ## Key Features
 
@@ -444,20 +473,190 @@ sequenceDiagram
     Protocol->>Client: JSON response
 ```
 
+## Version Selection Guide
+
+### Choosing the Right MCP Version
+
+**Use MCP 2025-06-18 (Stable)** when:
+- Building production systems
+- Need maximum interoperability with existing MCP clients/servers
+- Require stable, well-tested protocol features
+- Want long-term API stability guarantees
+
+**Use MCP 2025-11-25 (Draft)** when:
+- Experimenting with cutting-edge features
+- Building systems that need advanced capabilities (multi-select forms, tasks API, etc.)
+- Contributing to MCP specification development
+- Willing to accept potential breaking changes in future releases
+
+### Feature-by-Feature Selection
+
+Don't need all draft features? Enable specific ones:
+
+```toml
+[dependencies]
+turbomcp-protocol = { version = "2.2", features = [
+    "mcp-url-elicitation",      # URL mode for OAuth/sensitive data
+    "mcp-sampling-tools",       # Tool calling in LLM sampling
+    "mcp-icons",                # Icon metadata for UI
+    "mcp-enum-improvements",    # Standards-compliant enum schemas
+] }
+```
+
+### Runtime Version Negotiation
+
+**Client-side:**
+```rust
+use turbomcp_protocol::{InitializeRequest, ClientCapabilities};
+
+// Request draft features (server may downgrade)
+let init = InitializeRequest {
+    protocol_version: "2025-11-25".to_string(),
+    capabilities: ClientCapabilities::default(),
+    client_info: /* ... */,
+    _meta: None,
+};
+```
+
+**Server-side:**
+```rust
+use turbomcp_protocol::{InitializeResult, ServerCapabilities};
+
+// Respond with actual supported version
+let result = InitializeResult {
+    protocol_version: "2025-06-18".to_string(),  // Or 2025-11-25
+    capabilities: ServerCapabilities::default(),
+    server_info: /* ... */,
+    instructions: None,
+    _meta: None,
+};
+```
+
+**Key Principle:** Clients request, servers decide. The server's response version is the negotiated protocol version for the session.
+
+### Migration Path
+
+**Gradual Adoption:**
+1. Start with stable 2025-06-18
+2. Add specific draft features as needed
+3. Test with `cfg(feature = "...")` guards
+4. Upgrade to full draft when stable
+
+**Example:**
+```rust
+#[cfg(feature = "mcp-url-elicitation")]
+use turbomcp_protocol::types::URLElicitRequestParams;
+
+// Fallback for stable clients
+#[cfg(not(feature = "mcp-url-elicitation"))]
+fn handle_sensitive_input() {
+    // Use traditional form mode
+}
+
+#[cfg(feature = "mcp-url-elicitation")]
+fn handle_sensitive_input() {
+    // Use URL mode for better security
+}
+```
+
 ## Feature Flags
+
+### Default Features
 
 | Feature | Description | Default |
 |---------|-------------|---------|
+| `std` | Standard library support | ✅ |
 | `simd` | SIMD-accelerated JSON parsing (simd-json, sonic-rs) | ✅ |
-| `std` | Standard library support (always enabled with no-std support via wasm feature) | ✅ |
+
+### Performance Features
+
+| Feature | Description | Default |
+|---------|-------------|---------|
 | `zero-copy` | Zero-copy message handling with serde serialization | ❌ |
 | `messagepack` | MessagePack serialization support | ❌ |
-| `tracing` | OpenTelemetry tracing integration | ❌ |
-| `metrics` | Prometheus metrics collection | ❌ |
 | `mmap` | Memory-mapped file support | ❌ |
 | `lock-free` | Lock-free data structures (experimental, requires unsafe) | ❌ |
+
+### Observability Features
+
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `tracing` | OpenTelemetry tracing integration | ❌ |
+| `metrics` | Prometheus metrics collection | ❌ |
 | `fancy-errors` | Rich error reporting with miette | ❌ |
+
+### Platform Features
+
+| Feature | Description | Default |
+|---------|-------------|---------|
 | `wasm` | WebAssembly support (no_std compatible) | ❌ |
+
+### MCP 2025-11-25 Draft Specification Features
+
+#### Meta-Feature (Enable All Draft Features)
+
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `mcp-draft` | Enable **all** MCP 2025-11-25 draft features | ❌ |
+
+Equivalent to enabling all features below.
+
+#### Individual Draft Features (SEP = Specification Enhancement Proposal)
+
+| Feature | SEP | Description | Default |
+|---------|-----|-------------|---------|
+| `mcp-tasks` | SEP-1686 | Experimental Tasks API for durable long-running requests | ❌ |
+| `mcp-url-elicitation` | SEP-1036 | URL mode elicitation for OAuth/sensitive data | ❌ |
+| `mcp-sampling-tools` | SEP-1577 | Tool calling support in LLM sampling requests | ❌ |
+| `mcp-icons` | SEP-973 | Icon metadata for tools/resources/prompts | ❌ |
+| `mcp-enum-improvements` | SEP-1330 | Standards-based enum schemas (oneOf, anyOf) | ❌ |
+
+**Authentication & Security Features (Auth-Related SEPs):**
+
+| Feature | Description | Specification |
+|---------|-------------|---------------|
+| SSRF Protection | Built-in SSRF guards for URL validation | Always enabled |
+| CIMD | Client ID Metadata Documents (OAuth 2.1) | Always enabled |
+| OpenID Discovery | RFC 8414 + OIDC 1.0 discovery support | Always enabled |
+| Incremental Consent | WWW-Authenticate with scope expansion (SEP-835) | Always enabled |
+
+*Note: Auth features are always enabled for maximum security - no feature flag required.*
+
+### Feature Flag Examples
+
+**Minimal build (stable spec only):**
+```toml
+[dependencies]
+turbomcp-protocol = { version = "2.2", default-features = false, features = ["std"] }
+```
+
+**High-performance build:**
+```toml
+[dependencies]
+turbomcp-protocol = { version = "2.2", features = ["simd", "zero-copy", "lock-free"] }
+```
+
+**Observable production build:**
+```toml
+[dependencies]
+turbomcp-protocol = { version = "2.2", features = ["simd", "tracing", "metrics"] }
+```
+
+**Full draft specification:**
+```toml
+[dependencies]
+turbomcp-protocol = { version = "2.2", features = ["mcp-draft"] }
+```
+
+**Selective draft features (recommended):**
+```toml
+[dependencies]
+turbomcp-protocol = { version = "2.2", features = [
+    "mcp-url-elicitation",      # Need OAuth support
+    "mcp-sampling-tools",       # Need tool calling in sampling
+    "mcp-enum-improvements",    # Want standards-compliant forms
+] }
+```
 
 ## Supported MCP Methods
 

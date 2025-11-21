@@ -1,12 +1,16 @@
-//! LLM sampling types (MCP 2025-06-18)
+//! LLM sampling types
 //!
-//! This module contains types for server-initiated LLM sampling,
-//! allowing servers to request LLM interactions from clients.
+//! This module contains types for server-initiated LLM sampling:
+//! - MCP 2025-06-18: Basic text-based sampling
+//! - MCP 2025-11-25 draft (SEP-1577): + Tool calling support
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{content::Content, core::Role};
+
+#[cfg(feature = "mcp-sampling-tools")]
+use super::tools::Tool;
 
 /// Include context options for sampling
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -55,6 +59,27 @@ pub struct CreateMessageRequest {
     /// Stop sequences
     #[serde(rename = "stopSequences", skip_serializing_if = "Option::is_none")]
     pub stop_sequences: Option<Vec<String>>,
+    /// Tools that the model may use during generation (MCP 2025-11-25 draft, SEP-1577)
+    /// The client MUST return an error if this field is provided but
+    /// ClientCapabilities.sampling.tools is not declared
+    #[cfg(feature = "mcp-sampling-tools")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
+    /// Controls how the model uses tools (MCP 2025-11-25 draft, SEP-1577)
+    /// The client MUST return an error if this field is provided but
+    /// ClientCapabilities.sampling.tools is not declared
+    /// Default is `{ mode: "auto" }`
+    #[cfg(feature = "mcp-sampling-tools")]
+    #[serde(rename = "toolChoice", skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
+    /// Task metadata for task-augmented sampling (MCP 2025-11-25 draft, SEP-1686)
+    ///
+    /// When present, indicates the client should execute this sampling request as a long-running
+    /// task and return a CreateTaskResult instead of the immediate CreateMessageResult.
+    /// The actual result can be retrieved later via tasks/result.
+    #[cfg(feature = "mcp-tasks")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<crate::types::tasks::TaskMetadata>,
     /// Optional metadata per MCP 2025-06-18 specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
@@ -153,4 +178,108 @@ pub struct UsageStats {
     /// Total tokens used
     #[serde(rename = "totalTokens", skip_serializing_if = "Option::is_none")]
     pub total_tokens: Option<u32>,
+}
+
+/// Tool choice mode (MCP 2025-11-25 draft, SEP-1577)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "lowercase")]
+#[cfg(feature = "mcp-sampling-tools")]
+pub enum ToolChoiceMode {
+    /// Model decides whether to use tools (default)
+    #[default]
+    Auto,
+    /// Model MUST use at least one tool before completing
+    Required,
+    /// Model MUST NOT use any tools
+    None,
+}
+
+/// Controls tool selection behavior for sampling requests (MCP 2025-11-25 draft, SEP-1577)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg(feature = "mcp-sampling-tools")]
+pub struct ToolChoice {
+    /// Controls the tool use ability of the model
+    /// - "auto": Model decides whether to use tools (default)
+    /// - "required": Model MUST use at least one tool before completing
+    /// - "none": Model MUST NOT use any tools
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ToolChoiceMode>,
+}
+
+#[cfg(feature = "mcp-sampling-tools")]
+impl ToolChoice {
+    /// Create a new ToolChoice with auto mode
+    pub fn auto() -> Self {
+        Self {
+            mode: Some(ToolChoiceMode::Auto),
+        }
+    }
+
+    /// Create a new ToolChoice requiring tool use
+    pub fn required() -> Self {
+        Self {
+            mode: Some(ToolChoiceMode::Required),
+        }
+    }
+
+    /// Create a new ToolChoice forbidding tool use
+    pub fn none() -> Self {
+        Self {
+            mode: Some(ToolChoiceMode::None),
+        }
+    }
+}
+
+#[cfg(feature = "mcp-sampling-tools")]
+impl Default for ToolChoice {
+    fn default() -> Self {
+        Self::auto()
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "mcp-sampling-tools")]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_choice_mode_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ToolChoiceMode::Auto).unwrap(),
+            "\"auto\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoiceMode::Required).unwrap(),
+            "\"required\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoiceMode::None).unwrap(),
+            "\"none\""
+        );
+    }
+
+    #[test]
+    fn test_tool_choice_constructors() {
+        let auto = ToolChoice::auto();
+        assert_eq!(auto.mode, Some(ToolChoiceMode::Auto));
+
+        let required = ToolChoice::required();
+        assert_eq!(required.mode, Some(ToolChoiceMode::Required));
+
+        let none = ToolChoice::none();
+        assert_eq!(none.mode, Some(ToolChoiceMode::None));
+    }
+
+    #[test]
+    fn test_tool_choice_default() {
+        let default = ToolChoice::default();
+        assert_eq!(default.mode, Some(ToolChoiceMode::Auto));
+    }
+
+    #[test]
+    fn test_tool_choice_serialization() {
+        let choice = ToolChoice::required();
+        let json = serde_json::to_string(&choice).unwrap();
+        assert!(json.contains("\"mode\":\"required\""));
+    }
 }

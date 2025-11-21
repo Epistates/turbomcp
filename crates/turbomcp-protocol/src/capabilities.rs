@@ -6,7 +6,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-use crate::types::{ClientCapabilities, ServerCapabilities};
+use crate::types::ClientCapabilities;
+use crate::types::ServerCapabilities;
 
 /// Capability matcher for negotiating features between client and server
 ///
@@ -490,6 +491,8 @@ pub mod utils {
             roots: Some(Default::default()),
             elicitation: Some(Default::default()),
             experimental: None,
+            #[cfg(feature = "mcp-tasks")]
+            tasks: Some(Default::default()),
         }
     }
 
@@ -502,6 +505,8 @@ pub mod utils {
             completions: Some(Default::default()),
             logging: Some(Default::default()),
             experimental: None,
+            #[cfg(feature = "mcp-tasks")]
+            tasks: Some(Default::default()),
         }
     }
 
@@ -526,6 +531,8 @@ mod tests {
             roots: None,
             elicitation: None,
             experimental: None,
+            #[cfg(feature = "mcp-tasks")]
+            tasks: None,
         };
 
         let server = ServerCapabilities {
@@ -535,6 +542,8 @@ mod tests {
             logging: None,
             completions: None,
             experimental: None,
+            #[cfg(feature = "mcp-tasks")]
+            tasks: None,
         };
 
         assert!(matcher.is_compatible("sampling", &client, &server));
@@ -596,6 +605,8 @@ pub mod builders {
         PromptsCapabilities, ResourcesCapabilities, RootsCapabilities, SamplingCapabilities,
         ServerCapabilities, ToolsCapabilities,
     };
+    #[cfg(feature = "mcp-tasks")]
+    use crate::types::{ClientTasksCapabilities, ServerTasksCapabilities};
     use serde_json;
     use std::collections::HashMap;
     use std::marker::PhantomData;
@@ -636,6 +647,8 @@ pub mod builders {
         prompts: Option<PromptsCapabilities>,
         resources: Option<ResourcesCapabilities>,
         tools: Option<ToolsCapabilities>,
+        #[cfg(feature = "mcp-tasks")]
+        tasks: Option<ServerTasksCapabilities>,
 
         // TurboMCP Extensions
         negotiator: Option<super::CapabilityNegotiator>,
@@ -670,6 +683,8 @@ pub mod builders {
                 prompts: None,
                 resources: None,
                 tools: None,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: None,
                 negotiator: None,
                 strict_validation: false,
                 _state: PhantomData,
@@ -691,6 +706,8 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: self.tools,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
             }
         }
 
@@ -815,6 +832,8 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: self.tools,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -834,6 +853,8 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: self.tools,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -857,6 +878,8 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: self.tools,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -880,6 +903,8 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: self.tools,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -903,6 +928,8 @@ pub mod builders {
                 prompts: Some(PromptsCapabilities { list_changed: None }),
                 resources: self.resources,
                 tools: self.tools,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -929,6 +956,8 @@ pub mod builders {
                     list_changed: None,
                 }),
                 tools: self.tools,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -952,6 +981,8 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: Some(ToolsCapabilities { list_changed: None }),
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -1088,6 +1119,8 @@ pub mod builders {
         roots: Option<RootsCapabilities>,
         sampling: Option<SamplingCapabilities>,
         elicitation: Option<ElicitationCapabilities>,
+        #[cfg(feature = "mcp-tasks")]
+        tasks: Option<ClientTasksCapabilities>,
 
         // TurboMCP Extensions
         negotiator: Option<super::CapabilityNegotiator>,
@@ -1132,6 +1165,8 @@ pub mod builders {
                 roots: Some(RootsCapabilities::default()),
                 sampling: Some(SamplingCapabilities),
                 elicitation: Some(ElicitationCapabilities::default()),
+                #[cfg(feature = "mcp-tasks")]
+                tasks: Some(ClientTasksCapabilities::default()),
                 negotiator: None,
                 strict_validation: false,
                 _state: PhantomData,
@@ -1158,6 +1193,8 @@ pub mod builders {
                 roots: None,
                 sampling: None,
                 elicitation: None,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: None,
                 negotiator: None,
                 strict_validation: false,
                 _state: PhantomData,
@@ -1177,6 +1214,8 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: self.elicitation,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
             }
         }
 
@@ -1265,6 +1304,8 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: self.elicitation,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -1281,6 +1322,8 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: self.elicitation,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -1301,6 +1344,8 @@ pub mod builders {
                 roots: Some(RootsCapabilities { list_changed: None }),
                 sampling: self.sampling,
                 elicitation: self.elicitation,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -1321,6 +1366,8 @@ pub mod builders {
                 roots: self.roots,
                 sampling: Some(SamplingCapabilities),
                 elicitation: self.elicitation,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -1341,6 +1388,8 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: Some(ElicitationCapabilities::default()),
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -1356,6 +1405,8 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: Some(ElicitationCapabilities::default().with_schema_validation()),
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -1403,6 +1454,8 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: self.elicitation,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -1426,6 +1479,8 @@ pub mod builders {
                 roots: None,
                 sampling: self.sampling,
                 elicitation: self.elicitation,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -1449,6 +1504,8 @@ pub mod builders {
                 roots: self.roots,
                 sampling: None,
                 elicitation: self.elicitation,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,
@@ -1472,6 +1529,8 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: None,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
                 _state: PhantomData,

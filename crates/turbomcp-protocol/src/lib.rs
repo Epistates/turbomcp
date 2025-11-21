@@ -3,11 +3,31 @@
 //! Complete Model Context Protocol (MCP) implementation in Rust, providing all protocol types,
 //! traits, context management, and message handling for building MCP applications.
 //!
+//! ## MCP Version Support
+//!
+//! TurboMCP supports multiple MCP specification versions:
+//!
+//! | Specification | Status | Feature Flag | Use Case |
+//! |---------------|--------|--------------|----------|
+//! | **MCP 2025-06-18** | ✅ Stable | (default) | Production systems |
+//! | **MCP 2025-11-25** | 🚧 Draft | `mcp-draft` | Experimental features |
+//!
+//! **Quick Start:**
+//! ```toml
+//! # Stable (recommended for production)
+//! turbomcp-protocol = "2.2"
+//!
+//! # Draft (experimental features)
+//! turbomcp-protocol = { version = "2.2", features = ["mcp-draft"] }
+//! ```
+//!
+//! See [Version Selection Guide](#version-selection) below for detailed guidance.
+//!
 //! ## What's Inside
 //!
 //! This crate provides everything needed for MCP:
 //!
-//! - **Types**: All MCP request/response types from the MCP 2025-06-18 specification
+//! - **Types**: All MCP request/response types (2025-06-18 stable + 2025-11-25 draft)
 //! - **Traits**: `ServerToClientRequests` for bidirectional communication
 //! - **Context**: Request and response context management with full observability
 //! - **JSON-RPC**: JSON-RPC 2.0 implementation with batching and notifications
@@ -19,19 +39,37 @@
 //!
 //! ## Features
 //!
-//! ### Core Protocol Support
+//! ### Core Protocol Support (MCP 2025-06-18 Stable)
 //! - Complete MCP 2025-06-18 protocol implementation
 //! - JSON-RPC 2.0 support with batching and notifications
 //! - Type-safe capability negotiation and compatibility checking
 //! - Protocol versioning with backward compatibility
 //! - Fast serialization with SIMD acceleration
 //!
-//! ### Advanced Protocol Features
+//! ### Advanced Protocol Features (MCP 2025-06-18 Stable)
 //! - **Elicitation Protocol** - Server-initiated user input requests with rich schema validation
 //! - **Sampling Support** - Bidirectional LLM sampling with fully-typed interfaces
 //! - **Roots Protocol** - Filesystem boundaries with `roots/list` support
 //! - **Server-to-Client Requests** - Fully typed trait for sampling, elicitation, and roots
 //! - **Comprehensive Schema Builders** - Type-safe builders for all schema types
+//!
+//! ### Draft Specification Features (MCP 2025-11-25)
+//!
+//! Enable with `features = ["mcp-draft"]` or individual feature flags:
+//!
+//! | Feature Flag | SEP | Description |
+//! |-------------|-----|-------------|
+//! | `mcp-url-elicitation` | SEP-1036 | URL mode for OAuth/sensitive data |
+//! | `mcp-sampling-tools` | SEP-1577 | Tool calling in LLM sampling |
+//! | `mcp-icons` | SEP-973 | Icon metadata for UI |
+//! | `mcp-enum-improvements` | SEP-1330 | Standards-based enum schemas |
+//! | `mcp-tasks` | SEP-1686 | Experimental tasks API |
+//!
+//! **Authentication & Security** (always enabled):
+//! - SSRF protection for URL validation
+//! - Client ID Metadata Documents (CIMD) for OAuth 2.1
+//! - OpenID Connect Discovery (RFC 8414 + OIDC 1.0)
+//! - Incremental consent with WWW-Authenticate (SEP-835)
 //!
 //! ### Performance & Observability
 //! - **SIMD-Accelerated JSON** - Fast processing with `simd-json` and `sonic-rs`
@@ -39,6 +77,65 @@
 //! - **Request Context** - Full request/response context tracking for observability
 //! - **Session Management** - Memory-bounded state management with cleanup tasks
 //! - **Observability Ready** - Built-in support for tracing and metrics collection
+//!
+//! ## Version Selection
+//!
+//! ### When to Use Each Version
+//!
+//! **MCP 2025-06-18 (Stable - Recommended for Production):**
+//! - ✅ Production systems requiring stability
+//! - ✅ Maximum interoperability with existing MCP implementations
+//! - ✅ Long-term API stability guarantees
+//! - ✅ Well-tested, battle-hardened features
+//!
+//! **MCP 2025-11-25 (Draft - Experimental):**
+//! - 🧪 Experimenting with cutting-edge features
+//! - 🧪 Advanced capabilities (multi-select forms, tasks API, etc.)
+//! - 🧪 Contributing to MCP specification development
+//! - ⚠️ Accept potential breaking changes in future releases
+//!
+//! ### Feature Flag Selection
+//!
+//! **All draft features:**
+//! ```toml
+//! [dependencies]
+//! turbomcp-protocol = { version = "2.2", features = ["mcp-draft"] }
+//! ```
+//!
+//! **Selective draft features (recommended):**
+//! ```toml
+//! [dependencies]
+//! turbomcp-protocol = { version = "2.2", features = [
+//!     "mcp-url-elicitation",    # Need OAuth/sensitive data support
+//!     "mcp-sampling-tools",     # Need tool calling in sampling
+//!     "mcp-icons",              # Want icon metadata
+//! ] }
+//! ```
+//!
+//! ### Runtime Version Negotiation
+//!
+//! Clients and servers negotiate protocol versions during initialization:
+//!
+//! ```rust,no_run
+//! use turbomcp_protocol::{InitializeRequest, ClientCapabilities, Implementation};
+//!
+//! // Client requests draft features
+//! let request = InitializeRequest {
+//!     protocol_version: "2025-11-25".to_string(),  // Request draft
+//!     capabilities: ClientCapabilities::default(),
+//!     client_info: Implementation {
+//!         name: "my-client".to_string(),
+//!         title: None,
+//!         version: "1.0.0".to_string(),
+//!     },
+//!     _meta: None,
+//! };
+//!
+//! // Server responds with actual supported version
+//! // (may downgrade to 2025-06-18 if draft features unavailable)
+//! ```
+//!
+//! **Key Principle:** Clients request, servers decide. The negotiated version is the server's response.
 //!
 //! ## Migration from v1.x
 //!

@@ -39,14 +39,15 @@ pub(crate) fn should_log_for_stdio() -> bool {
     std::env::var("TURBOMCP_FORCE_LOGGING").is_ok()
 }
 
-/// Wrapper that holds router + headers and implements JsonRpcHandler
-/// This allows us to pass headers to create_context without storing them on the router.
+/// Wrapper that holds router + headers + tenant_id and implements JsonRpcHandler
+/// This allows us to pass headers and tenant info to create_context without storing them on the router.
 /// Used by both HTTP and WebSocket transports.
 #[cfg(any(feature = "http", feature = "websocket"))]
 struct HttpHandlerWithHeaders {
     router: crate::routing::RequestRouter,
     headers: Option<std::collections::HashMap<String, String>>,
     transport: &'static str,
+    tenant_id: Option<String>,
 }
 
 #[cfg(any(feature = "http", feature = "websocket"))]
@@ -70,10 +71,14 @@ impl turbomcp_protocol::JsonRpcHandler for HttpHandlerWithHeaders {
             }
         };
 
-        // Create context with headers and transport type
-        let ctx = self
-            .router
-            .create_context(self.headers.clone(), Some(self.transport));
+        // Create context with headers, transport type, and tenant_id
+        // tenant_id is extracted from request extensions by the HTTP/WebSocket handlers
+        // if TenantExtractionLayer middleware was applied
+        let ctx = self.router.create_context(
+            self.headers.clone(),
+            Some(self.transport),
+            self.tenant_id.clone(),
+        );
 
         // Route the request
         let response = self.router.route(req, ctx).await;
@@ -160,6 +165,9 @@ pub struct McpServer {
     pub(crate) lifecycle: Arc<ServerLifecycle>,
     /// Server metrics (Arc-wrapped for cheap cloning)
     pub(crate) metrics: Arc<ServerMetrics>,
+    /// Task storage for MCP Tasks API (SEP-1686)
+    #[cfg(feature = "mcp-tasks")]
+    pub(crate) task_storage: Arc<crate::task_storage::TaskStorage>,
 }
 
 impl std::fmt::Debug for McpServer {
@@ -274,10 +282,23 @@ impl McpServer {
     pub(crate) fn new_with_registry(config: ServerConfig, registry: HandlerRegistry) -> Self {
         let registry = Arc::new(registry);
         let metrics = Arc::new(ServerMetrics::new());
+
+        // Initialize task storage (SEP-1686)
+        #[cfg(feature = "mcp-tasks")]
+        let task_storage = {
+            use tokio::time::Duration;
+            let storage = crate::task_storage::TaskStorage::new(Duration::from_secs(60));
+            // Start background cleanup task
+            storage.start_cleanup();
+            Arc::new(storage)
+        };
+
         let router = Arc::new(RequestRouter::new(
             Arc::clone(&registry),
             Arc::clone(&metrics),
             config.clone(),
+            #[cfg(feature = "mcp-tasks")]
+            Some(Arc::clone(&task_storage)),
         ));
         // Build middleware stack configuration
         #[cfg(feature = "middleware")]
@@ -344,6 +365,8 @@ impl McpServer {
             service,
             lifecycle,
             metrics,
+            #[cfg(feature = "mcp-tasks")]
+            task_storage,
         }
     }
 
@@ -375,6 +398,16 @@ impl McpServer {
     #[must_use]
     pub const fn metrics(&self) -> &Arc<ServerMetrics> {
         &self.metrics
+    }
+
+    /// Get task storage (MCP Tasks API - SEP-1686)
+    ///
+    /// Returns the task storage instance for managing long-running operations.
+    /// Only available when the `mcp-tasks` feature is enabled.
+    #[cfg(feature = "mcp-tasks")]
+    #[must_use]
+    pub const fn task_storage(&self) -> &Arc<crate::task_storage::TaskStorage> {
+        &self.task_storage
     }
 
     /// Get the Tower service stack (test accessor)
@@ -789,51 +822,53 @@ impl McpServer {
 
         // Create a wrapper that converts headers and delegates to router
         // This is cleaner than storing headers on the router itself
-        let handler_factory =
-            move |session_id: Option<String>, headers: Option<axum::http::HeaderMap>| {
-                let session_id = session_id.unwrap_or_else(|| {
-                    let new_id = uuid::Uuid::new_v4().to_string();
-                    tracing::debug!(
-                        "HTTP POST without session ID - generating ephemeral ID for request: {}",
-                        new_id
-                    );
+        let handler_factory = move |session_id: Option<String>,
+                                    headers: Option<axum::http::HeaderMap>,
+                                    tenant_id: Option<String>| {
+            let session_id = session_id.unwrap_or_else(|| {
+                let new_id = uuid::Uuid::new_v4().to_string();
+                tracing::debug!(
+                    "HTTP POST without session ID - generating ephemeral ID for request: {}",
                     new_id
-                });
-
-                tracing::debug!("Factory creating handler for session: {}", session_id);
-
-                // Create session-specific HTTP dispatcher (now local to turbomcp-server!)
-                let dispatcher = crate::runtime::http::HttpDispatcher::new(
-                    session_id,
-                    Arc::clone(&sessions_for_factory),
-                    Arc::clone(&pending_for_factory),
                 );
+                new_id
+            });
 
-                // Clone the base router and configure with session-specific dispatcher
-                // CRITICAL: set_server_request_dispatcher also recreates server_to_client adapter
-                let mut session_router = (*router_for_factory).clone();
-                session_router.set_server_request_dispatcher(dispatcher);
+            tracing::debug!("Factory creating handler for session: {}", session_id);
 
-                // Convert HeaderMap to HashMap<String, String> for passing to create_context
-                let headers_map = headers.map(|header_map| {
-                    header_map
-                        .iter()
-                        .filter_map(|(name, value)| {
-                            value
-                                .to_str()
-                                .ok()
-                                .map(|v| (name.to_string(), v.to_string()))
-                        })
-                        .collect()
-                });
+            // Create session-specific HTTP dispatcher (now local to turbomcp-server!)
+            let dispatcher = crate::runtime::http::HttpDispatcher::new(
+                session_id,
+                Arc::clone(&sessions_for_factory),
+                Arc::clone(&pending_for_factory),
+            );
 
-                // Create wrapper that passes headers to create_context (HTTP transport)
-                HttpHandlerWithHeaders {
-                    router: session_router,
-                    headers: headers_map,
-                    transport: "http",
-                }
-            };
+            // Clone the base router and configure with session-specific dispatcher
+            // CRITICAL: set_server_request_dispatcher also recreates server_to_client adapter
+            let mut session_router = (*router_for_factory).clone();
+            session_router.set_server_request_dispatcher(dispatcher);
+
+            // Convert HeaderMap to HashMap<String, String> for passing to create_context
+            let headers_map = headers.map(|header_map| {
+                header_map
+                    .iter()
+                    .filter_map(|(name, value)| {
+                        value
+                            .to_str()
+                            .ok()
+                            .map(|v| (name.to_string(), v.to_string()))
+                    })
+                    .collect()
+            });
+
+            // Create wrapper that passes headers and tenant_id to create_context (HTTP transport)
+            HttpHandlerWithHeaders {
+                router: session_router,
+                headers: headers_map,
+                transport: "http",
+                tenant_id,
+            }
+        };
 
         info!(
             server_name = %server_info.name,
@@ -855,6 +890,177 @@ impl McpServer {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "HTTP server failed");
+            crate::ServerError::handler(e.to_string())
+        })?;
+
+        info!("HTTP server shutdown complete");
+        Ok(())
+    }
+
+    /// Run server with HTTP transport and Tower middleware
+    ///
+    /// This method enables advanced features like multi-tenancy, authentication, rate limiting,
+    /// and other cross-cutting concerns by allowing you to apply Tower middleware layers to the
+    /// HTTP router.
+    ///
+    /// # Multi-Tenancy Example
+    ///
+    /// ```no_run
+    /// use turbomcp_server::ServerBuilder;
+    /// use turbomcp_server::middleware::tenancy::{HeaderTenantExtractor, TenantExtractionLayer};
+    /// use tower::ServiceBuilder;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let server = ServerBuilder::new()
+    ///         .name("multi-tenant-server")
+    ///         .version("1.0.0")
+    ///         .build();
+    ///
+    ///     // Create tenant extractor middleware
+    ///     let tenant_extractor = HeaderTenantExtractor::new("X-Tenant-ID");
+    ///     let middleware = ServiceBuilder::new()
+    ///         .layer(TenantExtractionLayer::new(tenant_extractor));
+    ///
+    ///     // Run server with middleware
+    ///     server.run_http_with_middleware(
+    ///         "127.0.0.1:3000",
+    ///         Box::new(move |router| router.layer(middleware))
+    ///     ).await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Authentication Example
+    ///
+    /// ```no_run
+    /// use turbomcp_server::ServerBuilder;
+    /// use tower::ServiceBuilder;
+    /// use tower_http::auth::RequireAuthorizationLayer;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let server = ServerBuilder::new()
+    ///     .name("auth-server")
+    ///     .version("1.0.0")
+    ///     .build();
+    ///
+    /// // Add bearer token authentication
+    /// let middleware = ServiceBuilder::new()
+    ///     .layer(RequireAuthorizationLayer::bearer("secret-token"));
+    ///
+    /// server.run_http_with_middleware(
+    ///     "127.0.0.1:3000",
+    ///     Box::new(move |router| router.layer(middleware))
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "http")]
+    #[tracing::instrument(skip(self, middleware_fn), fields(
+        transport = "http",
+        service_name = %self.config.name,
+        service_version = %self.config.version,
+        addr = ?addr
+    ))]
+    pub async fn run_http_with_middleware<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
+        self,
+        addr: A,
+        middleware_fn: Box<dyn FnOnce(axum::Router) -> axum::Router + Send>,
+    ) -> ServerResult<()> {
+        use std::collections::HashMap;
+        use tokio::sync::{Mutex, RwLock};
+
+        // Sprint 2.6: Check for insecure 0.0.0.0 binding
+        crate::security_checks::check_binding_security(&addr);
+
+        info!("Starting MCP server with HTTP transport and custom middleware");
+
+        self.lifecycle.start().await;
+
+        // Resolve address to string
+        let socket_addr = addr
+            .to_socket_addrs()
+            .map_err(|e| crate::ServerError::configuration(format!("Invalid address: {}", e)))?
+            .next()
+            .ok_or_else(|| crate::ServerError::configuration("No address resolved"))?;
+
+        info!("Resolved address: {}", socket_addr);
+
+        // BIDIRECTIONAL HTTP SETUP
+        let sessions = Arc::new(RwLock::new(HashMap::new()));
+        let pending_requests = Arc::new(Mutex::new(HashMap::new()));
+        let router = self.router.clone();
+
+        // Factory pattern for session-specific handlers
+        let sessions_for_factory = Arc::clone(&sessions);
+        let pending_for_factory = Arc::clone(&pending_requests);
+        let router_for_factory = Arc::clone(&router);
+
+        let handler_factory = move |session_id: Option<String>,
+                                    headers: Option<axum::http::HeaderMap>,
+                                    tenant_id: Option<String>| {
+            let session_id = session_id.unwrap_or_else(|| {
+                let new_id = uuid::Uuid::new_v4().to_string();
+                tracing::debug!(
+                    "HTTP POST without session ID - generating ephemeral ID for request: {}",
+                    new_id
+                );
+                new_id
+            });
+
+            tracing::debug!("Factory creating handler for session: {}", session_id);
+
+            let dispatcher = crate::runtime::http::HttpDispatcher::new(
+                session_id,
+                Arc::clone(&sessions_for_factory),
+                Arc::clone(&pending_for_factory),
+            );
+
+            let mut session_router = (*router_for_factory).clone();
+            session_router.set_server_request_dispatcher(dispatcher);
+
+            let headers_map = headers.map(|header_map| {
+                header_map
+                    .iter()
+                    .filter_map(|(name, value)| {
+                        value
+                            .to_str()
+                            .ok()
+                            .map(|v| (name.to_string(), v.to_string()))
+                    })
+                    .collect()
+            });
+
+            HttpHandlerWithHeaders {
+                router: session_router,
+                headers: headers_map,
+                transport: "http",
+                tenant_id,
+            }
+        };
+
+        info!(
+            server_name = %self.config.name,
+            server_version = %self.config.version,
+            bind_addr = %socket_addr,
+            "HTTP server starting with custom middleware and bidirectional support"
+        );
+
+        // Use run_http_with_middleware function
+        use crate::runtime::http::run_http_with_middleware;
+        run_http_with_middleware(
+            handler_factory,
+            sessions,
+            pending_requests,
+            socket_addr.to_string(),
+            "/mcp".to_string(), // Default endpoint path
+            Some(middleware_fn),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "HTTP server with middleware failed");
             crate::ServerError::handler(e.to_string())
         })?;
 
@@ -983,7 +1189,8 @@ impl McpServer {
         // server layer provides MCP-specific handler logic
         let handler_factory =
             move |transport_dispatcher: turbomcp_transport::axum::WebSocketDispatcher,
-                  headers: Option<std::collections::HashMap<String, String>>| {
+                  headers: Option<std::collections::HashMap<String, String>>,
+                  tenant_id: Option<String>| {
                 // Wrap transport dispatcher with server layer adapter
                 let server_dispatcher =
                     crate::routing::WebSocketDispatcherAdapter::new(transport_dispatcher);
@@ -992,12 +1199,13 @@ impl McpServer {
                 let mut connection_router = router.clone();
                 connection_router.set_server_request_dispatcher(server_dispatcher);
 
-                // Create wrapper that passes headers to create_context (WebSocket transport)
+                // Create wrapper that passes headers and tenant_id to create_context (WebSocket transport)
                 // We can reuse HttpHandlerWithHeaders since it's generic
                 Arc::new(HttpHandlerWithHeaders {
                     router: connection_router,
                     headers,
                     transport: "websocket",
+                    tenant_id,
                 }) as Arc<dyn turbomcp_protocol::JsonRpcHandler>
             };
 

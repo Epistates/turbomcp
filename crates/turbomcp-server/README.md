@@ -588,7 +588,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 | `health-checks` | Enable health check endpoints | ❌ |
 | `middleware` | Enable middleware stack (CORS, security headers, etc) | ❌ |
 | `rate-limiting` | Enable rate limiting middleware | ❌ |
-| `graceful-shutdown` | Enable graceful shutdown handling | ❌ |
+| `multi-tenancy` | Enable multi-tenant SaaS features (tenant extraction, per-tenant config, metrics) | ❌ |
+| `graceful-shutdown` | **DEPRECATED** - Graceful shutdown is now always enabled | ❌ |
 | `observability` | Enable observability features | ❌ |
 | `hot-reload` | Enable hot reloading of handlers | ❌ |
 | `all-transports` | Enable all transport types | ❌ |
@@ -745,6 +746,254 @@ cargo run --example dev_server
 # Run with debug logging
 RUST_LOG=debug cargo run --example production_server
 ```
+
+## Multi-Tenancy Security Best Practices
+
+When building multi-tenant SaaS applications with TurboMCP, follow these security practices to ensure robust tenant isolation:
+
+### 1. Always Validate Tenant Ownership
+
+**Critical:** Before accessing any tenant-scoped resource, validate that the requesting tenant owns it:
+
+```rust
+#[tool("Get user data")]
+async fn get_user_data(
+    &self,
+    ctx: Context,
+    user_id: String,
+) -> McpResult<UserData> {
+    // ✅ REQUIRED: Extract tenant ID
+    let tenant_id = ctx.require_tenant()?;
+
+    // Fetch resource from database
+    let user = self.db.get_user(&user_id).await?;
+
+    // ✅ CRITICAL: Validate tenant owns this resource
+    ctx.validate_tenant_ownership(&user.tenant_id)?;
+
+    // Now safe to return data
+    Ok(user.data)
+}
+```
+
+**Never skip validation:**
+```rust
+// ❌ INSECURE: No tenant validation
+async fn bad_get_user(&self, user_id: String) -> McpResult<UserData> {
+    self.db.get_user(&user_id).await  // Any tenant can access any user!
+}
+```
+
+### 2. Use Database Row-Level Security (RLS)
+
+Implement defense-in-depth with database-level isolation:
+
+```sql
+-- PostgreSQL Row-Level Security example
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY tenant_isolation ON users
+    USING (tenant_id = current_setting('app.current_tenant')::text);
+
+-- Set tenant context in connection
+SET app.current_tenant = 'acme-corp';
+```
+
+### 3. Encrypt Tenant Credentials
+
+Store per-tenant API keys and OAuth tokens encrypted:
+
+```rust
+use aes_gcm::{Aes256Gcm, Key, Nonce};
+
+async fn store_credentials(&self, tenant_id: &str, credentials: Credentials) -> Result<()> {
+    // Per-tenant encryption key (stored in KMS/Vault)
+    let encryption_key = self.kms.get_tenant_key(tenant_id).await?;
+
+    // Encrypt before storing
+    let encrypted = self.encrypt(&credentials, &encryption_key)?;
+    self.db.store_encrypted_credentials(tenant_id, encrypted).await
+}
+```
+
+### 4. Implement Per-Tenant Rate Limiting
+
+Prevent one tenant from consuming all resources:
+
+```rust
+use turbomcp_server::config::multi_tenant::TenantConfig;
+
+let tenant_config = TenantConfig {
+    rate_limit_per_second: Some(100),  // 100 req/sec per tenant
+    max_concurrent_requests: Some(10),  // 10 concurrent per tenant
+    ..Default::default()
+};
+```
+
+### 5. Audit Logging for Compliance
+
+Log all tenant operations for security audits:
+
+```rust
+#[tool("Delete user")]
+async fn delete_user(&self, ctx: Context, user_id: String) -> McpResult<()> {
+    let tenant_id = ctx.require_tenant()?;
+
+    // Audit critical operations
+    tracing::warn!(
+        tenant_id = %tenant_id,
+        user_id = %user_id,
+        action = "delete_user",
+        "AUDIT: User deletion requested"
+    );
+
+    // ... perform deletion
+}
+```
+
+### 6. Tenant Extraction Strategies
+
+Use multiple extraction methods with fallback:
+
+```rust
+use turbomcp_server::middleware::tenancy::*;
+
+let extractor = CompositeTenantExtractor::new(vec![
+    // 1. Explicit header (highest priority)
+    Box::new(HeaderTenantExtractor::new("X-Tenant-ID")),
+
+    // 2. API key prefix (sk_tenant_secret)
+    Box::new(ApiKeyTenantExtractor::new('_', 1).with_prefix("sk_")),
+
+    // 3. JWT claim (requires validation first)
+    Box::new(JwtTenantExtractor::new("tenant_id")),
+
+    // 4. Subdomain (tenant.api.example.com)
+    Box::new(SubdomainTenantExtractor::new("api.example.com")),
+]);
+```
+
+### 7. Migration from Single to Multi-Tenant
+
+Gradual migration path:
+
+```rust
+// Phase 1: Add tenant_id column (nullable)
+ALTER TABLE users ADD COLUMN tenant_id TEXT;
+
+// Phase 2: Backfill existing data with default tenant
+UPDATE users SET tenant_id = 'default' WHERE tenant_id IS NULL;
+
+// Phase 3: Make non-nullable
+ALTER TABLE users ALTER COLUMN tenant_id SET NOT NULL;
+
+// Phase 4: Add tenant validation to code
+ctx.validate_tenant_ownership(&resource.tenant_id)?;
+```
+
+### 8. Testing Multi-Tenancy
+
+Test tenant isolation thoroughly:
+
+```rust
+#[tokio::test]
+async fn test_tenant_isolation() {
+    let server = create_test_server().await;
+
+    // Tenant A creates resource
+    let ctx_a = RequestContext::new().with_tenant_id("tenant-a");
+    let resource_id = server.create_resource(ctx_a, "data").await?;
+
+    // Tenant B tries to access (should fail)
+    let ctx_b = RequestContext::new().with_tenant_id("tenant-b");
+    let result = server.get_resource(ctx_b, resource_id).await;
+    assert!(result.is_err());  // ✅ Access denied
+}
+```
+
+### 9. Security Checklist
+
+Before deploying multi-tenant applications:
+
+- [ ] All resource access validates `ctx.validate_tenant_ownership()`
+- [ ] Database has row-level security (RLS) enabled
+- [ ] Credentials encrypted per-tenant with separate keys
+- [ ] Rate limiting configured per-tenant
+- [ ] Audit logging enabled for all mutations
+- [ ] Tenant extraction middleware configured
+- [ ] Integration tests verify tenant isolation
+- [ ] No tenant ID leakage in error messages
+- [ ] Background jobs scoped to correct tenant
+- [ ] Admin endpoints require super-user auth
+
+### 10. Common Pitfalls
+
+❌ **Don't** trust client-provided tenant IDs without validation
+❌ **Don't** use global caches without tenant keys
+❌ **Don't** expose tenant IDs in URLs (use opaque resource IDs)
+❌ **Don't** log sensitive tenant data
+❌ **Don't** share database connections across tenants without context
+
+✅ **Do** validate tenant ownership before every resource access
+✅ **Do** use database-level isolation (RLS)
+✅ **Do** encrypt credentials per-tenant
+✅ **Do** implement comprehensive audit logging
+✅ **Do** test tenant isolation thoroughly
+
+### Example: Complete Secure Tool
+
+```rust
+#[tool("Process payment (multi-tenant secure)")]
+async fn process_payment(
+    &self,
+    ctx: Context,
+    payment_id: String,
+) -> McpResult<PaymentResult> {
+    // 1. Extract tenant
+    let tenant_id = ctx.require_tenant()?;
+
+    // 2. Check tenant is active
+    let tenant_config = self.tenant_configs.get_config(tenant_id).await
+        .ok_or_else(|| mcp_error!("Tenant not found"))?;
+
+    if !tenant_config.is_active() {
+        return Err(mcp_error!("Account suspended"));
+    }
+
+    // 3. Get payment from database (with RLS)
+    let payment = self.db.get_payment(&payment_id).await?;
+
+    // 4. CRITICAL: Validate tenant ownership
+    ctx.validate_tenant_ownership(&payment.tenant_id)?;
+
+    // 5. Check tenant quota
+    tenant_config.check_quota("payments")?;
+
+    // 6. Audit log
+    tracing::info!(
+        tenant_id = %tenant_id,
+        payment_id = %payment_id,
+        amount = %payment.amount,
+        "Processing payment"
+    );
+
+    // 7. Process payment with tenant-specific credentials
+    let credentials = self.credential_store
+        .get_encrypted(tenant_id, "stripe")
+        .await?;
+
+    let result = self.payment_processor
+        .process(payment, credentials)
+        .await?;
+
+    // 8. Update metrics
+    self.metrics.record_request_success(tenant_id, ctx.elapsed());
+
+    Ok(result)
+}
+```
+
+For a complete working example, see `examples/multi_tenant_server.rs` in the TurboMCP repository.
 
 ## Related Crates
 

@@ -2,6 +2,53 @@
 //!
 //! This module provides comprehensive protocol version management and compatibility
 //! checking for MCP implementations.
+//!
+//! ## Supported Versions
+//!
+//! TurboMCP supports two MCP specification versions:
+//!
+//! - **MCP 2025-06-18** (see [`Version::current`]) - Stable, production-ready
+//! - **MCP 2025-11-25** (see [`Version::draft`]) - Draft with experimental features
+//!
+//! ## Version Negotiation
+//!
+//! The MCP protocol uses a client-request, server-decide negotiation model:
+//!
+//! ```rust
+//! use turbomcp_protocol::versioning::{Version, VersionManager};
+//!
+//! // Server setup
+//! let manager = VersionManager::with_default_versions();
+//!
+//! // Client requests draft features
+//! let client_versions = vec![Version::draft(), Version::current()];
+//!
+//! // Server negotiates (picks highest mutually supported version)
+//! let negotiated = manager.negotiate_version(&client_versions);
+//! assert_eq!(negotiated, Some(Version::draft()));
+//! ```
+//!
+//! ## Feature Flags vs Runtime Negotiation
+//!
+//! **Feature flags** (compile-time) control what types are available:
+//! ```toml
+//! # Enable draft types at compile time
+//! turbomcp-protocol = { version = "2.2", features = ["mcp-draft"] }
+//! ```
+//!
+//! **Runtime negotiation** determines what protocol version is used for a session:
+//! ```rust
+//! use turbomcp_protocol::{InitializeRequest, InitializeResult};
+//!
+//! // Client asks for draft
+//! let request = InitializeRequest { protocol_version: "2025-11-25".into(), /* ... */ };
+//!
+//! // Server responds with actual version (may downgrade)
+//! let response = InitializeResult { protocol_version: "2025-06-18".into(), /* ... */ };
+//! ```
+//!
+//! **Key Principle:** Compile with draft features if you *might* use them, negotiate at runtime
+//! based on what the other party supports.
 
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -88,12 +135,23 @@ impl Version {
         Ok(Self { year, month, day })
     }
 
-    /// Get the current MCP protocol version
+    /// Get the current MCP protocol version (latest stable)
     pub fn current() -> Self {
         Self {
             year: 2025,
             month: 6,
             day: 18,
+        }
+    }
+
+    /// Get the draft MCP protocol version (2025-11-25)
+    ///
+    /// This version includes experimental features and is under active development.
+    pub fn draft() -> Self {
+        Self {
+            year: 2025,
+            month: 11,
+            day: 25,
         }
     }
 
@@ -132,9 +190,10 @@ impl Version {
     /// Get all known MCP versions
     pub fn known_versions() -> Vec<Version> {
         vec![
-            Version::new(2025, 6, 18).unwrap(), // Current
-            Version::new(2024, 11, 5).unwrap(), // Previous
-            Version::new(2024, 6, 25).unwrap(), // Older
+            Version::new(2025, 11, 25).unwrap(), // Draft (with experimental features)
+            Version::new(2025, 6, 18).unwrap(),  // Current stable
+            Version::new(2024, 11, 5).unwrap(),  // Previous
+            Version::new(2024, 6, 25).unwrap(),  // Older
         ]
     }
 }

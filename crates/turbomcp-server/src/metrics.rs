@@ -618,6 +618,12 @@ impl MetricsCollector for ComprehensiveMetricsCollector {
     }
 }
 
+// Multi-tenancy metrics (opt-in feature)
+#[cfg(feature = "multi-tenancy")]
+pub mod multi_tenant;
+#[cfg(feature = "multi-tenancy")]
+pub use multi_tenant::{MultiTenantMetrics, TenantMetrics};
+
 // Comprehensive tests in separate file (tokio/axum pattern)
 #[cfg(test)]
 mod tests;

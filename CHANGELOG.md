@@ -7,6 +7,132 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### MCP 2025-11-25 Draft Specification Support
+- **Protocol Features** (`turbomcp-protocol`):
+  - **Tasks API** (SEP-1686): Experimental tasks-based operations for async workloads
+  - **URL Mode Elicitation** (SEP-1036): URL-based parameter elicitation for better UX
+  - **Tool Calling in Sampling** (SEP-1577): Support for tool invocation within sampling workflows
+  - **Icon Metadata Support** (SEP-973): Enhanced icon and resource metadata for better UI integration
+  - **Enum Improvements** (SEP-1330): Updated `ElicitResult` and `EnumSchema` types for better enum handling
+  - Feature flag: `mcp-draft` enables all experimental features; individual flags available for granular control
+- **Authorization Features** (`turbomcp-auth`):
+  - **SSRF Protection Module**: Secure HTTP fetching with redirect blocking and request validation
+  - **Client ID Metadata Documents** (SEP-991) - `mcp-cimd`:
+    - Cache-backed CIMD fetcher with concurrent access support
+    - Metadata discovery and validation for OAuth 2.0 clients
+    - Built-in type definitions for CIMD responses
+  - **OpenID Connect Discovery** (RFC 8414 + OIDC) - `mcp-oidc-discovery`:
+    - Authorization server metadata discovery
+    - Dynamic endpoint configuration from well-known endpoints
+    - Cached metadata with TTL-based expiration
+  - **Incremental Scope Consent** (SEP-835) - `mcp-incremental-consent`:
+    - WWW-Authenticate header parsing and processing
+    - Incremental authorization flow support
+    - Scope negotiation for privilege escalation workflows
+
+**Files Added**:
+- `crates/turbomcp-protocol/src/types/core.rs` - Enhanced protocol core types
+- `crates/turbomcp-auth/src/ssrf.rs` - SSRF protection utilities
+- `crates/turbomcp-auth/src/cimd/` - Client ID Metadata Documents support
+- `crates/turbomcp-auth/src/discovery/` - OpenID Connect Discovery support
+- `crates/turbomcp-auth/src/incremental_consent.rs` - Incremental consent handling
+
+**Design Philosophy**: All draft features are opt-in via feature flags. Stable versions remain unchanged and production-ready.
+
+#### Multi-Tenant SaaS Support
+- **New**: Comprehensive multi-tenancy infrastructure for SaaS applications
+  - `TenantConfigProvider` trait with static and dynamic implementations
+  - `MultiTenantMetrics` with LRU-based eviction (max 1000 tenants default)
+  - Per-tenant configuration: rate limits, timeouts, tool permissions, request size limits
+  - Tenant context tracking via `RequestContext::tenant()` and `require_tenant()` APIs
+- **New Middleware**: Complete tenant extraction layer
+  - `TenantExtractor` trait for flexible tenant identification strategies
+  - Built-in extractors: `HeaderTenantExtractor`, `SubdomainTenantExtractor`, `CompositeTenantExtractor`
+  - `TenantExtractionLayer` for automatic tenant context injection
+- **New Examples**: Production-ready multi-tenant server examples
+  - `multi_tenant_server.rs` - Basic multi-tenant setup with configuration
+  - `multi_tenant_saas.rs` - Complete SaaS example with tenant metrics, limits, and tool permissions
+- **Security**: Tenant ownership validation via `RequestContext::validate_tenant_ownership()`
+  - Prevents cross-tenant resource access with `ResourceAccessDenied` errors
+  - Critical for multi-tenant data isolation
+
+**Files Added**:
+- `crates/turbomcp-server/src/config/multi_tenant.rs` - Tenant configuration providers
+- `crates/turbomcp-server/src/metrics/multi_tenant.rs` - Tenant metrics tracking
+- `crates/turbomcp-server/src/middleware/tenancy.rs` - Tenant extraction middleware
+- `crates/turbomcp/examples/multi_tenant_server.rs` - Basic multi-tenant example
+- `crates/turbomcp/examples/multi_tenant_saas.rs` - Complete SaaS example
+
+**Design Philosophy**: Opt-in, zero-breaking-changes. Multi-tenancy features are completely optional and only active when explicitly configured.
+
+### Changed
+
+#### Protocol Type System Enhancements
+- **Protocol Core** (`turbomcp-protocol`):
+  - Enhanced content types with improved serialization/deserialization
+  - Expanded sampling workflow types with better async support
+  - Improved elicitation types to support URL-based and advanced modes
+  - Tool definition types updated for better compatibility with draft spec features
+
+#### Authorization Configuration Updates
+- **Authentication** (`turbomcp-auth`):
+  - Module structure reorganized with feature-gated access
+  - New optional dependency: `dashmap` 6.1.0 for concurrent caching (CIMD and Discovery)
+  - Added `mcp-ssrf`, `mcp-cimd`, `mcp-oidc-discovery`, and `mcp-incremental-consent` feature flags
+  - Updated `full` feature to include new draft specification modules
+  - HTTP client now includes built-in SSRF protection via redirect policy
+
+#### OAuth 2.1 Dependencies - Major Upgrade
+- **Breaking (for auth feature users)**: Migrated from `oauth2` 4.4.2 → 5.0.0
+  - **Typestate System**: Client now uses compile-time endpoint tracking for improved type safety
+  - **Stateful HTTP Client**: Connection pooling and reuse for better performance
+  - **SSRF Protection**: HTTP client configured with `redirect::Policy::none()` to prevent redirect-based attacks
+  - **Method Renames**: `set_revocation_uri()` → `set_revocation_url()` (API breaking change)
+  - **Import Changes**: `StandardRevocableToken` moved from `oauth2::revocation::` to `oauth2::` root
+- **Eliminated Duplicate Dependencies**: Removed 29 transitive dependencies
+  - Removed `oauth2 v4.4.2` (now only v5.0.0)
+  - Removed `reqwest v0.11.27` (now only v0.12.24)
+  - Removed `base64 v0.13.1` and `v0.21.7` (now only v0.22.1)
+  - **Build Time Impact**: Reduced compilation time and binary size
+- **Updated**: `jsonwebtoken` from 9.2 → 10.2.0 across workspace
+  - Unified 8 crates to use workspace version
+  - Updated features: now using `aws_lc_rs` backend
+
+#### OAuth2 Client Implementation (`turbomcp-auth`)
+- **Refactored**: `OAuth2Client` struct with typestate annotations
+  - `BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>`
+  - Compile-time guarantees for endpoint configuration
+- **Improved**: HTTP client handling with stateful reqwest::Client
+  - Connection pooling for multiple OAuth requests
+  - Configured to prevent SSRF via redirect blocking
+- **Fixed**: Optional client secret handling in oauth2 5.0
+  - Conditional `set_client_secret()` only when secret is present
+  - Prevents type mismatches in typestate system
+
+### Fixed
+
+#### Request Context Error Handling
+- **Fixed**: Double-boxing errors in `RequestContext` tenant validation methods
+  - `require_tenant()` and `validate_tenant_ownership()` were wrapping errors twice
+  - Changed from `Box::new(Error::new(...))` to `Error::new(...).into()`
+  - Fixes compilation errors introduced by recent context API enhancements
+
+**Files Modified**: `crates/turbomcp-protocol/src/context/request.rs`
+
+### Known Issues
+
+#### Token Revocation Temporarily Unavailable
+- **Limitation**: `OAuth2Client::revoke_token()` currently returns an error due to oauth2 5.0 typestate constraints
+  - **Cause**: Conditional revocation URL configuration changes client type at compile time
+  - **Workaround**: Tokens will naturally expire based on their TTL
+  - **Future Fix**: Will address in next minor version by either:
+    1. Making `OAuth2Client` generic over revocation endpoint typestate
+    2. Storing revocation URL separately and building client on-demand
+    3. Using dynamic dispatch for client storage
+- **Impact**: Minimal - token expiration remains functional, only explicit revocation is unavailable
+
 ## [2.2.3] - 2025-11-16
 
 ### Added

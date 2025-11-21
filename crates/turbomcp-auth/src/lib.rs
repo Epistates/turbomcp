@@ -113,6 +113,19 @@ pub mod providers;
 pub mod server;
 pub mod types;
 
+// MCP 2025-11-25 Draft Specification modules
+#[cfg(feature = "mcp-ssrf")]
+pub mod ssrf; // SSRF protection for HTTP fetching (used by CIMD and Discovery)
+
+#[cfg(feature = "mcp-cimd")]
+pub mod cimd; // Client ID Metadata Documents (SEP-991)
+
+#[cfg(feature = "mcp-oidc-discovery")]
+pub mod discovery; // OpenID Connect Discovery 1.0 and RFC 8414 (Authorization Server Metadata)
+
+#[cfg(feature = "mcp-incremental-consent")]
+pub mod incremental_consent; // Incremental Scope Consent via WWW-Authenticate (SEP-835)
+
 // Re-export configuration types
 #[doc(inline)]
 pub use config::*;

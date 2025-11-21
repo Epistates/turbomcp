@@ -333,3 +333,106 @@ pub struct ModelHint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
+
+/// Theme specifier for icons (MCP 2025-11-25 draft, SEP-973)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+#[cfg(feature = "mcp-icons")]
+pub enum IconTheme {
+    /// Icon designed for light backgrounds
+    Light,
+    /// Icon designed for dark backgrounds
+    Dark,
+}
+
+/// Icon metadata for visual representation (MCP 2025-11-25 draft, SEP-973)
+///
+/// Enables servers to expose icons as additional metadata for tools, resources,
+/// resource templates, prompts, and implementation information.
+///
+/// ## MIME Type Support
+///
+/// Clients MUST support at least:
+/// - `image/png` - PNG images (safe, universal compatibility)
+/// - `image/jpeg` / `image/jpg` - JPEG images (safe, universal compatibility)
+///
+/// Clients SHOULD support:
+/// - `image/svg+xml` - SVG images (scalable but requires security precautions)
+/// - `image/webp` - WebP images (modern, efficient format)
+///
+/// ## Security Considerations
+///
+/// - Consumers SHOULD ensure URLs are from the same domain or trusted domains
+/// - SVGs can contain executable JavaScript - take appropriate precautions
+/// - Data URIs avoid external dependencies but increase message size
+///
+/// ## Example
+///
+/// ```json
+/// {
+///   "src": "https://example.com/weather-icon.png",
+///   "mimeType": "image/png",
+///   "sizes": ["48x48", "96x96"],
+///   "theme": "light"
+/// }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg(feature = "mcp-icons")]
+pub struct Icon {
+    /// A standard URI pointing to an icon resource
+    ///
+    /// May be an HTTP/HTTPS URL or a `data:` URI with Base64-encoded image data.
+    ///
+    /// Consumers SHOULD ensure URLs serving icons are from the same domain as
+    /// the client/server or a trusted domain.
+    ///
+    /// Consumers SHOULD take appropriate precautions when consuming SVGs as
+    /// they can contain executable JavaScript.
+    #[serde(with = "url_string_serde")]
+    pub src: url::Url,
+
+    /// Optional MIME type override if the source MIME type is missing or generic
+    ///
+    /// Examples: `"image/png"`, `"image/jpeg"`, or `"image/svg+xml"`
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+
+    /// Optional array of strings specifying sizes at which the icon can be used
+    ///
+    /// Each string should be in WxH format (e.g., `"48x48"`, `"96x96"`)
+    /// or `"any"` for scalable formats like SVG.
+    ///
+    /// If not provided, the client should assume the icon can be used at any size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sizes: Option<Vec<String>>,
+
+    /// Optional theme specifier
+    ///
+    /// - `light`: Icon designed for light backgrounds
+    /// - `dark`: Icon designed for dark backgrounds
+    ///
+    /// If not provided, the client should assume the icon can be used with any theme.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<IconTheme>,
+}
+
+#[cfg(feature = "mcp-icons")]
+mod url_string_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+    use url::Url;
+
+    pub(super) fn serialize<S>(url: &Url, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(url.as_str())
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> std::result::Result<Url, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Url::parse(&s).map_err(serde::de::Error::custom)
+    }
+}
