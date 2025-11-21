@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-protocol"
-version = "2.2.3"
+version = "2.2.4"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Complete MCP protocol implementation with types, traits, context management, and message handling"
@@ -66,6 +66,9 @@ memmap2 = { version = "0.9.9", optional = true }
 # Validation
 regex = "1.12"
 
+# URL parsing (for mcp-url-elicitation feature)
+url = { version = "2.5", optional = true }
+
 [dev-dependencies]
 criterion = { workspace = true }
 tokio-test = { workspace = true }
@@ -84,3 +87,18 @@ wasm = []
 fancy-errors = ["miette"]
 mmap = ["memmap2"]  # Enable memory-mapped file support
 lock-free = []  # Enable lock-free data structures (requires unsafe)
+
+# MCP 2025-11-25 Draft Specification Features
+# These features enable support for the draft specification (2025-11-25)
+# which includes experimental and in-development protocol enhancements.
+mcp-draft = [
+    "mcp-tasks",
+    "mcp-url-elicitation",
+    "mcp-sampling-tools",
+    "mcp-icons",
+]
+mcp-tasks = []              # Experimental Tasks API (SEP-1686)
+mcp-url-elicitation = ["dep:url"]    # URL mode elicitation (SEP-1036)
+mcp-sampling-tools = []     # Tool calling in sampling (SEP-1577)
+mcp-icons = ["dep:url"]     # Icon metadata support (SEP-973)
+mcp-enum-improvements = []  # ElicitResult/EnumSchema updates (SEP-1330)
