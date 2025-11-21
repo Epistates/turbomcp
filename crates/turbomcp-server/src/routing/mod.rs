@@ -26,6 +26,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::warn;
 use turbomcp_protocol::RequestContext;
+
+#[cfg(feature = "multi-tenancy")]
+use crate::tenant_context::TenantContextExt;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
     types::{
@@ -63,6 +66,9 @@ pub struct RequestRouter {
     /// Server-to-client requests adapter for tool-initiated requests (sampling, elicitation, roots)
     /// This is injected into RequestContext so tools can make server-initiated requests
     server_to_client: Arc<dyn ServerToClientRequests>,
+    /// Task storage for MCP Tasks API (SEP-1686)
+    #[cfg(feature = "mcp-tasks")]
+    task_storage: Option<Arc<crate::task_storage::TaskStorage>>,
 }
 
 impl std::fmt::Debug for RequestRouter {
@@ -81,11 +87,21 @@ impl RequestRouter {
         registry: Arc<HandlerRegistry>,
         _metrics: Arc<ServerMetrics>,
         server_config: crate::config::ServerConfig,
+        #[cfg(feature = "mcp-tasks")] task_storage: Option<Arc<crate::task_storage::TaskStorage>>,
     ) -> Self {
         // Timeout management is now handled by middleware
         let config = RouterConfig::default();
 
-        let handler_context = HandlerContext::new(Arc::clone(&registry), server_config.clone());
+        let handler_context = HandlerContext::new(
+            Arc::clone(&registry),
+            server_config.clone(),
+            #[cfg(feature = "mcp-tasks")]
+            task_storage.clone().unwrap_or_else(|| {
+                // Fallback: create empty storage if none provided
+                use tokio::time::Duration;
+                Arc::new(crate::task_storage::TaskStorage::new(Duration::from_secs(60)))
+            }),
+        );
 
         let bidirectional = BidirectionalRouter::new();
 
@@ -103,6 +119,8 @@ impl RequestRouter {
             bidirectional,
             handlers: ProtocolHandlers::new(handler_context),
             server_to_client,
+            #[cfg(feature = "mcp-tasks")]
+            task_storage,
         }
     }
 
@@ -113,10 +131,20 @@ impl RequestRouter {
         config: RouterConfig,
         _metrics: Arc<ServerMetrics>,
         server_config: crate::config::ServerConfig,
+        #[cfg(feature = "mcp-tasks")] task_storage: Option<Arc<crate::task_storage::TaskStorage>>,
     ) -> Self {
         // Timeout management is now handled by middleware
 
-        let handler_context = HandlerContext::new(Arc::clone(&registry), server_config.clone());
+        let handler_context = HandlerContext::new(
+            Arc::clone(&registry),
+            server_config.clone(),
+            #[cfg(feature = "mcp-tasks")]
+            task_storage.clone().unwrap_or_else(|| {
+                // Fallback: create empty storage if none provided
+                use tokio::time::Duration;
+                Arc::new(crate::task_storage::TaskStorage::new(Duration::from_secs(60)))
+            }),
+        );
 
         let bidirectional = BidirectionalRouter::new();
 
@@ -134,6 +162,8 @@ impl RequestRouter {
             bidirectional,
             handlers: ProtocolHandlers::new(handler_context),
             server_to_client,
+            #[cfg(feature = "mcp-tasks")]
+            task_storage,
         }
     }
 
@@ -211,14 +241,15 @@ impl RequestRouter {
     ///
     /// * `headers` - Optional HTTP headers from the transport layer
     /// * `transport` - Optional transport type ("http", "websocket", etc.). Defaults to "http" if headers are provided.
+    /// * `tenant_id` - Optional tenant identifier for multi-tenant deployments. Extracted by `TenantExtractionLayer` middleware.
     ///
     /// # Example
     /// ```rust,ignore
-    /// // HTTP transport
-    /// let ctx = router.create_context(Some(headers), None);
+    /// // Single-tenant HTTP (tenant_id = None)
+    /// let ctx = router.create_context(Some(headers), None, None);
     ///
-    /// // WebSocket transport
-    /// let ctx = router.create_context(Some(headers), Some("websocket"));
+    /// // Multi-tenant WebSocket (with tenant ID from middleware)
+    /// let ctx = router.create_context(Some(headers), Some("websocket"), Some("acme-corp".to_string()));
     /// let response = router.route(request, ctx).await;
     /// ```
     #[must_use]
@@ -226,9 +257,18 @@ impl RequestRouter {
         &self,
         headers: Option<HashMap<String, String>>,
         transport: Option<&str>,
+        tenant_id: Option<String>,
     ) -> RequestContext {
         let mut ctx =
             RequestContext::new().with_server_to_client(Arc::clone(&self.server_to_client));
+
+        // Set tenant ID if provided (multi-tenant deployments)
+        #[cfg(feature = "multi-tenancy")]
+        if let Some(tenant_id) = tenant_id {
+            ctx = ctx.with_tenant(tenant_id);
+        }
+        #[cfg(not(feature = "multi-tenancy"))]
+        let _ = tenant_id; // Suppress unused warning when feature disabled
 
         // Add HTTP headers to context if provided
         if let Some(headers) = headers
@@ -305,6 +345,16 @@ impl RequestRouter {
                     .await
             }
             "ping" => self.handlers.handle_ping(request, ctx).await,
+
+            // Tasks API (MCP 2025-11-25 draft - SEP-1686)
+            #[cfg(feature = "mcp-tasks")]
+            "tasks/get" => self.handlers.handle_get_task(request, ctx).await,
+            #[cfg(feature = "mcp-tasks")]
+            "tasks/result" => self.handlers.handle_task_result(request, ctx).await,
+            #[cfg(feature = "mcp-tasks")]
+            "tasks/list" => self.handlers.handle_list_tasks(request, ctx).await,
+            #[cfg(feature = "mcp-tasks")]
+            "tasks/cancel" => self.handlers.handle_cancel_task(request, ctx).await,
 
             // Custom routes
             method => {
@@ -417,6 +467,13 @@ impl RequestRouter {
             .send_list_roots_to_client(request, ctx)
             .await
     }
+
+    /// Get task storage (exposed for testing)
+    #[cfg(feature = "mcp-tasks")]
+    #[doc(hidden)]
+    pub fn get_task_storage(&self) -> Option<Arc<crate::task_storage::TaskStorage>> {
+        self.task_storage.clone()
+    }
 }
 
 impl Clone for RequestRouter {
@@ -431,8 +488,16 @@ impl Clone for RequestRouter {
             handlers: ProtocolHandlers::new(HandlerContext::new(
                 Arc::clone(&self.registry),
                 self.server_config.clone(),
+                #[cfg(feature = "mcp-tasks")]
+                self.task_storage.clone().unwrap_or_else(|| {
+                    // Fallback: create empty storage if none provided
+                    use tokio::time::Duration;
+                    Arc::new(crate::task_storage::TaskStorage::new(Duration::from_secs(60)))
+                }),
             )),
             server_to_client: Arc::clone(&self.server_to_client),
+            #[cfg(feature = "mcp-tasks")]
+            task_storage: self.task_storage.clone(),
         }
     }
 }
@@ -498,7 +563,7 @@ impl turbomcp_protocol::JsonRpcHandler for RequestRouter {
         // Create properly configured context with server-to-client capabilities
         // Note: For authenticated HTTP requests, middleware should add auth info via with_* methods
         // For HTTP requests with headers, use the HTTP-specific entry point that passes headers
-        let ctx = self.create_context(None, None);
+        let ctx = self.create_context(None, None, None);
 
         // Route the request through the standard routing system
         let response = self.route(req, ctx).await;
