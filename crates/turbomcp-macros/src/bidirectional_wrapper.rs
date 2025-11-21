@@ -282,6 +282,44 @@ pub fn generate_bidirectional_transport_methods(
                 server.run_http_with_config(addr, config).await
                     .map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
             }
+
+            /// Run HTTP server with Tower middleware for advanced features
+            ///
+            /// This method enables multi-tenancy, authentication, rate limiting, and other
+            /// cross-cutting concerns by allowing Tower middleware layers to be applied to the router.
+            ///
+            /// **Note**: Requires the `http` feature to be enabled on `turbomcp`.
+            /// Add `turbomcp = { version = "2.0", features = ["http"] }` to your Cargo.toml.
+            ///
+            /// # Multi-Tenancy Example
+            ///
+            /// ```ignore
+            /// use turbomcp::prelude::*;
+            /// use turbomcp_server::middleware::tenancy::{HeaderTenantExtractor, TenantExtractionLayer};
+            /// use tower::ServiceBuilder;
+            ///
+            /// let tenant_extractor = HeaderTenantExtractor::new("X-Tenant-ID");
+            /// let middleware = ServiceBuilder::new()
+            ///     .layer(TenantExtractionLayer::new(tenant_extractor));
+            ///
+            /// server.run_http_with_middleware(
+            ///     "127.0.0.1:3000",
+            ///     Box::new(move |router| router.layer(middleware))
+            /// ).await?;
+            /// ```
+            #[cfg(feature = "http")]
+            pub async fn run_http_with_middleware<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
+                self,
+                addr: A,
+                middleware_fn: Box<dyn FnOnce(::axum::Router) -> ::axum::Router + Send>,
+            ) -> Result<(), Box<dyn ::std::error::Error>> {
+                // Create server instance using ServerBuilder pattern
+                let server = self.create_server()?;
+
+                // Use ServerBuilder's canonical HTTP implementation with middleware support
+                server.run_http_with_middleware(addr, middleware_fn).await
+                    .map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
+            }
         }
     } else {
         quote! {}
