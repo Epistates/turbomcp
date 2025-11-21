@@ -52,15 +52,56 @@ pub struct ToolAnnotations {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "readOnlyHint")]
     pub read_only_hint: Option<bool>,
+
+    /// **Hint** for task augmentation support (MCP 2025-11-25 draft, SEP-1686)
+    ///
+    /// Indicates whether this tool supports task-augmented invocation:
+    /// - `never` (default): Tool MUST NOT be invoked as a task
+    /// - `optional`: Tool MAY be invoked as a task or normal request
+    /// - `always`: Tool SHOULD be invoked as a task (server may reject non-task calls)
+    ///
+    /// This is a **hint** and does not guarantee behavioral conformance.
+    ///
+    /// ## Capability Requirements
+    ///
+    /// If `tasks.requests.tools.call` capability is false, clients MUST ignore this hint.
+    /// If capability is true:
+    /// - `taskHint` absent or `"never"`: MUST NOT invoke as task
+    /// - `taskHint: "optional"`: MAY invoke as task
+    /// - `taskHint: "always"`: SHOULD invoke as task
+    #[cfg(feature = "mcp-tasks")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "taskHint")]
+    pub task_hint: Option<TaskHint>,
+
     /// Custom application-specific hints.
     #[serde(flatten)]
     pub custom: HashMap<String, serde_json::Value>,
 }
 
-/// Represents a tool that can be executed by an MCP server, as per the MCP 2025-06-18 specification.
+/// Task hint for tool invocation (MCP 2025-11-25 draft, SEP-1686)
+///
+/// Indicates how a tool should be invoked with respect to task augmentation.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+#[cfg(feature = "mcp-tasks")]
+pub enum TaskHint {
+    /// Tool MUST NOT be invoked as a task (default behavior)
+    Never,
+    /// Tool MAY be invoked as either a task or normal request
+    Optional,
+    /// Tool SHOULD be invoked as a task (server may reject non-task calls)
+    Always,
+}
+
+/// Represents a tool that can be executed by an MCP server
 ///
 /// A `Tool` definition includes its programmatic name, a human-readable description,
 /// and JSON schemas for its inputs and outputs.
+///
+/// ## Version Support
+/// - MCP 2025-06-18: name, title, description, inputSchema, outputSchema, annotations, _meta
+/// - MCP 2025-11-25 draft (SEP-973): + icons
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
     /// The programmatic name of the tool, used to identify it in `CallToolRequest`.
@@ -86,6 +127,11 @@ pub struct Tool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
 
+    /// Optional set of icons for UI display (MCP 2025-11-25 draft, SEP-973)
+    #[cfg(feature = "mcp-icons")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icons: Option<Vec<super::core::Icon>>,
+
     /// A general-purpose metadata field for custom data.
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
@@ -100,6 +146,8 @@ impl Default for Tool {
             input_schema: ToolInputSchema::default(),
             output_schema: None,
             annotations: None,
+            #[cfg(feature = "mcp-icons")]
+            icons: None,
             meta: None,
         }
     }
@@ -120,6 +168,8 @@ impl Tool {
             input_schema: ToolInputSchema::default(),
             output_schema: None,
             annotations: None,
+            #[cfg(feature = "mcp-icons")]
+            icons: None,
             meta: None,
         }
     }
@@ -138,6 +188,8 @@ impl Tool {
             input_schema: ToolInputSchema::default(),
             output_schema: None,
             annotations: None,
+            #[cfg(feature = "mcp-icons")]
+            icons: None,
             meta: None,
         }
     }
@@ -317,13 +369,49 @@ pub struct ListToolsResult {
 }
 
 /// A request to execute a specific tool.
+///
+/// ## Version Support
+/// - MCP 2025-06-18: name, arguments, _meta
+/// - MCP 2025-11-25 draft (SEP-1686): + task (optional task augmentation)
+///
+/// ## Task Augmentation
+///
+/// When the `task` field is present, the receiver responds immediately with
+/// a `CreateTaskResult` containing a task ID. The actual tool result is available
+/// later via `tasks/result`.
+///
+/// ```rust,ignore
+/// use turbomcp_protocol::types::{CallToolRequest, tasks::TaskMetadata};
+///
+/// let request = CallToolRequest {
+///     name: "long_running_tool".to_string(),
+///     arguments: Some(json!({"data": "value"})),
+///     task: Some(TaskMetadata { ttl: Some(300_000) }), // 5 minute lifetime
+///     _meta: None,
+/// };
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallToolRequest {
     /// The programmatic name of the tool to call.
     pub name: String,
+
     /// The arguments to pass to the tool, conforming to its `input_schema`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<HashMap<String, serde_json::Value>>,
+
+    /// Optional task metadata for task-augmented requests (MCP 2025-11-25 draft)
+    ///
+    /// When present, this request will be executed asynchronously and the receiver
+    /// will respond immediately with a `CreateTaskResult`. The actual tool result
+    /// is available later via `tasks/result`.
+    ///
+    /// Requires:
+    /// - Server capability: `tasks.requests.tools.call`
+    /// - Tool annotation: `taskHint` must be "optional" or "always" (or absent/"never" for default)
+    #[cfg(feature = "mcp-tasks")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<crate::types::tasks::TaskMetadata>,
+
     /// Optional metadata for the request.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
@@ -357,6 +445,14 @@ pub struct CallToolResult {
     /// cache status, or internal state information.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
+    /// Optional task ID when tool execution is augmented with task tracking (MCP 2025-11-25 draft - SEP-1686).
+    ///
+    /// When a tool call includes task metadata, the server creates a task to track the operation
+    /// and returns the task_id here. Clients can use this to monitor progress via tasks/get
+    /// or retrieve final results via tasks/result.
+    #[cfg(feature = "mcp-tasks")]
+    #[serde(rename = "taskId", skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
 }
 
 impl CallToolResult {
@@ -557,6 +653,25 @@ impl CallToolResult {
                 }
                 ContentBlock::Resource(_resource) => {
                     parts.push(format!("[Embedded Resource #{}]", i + 1));
+                }
+                #[cfg(feature = "mcp-sampling-tools")]
+                ContentBlock::ToolUse(tool_use) => {
+                    parts.push(format!(
+                        "[Tool Use: {} (id: {})]",
+                        tool_use.name, tool_use.id
+                    ));
+                }
+                #[cfg(feature = "mcp-sampling-tools")]
+                ContentBlock::ToolResult(tool_result) => {
+                    parts.push(format!(
+                        "[Tool Result for: {}{}]",
+                        tool_result.tool_use_id,
+                        if tool_result.is_error.unwrap_or(false) {
+                            " (ERROR)"
+                        } else {
+                            ""
+                        }
+                    ));
                 }
             }
         }
