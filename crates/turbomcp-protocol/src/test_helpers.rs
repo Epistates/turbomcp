@@ -55,6 +55,8 @@ pub fn test_tool() -> Tool {
         },
         output_schema: None,
         annotations: None,
+        #[cfg(feature = "mcp-icons")]
+        icons: None,
         meta: None,
     }
 }
