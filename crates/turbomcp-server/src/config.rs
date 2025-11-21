@@ -465,6 +465,14 @@ impl Default for WebSocketServerConfig {
     }
 }
 
+// Multi-tenancy configuration (opt-in feature)
+#[cfg(feature = "multi-tenancy")]
+pub mod multi_tenant;
+#[cfg(feature = "multi-tenancy")]
+pub use multi_tenant::{
+    NoOpTenantConfigProvider, StaticTenantConfigProvider, TenantConfig, TenantConfigProvider,
+};
+
 // Additional comprehensive tests in separate file
 #[cfg(test)]
 mod tests;

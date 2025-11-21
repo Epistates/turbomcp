@@ -163,6 +163,10 @@ pub mod sampling;
 pub mod security_checks; // Sprint 2.6: Runtime security validation
 pub mod server;
 pub mod service;
+#[cfg(feature = "mcp-tasks")]
+pub mod task_storage; // Tasks API storage and lifecycle (SEP-1686)
+#[cfg(feature = "multi-tenancy")]
+pub mod tenant_context; // Sprint 3.2: Multi-tenant context extension trait
 pub mod timeout;
 // #[cfg(feature = "http")]
 // pub mod simple_http;
@@ -190,6 +194,10 @@ pub use middleware::{AuthConfig, AuthLayer, Claims};
 
 #[cfg(all(feature = "middleware", feature = "rate-limiting"))]
 pub use middleware::{RateLimitConfig, RateLimitLayer};
+
+#[cfg(feature = "multi-tenancy")]
+pub use tenant_context::TenantContextExt; // Extension trait for tenant support
+
 pub use observability::{
     ObservabilityConfig, ObservabilityGuard, OtlpProtocol, PerformanceMonitor, SamplingConfig,
     SecurityAuditLogger, global_observability,

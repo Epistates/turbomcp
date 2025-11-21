@@ -396,11 +396,14 @@ use turbomcp_transport::streamable_http_v2::{StreamableHttpConfig, StreamableHtt
 /// Application state for the HTTP server with bidirectional support
 struct HttpAppState<F, H>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H
+        + Send
+        + Sync
+        + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     /// Factory function that creates handlers with session-specific dispatchers
-    /// Now accepts optional HTTP headers for propagation to RequestContext
+    /// Now accepts optional HTTP headers and tenant_id for propagation to RequestContext
     handler_factory: Arc<F>,
     /// Shared sessions map for SSE broadcasting
     sessions: SessionsMap,
@@ -416,7 +419,10 @@ where
 
 impl<F, H> Clone for HttpAppState<F, H>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H
+        + Send
+        + Sync
+        + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
@@ -456,7 +462,74 @@ pub async fn run_http<F, H>(
     path: String,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H
+        + Send
+        + Sync
+        + 'static,
+    H: JsonRpcHandler + Send + Sync + 'static,
+{
+    run_http_with_middleware(
+        handler_factory,
+        sessions,
+        pending_requests,
+        addr,
+        path,
+        None,
+    )
+    .await
+}
+
+/// Run MCP HTTP server with full bidirectional support and optional Tower middleware
+///
+/// This function extends `run_http` with support for Tower middleware layers, enabling
+/// features like multi-tenancy, authentication, rate limiting, logging, etc.
+///
+/// # Type Parameters
+///
+/// * `F` - Factory function that creates handlers
+/// * `H` - Handler type that implements `JsonRpcHandler`
+///
+/// # Arguments
+///
+/// * `handler_factory` - Function that creates handlers with session-specific context
+/// * `sessions` - Shared sessions map for SSE broadcasting
+/// * `pending_requests` - Shared pending requests map for response correlation
+/// * `addr` - Bind address (e.g., "127.0.0.1:3000")
+/// * `path` - MCP endpoint path (e.g., "/mcp")
+/// * `middleware_fn` - Optional function that transforms the router by adding middleware layers
+///
+/// # Example: Multi-Tenancy Middleware
+///
+/// ```rust,ignore
+/// use turbomcp_server::middleware::tenancy::{HeaderTenantExtractor, TenantExtractionLayer};
+/// use tower::ServiceBuilder;
+///
+/// let tenant_extractor = HeaderTenantExtractor::new("X-Tenant-ID");
+/// let middleware = ServiceBuilder::new()
+///     .layer(TenantExtractionLayer::new(tenant_extractor));
+///
+/// run_http_with_middleware(
+///     handler_factory,
+///     sessions,
+///     pending,
+///     "127.0.0.1:3000".to_string(),
+///     "/mcp".to_string(),
+///     Some(Box::new(move |router| router.layer(middleware))),
+/// ).await?;
+/// ```
+pub async fn run_http_with_middleware<F, H>(
+    handler_factory: F,
+    sessions: SessionsMap,
+    pending_requests: PendingRequestsMap,
+    addr: String,
+    path: String,
+    middleware_fn: Option<Box<dyn FnOnce(Router) -> Router + Send>>,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H
+        + Send
+        + Sync
+        + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     // Create transport configuration
@@ -477,11 +550,11 @@ where
     };
 
     // Get server info from a temporary handler instance
-    let temp_handler = (state.handler_factory)(None, None);
+    let temp_handler = (state.handler_factory)(None, None, None);
     let server_info = temp_handler.server_info();
 
-    // Create router with custom handlers
-    let app = Router::new()
+    // Create router with custom handlers and attach state
+    let mut app = Router::new()
         .route(
             &config.endpoint_path,
             post(mcp_post_handler::<F, H>)
@@ -489,6 +562,12 @@ where
                 .delete(mcp_delete_handler::<F, H>),
         )
         .with_state(state);
+
+    // Apply middleware if provided (e.g., for multi-tenancy, authentication, etc.)
+    // Middleware must be compatible with Router after state attachment
+    if let Some(middleware) = middleware_fn {
+        app = middleware(app);
+    }
 
     // Bind to address
     let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -514,15 +593,27 @@ where
 async fn mcp_post_handler<F, H>(
     State(state): State<HttpAppState<F, H>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    #[cfg(feature = "multi-tenancy")] tenant_id_ext: Option<
+        axum::extract::Extension<crate::middleware::tenancy::TenantId>,
+    >,
     headers: HeaderMap,
     Json(request): Json<Value>,
 ) -> Result<impl IntoResponse, StatusCode>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H
+        + Send
+        + Sync
+        + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     // Security validation
     validate_security(&state, &headers, addr.ip())?;
+
+    // Extract tenant ID from request extensions (if TenantExtractionLayer was applied)
+    #[cfg(feature = "multi-tenancy")]
+    let tenant_id = tenant_id_ext.map(|ext| ext.0.as_str().to_string());
+    #[cfg(not(feature = "multi-tenancy"))]
+    let tenant_id: Option<String> = None;
 
     // Extract session ID from header
     let session_id = headers
@@ -562,15 +653,16 @@ where
         && matches!(message, JsonRpcMessage::Notification(_))
     {
         // Process the notification but don't send a response
-        let handler = (state.handler_factory)(session_id.clone(), Some(headers.clone()));
+        let handler =
+            (state.handler_factory)(session_id.clone(), Some(headers.clone()), tenant_id.clone());
         let _ = handler.handle_request(request).await;
 
         // Return 204 No Content per JSON-RPC 2.0 spec
         return Ok((StatusCode::NO_CONTENT, Json(serde_json::json!({}))));
     }
 
-    // This is a regular client request - create handler with session context and HTTP headers
-    let handler = (state.handler_factory)(session_id.clone(), Some(headers));
+    // This is a regular client request - create handler with session context, HTTP headers, and tenant ID
+    let handler = (state.handler_factory)(session_id.clone(), Some(headers), tenant_id);
 
     // Handle the request
     let response_value = handler.handle_request(request).await;
@@ -586,7 +678,10 @@ async fn mcp_get_handler<F, H>(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H
+        + Send
+        + Sync
+        + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     // Security validation
@@ -695,7 +790,10 @@ async fn mcp_delete_handler<F, H>(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, StatusCode>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H
+        + Send
+        + Sync
+        + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     // Extract session ID
@@ -717,7 +815,10 @@ fn validate_security<F, H>(
     client_ip: std::net::IpAddr,
 ) -> Result<(), StatusCode>
 where
-    F: Fn(Option<String>, Option<axum::http::HeaderMap>) -> H + Send + Sync + 'static,
+    F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H
+        + Send
+        + Sync
+        + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
     // Convert Axum headers to transport security headers
