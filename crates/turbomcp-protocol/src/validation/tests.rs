@@ -1026,6 +1026,8 @@ fn create_valid_tool() -> Tool {
         output_schema: None,
         annotations: None,
         meta: None,
+        #[cfg(feature = "mcp-icons")]
+        icons: None,
     }
 }
 
@@ -1075,6 +1077,10 @@ fn create_valid_initialize_request() -> InitializeRequest {
             name: "test-client".to_string(),
             title: Some("Test Client".to_string()),
             version: "1.0.0".to_string(),
+            #[cfg(feature = "mcp-draft")]
+            description: None,
+            #[cfg(feature = "mcp-icons")]
+            icons: None,
         },
         _meta: None,
     }

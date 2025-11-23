@@ -11,12 +11,12 @@
 use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
-    types::{GetTaskRequest, ListTasksRequest, ListTasksResult, CancelTaskRequest},
+    types::{CancelTaskRequest, GetTaskRequest, ListTasksRequest, ListTasksResult},
 };
 
 use super::HandlerContext;
-use crate::routing::utils::{error_response, parse_params, success_response};
 use crate::error::ServerError;
+use crate::routing::utils::{error_response, parse_params, success_response};
 
 /// Handle tasks/get request - retrieve task status
 pub async fn handle_get(
@@ -55,21 +55,15 @@ pub async fn handle_result(
                     use crate::task_storage::TaskResultState;
 
                     match result_state {
-                        TaskResultState::Completed(value) => {
-                            success_response(&request, value)
-                        }
-                        TaskResultState::Failed(error_msg) => {
-                            error_response(
-                                &request,
-                                ServerError::Lifecycle(format!("Task failed: {}", error_msg)),
-                            )
-                        }
-                        TaskResultState::Cancelled => {
-                            error_response(
-                                &request,
-                                ServerError::Lifecycle("Task was cancelled".to_string()),
-                            )
-                        }
+                        TaskResultState::Completed(value) => success_response(&request, value),
+                        TaskResultState::Failed(error_msg) => error_response(
+                            &request,
+                            ServerError::Lifecycle(format!("Task failed: {}", error_msg)),
+                        ),
+                        TaskResultState::Cancelled => error_response(
+                            &request,
+                            ServerError::Lifecycle("Task was cancelled".to_string()),
+                        ),
                         TaskResultState::Pending => {
                             // Should never happen since get_task_result blocks
                             error_response(

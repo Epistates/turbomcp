@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-macros"
-version = "2.2.4"
+version = "2.3.0-rc"
 edition = "2024"
 description = "Procedural macros for ergonomic MCP tool and resource registration"
 license = "MIT"
@@ -31,8 +31,8 @@ schemars = { version = "1.0" }
 # These are required because the #[server] macro generates code that uses these crates
 axum = { version = "0.8.4", optional = true, features = ["ws", "tracing", "macros"] }
 tokio = { workspace = true, optional = true }
-turbomcp-protocol = { version = "2.2.4", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "2.2.4", path = "../turbomcp-transport", optional = true }
+turbomcp-protocol = { version = "=2.3.0-rc", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "=2.3.0-rc", path = "../turbomcp-transport", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

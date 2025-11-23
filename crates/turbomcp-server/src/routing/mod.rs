@@ -99,7 +99,9 @@ impl RequestRouter {
             task_storage.clone().unwrap_or_else(|| {
                 // Fallback: create empty storage if none provided
                 use tokio::time::Duration;
-                Arc::new(crate::task_storage::TaskStorage::new(Duration::from_secs(60)))
+                Arc::new(crate::task_storage::TaskStorage::new(Duration::from_secs(
+                    60,
+                )))
             }),
         );
 
@@ -142,7 +144,9 @@ impl RequestRouter {
             task_storage.clone().unwrap_or_else(|| {
                 // Fallback: create empty storage if none provided
                 use tokio::time::Duration;
-                Arc::new(crate::task_storage::TaskStorage::new(Duration::from_secs(60)))
+                Arc::new(crate::task_storage::TaskStorage::new(Duration::from_secs(
+                    60,
+                )))
             }),
         );
 
@@ -492,7 +496,9 @@ impl Clone for RequestRouter {
                 self.task_storage.clone().unwrap_or_else(|| {
                     // Fallback: create empty storage if none provided
                     use tokio::time::Duration;
-                    Arc::new(crate::task_storage::TaskStorage::new(Duration::from_secs(60)))
+                    Arc::new(crate::task_storage::TaskStorage::new(Duration::from_secs(
+                        60,
+                    )))
                 }),
             )),
             server_to_client: Arc::clone(&self.server_to_client),

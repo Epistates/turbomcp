@@ -252,13 +252,14 @@ impl ElicitationBuilder {
 
         // Convert to MCP protocol type
         let request = turbomcp_protocol::types::ElicitRequest {
-            params: turbomcp_protocol::types::ElicitRequestParams {
-                message: self.message,
-                schema: self.schema,
-                timeout_ms: None,
-                cancellable: Some(true),
-            },
+            params: turbomcp_protocol::types::ElicitRequestParams::form(
+                self.message,
+                self.schema,
+                None,
+                Some(true),
+            ),
             _meta: None,
+            ..Default::default()
         };
 
         // Send fully-typed request directly (no serialization needed!)

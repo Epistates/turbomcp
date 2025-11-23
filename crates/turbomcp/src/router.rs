@@ -175,6 +175,7 @@ impl ServerToolHandler for TurboToolHandlerWrapper {
             output_schema: None,
             annotations: None,
             meta: None,
+            ..Tool::default()
         }
     }
 }

@@ -1135,6 +1135,7 @@ impl<T: Transport + 'static> Client<T> {
                 name: "turbomcp-client".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 title: Some("TurboMCP Client".to_string()),
+                ..Default::default()
             },
             _meta: None,
         };

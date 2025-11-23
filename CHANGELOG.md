@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0-rc] - 2025-11-23
+
+**Release Candidate for MCP 2025-11-25 Draft Specification Support**
+
+This RC release adds comprehensive support for the MCP 2025-11-25 draft specification, including Tasks API, URL-mode elicitation, tool calling in sampling, and enhanced metadata support. All new features are opt-in via feature flags to maintain backward compatibility.
+
 ### Added
 
 #### MCP 2025-11-25 Draft Specification Support
@@ -73,8 +79,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Protocol Core** (`turbomcp-protocol`):
   - Enhanced content types with improved serialization/deserialization
   - Expanded sampling workflow types with better async support
-  - Improved elicitation types to support URL-based and advanced modes
+  - **Elicitation API Refactored**: `ElicitRequestParams` is now an enum with `Form` and `Url` variants
+    - Breaking: Constructor changed from struct literal to `ElicitRequestParams::form()` factory method
+    - Added `message()` method to access message across variants
+    - `ElicitRequest` now has optional `task` field (feature-gated with `mcp-tasks`)
+  - **Implementation struct enhanced** with new optional fields (MCP 2025-11-25 draft):
+    - `description: Option<String>` - Human-readable description of implementation (feature-gated with `mcp-draft`)
+    - `icons: Option<Vec<Icon>>` - Icon metadata for UI integration (feature-gated with `mcp-icons`)
   - Tool definition types updated for better compatibility with draft spec features
+
+#### Client API Updates
+- **Client Handlers** (`turbomcp-client`):
+  - **Elicitation request API refactored** to match new enum-based `ElicitRequestParams`:
+    - `ElicitationRequest::schema()` now returns `Option<&ElicitationSchema>` (None for URL mode)
+    - `ElicitationRequest::timeout()` returns None for URL mode
+    - `ElicitationRequest::is_cancellable()` returns false for URL mode
+    - All methods handle both Form and Url elicitation modes correctly
 
 #### Authorization Configuration Updates
 - **Authentication** (`turbomcp-auth`):

@@ -71,6 +71,7 @@ where
         output_schema: None,
         annotations: None,
         meta: None,
+        ..Tool::default()
     };
 
     FunctionToolHandler::new(tool_def, handler)
@@ -108,6 +109,7 @@ where
         output_schema: None,
         annotations: None,
         meta: None,
+        ..Tool::default()
     };
 
     FunctionToolHandler::new(tool_def, handler)
