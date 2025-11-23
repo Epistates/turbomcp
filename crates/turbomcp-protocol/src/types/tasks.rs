@@ -183,7 +183,7 @@ impl TaskStatus {
     /// ```
     pub fn can_transition_to(&self, _next: &TaskStatus) -> bool {
         match self {
-            TaskStatus::Working => true, // Can transition to any state
+            TaskStatus::Working => true,       // Can transition to any state
             TaskStatus::InputRequired => true, // Can transition to any state
             TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled => false, // Terminal
         }
@@ -730,9 +730,7 @@ mod tests {
 
     #[test]
     fn test_task_metadata_serialization() {
-        let metadata = TaskMetadata {
-            ttl: Some(300000),
-        };
+        let metadata = TaskMetadata { ttl: Some(300000) };
 
         let json = serde_json::to_string(&metadata).unwrap();
         assert!(json.contains("\"ttl\":300000"));

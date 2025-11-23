@@ -28,20 +28,23 @@ impl ElicitationHandler for SimpleElicitationHandler {
     ) -> HandlerResult<ElicitationResponse> {
         eprintln!("[Client] Received elicitation request:");
         eprintln!("  Message: {}", request.message());
-        eprintln!("  Required fields: {:?}", request.schema().required);
 
-        // Provide mock responses based on schema
         let mut content = HashMap::new();
 
-        for field_name in request.schema().properties.keys() {
-            let value = match field_name.as_str() {
-                "name" => serde_json::json!("Alice Johnson"),
-                "model" => serde_json::json!("claude-3-5-sonnet"),
-                "temperature" => serde_json::json!(0.7),
-                "maxTokens" => serde_json::json!(1000),
-                _ => serde_json::json!("mock_value"),
-            };
-            content.insert(field_name.clone(), value);
+        if let Some(schema) = request.schema() {
+            eprintln!("  Required fields: {:?}", schema.required);
+
+            // Provide mock responses based on schema
+            for field_name in schema.properties.keys() {
+                let value = match field_name.as_str() {
+                    "name" => serde_json::json!("Alice Johnson"),
+                    "model" => serde_json::json!("claude-3-5-sonnet"),
+                    "temperature" => serde_json::json!(0.7),
+                    "maxTokens" => serde_json::json!(1000),
+                    _ => serde_json::json!("mock_value"),
+                };
+                content.insert(field_name.clone(), value);
+            }
         }
 
         eprintln!("[Client] Sending response: {:?}", content);

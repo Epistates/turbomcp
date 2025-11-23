@@ -198,6 +198,44 @@ pub struct Implementation {
     pub title: Option<String>,
     /// Implementation version
     pub version: String,
+    /// Optional human-readable description of what this implementation does
+    ///
+    /// This can be used by clients or servers to provide context about their purpose
+    /// and capabilities. For example, a server might describe the types of resources
+    /// or tools it provides, while a client might describe its intended use case.
+    ///
+    /// **MCP 2025-11-25 draft**: New field added for better context during initialization
+    #[cfg(feature = "mcp-draft")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional set of sized icons that the client can display in a user interface
+    ///
+    /// Clients that support rendering icons MUST support at least the following MIME types:
+    /// - `image/png` - PNG images (safe, universal compatibility)
+    /// - `image/jpeg` (and `image/jpg`) - JPEG images (safe, universal compatibility)
+    ///
+    /// Clients that support rendering icons SHOULD also support:
+    /// - `image/svg+xml` - SVG images (scalable but requires security precautions)
+    /// - `image/webp` - WebP images (modern, efficient format)
+    ///
+    /// **MCP 2025-11-25 draft**: New field added (SEP-973)
+    #[cfg(feature = "mcp-icons")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icons: Option<Vec<Icon>>,
+}
+
+impl Default for Implementation {
+    fn default() -> Self {
+        Self {
+            name: "unknown".to_string(),
+            title: None,
+            version: "0.0.0".to_string(),
+            #[cfg(feature = "mcp-draft")]
+            description: None,
+            #[cfg(feature = "mcp-icons")]
+            icons: None,
+        }
+    }
 }
 
 /// Optional metadata hints that can be attached to MCP objects.

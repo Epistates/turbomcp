@@ -33,16 +33,12 @@
 //! let result = storage.get_task_result(&task_id).await?;
 //! ```
 
-#![cfg(feature = "mcp-tasks")]
-
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::sync::watch;
-use turbomcp_protocol::types::{
-    RelatedTaskMetadata, Task, TaskMetadata, TaskStatus,
-};
+use turbomcp_protocol::types::{RelatedTaskMetadata, Task, TaskMetadata, TaskStatus};
 use uuid::Uuid;
 
 use crate::error::{ServerError, ServerResult};
@@ -173,19 +169,18 @@ impl TaskStorage {
     /// ## Security
     ///
     /// Validates auth context if task has auth binding.
-    pub fn get_task(
-        &self,
-        task_id: &str,
-        auth_context: Option<&str>,
-    ) -> ServerResult<Task> {
+    pub fn get_task(&self, task_id: &str, auth_context: Option<&str>) -> ServerResult<Task> {
         let tasks = self
             .tasks
             .read()
             .map_err(|_| ServerError::Lifecycle("Lock poisoned".to_string()))?;
 
-        let stored_task = tasks
-            .get(task_id)
-            .ok_or_else(|| ServerError::Protocol(ProtocolError::invalid_params(format!("Task not found: {}", task_id))))?;
+        let stored_task = tasks.get(task_id).ok_or_else(|| {
+            ServerError::Protocol(ProtocolError::invalid_params(format!(
+                "Task not found: {}",
+                task_id
+            )))
+        })?;
 
         // Validate auth context
         self.validate_auth_context(stored_task, auth_context)?;
@@ -208,19 +203,24 @@ impl TaskStorage {
             .write()
             .map_err(|_| ServerError::Lifecycle("Lock poisoned".to_string()))?;
 
-        let stored_task = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| ServerError::Protocol(ProtocolError::invalid_params(format!("Task not found: {}", task_id))))?;
+        let stored_task = tasks.get_mut(task_id).ok_or_else(|| {
+            ServerError::Protocol(ProtocolError::invalid_params(format!(
+                "Task not found: {}",
+                task_id
+            )))
+        })?;
 
         // Validate auth context
         self.validate_auth_context(stored_task, auth_context)?;
 
         // Validate state transition
         if !stored_task.task.status.can_transition_to(&new_status) {
-            return Err(ServerError::Protocol(ProtocolError::invalid_params(format!(
-                "Invalid state transition from {:?} to {:?}",
-                stored_task.task.status, new_status
-            ))));
+            return Err(ServerError::Protocol(ProtocolError::invalid_params(
+                format!(
+                    "Invalid state transition from {:?} to {:?}",
+                    stored_task.task.status, new_status
+                ),
+            )));
         }
 
         stored_task.task.status = new_status;
@@ -243,19 +243,28 @@ impl TaskStorage {
             .write()
             .map_err(|_| ServerError::Lifecycle("Lock poisoned".to_string()))?;
 
-        let stored_task = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| ServerError::Protocol(ProtocolError::invalid_params(format!("Task not found: {}", task_id))))?;
+        let stored_task = tasks.get_mut(task_id).ok_or_else(|| {
+            ServerError::Protocol(ProtocolError::invalid_params(format!(
+                "Task not found: {}",
+                task_id
+            )))
+        })?;
 
         // Validate auth context
         self.validate_auth_context(stored_task, auth_context)?;
 
         // Validate state transition
-        if !stored_task.task.status.can_transition_to(&TaskStatus::Completed) {
-            return Err(ServerError::Protocol(ProtocolError::invalid_params(format!(
-                "Cannot complete task in state {:?}",
-                stored_task.task.status
-            ))));
+        if !stored_task
+            .task
+            .status
+            .can_transition_to(&TaskStatus::Completed)
+        {
+            return Err(ServerError::Protocol(ProtocolError::invalid_params(
+                format!(
+                    "Cannot complete task in state {:?}",
+                    stored_task.task.status
+                ),
+            )));
         }
 
         stored_task.task.status = TaskStatus::Completed;
@@ -280,19 +289,25 @@ impl TaskStorage {
             .write()
             .map_err(|_| ServerError::Lifecycle("Lock poisoned".to_string()))?;
 
-        let stored_task = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| ServerError::Protocol(ProtocolError::invalid_params(format!("Task not found: {}", task_id))))?;
+        let stored_task = tasks.get_mut(task_id).ok_or_else(|| {
+            ServerError::Protocol(ProtocolError::invalid_params(format!(
+                "Task not found: {}",
+                task_id
+            )))
+        })?;
 
         // Validate auth context
         self.validate_auth_context(stored_task, auth_context)?;
 
         // Validate state transition
-        if !stored_task.task.status.can_transition_to(&TaskStatus::Failed) {
-            return Err(ServerError::Protocol(ProtocolError::invalid_params(format!(
-                "Cannot fail task in state {:?}",
-                stored_task.task.status
-            ))));
+        if !stored_task
+            .task
+            .status
+            .can_transition_to(&TaskStatus::Failed)
+        {
+            return Err(ServerError::Protocol(ProtocolError::invalid_params(
+                format!("Cannot fail task in state {:?}", stored_task.task.status),
+            )));
         }
 
         stored_task.task.status = TaskStatus::Failed;
@@ -300,7 +315,9 @@ impl TaskStorage {
         stored_task.result = TaskResultState::Failed(error_message.clone());
 
         // Notify waiters
-        let _ = stored_task.notify.send(TaskResultState::Failed(error_message));
+        let _ = stored_task
+            .notify
+            .send(TaskResultState::Failed(error_message));
 
         Ok(())
     }
@@ -317,19 +334,25 @@ impl TaskStorage {
             .write()
             .map_err(|_| ServerError::Lifecycle("Lock poisoned".to_string()))?;
 
-        let stored_task = tasks
-            .get_mut(task_id)
-            .ok_or_else(|| ServerError::Protocol(ProtocolError::invalid_params(format!("Task not found: {}", task_id))))?;
+        let stored_task = tasks.get_mut(task_id).ok_or_else(|| {
+            ServerError::Protocol(ProtocolError::invalid_params(format!(
+                "Task not found: {}",
+                task_id
+            )))
+        })?;
 
         // Validate auth context
         self.validate_auth_context(stored_task, auth_context)?;
 
         // Validate state transition
-        if !stored_task.task.status.can_transition_to(&TaskStatus::Cancelled) {
-            return Err(ServerError::Protocol(ProtocolError::invalid_params(format!(
-                "Cannot cancel task in state {:?}",
-                stored_task.task.status
-            ))));
+        if !stored_task
+            .task
+            .status
+            .can_transition_to(&TaskStatus::Cancelled)
+        {
+            return Err(ServerError::Protocol(ProtocolError::invalid_params(
+                format!("Cannot cancel task in state {:?}", stored_task.task.status),
+            )));
         }
 
         stored_task.task.status = TaskStatus::Cancelled;
@@ -364,7 +387,10 @@ impl TaskStorage {
                 .map_err(|_| ServerError::Lifecycle("Lock poisoned".to_string()))?;
 
             let stored_task = tasks.get(task_id).ok_or_else(|| {
-                ServerError::Protocol(ProtocolError::invalid_params(format!("Task not found: {}", task_id)))
+                ServerError::Protocol(ProtocolError::invalid_params(format!(
+                    "Task not found: {}",
+                    task_id
+                )))
             })?;
 
             // Validate auth context
@@ -400,7 +426,7 @@ impl TaskStorage {
                 // Filter by auth context if provided
                 match (auth_context, &stored_task.auth_context) {
                     (Some(ctx), Some(task_ctx)) => ctx == task_ctx,
-                    (None, _) => true, // No auth context = see all
+                    (None, _) => true,        // No auth context = see all
                     (Some(_), None) => false, // Auth provided but task has none
                 }
             })
@@ -438,13 +464,13 @@ impl TaskStorage {
 
         if let Ok(mut tasks_guard) = tasks.write() {
             tasks_guard.retain(|_task_id, stored_task| {
-                if let Some(ttl) = stored_task.task.ttl {
-                    if let Ok(created_at) = DateTime::parse_from_rfc3339(&stored_task.task.created_at)
-                    {
-                        let expiry = created_at + chrono::Duration::seconds(ttl as i64);
-                        // Keep if not yet expired
-                        return now < expiry;
-                    }
+                if let Some(ttl) = stored_task.task.ttl
+                    && let Ok(created_at) =
+                        DateTime::parse_from_rfc3339(&stored_task.task.created_at)
+                {
+                    let expiry = created_at + chrono::Duration::seconds(ttl as i64);
+                    // Keep if not yet expired
+                    return now < expiry;
                 }
                 // No TTL or parse error = keep forever
                 true
@@ -575,7 +601,10 @@ mod tests {
 
         // Create task with auth context
         let task_id = storage
-            .create_task(TaskMetadata { ttl: Some(3600) }, Some("user123".to_string()))
+            .create_task(
+                TaskMetadata { ttl: Some(3600) },
+                Some("user123".to_string()),
+            )
             .unwrap();
 
         // Access with correct context

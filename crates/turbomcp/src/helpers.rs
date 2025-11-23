@@ -22,12 +22,13 @@ pub fn error_text<S: AsRef<str>>(message: S) -> Content {
 
 /// Create a successful tool result
 #[must_use]
-pub const fn tool_success(content: Vec<Content>) -> CallToolResult {
+pub fn tool_success(content: Vec<Content>) -> CallToolResult {
     CallToolResult {
         content,
         is_error: Some(false),
         structured_content: None,
         _meta: None,
+        ..Default::default()
     }
 }
 
@@ -38,6 +39,7 @@ pub fn tool_error<S: AsRef<str>>(message: S) -> CallToolResult {
         is_error: Some(true),
         structured_content: None,
         _meta: None,
+        ..Default::default()
     }
 }
 

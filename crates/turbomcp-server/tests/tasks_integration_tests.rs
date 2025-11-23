@@ -14,21 +14,16 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use serde_json::json;
 use turbomcp_protocol::{
-    jsonrpc::{JsonRpcRequest, JsonRpcVersion},
-    types::{
-        RequestId, TaskMetadata, TaskStatus,
-    },
     RequestContext,
+    jsonrpc::{JsonRpcRequest, JsonRpcVersion},
+    types::{RequestId, TaskMetadata, TaskStatus},
 };
 use turbomcp_server::{
-    config::ServerConfig,
-    metrics::ServerMetrics,
-    registry::HandlerRegistry,
-    routing::RequestRouter,
-    task_storage::TaskStorage,
+    config::ServerConfig, metrics::ServerMetrics, registry::HandlerRegistry,
+    routing::RequestRouter, task_storage::TaskStorage,
 };
-use serde_json::json;
 
 /// Helper function to create a test router with task storage
 fn create_test_router() -> Arc<RequestRouter> {
@@ -62,7 +57,8 @@ async fn test_tasks_get_retrieves_task_status() {
         ttl: Some(3600_000), // 1 hour TTL
     };
 
-    let task_id = router.get_task_storage()
+    let task_id = router
+        .get_task_storage()
         .expect("Task storage should be available")
         .create_task(task_metadata, None)
         .expect("Task creation should succeed");
@@ -207,7 +203,9 @@ async fn test_tasks_cancel_returns_error_for_completed_task() {
         ttl: Some(3600_000),
     };
     let task_id = storage.create_task(metadata, None).unwrap();
-    storage.complete_task(&task_id, json!({"result": "success"}), None).unwrap();
+    storage
+        .complete_task(&task_id, json!({"result": "success"}), None)
+        .unwrap();
 
     // Attempt to cancel
     let request = JsonRpcRequest {
@@ -224,7 +222,10 @@ async fn test_tasks_cancel_returns_error_for_completed_task() {
 
     assert!(response.error().is_some());
     let error = response.error().unwrap();
-    assert!(error.message.contains("Cannot cancel") || error.message.contains("already in terminal state"));
+    assert!(
+        error.message.contains("Cannot cancel")
+            || error.message.contains("already in terminal state")
+    );
 }
 
 // ============================================================================
@@ -242,7 +243,9 @@ async fn test_tasks_result_returns_completed_result() {
     };
     let task_id = storage.create_task(metadata, None).unwrap();
     let result_value = json!({"answer": 42, "status": "success"});
-    storage.complete_task(&task_id, result_value.clone(), None).unwrap();
+    storage
+        .complete_task(&task_id, result_value.clone(), None)
+        .unwrap();
 
     // Get result via tasks/result
     let request = JsonRpcRequest {
@@ -279,7 +282,9 @@ async fn test_tasks_result_blocks_until_completion() {
     let task_id_clone = task_id.clone();
     tokio::spawn(async move {
         sleep(Duration::from_millis(100)).await;
-        storage_clone.complete_task(&task_id_clone, json!({"delayed": true}), None).unwrap();
+        storage_clone
+            .complete_task(&task_id_clone, json!({"delayed": true}), None)
+            .unwrap();
     });
 
     // Request result (should block)
@@ -314,7 +319,9 @@ async fn test_tasks_result_returns_error_for_failed_task() {
         ttl: Some(3600_000),
     };
     let task_id = storage.create_task(metadata, None).unwrap();
-    storage.fail_task(&task_id, "Task execution failed".to_string(), None).unwrap();
+    storage
+        .fail_task(&task_id, "Task execution failed".to_string(), None)
+        .unwrap();
 
     // Get result via tasks/result
     let request = JsonRpcRequest {
@@ -354,15 +361,19 @@ async fn test_complete_task_lifecycle() {
     assert_eq!(task.status, TaskStatus::Working);
 
     // 3. Update status with progress
-    storage.update_status(
-        &task_id,
-        TaskStatus::Working,
-        Some("Processing data".to_string()),
-        None,
-    ).unwrap();
+    storage
+        .update_status(
+            &task_id,
+            TaskStatus::Working,
+            Some("Processing data".to_string()),
+            None,
+        )
+        .unwrap();
 
     // 4. Complete task
-    storage.complete_task(&task_id, json!({"result": "success"}), None).unwrap();
+    storage
+        .complete_task(&task_id, json!({"result": "success"}), None)
+        .unwrap();
 
     // 5. Verify final status
     let task = storage.get_task(&task_id, None).unwrap();

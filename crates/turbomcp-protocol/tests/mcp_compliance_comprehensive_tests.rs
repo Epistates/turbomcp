@@ -21,6 +21,10 @@ mod mcp_compliance_tests {
                 name: "test".to_string(),
                 version: "1.0.0".to_string(),
                 title: None,
+                #[cfg(feature = "mcp-draft")]
+                description: None,
+                #[cfg(feature = "mcp-icons")]
+                icons: None,
             },
             capabilities: ServerCapabilities::default(),
             instructions: None,
@@ -46,6 +50,8 @@ mod mcp_compliance_tests {
             is_error: Some(false),
             structured_content: Some(json!({"structured": "data"})),
             _meta: Some(json!({"call_meta": "test"})),
+            #[cfg(feature = "mcp-tasks")]
+            task_id: None,
         };
         let serialized = serde_json::to_string(&call_result).unwrap();
         let parsed: Value = serde_json::from_str(&serialized).unwrap();
@@ -128,6 +134,10 @@ mod mcp_compliance_tests {
                 name: "test".to_string(),
                 version: "1.0.0".to_string(),
                 title: None,
+                #[cfg(feature = "mcp-draft")]
+                description: None,
+                #[cfg(feature = "mcp-icons")]
+                icons: None,
             },
             _meta: Some(json!({"init_meta": "test"})),
         };
@@ -140,6 +150,8 @@ mod mcp_compliance_tests {
             name: "test_tool".to_string(),
             arguments: Some(HashMap::new()),
             _meta: Some(json!({"call_meta": "test"})),
+            #[cfg(feature = "mcp-tasks")]
+            task: None,
         };
         let serialized = serde_json::to_string(&call_request).unwrap();
         let parsed: Value = serde_json::from_str(&serialized).unwrap();
@@ -182,6 +194,12 @@ mod mcp_compliance_tests {
             temperature: None,
             max_tokens: 100,
             stop_sequences: None,
+            #[cfg(feature = "mcp-sampling-tools")]
+            tools: None,
+            #[cfg(feature = "mcp-sampling-tools")]
+            tool_choice: None,
+            #[cfg(feature = "mcp-tasks")]
+            task: None,
             _meta: Some(json!({"message_meta": "test"})),
         };
         let serialized = serde_json::to_string(&message_request).unwrap();
@@ -199,6 +217,10 @@ mod mcp_compliance_tests {
                 name: "test".to_string(),
                 version: "1.0.0".to_string(),
                 title: None,
+                #[cfg(feature = "mcp-draft")]
+                description: None,
+                #[cfg(feature = "mcp-icons")]
+                icons: None,
             },
             capabilities: ServerCapabilities::default(),
             instructions: None,
@@ -236,6 +258,8 @@ mod mcp_compliance_tests {
                 }
             })),
             _meta: None,
+            #[cfg(feature = "mcp-tasks")]
+            task_id: None,
         };
         let serialized = serde_json::to_string(&call_result).unwrap();
         let parsed: Value = serde_json::from_str(&serialized).unwrap();
@@ -251,6 +275,8 @@ mod mcp_compliance_tests {
             is_error: Some(false),
             structured_content: None,
             _meta: None,
+            #[cfg(feature = "mcp-tasks")]
+            task_id: None,
         };
         let serialized = serde_json::to_string(&call_result_no_structured).unwrap();
         let parsed: Value = serde_json::from_str(&serialized).unwrap();
@@ -261,12 +287,12 @@ mod mcp_compliance_tests {
     #[test]
     fn test_parameter_structures_support_meta() {
         // Test ElicitRequestParams
-        let elicit_params = ElicitRequestParams {
-            message: "Please provide input".to_string(),
-            schema: ElicitationSchema::new(),
-            timeout_ms: None,
-            cancellable: None,
-        };
+        let elicit_params = ElicitRequestParams::form(
+            "Please provide input".to_string(),
+            ElicitationSchema::new(),
+            None,
+            None,
+        );
         let serialized = serde_json::to_string(&elicit_params).unwrap();
         let parsed: Value = serde_json::from_str(&serialized).unwrap();
         // Verify message field is present
@@ -361,6 +387,8 @@ mod mcp_compliance_tests {
             is_error: Some(false),
             structured_content: None,
             _meta: Some(complex_meta.clone()),
+            #[cfg(feature = "mcp-tasks")]
+            task_id: None,
         };
 
         let serialized = serde_json::to_string(&call_result).unwrap();
@@ -375,6 +403,8 @@ mod mcp_compliance_tests {
             is_error: Some(false),
             structured_content: None,
             _meta: Some(empty_meta.clone()),
+            #[cfg(feature = "mcp-tasks")]
+            task_id: None,
         };
 
         let serialized = serde_json::to_string(&call_result_empty).unwrap();

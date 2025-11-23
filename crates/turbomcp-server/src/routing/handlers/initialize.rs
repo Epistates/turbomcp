@@ -26,6 +26,7 @@ pub async fn handle(
                     name: context.config.name.clone(),
                     title: context.config.description.clone(),
                     version: context.config.version.clone(),
+                    ..Default::default()
                 },
                 capabilities: get_server_capabilities(context),
                 instructions: None,

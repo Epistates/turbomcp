@@ -362,17 +362,19 @@ mod tests {
         use turbomcp_protocol::types::ElicitationSchema;
 
         let request = ElicitRequest {
-            params: turbomcp_protocol::types::ElicitRequestParams {
-                message: "Test message".to_string(),
-                schema: ElicitationSchema {
+            params: turbomcp_protocol::types::ElicitRequestParams::form(
+                "Test message".to_string(),
+                ElicitationSchema {
                     schema_type: "object".to_string(),
                     properties: std::collections::HashMap::new(),
                     required: None,
                     additional_properties: None,
                 },
-                timeout_ms: None,
-                cancellable: Some(true),
-            },
+                None,
+                Some(true),
+            ),
+            #[cfg(feature = "mcp-tasks")]
+            task: None,
             _meta: None,
         };
         let (tx, _rx) = oneshot::channel();

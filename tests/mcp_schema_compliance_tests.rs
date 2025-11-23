@@ -195,6 +195,9 @@ mod message_schema_compliance {
                     version: "1.0.0".to_string(),
                     title: Some("Test Client".to_string()),
                     website_url: Some("https://example.com".to_string()),
+                    #[cfg(feature = "mcp-draft")]
+                    description: None,
+                    #[cfg(feature = "mcp-icons")]
                     icons: None,
                 },
                 meta: None,

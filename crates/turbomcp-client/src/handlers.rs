@@ -246,7 +246,7 @@ impl ElicitationRequest {
     /// This is the primary prompt/question being asked of the user.
     #[must_use]
     pub fn message(&self) -> &str {
-        &self.inner.params.message
+        self.inner.params.message()
     }
 
     /// Get schema defining expected response structure
@@ -279,8 +279,12 @@ impl ElicitationRequest {
     /// # }
     /// ```
     #[must_use]
-    pub fn schema(&self) -> &turbomcp_protocol::types::ElicitationSchema {
-        &self.inner.params.schema
+    pub fn schema(&self) -> Option<&turbomcp_protocol::types::ElicitationSchema> {
+        #[allow(unreachable_patterns)]
+        match &self.inner.params {
+            turbomcp_protocol::types::ElicitRequestParams::Form(form) => Some(&form.schema),
+            _ => None, // URL elicitation (when mcp-url-elicitation feature is enabled)
+        }
     }
 
     /// Get optional timeout as Duration
@@ -289,16 +293,25 @@ impl ElicitationRequest {
     /// No data loss occurs (unlike converting to integer seconds).
     #[must_use]
     pub fn timeout(&self) -> Option<Duration> {
-        self.inner
-            .params
-            .timeout_ms
-            .map(|ms| Duration::from_millis(ms as u64))
+        #[allow(unreachable_patterns)]
+        match &self.inner.params {
+            turbomcp_protocol::types::ElicitRequestParams::Form(form) => {
+                form.timeout_ms.map(|ms| Duration::from_millis(ms as u64))
+            }
+            _ => None, // URL elicitation (when mcp-url-elicitation feature is enabled)
+        }
     }
 
     /// Check if request can be cancelled by the user
     #[must_use]
     pub fn is_cancellable(&self) -> bool {
-        self.inner.params.cancellable.unwrap_or(false)
+        #[allow(unreachable_patterns)]
+        match &self.inner.params {
+            turbomcp_protocol::types::ElicitRequestParams::Form(form) => {
+                form.cancellable.unwrap_or(false)
+            }
+            _ => false, // URL elicitation (when mcp-url-elicitation feature is enabled)
+        }
     }
 
     /// Get access to underlying protocol request if needed
@@ -1204,12 +1217,14 @@ mod tests {
 
         // Create protocol request
         let proto_request = turbomcp_protocol::types::ElicitRequest {
-            params: turbomcp_protocol::types::ElicitRequestParams {
-                message: "Test prompt".to_string(),
-                schema: turbomcp_protocol::types::ElicitationSchema::new(),
-                timeout_ms: None,
-                cancellable: None,
-            },
+            params: turbomcp_protocol::types::ElicitRequestParams::form(
+                "Test prompt".to_string(),
+                turbomcp_protocol::types::ElicitationSchema::new(),
+                None,
+                None,
+            ),
+            #[cfg(feature = "mcp-tasks")]
+            task: None,
             _meta: None,
         };
 
@@ -1230,12 +1245,14 @@ mod tests {
 
         // Create protocol request
         let proto_request = turbomcp_protocol::types::ElicitRequest {
-            params: turbomcp_protocol::types::ElicitRequestParams {
-                message: "Test".to_string(),
-                schema: turbomcp_protocol::types::ElicitationSchema::new(),
-                timeout_ms: None,
-                cancellable: None,
-            },
+            params: turbomcp_protocol::types::ElicitRequestParams::form(
+                "Test".to_string(),
+                turbomcp_protocol::types::ElicitationSchema::new(),
+                None,
+                None,
+            ),
+            #[cfg(feature = "mcp-tasks")]
+            task: None,
             _meta: None,
         };
 

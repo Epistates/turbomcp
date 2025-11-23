@@ -198,6 +198,8 @@ pub fn generate_tool_result(input: TokenStream) -> TokenStream {
             is_error: Some(#is_error),
             structured_content: None,
             _meta: None,
+            #[cfg(feature = "mcp-tasks")]
+            task_id: None,
         }
     };
 
@@ -258,12 +260,14 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
                     // Create empty schema for simple prompt
                     let schema = ElicitationSchema::new();
                     let request = ElicitRequest {
-                        params: ::turbomcp_protocol::types::ElicitRequestParams {
-                            message: #message.to_string(),
+                        params: ::turbomcp_protocol::types::ElicitRequestParams::form(
+                            #message.to_string(),
                             schema,
-                            timeout_ms: None,
-                            cancellable: Some(true),
-                        },
+                            None,
+                            Some(true),
+                        ),
+                        #[cfg(feature = "mcp-tasks")]
+                        task: None,
                         _meta: None,
                     };
 
@@ -296,12 +300,14 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
                     use ::turbomcp_protocol::types::{ElicitRequest};
 
                     let request = ElicitRequest {
-                        params: ::turbomcp_protocol::types::ElicitRequestParams {
-                            message: #message.to_string(),
-                            schema: #schema,
-                            timeout_ms: None,
-                            cancellable: Some(true),
-                        },
+                        params: ::turbomcp_protocol::types::ElicitRequestParams::form(
+                            #message.to_string(),
+                            #schema,
+                            None,
+                            Some(true),
+                        ),
+                        #[cfg(feature = "mcp-tasks")]
+                        task: None,
                         _meta: None,
                     };
 

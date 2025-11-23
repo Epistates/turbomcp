@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-transport"
-version = "2.2.4"
+version = "2.3.0-rc"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Multi-protocol transport layer supporting HTTP, WebSocket, STDIO, and TCP for MCP communications"
@@ -55,7 +55,7 @@ tracing = { workspace = true }
 metrics = { workspace = true, optional = true }
 
 # Authentication (optional)
-turbomcp-auth = { version = "2.2.4", path = "../turbomcp-auth", optional = true }
+turbomcp-auth = { version = "=2.3.0-rc", path = "../turbomcp-auth", optional = true }
 jsonwebtoken = { version = "9.3", optional = true }
 base64 = { version = "0.22", optional = true }
 
@@ -110,6 +110,13 @@ jwt-validation = ["jsonwebtoken", "base64", "http", "reqwest"]
 
 # Observability
 metrics = ["dep:metrics"]
+
+# MCP draft specification features (pass-through to turbomcp-protocol)
+mcp-draft = ["turbomcp-protocol/mcp-draft"]
+mcp-icons = ["turbomcp-protocol/mcp-icons"]
+mcp-tasks = ["turbomcp-protocol/mcp-tasks"]
+mcp-url-elicitation = ["turbomcp-protocol/mcp-url-elicitation"]
+mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
 
 # Development features
 test-utils = ["dep:wiremock"]

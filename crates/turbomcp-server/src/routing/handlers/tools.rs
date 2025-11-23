@@ -43,7 +43,10 @@ pub async fn handle_call(
                 #[cfg(feature = "mcp-tasks")]
                 let task_id = if let Some(task_metadata) = &call_request.task {
                     // Create task before executing tool
-                    match context.task_storage.create_task(task_metadata.clone(), None) {
+                    match context
+                        .task_storage
+                        .create_task(task_metadata.clone(), None)
+                    {
                         Ok(id) => {
                             // Update task to Working status
                             let _ = context.task_storage.update_status(
@@ -64,9 +67,9 @@ pub async fn handle_call(
 
                 // Execute the tool
                 match handler.handle(call_request, ctx).await {
+                    #[cfg(feature = "mcp-tasks")]
                     Ok(mut tool_result) => {
                         // If task was created, update it with the result
-                        #[cfg(feature = "mcp-tasks")]
                         if let Some(ref task_id) = task_id {
                             // Complete the task with the tool result
                             let _ = context.task_storage.complete_task(
@@ -80,15 +83,15 @@ pub async fn handle_call(
 
                         success_response(&request, tool_result)
                     }
+                    #[cfg(not(feature = "mcp-tasks"))]
+                    Ok(tool_result) => {
+                        success_response(&request, tool_result)
+                    }
                     Err(e) => {
                         // If task was created, mark it as failed
                         #[cfg(feature = "mcp-tasks")]
                         if let Some(ref task_id) = task_id {
-                            let _ = context.task_storage.fail_task(
-                                task_id,
-                                e.to_string(),
-                                None,
-                            );
+                            let _ = context.task_storage.fail_task(task_id, e.to_string(), None);
                         }
 
                         error_response(&request, e)

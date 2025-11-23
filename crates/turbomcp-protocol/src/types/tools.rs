@@ -390,7 +390,7 @@ pub struct ListToolsResult {
 ///     _meta: None,
 /// };
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CallToolRequest {
     /// The programmatic name of the tool to call.
     pub name: String,
@@ -417,8 +417,9 @@ pub struct CallToolRequest {
     pub _meta: Option<serde_json::Value>,
 }
 
+
 /// The result of a `CallToolRequest`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CallToolResult {
     /// The output of the tool, typically as a series of text or other content blocks. This is required.
     pub content: Vec<ContentBlock>,

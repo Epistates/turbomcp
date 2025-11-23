@@ -652,6 +652,17 @@ pub struct ElicitRequest {
     pub _meta: Option<serde_json::Value>,
 }
 
+impl Default for ElicitRequest {
+    fn default() -> Self {
+        Self {
+            params: ElicitRequestParams::form(String::new(), ElicitationSchema::new(), None, None),
+            #[cfg(feature = "mcp-tasks")]
+            task: None,
+            _meta: None,
+        }
+    }
+}
+
 /// Elicit result
 ///
 /// ## Version Support
