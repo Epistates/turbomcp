@@ -55,6 +55,15 @@ where
     pub fn new(server: T) -> Self {
         let registry = Arc::new(HandlerRegistry::new());
         let metrics = Arc::new(turbomcp_server::metrics::ServerMetrics::new());
+        #[cfg(feature = "mcp-tasks")]
+        let router = Arc::new(RequestRouter::new(
+            registry.clone(),
+            metrics,
+            turbomcp_server::config::ServerConfig::default(),
+            None, // No task storage for simple tool router
+        ));
+
+        #[cfg(not(feature = "mcp-tasks"))]
         let router = Arc::new(RequestRouter::new(
             registry.clone(),
             metrics,
@@ -208,6 +217,15 @@ where
         // Create combined registry by merging all router registries
         let combined_registry = Arc::new(HandlerRegistry::new());
         let metrics = Arc::new(turbomcp_server::metrics::ServerMetrics::new());
+        #[cfg(feature = "mcp-tasks")]
+        let combined_router = Arc::new(RequestRouter::new(
+            combined_registry.clone(),
+            metrics,
+            turbomcp_server::config::ServerConfig::default(),
+            None, // No task storage for combined router
+        ));
+
+        #[cfg(not(feature = "mcp-tasks"))]
         let combined_router = Arc::new(RequestRouter::new(
             combined_registry.clone(),
             metrics,
@@ -297,6 +315,8 @@ mod tests {
                 is_error: None,
                 structured_content: None,
                 _meta: None,
+                #[cfg(feature = "mcp-tasks")]
+                task_id: None,
             })
         });
 

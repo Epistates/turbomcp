@@ -37,13 +37,15 @@ async fn get_user_name(
     schema.required = Some(vec!["name".to_string()]);
 
     let request = ElicitRequest {
-        params: ElicitRequestParams {
-            message: "Please enter your name".to_string(),
+        params: ElicitRequestParams::form(
+            "Please enter your name".to_string(),
             schema,
-            timeout_ms: Some(60000),
-            cancellable: Some(true),
-        },
+            Some(60000),
+            Some(true),
+        ),
         _meta: None,
+        #[cfg(feature = "mcp-tasks")]
+        task: None,
     };
 
     // Send elicitation request to client
@@ -73,6 +75,8 @@ async fn get_user_name(
         is_error: None,
         structured_content: None,
         _meta: None,
+        #[cfg(feature = "mcp-tasks")]
+        task_id: None,
     })
 }
 
@@ -131,13 +135,15 @@ async fn configure_model(
     schema.required = Some(vec!["model".to_string(), "temperature".to_string()]);
 
     let request = ElicitRequest {
-        params: ElicitRequestParams {
-            message: "Configure your LLM preferences".to_string(),
+        params: ElicitRequestParams::form(
+            "Configure your LLM preferences".to_string(),
             schema,
-            timeout_ms: Some(120000),
-            cancellable: Some(true),
-        },
+            Some(120000),
+            Some(true),
+        ),
         _meta: None,
+        #[cfg(feature = "mcp-tasks")]
+        task: None,
     };
 
     let result = ctx.elicit(request).await?;
@@ -164,6 +170,8 @@ async fn configure_model(
         is_error: None,
         structured_content: None,
         _meta: None,
+        #[cfg(feature = "mcp-tasks")]
+        task_id: None,
     })
 }
 
@@ -183,6 +191,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output_schema: None,
         annotations: None,
         meta: None,
+        #[cfg(feature = "mcp-icons")]
+        icons: None,
     };
 
     let config_tool = Tool {
@@ -198,6 +208,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output_schema: None,
         annotations: None,
         meta: None,
+        #[cfg(feature = "mcp-icons")]
+        icons: None,
     };
 
     // Build and run server

@@ -44,6 +44,12 @@ async fn ask_llm(req: CallToolRequest, ctx: RequestContext) -> Result<CallToolRe
         include_context: Some(turbomcp_protocol::types::IncludeContext::None),
         temperature: Some(0.7),
         stop_sequences: None,
+        #[cfg(feature = "mcp-sampling-tools")]
+        tools: None,
+        #[cfg(feature = "mcp-sampling-tools")]
+        tool_choice: None,
+        #[cfg(feature = "mcp-tasks")]
+        task: None,
         _meta: None,
     };
 
@@ -65,6 +71,8 @@ async fn ask_llm(req: CallToolRequest, ctx: RequestContext) -> Result<CallToolRe
         is_error: None,
         structured_content: None,
         _meta: None,
+        #[cfg(feature = "mcp-tasks")]
+        task_id: None,
     })
 }
 
@@ -93,6 +101,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output_schema: None,
         annotations: None,
         meta: None,
+        #[cfg(feature = "mcp-icons")]
+        icons: None,
     };
 
     // Build and run server

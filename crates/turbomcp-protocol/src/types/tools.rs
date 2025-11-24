@@ -417,7 +417,6 @@ pub struct CallToolRequest {
     pub _meta: Option<serde_json::Value>,
 }
 
-
 /// The result of a `CallToolRequest`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CallToolResult {

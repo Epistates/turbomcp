@@ -100,6 +100,13 @@ rest = ["utoipa", "utoipa-swagger-ui", "axum", "tower", "tower-http"]
 graphql = ["axum", "tower", "tower-http"]  # async-graphql dependencies optional for now
 adapters = ["rest", "graphql"]
 
+# MCP draft specification features (pass-through to turbomcp-protocol)
+mcp-draft = ["turbomcp-protocol/mcp-draft"]
+mcp-icons = ["turbomcp-protocol/mcp-icons"]
+mcp-tasks = ["turbomcp-protocol/mcp-tasks"]
+mcp-url-elicitation = ["turbomcp-protocol/mcp-url-elicitation"]
+mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
+
 # CLI
 cli = ["clap", "colored", "atty", "tracing-subscriber"]
 

@@ -141,6 +141,8 @@ impl HttpBackend {
                 sampling: None,
                 roots: None,
                 elicitation: None,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: None,
             },
             client_info: turbomcp_protocol::types::Implementation {
                 name: client_name.to_string(),

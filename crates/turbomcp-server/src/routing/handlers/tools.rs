@@ -84,9 +84,7 @@ pub async fn handle_call(
                         success_response(&request, tool_result)
                     }
                     #[cfg(not(feature = "mcp-tasks"))]
-                    Ok(tool_result) => {
-                        success_response(&request, tool_result)
-                    }
+                    Ok(tool_result) => success_response(&request, tool_result),
                     Err(e) => {
                         // If task was created, mark it as failed
                         #[cfg(feature = "mcp-tasks")]

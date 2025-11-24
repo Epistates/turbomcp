@@ -54,7 +54,7 @@ async fn test_tasks_get_retrieves_task_status() {
 
     // Create a task directly in storage
     let task_metadata = TaskMetadata {
-        ttl: Some(3600_000), // 1 hour TTL
+        ttl: Some(3_600_000), // 1 hour TTL
     };
 
     let task_id = router
@@ -115,7 +115,7 @@ async fn test_tasks_list_returns_all_tasks() {
     let storage = router.get_task_storage().unwrap();
     for _ in 0..3 {
         let metadata = TaskMetadata {
-            ttl: Some(3600_000),
+            ttl: Some(3_600_000),
         };
         storage.create_task(metadata, None).unwrap();
     }
@@ -170,7 +170,7 @@ async fn test_tasks_cancel_cancels_pending_task() {
     // Create a task
     let storage = router.get_task_storage().unwrap();
     let metadata = TaskMetadata {
-        ttl: Some(3600_000),
+        ttl: Some(3_600_000),
     };
     let task_id = storage.create_task(metadata, None).unwrap();
 
@@ -200,7 +200,7 @@ async fn test_tasks_cancel_returns_error_for_completed_task() {
     // Create and complete a task
     let storage = router.get_task_storage().unwrap();
     let metadata = TaskMetadata {
-        ttl: Some(3600_000),
+        ttl: Some(3_600_000),
     };
     let task_id = storage.create_task(metadata, None).unwrap();
     storage
@@ -239,7 +239,7 @@ async fn test_tasks_result_returns_completed_result() {
     // Create and complete a task
     let storage = router.get_task_storage().unwrap();
     let metadata = TaskMetadata {
-        ttl: Some(3600_000),
+        ttl: Some(3_600_000),
     };
     let task_id = storage.create_task(metadata, None).unwrap();
     let result_value = json!({"answer": 42, "status": "success"});
@@ -273,7 +273,7 @@ async fn test_tasks_result_blocks_until_completion() {
     // Create a task
     let storage = router.get_task_storage().unwrap();
     let metadata = TaskMetadata {
-        ttl: Some(3600_000),
+        ttl: Some(3_600_000),
     };
     let task_id = storage.create_task(metadata, None).unwrap();
 
@@ -316,7 +316,7 @@ async fn test_tasks_result_returns_error_for_failed_task() {
     // Create and fail a task
     let storage = router.get_task_storage().unwrap();
     let metadata = TaskMetadata {
-        ttl: Some(3600_000),
+        ttl: Some(3_600_000),
     };
     let task_id = storage.create_task(metadata, None).unwrap();
     storage
@@ -352,7 +352,7 @@ async fn test_complete_task_lifecycle() {
     // 1. Create task
     let storage = router.get_task_storage().unwrap();
     let metadata = TaskMetadata {
-        ttl: Some(3600_000),
+        ttl: Some(3_600_000),
     };
     let task_id = storage.create_task(metadata, None).unwrap();
 

@@ -101,6 +101,8 @@ pub fn generate_router(
                         name: tool_name.to_string(),
                         arguments: args,
                         _meta: None,
+                        #[cfg(feature = "mcp-tasks")]
+                        task: None,
                     };
 
                     let ctx = ::turbomcp::RequestContext::new();
