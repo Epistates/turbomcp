@@ -4,6 +4,7 @@ version = "2.2.4"
 edition = "2021"
 license = "MIT"
 description = "Demo project showcasing TurboMCP in action"
+publish = false
 
 [dependencies]
 # Using the TurboMCP SDK for zero boilerplate
