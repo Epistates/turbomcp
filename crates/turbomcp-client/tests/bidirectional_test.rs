@@ -91,9 +91,9 @@ mod bidirectional_tests {
 
         // Simulate what the server sends (MCP protocol format)
         let mcp_request = ElicitRequest {
-            params: ElicitRequestParams {
-                message: "Please enter your configuration".to_string(),
-                schema: ElicitationSchema::new()
+            params: ElicitRequestParams::form(
+                "Please enter your configuration".to_string(),
+                ElicitationSchema::new()
                     .add_string_property(
                         "username".to_string(),
                         true,
@@ -106,9 +106,11 @@ mod bidirectional_tests {
                         Some(0.0),
                         Some(150.0),
                     ),
-                timeout_ms: Some(30000), // 30 seconds in milliseconds
-                cancellable: Some(true),
-            },
+                Some(30000), // 30 seconds in milliseconds
+                Some(true),
+            ),
+            #[cfg(feature = "mcp-tasks")]
+            task: None,
             _meta: None,
         };
 
@@ -154,7 +156,9 @@ mod bidirectional_tests {
         );
 
         // Validate schema is TYPED (not serde_json::Value!)
-        let schema = handler_request.schema();
+        let schema = handler_request
+            .schema()
+            .expect("Schema should be present for form mode");
         assert_eq!(
             schema.schema_type, "object",
             "Schema type should be 'object'"

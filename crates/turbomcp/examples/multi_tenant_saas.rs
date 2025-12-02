@@ -294,14 +294,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("  - acme-corp (enterprise plan)");
     tracing::info!("  - startup-inc (starter plan)");
     tracing::info!("  - demo (demo plan - expires 2025-12-31)");
-    tracing::info!("\n✅ Multi-tenancy middleware is ACTIVE - X-Tenant-ID headers will be extracted!");
+    tracing::info!(
+        "\n✅ Multi-tenancy middleware is ACTIVE - X-Tenant-ID headers will be extracted!"
+    );
 
     // Run HTTP server with tenant extraction middleware
     // This applies the middleware to the router, enabling automatic tenant extraction
     server
-        .run_http_with_middleware("localhost:3000", Box::new(move |router| {
-            router.layer(tenant_layer)
-        }))
+        .run_http_with_middleware(
+            "localhost:3000",
+            Box::new(move |router| router.layer(tenant_layer)),
+        )
         .await?;
 
     Ok(())

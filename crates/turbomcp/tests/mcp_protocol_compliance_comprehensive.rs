@@ -792,6 +792,8 @@ async fn test_annotations_and_metadata_support() {
                 idempotent_hint: Some(true),
                 open_world_hint: Some(false),
                 read_only_hint: Some(true),
+                #[cfg(feature = "mcp-tasks")]
+                task_hint: None,
                 custom: std::collections::HashMap::new(),
             }),
             meta: Some({
@@ -802,6 +804,8 @@ async fn test_annotations_and_metadata_support() {
                 );
                 m
             }),
+            #[cfg(feature = "mcp-icons")]
+            icons: None,
         };
 
         // Serialize and verify structure

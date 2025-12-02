@@ -43,6 +43,12 @@ async fn test_sampling_rejection_should_not_hang() {
         temperature: None,
         max_tokens: 100,
         stop_sequences: None,
+        #[cfg(feature = "mcp-sampling-tools")]
+        tools: None,
+        #[cfg(feature = "mcp-sampling-tools")]
+        tool_choice: None,
+        #[cfg(feature = "mcp-tasks")]
+        task: None,
         _meta: None,
     };
 
@@ -215,6 +221,12 @@ async fn benchmark_sampling_rejection_hang_time() {
         temperature: None,
         max_tokens: 100,
         stop_sequences: None,
+        #[cfg(feature = "mcp-sampling-tools")]
+        tools: None,
+        #[cfg(feature = "mcp-sampling-tools")]
+        tool_choice: None,
+        #[cfg(feature = "mcp-tasks")]
+        task: None,
         _meta: None,
     };
 

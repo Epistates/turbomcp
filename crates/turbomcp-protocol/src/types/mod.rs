@@ -20,6 +20,7 @@
 //! - [`crate::types::roots`] - Filesystem boundaries (MCP 2025-06-18)
 //! - [`crate::types::completion`] - Argument autocompletion
 //! - [`crate::types::ping`] - Connection testing
+//! - [`crate::types::tasks`] - Tasks API for durable operations (MCP 2025-11-25 draft)
 
 pub mod capabilities;
 pub mod completion;
@@ -35,6 +36,8 @@ pub mod requests;
 pub mod resources;
 pub mod roots;
 pub mod sampling;
+#[cfg(feature = "mcp-tasks")]
+pub mod tasks;
 pub mod tools;
 
 // Re-export all types for backward compatibility
@@ -51,6 +54,8 @@ pub use requests::*;
 pub use resources::*;
 pub use roots::*;
 pub use sampling::{ModelHint, *};
+#[cfg(feature = "mcp-tasks")]
+pub use tasks::*;
 pub use tools::*;
 
 // Re-export validated domain types (these have the same names as type aliases in core,

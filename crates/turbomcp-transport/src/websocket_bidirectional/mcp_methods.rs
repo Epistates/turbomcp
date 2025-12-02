@@ -427,6 +427,12 @@ mod tests {
             temperature: None,
             max_tokens: 100,
             stop_sequences: None,
+            #[cfg(feature = "mcp-sampling-tools")]
+            tools: None,
+            #[cfg(feature = "mcp-sampling-tools")]
+            tool_choice: None,
+            #[cfg(feature = "mcp-tasks")]
+            task: None,
             _meta: None,
         };
         let result = transport.send_sampling(request, None).await;

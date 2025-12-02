@@ -32,6 +32,7 @@ async fn hello(
         is_error: None,
         structured_content: None,
         _meta: None,
+        ..Default::default()
     })
 }
 
@@ -64,6 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         output_schema: None,
         annotations: None,
         meta: None,
+        ..Tool::default()
     };
 
     // Build minimal server - STDIO compliant

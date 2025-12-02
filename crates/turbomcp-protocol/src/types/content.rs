@@ -31,7 +31,10 @@ pub enum ContentType {
     Text,
 }
 
-/// Content block union type per MCP 2025-06-18 specification
+/// Content block union type
+///
+/// - MCP 2025-06-18: text, image, audio, resource_link, resource
+/// - MCP 2025-11-25 draft (SEP-1577): + tool_use, tool_result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ContentBlock {
@@ -50,6 +53,14 @@ pub enum ContentBlock {
     /// Embedded resource
     #[serde(rename = "resource")]
     Resource(EmbeddedResource),
+    /// Tool use (MCP 2025-11-25 draft, SEP-1577)
+    #[cfg(feature = "mcp-sampling-tools")]
+    #[serde(rename = "tool_use")]
+    ToolUse(ToolUseContent),
+    /// Tool result (MCP 2025-11-25 draft, SEP-1577)
+    #[cfg(feature = "mcp-sampling-tools")]
+    #[serde(rename = "tool_result")]
+    ToolResult(ToolResultContent),
 }
 
 /// Backward compatibility alias for `ContentBlock`.
@@ -204,4 +215,62 @@ pub enum ResourceContent {
     Text(TextResourceContents),
     /// Binary resource content
     Blob(BlobResourceContents),
+}
+
+/// Tool use content (MCP 2025-11-25 draft, SEP-1577)
+///
+/// Represents a request from the LLM to call a tool during sampling.
+/// The model wants to execute a function and receive its results.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(feature = "mcp-sampling-tools")]
+pub struct ToolUseContent {
+    /// A unique identifier for this tool use
+    /// This ID is used to match tool results to their corresponding tool uses
+    pub id: String,
+
+    /// The name of the tool to call
+    pub name: String,
+
+    /// The arguments to pass to the tool, conforming to the tool's input schema
+    pub input: serde_json::Value,
+
+    /// Optional metadata about the tool use
+    /// Clients SHOULD preserve this field when including tool uses in subsequent
+    /// sampling requests to enable caching optimizations
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Tool result content (MCP 2025-11-25 draft, SEP-1577)
+///
+/// Represents the result of executing a tool that was requested by the LLM.
+/// The server provides the tool execution results back to the model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(feature = "mcp-sampling-tools")]
+pub struct ToolResultContent {
+    /// The ID of the tool use this result corresponds to
+    /// This MUST match the ID from a previous ToolUseContent
+    #[serde(rename = "toolUseId")]
+    pub tool_use_id: String,
+
+    /// The unstructured result content of the tool use
+    /// Can include text, images, audio, resource links, and embedded resources
+    pub content: Vec<ContentBlock>,
+
+    /// An optional structured result object
+    /// If the tool defined an outputSchema, this SHOULD conform to that schema
+    #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<serde_json::Value>,
+
+    /// Whether the tool use resulted in an error
+    /// If true, the content typically describes the error that occurred
+    /// Default: false
+    #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
+    pub is_error: Option<bool>,
+
+    /// Optional metadata about the tool result
+    /// Clients SHOULD preserve this field when including tool results in subsequent
+    /// sampling requests to enable caching optimizations
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
 }

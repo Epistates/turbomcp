@@ -468,7 +468,15 @@ where
         + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
-    run_http_with_middleware(handler_factory, sessions, pending_requests, addr, path, None).await
+    run_http_with_middleware(
+        handler_factory,
+        sessions,
+        pending_requests,
+        addr,
+        path,
+        None,
+    )
+    .await
 }
 
 /// Run MCP HTTP server with full bidirectional support and optional Tower middleware

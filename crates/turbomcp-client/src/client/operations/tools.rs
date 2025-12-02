@@ -194,6 +194,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             name: name.to_string(),
             arguments: Some(arguments.unwrap_or_default()),
             _meta: None,
+            ..Default::default()
         };
 
         with_plugins!(self, "tools/call", request_data, {

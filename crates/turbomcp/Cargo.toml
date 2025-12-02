@@ -1,6 +1,10 @@
 [package]
 name = "turbomcp"
-version = "2.2.4"
+
+version = "2.3.0"
+
+version = "2.3.0"
+
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Rust SDK for Model Context Protocol (MCP) with OAuth 2.1 compliance, ergonomic macros and SIMD acceleration"
@@ -45,8 +49,13 @@ axum = { version = "0.8.4", features = ["ws"], optional = true }
 tower-http = { workspace = true, optional = true }
 
 # Authentication and DPoP support (now as separate optional crates for clean minimal build)
-turbomcp-auth = { version = "2.2.4", path = "../turbomcp-auth", optional = true }
-turbomcp-dpop = { version = "2.2.4", path = "../turbomcp-dpop", optional = true }
+
+turbomcp-auth = { version = "2.3.0", path = "../turbomcp-auth", optional = true }
+turbomcp-dpop = { version = "2.3.0", path = "../turbomcp-dpop", optional = true }
+
+turbomcp-auth = { version = "2.3.0", path = "../turbomcp-auth", optional = true }
+turbomcp-dpop = { version = "2.3.0", path = "../turbomcp-dpop", optional = true }
+
 # JSON Schema generation (always required by macros)
 schemars = { version = "1.0", features = ["chrono04", "uuid1"] }
 regex = { version = "1.12", optional = true }
@@ -64,13 +73,23 @@ async-stream = { version = "0.3", optional = true }
 
 # Internal dependencies (always required)
 # CRITICAL: Use default-features = false to prevent feature leakage
-turbomcp-protocol = { version = "2.2.4", path = "../turbomcp-protocol", default-features = false }
-turbomcp-transport = { version = "2.2.4", path = "../turbomcp-transport", default-features = false }
-turbomcp-server = { version = "2.2.4", path = "../turbomcp-server", default-features = false }
-turbomcp-macros = { version = "2.2.4", path = "../turbomcp-macros", default-features = false }
+
+turbomcp-protocol = { version = "2.3.0", path = "../turbomcp-protocol", default-features = false }
+turbomcp-transport = { version = "2.3.0", path = "../turbomcp-transport", default-features = false }
+turbomcp-server = { version = "2.3.0", path = "../turbomcp-server", default-features = false }
+turbomcp-macros = { version = "2.3.0", path = "../turbomcp-macros", default-features = false }
 
 # Client library (optional - only needed for full-stack development)
-turbomcp-client = { version = "2.2.4", path = "../turbomcp-client", optional = true, default-features = false }
+turbomcp-client = { version = "2.3.0", path = "../turbomcp-client", optional = true, default-features = false }
+
+turbomcp-protocol = { version = "2.3.0", path = "../turbomcp-protocol", default-features = false }
+turbomcp-transport = { version = "2.3.0", path = "../turbomcp-transport", default-features = false }
+turbomcp-server = { version = "2.3.0", path = "../turbomcp-server", default-features = false }
+turbomcp-macros = { version = "2.3.0", path = "../turbomcp-macros", default-features = false }
+
+# Client library (optional - only needed for full-stack development)
+turbomcp-client = { version = "2.3.0", path = "../turbomcp-client", optional = true, default-features = false }
+
 
 [dev-dependencies]
 tokio-test = "0.4"
@@ -82,7 +101,11 @@ rand = "0.9"
 jsonschema = { version = "0.33", default-features = false, features = ["resolve-file"] }
 rustc-hash = "2.1.1"
 walkdir = { workspace = true }
-turbomcp-client = { version = "2.2.4", path = "../turbomcp-client" }
+
+turbomcp-client = { version = "2.3.0", path = "../turbomcp-client" }
+
+turbomcp-client = { version = "2.3.0", path = "../turbomcp-client" }
+
 tokio-tungstenite = "0.28.0"
 proptest = "1.5"
 oauth2 = { version = "5.0", default-features = false, features = ["reqwest"] }  # Required for oauth_integration_tests.rs
@@ -250,6 +273,14 @@ unix = ["turbomcp-transport/unix", "turbomcp-server/unix", "turbomcp-macros/unix
 
 # Performance
 simd = ["turbomcp-protocol/simd", "simd-json", "sonic-rs"]  # SIMD JSON acceleration
+
+# MCP draft specification features (pass-through to turbomcp-protocol)
+mcp-draft = ["turbomcp-protocol/mcp-draft"]
+mcp-icons = ["turbomcp-protocol/mcp-icons"]
+mcp-tasks = ["turbomcp-protocol/mcp-tasks"]
+mcp-url-elicitation = ["turbomcp-protocol/mcp-url-elicitation"]
+mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
+
 # Advanced combinations
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]  # All transports without extra features
 

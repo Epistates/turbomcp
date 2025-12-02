@@ -153,11 +153,14 @@ impl McpIntrospector {
                     schema_validation: None,
                 }),
                 experimental: None,
+                #[cfg(feature = "mcp-tasks")]
+                tasks: None,
             },
             client_info: Implementation {
                 name: self.client_name.clone(),
                 title: None,
                 version: self.client_version.clone(),
+                ..Default::default()
             },
             _meta: None,
         };

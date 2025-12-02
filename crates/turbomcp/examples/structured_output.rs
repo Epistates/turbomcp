@@ -146,6 +146,8 @@ impl WeatherServer {
                 "timestamp": "2025-11-06T10:30:00Z",
                 "collection_time_ms": 15
             })),
+            #[cfg(feature = "mcp-tasks")]
+            task_id: None,
         })
     }
 }

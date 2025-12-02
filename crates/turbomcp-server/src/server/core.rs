@@ -165,6 +165,9 @@ pub struct McpServer {
     pub(crate) lifecycle: Arc<ServerLifecycle>,
     /// Server metrics (Arc-wrapped for cheap cloning)
     pub(crate) metrics: Arc<ServerMetrics>,
+    /// Task storage for MCP Tasks API (SEP-1686)
+    #[cfg(feature = "mcp-tasks")]
+    pub(crate) task_storage: Arc<crate::task_storage::TaskStorage>,
 }
 
 impl std::fmt::Debug for McpServer {
@@ -279,10 +282,23 @@ impl McpServer {
     pub(crate) fn new_with_registry(config: ServerConfig, registry: HandlerRegistry) -> Self {
         let registry = Arc::new(registry);
         let metrics = Arc::new(ServerMetrics::new());
+
+        // Initialize task storage (SEP-1686)
+        #[cfg(feature = "mcp-tasks")]
+        let task_storage = {
+            use tokio::time::Duration;
+            let storage = crate::task_storage::TaskStorage::new(Duration::from_secs(60));
+            // Start background cleanup task
+            storage.start_cleanup();
+            Arc::new(storage)
+        };
+
         let router = Arc::new(RequestRouter::new(
             Arc::clone(&registry),
             Arc::clone(&metrics),
             config.clone(),
+            #[cfg(feature = "mcp-tasks")]
+            Some(Arc::clone(&task_storage)),
         ));
         // Build middleware stack configuration
         #[cfg(feature = "middleware")]
@@ -349,6 +365,8 @@ impl McpServer {
             service,
             lifecycle,
             metrics,
+            #[cfg(feature = "mcp-tasks")]
+            task_storage,
         }
     }
 
@@ -380,6 +398,16 @@ impl McpServer {
     #[must_use]
     pub const fn metrics(&self) -> &Arc<ServerMetrics> {
         &self.metrics
+    }
+
+    /// Get task storage (MCP Tasks API - SEP-1686)
+    ///
+    /// Returns the task storage instance for managing long-running operations.
+    /// Only available when the `mcp-tasks` feature is enabled.
+    #[cfg(feature = "mcp-tasks")]
+    #[must_use]
+    pub const fn task_storage(&self) -> &Arc<crate::task_storage::TaskStorage> {
+        &self.task_storage
     }
 
     /// Get the Tower service stack (test accessor)

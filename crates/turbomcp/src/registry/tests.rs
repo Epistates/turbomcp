@@ -30,6 +30,8 @@ fn dummy_tool_handler(
             is_error: Some(false),
             structured_content: None,
             _meta: None,
+            #[cfg(feature = "mcp-tasks")]
+            task_id: None,
         })
     })
 }
@@ -228,6 +230,8 @@ async fn test_tool_handler_invocation_through_registry_pattern() {
                 is_error: Some(false),
                 structured_content: None,
                 _meta: None,
+                #[cfg(feature = "mcp-tasks")]
+                task_id: None,
             })
         };
 
@@ -401,6 +405,8 @@ async fn test_concurrent_handler_invocations() {
                     is_error: Some(false),
                     structured_content: None,
                     _meta: None,
+                    #[cfg(feature = "mcp-tasks")]
+                    task_id: None,
                 })
             };
 
@@ -450,6 +456,8 @@ async fn test_handler_error_propagation() {
                 is_error: Some(true), // Indicate error condition
                 structured_content: None,
                 _meta: None,
+                #[cfg(feature = "mcp-tasks")]
+                task_id: None,
             })
         };
 

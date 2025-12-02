@@ -163,6 +163,8 @@ pub mod sampling;
 pub mod security_checks; // Sprint 2.6: Runtime security validation
 pub mod server;
 pub mod service;
+#[cfg(feature = "mcp-tasks")]
+pub mod task_storage; // Tasks API storage and lifecycle (SEP-1686)
 #[cfg(feature = "multi-tenancy")]
 pub mod tenant_context; // Sprint 3.2: Multi-tenant context extension trait
 pub mod timeout;

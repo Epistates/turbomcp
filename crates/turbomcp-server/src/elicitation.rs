@@ -558,12 +558,14 @@ mod tests {
         let coordinator = ElicitationCoordinator::with_config(Duration::from_millis(100));
 
         let request = ElicitRequest {
-            params: turbomcp_protocol::types::ElicitRequestParams {
-                message: "Test".to_string(),
-                schema: ElicitationSchema::new(),
-                timeout_ms: None,
-                cancellable: Some(true),
-            },
+            params: turbomcp_protocol::types::ElicitRequestParams::form(
+                "Test".to_string(),
+                ElicitationSchema::new(),
+                None,
+                Some(true),
+            ),
+            #[cfg(feature = "mcp-tasks")]
+            task: None,
             _meta: None,
         };
 
@@ -581,12 +583,14 @@ mod tests {
         let coordinator = ElicitationCoordinator::new();
 
         let request = ElicitRequest {
-            params: turbomcp_protocol::types::ElicitRequestParams {
-                message: "Test".to_string(),
-                schema: ElicitationSchema::new(),
-                timeout_ms: None,
-                cancellable: Some(true),
-            },
+            params: turbomcp_protocol::types::ElicitRequestParams::form(
+                "Test".to_string(),
+                ElicitationSchema::new(),
+                None,
+                Some(true),
+            ),
+            #[cfg(feature = "mcp-tasks")]
+            task: None,
             _meta: None,
         };
 
@@ -642,12 +646,14 @@ mod tests {
         // Create multiple pending requests
         for i in 0..3 {
             let request = ElicitRequest {
-                params: turbomcp_protocol::types::ElicitRequestParams {
-                    message: format!("Test {}", i),
-                    schema: ElicitationSchema::new(),
-                    timeout_ms: None,
-                    cancellable: Some(true),
-                },
+                params: turbomcp_protocol::types::ElicitRequestParams::form(
+                    format!("Test {}", i),
+                    ElicitationSchema::new(),
+                    None,
+                    Some(true),
+                ),
+                #[cfg(feature = "mcp-tasks")]
+                task: None,
                 _meta: None,
             };
 

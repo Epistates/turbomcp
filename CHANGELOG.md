@@ -7,7 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.0] - 2025-12-02
+
+**MCP 2025-11-25 Specification Support**
+
+This release adds comprehensive support for the MCP 2025-11-25 specification (final), including Tasks API, URL-mode elicitation, tool calling in sampling, enhanced metadata support, and multi-tenant infrastructure. All new features are opt-in via feature flags to maintain backward compatibility.
+
 ### Added
+
+#### MCP 2025-11-25 Specification Support
+- **Protocol Features** (`turbomcp-protocol`):
+  - **Tasks API** (SEP-1686): Durable state machines for long-running operations with polling and deferred result retrieval
+  - **URL Mode Elicitation** (SEP-1036): Out-of-band URL-based interactions for sensitive data
+  - **Tool Calling in Sampling** (SEP-1577): `tools` and `toolChoice` parameters in sampling requests
+  - **Icon Metadata Support** (SEP-973): Icons for tools, resources, resource templates, and prompts
+  - **Enum Improvements** (SEP-1330): `oneOf`/`anyOf` titled enums, multi-select arrays, default values
+  - **Tool Execution Settings**: `execution.taskSupport` field (forbidden/optional/required)
+  - Feature flag: `mcp-draft` enables all experimental features; individual flags available for granular control
+- **Authorization Features** (`turbomcp-auth`):
+  - **SSRF Protection Module**: Secure HTTP fetching with redirect blocking and request validation
+  - **Client ID Metadata Documents** (SEP-991) - `mcp-cimd`:
+    - Cache-backed CIMD fetcher with concurrent access support
+    - Metadata discovery and validation for OAuth 2.0 clients
+    - Built-in type definitions for CIMD responses
+  - **OpenID Connect Discovery** (RFC 8414 + OIDC) - `mcp-oidc-discovery`:
+    - Authorization server metadata discovery
+    - Dynamic endpoint configuration from well-known endpoints
+    - Cached metadata with TTL-based expiration
+  - **Incremental Scope Consent** (SEP-835) - `mcp-incremental-consent`:
+    - WWW-Authenticate header parsing and processing
+    - Incremental authorization flow support
+    - Scope negotiation for privilege escalation workflows
+
+**Files Added**:
+- `crates/turbomcp-protocol/src/types/tasks.rs` - Tasks API types
+- `crates/turbomcp-protocol/src/types/core.rs` - Enhanced protocol core types
+- `crates/turbomcp-server/src/task_storage.rs` - Task storage backend
+- `crates/turbomcp-server/src/routing/handlers/tasks.rs` - Task handlers
+- `crates/turbomcp-auth/src/ssrf.rs` - SSRF protection utilities
+- `crates/turbomcp-auth/src/cimd/` - Client ID Metadata Documents support
+- `crates/turbomcp-auth/src/discovery/` - OpenID Connect Discovery support
+- `crates/turbomcp-auth/src/incremental_consent.rs` - Incremental consent handling
+
+**Design Philosophy**: All draft features are opt-in via feature flags. Stable versions remain unchanged and production-ready.
 
 #### Multi-Tenant SaaS Support
 - **New**: Comprehensive multi-tenancy infrastructure for SaaS applications
@@ -36,6 +78,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 **Design Philosophy**: Opt-in, zero-breaking-changes. Multi-tenancy features are completely optional and only active when explicitly configured.
 
 ### Changed
+
+#### Protocol Type System Enhancements
+- **Protocol Core** (`turbomcp-protocol`):
+  - Enhanced content types with improved serialization/deserialization
+  - Expanded sampling workflow types with better async support
+  - **Elicitation API Refactored**: `ElicitRequestParams` is now an enum with `Form` and `Url` variants
+    - Breaking: Constructor changed from struct literal to `ElicitRequestParams::form()` factory method
+    - Added `message()` method to access message across variants
+    - `ElicitRequest` now has optional `task` field (feature-gated with `mcp-tasks`)
+  - **Implementation struct enhanced** with new optional fields (MCP 2025-11-25):
+    - `description: Option<String>` - Human-readable description of implementation
+    - `icons: Option<Vec<Icon>>` - Icon metadata for UI integration
+  - Tool definition types updated for better compatibility with spec features
+
+#### Client API Updates
+- **Client Handlers** (`turbomcp-client`):
+  - **Elicitation request API refactored** to match new enum-based `ElicitRequestParams`:
+    - `ElicitationRequest::schema()` now returns `Option<&ElicitationSchema>` (None for URL mode)
+    - `ElicitationRequest::timeout()` returns None for URL mode
+    - `ElicitationRequest::is_cancellable()` returns false for URL mode
+    - All methods handle both Form and Url elicitation modes correctly
+
+#### Authorization Configuration Updates
+- **Authentication** (`turbomcp-auth`):
+  - Module structure reorganized with feature-gated access
+  - New optional dependency: `dashmap` 6.1.0 for concurrent caching (CIMD and Discovery)
+  - Added `mcp-ssrf`, `mcp-cimd`, `mcp-oidc-discovery`, and `mcp-incremental-consent` feature flags
+  - Updated `full` feature to include new draft specification modules
+  - HTTP client now includes built-in SSRF protection via redirect policy
 
 #### OAuth 2.1 Dependencies - Major Upgrade
 - **Breaking (for auth feature users)**: Migrated from `oauth2` 4.4.2 → 5.0.0

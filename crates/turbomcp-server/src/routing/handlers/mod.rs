@@ -9,6 +9,8 @@ pub mod prompts;
 pub mod resources;
 pub mod roots;
 pub mod sampling;
+#[cfg(feature = "mcp-tasks")]
+pub mod tasks;
 pub mod tools;
 
 use turbomcp_protocol::RequestContext;
@@ -22,11 +24,22 @@ use std::sync::Arc;
 pub struct HandlerContext {
     pub registry: Arc<HandlerRegistry>,
     pub config: crate::config::ServerConfig,
+    #[cfg(feature = "mcp-tasks")]
+    pub task_storage: Arc<crate::task_storage::TaskStorage>,
 }
 
 impl HandlerContext {
-    pub fn new(registry: Arc<HandlerRegistry>, config: crate::config::ServerConfig) -> Self {
-        Self { registry, config }
+    pub fn new(
+        registry: Arc<HandlerRegistry>,
+        config: crate::config::ServerConfig,
+        #[cfg(feature = "mcp-tasks")] task_storage: Arc<crate::task_storage::TaskStorage>,
+    ) -> Self {
+        Self {
+            registry,
+            config,
+            #[cfg(feature = "mcp-tasks")]
+            task_storage,
+        }
     }
 }
 
@@ -182,5 +195,45 @@ impl ProtocolHandlers {
         ctx: RequestContext,
     ) -> JsonRpcResponse {
         ping::handle(&self.context, request, ctx).await
+    }
+
+    /// Handle tasks/get request - retrieve task status (MCP Tasks API - SEP-1686)
+    #[cfg(feature = "mcp-tasks")]
+    pub async fn handle_get_task(
+        &self,
+        request: JsonRpcRequest,
+        ctx: RequestContext,
+    ) -> JsonRpcResponse {
+        tasks::handle_get(&self.context, request, ctx).await
+    }
+
+    /// Handle tasks/result request - get task result (MCP Tasks API - SEP-1686)
+    #[cfg(feature = "mcp-tasks")]
+    pub async fn handle_task_result(
+        &self,
+        request: JsonRpcRequest,
+        ctx: RequestContext,
+    ) -> JsonRpcResponse {
+        tasks::handle_result(&self.context, request, ctx).await
+    }
+
+    /// Handle tasks/list request - list all tasks (MCP Tasks API - SEP-1686)
+    #[cfg(feature = "mcp-tasks")]
+    pub async fn handle_list_tasks(
+        &self,
+        request: JsonRpcRequest,
+        ctx: RequestContext,
+    ) -> JsonRpcResponse {
+        tasks::handle_list(&self.context, request, ctx).await
+    }
+
+    /// Handle tasks/cancel request - cancel a running task (MCP Tasks API - SEP-1686)
+    #[cfg(feature = "mcp-tasks")]
+    pub async fn handle_cancel_task(
+        &self,
+        request: JsonRpcRequest,
+        ctx: RequestContext,
+    ) -> JsonRpcResponse {
+        tasks::handle_cancel(&self.context, request, ctx).await
     }
 }
