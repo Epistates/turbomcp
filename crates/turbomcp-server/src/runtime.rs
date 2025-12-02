@@ -1,7 +1,7 @@
 //! Runtime components for bidirectional transport
 //!
 //! This module provides unified bidirectional communication support for all
-//! duplex transports (STDIO, TCP, Unix Socket, HTTP, WebSocket) with full MCP 2025-06-18 compliance.
+//! duplex transports (STDIO, TCP, Unix Socket, HTTP, WebSocket) with full MCP 2025-11-25 compliance.
 //!
 //! ## Architecture
 //!
@@ -44,7 +44,7 @@ type MessageId = turbomcp_protocol::MessageId;
 
 /// STDIO dispatcher for server-initiated requests
 ///
-/// This dispatcher implements the MCP 2025-06-18 specification for stdio transport,
+/// This dispatcher implements the MCP 2025-11-25 specification for stdio transport,
 /// allowing servers to make requests to clients (server→client capability).
 #[derive(Clone)]
 pub struct StdioDispatcher {
@@ -288,7 +288,7 @@ impl ServerRequestDispatcher for StdioDispatcher {
 
 /// Run MCP server over STDIO transport with full bidirectional support
 ///
-/// This runtime implements the complete MCP 2025-06-18 stdio protocol:
+/// This runtime implements the complete MCP 2025-11-25 stdio protocol:
 /// - Reads JSON-RPC from stdin (client requests AND server response correlations)
 /// - Writes JSON-RPC to stdout (server responses AND server requests)
 /// - Maintains request/response correlation

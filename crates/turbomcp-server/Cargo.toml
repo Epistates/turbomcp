@@ -3,8 +3,6 @@ name = "turbomcp-server"
 
 version = "2.3.0"
 
-version = "2.3.0"
-
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Fast MCP server implementation with middleware, routing, and lifecycle management"
@@ -19,11 +17,6 @@ rust-version = "1.89.0"
 [dependencies]
 
 turbomcp-protocol = { version = "2.3.0", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "2.3.0", path = "../turbomcp-transport", optional = true }
-turbomcp-macros = { version = "2.3.0", path = "../turbomcp-macros" }
-turbomcp-auth = { version = "2.3.0", path = "../turbomcp-auth", optional = true }
-
-turbomcp-protocol = { version = "2.3.0", path = "../turbomcp-protocol", default-features = false }
 turbomcp-transport = { version = "2.3.0", path = "../turbomcp-transport", optional = true }
 turbomcp-macros = { version = "2.3.0", path = "../turbomcp-macros" }
 turbomcp-auth = { version = "2.3.0", path = "../turbomcp-auth", optional = true }
@@ -99,8 +92,4 @@ unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
 mcp-tasks = ["turbomcp-protocol/mcp-tasks"]  # Tasks API (MCP 2025-11-25 draft, SEP-1686)
 # Convenience feature bundles
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]
-
-full = ["all-transports", "auth", "dpop", "sessions", "security", "input-validation", "multi-tenancy", "health-checks", "metrics", "middleware", "rate-limiting"]
-
 full = ["all-transports", "auth", "dpop", "sessions", "security", "input-validation", "multi-tenancy", "health-checks", "metrics", "middleware", "rate-limiting", "mcp-tasks"]
-

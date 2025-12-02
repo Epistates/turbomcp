@@ -39,24 +39,24 @@ impl Default for ValidationConfig {
 }
 
 impl ValidationConfig {
-    /// Create new validation config with MCP 2025-06-18 official schema
+    /// Create new validation config with MCP 2025-11-25 official schema
     ///
     /// This uses the official MCP protocol schema from modelcontextprotocol.io
     /// Schema source: <https://github.com/modelcontextprotocol/specification>
     pub fn with_mcp_schemas() -> Result<Self, ValidationError> {
         let mut schemas = HashMap::new();
 
-        // Load the official MCP 2025-06-18 schema
+        // Load the official MCP 2025-11-25 schema
         // This is the complete, official schema from the Model Context Protocol specification
-        let mcp_schema_str = include_str!("../schemas/mcp_2025-06-18.json");
+        let mcp_schema_str = include_str!("../schemas/mcp_2025-11-25.json");
 
         // Parse the official schema document
         let mcp_schema: Value = serde_json::from_str(mcp_schema_str)
             .map_err(|e| ValidationError::SchemaParseError(format!("MCP schema: {}", e)))?;
 
-        // The MCP schema defines all protocol messages in the "definitions" section
+        // The MCP 2025-11-25 schema defines all protocol messages in the "$defs" section
         // We extract and compile schemas for the most common request types
-        if let Some(definitions) = mcp_schema.get("definitions").and_then(|d| d.as_object()) {
+        if let Some(definitions) = mcp_schema.get("$defs").and_then(|d| d.as_object()) {
             // Map of JSON-RPC method names to their schema definitions in the spec
             let method_mappings = [
                 ("initialize", "InitializeRequest"),

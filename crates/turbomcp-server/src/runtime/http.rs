@@ -66,7 +66,7 @@ use crate::{MessageId, ServerError, ServerResult};
 /// HTTP dispatcher for server-initiated requests
 ///
 /// This dispatcher integrates directly with streamable_http_v2's session management
-/// to enable complete MCP 2025-06-18 support over HTTP + SSE.
+/// to enable complete MCP 2025-11-25 support over HTTP + SSE.
 ///
 /// ## MCP Compliance
 ///
@@ -155,7 +155,7 @@ impl HttpDispatcher {
     /// 2. Broadcasts to client via direct session access
     /// 3. Waits for correlated response from HTTP POST
     ///
-    /// ## MCP 2025-06-18 Compliance
+    /// ## MCP 2025-11-25 Compliance
     ///
     /// - Uses JSON-RPC 2.0 format
     /// - Generates unique request IDs (UUID v4)
@@ -250,7 +250,7 @@ impl ServerRequestDispatcher for HttpDispatcher {
             params: Some(
                 serde_json::to_value(&request).map_err(|e| ServerError::Handler {
                     message: format!("Failed to serialize elicitation request: {}", e),
-                    context: Some("MCP 2025-06-18 compliance".to_string()),
+                    context: Some("MCP 2025-11-25 compliance".to_string()),
                 })?,
             ),
             id: Self::generate_request_id(),
@@ -262,7 +262,7 @@ impl ServerRequestDispatcher for HttpDispatcher {
             JsonRpcResponsePayload::Success { result } => {
                 serde_json::from_value(result).map_err(|e| ServerError::Handler {
                     message: format!("Failed to deserialize elicitation result: {}", e),
-                    context: Some("MCP 2025-06-18 compliance".to_string()),
+                    context: Some("MCP 2025-11-25 compliance".to_string()),
                 })
             }
             JsonRpcResponsePayload::Error { error } => {
@@ -309,7 +309,7 @@ impl ServerRequestDispatcher for HttpDispatcher {
             params: Some(
                 serde_json::to_value(&request).map_err(|e| ServerError::Handler {
                     message: format!("Failed to serialize sampling request: {}", e),
-                    context: Some("MCP 2025-06-18 compliance".to_string()),
+                    context: Some("MCP 2025-11-25 compliance".to_string()),
                 })?,
             ),
             id: Self::generate_request_id(),
@@ -321,7 +321,7 @@ impl ServerRequestDispatcher for HttpDispatcher {
             JsonRpcResponsePayload::Success { result } => {
                 serde_json::from_value(result).map_err(|e| ServerError::Handler {
                     message: format!("Failed to deserialize sampling result: {}", e),
-                    context: Some("MCP 2025-06-18 compliance".to_string()),
+                    context: Some("MCP 2025-11-25 compliance".to_string()),
                 })
             }
             JsonRpcResponsePayload::Error { error } => {
@@ -349,7 +349,7 @@ impl ServerRequestDispatcher for HttpDispatcher {
             JsonRpcResponsePayload::Success { result } => {
                 serde_json::from_value(result).map_err(|e| ServerError::Handler {
                     message: format!("Failed to deserialize roots result: {}", e),
-                    context: Some("MCP 2025-06-18 compliance".to_string()),
+                    context: Some("MCP 2025-11-25 compliance".to_string()),
                 })
             }
             JsonRpcResponsePayload::Error { error } => {
@@ -439,7 +439,7 @@ where
 
 /// Run MCP HTTP server with full bidirectional support
 ///
-/// This function implements the complete MCP 2025-06-18 HTTP transport with factory pattern
+/// This function implements the complete MCP 2025-11-25 HTTP transport with factory pattern
 /// for session-specific bidirectional dispatchers.
 ///
 /// # Type Parameters
@@ -572,7 +572,7 @@ where
     // Bind to address
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
-    tracing::info!("🚀 MCP 2025-06-18 Compliant HTTP Transport Ready");
+    tracing::info!("🚀 MCP 2025-11-25 Compliant HTTP Transport Ready");
     tracing::info!("   Server: {} v{}", server_info.name, server_info.version);
     tracing::info!("   Listening: {}", addr);
     tracing::info!("   Endpoint: {} (GET/POST/DELETE)", path);
@@ -698,7 +698,7 @@ where
     }
 
     // Extract or generate session ID
-    // Per MCP 2025-06-18 spec: Server generates session ID and sends to client
+    // Per MCP 2025-11-25 spec: Server generates session ID and sends to client
     // Client may provide session ID for reconnection/resumption
     let session_id = headers
         .get("Mcp-Session-Id")
@@ -769,7 +769,7 @@ where
     );
     response_headers.insert(
         "MCP-Protocol-Version",
-        HeaderValue::from_static("2025-06-18"),
+        HeaderValue::from_static("2025-11-25"),
     );
     response_headers.insert(
         header::CONTENT_TYPE,

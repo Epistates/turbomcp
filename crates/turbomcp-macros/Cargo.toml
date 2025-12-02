@@ -1,10 +1,6 @@
 [package]
 name = "turbomcp-macros"
-
 version = "2.3.0"
-
-version = "2.3.0"
-
 edition = "2024"
 description = "Procedural macros for ergonomic MCP tool and resource registration"
 license = "MIT"
@@ -39,14 +35,10 @@ tokio = { workspace = true, optional = true }
 turbomcp-protocol = { version = "2.3.0", path = "../turbomcp-protocol" }
 turbomcp-transport = { version = "2.3.0", path = "../turbomcp-transport", optional = true }
 
-turbomcp-protocol = { version = "2.3.0", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "2.3.0", path = "../turbomcp-transport", optional = true }
-
-
 [dev-dependencies]
-tokio = { workspace = true }
 async-trait = "0.1"
 trybuild = "1.0"
+tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }
 
 [features]
 default = []

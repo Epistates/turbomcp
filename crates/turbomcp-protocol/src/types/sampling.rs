@@ -1,7 +1,7 @@
 //! LLM sampling types
 //!
 //! This module contains types for server-initiated LLM sampling:
-//! - MCP 2025-06-18: Basic text-based sampling
+//! - MCP 2025-11-25: Basic text-based sampling
 //! - MCP 2025-11-25 draft (SEP-1577): + Tool calling support
 
 use serde::{Deserialize, Serialize};
@@ -80,12 +80,12 @@ pub struct CreateMessageRequest {
     #[cfg(feature = "mcp-tasks")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<crate::types::tasks::TaskMetadata>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per MCP 2025-11-25 specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
 
-/// Model hint for selection (MCP 2025-06-18 compliant)
+/// Model hint for selection (MCP 2025-11-25 compliant)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ModelHint {
     /// Model name hint (substring matching)
@@ -103,7 +103,7 @@ impl ModelHint {
     }
 }
 
-/// Model preferences for sampling (MCP 2025-06-18 compliant)
+/// Model preferences for sampling (MCP 2025-11-25 compliant)
 ///
 /// The spec changed from tier-based to priority-based system.
 /// Priorities are 0.0-1.0 where 0 = not important, 1 = most important.
@@ -140,17 +140,17 @@ pub struct CreateMessageResult {
     pub model: String,
     /// Stop reason (if applicable)
     ///
-    /// Uses the StopReason enum with camelCase serialization for MCP 2025-06-18 compliance.
+    /// Uses the StopReason enum with camelCase serialization for MCP 2025-11-25 compliance.
     #[serde(rename = "stopReason", skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<StopReason>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per MCP 2025-11-25 specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
 
 /// Stop reason for generation
 ///
-/// Per MCP 2025-06-18 spec, these values use camelCase serialization for interoperability.
+/// Per MCP 2025-11-25 spec, these values use camelCase serialization for interoperability.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "camelCase")]
 pub enum StopReason {

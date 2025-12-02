@@ -115,10 +115,10 @@ impl McpService {
                 })
             }
             // Allow deprecated for defensive pattern matching on batch types
-            // These exist only to return proper errors per MCP 2025-06-18 spec
+            // These exist only to return proper errors per MCP 2025-11-25 spec
             #[allow(deprecated)]
             JsonRpcMessage::RequestBatch(_) => {
-                warn!("Received JSON-RPC request batch (not supported per MCP 2025-06-18)");
+                warn!("Received JSON-RPC request batch (not supported per MCP 2025-11-25)");
                 Some(JsonRpcResponse {
                     jsonrpc: JsonRpcVersion,
                     payload: JsonRpcResponsePayload::Error {
@@ -135,7 +135,7 @@ impl McpService {
             #[allow(deprecated)]
             JsonRpcMessage::ResponseBatch(_) => {
                 warn!(
-                    "Received JSON-RPC response batch (unexpected, not supported per MCP 2025-06-18)"
+                    "Received JSON-RPC response batch (unexpected, not supported per MCP 2025-11-25)"
                 );
                 Some(JsonRpcResponse {
                     jsonrpc: JsonRpcVersion,
@@ -151,7 +151,7 @@ impl McpService {
             }
             #[allow(deprecated)]
             JsonRpcMessage::MessageBatch(_) => {
-                warn!("Received JSON-RPC message batch (not supported per MCP 2025-06-18)");
+                warn!("Received JSON-RPC message batch (not supported per MCP 2025-11-25)");
                 Some(JsonRpcResponse {
                     jsonrpc: JsonRpcVersion,
                     payload: JsonRpcResponsePayload::Error {

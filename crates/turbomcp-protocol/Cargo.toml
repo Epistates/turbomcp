@@ -1,10 +1,6 @@
 [package]
 name = "turbomcp-protocol"
-
 version = "2.3.0"
-
-version = "2.3.0"
-
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Complete MCP protocol implementation with types, traits, context management, and message handling"

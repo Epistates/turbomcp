@@ -1,7 +1,7 @@
 //! User input elicitation types
 //!
 //! This module contains types for server-initiated user input requests:
-//! - **Form Mode** (MCP 2025-06-18): In-band structured data collection
+//! - **Form Mode** (MCP 2025-11-25): In-band structured data collection
 //! - **URL Mode** (MCP 2025-11-25 draft, SEP-1036): Out-of-band sensitive data collection
 //!
 //! ## Form Mode vs URL Mode
@@ -141,7 +141,7 @@ impl Default for ElicitationSchema {
 /// Primitive schema definition for elicitation fields
 ///
 /// ## Version Support
-/// - MCP 2025-06-18: String (with legacy enumNames), Number, Integer, Boolean
+/// - MCP 2025-11-25: String (with legacy enumNames), Number, Integer, Boolean
 /// - MCP 2025-11-25 draft (SEP-1330): Use `EnumSchema` for standards-compliant enum handling
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -508,7 +508,7 @@ pub enum EnumSchema {
 #[serde(rename_all = "lowercase")]
 #[cfg(feature = "mcp-url-elicitation")]
 pub enum ElicitMode {
-    /// Form mode: In-band structured data collection (MCP 2025-06-18)
+    /// Form mode: In-band structured data collection (MCP 2025-11-25)
     Form,
     /// URL mode: Out-of-band sensitive data collection (MCP 2025-11-25 draft)
     Url,
@@ -558,7 +558,7 @@ mod url_serde {
     }
 }
 
-/// Form mode elicitation parameters (MCP 2025-06-18)
+/// Form mode elicitation parameters (MCP 2025-11-25)
 ///
 /// Used for in-band structured data collection with JSON schema validation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -647,7 +647,7 @@ pub struct ElicitRequest {
     #[cfg(feature = "mcp-tasks")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<crate::types::tasks::TaskMetadata>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per MCP 2025-11-25 specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -666,7 +666,7 @@ impl Default for ElicitRequest {
 /// Elicit result
 ///
 /// ## Version Support
-/// - MCP 2025-06-18: action, content (form mode), _meta
+/// - MCP 2025-11-25: action, content (form mode), _meta
 /// - MCP 2025-11-25 draft (SEP-1330): Clarified content field behavior
 ///
 /// ## Content Field Behavior (SEP-1330 Clarification)
@@ -720,7 +720,7 @@ pub struct ElicitResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<std::collections::HashMap<String, serde_json::Value>>,
 
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per MCP 2025-11-25 specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }

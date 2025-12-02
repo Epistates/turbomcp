@@ -347,10 +347,10 @@ pub use versioning::{VersionCompatibility, VersionManager, VersionRequirement};
 pub type Context = RequestContext;
 
 /// Current MCP protocol version supported by this SDK
-pub const PROTOCOL_VERSION: &str = "2025-06-18";
+pub const PROTOCOL_VERSION: &str = "2025-11-25";
 
 /// Supported protocol versions for compatibility
-pub const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+pub const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 /// Maximum message size in bytes (1MB) - Reduced for security (DoS protection)
 pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_version_constants() {
-        assert_eq!(PROTOCOL_VERSION, "2025-06-18");
+        assert_eq!(PROTOCOL_VERSION, "2025-11-25");
         assert!(SUPPORTED_VERSIONS.contains(&PROTOCOL_VERSION));
     }
 

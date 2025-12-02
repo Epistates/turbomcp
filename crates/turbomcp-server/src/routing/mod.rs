@@ -340,7 +340,7 @@ impl RequestRouter {
             // Roots methods
             "roots/list" => self.handlers.handle_list_roots(request, ctx).await,
 
-            // Enhanced MCP features (MCP 2025-06-18 protocol methods)
+            // Enhanced MCP features (MCP 2025-11-25 protocol methods)
             "elicitation/create" => self.handlers.handle_elicitation(request, ctx).await,
             "completion/complete" => self.handlers.handle_completion(request, ctx).await,
             "resources/templates/list" => {

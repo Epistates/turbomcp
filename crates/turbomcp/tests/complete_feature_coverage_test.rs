@@ -1,7 +1,7 @@
 //! Complete Feature Coverage Test Suite
 //!
 //! This test file systematically validates ALL remaining gaps identified in the
-//! diligence pass, ensuring 100% feature coverage and MCP 2025-06-18 compliance.
+//! diligence pass, ensuring 100% feature coverage and MCP 2025-11-25 compliance.
 //!
 //! Coverage areas:
 //! 1. Resource subscriptions (subscribe, unsubscribe, notifications)

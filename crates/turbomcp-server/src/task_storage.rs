@@ -130,7 +130,7 @@ impl TaskStorage {
         auth_context: Option<String>,
     ) -> ServerResult<String> {
         let task_id = Uuid::new_v4().to_string();
-        let created_at = Utc::now().to_rfc3339();
+        let now = Utc::now().to_rfc3339();
 
         // Use explicit TTL, default TTL, or None
         let ttl = metadata.ttl.or(self.default_ttl);
@@ -139,7 +139,8 @@ impl TaskStorage {
             task_id: task_id.clone(),
             status: TaskStatus::Working,
             status_message: None,
-            created_at,
+            created_at: now.clone(),
+            last_updated_at: now,
             ttl,
             poll_interval: None, // Server doesn't set poll interval
         };
@@ -225,6 +226,7 @@ impl TaskStorage {
 
         stored_task.task.status = new_status;
         stored_task.task.status_message = status_message;
+        stored_task.task.last_updated_at = Utc::now().to_rfc3339();
 
         Ok(())
     }
@@ -269,6 +271,7 @@ impl TaskStorage {
 
         stored_task.task.status = TaskStatus::Completed;
         stored_task.task.status_message = Some("Task completed successfully".to_string());
+        stored_task.task.last_updated_at = Utc::now().to_rfc3339();
         stored_task.result = TaskResultState::Completed(result.clone());
 
         // Notify waiters
@@ -312,6 +315,7 @@ impl TaskStorage {
 
         stored_task.task.status = TaskStatus::Failed;
         stored_task.task.status_message = Some(error_message.clone());
+        stored_task.task.last_updated_at = Utc::now().to_rfc3339();
         stored_task.result = TaskResultState::Failed(error_message.clone());
 
         // Notify waiters
@@ -357,6 +361,7 @@ impl TaskStorage {
 
         stored_task.task.status = TaskStatus::Cancelled;
         stored_task.task.status_message = reason.clone();
+        stored_task.task.last_updated_at = Utc::now().to_rfc3339();
         stored_task.result = TaskResultState::Cancelled;
 
         // Notify waiters

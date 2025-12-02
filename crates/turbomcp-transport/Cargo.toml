@@ -1,10 +1,6 @@
 [package]
 name = "turbomcp-transport"
-
 version = "2.3.0"
-
-version = "2.3.0"
-
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Multi-protocol transport layer supporting HTTP, WebSocket, STDIO, and TCP for MCP communications"
@@ -59,11 +55,7 @@ tracing = { workspace = true }
 metrics = { workspace = true, optional = true }
 
 # Authentication (optional)
-
 turbomcp-auth = { version = "2.3.0", path = "../turbomcp-auth", optional = true }
-
-turbomcp-auth = { version = "2.3.0", path = "../turbomcp-auth", optional = true }
-
 jsonwebtoken = { version = "9.3", optional = true }
 base64 = { version = "0.22", optional = true }
 
@@ -88,8 +80,6 @@ tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
 serial_test = "3.0"
 tempfile = { workspace = true }
-futures-util = "0.3"
-
 [features]
 default = ["stdio"]
 
@@ -128,4 +118,3 @@ mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
 
 # Development features
 test-utils = ["dep:wiremock"]
-

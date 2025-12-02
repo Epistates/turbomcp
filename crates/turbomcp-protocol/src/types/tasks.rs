@@ -1,6 +1,6 @@
 //! Tasks API for durable long-running operations
 //!
-//! The Tasks API (MCP 2025-11-25 draft, SEP-1686) provides durable state machines for
+//! The Tasks API (MCP 2025-11-25, SEP-1686) provides durable state machines for
 //! long-running operations, enabling requestor polling and deferred result retrieval.
 //!
 //! ## Overview
@@ -198,6 +198,7 @@ impl TaskStatus {
 /// - `status`: Current task state
 /// - `status_message`: Optional human-readable status (any state)
 /// - `created_at`: ISO 8601 timestamp of creation
+/// - `last_updated_at`: ISO 8601 timestamp when task was last updated
 /// - `ttl`: Time-to-live in milliseconds from creation (null = unlimited)
 /// - `poll_interval`: Suggested polling interval in milliseconds
 ///
@@ -222,6 +223,7 @@ impl TaskStatus {
 ///     status: TaskStatus::Working,
 ///     status_message: Some("Processing data...".to_string()),
 ///     created_at: "2025-11-25T10:30:00Z".to_string(),
+///     last_updated_at: "2025-11-25T10:30:00Z".to_string(),
 ///     ttl: Some(300_000), // 5 minutes
 ///     poll_interval: Some(5_000), // Poll every 5s
 /// };
@@ -258,6 +260,13 @@ pub struct Task {
     /// TTL is measured from this timestamp.
     #[serde(rename = "createdAt")]
     pub created_at: String,
+
+    /// ISO 8601 timestamp when task was last updated
+    ///
+    /// Format: `YYYY-MM-DDTHH:MM:SSZ` (UTC)
+    /// Updated whenever task status or other fields change.
+    #[serde(rename = "lastUpdatedAt")]
+    pub last_updated_at: String,
 
     /// Time-to-live in milliseconds from creation
     ///
@@ -710,6 +719,7 @@ mod tests {
             status: TaskStatus::Working,
             status_message: Some("Processing...".to_string()),
             created_at: "2025-11-25T10:30:00Z".to_string(),
+            last_updated_at: "2025-11-25T10:30:00Z".to_string(),
             ttl: Some(60000),
             poll_interval: Some(5000),
         };
@@ -719,6 +729,7 @@ mod tests {
         assert!(json.contains("\"status\":\"working\""));
         assert!(json.contains("\"statusMessage\":\"Processing...\""));
         assert!(json.contains("\"createdAt\":\"2025-11-25T10:30:00Z\""));
+        assert!(json.contains("\"lastUpdatedAt\":\"2025-11-25T10:30:00Z\""));
         assert!(json.contains("\"ttl\":60000"));
         assert!(json.contains("\"pollInterval\":5000"));
 
@@ -766,6 +777,7 @@ mod tests {
                 status: TaskStatus::Working,
                 status_message: None,
                 created_at: "2025-11-25T10:30:00Z".to_string(),
+                last_updated_at: "2025-11-25T10:30:00Z".to_string(),
                 ttl: Some(60000),
                 poll_interval: Some(5000),
             },
@@ -799,6 +811,7 @@ mod tests {
                     status: TaskStatus::Working,
                     status_message: None,
                     created_at: "2025-11-25T10:30:00Z".to_string(),
+                    last_updated_at: "2025-11-25T10:30:00Z".to_string(),
                     ttl: Some(60000),
                     poll_interval: None,
                 },
@@ -807,6 +820,7 @@ mod tests {
                     status: TaskStatus::Completed,
                     status_message: Some("Done".to_string()),
                     created_at: "2025-11-25T09:00:00Z".to_string(),
+                    last_updated_at: "2025-11-25T09:30:00Z".to_string(),
                     ttl: Some(30000),
                     poll_interval: None,
                 },

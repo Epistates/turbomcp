@@ -64,7 +64,7 @@ mod jsonrpc_compliance {
             id: valid_request_id(),
             method: "initialize".to_string(),
             params: Some(json!({
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": "2025-11-25",
                 "capabilities": {},
                 "clientInfo": {
                     "name": "test-client",
@@ -91,7 +91,7 @@ mod jsonrpc_compliance {
             jsonrpc: JsonRpcVersion::V2_0,
             id: valid_request_id(),
             result: json!({
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": "2025-11-25",
                 "capabilities": {},
                 "serverInfo": {
                     "name": "test-server",
@@ -188,7 +188,7 @@ mod message_schema_compliance {
             jsonrpc: JsonRpcVersion::V2_0,
             method: "initialize".to_string(),
             params: InitializeParams {
-                protocol_version: "2025-06-18".to_string(),
+                protocol_version: "2025-11-25".to_string(),
                 capabilities: ClientCapabilities::default(),
                 client_info: Implementation {
                     name: "test-client".to_string(),
@@ -206,7 +206,7 @@ mod message_schema_compliance {
 
         // Validate required fields per MCP spec
         assert_eq!(request.method, "initialize");
-        assert_eq!(request.params.protocol_version, "2025-06-18");
+        assert_eq!(request.params.protocol_version, "2025-11-25");
         assert!(!request.params.client_info.name.is_empty());
         assert!(!request.params.client_info.version.is_empty());
 

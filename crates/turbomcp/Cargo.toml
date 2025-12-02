@@ -3,8 +3,6 @@ name = "turbomcp"
 
 version = "2.3.0"
 
-version = "2.3.0"
-
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Rust SDK for Model Context Protocol (MCP) with OAuth 2.1 compliance, ergonomic macros and SIMD acceleration"
@@ -19,7 +17,6 @@ rust-version = "1.89.0"
 
 [lints]
 workspace = true
-
 
 [dependencies]
 # Core dependencies
@@ -53,9 +50,6 @@ tower-http = { workspace = true, optional = true }
 turbomcp-auth = { version = "2.3.0", path = "../turbomcp-auth", optional = true }
 turbomcp-dpop = { version = "2.3.0", path = "../turbomcp-dpop", optional = true }
 
-turbomcp-auth = { version = "2.3.0", path = "../turbomcp-auth", optional = true }
-turbomcp-dpop = { version = "2.3.0", path = "../turbomcp-dpop", optional = true }
-
 # JSON Schema generation (always required by macros)
 schemars = { version = "1.0", features = ["chrono04", "uuid1"] }
 regex = { version = "1.12", optional = true }
@@ -82,34 +76,22 @@ turbomcp-macros = { version = "2.3.0", path = "../turbomcp-macros", default-feat
 # Client library (optional - only needed for full-stack development)
 turbomcp-client = { version = "2.3.0", path = "../turbomcp-client", optional = true, default-features = false }
 
-turbomcp-protocol = { version = "2.3.0", path = "../turbomcp-protocol", default-features = false }
-turbomcp-transport = { version = "2.3.0", path = "../turbomcp-transport", default-features = false }
-turbomcp-server = { version = "2.3.0", path = "../turbomcp-server", default-features = false }
-turbomcp-macros = { version = "2.3.0", path = "../turbomcp-macros", default-features = false }
-
 # Client library (optional - only needed for full-stack development)
-turbomcp-client = { version = "2.3.0", path = "../turbomcp-client", optional = true, default-features = false }
-
 
 [dev-dependencies]
 tokio-test = "0.4"
-chrono = { version = "0.4", features = ["serde"] }
 criterion = { version = "0.7.0", features = ["html_reports"] }
-tracing-subscriber = "0.3"
 tempfile = "3.0"
 rand = "0.9"
 jsonschema = { version = "0.33", default-features = false, features = ["resolve-file"] }
 rustc-hash = "2.1.1"
 walkdir = { workspace = true }
 
-turbomcp-client = { version = "2.3.0", path = "../turbomcp-client" }
-
-turbomcp-client = { version = "2.3.0", path = "../turbomcp-client" }
-
 tokio-tungstenite = "0.28.0"
 proptest = "1.5"
 oauth2 = { version = "5.0", default-features = false, features = ["reqwest"] }  # Required for oauth_integration_tests.rs
 tower = { workspace = true }  # Required for multi_tenant_saas.rs example
+turbomcp-client = { version = "2.3.0", path = "../turbomcp-client" }  # Required for resource subscription tests
 
 # Example configurations with required features
 # Server examples
@@ -285,7 +267,6 @@ mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]  # All transports without extra features
 
 ## No examples currently shipped from the framework crate. See top-level examples.
-
 
 [package.metadata.docs.rs]
 features = ["full"]

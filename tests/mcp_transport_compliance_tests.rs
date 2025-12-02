@@ -295,7 +295,7 @@ mod mcp_transport_compliance_tests {
         fn test_protocol_version_header() {
             // Spec: Client MUST include MCP-Protocol-Version header
             let protocol_headers = HashMap::from([
-                ("MCP-Protocol-Version".to_string(), "2025-06-18".to_string()),
+                ("MCP-Protocol-Version".to_string(), "2025-11-25".to_string()),
             ]);
 
             // TODO: Test protocol version header requirement

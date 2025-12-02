@@ -1,7 +1,7 @@
 //! MCP Protocol Types Module
 //!
 //! This module contains all the type definitions for the Model Context Protocol
-//! organized into focused submodules based on the MCP 2025-06-18 specification.
+//! organized into focused submodules based on the MCP 2025-11-25 specification.
 //!
 //! # Module Organization
 //!
@@ -15,12 +15,12 @@
 //! - [`crate::types::prompts`] - Prompt templates
 //! - [`crate::types::resources`] - Resource access and templates
 //! - [`crate::types::logging`] - Logging and progress tracking
-//! - [`crate::types::sampling`] - LLM sampling (MCP 2025-06-18)
-//! - [`crate::types::elicitation`] - User input elicitation (MCP 2025-06-18)
-//! - [`crate::types::roots`] - Filesystem boundaries (MCP 2025-06-18)
+//! - [`crate::types::sampling`] - LLM sampling (MCP 2025-11-25)
+//! - [`crate::types::elicitation`] - User input elicitation (MCP 2025-11-25)
+//! - [`crate::types::roots`] - Filesystem boundaries (MCP 2025-11-25)
 //! - [`crate::types::completion`] - Argument autocompletion
 //! - [`crate::types::ping`] - Connection testing
-//! - [`crate::types::tasks`] - Tasks API for durable operations (MCP 2025-11-25 draft)
+//! - [`crate::types::tasks`] - Tasks API for durable operations (MCP 2025-11-25)
 
 pub mod capabilities;
 pub mod completion;

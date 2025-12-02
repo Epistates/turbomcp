@@ -13,10 +13,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Client capabilities per MCP 2025-06-18 specification
+/// Client capabilities per MCP 2025-11-25 specification
 ///
 /// ## Version Support
-/// - MCP 2025-06-18: roots, sampling, elicitation, experimental
+/// - MCP 2025-11-25: roots, sampling, elicitation, experimental
 /// - MCP 2025-11-25 draft (SEP-1686): + tasks
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClientCapabilities {
@@ -45,10 +45,10 @@ pub struct ClientCapabilities {
     pub tasks: Option<ClientTasksCapabilities>,
 }
 
-/// Server capabilities per MCP 2025-06-18 specification
+/// Server capabilities per MCP 2025-11-25 specification
 ///
 /// ## Version Support
-/// - MCP 2025-06-18: logging, completions, prompts, resources, tools, experimental
+/// - MCP 2025-11-25: logging, completions, prompts, resources, tools, experimental
 /// - MCP 2025-11-25 draft (SEP-1686): + tasks
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ServerCapabilities {
@@ -89,7 +89,7 @@ pub struct ServerCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SamplingCapabilities;
 
-/// Elicitation capabilities per MCP 2025-06-18 specification
+/// Elicitation capabilities per MCP 2025-11-25 specification
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct ElicitationCapabilities {
     /// Whether the client performs JSON schema validation on elicitation responses

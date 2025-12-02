@@ -454,7 +454,7 @@ mod lifecycle_compliance {
             method: "initialize".to_string(),
             id: RequestId::from("init-1"),
             params: Some(json!({
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": "2025-11-25",
                 "capabilities": {
                     "roots": {
                         "listChanged": true
@@ -530,21 +530,21 @@ mod lifecycle_compliance {
     /// **MCP Spec Requirement**: "Otherwise, the server MUST respond with another protocol version it supports"
     #[test]
     fn test_version_negotiation_requirements() {
-        let supported_versions = vec!["2025-06-18", "2025-03-26", "2024-11-05"];
+        let supported_versions = vec!["2025-11-25", "2025-03-26", "2024-11-05"];
 
         // Test same version response
-        let client_version = "2025-06-18";
+        let client_version = "2025-11-25";
         let server_response_version = negotiate_version(client_version, &supported_versions);
         assert_eq!(server_response_version, client_version, "Server should respond with same version if supported");
 
         // Test fallback version response
         let unsupported_version = "1.0.0";
         let server_response_version = negotiate_version(unsupported_version, &supported_versions);
-        assert_eq!(server_response_version, "2025-06-18", "Server should respond with latest supported version");
+        assert_eq!(server_response_version, "2025-11-25", "Server should respond with latest supported version");
 
         // Test client should disconnect if server version not supported
         let client_supported = vec!["1.0.0", "1.1.0"];
-        let server_version = "2025-06-18";
+        let server_version = "2025-11-25";
         assert!(!client_should_accept_version(server_version, &client_supported), "Client should reject unsupported version");
     }
 
@@ -562,7 +562,7 @@ mod lifecycle_compliance {
             client_version
         } else {
             // Return latest supported version
-            supported_versions.first().unwrap_or(&"2025-06-18")
+            supported_versions.first().unwrap_or(&"2025-11-25")
         }
     }
 
@@ -681,7 +681,7 @@ mod protocol_version_compliance {
     #[test]
     fn test_protocol_version_constants() {
         // Test current protocol version matches spec
-        assert_eq!(PROTOCOL_VERSION, "2025-06-18");
+        assert_eq!(PROTOCOL_VERSION, "2025-11-25");
 
         // Test supported versions include current and previous versions
         assert!(SUPPORTED_VERSIONS.contains(&PROTOCOL_VERSION));

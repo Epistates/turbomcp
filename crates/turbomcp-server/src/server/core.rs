@@ -539,7 +539,7 @@ impl McpServer {
         let router = Arc::make_mut(&mut self.router);
         router.set_server_request_dispatcher(dispatcher.clone());
 
-        // Run STDIO with full bidirectional support (MCP 2025-06-18 compliant)
+        // Run STDIO with full bidirectional support (MCP 2025-11-25 compliant)
         // This uses the bidirectional-aware runtime that handles both:
         // - Client→Server requests (tools, resources, prompts)
         // - Server→Client requests (sampling, elicitation, roots, ping)
@@ -560,7 +560,7 @@ impl McpServer {
     ///
     /// This provides a working HTTP server with:
     /// - Standard HTTP POST/GET/DELETE for MCP protocol at `/mcp`
-    /// - Full MCP 2025-06-18 protocol compliance
+    /// - Full MCP 2025-11-25 protocol compliance
     /// - Graceful shutdown support
     /// - Default rate limiting (100 req/60s)
     /// - Default security settings (localhost allowed, CORS disabled)
@@ -1072,7 +1072,7 @@ impl McpServer {
     ///
     /// This provides a simple API for WebSocket servers with sensible defaults:
     /// - Default endpoint: `/mcp/ws`
-    /// - Full MCP 2025-06-18 compliance
+    /// - Full MCP 2025-11-25 compliance
     /// - Bidirectional communication
     /// - Elicitation support
     /// - Session management and middleware
@@ -1334,7 +1334,7 @@ impl McpServer {
         let router = Arc::make_mut(&mut self.router);
         router.set_server_request_dispatcher(dispatcher.clone());
 
-        // Run TCP with full bidirectional support (MCP 2025-06-18 compliant)
+        // Run TCP with full bidirectional support (MCP 2025-11-25 compliant)
         // This uses the generic bidirectional runtime that handles both:
         // - Client→Server requests (tools, resources, prompts)
         // - Server→Client requests (sampling, elicitation, roots, ping)
@@ -1381,7 +1381,7 @@ impl McpServer {
         let router = Arc::make_mut(&mut self.router);
         router.set_server_request_dispatcher(dispatcher.clone());
 
-        // Run Unix Socket with full bidirectional support (MCP 2025-06-18 compliant)
+        // Run Unix Socket with full bidirectional support (MCP 2025-11-25 compliant)
         // This uses the generic bidirectional runtime that handles both:
         // - Client→Server requests (tools, resources, prompts)
         // - Server→Client requests (sampling, elicitation, roots, ping)

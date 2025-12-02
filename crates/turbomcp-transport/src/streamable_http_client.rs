@@ -1,6 +1,6 @@
-//! MCP 2025-06-18 Compliant Streamable HTTP Client - Standard Implementation
+//! MCP 2025-11-25 Compliant Streamable HTTP Client - Standard Implementation
 //!
-//! This client provides **strict MCP 2025-06-18 specification compliance** with:
+//! This client provides **strict MCP 2025-11-25 specification compliance** with:
 //! - ✅ Single MCP endpoint for all communication
 //! - ✅ Endpoint discovery via SSE "endpoint" event
 //! - ✅ Accept header negotiation (application/json, text/event-stream)
@@ -136,7 +136,7 @@ impl Default for StreamableHttpClientConfig {
             auth_token: None,
             headers: HashMap::new(),
             user_agent: format!("TurboMCP-Client/{}", env!("CARGO_PKG_VERSION")),
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: "2025-11-25".to_string(),
             limits: crate::config::LimitsConfig::default(),
             tls: crate::config::TlsConfig::default(),
         }
@@ -534,7 +534,7 @@ impl StreamableHttpClientTransport {
         // Handle different event types
         match event_type.as_deref() {
             Some("endpoint") => {
-                // CRITICAL: This is the endpoint discovery event per MCP 2025-06-18 spec
+                // CRITICAL: This is the endpoint discovery event per MCP 2025-11-25 spec
                 // The event data may be either:
                 // 1. A JSON object: {"uri":"http://..."}
                 // 2. A plain string: "http://..."
@@ -712,7 +712,7 @@ impl Transport for StreamableHttpClientTransport {
             *self.session_id.write().await = Some(session_id.to_string());
         }
 
-        // MCP 2025-06-18: HTTP 202 Accepted means notification/response was accepted (no body)
+        // MCP 2025-11-25: HTTP 202 Accepted means notification/response was accepted (no body)
         if response.status() == reqwest::StatusCode::ACCEPTED {
             debug!("Received HTTP 202 Accepted (no response body expected)");
             // Update metrics
@@ -732,7 +732,7 @@ impl Transport for StreamableHttpClientTransport {
             .unwrap_or("");
 
         if content_type.contains("application/json") {
-            // MCP 2025-06-18: Server returned immediate JSON response
+            // MCP 2025-11-25: Server returned immediate JSON response
             debug!("Received JSON response from POST");
 
             let response_bytes = response
@@ -754,7 +754,7 @@ impl Transport for StreamableHttpClientTransport {
 
             debug!("JSON response queued successfully");
         } else if content_type.contains("text/event-stream") {
-            // MCP 2025-06-18: Server returned SSE stream response from POST
+            // MCP 2025-11-25: Server returned SSE stream response from POST
             // Process the stream synchronously to ensure responses are available
             debug!("Received SSE stream response from POST, processing events");
 
@@ -809,7 +809,7 @@ impl Transport for StreamableHttpClientTransport {
 
     async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
         // CRITICAL: Check response queue FIRST (for immediate JSON responses from POST)
-        // This ensures request-response pattern works correctly per MCP 2025-06-18
+        // This ensures request-response pattern works correctly per MCP 2025-11-25
         {
             let mut response_receiver = self.response_receiver.lock().await;
             match response_receiver.try_recv() {
@@ -967,7 +967,7 @@ mod tests {
 
         let message_endpoint = Arc::new(RwLock::new(None::<String>));
 
-        // Simulate endpoint event with JSON format (MCP 2025-06-18 spec)
+        // Simulate endpoint event with JSON format (MCP 2025-11-25 spec)
         let event_data = [r#"{"uri":"http://127.0.0.1:8080/mcp"}"#.to_string()];
         let data_str = event_data.join("\n");
 
