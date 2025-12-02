@@ -23,9 +23,25 @@
 //!   -H "Content-Type: application/json" \
 //!   -d '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"echo","arguments":{"message":"Hello"}},"id":2}'
 //! ```
+//!
+//! ## Browser-Based Tools (MCP Inspector)
+//!
+//! By default, CORS is disabled for security. To use browser-based tools like
+//! [MCP Inspector](https://github.com/anthropics/mcp-inspector), you need to
+//! enable CORS. Set the `ENABLE_CORS` environment variable:
+//!
+//! ```bash
+//! ENABLE_CORS=1 cargo run --example http_server --features http
+//! ```
+//!
+//! **Security Note**: Only enable CORS in development. For production, configure
+//! specific allowed origins using `StreamableHttpConfigBuilder::with_allowed_origins()`.
 
 #[cfg(feature = "http")]
 use turbomcp::prelude::*;
+
+#[cfg(feature = "http")]
+use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
 
 #[derive(Clone)]
 struct HttpServer;
@@ -51,6 +67,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_writer(std::io::stdout)
         .init();
 
+    // Check if CORS should be enabled (for browser-based tools like MCP Inspector)
+    let enable_cors = std::env::var("ENABLE_CORS").is_ok();
+
     println!("\n╔══════════════════════════════════════╗");
     println!("║      HTTP/SSE Server Example       ║");
     println!("╚══════════════════════════════════════╝");
@@ -59,13 +78,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Available tools:");
     println!("  • info - Get server info");
     println!("  • echo - Echo a message back\n");
+
+    if enable_cors {
+        println!("🔓 CORS enabled (development mode)");
+        println!("   Browser-based tools like MCP Inspector can connect.\n");
+    } else {
+        println!("🔒 CORS disabled (default, secure)");
+        println!("   To enable for MCP Inspector: ENABLE_CORS=1 cargo run --example http_server --features http\n");
+    }
+
     println!("Test with curl (see docs in example source code)\n");
 
     tracing::info!("Starting HTTP/SSE server on 127.0.0.1:3000");
 
-    HttpServer
-        .run_http_with_path("127.0.0.1:3000", "/mcp")
-        .await?;
+    // Build configuration with optional CORS support
+    let config = StreamableHttpConfigBuilder::new()
+        .with_bind_address("127.0.0.1:3000")
+        .with_endpoint_path("/mcp")
+        .allow_any_origin(enable_cors) // Enable CORS only when ENABLE_CORS is set
+        .build();
+
+    HttpServer.run_http_with_config("127.0.0.1:3000", config).await?;
 
     Ok(())
 }

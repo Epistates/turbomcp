@@ -258,7 +258,7 @@ pub fn generate_bidirectional_transport_methods(
                 self.run_http_with_path(addr, "/mcp").await
             }
 
-            /// Run HTTP server with custom endpoint path (MCP 2025-06-18 compliant)
+            /// Run HTTP server with custom endpoint path (MCP 2025-11-25 compliant)
             ///
             /// **Note**: Requires the `http` feature to be enabled on `turbomcp`.
             /// Add `turbomcp = { version = "2.0", features = ["http"] }` to your Cargo.toml.
@@ -277,6 +277,42 @@ pub fn generate_bidirectional_transport_methods(
                 let config = StreamableHttpConfigBuilder::new()
                     .with_endpoint_path(path)
                     .build();
+
+                // Use ServerBuilder's canonical HTTP implementation
+                server.run_http_with_config(addr, config).await
+                    .map_err(|e| Box::new(e) as Box<dyn ::std::error::Error>)
+            }
+
+            /// Run HTTP server with custom configuration (MCP 2025-11-25 compliant)
+            ///
+            /// Allows full control over HTTP server configuration including CORS,
+            /// rate limiting, and security settings.
+            ///
+            /// **Note**: Requires the `http` feature to be enabled on `turbomcp`.
+            /// Add `turbomcp = { version = "2.0", features = ["http"] }` to your Cargo.toml.
+            ///
+            /// # Example: Enable CORS for browser-based tools
+            ///
+            /// ```ignore
+            /// use turbomcp::prelude::*;
+            /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+            ///
+            /// let config = StreamableHttpConfigBuilder::new()
+            ///     .with_bind_address("127.0.0.1:3000")
+            ///     .with_endpoint_path("/mcp")
+            ///     .allow_any_origin(true)  // Enable CORS for development
+            ///     .build();
+            ///
+            /// server.run_http_with_config("127.0.0.1:3000", config).await?;
+            /// ```
+            #[cfg(feature = "http")]
+            pub async fn run_http_with_config<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
+                self,
+                addr: A,
+                config: ::turbomcp::turbomcp_transport::streamable_http_v2::StreamableHttpConfig
+            ) -> Result<(), Box<dyn ::std::error::Error>> {
+                // Create server instance using ServerBuilder pattern
+                let server = self.create_server()?;
 
                 // Use ServerBuilder's canonical HTTP implementation
                 server.run_http_with_config(addr, config).await
