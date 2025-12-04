@@ -418,27 +418,78 @@ impl TaskStorage {
         Ok(receiver.borrow().clone())
     }
 
-    /// List all tasks (optionally filtered by auth context)
-    pub fn list_tasks(&self, auth_context: Option<&str>) -> ServerResult<Vec<Task>> {
-        let tasks = self
+    /// List tasks with pagination and optional filtering by auth context.
+    ///
+    /// ## Parameters
+    ///
+    /// - `auth_context`: Optional authentication context to filter tasks by.
+    /// - `cursor`: An optional opaque cursor (task_id) to start pagination from.
+    /// - `limit`: Optional maximum number of tasks to return. Defaults to 100.
+    ///
+    /// ## Returns
+    ///
+    /// A `ServerResult` containing a tuple:
+    /// - `Vec<Task>`: The list of tasks for the current page.
+    /// - `Option<String>`: An opaque cursor for the next page, if more results are available.
+    pub fn list_tasks(
+        &self,
+        auth_context: Option<&str>,
+        cursor: Option<&str>,
+        limit: Option<usize>,
+    ) -> ServerResult<(Vec<Task>, Option<String>)> {
+        let tasks_guard = self
             .tasks
             .read()
             .map_err(|_| ServerError::Lifecycle("Lock poisoned".to_string()))?;
 
-        let filtered_tasks: Vec<Task> = tasks
-            .values()
-            .filter(|stored_task| {
-                // Filter by auth context if provided
-                match (auth_context, &stored_task.auth_context) {
+        // Convert HashMap values to a Vec for sorting and slicing
+        let mut all_tasks: Vec<&StoredTask> = tasks_guard.values().collect();
+
+        // Sort by task_id to ensure consistent pagination order
+        all_tasks.sort_by(|a, b| a.task.task_id.cmp(&b.task.task_id));
+
+        let actual_limit = limit.unwrap_or(100); // Default limit to 100
+
+        // Handle limit=0 edge case: return empty results with no cursor
+        if actual_limit == 0 {
+            return Ok((Vec::new(), None));
+        }
+
+        // Filter tasks by auth context
+        let filtered_tasks: Vec<&StoredTask> = all_tasks
+            .into_iter()
+            .filter(
+                |stored_task| match (auth_context, &stored_task.auth_context) {
                     (Some(ctx), Some(task_ctx)) => ctx == task_ctx,
-                    (None, _) => true,        // No auth context = see all
-                    (Some(_), None) => false, // Auth provided but task has none
-                }
-            })
-            .map(|stored_task| stored_task.task.clone())
+                    (None, _) => true,
+                    (Some(_), None) => false,
+                },
+            )
             .collect();
 
-        Ok(filtered_tasks)
+        // Find starting index based on cursor
+        // If cursor is not found or not provided, start from index 0
+        let start_index = cursor
+            .and_then(|c| filtered_tasks.iter().position(|t| t.task.task_id == c))
+            .unwrap_or(0);
+
+        // Get the page of tasks
+        let paginated_tasks: Vec<Task> = filtered_tasks
+            .iter()
+            .skip(start_index)
+            .take(actual_limit)
+            .map(|t| t.task.clone())
+            .collect();
+
+        // Determine next_cursor: the ID of the first item NOT included in this page
+        let next_index = start_index + actual_limit;
+        let next_cursor = if next_index < filtered_tasks.len() {
+            Some(filtered_tasks[next_index].task.task_id.clone())
+        } else {
+            None
+        };
+
+        Ok((paginated_tasks, next_cursor))
     }
 
     /// Start background cleanup task for TTL expiry
@@ -641,15 +692,86 @@ mod tests {
             .unwrap();
 
         // List all tasks (no filter)
-        let all_tasks = storage.list_tasks(None).unwrap();
+        let (all_tasks, _) = storage.list_tasks(None, None, None).unwrap();
         assert_eq!(all_tasks.len(), 3);
 
         // List tasks for user1
-        let user1_tasks = storage.list_tasks(Some("user1")).unwrap();
+        let (user1_tasks, _) = storage.list_tasks(Some("user1"), None, None).unwrap();
         assert_eq!(user1_tasks.len(), 1);
 
         // List tasks for user2
-        let user2_tasks = storage.list_tasks(Some("user2")).unwrap();
+        let (user2_tasks, _) = storage.list_tasks(Some("user2"), None, None).unwrap();
         assert_eq!(user2_tasks.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_list_tasks_pagination() {
+        let storage = TaskStorage::new(Duration::from_secs(60));
+
+        // Create 5 tasks with distinct task_ids (sorted alphabetically for consistent cursor)
+        let task_ids = vec![
+            storage
+                .create_task(TaskMetadata { ttl: Some(3600) }, None)
+                .unwrap(), // A
+            storage
+                .create_task(TaskMetadata { ttl: Some(3600) }, None)
+                .unwrap(), // B
+            storage
+                .create_task(TaskMetadata { ttl: Some(3600) }, None)
+                .unwrap(), // C
+            storage
+                .create_task(TaskMetadata { ttl: Some(3600) }, None)
+                .unwrap(), // D
+            storage
+                .create_task(TaskMetadata { ttl: Some(3600) }, None)
+                .unwrap(), // E
+        ];
+        // Ensure task_ids are truly unique and can be sorted consistently
+        let mut sorted_task_ids = task_ids.clone();
+        sorted_task_ids.sort();
+
+        // Page 1: Limit 2
+        let (page1_tasks, next_cursor1) = storage.list_tasks(None, None, Some(2)).unwrap();
+        assert_eq!(page1_tasks.len(), 2);
+        assert_eq!(page1_tasks[0].task_id, sorted_task_ids[0]);
+        assert_eq!(page1_tasks[1].task_id, sorted_task_ids[1]);
+        assert_eq!(next_cursor1, Some(sorted_task_ids[2].clone()));
+
+        // Page 2: Limit 2, using cursor from Page 1
+        let (page2_tasks, next_cursor2) = storage
+            .list_tasks(None, next_cursor1.as_deref(), Some(2))
+            .unwrap();
+        assert_eq!(page2_tasks.len(), 2);
+        assert_eq!(page2_tasks[0].task_id, sorted_task_ids[2]);
+        assert_eq!(page2_tasks[1].task_id, sorted_task_ids[3]);
+        assert_eq!(next_cursor2, Some(sorted_task_ids[4].clone()));
+
+        // Page 3: Limit 2, using cursor from Page 2 (should be last task, so no next cursor)
+        let (page3_tasks, next_cursor3) = storage
+            .list_tasks(None, next_cursor2.as_deref(), Some(2))
+            .unwrap();
+        assert_eq!(page3_tasks.len(), 1); // Only one task remaining
+        assert_eq!(page3_tasks[0].task_id, sorted_task_ids[4]);
+        assert_eq!(next_cursor3, None);
+
+        // Test with limit greater than remaining tasks
+        let (page_large_limit, next_cursor_large_limit) =
+            storage.list_tasks(None, None, Some(10)).unwrap();
+        assert_eq!(page_large_limit.len(), 5);
+        assert_eq!(next_cursor_large_limit, None);
+
+        // Test with limit 0 (should return no tasks and no cursor)
+        let (page_limit_0, next_cursor_limit_0) = storage.list_tasks(None, None, Some(0)).unwrap();
+        assert_eq!(page_limit_0.len(), 0);
+        assert_eq!(next_cursor_limit_0, None);
+
+        // Test with an invalid cursor (should act like no cursor)
+        let (page_invalid_cursor, next_cursor_invalid_cursor) = storage
+            .list_tasks(None, Some("non-existent-cursor"), Some(2))
+            .unwrap();
+        assert_eq!(page_invalid_cursor.len(), 2);
+        assert_eq!(page_invalid_cursor[0].task_id, sorted_task_ids[0]);
+        assert_eq!(page_invalid_cursor[1].task_id, sorted_task_ids[1]);
+        assert_eq!(next_cursor_invalid_cursor, Some(sorted_task_ids[2].clone()));
     }
 }
