@@ -40,6 +40,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -766,23 +768,33 @@ impl MessageSerializer {
     }
 
     /// Serialize a message using the default format
-    pub fn serialize(&self, message: &Message) -> Result<Bytes> {
+    pub fn serialize(&self, message: &mut Message) -> Result<Bytes> {
         let serialized = message.serialize(self.default_format)?;
 
         // Apply compression if enabled and message is large enough
         if self.enable_compression && serialized.len() > self.compression_threshold {
+            message.metadata.encoding = Some("gzip".to_string()); // Set encoding to gzip
             Ok(self.compress(serialized))
         } else {
             Ok(serialized)
         }
     }
 
+    /// Compresses the given data using gzip.
+    /// Returns the compressed data, or the original data if compression fails.
     fn compress(&self, data: Bytes) -> Bytes {
-        // Compression support is planned for a future release (v1.2.0)
-        // This method is currently a no-op but exists to maintain API stability
-        // When implemented, it will use self.compression_threshold and self.enable_compression
-        let _ = self;
-        data
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        if let Err(e) = std::io::Write::write_all(&mut encoder, &data) {
+            eprintln!("Failed to compress data: {}", e);
+            return data; // Return original data on error
+        }
+        match encoder.finish() {
+            Ok(compressed_data) => Bytes::from(compressed_data),
+            Err(e) => {
+                eprintln!("Failed to finish compression: {}", e);
+                data // Return original data on error
+            }
+        }
     }
 }
 
@@ -878,5 +890,46 @@ mod tests {
         assert_eq!(metadata.size, 100);
         assert_eq!(metadata.headers.get("custom"), Some(&"value".to_string()));
         assert_eq!(metadata.correlation_id, Some("corr-123".to_string()));
+    }
+
+    #[test]
+    fn test_message_serializer_compression() {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+
+        let serializer = MessageSerializer::new().with_compression(true, 10); // Enable compression with a low threshold
+
+        let large_json = json!({
+            "data": "a".repeat(100), // A string larger than 10 bytes
+        });
+        let mut message =
+            Message::json(MessageId::from("compressed_test"), large_json.clone()).unwrap();
+
+        let original_size = message.size();
+        assert!(
+            original_size > 10,
+            "Original message size should be greater than compression threshold"
+        );
+
+        let compressed_bytes = serializer.serialize(&mut message).unwrap();
+
+        // Assert encoding metadata is set
+        assert_eq!(message.metadata.encoding, Some("gzip".to_string()));
+
+        // Assert compressed size is smaller (unless data is incompressible)
+        assert!(
+            compressed_bytes.len() < original_size,
+            "Compressed size should be smaller than original"
+        );
+
+        // Decompress and verify content
+        let mut decoder = GzDecoder::new(&compressed_bytes[..]);
+        let mut decompressed_data = Vec::new();
+        decoder.read_to_end(&mut decompressed_data).unwrap();
+
+        let decompressed_message = Message::deserialize(Bytes::from(decompressed_data)).unwrap();
+        let parsed_json: serde_json::Value = decompressed_message.parse_json().unwrap();
+
+        assert_eq!(parsed_json, large_json);
     }
 }

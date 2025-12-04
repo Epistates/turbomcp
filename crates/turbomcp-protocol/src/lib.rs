@@ -117,11 +117,12 @@
 //! Clients and servers negotiate protocol versions during initialization:
 //!
 //! ```rust,no_run
-//! use turbomcp_protocol::{InitializeRequest, ClientCapabilities, Implementation};
+//! use turbomcp_protocol::{InitializeRequest, InitializeResult, ClientCapabilities};
+//! use turbomcp_protocol::types::{Implementation, ServerCapabilities}; // Corrected import path
 //!
 //! // Client requests draft features
 //! let request = InitializeRequest {
-//!     protocol_version: "2025-11-25".to_string(),  // Request draft
+//!     protocol_version: "2025-11-25".into(),  // Request draft
 //!     capabilities: ClientCapabilities::default(),
 //!     client_info: Implementation {
 //!         name: "my-client".to_string(),
@@ -133,6 +134,17 @@
 //!
 //! // Server responds with actual supported version
 //! // (may downgrade to 2025-06-18 if draft features unavailable)
+//! let response = InitializeResult {
+//!     protocol_version: "2025-11-25".into(),
+//!     capabilities: ServerCapabilities::default(),
+//!     server_info: Implementation {
+//!         name: "my-server".to_string(),
+//!         title: None,
+//!         version: "1.0.0".to_string(),
+//!     },
+//!     instructions: None,
+//!     _meta: None,
+//! };
 //! ```
 //!
 //! **Key Principle:** Clients request, servers decide. The negotiated version is the server's response.

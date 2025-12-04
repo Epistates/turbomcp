@@ -524,6 +524,12 @@ pub struct ListTasksRequest {
     /// - Use `nextCursor` from previous response for subsequent pages
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
+    /// Maximum number of tasks to return
+    ///
+    /// - Omit for server default (typically 100)
+    /// - Values > 1000 may be truncated by server
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
 }
 
 /// Response from tasks/list containing paginated task list

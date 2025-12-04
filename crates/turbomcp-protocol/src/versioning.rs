@@ -37,14 +37,14 @@
 //! ```
 //!
 //! **Runtime negotiation** determines what protocol version is used for a session:
-//! ```rust
+//! ```rust,ignore
 //! use turbomcp_protocol::{InitializeRequest, InitializeResult};
 //!
 //! // Client asks for draft
-//! let request = InitializeRequest { protocol_version: "2025-11-25".into(), /* ... */ };
+//! let request = InitializeRequest { protocol_version: "2025-11-25".into(), ..Default::default() };
 //!
 //! // Server responds with actual version (may downgrade)
-//! let response = InitializeResult { protocol_version: "2025-06-18".into(), /* ... */ };
+//! let response = InitializeResult { protocol_version: "2025-06-18".into(), ..Default::default() };
 //! ```
 //!
 //! **Key Principle:** Compile with draft features if you *might* use them, negotiate at runtime

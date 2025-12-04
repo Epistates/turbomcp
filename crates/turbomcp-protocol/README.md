@@ -595,21 +595,25 @@ fn handle_sensitive_input() {
 
 #### Meta-Feature (Enable All Draft Features)
 
-| Feature | Description | Default |
-|---------|-------------|---------|
+| Feature | Description | Enabled by Default |
+|---------|-------------|--------------------|
 | `mcp-draft` | Enable **all** MCP 2025-11-25 draft features | ❌ |
 
 Equivalent to enabling all features below.
 
 #### Individual Draft Features (SEP = Specification Enhancement Proposal)
 
-| Feature | SEP | Description | Default |
-|---------|-----|-------------|---------|
+| Feature | SEP | Description | Enabled by Default |
+|---------|-----|-------------|--------------------|
 | `mcp-tasks` | SEP-1686 | Experimental Tasks API for durable long-running requests | ❌ |
 | `mcp-url-elicitation` | SEP-1036 | URL mode elicitation for OAuth/sensitive data | ❌ |
 | `mcp-sampling-tools` | SEP-1577 | Tool calling support in LLM sampling requests | ❌ |
 | `mcp-icons` | SEP-973 | Icon metadata for tools/resources/prompts | ❌ |
 | `mcp-enum-improvements` | SEP-1330 | Standards-based enum schemas (oneOf, anyOf) | ❌ |
+
+**Legend:**
+- ✅ : Enabled by default (standard feature)
+- ❌ : Disabled by default (requires explicit feature flag)
 
 **Authentication & Security Features (Auth-Related SEPs):**
 

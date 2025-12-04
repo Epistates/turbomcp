@@ -26,6 +26,7 @@ serde_json = { workspace = true }
 bytes = { workspace = true }
 msgpacker = { workspace = true, optional = true, features = ["derive", "alloc"] }
 ciborium = "0.2"
+flate2 = "1.0" # For gzip compression
 
 # Error handling
 thiserror = { workspace = true }
