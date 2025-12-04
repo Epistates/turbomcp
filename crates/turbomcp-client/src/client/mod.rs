@@ -14,12 +14,15 @@
 //! Note: `Client<T>` is now cloneable via `Arc<ClientInner<T>>` - no need for SharedClient!
 
 // Core modules
-pub mod config;
-pub mod core;
-pub mod dispatcher;
-pub mod manager;
+pub(crate) mod config;
+pub(crate) mod core;
+mod dispatcher;
+mod manager;
+mod protocol;
+mod tasks_test;
+
+// Operations modules
 pub mod operations;
-pub mod protocol;
 
 // Design Note: Module decomposition is complete for 2.0.0
 //

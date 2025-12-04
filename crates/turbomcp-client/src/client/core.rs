@@ -28,6 +28,8 @@ use turbomcp_protocol::types::{
     ClientCapabilities as ProtocolClientCapabilities, InitializeResult as ProtocolInitializeResult,
     *,
 };
+#[cfg(feature = "mcp-tasks")]
+use turbomcp_protocol::types::tasks::*;
 use turbomcp_protocol::{Error, PROTOCOL_VERSION, Result};
 use turbomcp_transport::{Transport, TransportMessage};
 
@@ -1464,6 +1466,118 @@ impl<T: Transport + 'static> Client<T> {
         // Replace the registry with a fresh one (mutex ensures safe access)
         *self.inner.plugin_registry.lock().await = crate::plugins::PluginRegistry::new();
         Ok(())
+    }
+
+    // ============================================================================
+    // Tasks API Methods (MCP 2025-11-25 Draft - SEP-1686)
+    // ============================================================================
+
+    /// Retrieve the status of a task (tasks/get)
+    ///
+    /// Polls the server for the current status of a specific task.
+    ///
+    /// # Arguments
+    ///
+    /// * `task_id` - The ID of the task to query
+    ///
+    /// # Returns
+    ///
+    /// Returns the current `Task` state including status, timestamps, and messages.
+    #[cfg(feature = "mcp-tasks")]
+    pub async fn get_task(&self, task_id: &str) -> Result<Task> {
+        let request = GetTaskRequest {
+            task_id: task_id.to_string(),
+        };
+
+        self.execute_with_plugins(
+            "tasks/get",
+            Some(serde_json::to_value(request).map_err(|e| {
+                Error::protocol(format!("Failed to serialize get_task request: {}", e))
+            })?),
+        )
+        .await
+    }
+
+    /// Cancel a running task (tasks/cancel)
+    ///
+    /// Attempts to cancel a task execution. This is a best-effort operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `task_id` - The ID of the task to cancel
+    ///
+    /// # Returns
+    ///
+    /// Returns the updated `Task` state (typically with status "cancelled").
+    #[cfg(feature = "mcp-tasks")]
+    pub async fn cancel_task(&self, task_id: &str) -> Result<Task> {
+        let request = CancelTaskRequest {
+            task_id: task_id.to_string(),
+        };
+
+        self.execute_with_plugins(
+            "tasks/cancel",
+            Some(serde_json::to_value(request).map_err(|e| {
+                Error::protocol(format!("Failed to serialize cancel_task request: {}", e))
+            })?),
+        )
+        .await
+    }
+
+    /// List all tasks (tasks/list)
+    ///
+    /// Retrieves a paginated list of tasks known to the server.
+    ///
+    /// # Arguments
+    ///
+    /// * `cursor` - Optional pagination cursor from a previous response
+    /// * `limit` - Optional maximum number of tasks to return
+    ///
+    /// # Returns
+    ///
+    /// Returns a `ListTasksResult` containing the list of tasks and next cursor.
+    #[cfg(feature = "mcp-tasks")]
+    pub async fn list_tasks(
+        &self,
+        cursor: Option<String>,
+        limit: Option<usize>,
+    ) -> Result<ListTasksResult> {
+        let request = ListTasksRequest { cursor, limit };
+
+        self.execute_with_plugins(
+            "tasks/list",
+            Some(serde_json::to_value(request).map_err(|e| {
+                Error::protocol(format!("Failed to serialize list_tasks request: {}", e))
+            })?),
+        )
+        .await
+    }
+
+    /// Retrieve the result of a completed task (tasks/result)
+    ///
+    /// Blocks until the task reaches a terminal state (completed, failed, or cancelled),
+    /// then returns the operation result.
+    ///
+    /// # Arguments
+    ///
+    /// * `task_id` - The ID of the task to retrieve results for
+    ///
+    /// # Returns
+    ///
+    /// Returns a `GetTaskPayloadResult` containing the operation result (e.g. CallToolResult).
+    #[cfg(feature = "mcp-tasks")]
+    pub async fn get_task_result(&self, task_id: &str) -> Result<GetTaskPayloadResult> {
+        let request = GetTaskPayloadRequest {
+            task_id: task_id.to_string(),
+        };
+
+        self.execute_with_plugins(
+            "tasks/result",
+            Some(serde_json::to_value(request).map_err(|e| {
+                Error::protocol(format!("Failed to serialize get_task_result request: {}", e))
+            })?),
+        )
+        .await
     }
 
     // Note: Capability detection methods (has_*_handler, get_*_capabilities)
