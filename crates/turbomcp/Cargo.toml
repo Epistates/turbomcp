@@ -86,6 +86,7 @@ rand = "0.9"
 jsonschema = { version = "0.33", default-features = false, features = ["resolve-file"] }
 rustc-hash = "2.1.1"
 walkdir = { workspace = true }
+serial_test = "3.2"  # Required for integration tests that spawn cargo processes
 
 tokio-tungstenite = "0.28.0"
 proptest = "1.5"
@@ -145,6 +146,14 @@ required-features = ["stdio"]
 name = "validation"
 required-features = ["stdio"]
 
+[[example]]
+name = "multi_tenant_server"
+required-features = ["multi-tenancy", "http"]
+
+[[example]]
+name = "multi_tenant_saas"
+required-features = ["multi-tenancy", "http"]
+
 # Complete apps
 [[example]]
 name = "stdio_app"
@@ -176,6 +185,11 @@ required-features = ["unix"]
 [[example]]
 name = "transports_demo"
 required-features = ["stdio", "http", "tcp"]
+
+# Tasks API example
+[[example]]
+name = "tasks_demo"
+required-features = ["stdio", "mcp-tasks"]
 
 [features]
 default = ["stdio"]
@@ -221,6 +235,8 @@ server-only = ["tcp", "unix"]
 context-injection = []                 # Enhanced Context API features
 uri-templates = ["regex"]             # URI template matching for resources
 client-integration = ["dep:turbomcp-client", "turbomcp-client/stdio"]  # Re-export client types for full-stack development
+middleware = ["turbomcp-server/middleware"]
+multi-tenancy = ["turbomcp-server/multi-tenancy", "middleware"]
 # Note: JSON Schema generation (schemars) is always enabled - it's required by the macros
 # database feature removed - examples moved to separate crate for clean dependencies
 

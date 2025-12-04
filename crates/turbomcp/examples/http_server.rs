@@ -57,6 +57,28 @@ impl HttpServer {
     async fn echo(&self, message: String) -> McpResult<String> {
         Ok(format!("Echo: {}", message))
     }
+
+    #[tool("Read a mock file content")]
+    async fn read_file_tool(&self, file_path: String) -> McpResult<String> {
+        if file_path == "/mock/data.txt" {
+            Ok("This is the content of the mock data file.".to_string())
+        } else {
+            Err(McpError::resource_not_found(format!("File not found: {}", file_path)))
+        }
+    }
+
+    #[resource(
+        uri_pattern = "file:///mock/data.txt",
+        description = "A mock data file resource"
+    )]
+    async fn mock_data_resource(&self, _uri: String) -> McpResult<String> {
+        Ok("This is the content of the mock data file served as a resource.".to_string())
+    }
+
+    #[prompt("Get a personalized greeting")]
+    async fn personalized_greeting(&self, name: String) -> McpResult<String> {
+        Ok(format!("Hello, {}! Welcome to the HTTP/SSE server.", name))
+    }
 }
 
 #[tokio::main]
@@ -75,16 +97,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╚══════════════════════════════════════╝");
     println!("\n🌐 Starting server...");
     println!("📡 Listening on http://localhost:3000/mcp\n");
-    println!("Available tools:");
-    println!("  • info - Get server info");
-    println!("  • echo - Echo a message back\n");
+    println!("Available methods:");
+    println!("  • tools/list (POST)");
+    println!("  • tools/call (POST) - info, echo, read_file_tool");
+    println!("  • resources/read (POST) - file:///mock/data.txt");
+    println!("  • prompts/get (POST) - personalized_greeting\n");
 
     if enable_cors {
         println!("🔓 CORS enabled (development mode)");
         println!("   Browser-based tools like MCP Inspector can connect.\n");
     } else {
         println!("🔒 CORS disabled (default, secure)");
-        println!("   To enable for MCP Inspector: ENABLE_CORS=1 cargo run --example http_server --features http\n");
+        println!(
+            "   To enable for MCP Inspector: ENABLE_CORS=1 cargo run --example http_server --features http\n"
+        );
     }
 
     println!("Test with curl (see docs in example source code)\n");
@@ -98,7 +124,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .allow_any_origin(enable_cors) // Enable CORS only when ENABLE_CORS is set
         .build();
 
-    HttpServer.run_http_with_config("127.0.0.1:3000", config).await?;
+    HttpServer
+        .run_http_with_config("127.0.0.1:3000", config)
+        .await?;
 
     Ok(())
 }

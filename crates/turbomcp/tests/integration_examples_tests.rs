@@ -2,8 +2,12 @@
 //!
 //! These tests validate actual MCP protocol communication, server behavior,
 //! and end-to-end functionality using real JSON-RPC over stdio.
+//!
+//! NOTE: Tests that spawn `cargo run` processes must be run serially to avoid
+//! cargo build lock contention which causes intermittent failures.
 
 use serde_json::{Value, json};
+use serial_test::serial;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -160,6 +164,7 @@ async fn test_example_jsonrpc(
 
 /// Test that hello_world example handles real MCP communication
 #[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn test_hello_world_integration() {
     let requests = vec![json!({
         "jsonrpc": "2.0",
@@ -202,6 +207,7 @@ async fn test_hello_world_integration() {
 
 /// Test that stdio_app example works correctly
 #[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn test_transport_showcase_stdio() {
     // Test that the stdio app compiles and can respond to JSON-RPC
     let requests = vec![json!({
@@ -227,6 +233,7 @@ async fn test_transport_showcase_stdio() {
 
 /// Test error handling with invalid requests
 #[tokio::test]
+#[serial]
 async fn test_error_handling_integration() {
     let requests = vec![json!({
         "jsonrpc": "2.0",
@@ -255,6 +262,7 @@ async fn test_error_handling_integration() {
 
 /// Test that examples compile and can be spawned
 #[tokio::test]
+#[serial]
 async fn test_examples_compile_and_spawn() {
     let examples = ["hello_world", "macro_server", "tools"];
 
@@ -277,6 +285,7 @@ async fn test_examples_compile_and_spawn() {
 
 /// Test JSON-RPC protocol compliance
 #[tokio::test]
+#[serial]
 async fn test_jsonrpc_protocol_compliance() {
     let requests = vec![
         // Valid request with all fields
@@ -318,6 +327,7 @@ async fn test_jsonrpc_protocol_compliance() {
 ///
 /// TODO: Refactor to use pre-compiled binary instead of `cargo run` for reliable testing.
 #[tokio::test]
+#[serial]
 #[ignore]
 async fn test_invalid_jsonrpc_robustness_integration() {
     let requests = vec![
@@ -368,6 +378,7 @@ async fn test_invalid_jsonrpc_robustness_integration() {
 
 /// Test MCP protocol compliance for all examples
 #[tokio::test]
+#[serial]
 async fn test_mcp_protocol_compliance() {
     use turbomcp_protocol::jsonrpc::JsonRpcResponse;
     use turbomcp_protocol::validation::ProtocolValidator;
@@ -486,6 +497,7 @@ async fn test_mcp_protocol_compliance() {
 
 /// Test that examples produce clean JSON-RPC output with no log contamination
 #[tokio::test]
+#[serial]
 async fn test_clean_json_output() {
     let example_name = "hello_world";
 
