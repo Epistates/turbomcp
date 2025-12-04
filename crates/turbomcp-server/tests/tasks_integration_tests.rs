@@ -426,3 +426,121 @@ async fn test_missing_task_id_parameter() {
 
     assert!(response.error().is_some());
 }
+
+// ============================================================================
+// Tool Call Task Creation Tests (Automatic)
+// ============================================================================
+
+struct MockSlowTool {
+    name: String,
+    delay: Duration,
+}
+
+#[async_trait::async_trait]
+impl turbomcp_server::handlers::ToolHandler for MockSlowTool {
+    async fn handle(
+        &self,
+        _request: turbomcp_protocol::types::CallToolRequest,
+        _ctx: RequestContext,
+    ) -> turbomcp_server::ServerResult<turbomcp_protocol::types::CallToolResult> {
+        sleep(self.delay).await;
+        Ok(turbomcp_protocol::types::CallToolResult {
+            content: vec![turbomcp_protocol::types::Content::Text(
+                turbomcp_protocol::types::TextContent {
+                    text: "Tool finished".to_string(),
+                    annotations: None,
+                    meta: None,
+                },
+            )],
+            ..Default::default()
+        })
+    }
+
+    fn tool_definition(&self) -> turbomcp_protocol::types::Tool {
+        turbomcp_protocol::types::Tool {
+            name: self.name.clone(),
+            description: Some("A slow tool".to_string()),
+            input_schema: turbomcp_protocol::types::ToolInputSchema::default(),
+            ..Default::default()
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_tool_call_auto_creates_task() {
+    // 1. Setup Router with Slow Tool
+    let registry = Arc::new(HandlerRegistry::new());
+    let tool = MockSlowTool {
+        name: "slow_tool".to_string(),
+        delay: Duration::from_millis(500),
+    };
+    registry.register_tool("slow_tool", tool).unwrap();
+
+    let metrics = Arc::new(ServerMetrics::new());
+    let task_storage = Arc::new(TaskStorage::new(Duration::from_secs(3600)));
+    let router = Arc::new(RequestRouter::new(
+        registry,
+        metrics,
+        ServerConfig::default(),
+        Some(task_storage.clone()),
+    ));
+
+    // 2. Call Tool with Task Metadata
+    let request = JsonRpcRequest {
+        jsonrpc: JsonRpcVersion,
+        id: RequestId::String("call-1".to_string()),
+        method: "tools/call".to_string(),
+        params: Some(json!({
+            "name": "slow_tool",
+            "arguments": {},
+            "task": {
+                "ttl": 3600000
+            }
+        })),
+    };
+
+    let start = std::time::Instant::now();
+    let ctx = create_test_context(&router);
+    let response = router.route(request, ctx).await;
+    let duration = start.elapsed();
+
+    // 3. Verify Immediate Return (Non-blocking)
+    // IMPORTANT: If this fails (>500ms), it means the handler blocked!
+    assert!(
+        duration.as_millis() < 100,
+        "Handler blocked for {:?}, expected immediate return (<100ms)",
+        duration
+    );
+
+    // 4. Verify Response is CreateTaskResult
+    assert!(response.result().is_some());
+    let result = response.result().unwrap();
+    // Verify it looks like a task (has taskId, status)
+    assert!(result.get("task").is_some());
+    let task = result.get("task").unwrap();
+    let task_id = task.get("taskId").unwrap().as_str().unwrap().to_string();
+    assert_eq!(task.get("status").unwrap().as_str().unwrap(), "working");
+
+    // 5. Verify Task Eventually Completes
+    // Wait for the tool to finish (500ms + buffer)
+    sleep(Duration::from_millis(700)).await;
+
+    // Check status via storage directly
+    let stored_task = task_storage.get_task(&task_id, None).expect("Task should exist");
+    assert_eq!(
+        stored_task.status,
+        TaskStatus::Completed,
+        "Task should be completed after delay"
+    );
+
+    // 6. Verify Result Data
+    // We can use get_task_result (which returns immediately for completed tasks)
+    let result_state = task_storage.get_task_result(&task_id, None).await.unwrap();
+    match result_state {
+        turbomcp_server::task_storage::TaskResultState::Completed(val) => {
+            let content = val.get("content").unwrap().as_array().unwrap();
+            assert_eq!(content[0].get("text").unwrap().as_str().unwrap(), "Tool finished");
+        },
+        _ => panic!("Expected completed task result"),
+    }
+}
