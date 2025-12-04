@@ -1,5 +1,6 @@
 //! Roots handler for MCP roots operations
 
+use tracing::warn;
 use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::{
     jsonrpc::{JsonRpcRequest, JsonRpcResponse},
@@ -31,6 +32,9 @@ pub async fn handle_list(
     match parse_params::<ListRootsRequest>(&request) {
         Ok(_roots_request) => {
             // Default: empty roots list (configure via server builder or middleware)
+            warn!(
+                "Returning empty roots list. Consider configuring roots via server builder or middleware."
+            );
             let result = ListRootsResult {
                 roots: vec![],
                 _meta: None,

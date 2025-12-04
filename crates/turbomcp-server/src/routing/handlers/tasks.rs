@@ -80,20 +80,25 @@ pub async fn handle_result(
     }
 }
 
-/// Handle tasks/list request - list all tasks
+/// Handle tasks/list request - list all tasks with pagination and optional filtering
 pub async fn handle_list(
     context: &HandlerContext,
     request: JsonRpcRequest,
     _ctx: RequestContext,
 ) -> JsonRpcResponse {
     match parse_params::<ListTasksRequest>(&request) {
-        Ok(_list_request) => {
-            // List all tasks (no auth filtering for now, no pagination)
-            match context.task_storage.list_tasks(None) {
-                Ok(tasks) => {
+        Ok(list_request) => {
+            // Extract cursor and limit from the request
+            let cursor = list_request.cursor.as_deref();
+            let limit = list_request.limit;
+
+            // List tasks with pagination and auth filtering
+            match context.task_storage.list_tasks(None, cursor, limit) {
+                // Pass None for auth_context for now
+                Ok((tasks, next_cursor)) => {
                     let result = ListTasksResult {
                         tasks,
-                        next_cursor: None,
+                        next_cursor,
                         _meta: None,
                     };
                     success_response(&request, result)
