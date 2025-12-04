@@ -41,59 +41,82 @@ pub async fn handle_call(
             if let Some(handler) = context.registry.get_tool(&tool_name) {
                 // Check if task augmentation is requested (MCP 2025-11-25 draft - SEP-1686)
                 #[cfg(feature = "mcp-tasks")]
-                let task_id = if let Some(task_metadata) = &call_request.task {
+                if let Some(task_metadata) = call_request.task.clone() {
                     // Create task before executing tool
                     match context
                         .task_storage
-                        .create_task(task_metadata.clone(), None)
+                        .create_task(task_metadata, None)
                     {
-                        Ok(id) => {
+                        Ok(task_id) => {
                             // Update task to Working status
                             let _ = context.task_storage.update_status(
-                                &id,
+                                &task_id,
                                 turbomcp_protocol::types::TaskStatus::Working,
                                 Some(format!("Executing tool: {}", tool_name)),
                                 None,
                             );
-                            Some(id)
+
+                            // Spawn background task for execution
+                            let handler = handler.clone();
+                            let ctx = ctx.clone();
+                            let task_storage = context.task_storage.clone();
+                            let task_id_clone = task_id.clone();
+                            let call_request_clone = call_request.clone();
+
+                            tokio::spawn(async move {
+                                match handler.handle(call_request_clone, ctx).await {
+                                    Ok(mut tool_result) => {
+                                        // Add task_id to the tool result metadata
+                                        tool_result.task_id = Some(task_id_clone.clone());
+                                        
+                                        // Complete the task with the tool result
+                                        let _ = task_storage.complete_task(
+                                            &task_id_clone,
+                                            serde_json::to_value(&tool_result).unwrap_or(serde_json::json!({})),
+                                            None,
+                                        );
+                                    }
+                                    Err(e) => {
+                                        let _ = task_storage.fail_task(&task_id_clone, e.to_string(), None);
+                                    }
+                                }
+                            });
+
+                            // Return CreateTaskResult immediately
+                            // We need to fetch the created task to return it
+                            let task = context.task_storage.get_task(&task_id, None).unwrap_or_else(|_| {
+                                // Fallback if somehow deleted immediately (unlikely)
+                                turbomcp_protocol::types::tasks::Task {
+                                    task_id: task_id.clone(),
+                                    status: turbomcp_protocol::types::TaskStatus::Working,
+                                    status_message: Some("Task created".to_string()),
+                                    created_at: chrono::Utc::now().to_rfc3339(),
+                                    last_updated_at: chrono::Utc::now().to_rfc3339(),
+                                    ttl: None,
+                                    poll_interval: None,
+                                }
+                            });
+
+                            let result = turbomcp_protocol::types::tasks::CreateTaskResult {
+                                task,
+                                _meta: None,
+                            };
+
+                            return success_response(&request, result);
                         }
                         Err(e) => {
                             return error_response(&request, e);
                         }
                     }
-                } else {
-                    None
-                };
+                }
 
-                // Execute the tool
+                // Normal execution (synchronous / no task)
                 match handler.handle(call_request, ctx).await {
                     #[cfg(feature = "mcp-tasks")]
-                    Ok(mut tool_result) => {
-                        // If task was created, update it with the result
-                        if let Some(ref task_id) = task_id {
-                            // Complete the task with the tool result
-                            let _ = context.task_storage.complete_task(
-                                task_id,
-                                serde_json::to_value(&tool_result).unwrap_or(serde_json::json!({})),
-                                None,
-                            );
-                            // Add task_id to the tool result metadata
-                            tool_result.task_id = Some(task_id.clone());
-                        }
-
-                        success_response(&request, tool_result)
-                    }
+                    Ok(tool_result) => success_response(&request, tool_result),
                     #[cfg(not(feature = "mcp-tasks"))]
                     Ok(tool_result) => success_response(&request, tool_result),
-                    Err(e) => {
-                        // If task was created, mark it as failed
-                        #[cfg(feature = "mcp-tasks")]
-                        if let Some(ref task_id) = task_id {
-                            let _ = context.task_storage.fail_task(task_id, e.to_string(), None);
-                        }
-
-                        error_response(&request, e)
-                    }
+                    Err(e) => error_response(&request, e)
                 }
             } else {
                 let error = ServerError::not_found(format!("Tool '{tool_name}'"));
