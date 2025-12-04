@@ -24,12 +24,12 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Semaphore;
 
 use turbomcp_protocol::jsonrpc::*;
+#[cfg(feature = "mcp-tasks")]
+use turbomcp_protocol::types::tasks::*;
 use turbomcp_protocol::types::{
     ClientCapabilities as ProtocolClientCapabilities, InitializeResult as ProtocolInitializeResult,
     *,
 };
-#[cfg(feature = "mcp-tasks")]
-use turbomcp_protocol::types::tasks::*;
 use turbomcp_protocol::{Error, PROTOCOL_VERSION, Result};
 use turbomcp_transport::{Transport, TransportMessage};
 
@@ -1574,7 +1574,10 @@ impl<T: Transport + 'static> Client<T> {
         self.execute_with_plugins(
             "tasks/result",
             Some(serde_json::to_value(request).map_err(|e| {
-                Error::protocol(format!("Failed to serialize get_task_result request: {}", e))
+                Error::protocol(format!(
+                    "Failed to serialize get_task_result request: {}",
+                    e
+                ))
             })?),
         )
         .await

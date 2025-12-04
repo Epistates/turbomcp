@@ -59,8 +59,8 @@
 //! }
 //! ```
 
+use tokio::time::{Duration, sleep};
 use turbomcp::prelude::*;
-use tokio::time::{sleep, Duration};
 
 #[derive(Clone)]
 struct TasksServer;
@@ -75,19 +75,24 @@ impl TasksServer {
         description = "Analyzes a dataset (simulated long operation). Use task augmentation to run asynchronously."
     )]
     async fn analyze_data(&self, ctx: Context, dataset_size: u64) -> McpResult<String> {
-        ctx.info(&format!("Starting analysis of {} items...", dataset_size)).await?;
-        
+        ctx.info(&format!("Starting analysis of {} items...", dataset_size))
+            .await?;
+
         // Simulate progress (in a real app, you could update task status/progress here if exposed)
         let steps = 5;
         let step_time = Duration::from_secs(1);
-        
+
         for i in 1..=steps {
             // Simulate work
             sleep(step_time).await;
-            ctx.info(&format!("Analysis progress: {}/{}", i, steps)).await?;
+            ctx.info(&format!("Analysis progress: {}/{}", i, steps))
+                .await?;
         }
-        
-        Ok(format!("Analysis complete for {} items. Found 42 anomalies.", dataset_size))
+
+        Ok(format!(
+            "Analysis complete for {} items. Found 42 anomalies.",
+            dataset_size
+        ))
     }
 }
 

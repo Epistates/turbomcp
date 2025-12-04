@@ -18,23 +18,14 @@
 //! - Secure session management with IP binding
 
 use axum::{
-
     Json, Router,
-
     extract::{ConnectInfo, State},
-
-    http::{HeaderMap, HeaderValue, StatusCode, header, Method},
-
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     response::{
-
         IntoResponse, Response,
-
         sse::{Event, KeepAlive, Sse},
-
     },
-
     routing::get,
-
 };
 
 use bytes::Bytes;
@@ -53,14 +44,9 @@ use uuid::Uuid;
 
 use tower_http::cors::{Any, CorsLayer};
 
-
-
 use crate::security::{
-
     SecurityConfigBuilder, SecurityHeaders, SecurityValidator, SessionSecurityConfig,
-
     SessionSecurityManager,
-
 };
 
 // Bidirectional MCP support

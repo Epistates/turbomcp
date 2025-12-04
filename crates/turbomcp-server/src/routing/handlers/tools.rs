@@ -43,10 +43,7 @@ pub async fn handle_call(
                 #[cfg(feature = "mcp-tasks")]
                 if let Some(task_metadata) = call_request.task.clone() {
                     // Create task before executing tool
-                    match context
-                        .task_storage
-                        .create_task(task_metadata, None)
-                    {
+                    match context.task_storage.create_task(task_metadata, None) {
                         Ok(task_id) => {
                             // Update task to Working status
                             let _ = context.task_storage.update_status(
@@ -68,34 +65,42 @@ pub async fn handle_call(
                                     Ok(mut tool_result) => {
                                         // Add task_id to the tool result metadata
                                         tool_result.task_id = Some(task_id_clone.clone());
-                                        
+
                                         // Complete the task with the tool result
                                         let _ = task_storage.complete_task(
                                             &task_id_clone,
-                                            serde_json::to_value(&tool_result).unwrap_or(serde_json::json!({})),
+                                            serde_json::to_value(&tool_result)
+                                                .unwrap_or(serde_json::json!({})),
                                             None,
                                         );
                                     }
                                     Err(e) => {
-                                        let _ = task_storage.fail_task(&task_id_clone, e.to_string(), None);
+                                        let _ = task_storage.fail_task(
+                                            &task_id_clone,
+                                            e.to_string(),
+                                            None,
+                                        );
                                     }
                                 }
                             });
 
                             // Return CreateTaskResult immediately
                             // We need to fetch the created task to return it
-                            let task = context.task_storage.get_task(&task_id, None).unwrap_or_else(|_| {
-                                // Fallback if somehow deleted immediately (unlikely)
-                                turbomcp_protocol::types::tasks::Task {
-                                    task_id: task_id.clone(),
-                                    status: turbomcp_protocol::types::TaskStatus::Working,
-                                    status_message: Some("Task created".to_string()),
-                                    created_at: chrono::Utc::now().to_rfc3339(),
-                                    last_updated_at: chrono::Utc::now().to_rfc3339(),
-                                    ttl: None,
-                                    poll_interval: None,
-                                }
-                            });
+                            let task = context
+                                .task_storage
+                                .get_task(&task_id, None)
+                                .unwrap_or_else(|_| {
+                                    // Fallback if somehow deleted immediately (unlikely)
+                                    turbomcp_protocol::types::tasks::Task {
+                                        task_id: task_id.clone(),
+                                        status: turbomcp_protocol::types::TaskStatus::Working,
+                                        status_message: Some("Task created".to_string()),
+                                        created_at: chrono::Utc::now().to_rfc3339(),
+                                        last_updated_at: chrono::Utc::now().to_rfc3339(),
+                                        ttl: None,
+                                        poll_interval: None,
+                                    }
+                                });
 
                             let result = turbomcp_protocol::types::tasks::CreateTaskResult {
                                 task,
@@ -116,7 +121,7 @@ pub async fn handle_call(
                     Ok(tool_result) => success_response(&request, tool_result),
                     #[cfg(not(feature = "mcp-tasks"))]
                     Ok(tool_result) => success_response(&request, tool_result),
-                    Err(e) => error_response(&request, e)
+                    Err(e) => error_response(&request, e),
                 }
             } else {
                 let error = ServerError::not_found(format!("Tool '{tool_name}'"));

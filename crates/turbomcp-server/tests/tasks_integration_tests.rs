@@ -526,7 +526,9 @@ async fn test_tool_call_auto_creates_task() {
     sleep(Duration::from_millis(700)).await;
 
     // Check status via storage directly
-    let stored_task = task_storage.get_task(&task_id, None).expect("Task should exist");
+    let stored_task = task_storage
+        .get_task(&task_id, None)
+        .expect("Task should exist");
     assert_eq!(
         stored_task.status,
         TaskStatus::Completed,
@@ -539,8 +541,11 @@ async fn test_tool_call_auto_creates_task() {
     match result_state {
         turbomcp_server::task_storage::TaskResultState::Completed(val) => {
             let content = val.get("content").unwrap().as_array().unwrap();
-            assert_eq!(content[0].get("text").unwrap().as_str().unwrap(), "Tool finished");
-        },
+            assert_eq!(
+                content[0].get("text").unwrap().as_str().unwrap(),
+                "Tool finished"
+            );
+        }
         _ => panic!("Expected completed task result"),
     }
 }

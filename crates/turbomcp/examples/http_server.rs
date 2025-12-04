@@ -63,7 +63,10 @@ impl HttpServer {
         if file_path == "/mock/data.txt" {
             Ok("This is the content of the mock data file.".to_string())
         } else {
-            Err(McpError::resource_not_found(format!("File not found: {}", file_path)))
+            Err(McpError::resource_not_found(format!(
+                "File not found: {}",
+                file_path
+            )))
         }
     }
 
