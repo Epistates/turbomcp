@@ -18,26 +18,49 @@
 //! - Secure session management with IP binding
 
 use axum::{
+
     Json, Router,
+
     extract::{ConnectInfo, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+
+    http::{HeaderMap, HeaderValue, StatusCode, header, Method},
+
     response::{
+
         IntoResponse, Response,
+
         sse::{Event, KeepAlive, Sse},
+
     },
+
     routing::get,
+
 };
+
 use bytes::Bytes;
+
 use std::collections::{HashMap, VecDeque};
+
 use std::net::SocketAddr;
+
 use std::sync::Arc;
+
 use std::time::Duration;
+
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
+
 use uuid::Uuid;
 
+use tower_http::cors::{Any, CorsLayer};
+
+
+
 use crate::security::{
+
     SecurityConfigBuilder, SecurityHeaders, SecurityValidator, SessionSecurityConfig,
+
     SessionSecurityManager,
+
 };
 
 // Bidirectional MCP support
@@ -430,7 +453,24 @@ fn create_router_internal<H: turbomcp_protocol::JsonRpcHandler>(
                 .post(mcp_post_handler::<H>)
                 .delete(mcp_delete_handler::<H>),
         )
-        .with_state(state)
+        .with_state(state.clone()); // Clone state for the CorsLayer if needed, or pass it directly.
+
+    // Apply CORS layer if allow_any_origin is true
+    if state.security_validator.allow_any_origin() {
+        let cors = CorsLayer::new()
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::DELETE,
+                Method::OPTIONS, // Explicitly allow OPTIONS for preflight requests
+            ])
+            .allow_origin(Any) // Allow any origin, as configured
+            .allow_headers(Any); // Allow any headers
+
+        router = router.layer(cors);
+    }
+
+    router
 }
 
 /// GET handler - Opens SSE stream for server-initiated communication
