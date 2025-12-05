@@ -56,6 +56,15 @@ impl OriginConfig {
     }
 }
 
+/// Get header value case-insensitively (HTTP headers are case-insensitive per RFC 7230)
+fn get_header_case_insensitive<'a>(headers: &'a SecurityHeaders, name: &str) -> Option<&'a String> {
+    let name_lower = name.to_lowercase();
+    headers
+        .iter()
+        .find(|(k, _)| k.to_lowercase() == name_lower)
+        .map(|(_, v)| v)
+}
+
 /// Validate Origin header to prevent DNS rebinding attacks
 ///
 /// Per MCP 2025-06-18 specification:
@@ -76,8 +85,8 @@ pub fn validate_origin(
         return Ok(());
     }
 
-    // Check if Origin header exists
-    match headers.get("Origin") {
+    // Check if Origin header exists (case-insensitive per HTTP spec)
+    match get_header_case_insensitive(headers, "Origin") {
         Some(origin) => {
             // Origin present → validate it
 

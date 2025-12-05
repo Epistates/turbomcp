@@ -137,10 +137,23 @@ pub mod bidirectional;
 pub mod core;
 
 // MCP 2025-06-18 Compliant Streamable HTTP Transport (Recommended)
-/// A streamable HTTP transport implementation compliant with the MCP 2025-06-18 specification.
+/// HTTP transport types and configuration for MCP 2025-06-18 specification compliance.
+///
+/// This module provides configuration and session management types.
+/// The actual HTTP server implementation is in `turbomcp_server::runtime::http`.
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
-pub mod streamable_http_v2;
+pub mod streamable_http;
+
+/// Backwards-compatible re-export of `streamable_http` module.
+///
+/// **Deprecated**: Use `streamable_http` instead. This alias will be removed in v3.0.0.
+#[cfg(feature = "http")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http")))]
+#[deprecated(since = "2.4.0", note = "Use `streamable_http` instead")]
+pub mod streamable_http_v2 {
+    pub use crate::streamable_http::*;
+}
 
 /// A streamable HTTP client transport implementation.
 #[cfg(feature = "http")]
