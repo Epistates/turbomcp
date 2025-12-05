@@ -56,9 +56,7 @@ use turbomcp_protocol::types::{
     CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsRequest,
     ListRootsResult, PingRequest, PingResult,
 };
-use turbomcp_transport::streamable_http_v2::{
-    PendingRequestsMap, Session, SessionsMap, StoredEvent,
-};
+use turbomcp_transport::streamable_http::{PendingRequestsMap, Session, SessionsMap, StoredEvent};
 
 use crate::routing::ServerRequestDispatcher;
 use crate::{MessageId, ServerError, ServerResult};
@@ -391,7 +389,7 @@ use std::net::SocketAddr;
 use tokio::sync::mpsc;
 use turbomcp_protocol::JsonRpcHandler;
 use turbomcp_transport::security::{SecurityError, SecurityValidator, SessionSecurityManager};
-use turbomcp_transport::streamable_http_v2::{StreamableHttpConfig, StreamableHttpConfigBuilder};
+use turbomcp_transport::streamable_http::StreamableHttpConfig;
 
 /// Application state for the HTTP server with bidirectional support
 struct HttpAppState<F, H>
@@ -452,14 +450,12 @@ where
 /// * `handler_factory` - Function that creates handlers with session-specific context
 /// * `sessions` - Shared sessions map for SSE broadcasting
 /// * `pending_requests` - Shared pending requests map for response correlation
-/// * `addr` - Bind address (e.g., "127.0.0.1:3000")
-/// * `path` - MCP endpoint path (e.g., "/mcp")
+/// * `config` - Full transport configuration including CORS settings
 pub async fn run_http<F, H>(
     handler_factory: F,
     sessions: SessionsMap,
     pending_requests: PendingRequestsMap,
-    addr: String,
-    path: String,
+    config: StreamableHttpConfig,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     F: Fn(Option<String>, Option<axum::http::HeaderMap>, Option<String>) -> H
@@ -468,15 +464,7 @@ where
         + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
-    run_http_with_middleware(
-        handler_factory,
-        sessions,
-        pending_requests,
-        addr,
-        path,
-        None,
-    )
-    .await
+    run_http_with_middleware(handler_factory, sessions, pending_requests, config, None).await
 }
 
 /// Run MCP HTTP server with full bidirectional support and optional Tower middleware
@@ -494,8 +482,7 @@ where
 /// * `handler_factory` - Function that creates handlers with session-specific context
 /// * `sessions` - Shared sessions map for SSE broadcasting
 /// * `pending_requests` - Shared pending requests map for response correlation
-/// * `addr` - Bind address (e.g., "127.0.0.1:3000")
-/// * `path` - MCP endpoint path (e.g., "/mcp")
+/// * `config` - Full transport configuration including CORS settings
 /// * `middleware_fn` - Optional function that transforms the router by adding middleware layers
 ///
 /// # Example: Multi-Tenancy Middleware
@@ -503,6 +490,11 @@ where
 /// ```rust,ignore
 /// use turbomcp_server::middleware::tenancy::{HeaderTenantExtractor, TenantExtractionLayer};
 /// use tower::ServiceBuilder;
+///
+/// let config = StreamableHttpConfigBuilder::new()
+///     .with_bind_address("127.0.0.1:3000")
+///     .with_endpoint_path("/mcp")
+///     .build();
 ///
 /// let tenant_extractor = HeaderTenantExtractor::new("X-Tenant-ID");
 /// let middleware = ServiceBuilder::new()
@@ -512,8 +504,7 @@ where
 ///     handler_factory,
 ///     sessions,
 ///     pending,
-///     "127.0.0.1:3000".to_string(),
-///     "/mcp".to_string(),
+///     config,
 ///     Some(Box::new(move |router| router.layer(middleware))),
 /// ).await?;
 /// ```
@@ -521,8 +512,7 @@ pub async fn run_http_with_middleware<F, H>(
     handler_factory: F,
     sessions: SessionsMap,
     pending_requests: PendingRequestsMap,
-    addr: String,
-    path: String,
+    config: StreamableHttpConfig,
     middleware_fn: Option<Box<dyn FnOnce(Router) -> Router + Send>>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
@@ -532,12 +522,10 @@ where
         + 'static,
     H: JsonRpcHandler + Send + Sync + 'static,
 {
-    // Create transport configuration
-    let config = StreamableHttpConfigBuilder::new()
-        .with_bind_address(addr.clone())
-        .with_endpoint_path(path.clone())
-        .allow_localhost(true) // Required for MCP
-        .build();
+    // Extract frequently used config values
+    let addr = config.bind_addr.clone();
+    let path = config.endpoint_path.clone();
+    let allow_any_origin = config.security_validator.origin_config().allow_any;
 
     // Create application state
     let state = HttpAppState {
@@ -554,7 +542,7 @@ where
     let server_info = temp_handler.server_info();
 
     // Create router with custom handlers and attach state
-    let mut app = Router::new()
+    let app = Router::new()
         .route(
             &config.endpoint_path,
             post(mcp_post_handler::<F, H>)
@@ -562,6 +550,24 @@ where
                 .delete(mcp_delete_handler::<F, H>),
         )
         .with_state(state);
+
+    // Apply CORS layer if allow_any_origin is enabled
+    // Per MCP spec, CORS is needed for browser-based clients (e.g., MCP Inspector)
+    use axum::http::Method;
+    use tower_http::cors::{Any, CorsLayer};
+
+    let mut app = if allow_any_origin {
+        let cors = CorsLayer::new()
+            .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+            .allow_origin(Any)
+            .allow_headers(Any);
+
+        tracing::info!("   CORS: Enabled (allow_any_origin=true)");
+        app.layer(cors)
+    } else {
+        tracing::info!("   CORS: Disabled (secure mode)");
+        app
+    };
 
     // Apply middleware if provided (e.g., for multi-tenancy, authentication, etc.)
     // Middleware must be compatible with Router after state attachment
@@ -621,6 +627,21 @@ where
         .and_then(|v| v.to_str().ok())
         .map(String::from);
 
+    // Helper to create MCP-compliant response headers
+    fn mcp_response_headers(session_id: Option<&str>) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "MCP-Protocol-Version",
+            HeaderValue::from_static("2025-11-25"),
+        );
+        if let Some(sid) = session_id
+            && let Ok(hv) = HeaderValue::from_str(sid)
+        {
+            headers.insert("Mcp-Session-Id", hv);
+        }
+        headers
+    }
+
     // Check if this is a response to a server-initiated request
     use crate::MessageId;
     use turbomcp_protocol::jsonrpc::{JsonRpcResponse, ResponseId};
@@ -635,14 +656,24 @@ where
                 MessageId::Number(n) => n.to_string(),
                 MessageId::Uuid(u) => u.to_string(),
             },
-            _ => return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({})))),
+            _ => {
+                return Ok((
+                    StatusCode::ACCEPTED,
+                    mcp_response_headers(session_id.as_deref()),
+                    Json(serde_json::json!({})),
+                ))
+            }
         };
 
         // Check if this matches a pending server-initiated request
         if let Some(tx) = state.pending_requests.lock().await.remove(&response_id) {
             // Complete the pending request
             let _ = tx.send(response);
-            return Ok((StatusCode::ACCEPTED, Json(serde_json::json!({}))));
+            return Ok((
+                StatusCode::ACCEPTED,
+                mcp_response_headers(session_id.as_deref()),
+                Json(serde_json::json!({})),
+            ));
         }
     }
 
@@ -657,8 +688,13 @@ where
             (state.handler_factory)(session_id.clone(), Some(headers.clone()), tenant_id.clone());
         let _ = handler.handle_request(request).await;
 
-        // Return 204 No Content per JSON-RPC 2.0 spec
-        return Ok((StatusCode::NO_CONTENT, Json(serde_json::json!({}))));
+        // Return 202 Accepted per MCP 2025-11-25 spec
+        // (note: JSON-RPC 2.0 says no response, but MCP HTTP transport requires 202)
+        return Ok((
+            StatusCode::ACCEPTED,
+            mcp_response_headers(session_id.as_deref()),
+            Json(serde_json::json!({})),
+        ));
     }
 
     // This is a regular client request - create handler with session context, HTTP headers, and tenant ID
@@ -667,8 +703,12 @@ where
     // Handle the request
     let response_value = handler.handle_request(request).await;
 
-    // Return JSON response
-    Ok((StatusCode::OK, Json(response_value)))
+    // Return JSON response with MCP headers
+    Ok((
+        StatusCode::OK,
+        mcp_response_headers(session_id.as_deref()),
+        Json(response_value),
+    ))
 }
 
 /// GET handler - Opens SSE stream for server-initiated messages

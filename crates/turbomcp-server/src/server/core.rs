@@ -588,7 +588,7 @@ impl McpServer {
     /// ## With custom configuration
     /// ```no_run
     /// use turbomcp_server::ServerBuilder;
-    /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
     /// use std::time::Duration;
     ///
     /// #[tokio::main]
@@ -625,7 +625,7 @@ impl McpServer {
         self,
         addr: A,
     ) -> ServerResult<()> {
-        use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+        use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
 
         // Build default configuration
         let config = StreamableHttpConfigBuilder::new().build();
@@ -649,7 +649,7 @@ impl McpServer {
     /// **Best Practice** (recommended for forward compatibility):
     /// ```no_run
     /// # use turbomcp_server::ServerBuilder;
-    /// # use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// # use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// let config = StreamableHttpConfigBuilder::new()
@@ -667,7 +667,7 @@ impl McpServer {
     /// **Deprecated** (will be removed in v3.x):
     /// ```no_run
     /// # use turbomcp_server::ServerBuilder;
-    /// # use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// # use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
     /// # #[tokio::main]
     /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// // ⚠️ Avoid setting different addresses - causes deprecation warning
@@ -691,7 +691,7 @@ impl McpServer {
     /// ## Custom configuration example
     /// ```no_run
     /// use turbomcp_server::ServerBuilder;
-    /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
     /// use std::time::Duration;
     ///
     /// #[tokio::main]
@@ -714,7 +714,7 @@ impl McpServer {
     /// ## Production configuration (secure, rate limited)
     /// ```no_run
     /// use turbomcp_server::ServerBuilder;
-    /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
     /// use std::time::Duration;
     ///
     /// #[tokio::main]
@@ -752,7 +752,7 @@ impl McpServer {
     pub async fn run_http_with_config<A: std::net::ToSocketAddrs + Send + std::fmt::Debug>(
         self,
         addr: A,
-        mut config: turbomcp_transport::streamable_http_v2::StreamableHttpConfig,
+        mut config: turbomcp_transport::streamable_http::StreamableHttpConfig,
     ) -> ServerResult<()> {
         use std::collections::HashMap;
         use tokio::sync::{Mutex, RwLock};
@@ -880,18 +880,12 @@ impl McpServer {
 
         // Use factory-based HTTP server with full bidirectional support
         use crate::runtime::http::run_http;
-        run_http(
-            handler_factory,
-            sessions,
-            pending_requests,
-            socket_addr.to_string(),
-            config.endpoint_path.clone(),
-        )
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "HTTP server failed");
-            crate::ServerError::handler(e.to_string())
-        })?;
+        run_http(handler_factory, sessions, pending_requests, config)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "HTTP server failed");
+                crate::ServerError::handler(e.to_string())
+            })?;
 
         info!("HTTP server shutdown complete");
         Ok(())
@@ -1050,12 +1044,20 @@ impl McpServer {
 
         // Use run_http_with_middleware function
         use crate::runtime::http::run_http_with_middleware;
+        use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
+
+        // Create default config with resolved address
+        let config = StreamableHttpConfigBuilder::new()
+            .with_bind_address(socket_addr.to_string())
+            .with_endpoint_path("/mcp")
+            .allow_localhost(true)
+            .build();
+
         run_http_with_middleware(
             handler_factory,
             sessions,
             pending_requests,
-            socket_addr.to_string(),
-            "/mcp".to_string(), // Default endpoint path
+            config,
             Some(middleware_fn),
         )
         .await
