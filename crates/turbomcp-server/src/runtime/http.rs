@@ -661,7 +661,7 @@ where
                     StatusCode::ACCEPTED,
                     mcp_response_headers(session_id.as_deref()),
                     Json(serde_json::json!({})),
-                ))
+                ));
             }
         };
 
