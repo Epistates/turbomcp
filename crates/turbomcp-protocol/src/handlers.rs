@@ -386,7 +386,7 @@ impl HandlerCapabilities {
 ///
 /// ```rust,ignore
 /// // HTTP Transport
-/// use turbomcp_transport::streamable_http_v2::StreamableHttpTransport;
+/// use turbomcp_transport::streamable_http::StreamableHttpTransport;
 ///
 /// let handler = Arc::new(WeatherServer);
 /// let transport = StreamableHttpTransport::new(config, handler);

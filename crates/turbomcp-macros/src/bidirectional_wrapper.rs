@@ -272,7 +272,7 @@ pub fn generate_bidirectional_transport_methods(
                 let server = self.create_server()?;
 
                 // Configure HTTP with custom endpoint path
-                use ::turbomcp::turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+                use ::turbomcp::turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
 
                 let config = StreamableHttpConfigBuilder::new()
                     .with_endpoint_path(path)
@@ -295,7 +295,7 @@ pub fn generate_bidirectional_transport_methods(
             ///
             /// ```ignore
             /// use turbomcp::prelude::*;
-            /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+            /// use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
             ///
             /// let config = StreamableHttpConfigBuilder::new()
             ///     .with_bind_address("127.0.0.1:3000")
@@ -309,7 +309,7 @@ pub fn generate_bidirectional_transport_methods(
             pub async fn run_http_with_config<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A,
-                config: ::turbomcp::turbomcp_transport::streamable_http_v2::StreamableHttpConfig
+                config: ::turbomcp::turbomcp_transport::streamable_http::StreamableHttpConfig
             ) -> Result<(), Box<dyn ::std::error::Error>> {
                 // Create server instance using ServerBuilder pattern
                 let server = self.create_server()?;
