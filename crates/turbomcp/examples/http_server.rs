@@ -41,7 +41,7 @@
 use turbomcp::prelude::*;
 
 #[cfg(feature = "http")]
-use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
 
 #[derive(Clone)]
 struct HttpServer;
@@ -63,15 +63,12 @@ impl HttpServer {
         if file_path == "/mock/data.txt" {
             Ok("This is the content of the mock data file.".to_string())
         } else {
-            Err(McpError::resource_not_found(format!(
-                "File not found: {}",
-                file_path
-            )))
+            Err(McpError::resource(format!("File not found: {}", file_path)))
         }
     }
 
     #[resource(
-        uri_pattern = "file:///mock/data.txt",
+        uri = "file:///mock/data.txt",
         description = "A mock data file resource"
     )]
     async fn mock_data_resource(&self, _uri: String) -> McpResult<String> {

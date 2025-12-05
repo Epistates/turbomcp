@@ -755,12 +755,11 @@ pub mod prelude {
     // Streamable HTTP v2 (MCP 2025-06-18 Compliant) - RECOMMENDED
     // ============================================================================
 
-    /// Streamable HTTP v2 server configuration and runtime
+    /// Streamable HTTP server configuration types
     #[cfg(feature = "http")]
     #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
-    pub use turbomcp_transport::streamable_http_v2::{
-        StreamableHttpConfig, StreamableHttpConfigBuilder, create_router as create_http_router,
-        run_server as run_http_server,
+    pub use turbomcp_transport::streamable_http::{
+        StreamableHttpConfig, StreamableHttpConfigBuilder,
     };
 
     /// Security configuration types for HTTP transport
@@ -783,7 +782,7 @@ pub mod prelude {
     ///
     /// Instead of:
     /// ```ignore
-    /// use turbomcp_transport::streamable_http_v2::StreamableHttpConfigBuilder;
+    /// use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
     /// ```
     ///
     /// Use:
