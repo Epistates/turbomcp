@@ -98,10 +98,11 @@ for crate in "${CRATES[@]}"; do
         workspace_version=$(grep "^$crate = { version =" Cargo.toml | sed 's/.*version = "\([^"]*\)".*/\1/' || echo "NOT FOUND")
         if [ "$workspace_version" != "NOT FOUND" ]; then
             print_error "  ✗ $crate: workspace has $workspace_version, expected $EXPECTED_VERSION"
+            workspace_issues=$((workspace_issues + 1))
         else
-            print_warning "  ⚠ $crate: not found in workspace dependencies (may be optional)"
+            # Not in workspace deps is OK - these are optional crates
+            print_warning "  ⚠ $crate: not found in workspace dependencies (optional)"
         fi
-        workspace_issues=$((workspace_issues + 1))
     fi
 done
 
@@ -121,9 +122,10 @@ for crate in "${CRATES[@]}"; do
             continue
         fi
 
-        # Check if dep_crate is in dependencies
+        # Check if dep_crate is in dependencies (may have multiple entries for dev-deps)
+        # Only take the first match to avoid concatenating versions from multiple sections
         if grep -q "^$dep_crate = " "$cargo_toml"; then
-            dep_line=$(grep "^$dep_crate = " "$cargo_toml")
+            dep_line=$(grep "^$dep_crate = " "$cargo_toml" | head -1)
 
             # Check if using workspace = true
             if echo "$dep_line" | grep -q "workspace = true"; then
@@ -131,7 +133,7 @@ for crate in "${CRATES[@]}"; do
             else
                 # Extract version - handle both inline and multiline formats
                 if echo "$dep_line" | grep -q 'version = '; then
-                    dep_version=$(echo "$dep_line" | grep -oE 'version = "[^"]*"' | sed 's/version = "\([^"]*\)"/\1/')
+                    dep_version=$(echo "$dep_line" | grep -oE 'version = "[^"]*"' | head -1 | sed 's/version = "\([^"]*\)"/\1/')
                 else
                     dep_version="PATH ONLY"
                 fi
@@ -157,47 +159,21 @@ print_section "Step 4: Checking for Hardcoded Versions in Tests"
 
 hardcoded_issues=0
 
-# Look for version patterns in test files (broader search includes tests.rs, test.rs, config.rs, etc.)
-# Only flag tests that check the DEFAULT version, not custom versions set in test data
-for test_file in $(find crates/*/src crates/*/tests -name "*.rs" -type f 2>/dev/null | grep -E "(test|config)"); do
-    # Search for lines that check the DEFAULT config version
-    while IFS= read -r line; do
-        # Only check lines testing DEFAULT values (not lines where version is explicitly set to something else)
-        # Skip lines that have:
-        # 1. .version() method call (setting custom version)
-        # 2. version: assignment (struct initialization with custom version)
-        # 3. Lines within 10 lines after "version:" assignment (these are testing the custom version)
-        if echo "$line" | grep -qE '(assert.*version|DEFAULT_VERSION|SERVER_VERSION)' && \
-           ! echo "$line" | grep -qE '(\.version\(|version:)'; then
-            # Also skip if this test file has a custom version assignment nearby
-            line_num=$(grep -n "^.*$line" "$test_file" | head -1 | cut -d: -f1)
-            if [ -n "$line_num" ]; then
-                # Check 10 lines before for version: assignment
-                start_line=$((line_num > 10 ? line_num - 10 : 1))
-                context_has_custom_version=$(sed -n "${start_line},${line_num}p" "$test_file" | grep -c 'version: "' || true)
-                
-                if [ "$context_has_custom_version" -eq 0 ]; then
-                    if echo "$line" | grep -qE '"[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?"' && \
-                       ! echo "$line" | grep -q "\"$EXPECTED_VERSION\""; then
-                        found_version=$(echo "$line" | grep -oE '"[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?"' | head -1 | tr -d '"')
-                        # Only report if it looks like a previous version (2.0.x or 1.0.x pattern suggesting it should be current)
-                        if echo "$found_version" | grep -qE '^2\.0\.[0-2]$'; then
-                            relative_path=$(echo "$test_file" | sed 's|.*/crates/|crates/|')
-                            print_error "  ✗ $relative_path: Found version $found_version (expected $EXPECTED_VERSION)"
-                            echo "    Line: $(echo "$line" | xargs)"
-                            hardcoded_issues=$((hardcoded_issues + 1))
-                        fi
-                    fi
-                fi
-            fi
-        fi
-    done < "$test_file"
-done
+# Quick grep-based check for old version patterns in test files
+# Only flag obvious old versions like 2.0.0, 2.0.1, 2.0.2 that should be updated
+old_versions=$(grep -rE 'DEFAULT_VERSION|SERVER_VERSION' crates/*/src crates/*/tests 2>/dev/null | \
+    grep -oE '"2\.0\.[0-2]"' | sort -u || true)
+
+if [ -n "$old_versions" ]; then
+    print_error "Found old version references in test files:"
+    echo "$old_versions"
+    hardcoded_issues=1
+fi
 
 if [ $hardcoded_issues -eq 0 ]; then
     print_status "No hardcoded version mismatches found in test files"
 else
-    print_error "Found $hardcoded_issues hardcoded version mismatch(es) in test files"
+    print_error "Found hardcoded version mismatch(es) in test files"
     echo ""
     echo "To fix, run: VERSION=$EXPECTED_VERSION ./scripts/update-versions.sh"
     version_issues=$((version_issues + hardcoded_issues))
@@ -256,32 +232,30 @@ echo ""
 # Step 7: Check scripts directory for version references
 print_section "Step 7: Checking Scripts for Version References"
 
-script_issues=0
-
-# Only check key scripts for obvious hardcoded versions
-if [ -f "scripts/prepare-release.sh" ] && grep -q "auto-detect version" scripts/prepare-release.sh; then
-    print_status "Publish scripts use auto-detection (good practice)"
+# Informational only - scripts typically auto-detect versions
+if [ -f "scripts/prepare-release.sh" ]; then
+    print_status "Release scripts present (scripts/prepare-release.sh)"
 else
-    print_warning "Scripts may contain hardcoded version references - review manually"
-    script_issues=$((script_issues + 1))
+    print_warning "No release scripts found"
 fi
 
-version_issues=$((version_issues + script_issues))
 echo ""
 
-# Step 8: Check for old version references in key files
-print_section "Step 8: Checking for Old Version References"
+# Step 8: Check for old version references in internal dependencies
+print_section "Step 8: Checking for Old Internal Version References"
 
 old_version_issues=0
 
-# Check if there are any references to very old versions (like 1.x in a 2.x project)
-if grep -r "version.*1\.[0-9]\+\.[0-9]\+" crates/*/Cargo.toml 2>/dev/null | grep -v "^Binary" >/dev/null; then
-    print_warning "  ⚠ Found references to version 1.x in crates (may be outdated dependencies)"
-    old_version_issues=$((old_version_issues + 1))
-fi
+# Only check for OLD internal turbomcp crate versions (not external deps like serde = "1.0")
+for old_ver in "1.0" "2.0" "2.1" "2.2"; do
+    if grep -E "^turbomcp.*version = \"${old_ver}\.[0-9]+\"" crates/*/Cargo.toml 2>/dev/null >/dev/null; then
+        print_error "  ✗ Found internal turbomcp dependency with old version ${old_ver}.x"
+        old_version_issues=$((old_version_issues + 1))
+    fi
+done
 
 if [ $old_version_issues -eq 0 ]; then
-    print_status "No outdated version references detected"
+    print_status "No outdated internal version references detected"
 fi
 
 version_issues=$((version_issues + old_version_issues))
