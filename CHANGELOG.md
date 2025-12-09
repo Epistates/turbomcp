@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.1] - 2025-12-09
+
+### Added
+
+#### MCP 2025-11-25 Specification Enhancements
+- **Protocol Features** (`turbomcp-protocol`):
+  - **Error Codes**: Added `URL_ELICITATION_REQUIRED` (-32042) for URL-based elicitation scenarios
+  - **Tool Execution Management**: New `ToolExecution` struct with `taskSupport` field
+    - `TaskSupportMode` enum (Forbidden/Optional/Required) for fine-grained task execution control
+    - `Tool::execution` field to specify task execution capabilities per tool
+    - Allows servers to declare which tools support asynchronous task-based invocation
+  - **Builder API**: Added `Tool::with_execution()` method for ergonomic configuration
+
+#### Dependency Updates
+- `tower-http`: Updated to 0.6.8 (with `TimeoutLayer::with_status_code()` API migration)
+  - Applies consistent HTTP timeout handling across all transports
+  - Updated in: HTTP router, middleware stack, server core, WebSocket/HTTP proxies
+
+### Fixed
+
+#### Code Quality
+- Updated all `Tool` struct initializers across 11 files to include new `execution: None` field
+- Fixed `TimeoutLayer::new()` deprecation warnings (0.6.8 API change)
+- Ensured backward compatibility: all new fields are optional with sensible defaults
+
+#### Test Coverage
+- All 950+ tests passing
+- Zero clippy warnings
+- All examples compiling without errors
+
 ## [2.3.0] - 2025-12-02
 
 **MCP 2025-11-25 Specification Support**

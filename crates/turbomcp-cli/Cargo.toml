@@ -1,7 +1,7 @@
 [package]
 name = "turbomcp-cli"
 
-version = "2.3.0"
+version = "2.3.1"
 
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -17,9 +17,9 @@ rust-version = "1.89.0"
 [dependencies]
 # Core TurboMCP
 
-turbomcp-client = { path = "../turbomcp-client", version = "2.3.0" }
-turbomcp-transport = { path = "../turbomcp-transport", version = "2.3.0" }
-turbomcp-protocol = { path = "../turbomcp-protocol", version = "2.3.0" }
+turbomcp-client = { path = "../turbomcp-client", version = "2.3.1" }
+turbomcp-transport = { path = "../turbomcp-transport", version = "2.3.1" }
+turbomcp-protocol = { path = "../turbomcp-protocol", version = "2.3.1" }
 
 # CLI framework
 clap = { workspace = true, features = ["derive", "env", "string"] }
