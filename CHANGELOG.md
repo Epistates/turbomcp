@@ -19,8 +19,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `test_backward_compatibility_tools_without_execution()` - Ensures pre-v2.3.1 tools work
   - Added `test_mixed_tools_in_list()` - Real-world scenario with mixed tool configurations
   - All tests prevent future tool serialization/visibility regressions
-
 ### Fixed
+
+#### MCP Inspector Compatibility (GitHub Issue #9)
+- **CORS Preflight Handling** (`turbomcp-server/runtime/http.rs`):
+  - Added explicit OPTIONS handler for CORS preflight requests
+  - Without this, Axum returned 405 Method Not Allowed before CorsLayer could process preflight
+  - Browser-based clients (MCP Inspector) now connect successfully with `ENABLE_CORS=1`
+
+- **CORS Expose Headers** (`turbomcp-server/runtime/http.rs`):
+  - Added `Access-Control-Expose-Headers: mcp-session-id, mcp-protocol-version`
+  - Critical fix: browsers block JavaScript from reading response headers not in expose list
+  - MCP Inspector can now read session ID and protocol version from responses
+
+#### Code Quality
+- Fixed unused variable warnings in `turbomcp-transport/src/axum/middleware/auth.rs`
+- Fixed unused mut warning in `turbomcp-transport/src/axum/router/builder.rs`
+- Added `#[allow(dead_code)]` for conditionally-used `extract_bearer_token` function
+
+### Verified Compatibility
+- ✅ Full MCP Inspector v0.17.5 compatibility verified
+- ✅ Streamable HTTP transport: GET/POST/DELETE/OPTIONS
+- ✅ SSE streaming with proper Content-Type
+- ✅ Session management headers exposed to browser clients
+- ✅ Last-Event-ID resumption support
+- ✅ 227 turbomcp-server tests passing
+- ✅ 258 turbomcp-transport tests passing
 
 #### Configuration Guards and Feature Gating
 - Removed unnecessary `#[cfg(feature = "mcp-tasks")]` guards on now-unconditional `task` fields
