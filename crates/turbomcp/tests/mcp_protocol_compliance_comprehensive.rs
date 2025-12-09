@@ -784,6 +784,7 @@ async fn test_annotations_and_metadata_support() {
             description: Some("Tool with metadata".to_string()),
             input_schema: turbomcp_protocol::types::ToolInputSchema::default(),
             output_schema: None,
+            execution: None,
             annotations: Some(turbomcp_protocol::types::ToolAnnotations {
                 title: Some("Annotated Title".to_string()),
                 audience: Some(vec!["user".to_string(), "assistant".to_string()]),
@@ -792,7 +793,6 @@ async fn test_annotations_and_metadata_support() {
                 idempotent_hint: Some(true),
                 open_world_hint: Some(false),
                 read_only_hint: Some(true),
-                #[cfg(feature = "mcp-tasks")]
                 task_hint: None,
                 custom: std::collections::HashMap::new(),
             }),

@@ -50,7 +50,6 @@ mod mcp_compliance_tests {
             is_error: Some(false),
             structured_content: Some(json!({"structured": "data"})),
             _meta: Some(json!({"call_meta": "test"})),
-            #[cfg(feature = "mcp-tasks")]
             task_id: None,
         };
         let serialized = serde_json::to_string(&call_result).unwrap();
@@ -150,7 +149,6 @@ mod mcp_compliance_tests {
             name: "test_tool".to_string(),
             arguments: Some(HashMap::new()),
             _meta: Some(json!({"call_meta": "test"})),
-            #[cfg(feature = "mcp-tasks")]
             task: None,
         };
         let serialized = serde_json::to_string(&call_request).unwrap();
@@ -198,7 +196,6 @@ mod mcp_compliance_tests {
             tools: None,
             #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
-            #[cfg(feature = "mcp-tasks")]
             task: None,
             _meta: Some(json!({"message_meta": "test"})),
         };
@@ -258,7 +255,6 @@ mod mcp_compliance_tests {
                 }
             })),
             _meta: None,
-            #[cfg(feature = "mcp-tasks")]
             task_id: None,
         };
         let serialized = serde_json::to_string(&call_result).unwrap();
@@ -275,7 +271,6 @@ mod mcp_compliance_tests {
             is_error: Some(false),
             structured_content: None,
             _meta: None,
-            #[cfg(feature = "mcp-tasks")]
             task_id: None,
         };
         let serialized = serde_json::to_string(&call_result_no_structured).unwrap();
@@ -387,7 +382,6 @@ mod mcp_compliance_tests {
             is_error: Some(false),
             structured_content: None,
             _meta: Some(complex_meta.clone()),
-            #[cfg(feature = "mcp-tasks")]
             task_id: None,
         };
 
@@ -403,7 +397,6 @@ mod mcp_compliance_tests {
             is_error: Some(false),
             structured_content: None,
             _meta: Some(empty_meta.clone()),
-            #[cfg(feature = "mcp-tasks")]
             task_id: None,
         };
 

@@ -820,6 +820,7 @@ mod integrated_server_features {
                 additional_properties: None,
             },
             output_schema: None,
+            execution: None,
             annotations: None,
             meta: None,
         };

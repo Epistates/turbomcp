@@ -153,7 +153,8 @@ impl MiddlewareStack {
             .layer(PropagateRequestIdLayer::x_request_id())
             .layer(TraceLayer::new_for_http())
             // 3. Request timeout (DoS protection)
-            .layer(tower_http::timeout::TimeoutLayer::new(
+            .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+                http::StatusCode::REQUEST_TIMEOUT,
                 timeout.request_timeout,
             ))
             // 4. Response compression

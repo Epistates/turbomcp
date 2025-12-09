@@ -69,6 +69,7 @@ where
             additional_properties: None,
         },
         output_schema: None,
+        execution: None,
         annotations: None,
         meta: None,
         ..Tool::default()
@@ -107,6 +108,7 @@ where
         description: Some(description),
         input_schema: schema,
         output_schema: None,
+        execution: None,
         annotations: None,
         meta: None,
         ..Tool::default()

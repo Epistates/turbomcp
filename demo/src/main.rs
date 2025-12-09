@@ -63,6 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             additional_properties: Some(false),
         },
         output_schema: None,
+        execution: None,
         annotations: None,
         meta: None,
         ..Tool::default()

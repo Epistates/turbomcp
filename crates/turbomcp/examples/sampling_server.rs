@@ -48,7 +48,6 @@ async fn ask_llm(req: CallToolRequest, ctx: RequestContext) -> Result<CallToolRe
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
         _meta: None,
     };
@@ -71,7 +70,6 @@ async fn ask_llm(req: CallToolRequest, ctx: RequestContext) -> Result<CallToolRe
         is_error: None,
         structured_content: None,
         _meta: None,
-        #[cfg(feature = "mcp-tasks")]
         task_id: None,
     })
 }
@@ -99,6 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             additional_properties: Some(false),
         },
         output_schema: None,
+        execution: None,
         annotations: None,
         meta: None,
         #[cfg(feature = "mcp-icons")]

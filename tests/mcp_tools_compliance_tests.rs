@@ -133,6 +133,7 @@ mod tools_list_tests {
                         additional_properties: None,
                     },
                     output_schema: None,
+                    execution: None,
                     annotations: None,
                     meta: None,
                 }
@@ -810,6 +811,7 @@ mod tool_message_flow_tests {
                         additional_properties: None,
                     },
                     output_schema: None,
+                    execution: None,
                     annotations: None,
                     meta: None,
                 }

@@ -104,7 +104,6 @@ async fn test_sampling_basic_request_response() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -184,7 +183,6 @@ async fn test_sampling_model_preferences() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -250,7 +248,6 @@ async fn test_sampling_stop_reasons() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -318,7 +315,6 @@ async fn test_sampling_include_context() {
             tools: None,
             #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
-            #[cfg(feature = "mcp-tasks")]
             task: None,
         };
 
@@ -376,7 +372,6 @@ async fn test_sampling_parameter_validation() {
             tools: None,
             #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
-            #[cfg(feature = "mcp-tasks")]
             task: None,
         };
 
@@ -430,7 +425,6 @@ async fn test_sampling_error_cases() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -490,7 +484,6 @@ async fn test_sampling_multi_turn_conversation() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -575,7 +568,6 @@ async fn test_sampling_concurrent_requests() {
                 tools: None,
                 #[cfg(feature = "mcp-sampling-tools")]
                 tool_choice: None,
-                #[cfg(feature = "mcp-tasks")]
                 task: None,
             };
 
@@ -630,7 +622,6 @@ async fn test_sampling_image_content() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -699,7 +690,6 @@ async fn test_sampling_audio_content() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -759,7 +749,6 @@ async fn test_sampling_malformed_response_handling() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -791,7 +780,6 @@ async fn test_sampling_empty_messages_validation() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -854,7 +842,6 @@ async fn test_sampling_metadata_propagation() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -928,7 +915,6 @@ async fn test_sampling_stop_sequences_edge_cases() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -976,7 +962,6 @@ async fn test_sampling_stop_sequences_edge_cases() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -1060,7 +1045,6 @@ async fn test_sampling_model_preference_combinations() {
             tools: None,
             #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
-            #[cfg(feature = "mcp-tasks")]
             task: None,
         };
 
@@ -1134,7 +1118,6 @@ async fn test_sampling_system_prompt_variations() {
             tools: None,
             #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
-            #[cfg(feature = "mcp-tasks")]
             task: None,
         };
 
@@ -1239,7 +1222,6 @@ async fn test_sampling_mixed_content_multimodal_conversation() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
