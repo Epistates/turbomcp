@@ -469,6 +469,10 @@ pub mod error_codes {
     /// Internal error - Internal JSON-RPC error
     pub const INTERNAL_ERROR: i32 = -32603;
 
+    // Implementation-specific JSON-RPC errors (reserved range -32000 to -32099)
+    /// URL elicitation required - Server requires client to provide info via URL elicitation
+    pub const URL_ELICITATION_REQUIRED: i32 = -32042;
+
     // MCP-specific errors (application-defined range)
     /// Tool not found error
     pub const TOOL_NOT_FOUND: i32 = -32001;

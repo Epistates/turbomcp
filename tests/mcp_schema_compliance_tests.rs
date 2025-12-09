@@ -238,6 +238,7 @@ mod message_schema_compliance {
                 additional_properties: Some(false),
             },
             output_schema: None,
+            execution: None,
             annotations: None,
             meta: None,
         };
@@ -365,6 +366,7 @@ mod constraint_validation {
                 additional_properties: None,
             },
             output_schema: None,
+            execution: None,
             annotations: None,
             meta: None,
         };
@@ -455,6 +457,7 @@ mod constraint_validation {
                 additional_properties: None,
             },
             output_schema: None,
+            execution: None,
             annotations: None,
             meta: None,
         };

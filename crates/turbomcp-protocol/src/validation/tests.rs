@@ -1024,6 +1024,7 @@ fn create_valid_tool() -> Tool {
             additional_properties: None,
         },
         output_schema: None,
+        execution: None,
         annotations: None,
         meta: None,
         #[cfg(feature = "mcp-icons")]

@@ -691,6 +691,7 @@ fn test_tool() {
             additional_properties: None,
         },
         output_schema: None,
+        execution: None,
         annotations: None,
         meta: None,
     };
@@ -762,6 +763,7 @@ fn test_tool_serialization() {
             additional_properties: None,
         },
         output_schema: None,
+        execution: None,
         annotations: None,
         meta: None,
     };

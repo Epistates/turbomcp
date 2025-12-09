@@ -69,7 +69,6 @@ pub struct ToolAnnotations {
     /// - `taskHint` absent or `"never"`: MUST NOT invoke as task
     /// - `taskHint: "optional"`: MAY invoke as task
     /// - `taskHint: "always"`: SHOULD invoke as task
-    #[cfg(feature = "mcp-tasks")]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "taskHint")]
     pub task_hint: Option<TaskHint>,
@@ -82,9 +81,10 @@ pub struct ToolAnnotations {
 /// Task hint for tool invocation (MCP 2025-11-25 draft, SEP-1686)
 ///
 /// Indicates how a tool should be invoked with respect to task augmentation.
+/// Note: This is kept for backward compatibility. The newer API uses
+/// `ToolExecution.task_support` with `TaskSupportMode`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
-#[cfg(feature = "mcp-tasks")]
 pub enum TaskHint {
     /// Tool MUST NOT be invoked as a task (default behavior)
     Never,
@@ -92,6 +92,38 @@ pub enum TaskHint {
     Optional,
     /// Tool SHOULD be invoked as a task (server may reject non-task calls)
     Always,
+}
+
+/// Task support mode for tool execution (MCP 2025-11-25)
+///
+/// Indicates whether this tool supports task-augmented execution.
+/// This allows clients to handle long-running operations through polling
+/// the task system.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskSupportMode {
+    /// Tool does not support task-augmented execution (default when absent)
+    #[default]
+    Forbidden,
+    /// Tool may support task-augmented execution
+    Optional,
+    /// Tool requires task-augmented execution
+    Required,
+}
+
+/// Execution-related properties for a tool (MCP 2025-11-25)
+///
+/// Contains execution configuration hints for tools, particularly around
+/// task-augmented execution support.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ToolExecution {
+    /// Indicates whether this tool supports task-augmented execution.
+    ///
+    /// - `forbidden` (default): Tool does not support task-augmented execution
+    /// - `optional`: Tool may support task-augmented execution
+    /// - `required`: Tool requires task-augmented execution
+    #[serde(rename = "taskSupport", skip_serializing_if = "Option::is_none")]
+    pub task_support: Option<TaskSupportMode>,
 }
 
 /// Represents a tool that can be executed by an MCP server
@@ -123,6 +155,10 @@ pub struct Tool {
     #[serde(rename = "outputSchema", skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<ToolOutputSchema>,
 
+    /// Execution-related properties for this tool (MCP 2025-11-25)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ToolExecution>,
+
     /// Optional, additional metadata providing hints about the tool's behavior.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
@@ -145,6 +181,7 @@ impl Default for Tool {
             description: None,
             input_schema: ToolInputSchema::default(),
             output_schema: None,
+            execution: None,
             annotations: None,
             #[cfg(feature = "mcp-icons")]
             icons: None,
@@ -167,6 +204,7 @@ impl Tool {
             description: None,
             input_schema: ToolInputSchema::default(),
             output_schema: None,
+            execution: None,
             annotations: None,
             #[cfg(feature = "mcp-icons")]
             icons: None,
@@ -187,11 +225,18 @@ impl Tool {
             description: Some(description.into()),
             input_schema: ToolInputSchema::default(),
             output_schema: None,
+            execution: None,
             annotations: None,
             #[cfg(feature = "mcp-icons")]
             icons: None,
             meta: None,
         }
+    }
+
+    /// Sets the execution properties for this tool.
+    pub fn with_execution(mut self, execution: ToolExecution) -> Self {
+        self.execution = Some(execution);
+        self
     }
 
     /// Sets the input schema for this tool.
@@ -408,7 +453,6 @@ pub struct CallToolRequest {
     /// Requires:
     /// - Server capability: `tasks.requests.tools.call`
     /// - Tool annotation: `taskHint` must be "optional" or "always" (or absent/"never" for default)
-    #[cfg(feature = "mcp-tasks")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<crate::types::tasks::TaskMetadata>,
 
@@ -450,7 +494,6 @@ pub struct CallToolResult {
     /// When a tool call includes task metadata, the server creates a task to track the operation
     /// and returns the task_id here. Clients can use this to monitor progress via tasks/get
     /// or retrieve final results via tasks/result.
-    #[cfg(feature = "mcp-tasks")]
     #[serde(rename = "taskId", skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
 }
