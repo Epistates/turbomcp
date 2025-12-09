@@ -198,7 +198,6 @@ pub fn generate_tool_result(input: TokenStream) -> TokenStream {
             is_error: Some(#is_error),
             structured_content: None,
             _meta: None,
-            #[cfg(feature = "mcp-tasks")]
             task_id: None,
         }
     };
@@ -266,7 +265,6 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
                             None,
                             Some(true),
                         ),
-                        #[cfg(feature = "mcp-tasks")]
                         task: None,
                         _meta: None,
                     };
@@ -306,7 +304,6 @@ pub fn generate_elicitation(input: TokenStream) -> TokenStream {
                             None,
                             Some(true),
                         ),
-                        #[cfg(feature = "mcp-tasks")]
                         task: None,
                         _meta: None,
                     };

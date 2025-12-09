@@ -161,7 +161,6 @@ pub fn generate_tool_impl(args: TokenStream, input: TokenStream) -> TokenStream 
                     is_error: Some(false),  // Explicitly mark as success
                     structured_content: None,
                     _meta: None,
-                    #[cfg(feature = "mcp-tasks")]
                     task_id: None,
                 })
             })

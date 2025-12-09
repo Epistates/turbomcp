@@ -109,7 +109,6 @@ mod bidirectional_tests {
                 Some(30000), // 30 seconds in milliseconds
                 Some(true),
             ),
-            #[cfg(feature = "mcp-tasks")]
             task: None,
             _meta: None,
         };

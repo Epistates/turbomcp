@@ -77,7 +77,6 @@ pub struct CreateMessageRequest {
     /// When present, indicates the client should execute this sampling request as a long-running
     /// task and return a CreateTaskResult instead of the immediate CreateMessageResult.
     /// The actual result can be retrieved later via tasks/result.
-    #[cfg(feature = "mcp-tasks")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<crate::types::tasks::TaskMetadata>,
     /// Optional metadata per MCP 2025-11-25 specification

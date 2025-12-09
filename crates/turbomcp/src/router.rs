@@ -315,7 +315,6 @@ mod tests {
                 is_error: None,
                 structured_content: None,
                 _meta: None,
-                #[cfg(feature = "mcp-tasks")]
                 task_id: None,
             })
         });

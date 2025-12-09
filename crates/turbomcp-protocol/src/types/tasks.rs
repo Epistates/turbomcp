@@ -117,7 +117,6 @@ use std::collections::HashMap;
 /// ```
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
-#[cfg(feature = "mcp-tasks")]
 pub enum TaskStatus {
     /// Request is currently being processed
     Working,
@@ -232,7 +231,6 @@ impl TaskStatus {
 /// assert_eq!(task.ttl, Some(300_000));
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg(feature = "mcp-tasks")]
 pub struct Task {
     /// Unique identifier for this task
     ///
@@ -309,7 +307,6 @@ pub struct Task {
 /// The receiver MAY override the requested TTL. Check the actual `ttl` value
 /// in the returned `Task` object.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg(feature = "mcp-tasks")]
 pub struct TaskMetadata {
     /// Requested time-to-live in milliseconds from creation
     ///
@@ -338,7 +335,6 @@ pub struct TaskMetadata {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg(feature = "mcp-tasks")]
 pub struct RelatedTaskMetadata {
     /// Task ID this message is associated with
     ///
@@ -383,7 +379,6 @@ pub struct RelatedTaskMetadata {
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-tasks")]
 pub struct CreateTaskResult {
     /// The created task with initial state (typically `Working`)
     pub task: Task,
@@ -418,7 +413,6 @@ pub struct CreateTaskResult {
 /// - Task expired: JSON-RPC error -32602
 /// - Unauthorized: JSON-RPC error -32602 (if different auth context)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-tasks")]
 pub struct GetTaskRequest {
     /// Task identifier to query
     #[serde(rename = "taskId")]
@@ -428,7 +422,6 @@ pub struct GetTaskRequest {
 /// Response from tasks/get containing current task status
 ///
 /// This is a type alias - the response is a `Task` object with all current information.
-#[cfg(feature = "mcp-tasks")]
 pub type GetTaskResult = Task;
 
 /// Request to retrieve task results (or receive input requests during input_required)
@@ -455,7 +448,6 @@ pub type GetTaskResult = Task;
 ///
 /// Same as GetTaskRequest
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-tasks")]
 pub struct GetTaskPayloadRequest {
     /// Task identifier to retrieve results for
     #[serde(rename = "taskId")]
@@ -485,7 +477,6 @@ pub struct GetTaskPayloadRequest {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-tasks")]
 pub struct GetTaskPayloadResult {
     /// Dynamic result content (structure depends on original request type)
     #[serde(flatten)]
@@ -516,7 +507,6 @@ pub struct GetTaskPayloadResult {
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
 pub struct ListTasksRequest {
     /// Opaque pagination cursor
     ///
@@ -552,7 +542,6 @@ pub struct ListTasksRequest {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-tasks")]
 pub struct ListTasksResult {
     /// Array of tasks (may be empty)
     pub tasks: Vec<Task>,
@@ -592,7 +581,6 @@ pub struct ListTasksResult {
 /// - Already terminal: -32602 ("Cannot cancel task: already in terminal status")
 /// - Unauthorized: -32602
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-tasks")]
 pub struct CancelTaskRequest {
     /// Task identifier to cancel
     #[serde(rename = "taskId")]
@@ -602,7 +590,6 @@ pub struct CancelTaskRequest {
 /// Response from tasks/cancel containing updated task with cancelled status
 ///
 /// This is a type alias - the response is a `Task` object with `status: Cancelled`.
-#[cfg(feature = "mcp-tasks")]
 pub type CancelTaskResult = Task;
 
 /// Task status change notification (optional, not required by spec)
@@ -625,7 +612,6 @@ pub type CancelTaskResult = Task;
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-tasks")]
 pub struct TaskStatusNotification {
     /// Task ID this notification is for
     #[serde(rename = "taskId")]
@@ -654,7 +640,7 @@ pub struct TaskStatusNotification {
     pub _meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[cfg(all(test, feature = "mcp-tasks"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

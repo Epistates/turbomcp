@@ -644,7 +644,6 @@ pub struct ElicitRequest {
     /// When present, indicates the server should execute this elicitation request as a long-running
     /// task and return a CreateTaskResult instead of the immediate ElicitResult.
     /// The actual result can be retrieved later via tasks/result.
-    #[cfg(feature = "mcp-tasks")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<crate::types::tasks::TaskMetadata>,
     /// Optional metadata per MCP 2025-11-25 specification
@@ -656,7 +655,6 @@ impl Default for ElicitRequest {
     fn default() -> Self {
         Self {
             params: ElicitRequestParams::form(String::new(), ElicitationSchema::new(), None, None),
-            #[cfg(feature = "mcp-tasks")]
             task: None,
             _meta: None,
         }

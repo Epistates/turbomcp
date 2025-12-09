@@ -130,7 +130,6 @@ impl DocumentServer {
                 "total_results": 3,
                 "search_time_ms": 15
             })),
-            #[cfg(feature = "mcp-tasks")]
             task_id: None,
         })
     }
@@ -202,7 +201,6 @@ impl DocumentServer {
             is_error: Some(false),
             structured_content: None,
             _meta: None,
-            #[cfg(feature = "mcp-tasks")]
             task_id: None,
         })
     }

@@ -36,7 +36,6 @@ pub mod requests;
 pub mod resources;
 pub mod roots;
 pub mod sampling;
-#[cfg(feature = "mcp-tasks")]
 pub mod tasks;
 pub mod tools;
 
@@ -54,7 +53,6 @@ pub use requests::*;
 pub use resources::*;
 pub use roots::*;
 pub use sampling::{ModelHint, *};
-#[cfg(feature = "mcp-tasks")]
 pub use tasks::*;
 pub use tools::*;
 

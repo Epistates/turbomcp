@@ -44,7 +44,6 @@ async fn get_user_name(
             Some(true),
         ),
         _meta: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -75,7 +74,6 @@ async fn get_user_name(
         is_error: None,
         structured_content: None,
         _meta: None,
-        #[cfg(feature = "mcp-tasks")]
         task_id: None,
     })
 }
@@ -142,7 +140,6 @@ async fn configure_model(
             Some(true),
         ),
         _meta: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
     };
 
@@ -170,7 +167,6 @@ async fn configure_model(
         is_error: None,
         structured_content: None,
         _meta: None,
-        #[cfg(feature = "mcp-tasks")]
         task_id: None,
     })
 }
@@ -189,6 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             additional_properties: Some(false),
         },
         output_schema: None,
+        execution: None,
         annotations: None,
         meta: None,
         #[cfg(feature = "mcp-icons")]
@@ -206,6 +203,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             additional_properties: Some(false),
         },
         output_schema: None,
+        execution: None,
         annotations: None,
         meta: None,
         #[cfg(feature = "mcp-icons")]

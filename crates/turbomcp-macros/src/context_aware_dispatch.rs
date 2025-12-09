@@ -36,7 +36,6 @@ pub fn generate_context_aware_tool_dispatch(
                         name: tool_name.to_string(),
                         arguments: args,
                         _meta: None,
-                        #[cfg(feature = "mcp-tasks")]
                         task: None,
                     };
 
