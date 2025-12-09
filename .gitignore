@@ -46,6 +46,7 @@ cov.xml
 **/target/llvm-cov/
 **/target/llvm-cov-target/
 **/target/coverage/
+target
 
 # Testing artifacts
 /test-results/

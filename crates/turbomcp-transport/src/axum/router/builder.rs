@@ -83,6 +83,7 @@ where
         // 3. Response compression (reduce bandwidth)
         .layer(CompressionLayer::new());
 
+    #[allow(unused_mut)]
     let mut router = router
         // Apply tower middleware stack
         .layer(middleware_stack)

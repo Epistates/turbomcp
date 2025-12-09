@@ -59,6 +59,7 @@ impl AuthError {
     /// ```text
     /// WWW-Authenticate: Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"
     /// ```
+    #[allow(unused_variables)]
     fn unauthorized(metadata_uri: Option<&str>, scope: Option<&str>) -> Self {
         #[cfg(feature = "auth")]
         let www_authenticate = metadata_uri.map(|uri| {
@@ -153,6 +154,7 @@ fn get_jwks_cache(uri: &str) -> Arc<JwksCache> {
 }
 
 /// Extract Bearer token from Authorization header
+#[allow(dead_code)]
 fn extract_bearer_token(request: &axum::http::Request<axum::body::Body>) -> Option<String> {
     let auth_header = request.headers().get("Authorization")?;
     let auth_str = auth_header.to_str().ok()?;

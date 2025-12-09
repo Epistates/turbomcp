@@ -47,7 +47,6 @@ async fn test_sampling_rejection_should_not_hang() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
         _meta: None,
     };
@@ -225,7 +224,6 @@ async fn benchmark_sampling_rejection_hang_time() {
         tools: None,
         #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
-        #[cfg(feature = "mcp-tasks")]
         task: None,
         _meta: None,
     };
