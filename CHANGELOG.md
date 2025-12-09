@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.2] - 2025-12-09
+
+### Added
+
+#### Comprehensive Regression Test Coverage
+- **Tool Serialization Tests** (`turbomcp-protocol`):
+  - Added `test_tool_serialization_roundtrip()` - Validates tool JSON serialization/deserialization
+  - Added `test_tool_list_result_serialization()` - Tests ListToolsResult with mixed execution modes
+  - Added `test_tool_call_request_with_task_support()` - Validates CallToolRequest with task metadata
+  - Added `test_backward_compatibility_tools_without_execution()` - Ensures pre-v2.3.1 tools work
+  - Added `test_mixed_tools_in_list()` - Real-world scenario with mixed tool configurations
+  - All tests prevent future tool serialization/visibility regressions
+
+### Fixed
+
+#### Configuration Guards and Feature Gating
+- Removed unnecessary `#[cfg(feature = "mcp-tasks")]` guards on now-unconditional `task` fields
+- Fixed 4 test files with incorrect feature flag usage:
+  - `crates/turbomcp-transport/src/websocket_bidirectional/mcp_methods.rs`
+  - `crates/turbomcp-transport/src/websocket_bidirectional/types.rs`
+  - `crates/turbomcp-transport/tests/sampling_rejection_hang_test.rs` (2 fixes)
+
+#### Documentation
+- Updated HTTP server example documentation with CORS setup guidance
+- Clarified CORS messaging: "CORS disabled (secure mode)" instead of "CORS enabled (development mode)"
+- Added explicit instructions for enabling CORS with `ENABLE_CORS=1` for browser-based tools
+
+### Testing & Verification
+
+- ✅ Verified tool listing works correctly in HTTP transport
+- ✅ Confirmed new `execution` field serializes properly (optional, skipped when None)
+- ✅ All 950+ tests passing
+- ✅ Zero clippy warnings
+- ✅ Backward compatibility maintained for tools without `execution` field
+
 ## [2.3.1] - 2025-12-09
 
 ### Added
