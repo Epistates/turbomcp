@@ -431,7 +431,6 @@ mod tests {
             tools: None,
             #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
-            #[cfg(feature = "mcp-tasks")]
             task: None,
             _meta: None,
         };

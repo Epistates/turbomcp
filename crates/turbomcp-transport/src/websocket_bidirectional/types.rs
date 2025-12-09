@@ -373,7 +373,6 @@ mod tests {
                 None,
                 Some(true),
             ),
-            #[cfg(feature = "mcp-tasks")]
             task: None,
             _meta: None,
         };
