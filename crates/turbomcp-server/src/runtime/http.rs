@@ -542,25 +542,34 @@ where
     let server_info = temp_handler.server_info();
 
     // Create router with custom handlers and attach state
+    // NOTE: OPTIONS handler is added explicitly for CORS preflight support (GitHub Issue #9)
     let app = Router::new()
         .route(
             &config.endpoint_path,
             post(mcp_post_handler::<F, H>)
                 .get(mcp_get_handler::<F, H>)
-                .delete(mcp_delete_handler::<F, H>),
+                .delete(mcp_delete_handler::<F, H>)
+                .options(mcp_options_handler),
         )
         .with_state(state);
 
     // Apply CORS layer if allow_any_origin is enabled
     // Per MCP spec, CORS is needed for browser-based clients (e.g., MCP Inspector)
-    use axum::http::Method;
+    use axum::http::{HeaderName, Method};
     use tower_http::cors::{Any, CorsLayer};
 
     let mut app = if allow_any_origin {
+        // CRITICAL: expose_headers is required for browser-based clients (MCP Inspector)
+        // to read response headers like mcp-session-id and mcp-protocol-version.
+        // Without this, browsers block access to these headers due to CORS.
         let cors = CorsLayer::new()
             .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
             .allow_origin(Any)
-            .allow_headers(Any);
+            .allow_headers(Any)
+            .expose_headers([
+                HeaderName::from_static("mcp-session-id"),
+                HeaderName::from_static("mcp-protocol-version"),
+            ]);
 
         tracing::info!("   CORS: Enabled (allow_any_origin=true)");
         app.layer(cors)
@@ -821,6 +830,17 @@ where
         response_headers,
         Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(30))),
     ))
+}
+
+/// OPTIONS handler - CORS preflight support (GitHub Issue #9)
+///
+/// This handler responds to OPTIONS preflight requests from browsers.
+/// The CorsLayer adds the necessary CORS headers to the response.
+/// Without this explicit handler, the router returns 405 Method Not Allowed
+/// before CorsLayer can process the preflight request.
+async fn mcp_options_handler() -> impl IntoResponse {
+    // Return 204 No Content - the CorsLayer will add CORS headers
+    StatusCode::NO_CONTENT
 }
 
 /// DELETE handler - Terminates a session
