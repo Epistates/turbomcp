@@ -1,0 +1,52 @@
+[package]
+name = "turbomcp-protocol-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+serde_json = "1.0"
+
+[dependencies.turbomcp-protocol]
+path = ".."
+features = ["default"]
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_jsonrpc_parsing"
+path = "fuzz_targets/fuzz_jsonrpc_parsing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_tool_deserialization"
+path = "fuzz_targets/fuzz_tool_deserialization.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_message_validation"
+path = "fuzz_targets/fuzz_message_validation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_capability_parsing"
+path = "fuzz_targets/fuzz_capability_parsing.rs"
+test = false
+doc = false
+bench = false
