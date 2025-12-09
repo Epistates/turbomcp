@@ -7,7 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
-    Router, middleware,
+    Router,
+    http::StatusCode,
+    middleware,
     routing::{get, post},
 };
 use tokio::sync::broadcast;
@@ -74,7 +76,10 @@ where
         // 1. Distributed tracing (first for observability)
         .layer(TraceLayer::new_for_http())
         // 2. Request timeout (protect against slow clients)
-        .layer(TimeoutLayer::new(config.request_timeout))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            config.request_timeout,
+        ))
         // 3. Response compression (reduce bandwidth)
         .layer(CompressionLayer::new());
 

@@ -5,6 +5,7 @@
 
 use std::time::Duration;
 
+use http::StatusCode;
 use tower_http::timeout::TimeoutLayer as HttpTimeoutLayer;
 
 /// Timeout configuration
@@ -87,7 +88,10 @@ impl TimeoutLayer {
     /// Returns None if timeouts are disabled
     pub fn build(self) -> Option<HttpTimeoutLayer> {
         if self.config.enabled {
-            Some(HttpTimeoutLayer::new(self.config.request_timeout))
+            Some(HttpTimeoutLayer::with_status_code(
+                StatusCode::REQUEST_TIMEOUT,
+                self.config.request_timeout,
+            ))
         } else {
             None
         }

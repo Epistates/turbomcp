@@ -23,6 +23,8 @@ use crate::{
 use crate::middleware::MiddlewareStack;
 
 use bytes::Bytes;
+#[cfg(feature = "middleware")]
+use http::StatusCode;
 use http::{Request, Response};
 use tokio::time::{Duration, sleep};
 use turbomcp_transport::Transport;
@@ -255,7 +257,8 @@ impl McpServer {
             {
                 service = tower::util::BoxCloneService::new(
                     tower::ServiceBuilder::new()
-                        .layer(tower_http::timeout::TimeoutLayer::new(
+                        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+                            StatusCode::REQUEST_TIMEOUT,
                             timeout_config.request_timeout,
                         ))
                         .service(service),

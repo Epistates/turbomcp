@@ -859,7 +859,7 @@ impl RuntimeProxy {
 
     /// Run HTTP frontend using Axum and `ProxyService`
     async fn run_http(&mut self, bind: &str) -> ProxyResult<()> {
-        use axum::Router;
+        use axum::{Router, http::StatusCode};
         use std::time::Duration;
         use tower_http::limit::RequestBodyLimitLayer;
         use tower_http::timeout::TimeoutLayer;
@@ -887,7 +887,10 @@ impl RuntimeProxy {
         let app = Router::new()
             .turbo_mcp_routes(service)
             .layer(RequestBodyLimitLayer::new(self.request_size_limit))
-            .layer(TimeoutLayer::new(Duration::from_millis(self.timeout_ms)));
+            .layer(TimeoutLayer::with_status_code(
+                StatusCode::REQUEST_TIMEOUT,
+                Duration::from_millis(self.timeout_ms),
+            ));
 
         // 4. Parse bind address
         let listener = tokio::net::TcpListener::bind(bind).await.map_err(|e| {
@@ -906,7 +909,7 @@ impl RuntimeProxy {
 
     /// Run WebSocket frontend using Axum and `ProxyService`
     async fn run_websocket(&mut self, bind: &str) -> ProxyResult<()> {
-        use axum::Router;
+        use axum::{Router, http::StatusCode};
         use std::time::Duration;
         use tower_http::limit::RequestBodyLimitLayer;
         use tower_http::timeout::TimeoutLayer;
@@ -935,7 +938,10 @@ impl RuntimeProxy {
         let app = Router::new()
             .turbo_mcp_routes(service)
             .layer(RequestBodyLimitLayer::new(self.request_size_limit))
-            .layer(TimeoutLayer::new(Duration::from_millis(self.timeout_ms)));
+            .layer(TimeoutLayer::with_status_code(
+                StatusCode::REQUEST_TIMEOUT,
+                Duration::from_millis(self.timeout_ms),
+            ));
 
         // 4. Parse bind address
         let listener = tokio::net::TcpListener::bind(bind).await.map_err(|e| {
