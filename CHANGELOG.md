@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.3] - 2025-12-09
+
+### Fixed
+
+#### Macro-Generated HTTP Middleware Signature (`turbomcp-macros`)
+- **`run_http_with_middleware` now uses `::turbomcp::axum::Router`** instead of `::axum::Router`
+  - Fixes compilation failure for users who don't have `axum` as a direct dependency
+  - Users only need `turbomcp` with the `http` feature enabled
+  - "Bring Your Own Axum" still works: if user has `axum = "0.8.4"` (same version), types are identical
+  - Mismatched axum versions correctly produce compile errors (prevents subtle runtime issues)
+
 ## [2.3.2] - 2025-12-09
 
 ### Added

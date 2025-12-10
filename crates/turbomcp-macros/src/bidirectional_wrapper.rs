@@ -343,11 +343,26 @@ pub fn generate_bidirectional_transport_methods(
             ///     Box::new(move |router| router.layer(middleware))
             /// ).await?;
             /// ```
+            // IMPORTANT: Use ::turbomcp::axum::Router (NOT ::axum::Router) because:
+            //
+            // 1. All users of this macro have `turbomcp` as a dependency
+            // 2. `turbomcp` re-exports `axum` under the `http` feature (see turbomcp/src/lib.rs ~L557)
+            // 3. Using `::axum::Router` would FAIL if user doesn't have axum as a direct dependency
+            //
+            // "Bring Your Own Axum" compatibility:
+            // - If user also has `axum = "0.8.4"` (same version as turbomcp), the types are IDENTICAL
+            //   because Rust's semver resolution makes them the same underlying type
+            // - If user has a DIFFERENT axum version, they get a compile error - this is CORRECT
+            //   because mixing axum versions causes subtle runtime issues
+            //
+            // Users can write middleware using either:
+            //   - `turbomcp::axum::Router` (always works)
+            //   - `axum::Router` (works if their axum version matches turbomcp's)
             #[cfg(feature = "http")]
             pub async fn run_http_with_middleware<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A,
-                middleware_fn: Box<dyn FnOnce(::axum::Router) -> ::axum::Router + Send>,
+                middleware_fn: Box<dyn FnOnce(::turbomcp::axum::Router) -> ::turbomcp::axum::Router + Send>,
             ) -> Result<(), Box<dyn ::std::error::Error>> {
                 // Create server instance using ServerBuilder pattern
                 let server = self.create_server()?;
