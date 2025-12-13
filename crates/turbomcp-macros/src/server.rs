@@ -51,6 +51,7 @@ impl StdioSafetyValidator {
                tracing::info!(\"message\");  // if configured for stderr\n\n\
             ❌ WRONG:\n\
                println!(\"debug info\");\n\
+               dbg!(value);  // writes to stdout\n\
                std::io::stdout().write_all(b\"...\");\n\n\
             See: https://docs.modelcontextprotocol.io/guides/stdio-output",
             violations
@@ -75,6 +76,13 @@ impl Visit<'_> for StdioSafetyValidator {
                     self.errors.push(StdioViolation {
                         macro_name: "print!()".to_string(),
                         line_hint: "forbidden in stdio server (use eprintln! or tracing)"
+                            .to_string(),
+                    });
+                }
+                "dbg" => {
+                    self.errors.push(StdioViolation {
+                        macro_name: "dbg!()".to_string(),
+                        line_hint: "forbidden in stdio server (writes to stdout, use tracing)"
                             .to_string(),
                     });
                 }
