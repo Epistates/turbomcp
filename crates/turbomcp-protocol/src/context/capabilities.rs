@@ -79,6 +79,7 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     ///         temperature: None,
     ///         max_tokens: 100,
     ///         stop_sequences: None,
+    ///         task: None,
     ///         _meta: None,
     ///     };
     ///

@@ -200,6 +200,7 @@
 //!             include_context: None,
 //!             temperature: None,
 //!             stop_sequences: None,
+//!             task: None,
 //!             _meta: None,
 //!         };
 //!         let response = capabilities.create_message(request, ctx).await?;

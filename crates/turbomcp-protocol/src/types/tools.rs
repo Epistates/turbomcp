@@ -530,6 +530,7 @@ impl CallToolResult {
     ///     is_error: None,
     ///     structured_content: None,
     ///     _meta: None,
+    ///     task_id: None,
     /// };
     ///
     /// assert_eq!(result.all_text(), "Line 1\nLine 2");
@@ -569,6 +570,7 @@ impl CallToolResult {
     ///     is_error: None,
     ///     structured_content: None,
     ///     _meta: None,
+    ///     task_id: None,
     /// };
     ///
     /// assert_eq!(result.first_text(), Some("Hello, world!"));
@@ -597,6 +599,7 @@ impl CallToolResult {
     ///     is_error: Some(false),
     ///     structured_content: None,
     ///     _meta: None,
+    ///     task_id: None,
     /// };
     /// assert!(!success_result.has_error());
     ///
@@ -605,6 +608,7 @@ impl CallToolResult {
     ///     is_error: Some(true),
     ///     structured_content: None,
     ///     _meta: None,
+    ///     task_id: None,
     /// };
     /// assert!(error_result.has_error());
     ///
@@ -613,6 +617,7 @@ impl CallToolResult {
     ///     is_error: None,
     ///     structured_content: None,
     ///     _meta: None,
+    ///     task_id: None,
     /// };
     /// assert!(!unspecified_result.has_error());
     /// ```
@@ -646,6 +651,7 @@ impl CallToolResult {
     ///     is_error: Some(false),
     ///     structured_content: None,
     ///     _meta: None,
+    ///     task_id: None,
     /// };
     ///
     /// let display = result.to_display_string();

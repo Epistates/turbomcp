@@ -41,12 +41,15 @@
 //! ```rust,no_run
 //! use turbomcp_protocol::types::tasks::{Task, TaskStatus, TaskMetadata, CreateTaskResult};
 //! use turbomcp_protocol::types::CallToolRequest;
+//! use std::collections::HashMap;
 //! use serde_json::json;
 //!
 //! // Client requests task-augmented tool call
+//! let mut arguments = HashMap::new();
+//! arguments.insert("data".to_string(), json!("large_dataset"));
 //! let request = CallToolRequest {
 //!     name: "long_running_analysis".to_string(),
-//!     arguments: Some(json!({"data": "large_dataset"})),
+//!     arguments: Some(arguments),
 //!     task: Some(TaskMetadata {
 //!         ttl: Some(300_000), // 5 minute lifetime
 //!     }),
@@ -60,6 +63,7 @@
 //!         status: TaskStatus::Working,
 //!         status_message: None,
 //!         created_at: "2025-11-25T10:30:00Z".to_string(),
+//!         last_updated_at: "2025-11-25T10:30:00Z".to_string(),
 //!         ttl: Some(300_000),
 //!         poll_interval: Some(5_000), // Poll every 5s
 //!     },
@@ -290,11 +294,14 @@ pub struct Task {
 /// ```rust
 /// use turbomcp_protocol::types::tasks::TaskMetadata;
 /// use turbomcp_protocol::types::CallToolRequest;
+/// use std::collections::HashMap;
 /// use serde_json::json;
 ///
+/// let mut arguments = HashMap::new();
+/// arguments.insert("data".to_string(), json!("value"));
 /// let request = CallToolRequest {
 ///     name: "long_tool".to_string(),
-///     arguments: Some(json!({"data": "value"})),
+///     arguments: Some(arguments),
 ///     task: Some(TaskMetadata {
 ///         ttl: Some(300_000), // Request 5 minute lifetime
 ///     }),
@@ -372,6 +379,7 @@ pub struct RelatedTaskMetadata {
 ///         status: TaskStatus::Working,
 ///         status_message: None,
 ///         created_at: "2025-11-25T10:30:00Z".to_string(),
+///         last_updated_at: "2025-11-25T10:30:00Z".to_string(),
 ///         ttl: Some(60_000),
 ///         poll_interval: Some(5_000),
 ///     },
@@ -499,11 +507,13 @@ pub struct GetTaskPayloadResult {
 /// // First page
 /// let request = ListTasksRequest {
 ///     cursor: None,
+///     limit: None,
 /// };
 ///
-/// // Subsequent pages
+/// // Subsequent pages with custom limit
 /// let request = ListTasksRequest {
 ///     cursor: Some("next-page-cursor".to_string()),
+///     limit: Some(50),
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
