@@ -1,0 +1,171 @@
+# TurboMCP Documentation Site
+# Built with Material for MkDocs
+
+site_name: TurboMCP
+site_url: https://turbomcp.dev
+site_author: TurboMCP Contributors
+site_description: >-
+  Production-ready Rust SDK for the Model Context Protocol (MCP).
+  Build MCP servers with zero-boilerplate, automatic schema generation,
+  and full support for tools, resources, prompts, sampling, and elicitation.
+
+# Repository
+repo_name: turbomcp/turbomcp
+repo_url: https://github.com/turbomcp/turbomcp
+
+# Copyright
+copyright: Copyright &copy; 2024 - 2025 TurboMCP Contributors
+
+# Configuration
+theme:
+  name: material
+  custom_dir: docs/overrides
+
+  features:
+    - content.action.edit
+    - content.action.view
+    - content.code.annotate
+    - content.code.copy
+    - content.tooltips
+    - navigation.footer
+    - navigation.indexes
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+
+  palette:
+    # Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to dark mode
+    # Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch-off
+        name: Switch to light mode
+
+  font:
+    text: Roboto
+    code: Roboto Mono
+
+# Extensions
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - meta
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.critic:
+      mode: accept
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+  - pymdownx.highlight:
+      use_pygments: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shortener: true
+      repo_url_shorthand: true
+      user: squidfunk
+      repo: mkdocs-material
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      combine_header_slug: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search:
+      lang:
+        - en
+
+nav:
+  - Home: index.md
+
+  - Getting Started:
+    - Overview: getting-started/overview.md
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quick-start.md
+    - Your First Server: getting-started/first-server.md
+
+  - Guide:
+    - Architecture: guide/architecture.md
+    - Handlers: guide/handlers.md
+    - Context & DI: guide/context-injection.md
+    - Transports: guide/transports.md
+    - Authentication: guide/authentication.md
+    - Observability: guide/observability.md
+    - Advanced Patterns: guide/advanced-patterns.md
+
+  - API Reference:
+    - Protocol: api/protocol.md
+    - Server Framework: api/server.md
+    - Client: api/client.md
+    - Macros: api/macros.md
+    - Utilities: api/utilities.md
+
+  - Examples:
+    - Basic Examples: examples/basic.md
+    - Real-World Patterns: examples/patterns.md
+    - Sampling & Elicitation: examples/advanced.md
+
+  - Deployment:
+    - Docker: deployment/docker.md
+    - Production Setup: deployment/production.md
+    - Monitoring: deployment/monitoring.md
+
+  - Architecture Deep Dives:
+    - System Design: architecture/system-design.md
+    - Context Lifecycle: architecture/context-lifecycle.md
+    - Dependency Injection: architecture/dependency-injection.md
+    - Protocol Compliance: architecture/protocol-compliance.md
+
+  - Contributing:
+    - Code of Conduct: contributing/code-of-conduct.md
+    - Development: contributing/development.md
+    - Documentation: contributing/documentation.md
+
+# Social icons
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/turbomcp/turbomcp
+      name: GitHub
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/turbomcp
+      name: Twitter
+    - icon: fontawesome/solid/book
+      link: https://docs.rs/turbomcp
+      name: API Docs
