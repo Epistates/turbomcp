@@ -13,12 +13,68 @@ Build MCP servers in seconds with automatic schema generation, type-safe handler
 
 ## Requirements
 
-- **Rust 1.89.0+** (Edition 2024)
+- **Rust 1.89.0+** (Edition 2024) - Check with `rustc --version`
 - Tokio async runtime
+
+### Installation
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+turbomcp = "2.3"
+tokio = { version = "1", features = ["full"] }
+```
+
+Or with cargo:
+
+```bash
+cargo add turbomcp tokio --features tokio/full
+```
+
+### Feature Presets
+
+TurboMCP uses feature flags for progressive enhancement. Choose a preset based on your needs:
+
+| Preset | Use Case | Features Included |
+|--------|----------|-------------------|
+| `default` | Basic tool servers | STDIO only |
+| `full` | Production servers | All transports, context injection |
+| `full-stack` | Server + Client | Full + client integration |
+| `network` | Network services | STDIO + TCP |
+
+```toml
+# Production server with all transports
+turbomcp = { version = "2.3", features = ["full"] }
+
+# Add authentication
+turbomcp = { version = "2.3", features = ["full", "auth"] }
+
+# With SIMD acceleration for high throughput
+turbomcp = { version = "2.3", features = ["full", "simd"] }
+```
+
+### Individual Features
+
+| Feature | Description |
+|---------|-------------|
+| `stdio` | Standard MCP transport (default) |
+| `http` | HTTP/SSE for web integration |
+| `websocket` | WebSocket bidirectional |
+| `tcp` | Raw TCP sockets |
+| `unix` | Unix domain sockets |
+| `auth` | OAuth 2.1 authentication |
+| `dpop` | DPoP (RFC 9449) proof-of-possession |
+| `simd` | SIMD-accelerated JSON processing |
+| `context-injection` | Enhanced Context API |
+| `middleware` | Request middleware stack |
 
 ## Table of Contents
 
 - [Requirements](#requirements)
+  - [Installation](#installation)
+  - [Feature Presets](#feature-presets)
+  - [Individual Features](#individual-features)
 - [60-Second Quick Start](#60-second-quick-start)
 - [Why TurboMCP?](#why-turbomcp)
 - [Key Features](#key-features)
@@ -174,9 +230,8 @@ Start minimal (STDIO only), add features as needed:
 
 ```toml
 [dependencies]
-turbomcp = "2.1"
-tokio = { version = "1.0", features = ["full"] }
-serde_json = "1.0"
+turbomcp = "2.3"
+tokio = { version = "1", features = ["full"] }
 ```
 
 Create an MCP server with zero boilerplate:
