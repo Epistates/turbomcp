@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.4] - 2025-12-13
+
+### Fixed
+
+#### WebSocket Transport (`turbomcp-transport`)
+- **WebSocket client requests no longer timeout** - Fixed critical bug where standard request-response
+  patterns were never routed to correlation handlers in `spawn_message_reader_task()`. Responses now
+  correctly route to the `correlations` DashMap by matching JSON-RPC `id` to `request_id`.
+
+#### Feature Propagation (`turbomcp`)
+- **`mcp-tasks` feature now propagates to `turbomcp-server`** - Previously only propagated to
+  `turbomcp-protocol`, causing compilation errors when `mcp-tasks` was enabled.
+
+#### Error Handling (`turbomcp-protocol`)
+- **`std::error::Error::source()` now returns the actual source error** - Was previously always
+  returning `None` despite the `Error` struct having a `source` field. Enables proper error chain
+  introspection for debugging and logging frameworks.
+
+#### Code Quality
+- Removed unused `error` import in `turbomcp-transport/src/axum/middleware/jwks.rs`
+- Replaced `eprintln!` debug statements with `tracing::error` in `turbomcp-dpop/src/proof.rs`
+
+### Added
+
+#### Compile-Time Safety (`turbomcp-macros`)
+- **`dbg!` macro now detected by stdio safety validation** - Prevents accidental stdout writes in
+  servers using stdio transport. Error message updated to include `dbg!` in examples.
+
+### Changed
+
+#### Documentation
+- **Protocol version updated from 2025-06-18 to 2025-11-25** - README now correctly reflects the
+  actual `PROTOCOL_VERSION` constant used in the codebase.
+- **Added comprehensive Requirements section** - Documents Rust 1.89.0+ requirement with `rustc --version`
+  hint for verification.
+- **Added Installation section** - Includes `Cargo.toml` and `cargo add` examples.
+- **Added Feature Presets documentation** - Documents `default`, `full`, `full-stack`, and `network`
+  presets with use cases.
+- **Added Individual Features table** - Documents all transport, security, and performance features.
+- **Fixed 10 failing doctests** - Updated examples to include required fields (`task`, `task_id`,
+  `last_updated_at`, `limit`) and correct types (`HashMap<String, Value>` for arguments).
+- **Updated version references from 2.1 to 2.3** in Quick Start examples.
+
 ## [2.3.3] - 2025-12-09
 
 ### Fixed

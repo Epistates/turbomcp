@@ -1,7 +1,7 @@
 [package]
 name = "turbomcp"
 
-version = "2.3.3"
+version = "2.3.4"
 
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -47,8 +47,8 @@ tower-http = { workspace = true, optional = true }
 
 # Authentication and DPoP support (now as separate optional crates for clean minimal build)
 
-turbomcp-auth = { version = "2.3.3", path = "../turbomcp-auth", optional = true }
-turbomcp-dpop = { version = "2.3.3", path = "../turbomcp-dpop", optional = true }
+turbomcp-auth = { version = "2.3.4", path = "../turbomcp-auth", optional = true }
+turbomcp-dpop = { version = "2.3.4", path = "../turbomcp-dpop", optional = true }
 
 # JSON Schema generation (always required by macros)
 schemars = { version = "1.0", features = ["chrono04", "uuid1"] }
@@ -68,13 +68,13 @@ async-stream = { version = "0.3", optional = true }
 # Internal dependencies (always required)
 # CRITICAL: Use default-features = false to prevent feature leakage
 
-turbomcp-protocol = { version = "2.3.3", path = "../turbomcp-protocol", default-features = false }
-turbomcp-transport = { version = "2.3.3", path = "../turbomcp-transport", default-features = false }
-turbomcp-server = { version = "2.3.3", path = "../turbomcp-server", default-features = false }
-turbomcp-macros = { version = "2.3.3", path = "../turbomcp-macros", default-features = false }
+turbomcp-protocol = { version = "2.3.4", path = "../turbomcp-protocol", default-features = false }
+turbomcp-transport = { version = "2.3.4", path = "../turbomcp-transport", default-features = false }
+turbomcp-server = { version = "2.3.4", path = "../turbomcp-server", default-features = false }
+turbomcp-macros = { version = "2.3.4", path = "../turbomcp-macros", default-features = false }
 
 # Client library (optional - only needed for full-stack development)
-turbomcp-client = { version = "2.3.3", path = "../turbomcp-client", optional = true, default-features = false }
+turbomcp-client = { version = "2.3.4", path = "../turbomcp-client", optional = true, default-features = false }
 
 # Client library (optional - only needed for full-stack development)
 
@@ -92,7 +92,7 @@ tokio-tungstenite = "0.28.0"
 proptest = "1.5"
 oauth2 = { version = "5.0", default-features = false, features = ["reqwest"] }  # Required for oauth_integration_tests.rs
 tower = { workspace = true }  # Required for multi_tenant_saas.rs example
-turbomcp-client = { version = "2.3.3", path = "../turbomcp-client" }  # Required for resource subscription tests
+turbomcp-client = { version = "2.3.4", path = "../turbomcp-client" }  # Required for resource subscription tests
 
 # Example configurations with required features
 # Server examples

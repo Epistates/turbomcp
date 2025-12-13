@@ -22,7 +22,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "2.3"
+turbomcp = "2.3.4"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -230,7 +230,7 @@ Start minimal (STDIO only), add features as needed:
 
 ```toml
 [dependencies]
-turbomcp = "2.3"
+turbomcp = "2.3.4"
 tokio = { version = "1", features = ["full"] }
 ```
 
