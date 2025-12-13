@@ -13,10 +13,12 @@ use dashmap::DashMap;
 use futures::{stream::SplitSink, stream::SplitStream};
 use serde_json::json;
 use tokio::net::TcpStream;
-use tokio::sync::{Mutex, RwLock, broadcast, oneshot};
+use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::Message};
 use turbomcp_protocol::types::{ElicitRequest, ElicitResult};
 use uuid::Uuid;
+
+use crate::core::TransportMessage;
 
 use super::config::WebSocketBidirectionalConfig;
 use crate::bidirectional::{ConnectionState, CorrelationContext};
@@ -154,6 +156,21 @@ pub struct WebSocketBidirectionalTransport {
 
     /// Session ID for this connection
     pub session_id: String,
+
+    /// Channel receiver for incoming messages (consumed by `Transport::receive()`)
+    ///
+    /// The background `spawn_message_reader_task()` reads from the WebSocket stream
+    /// and forwards non-correlation messages to this channel. This eliminates the
+    /// race condition where both the background task and `receive()` compete to
+    /// read from the same WebSocket stream.
+    pub incoming_rx: Arc<Mutex<mpsc::Receiver<TransportMessage>>>,
+
+    /// Channel sender for incoming messages (used by `spawn_message_reader_task()`)
+    ///
+    /// This sender is cloned and given to the background message reader task.
+    /// The task forwards all messages that aren't handled by correlation routing
+    /// to this channel for `Transport::receive()` to consume.
+    pub incoming_tx: mpsc::Sender<TransportMessage>,
 }
 
 impl WebSocketBidirectionalTransport {

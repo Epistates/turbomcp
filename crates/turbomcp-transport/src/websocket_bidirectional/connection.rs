@@ -30,6 +30,12 @@ impl WebSocketBidirectionalTransport {
         // Capture reconnect setting before moving config
         let reconnect_enabled = config.reconnect.enabled;
 
+        // Create channel for incoming messages
+        // The background task reads from WebSocket and forwards to this channel
+        // Transport::receive() reads from this channel instead of the raw stream
+        // Buffer size of 256 should be sufficient for most use cases
+        let (incoming_tx, incoming_rx) = tokio::sync::mpsc::channel(256);
+
         Ok(Self {
             state: Arc::new(RwLock::new(TransportState::Disconnected)),
             capabilities,
@@ -48,6 +54,8 @@ impl WebSocketBidirectionalTransport {
             shutdown_tx: Arc::new(shutdown_tx),
             reconnect_allowed: Arc::new(std::sync::atomic::AtomicBool::new(reconnect_enabled)),
             session_id: Uuid::new_v4().to_string(),
+            incoming_rx: Arc::new(Mutex::new(incoming_rx)),
+            incoming_tx,
         })
     }
 

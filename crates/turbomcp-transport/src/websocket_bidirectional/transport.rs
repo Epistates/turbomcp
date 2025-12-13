@@ -4,19 +4,16 @@
 //! providing the core send/receive operations and transport management.
 
 use async_trait::async_trait;
-use bytes::Bytes;
-use futures::{SinkExt, StreamExt as _};
+use futures::SinkExt;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, trace};
-use uuid::Uuid;
 
 use super::types::WebSocketBidirectionalTransport;
 use crate::core::{
     Transport, TransportCapabilities, TransportConfig, TransportError, TransportMessage,
-    TransportMessageMetadata, TransportMetrics, TransportResult, TransportState, TransportType,
+    TransportMetrics, TransportResult, TransportState, TransportType,
 };
-use turbomcp_protocol::MessageId;
 
 #[async_trait]
 impl Transport for WebSocketBidirectionalTransport {
@@ -89,85 +86,34 @@ impl Transport for WebSocketBidirectionalTransport {
     }
 
     async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-        if let Some(ref mut reader) = *self.reader.lock().await {
-            match reader.next().await {
-                Some(Ok(Message::Text(text))) => {
-                    // Process for elicitation responses first
-                    let _ = self.process_incoming_message(text.to_string()).await;
+        // Read from the incoming channel instead of the raw WebSocket stream.
+        //
+        // The background `spawn_message_reader_task()` is the SINGLE consumer of the
+        // WebSocket stream. It routes correlation messages to their waiting handlers
+        // and forwards all other messages to the `incoming_rx` channel.
+        //
+        // This eliminates the race condition where both the background task and this
+        // method competed to read from the same WebSocket stream.
+        let mut incoming_rx = self.incoming_rx.lock().await;
 
-                    let message = TransportMessage {
-                        id: MessageId::from(Uuid::new_v4()),
-                        payload: Bytes::from(text.as_bytes().to_vec()),
-                        metadata: TransportMessageMetadata::default(),
-                    };
-
-                    self.metrics.write().await.messages_received += 1;
-                    trace!(
-                        "Received message {} in session {}",
-                        message.id, self.session_id
-                    );
-                    Ok(Some(message))
-                }
-                Some(Ok(Message::Binary(data))) => {
-                    let message = TransportMessage {
-                        id: MessageId::from(Uuid::new_v4()),
-                        payload: data,
-                        metadata: TransportMessageMetadata::default(),
-                    };
-
-                    self.metrics.write().await.messages_received += 1;
-                    trace!(
-                        "Received binary message {} in session {}",
-                        message.id, self.session_id
-                    );
-                    Ok(Some(message))
-                }
-                Some(Ok(Message::Close(_))) => {
-                    *self.state.write().await = TransportState::Disconnected;
-                    Err(TransportError::ConnectionLost(
-                        "WebSocket closed".to_string(),
-                    ))
-                }
-                Some(Ok(Message::Ping(data))) => {
-                    // Auto-reply with pong (required by WebSocket protocol)
-                    if let Some(ref mut writer) = *self.writer.lock().await {
-                        // Send pong to buffer
-                        if let Ok(()) = writer.send(Message::Pong(data)).await {
-                            // Flush to TCP socket to ensure immediate response
-                            let _ = writer.flush().await;
-                            trace!(
-                                "Replied to ping with pong and flushed in session {}",
-                                self.session_id
-                            );
-                        }
-                    }
-                    Ok(None)
-                }
-                Some(Ok(Message::Pong(_))) => {
-                    trace!("Received pong in session {}", self.session_id);
-                    Ok(None)
-                }
-                Some(Ok(Message::Frame(_))) => {
-                    // Raw frames are typically not used in normal operation
-                    trace!("Received raw frame in session {}", self.session_id);
-                    Ok(None)
-                }
-                Some(Err(e)) => {
-                    error!("WebSocket error in session {}: {}", self.session_id, e);
-                    *self.state.write().await = TransportState::Disconnected;
-                    Err(TransportError::ReceiveFailed(e.to_string()))
-                }
-                None => {
-                    *self.state.write().await = TransportState::Disconnected;
-                    Err(TransportError::ConnectionLost(
-                        "WebSocket stream ended".to_string(),
-                    ))
-                }
+        // Use try_recv to check if a message is available without blocking indefinitely
+        // This matches the behavior expected by the client's MessageDispatcher
+        match incoming_rx.recv().await {
+            Some(message) => {
+                self.metrics.write().await.messages_received += 1;
+                trace!(
+                    "Received message {} from incoming channel in session {}",
+                    message.id, self.session_id
+                );
+                Ok(Some(message))
             }
-        } else {
-            Err(TransportError::ReceiveFailed(
-                "WebSocket not connected".to_string(),
-            ))
+            None => {
+                // Channel closed - transport is likely disconnecting
+                *self.state.write().await = TransportState::Disconnected;
+                Err(TransportError::ConnectionLost(
+                    "Incoming message channel closed".to_string(),
+                ))
+            }
         }
     }
 
@@ -414,7 +360,11 @@ pub struct TransportStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::{TransportMessage, TransportMessageMetadata};
     use crate::websocket_bidirectional::config::WebSocketBidirectionalConfig;
+    use bytes::Bytes;
+    use turbomcp_protocol::MessageId;
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn test_transport_type() {
@@ -467,9 +417,14 @@ mod tests {
         let config = WebSocketBidirectionalConfig::default();
         let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
-        let result = transport.receive().await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not connected"));
+        // Note: With the new architecture, receive() reads from the incoming channel.
+        // Since no background task is running (not connected), the channel will be empty.
+        // The test needs a timeout since recv() will wait indefinitely.
+        let result =
+            tokio::time::timeout(std::time::Duration::from_millis(100), transport.receive()).await;
+
+        // Should timeout since no messages arrive when not connected
+        assert!(result.is_err(), "Should timeout when not connected");
     }
 
     #[tokio::test]

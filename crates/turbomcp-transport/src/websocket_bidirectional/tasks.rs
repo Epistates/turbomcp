@@ -21,9 +21,22 @@ impl WebSocketBidirectionalTransport {
     /// - Routes responses to their waiting correlation maps
     /// - Processes keep-alive control frames
     /// - Enables async bidirectional communication
+    /// - Forwards non-correlation messages to the incoming channel for `Transport::receive()`
     ///
     /// Without this task, `send_ping()`, `send_sampling()`, etc. will timeout
     /// waiting for responses that never arrive.
+    ///
+    /// ## Architecture
+    ///
+    /// This task is the SINGLE consumer of the WebSocket stream. It reads all messages
+    /// and routes them:
+    /// 1. Correlation matches (pending_pings, pending_samplings, pending_roots, elicitations, correlations)
+    ///    → Sent directly to the waiting oneshot channel
+    /// 2. Non-correlation messages (server requests, notifications)
+    ///    → Forwarded to `incoming_tx` channel for `Transport::receive()` to consume
+    ///
+    /// This eliminates the race condition where both this task and `receive()` competed
+    /// to read from the same WebSocket stream.
     pub fn spawn_message_reader_task(&self) -> tokio::task::JoinHandle<()> {
         let reader = self.reader.clone();
         let writer = self.writer.clone();
@@ -35,6 +48,7 @@ impl WebSocketBidirectionalTransport {
         let pending_roots = self.pending_roots.clone();
         let elicitations = self.elicitations.clone();
         let correlations = self.correlations.clone();
+        let incoming_tx = self.incoming_tx.clone();
 
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let session_id_clone = session_id.clone();
@@ -64,77 +78,130 @@ impl WebSocketBidirectionalTransport {
                         match msg_result {
                             Some(Ok(Message::Text(text))) => {
                                 // Parse JSON-RPC and route to appropriate handler
-                                if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&text)
-                                    && let Some(id) = json_value.get("id").and_then(|v| v.as_str())
-                                {
+                                let json_value = serde_json::from_str::<serde_json::Value>(&text);
+
+                                // Extract ID from the message (can be string or number)
+                                let id_str = json_value.as_ref().ok().and_then(|v| {
+                                    v.get("id").and_then(|id| {
+                                        // Handle both string and numeric IDs
+                                        id.as_str().map(|s| s.to_string())
+                                            .or_else(|| id.as_i64().map(|n| n.to_string()))
+                                            .or_else(|| id.as_u64().map(|n| n.to_string()))
+                                    })
+                                });
+
+                                let mut message_handled = false;
+
+                                if let Some(ref id) = id_str {
                                     // Try to deliver to pending_pings
                                     if let Some((_, response_tx)) = pending_pings.remove(id)
-                                        && let Some(result) = json_value.get("result")
+                                        && let Ok(ref json) = json_value
+                                        && let Some(result) = json.get("result")
                                         && let Ok(ping_result) = serde_json::from_value(result.clone())
                                     {
                                         let _ = response_tx.send(ping_result);
-                                        continue;
+                                        message_handled = true;
                                     }
 
                                     // Try to deliver to pending_samplings
-                                    if let Some((_, response_tx)) = pending_samplings.remove(id)
-                                        && let Some(result) = json_value.get("result")
+                                    if !message_handled
+                                        && let Some((_, response_tx)) = pending_samplings.remove(id)
+                                        && let Ok(ref json) = json_value
+                                        && let Some(result) = json.get("result")
                                         && let Ok(sampling_result) = serde_json::from_value(result.clone())
                                     {
                                         let _ = response_tx.send(sampling_result);
-                                        continue;
+                                        message_handled = true;
                                     }
 
                                     // Try to deliver to pending_roots
-                                    if let Some((_, response_tx)) = pending_roots.remove(id)
-                                        && let Some(result) = json_value.get("result")
+                                    if !message_handled
+                                        && let Some((_, response_tx)) = pending_roots.remove(id)
+                                        && let Ok(ref json) = json_value
+                                        && let Some(result) = json.get("result")
                                         && let Ok(roots_result) = serde_json::from_value(result.clone())
                                     {
                                         let _ = response_tx.send(roots_result);
-                                        continue;
+                                        message_handled = true;
                                     }
 
                                     // Try to deliver to elicitations
-                                    if let Some((_, pending)) = elicitations.remove(id)
-                                        && let Some(result) = json_value.get("result")
+                                    if !message_handled
+                                        && let Some((_, pending)) = elicitations.remove(id)
+                                        && let Ok(ref json) = json_value
+                                        && let Some(result) = json.get("result")
                                         && let Ok(elicit_result) = serde_json::from_value(result.clone())
                                     {
                                         let _ = pending.response_tx.send(elicit_result);
-                                        continue;
+                                        message_handled = true;
                                     }
 
                                     // Try to deliver to correlations (for standard request-response)
                                     // Find correlation by matching request_id to the JSON-RPC id
-                                    let mut matched_correlation_id = None;
-                                    for entry in correlations.iter() {
-                                        if entry.value().request_id == id {
-                                            matched_correlation_id = Some(entry.key().clone());
-                                            break;
+                                    if !message_handled {
+                                        let mut matched_correlation_id = None;
+                                        for entry in correlations.iter() {
+                                            if entry.value().request_id == *id {
+                                                matched_correlation_id = Some(entry.key().clone());
+                                                break;
+                                            }
                                         }
-                                    }
-                                    if let Some(correlation_id) = matched_correlation_id
-                                        && let Some((_, ctx)) = correlations.remove(&correlation_id)
-                                    {
-                                        if let Some(response_tx) = ctx.response_tx {
-                                            // Create TransportMessage from the raw JSON text
-                                            let response_message = crate::core::TransportMessage {
-                                                id: turbomcp_protocol::MessageId::from(id),
-                                                payload: bytes::Bytes::from(text.as_bytes().to_vec()),
-                                                metadata: crate::core::TransportMessageMetadata::default(),
-                                            };
-                                            let _ = response_tx.send(response_message);
-                                            debug!(
-                                                "Delivered response for correlation {} (request_id: {}) in session {}",
-                                                correlation_id, id, session_id_clone
-                                            );
+                                        if let Some(correlation_id) = matched_correlation_id
+                                            && let Some((_, ctx)) = correlations.remove(&correlation_id)
+                                        {
+                                            if let Some(response_tx) = ctx.response_tx {
+                                                // Create TransportMessage from the raw JSON text
+                                                let response_message = crate::core::TransportMessage {
+                                                    id: turbomcp_protocol::MessageId::from(id.as_str()),
+                                                    payload: bytes::Bytes::from(text.as_bytes().to_vec()),
+                                                    metadata: crate::core::TransportMessageMetadata::default(),
+                                                };
+                                                let _ = response_tx.send(response_message);
+                                                debug!(
+                                                    "Delivered response for correlation {} (request_id: {}) in session {}",
+                                                    correlation_id, id, session_id_clone
+                                                );
+                                            }
+                                            message_handled = true;
                                         }
-                                        continue;
                                     }
                                 }
-                                trace!(
-                                    "Message reader received unmatched text message in session {}",
-                                    session_id_clone
-                                );
+
+                                // If message wasn't handled by any correlation, forward to incoming channel
+                                // This allows Transport::receive() to get messages like server-initiated
+                                // requests, notifications, and other non-response messages
+                                if !message_handled {
+                                    let message = crate::core::TransportMessage {
+                                        id: turbomcp_protocol::MessageId::from(uuid::Uuid::new_v4()),
+                                        payload: bytes::Bytes::from(text.as_bytes().to_vec()),
+                                        metadata: crate::core::TransportMessageMetadata::default(),
+                                    };
+                                    if let Err(e) = incoming_tx.send(message).await {
+                                        warn!(
+                                            "Failed to forward message to incoming channel in session {}: {}",
+                                            session_id_clone, e
+                                        );
+                                    } else {
+                                        trace!(
+                                            "Forwarded non-correlation message to incoming channel in session {}",
+                                            session_id_clone
+                                        );
+                                    }
+                                }
+                            }
+                            Some(Ok(Message::Binary(data))) => {
+                                // Forward binary messages to incoming channel
+                                let message = crate::core::TransportMessage {
+                                    id: turbomcp_protocol::MessageId::from(uuid::Uuid::new_v4()),
+                                    payload: data,
+                                    metadata: crate::core::TransportMessageMetadata::default(),
+                                };
+                                if let Err(e) = incoming_tx.send(message).await {
+                                    warn!(
+                                        "Failed to forward binary message to incoming channel in session {}: {}",
+                                        session_id_clone, e
+                                    );
+                                }
                             }
                             Some(Ok(Message::Ping(data))) => {
                                 // Auto-respond with pong
