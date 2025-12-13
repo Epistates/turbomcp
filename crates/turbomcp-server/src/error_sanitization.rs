@@ -38,17 +38,111 @@
 use regex::Regex;
 use std::sync::OnceLock;
 
-/// Display mode for error messages
+/// Display mode for error messages according to OWASP guidelines.
+///
+/// Controls whether error messages are sanitized to prevent information leakage.
+/// Default is Production for safety.
+///
+/// # Security Considerations
+///
+/// Error messages can leak sensitive information including:
+/// - File system paths (e.g., `/etc/secrets/key.txt`)
+/// - IP addresses and network information (e.g., `192.168.1.100`)
+/// - Database connection strings (e.g., `postgres://user:pass@host/db`)
+/// - API keys and authentication tokens
+/// - Email addresses and other PII
+/// - Stack traces and implementation details
+///
+/// Use Production mode in all customer-facing systems to prevent information disclosure attacks.
+/// Only use Development mode when debugging in secure environments.
+///
+/// # Examples
+///
+/// ```ignore
+/// use turbomcp_server::error_sanitization::{SanitizedError, DisplayMode};
+///
+/// let error = std::io::Error::new(
+///     std::io::ErrorKind::NotFound,
+///     "File /etc/secrets/password.txt not found"
+/// );
+///
+/// // Production mode: Redacts sensitive paths
+/// let prod_error = SanitizedError::new(&error, DisplayMode::Production);
+/// println!("{}", prod_error);  // "File [PATH] not found"
+///
+/// // Development mode: Shows full details for debugging
+/// let dev_error = SanitizedError::new(&error, DisplayMode::Development);
+/// println!("{}", dev_error);   // "File /etc/secrets/password.txt not found"
+/// ```
+///
+/// # OWASP Reference
+/// See OWASP Top 10: A01:2021 – Broken Access Control for information disclosure risks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DisplayMode {
-    /// Production mode: Sanitize all sensitive information (default for safety)
+    /// Production mode: Sanitize all sensitive information (default for safety).
+    ///
+    /// Recommended for all customer-facing systems, APIs, and logs that might
+    /// be accessed by untrusted parties. Redacts:
+    /// - File paths → `[PATH]`
+    /// - IP addresses → `[IP]`
+    /// - Connection strings → `[CONNECTION]`
+    /// - API keys and tokens → `[REDACTED]`
+    /// - Email addresses → `[EMAIL]`
+    /// - URLs → `[URL]`
     #[default]
     Production,
-    /// Development mode: Show full error details
+    /// Development mode: Show full error details without sanitization.
+    ///
+    /// Only use in development, testing, and secure environments where
+    /// debugging information leakage is acceptable. Shows full error messages
+    /// including paths, IPs, and other sensitive details.
     Development,
 }
 
-/// Sanitized error wrapper
+/// Wrapper that sanitizes error messages according to security requirements.
+///
+/// This generic wrapper can wrap any error type and sanitize its display output.
+/// It implements `Display` and `Error` traits, making it compatible with Rust's
+/// standard error handling.
+///
+/// # Purpose
+///
+/// Prevents accidental information leakage from error messages in production environments
+/// while preserving full error details in development. This is critical for preventing
+/// attackers from using error messages to:
+/// - Map the internal system architecture
+/// - Identify file paths and system configuration
+/// - Discover IP addresses and network topology
+/// - Extract API keys, passwords, and other secrets
+///
+/// # Usage
+///
+/// ```ignore
+/// use turbomcp_server::error_sanitization::{SanitizedError, DisplayMode};
+///
+/// // Wrap an existing error for sanitization
+/// let io_error = std::io::Error::new(
+///     std::io::ErrorKind::PermissionDenied,
+///     "Access denied to /etc/shadow"
+/// );
+///
+/// // Automatically redact sensitive information when displayed
+/// let sanitized = SanitizedError::production(io_error);
+/// println!("{}", sanitized);  // "Access denied to [PATH]"
+///
+/// // Extract the original error if needed
+/// let original = sanitized.into_inner();
+/// ```
+///
+/// # Thread Safety
+///
+/// This wrapper is `Send + Sync` if the wrapped error is. Safe to use in concurrent contexts.
+///
+/// # Performance
+///
+/// The sanitization happens lazily during `Display` implementation. The error is not
+/// modified until it's converted to a string, so there's minimal overhead for errors
+/// that are never displayed.
 #[derive(Debug)]
 pub struct SanitizedError<E> {
     error: E,
@@ -56,27 +150,78 @@ pub struct SanitizedError<E> {
 }
 
 impl<E> SanitizedError<E> {
-    /// Create a new sanitized error
+    /// Create a new sanitized error with specified display mode.
+    ///
+    /// # Arguments
+    ///
+    /// * `error` - The underlying error to wrap
+    /// * `mode` - Whether to sanitize (Production) or show full details (Development)
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let error = std::io::Error::last_os_error();
+    /// let sanitized = SanitizedError::new(error, DisplayMode::Production);
+    /// ```
     pub fn new(error: E, mode: DisplayMode) -> Self {
         Self { error, mode }
     }
 
-    /// Create a production-mode sanitized error
+    /// Create a production-mode sanitized error (recommended for most cases).
+    ///
+    /// This is the recommended constructor for error wrappers that will be
+    /// displayed to users or in logs that might be accessed by untrusted parties.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let error = std::fs::read("private.txt")
+    ///     .map_err(SanitizedError::production)?;
+    /// ```
     pub fn production(error: E) -> Self {
         Self::new(error, DisplayMode::Production)
     }
 
-    /// Create a development-mode sanitized error (no sanitization)
+    /// Create a development-mode sanitized error (shows full error details).
+    ///
+    /// Only use this in development and testing environments. In production,
+    /// development-mode errors can leak sensitive information.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let error = std::fs::read("config.yml")
+    ///     .map_err(SanitizedError::development)?;  // Shows full path
+    /// ```
     pub fn development(error: E) -> Self {
         Self::new(error, DisplayMode::Development)
     }
 
-    /// Get the inner error
+    /// Consume the wrapper and extract the original error.
+    ///
+    /// Useful if you need access to the underlying error type after wrapping.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let sanitized = SanitizedError::production(some_error);
+    /// let original = sanitized.into_inner();
+    /// // Now you have the original error back
+    /// ```
     pub fn into_inner(self) -> E {
         self.error
     }
 
-    /// Get a reference to the inner error
+    /// Get a reference to the wrapped error.
+    ///
+    /// Allows reading the original error without taking ownership.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let sanitized = SanitizedError::production(some_error);
+    /// let original_ref = sanitized.inner();
+    /// ```
     pub fn inner(&self) -> &E {
         &self.error
     }

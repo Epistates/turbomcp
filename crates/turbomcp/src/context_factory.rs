@@ -29,22 +29,37 @@ use crate::context::Container;
 use crate::{Context, HandlerMetadata, McpResult};
 use turbomcp_protocol::RequestContext;
 
-/// Correlation ID for request tracing and distributed observability
+/// Unique correlation identifier for request tracing and distributed observability.
+///
+/// Correlation IDs enable tracking of related requests across multiple services in
+/// distributed systems. Each request chain gets a unique correlation ID that propagates
+/// through parent-child relationships for distributed tracing.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Generate a new correlation ID
+/// let id = CorrelationId::new();
+/// println!("Tracing request: {}", id.as_str());
+///
+/// // Create from existing string (useful for propagation from clients)
+/// let propagated = CorrelationId::from_string("parent-request-id".to_string());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CorrelationId(String);
 
 impl CorrelationId {
-    /// Generate a new correlation ID
+    /// Generate a new random correlation ID using UUID v4.
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string())
     }
 
-    /// Create from existing ID
+    /// Create a correlation ID from an existing string (for propagating from external sources).
     pub fn from_string(id: String) -> Self {
         Self(id)
     }
 
-    /// Get the correlation ID as string
+    /// Get the correlation ID as a string reference.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -56,18 +71,42 @@ impl Default for CorrelationId {
     }
 }
 
-/// Request scope information for context inheritance
+/// Request scope information for context inheritance and correlation tracking.
+///
+/// A request scope captures the context for a request execution, including correlation
+/// information, metadata, and tracing spans. Request scopes form a hierarchy that tracks
+/// parent-child relationships for distributed tracing.
+///
+/// # Fields
+///
+/// - `correlation_id`: Unique ID for this request (for distributed tracing)
+/// - `created_at`: Timestamp when scope was created (for duration tracking)
+/// - `parent_correlation_id`: Parent request ID (None for root requests)
+/// - `metadata`: Custom metadata for observability and correlation
+/// - `span`: Optional OpenTelemetry/tracing span for distributed tracing
+///
+/// # Examples
+///
+/// ```ignore
+/// // Create root scope for incoming request
+/// let scope = RequestScope::new_root()
+///     .with_metadata("user_id".to_string(), "user123".to_string());
+///
+/// // Create child scope for downstream requests
+/// let child = scope.create_child();
+/// assert_eq!(child.parent_correlation_id, Some(scope.correlation_id.clone()));
+/// ```
 #[derive(Debug, Clone)]
 pub struct RequestScope {
-    /// Unique correlation ID for this request chain
+    /// Unique correlation ID for this request chain.
     pub correlation_id: CorrelationId,
-    /// When this request scope was created
+    /// Timestamp when this request scope was created.
     pub created_at: SystemTime,
-    /// Parent correlation ID if this is a child request
+    /// Parent correlation ID if this is a child request, None for root requests.
     pub parent_correlation_id: Option<CorrelationId>,
-    /// Request metadata for observability
+    /// Custom metadata for observability and correlation tracking.
     pub metadata: HashMap<String, String>,
-    /// Tracing span for this request
+    /// Optional OpenTelemetry/tracing span for distributed tracing integration.
     pub span: Option<tracing::Span>,
 }
 
@@ -107,16 +146,35 @@ impl RequestScope {
     }
 }
 
-/// Context creation strategy for different scenarios
+/// Strategy for creating contexts with different isolation and sharing levels.
+///
+/// Different handlers have different needs for context isolation vs. resource sharing.
+/// This enum allows fine-tuned control over context creation behavior.
+///
+/// # Variants
+///
+/// - `Fresh`: Create a completely new context with isolated dependency container
+/// - `Inherit`: Create context that shares the server's dependency container
+/// - `Scoped`: Create context with isolated container but copy essential services
+/// - `Pooled`: Reuse contexts from pool for performance-critical paths
+///
+/// # Use Cases
+///
+/// | Strategy | Use Case |
+/// |----------|----------|
+/// | Fresh | Prompt handlers, request isolation needed |
+/// | Inherit | Tool handlers, sharing server services |
+/// | Scoped | Resource handlers, partial isolation |
+/// | Pooled | High-frequency operations, performance critical |
 #[derive(Debug, Clone)]
 pub enum ContextCreationStrategy {
-    /// Create a fresh context with no inheritance
+    /// Create a fresh context with no inheritance or resource sharing.
     Fresh,
-    /// Inherit from parent context with shared container
+    /// Inherit from parent context with shared dependency container.
     Inherit,
-    /// Create scoped context with isolated container
+    /// Create scoped context with isolated container but inheriting essential services.
     Scoped,
-    /// Create pooled context for performance
+    /// Create or reuse pooled context for performance optimization.
     Pooled,
 }
 
@@ -176,20 +234,36 @@ impl PooledContext {
     }
 }
 
-/// Metrics for context factory operations
+/// Metrics and statistics for context factory operations.
+///
+/// Tracks performance characteristics of the context factory including creation rates,
+/// pool efficiency, and timing information. These metrics are useful for:
+/// - Performance monitoring and optimization
+/// - Detecting resource leaks
+/// - Tuning pool size and TTL settings
+/// - Understanding request patterns
+///
+/// # Fields
+///
+/// - `contexts_created`: Total number of contexts created
+/// - `contexts_pooled`: Contexts that were reused from pool
+/// - `pool_hits`: Successful pool reuses
+/// - `pool_misses`: Pool reuses that failed (had to create new)
+/// - `contexts_evicted`: Contexts evicted from pool due to expiration
+/// - `avg_creation_time_us`: Average context creation time in microseconds
 #[derive(Debug, Default)]
 pub struct ContextFactoryMetrics {
-    /// Total contexts created
+    /// Total number of contexts created (including pooled reuses).
     pub contexts_created: AtomicU64,
-    /// Contexts reused from pool
+    /// Number of contexts reused from the pool (pool_hits + contexts_pooled).
     pub contexts_pooled: AtomicU64,
-    /// Pool hits (successful reuse)
+    /// Successful pool hits (context reused without creation).
     pub pool_hits: AtomicU64,
-    /// Pool misses (had to create new)
+    /// Pool misses (pool empty or expired, had to create new context).
     pub pool_misses: AtomicU64,
-    /// Contexts evicted from pool
+    /// Contexts evicted from pool due to TTL expiration.
     pub contexts_evicted: AtomicU64,
-    /// Average context creation time in microseconds
+    /// Average context creation time in microseconds (moving average).
     pub avg_creation_time_us: AtomicU64,
 }
 
@@ -226,17 +300,49 @@ impl ContextFactoryMetrics {
     }
 }
 
-/// Context factory with comprehensive lifecycle management
+/// Factory for creating and managing request contexts with lifecycle management.
+///
+/// The context factory is responsible for creating appropriately configured contexts
+/// for each handler execution. It manages:
+/// - Context creation with different strategies (fresh, inherited, scoped, pooled)
+/// - Dependency injection container sharing and isolation
+/// - Context pool for performance optimization
+/// - Request scope hierarchy for distributed tracing
+/// - Observability metrics
+///
+/// # Features
+///
+/// - **Multiple Creation Strategies**: Choose isolation vs. sharing based on handler type
+/// - **Context Pooling**: Reuse contexts for performance-critical paths
+/// - **Request Correlation**: Track requests across parent-child relationships
+/// - **Dependency Management**: Share or isolate service dependencies
+/// - **Observability**: Built-in metrics for monitoring factory performance
+///
+/// # Examples
+///
+/// ```ignore
+/// let config = ContextFactoryConfig::default();
+/// let container = Container::new();
+/// let factory = ContextFactory::new(config, container);
+///
+/// // Create context for tool handler
+/// let ctx = factory.create_for_tool(request, "my_tool", Some("Tool description")).await?;
+///
+/// // Use context in handler...
+///
+/// // Return to pool when done
+/// factory.return_to_pool(ctx).await;
+/// ```
 pub struct ContextFactory {
-    /// Factory configuration
+    /// Factory configuration controlling pool size, TTL, tracing, and default strategy.
     config: ContextFactoryConfig,
-    /// Shared dependency injection container
+    /// Shared dependency injection container for inherited strategy contexts.
     shared_container: Arc<Container>,
-    /// Context pool for performance optimization
+    /// Context pool for reusing contexts in performance-critical paths.
     context_pool: Arc<RwLock<Vec<PooledContext>>>,
-    /// Factory metrics for observability
+    /// Metrics tracking factory operations for observability.
     metrics: Arc<ContextFactoryMetrics>,
-    /// Current request scope stack for inheritance
+    /// Request scope stack for tracking parent-child context relationships.
     request_scope_stack: Arc<RwLock<Vec<RequestScope>>>,
 }
 
@@ -541,13 +647,37 @@ impl ContextFactory {
     }
 }
 
-/// Trait for servers that support context injection
+/// Trait for servers that provide context injection support.
+///
+/// This trait enables servers to expose their context factory, allowing external code
+/// to create contexts and understand the server's context management strategy.
+///
+/// # Examples
+///
+/// ```ignore
+/// impl ContextFactoryProvider for MyServer {
+///     fn context_factory(&self) -> &ContextFactory {
+///         &self.factory
+///     }
+///
+///     async fn initialize_context_factory(&mut self) -> McpResult<()> {
+///         // Setup factory configuration
+///         Ok(())
+///     }
+/// }
+/// ```
 #[async_trait]
 pub trait ContextFactoryProvider {
-    /// Get the context factory for this server
+    /// Get the context factory for this server.
+    ///
+    /// Returns a reference to the server's context factory used for creating
+    /// contexts during request handling.
     fn context_factory(&self) -> &ContextFactory;
 
-    /// Initialize the context factory with server configuration
+    /// Initialize the context factory with server configuration.
+    ///
+    /// Called during server startup to configure the context factory based on
+    /// server settings, environment, and runtime requirements.
     async fn initialize_context_factory(&mut self) -> McpResult<()>;
 }
 

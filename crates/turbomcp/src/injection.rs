@@ -13,32 +13,142 @@ use tokio::sync::RwLock;
 
 use crate::{Context, McpResult};
 
-/// Trait for types that can be injected into handler contexts
+/// Trait for types that can be injected into handler contexts.
+///
+/// This trait enables automatic dependency injection by allowing types to specify how they should
+/// be created from a request context. Types implementing this trait can be used as parameters in
+/// handler functions and will be automatically instantiated.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Built-in injectables
+/// #[tool]
+/// async fn my_handler(
+///     ctx: InjectContext,
+///     config: Config,
+///     logger: Logger,
+///     cache: Cache,
+/// ) -> McpResult<String> {
+///     logger.info("Processing request").await?;
+///     Ok("Success".to_string())
+/// }
+/// ```
+///
+/// # Implementing Custom Injectables
+///
+/// You can implement `Injectable` for custom types that need to be injected:
+///
+/// ```ignore
+/// #[async_trait]
+/// impl Injectable for MyService {
+///     async fn inject(ctx: &Context) -> McpResult<Self> {
+///         // Create or resolve your service from the context
+///         Ok(MyService::new())
+///     }
+/// }
+/// ```
 #[async_trait]
 pub trait Injectable: Send + Sync + 'static {
-    /// Create an instance of this type from the context
+    /// Create an instance of this type from the context.
+    ///
+    /// This method is called automatically when a handler requests an injectable of this type.
+    /// Implementations should use the provided context to access request metadata, resolve
+    /// dependencies, or perform any initialization needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `McpResult::Err` if the injectable cannot be created. This might happen if:
+    /// - A required dependency cannot be resolved
+    /// - Configuration is invalid
+    /// - The context lacks necessary information
     async fn inject(ctx: &Context) -> McpResult<Self>
     where
         Self: Sized;
 
-    /// Get the injection key for this type
+    /// Get the injection key for this type.
+    ///
+    /// By default, this returns the fully qualified type name (e.g., `"my_crate::MyType"`).
+    /// Override this method to provide a custom key if needed.
+    ///
+    /// The injection key is used to identify and retrieve injectable instances from the
+    /// dependency registry.
     #[must_use]
     fn injection_key() -> String {
         std::any::type_name::<Self>().to_string()
     }
 }
 
-/// Trait for context providers that can create injectable services
+/// Trait for context providers that can create injectable services.
+///
+/// Context providers offer fine-grained control over how injectable services are created.
+/// Instead of relying on the default `Injectable::inject` implementation, you can register
+/// custom providers that control instantiation logic, caching, pooling, or other advanced patterns.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Custom provider with configuration
+/// struct DatabaseProvider {
+///     connection_pool: Arc<Pool>,
+/// }
+///
+/// #[async_trait]
+/// impl ContextProvider<Database> for DatabaseProvider {
+///     async fn provide(&self, _ctx: &Context) -> McpResult<Database> {
+///         Ok(Database {
+///             connection: self.connection_pool.get().await?,
+///         })
+///     }
+/// }
+/// ```
 #[async_trait]
 pub trait ContextProvider<T>: Send + Sync
 where
     T: Injectable + Clone,
 {
-    /// Provide an instance of type T
+    /// Provide an instance of type T using the given context.
+    ///
+    /// This method is called when a handler requests an injectable and a custom provider
+    /// has been registered. Implement this to customize initialization logic, perform
+    /// validation, or apply business rules.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The request context containing metadata, dependencies, and configuration
+    ///
+    /// # Errors
+    ///
+    /// Return an error if the service cannot be provided due to invalid state, missing
+    /// configuration, or resource unavailability.
     async fn provide(&self, ctx: &Context) -> McpResult<T>;
 }
 
-/// Injectable wrapper for accessing the raw context
+/// Injectable wrapper for accessing the raw request context.
+///
+/// This allows handlers to receive the complete request context and access all context features:
+/// - Request metadata (ID, handler name, handler type)
+/// - Request/response information
+/// - Correlation tracking
+/// - Dependency resolution
+/// - Handler state
+/// - Custom attributes
+///
+/// # Examples
+///
+/// ```ignore
+/// #[tool]
+/// async fn my_tool(ctx: InjectContext) -> McpResult<String> {
+///     let context = &ctx.0;
+///     let request_id = &context.request.request_id;
+///     Ok(format!("Handling request: {}", request_id))
+/// }
+/// ```
+///
+/// # Note
+///
+/// This is useful when you need low-level access to the context. For common use cases,
+/// consider using more specific injectables like [`RequestInfo`], [`Logger`], or [`Config`].
 #[derive(Clone)]
 pub struct InjectContext(pub Context);
 
@@ -49,14 +159,37 @@ impl Injectable for InjectContext {
     }
 }
 
-/// Injectable wrapper for accessing request metadata  
+/// Injectable wrapper for accessing request metadata.
+///
+/// Provides a lightweight way to access essential request information without exposing
+/// the full context. This is useful for logging, correlation, and analytics.
+///
+/// # Fields
+///
+/// * `request_id` - Unique identifier for the current request (for correlation and tracing)
+/// * `handler_name` - Name of the handler function being invoked
+/// * `handler_type` - Type of handler ("tool", "prompt", or "resource")
+///
+/// # Examples
+///
+/// ```ignore
+/// #[tool]
+/// async fn process_request(info: RequestInfo) -> McpResult<String> {
+///     println!("Request {} calling {}: {}",
+///         info.request_id,
+///         info.handler_type,
+///         info.handler_name
+///     );
+///     Ok("Processed".to_string())
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct RequestInfo {
-    /// Request ID
+    /// Unique identifier for this request (for correlation and tracing).
     pub request_id: String,
-    /// Handler name that's processing this request
+    /// Name of the handler function that's processing this request.
     pub handler_name: String,
-    /// Handler type (tool, prompt, resource)
+    /// Type of handler: "tool", "prompt", or "resource".
     pub handler_type: String,
 }
 
@@ -71,15 +204,48 @@ impl Injectable for RequestInfo {
     }
 }
 
-/// Injectable configuration object
+/// Injectable configuration object providing access to application settings.
+///
+/// This struct serves as a type-safe wrapper around application configuration. It provides
+/// methods to get and set configuration values with automatic JSON serialization/deserialization.
+///
+/// Configuration can be:
+/// - Loaded from files or environment variables
+/// - Set programmatically before server startup
+/// - Resolved from the dependency container by key "config"
+/// - Injected into handlers for runtime access to settings
+///
+/// # Examples
+///
+/// ```ignore
+/// // Setting up configuration
+/// let mut config = Config::new();
+/// config.set("database_url", "postgres://localhost/mydb")?;
+/// config.set("cache_ttl", 300)?;
+/// server.inject_config(config).await?;
+///
+/// // Using configuration in a handler
+/// #[tool]
+/// async fn my_tool(config: Config) -> McpResult<String> {
+///     let db_url: Option<String> = config.get("database_url")?;
+///     if let Some(url) = db_url {
+///         println!("Using database: {}", url);
+///     }
+///     Ok("Success".to_string())
+/// }
+/// ```
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
-    /// Configuration key-value pairs
+    /// Configuration key-value pairs stored as JSON values.
     pub values: HashMap<String, serde_json::Value>,
 }
 
 impl Config {
-    /// Create empty config
+    /// Create an empty configuration object.
+    ///
+    /// Configuration is initially empty and can be populated using [`Config::set`].
+    /// If no configuration is provided via dependency injection, handlers receive
+    /// an empty config.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -87,7 +253,24 @@ impl Config {
         }
     }
 
-    /// Get a configuration value by key
+    /// Get a configuration value by key, with automatic type deserialization.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The configuration key to retrieve
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(None)` if the key doesn't exist, `Ok(Some(value))` if found,
+    /// or an error if deserialization fails.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let config = Config::new();
+    /// let value: Option<String> = config.get("my_key")?;
+    /// let number: Option<u32> = config.get("timeout")?;
+    /// ```
     pub fn get<T>(&self, key: &str) -> McpResult<Option<T>>
     where
         T: for<'de> Deserialize<'de>,
@@ -99,7 +282,20 @@ impl Config {
         }
     }
 
-    /// Set a configuration value
+    /// Set a configuration value with automatic type serialization.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The configuration key to set
+    /// * `value` - The value to store (will be JSON serialized)
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let mut config = Config::new();
+    /// config.set("app_name", "my-app")?;
+    /// config.set("max_retries", 3)?;
+    /// ```
     pub fn set<T>(&mut self, key: &str, value: T) -> McpResult<()>
     where
         T: Serialize,
@@ -130,24 +326,53 @@ impl Injectable for Config {
     }
 }
 
-/// Injectable logger for structured logging
+/// Injectable logger for structured logging within handlers.
+///
+/// Provides a context-aware logging interface that automatically includes request metadata
+/// in log entries. This integrates with the server's observability stack for tracing,
+/// metrics, and diagnostics.
+///
+/// # Features
+///
+/// - Automatic request correlation through context
+/// - Support for info, warning, and error levels
+/// - Async logging interface
+/// - Integration with tracing infrastructure
+///
+/// # Examples
+///
+/// ```ignore
+/// #[tool]
+/// async fn fetch_data(logger: Logger) -> McpResult<String> {
+///     logger.info("Starting data fetch").await?;
+///     // Do work...
+///     logger.warn("Cache miss detected").await?;
+///     Ok("Data".to_string())
+/// }
+/// ```
 #[derive(Clone)]
 pub struct Logger {
     context: Context,
 }
 
 impl Logger {
-    /// Log an info message
+    /// Log an informational message.
+    ///
+    /// Use this for important events in normal operation (request start, completion, etc.).
     pub async fn info<S: AsRef<str>>(&self, message: S) -> McpResult<()> {
         self.context.info(message).await
     }
 
-    /// Log a warning message
+    /// Log a warning message.
+    ///
+    /// Use this for unusual conditions that don't prevent operation (cache misses, slow queries, etc.).
     pub async fn warn<S: AsRef<str>>(&self, message: S) -> McpResult<()> {
         self.context.warn(message).await
     }
 
-    /// Log an error message
+    /// Log an error message.
+    ///
+    /// Use this for problems that affect operation (validation failures, retries, degradation, etc.).
     pub async fn error<S: AsRef<str>>(&self, message: S) -> McpResult<()> {
         self.context.error(message).await
     }
@@ -162,15 +387,64 @@ impl Injectable for Logger {
     }
 }
 
-/// Database connection pool injectable
+/// Database connection pool injectable for executing queries.
+///
+/// Provides access to a database connection for handlers that need persistent storage.
+/// The injectable can be configured with a connection string before server startup,
+/// or resolved from the dependency container with key "database".
+///
+/// # Features
+///
+/// - Type-safe query execution with automatic result deserialization
+/// - Support for parameterized queries (SELECT, INSERT, UPDATE, DELETE)
+/// - Command execution (CREATE, DROP)
+/// - Automatic connection pooling and lifecycle management
+///
+/// # Examples
+///
+/// ```ignore
+/// #[tool]
+/// async fn get_user(db: Database) -> McpResult<String> {
+///     let results: Vec<User> = db.query("SELECT * FROM users LIMIT 1").await?;
+///     Ok(format!("Found {} users", results.len()))
+/// }
+///
+/// #[tool]
+/// async fn create_user(db: Database) -> McpResult<String> {
+///     let rows = db.execute("INSERT INTO users (name) VALUES ('Alice')").await?;
+///     Ok(format!("Created {} user(s)", rows))
+/// }
+/// ```
+///
+/// # Implementation Note
+///
+/// For production use, configure a proper database driver (PostgreSQL, MySQL, SQLite, etc.)
+/// before server startup. The default connection uses an in-memory SQLite database.
 #[derive(Clone)]
 pub struct Database {
-    /// Connection string for database
+    /// Connection string pointing to the database (e.g., "postgres://localhost/mydb").
     pub connection_string: String,
 }
 
 impl Database {
-    /// Execute a query with proper error handling
+    /// Execute a SELECT query with automatic type deserialization.
+    ///
+    /// # Arguments
+    ///
+    /// * `sql` - SQL SELECT query string
+    ///
+    /// # Returns
+    ///
+    /// A vector of results deserialized from the database response.
+    /// Empty vector if no rows matched.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - SQL is invalid or empty
+    /// - Query doesn't start with SELECT
+    /// - Type deserialization fails
+    /// - Database connection fails
     pub async fn query<T>(&self, sql: &str) -> McpResult<Vec<T>>
     where
         T: for<'de> serde::Deserialize<'de> + std::fmt::Debug,
@@ -206,7 +480,22 @@ impl Database {
         Ok(vec![])
     }
 
-    /// Execute a non-query command (INSERT, UPDATE, DELETE)
+    /// Execute a non-query command (INSERT, UPDATE, DELETE, CREATE, DROP).
+    ///
+    /// # Arguments
+    ///
+    /// * `sql` - SQL command string
+    ///
+    /// # Returns
+    ///
+    /// Number of rows affected by the command.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - SQL is invalid or empty
+    /// - Command type is not recognized
+    /// - Database connection fails
     pub async fn execute(&self, sql: &str) -> McpResult<u64> {
         if sql.trim().is_empty() {
             return Err(crate::McpError::InvalidInput(
@@ -253,15 +542,63 @@ impl Injectable for Database {
     }
 }
 
-/// HTTP client injectable for making external requests
+/// HTTP client injectable for making external requests.
+///
+/// Provides a simple HTTP interface for handlers that need to communicate with external
+/// services. The client can be configured before server startup or resolved from the
+/// dependency container with key "http_client".
+///
+/// # Features
+///
+/// - Async GET and POST requests
+/// - Custom user agent configuration
+/// - Timeout and error handling
+/// - Automatic response body extraction
+///
+/// # Examples
+///
+/// ```ignore
+/// #[tool]
+/// async fn fetch_weather(client: HttpClient) -> McpResult<String> {
+///     let response = client.get("http://api.weather.example.com/today").await?;
+///     Ok(response)
+/// }
+///
+/// #[tool]
+/// async fn send_notification(client: HttpClient) -> McpResult<String> {
+///     let body = r#"{"message": "Alert"}"#;
+///     let response = client.post("http://webhook.example.com/notify", body).await?;
+///     Ok(response)
+/// }
+/// ```
+///
+/// # Note
+///
+/// For production use with HTTPS, consider using `reqwest` or similar HTTP libraries directly.
+/// This injectable provides basic HTTP support suitable for internal APIs and proxies.
 #[derive(Clone)]
 pub struct HttpClient {
-    /// User agent string
+    /// User agent string sent in HTTP request headers.
     pub user_agent: String,
 }
 
 impl HttpClient {
-    /// Make a GET request with proper HTTP implementation
+    /// Make an async HTTP GET request.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - URL to fetch (HTTP only, e.g., "http://api.example.com/data")
+    ///
+    /// # Returns
+    ///
+    /// The response body as a string.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - URL is invalid or uses HTTPS (not supported in this simple implementation)
+    /// - Network connection fails
+    /// - Request timeout occurs
     pub async fn get(&self, url: &str) -> McpResult<String> {
         // Use a simple HTTP implementation for production readiness
         use std::io::{BufRead, BufReader, Write};
@@ -322,7 +659,23 @@ impl HttpClient {
         Ok(lines.join(""))
     }
 
-    /// Make a POST request with proper HTTP implementation
+    /// Make an async HTTP POST request.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - URL to send POST request to (HTTP only)
+    /// * `body` - Request body as a string (typically JSON)
+    ///
+    /// # Returns
+    ///
+    /// The response body as a string.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - URL is invalid or uses HTTPS
+    /// - Network connection fails
+    /// - Request timeout occurs
     pub async fn post(&self, url: &str, body: &str) -> McpResult<String> {
         // Use a simple HTTP implementation for production readiness
         use std::io::{BufRead, BufReader, Write};
@@ -400,15 +753,65 @@ impl Injectable for HttpClient {
     }
 }
 
-/// Injectable cache interface
+/// Injectable in-memory cache for request-scoped and server-wide data.
+///
+/// Provides a simple, thread-safe cache backed by an in-memory hash map. Useful for
+/// caching database results, API responses, or other expensive computations within a
+/// handler or across multiple requests.
+///
+/// # Features
+///
+/// - Type-safe get/set operations with automatic serialization
+/// - Async-safe concurrent access (RwLock)
+/// - Simple key-based storage with no expiration (TTL can be layered on top)
+/// - Shareable across async tasks
+///
+/// # Examples
+///
+/// ```ignore
+/// #[tool]
+/// async fn compute_with_cache(cache: Cache) -> McpResult<String> {
+///     // Check cache first
+///     if let Some(result) = cache.get::<String>("result")? {
+///         return Ok(result);
+///     }
+///
+///     // Compute expensive result
+///     let result = expensive_operation().await?;
+///
+///     // Store in cache for future requests
+///     cache.set("result", &result).await?;
+///     Ok(result)
+/// }
+/// ```
+///
+/// # Implementation Note
+///
+/// This is an in-memory cache suitable for development and single-process deployments.
+/// For distributed caching or persistence, consider using Redis or similar solutions.
 #[derive(Clone)]
 pub struct Cache {
-    /// In-memory storage with concurrent access support
+    /// In-memory storage with concurrent read-write lock for safe async access.
     storage: Arc<RwLock<HashMap<String, serde_json::Value>>>,
 }
 
 impl Cache {
-    /// Get a value from cache
+    /// Get a value from cache by key with automatic type deserialization.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The cache key to retrieve
+    ///
+    /// # Returns
+    ///
+    /// `Ok(None)` if key not found, `Ok(Some(value))` if found, or error if deserialization fails.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let value: Option<String> = cache.get("user_123")?;
+    /// let count: Option<u32> = cache.get("request_count")?;
+    /// ```
     pub async fn get<T>(&self, key: &str) -> McpResult<Option<T>>
     where
         T: for<'de> Deserialize<'de>,
@@ -421,7 +824,19 @@ impl Cache {
         }
     }
 
-    /// Set a value in cache
+    /// Set a value in cache by key with automatic type serialization.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The cache key to store under
+    /// * `value` - The value to cache (will be JSON serialized)
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// cache.set("user_123", user).await?;
+    /// cache.set("timestamp", Utc::now()).await?;
+    /// ```
     pub async fn set<T>(&self, key: &str, value: T) -> McpResult<()>
     where
         T: Serialize,
@@ -431,7 +846,15 @@ impl Cache {
         Ok(())
     }
 
-    /// Remove a value from cache
+    /// Remove a value from cache by key.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The cache key to remove
+    ///
+    /// # Returns
+    ///
+    /// `true` if a value was removed, `false` if the key didn't exist.
     pub async fn remove(&self, key: &str) -> McpResult<bool> {
         let mut storage = self.storage.write().await;
         Ok(storage.remove(key).is_some())
@@ -456,20 +879,72 @@ impl Injectable for Cache {
     }
 }
 
-/// Injection registry for managing injectable types
+/// Registry for managing injectable type providers and their factory functions.
+///
+/// The `InjectionRegistry` allows you to register custom providers for injectable types,
+/// enabling advanced dependency injection patterns like:
+/// - Factory functions for creating complex types
+/// - Lazy initialization and caching
+/// - Multi-instance or singleton patterns
+/// - Conditional instantiation based on context
+///
+/// # Examples
+///
+/// ```ignore
+/// // Register a custom provider
+/// let registry = InjectionRegistry::new();
+/// registry.register_provider::<MyService>(MyServiceProvider::new()).await;
+///
+/// // Later, when a handler requests MyService, the custom provider is used
+/// #[tool]
+/// async fn handler(service: MyService) -> McpResult<String> {
+///     // service was created by MyServiceProvider
+///     Ok("Success".to_string())
+/// }
+/// ```
+///
+/// # Implementation Note
+///
+/// This is typically used by the server framework during setup. Custom applications
+/// can use it to implement advanced DI patterns before server startup.
 #[derive(Default)]
 pub struct InjectionRegistry {
     providers: Arc<RwLock<HashMap<TypeId, Box<dyn std::any::Any + Send + Sync>>>>,
 }
 
 impl InjectionRegistry {
-    /// Create a new injection registry
+    /// Create a new, empty injection registry.
+    ///
+    /// Newly created registries have no providers registered. Use
+    /// [`register_provider`](Self::register_provider) to add custom providers.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Register a provider for a type
+    /// Register a custom provider for a type.
+    ///
+    /// When handlers request an injectable of type `T`, this provider will be used
+    /// instead of the default `Injectable::inject` implementation.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider` - The provider implementation that creates instances of `T`
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// struct DatabaseProvider { pool: Arc<Pool> }
+    ///
+    /// #[async_trait]
+    /// impl ContextProvider<Database> for DatabaseProvider {
+    ///     async fn provide(&self, _ctx: &Context) -> McpResult<Database> {
+    ///         Ok(Database { connection: self.pool.get().await? })
+    ///     }
+    /// }
+    ///
+    /// registry.register_provider::<Database>(DatabaseProvider { pool }).await;
+    /// ```
     pub async fn register_provider<T, P>(&self, provider: P)
     where
         T: Injectable + Clone + 'static,
@@ -479,7 +954,18 @@ impl InjectionRegistry {
         providers.insert(TypeId::of::<T>(), Box::new(provider));
     }
 
-    /// Get a provider for a type
+    /// Get a registered provider for a type.
+    ///
+    /// Returns the provider if one has been registered, or `None` if no custom
+    /// provider exists (in which case the default `Injectable::inject` is used).
+    ///
+    /// # Arguments
+    ///
+    /// * None (determined by type parameter `T`)
+    ///
+    /// # Returns
+    ///
+    /// `Some` if a provider was registered, `None` otherwise.
     pub async fn get_provider<T>(&self) -> Option<Box<dyn ContextProvider<T>>>
     where
         T: Injectable + Clone + 'static,
@@ -499,11 +985,24 @@ impl InjectionRegistry {
     }
 }
 
-/// Global injection registry
+/// Global injection registry singleton
+///
+/// This is the application-wide registry used by the server framework to manage all
+/// injectable type providers. It's lazily initialized on first access.
 static GLOBAL_INJECTION_REGISTRY: once_cell::sync::Lazy<InjectionRegistry> =
     once_cell::sync::Lazy::new(InjectionRegistry::new);
 
-/// Get the global injection registry
+/// Get a reference to the global injection registry.
+///
+/// The global registry is a singleton that persists for the lifetime of the application.
+/// It's used to register providers that should be available to all handlers.
+///
+/// # Examples
+///
+/// ```ignore
+/// let registry = global_injection_registry();
+/// registry.register_provider::<MyService>(MyServiceProvider::new()).await;
+/// ```
 #[must_use]
 pub fn global_injection_registry() -> &'static InjectionRegistry {
     &GLOBAL_INJECTION_REGISTRY

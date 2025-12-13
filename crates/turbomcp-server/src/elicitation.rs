@@ -15,10 +15,75 @@ use turbomcp_protocol::types::{ElicitRequest, ElicitResult, ElicitationAction};
 use crate::ServerError;
 use turbomcp_protocol::Shareable;
 
-/// Global elicitation coordinator for a server instance
+/// Global elicitation coordinator for a server instance.
 ///
 /// This manages all pending elicitation requests across all transports
 /// and handles correlation between requests and responses.
+///
+/// # Purpose
+///
+/// The ElicitationCoordinator provides bidirectional communication between server handlers
+/// and clients. Handlers can request user input, client decisions, or additional information
+/// through the elicitation mechanism, with automatic:
+/// - Request/response correlation via unique IDs
+/// - Timeout handling with configurable retry logic
+/// - Background cleanup of expired requests
+/// - Statistics tracking for monitoring
+///
+/// # Architecture
+///
+/// The coordinator uses an async request/response pattern with:
+/// - `pending`: HashMap of awaiting requests
+/// - `request_sender`: Channel for outgoing elicitation requests (to transport)
+/// - `response_receiver`: Channel for incoming client responses
+/// - Background tasks for response processing and cleanup
+///
+/// # Concurrency & Thread Safety
+///
+/// - Fully `Send + Sync` for concurrent access
+/// - Uses `RwLock` for fast reads, `Mutex` for exclusive channel access
+/// - Cheap to clone via `Arc` (clones share state)
+/// - Safe to share across tokio tasks
+///
+/// # Timeout & Retry Behavior
+///
+/// Configurable per-request timeouts with automatic retries:
+/// - Default timeout: 60 seconds
+/// - Retries: Up to 3 by default
+/// - Expired requests automatically cleaned up every 30 seconds
+/// - Pending requests tracked with age, tool name, and retry count
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use turbomcp_server::elicitation::ElicitationCoordinator;
+/// use turbomcp_protocol::types::ElicitRequest;
+/// use std::time::Duration;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// // Create coordinator with custom timeout
+/// let coordinator = ElicitationCoordinator::with_config(Duration::from_secs(30));
+///
+/// // Tool handler can request user input
+/// let request = ElicitRequest {
+///     params: /* ... */,
+///     task: None,
+///     _meta: None,
+/// };
+///
+/// // Wait for client response with timeout and retries
+/// let response = coordinator
+///     .send_with_options(
+///         request,
+///         Some("my_tool".to_string()),
+///         Some(Duration::from_secs(45)),
+///         0,  // retry_count
+///         3,  // max_retries
+///     )
+///     .await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct ElicitationCoordinator {
     /// Pending elicitation requests awaiting client responses
@@ -64,7 +129,35 @@ struct PendingElicitation {
     max_retries: u32,
 }
 
-/// Outgoing elicitation request to be sent via transport
+/// Outgoing elicitation request to be sent via transport.
+///
+/// This message is produced by the ElicitationCoordinator and sent to transports
+/// for delivery to the client. Transports should handle correlation via `request_id`.
+///
+/// # Fields
+///
+/// - `request_id`: Unique correlation identifier. Must be preserved when receiving responses.
+/// - `request`: The actual elicitation request (form, task, etc.)
+/// - `transport_id`: Optional target transport (for multi-transport scenarios)
+/// - `priority`: Queueing priority (low to critical)
+///
+/// # Transport Integration
+///
+/// Transports should:
+/// 1. Send the request to the client with the `request_id`
+/// 2. Store the `request_id` → message correlation
+/// 3. When receiving a response, create `IncomingElicitationResponse` with matching `request_id`
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use turbomcp_server::elicitation::OutgoingElicitation;
+///
+/// fn handle_outgoing(req: OutgoingElicitation) {
+///     println!("Send request {} with priority {:?}", req.request_id, req.priority);
+///     // Transport sends to client, waits for response with same request_id
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct OutgoingElicitation {
     /// Unique request ID for correlation
@@ -80,7 +173,40 @@ pub struct OutgoingElicitation {
     pub priority: ElicitationPriority,
 }
 
-/// Priority levels for elicitation requests
+/// Priority levels for elicitation requests.
+///
+/// Controls how quickly a request is sent to the client and processed.
+/// Used for queuing and prioritization in transports handling multiple
+/// concurrent elicitations.
+///
+/// # Priority Levels
+///
+/// Levels are ordered (implement `Ord`) to allow sorting queues:
+/// - `Low` (0): Non-urgent requests, can be batched/delayed
+/// - `Normal` (1): Standard tool requests
+/// - `High` (2): Urgent requests, expedited
+/// - `Critical` (3): Time-sensitive requests, immediate
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// use turbomcp_server::elicitation::{OutgoingElicitation, ElicitationPriority};
+///
+/// let request = OutgoingElicitation {
+///     request_id: "123".to_string(),
+///     request: /* ... */,
+///     transport_id: None,
+///     priority: ElicitationPriority::High,  // Send urgently
+/// };
+/// ```
+///
+/// # Transport Behavior
+///
+/// Well-behaved transports should:
+/// - Process Critical immediately
+/// - Batch and delay Low-priority requests when possible
+/// - Use priority for queue ordering when under load
+/// - Not drop requests due to priority (still deliver eventually)
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ElicitationPriority {
     /// Low priority - can be delayed
@@ -93,7 +219,49 @@ pub enum ElicitationPriority {
     Critical = 3,
 }
 
-/// Incoming elicitation response from transport
+/// Incoming elicitation response from transport.
+///
+/// This message is received by the ElicitationCoordinator from transports,
+/// containing the client's response to a pending elicitation request.
+///
+/// # Correlation
+///
+/// The `request_id` MUST match the original request sent via `OutgoingElicitation`.
+/// The coordinator uses this to route the response to the correct waiting handler.
+///
+/// # Fields
+///
+/// - `request_id`: Correlation ID matching the original request (required)
+/// - `response`: Client's response (accept, reject, cancel, etc.)
+/// - `transport_id`: Which transport delivered this response
+/// - `metadata`: Optional transport-specific metadata (timing, routing info, etc.)
+///
+/// # Usage by Transports
+///
+/// Transports should:
+/// 1. Receive response from client with correlation ID
+/// 2. Create `IncomingElicitationResponse` with matching `request_id`
+/// 3. Call `coordinator.submit_response()`
+/// 4. The coordinator routes response to waiting handler
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use turbomcp_server::elicitation::IncomingElicitationResponse;
+/// use turbomcp_protocol::types::{ElicitResult, ElicitationAction};
+///
+/// // Transport receives response from client and constructs message
+/// let response = IncomingElicitationResponse {
+///     request_id: "uuid-123".to_string(),  // Must match request ID
+///     response: ElicitResult {
+///         action: ElicitationAction::Accept,
+///         content: Some(/* form response */),
+///         _meta: None,
+///     },
+///     transport_id: "http".to_string(),
+///     metadata: Default::default(),
+/// };
+/// ```
 #[derive(Clone, Debug)]
 pub struct IncomingElicitationResponse {
     /// Request ID this responds to
@@ -340,7 +508,54 @@ impl ElicitationCoordinator {
     }
 }
 
-/// Statistics about elicitation system
+/// Statistics about the elicitation system.
+///
+/// Snapshot of coordinator state useful for monitoring, diagnostics, and alerting.
+/// Can detect hung requests, load problems, and retry storms.
+///
+/// # Fields
+///
+/// - `pending_count`: Total elicitations waiting for client response
+/// - `by_tool`: Which tools have pending elicitations (helps identify bottlenecks)
+/// - `total_retries`: Cumulative retry count (helps detect timeout patterns)
+/// - `oldest_request_age`: Age of longest-waiting request (detect hangs)
+///
+/// # Monitoring & Alerting
+///
+/// Good places to use stats:
+/// - High `pending_count`: Many concurrent elicitations (overload indicator)
+/// - High `total_retries`: Timeout pattern (client slow or disconnected)
+/// - Old `oldest_request_age`: Hung request (alert, investigate)
+/// - Imbalanced `by_tool`: Specific tool causing issues
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use turbomcp_server::elicitation::ElicitationCoordinator;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let coordinator = ElicitationCoordinator::new();
+///
+/// // Get snapshot
+/// let stats = coordinator.get_stats().await;
+///
+/// // Check for issues
+/// if stats.pending_count > 100 {
+///     eprintln!("WARNING: {} pending elicitations", stats.pending_count);
+/// }
+///
+/// if let Some(age) = stats.oldest_request_age {
+///     if age.as_secs() > 300 {
+///         eprintln!("ALERT: Request hung for {} seconds", age.as_secs());
+///     }
+/// }
+///
+/// if stats.total_retries > stats.pending_count as u32 * 2 {
+///     eprintln!("WARNING: High retry rate - client may be slow");
+/// }
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone)]
 pub struct ElicitationStats {
     /// Number of pending elicitation requests
@@ -368,9 +583,55 @@ impl std::fmt::Debug for ElicitationCoordinator {
     }
 }
 
-/// Transport adapter for elicitation
+/// Transport adapter for elicitation support.
 ///
-/// This trait should be implemented by transports to support elicitation
+/// Implemented by transports (HTTP, WebSocket, etc.) that support bidirectional
+/// communication needed for elicitation. Handles sending requests to clients and
+/// receiving responses back.
+///
+/// # Implementation Requirements
+///
+/// Transports must:
+/// 1. Accept `OutgoingElicitation` via `send_elicitation()`
+/// 2. Deliver it to the client preserving the `request_id`
+/// 3. Wait for client response
+/// 4. Create `IncomingElicitationResponse` with matching `request_id`
+/// 5. Return response to coordinator
+///
+/// # Thread Safety
+///
+/// Must be `Send + Sync` for concurrent access from multiple tokio tasks.
+/// Implementations commonly use `Arc<RwLock<>>` for internal state.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use turbomcp_server::elicitation::{ElicitationTransport, OutgoingElicitation};
+/// use turbomcp_server::ServerError;
+///
+/// struct MyTransport {
+///     // ...
+/// }
+///
+/// #[async_trait::async_trait]
+/// impl ElicitationTransport for MyTransport {
+///     async fn send_elicitation(&self, request: OutgoingElicitation)
+///         -> Result<(), ServerError> {
+///         // Send to client and wait for response
+///         // Client responds with matching request_id
+///         // Call coordinator.submit_response(response)
+///         Ok(())
+///     }
+///
+///     fn supports_elicitation(&self) -> bool {
+///         true  // Indicate support to server
+///     }
+///
+///     fn transport_id(&self) -> String {
+///         "my-transport".to_string()
+///     }
+/// }
+/// ```
 #[async_trait::async_trait]
 pub trait ElicitationTransport: Send + Sync {
     /// Send an elicitation request to the client
@@ -383,7 +644,46 @@ pub trait ElicitationTransport: Send + Sync {
     fn transport_id(&self) -> String;
 }
 
-/// Bridge between ServerCapabilities and ElicitationCoordinator
+/// Bridge between ServerCapabilities and ElicitationCoordinator.
+///
+/// Adapts JSON-based ServerCapabilities requests to the type-safe
+/// ElicitationCoordinator API, and vice versa for responses.
+///
+/// # Purpose
+///
+/// Allows ServerCapabilities (which use JSON for request/response) to integrate
+/// with ElicitationCoordinator without knowing about MCP types directly. Acts as
+/// an adapter/translation layer.
+///
+/// # Integration Points
+///
+/// Used by ServerCapabilities middleware to:
+/// 1. Accept JSON elicitation requests from framework layer
+/// 2. Deserialize to MCP types
+/// 3. Send through coordinator
+/// 4. Serialize response back to JSON
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use turbomcp_server::elicitation::{ElicitationCoordinator, ElicitationBridge};
+/// use std::sync::Arc;
+///
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// let coordinator = Arc::new(ElicitationCoordinator::new());
+/// let bridge = ElicitationBridge::new(coordinator);
+///
+/// // JSON request from ServerCapabilities
+/// let request_json = serde_json::json!({
+///     "params": { /* form schema */ },
+///     "task": null,
+/// });
+///
+/// // Bridge translates to MCP and sends
+/// let response_json = bridge.handle_elicitation(request_json).await?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct ElicitationBridge {
     coordinator: Arc<ElicitationCoordinator>,
