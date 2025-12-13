@@ -129,7 +129,7 @@ Start minimal (STDIO only), add features as needed:
 - Clone pattern for McpServer and Client (Axum/Tower standard - cheap Arc increments)
 
 **Protocol Features**
-- Full MCP 2025-06-18 specification compliance
+- Full MCP 2025-11-25 specification compliance
 - Server-initiated sampling for bidirectional AI communication
 - Interactive form elicitation with real-time validation
 - AudioContent support for multimedia applications
@@ -137,7 +137,7 @@ Start minimal (STDIO only), add features as needed:
 - Resource templates with RFC 6570 URI patterns
 
 **Transport & Performance**
-- **MCP Standard Transports**: STDIO, HTTP/SSE (full 2025-06-18 spec compliance)
+- **MCP Standard Transports**: STDIO, HTTP/SSE (full 2025-11-25 spec compliance)
 - **Custom Extensions**: WebSocket, TCP, Unix Socket (MCP-compliant bidirectional transports)
 - SIMD-accelerated JSON processing (simd-json, sonic-rs)
 - Zero-copy message handling with Bytes
@@ -978,7 +978,7 @@ TurboMCP v2.2.0 provides:
 
 - Zero known security vulnerabilities with continuous monitoring
 - Performance focus with automated regression detection
-- Full MCP 2025-06-18 specification compliance
+- Full MCP 2025-11-25 specification compliance
 - Production deployment patterns with container & Kubernetes support
 - 26 focused examples covering all usage patterns
 - Active development with regular security updates and performance improvements
@@ -987,7 +987,7 @@ TurboMCP v2.2.0 provides:
 - **NEW**: RFC 9728 Protected Resource Metadata support
 - **NEW**: JWT and JWKS authentication middleware
 
-**Production Status:** TurboMCP 2.2.0 is production-ready with full MCP 2025-06-18 compliance, comprehensive test coverage (1,165+ tests passing), and the complete authentication stack. The API is stable.
+**Production Status:** TurboMCP 2.2.0 is production-ready with full MCP 2025-11-25 compliance, comprehensive test coverage (1,165+ tests passing), and the complete authentication stack. The API is stable.
 
 ---
 
