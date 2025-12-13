@@ -275,7 +275,7 @@ simd = ["turbomcp-protocol/simd", "simd-json", "sonic-rs"]  # SIMD JSON accelera
 # MCP draft specification features (pass-through to turbomcp-protocol)
 mcp-draft = ["turbomcp-protocol/mcp-draft"]
 mcp-icons = ["turbomcp-protocol/mcp-icons"]
-mcp-tasks = ["turbomcp-protocol/mcp-tasks"]
+mcp-tasks = ["turbomcp-protocol/mcp-tasks", "turbomcp-server/mcp-tasks"]
 mcp-url-elicitation = ["turbomcp-protocol/mcp-url-elicitation"]
 mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
 
