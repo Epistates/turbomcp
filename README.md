@@ -11,8 +11,14 @@
 
 Build MCP servers in seconds with automatic schema generation, type-safe handlers, and multiple transport protocols.
 
+## Requirements
+
+- **Rust 1.89.0+** (Edition 2024)
+- Tokio async runtime
+
 ## Table of Contents
 
+- [Requirements](#requirements)
 - [60-Second Quick Start](#60-second-quick-start)
 - [Why TurboMCP?](#why-turbomcp)
 - [Key Features](#key-features)
