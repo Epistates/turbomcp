@@ -34,6 +34,7 @@ impl WebSocketBidirectionalTransport {
         let pending_samplings = self.pending_samplings.clone();
         let pending_roots = self.pending_roots.clone();
         let elicitations = self.elicitations.clone();
+        let correlations = self.correlations.clone();
 
         let mut shutdown_rx = self.shutdown_tx.subscribe();
         let session_id_clone = session_id.clone();
@@ -99,6 +100,34 @@ impl WebSocketBidirectionalTransport {
                                         && let Ok(elicit_result) = serde_json::from_value(result.clone())
                                     {
                                         let _ = pending.response_tx.send(elicit_result);
+                                        continue;
+                                    }
+
+                                    // Try to deliver to correlations (for standard request-response)
+                                    // Find correlation by matching request_id to the JSON-RPC id
+                                    let mut matched_correlation_id = None;
+                                    for entry in correlations.iter() {
+                                        if entry.value().request_id == id {
+                                            matched_correlation_id = Some(entry.key().clone());
+                                            break;
+                                        }
+                                    }
+                                    if let Some(correlation_id) = matched_correlation_id
+                                        && let Some((_, ctx)) = correlations.remove(&correlation_id)
+                                    {
+                                        if let Some(response_tx) = ctx.response_tx {
+                                            // Create TransportMessage from the raw JSON text
+                                            let response_message = crate::core::TransportMessage {
+                                                id: turbomcp_protocol::MessageId::from(id),
+                                                payload: bytes::Bytes::from(text.as_bytes().to_vec()),
+                                                metadata: crate::core::TransportMessageMetadata::default(),
+                                            };
+                                            let _ = response_tx.send(response_message);
+                                            debug!(
+                                                "Delivered response for correlation {} (request_id: {}) in session {}",
+                                                correlation_id, id, session_id_clone
+                                            );
+                                        }
                                         continue;
                                     }
                                 }
