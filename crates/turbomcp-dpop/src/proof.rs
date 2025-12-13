@@ -198,16 +198,13 @@ impl DpopProofGenerator {
             jwt_string.clone(),
         );
 
-        // Verify the cached JWT is actually stored
+        // Verify the cached JWT is actually stored (sanity check)
         let retrieved_jwt = proof.to_jwt_string();
         if retrieved_jwt != jwt_string {
-            eprintln!("ERROR: JWT string mismatch!");
-            eprintln!("Original  len: {}", jwt_string.len());
-            eprintln!("Retrieved len: {}", retrieved_jwt.len());
-            eprintln!("Original : {}", &jwt_string[..50.min(jwt_string.len())]);
-            eprintln!(
-                "Retrieved: {}",
-                &retrieved_jwt[..50.min(retrieved_jwt.len())]
+            tracing::error!(
+                original_len = jwt_string.len(),
+                retrieved_len = retrieved_jwt.len(),
+                "JWT string mismatch - proof caching inconsistency detected"
             );
         }
 
