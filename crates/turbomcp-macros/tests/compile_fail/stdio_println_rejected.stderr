@@ -11,6 +11,7 @@ error: ❌ stdio transport detected but found unsafe stdout writes:
 
        ❌ WRONG:
        println!("debug info");
+       dbg!(value);  // writes to stdout
        std::io::stdout().write_all(b"...");
 
        See: https://docs.modelcontextprotocol.io/guides/stdio-output

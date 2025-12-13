@@ -739,10 +739,9 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        // Note: We can't return the source error because it's also an Error type
-        // which would create infinite recursion. Current design returns None to avoid this.
-        // Future enhancement could add proper error chaining with boxed std::error::Error.
-        None
+        self.source
+            .as_ref()
+            .map(|e| e.as_ref() as &(dyn std::error::Error + 'static))
     }
 }
 
