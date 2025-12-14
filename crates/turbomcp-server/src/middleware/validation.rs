@@ -12,7 +12,7 @@ use std::task::{Context, Poll};
 use jsonschema::Validator;
 use serde_json::Value;
 use tower::{Layer, Service};
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 /// Validation configuration
 #[derive(Debug, Clone)]
