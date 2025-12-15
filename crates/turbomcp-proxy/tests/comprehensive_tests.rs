@@ -240,9 +240,8 @@ async fn test_timeout_validation() {
     // Reasonable timeout should work
     let timeout_result = RuntimeProxyBuilder::new().with_timeout(30_000);
 
-    if timeout_result.is_ok() {
-        let builder = timeout_result
-            .unwrap()
+    if let Ok(builder_result) = timeout_result {
+        let builder = builder_result
             .with_stdio_backend("python", vec!["server.py".to_string()])
             .with_stdio_frontend();
 
