@@ -94,9 +94,9 @@ impl WebSocketBidirectionalTransport {
     ///
     /// ```no_run
     /// # use turbomcp_transport::websocket_bidirectional::WebSocketBidirectionalTransport;
-    /// # use turbomcp_protocol::types::{PingRequest, PingResult};
+    /// # use turbomcp_protocol::types::{PingRequest, PingParams, PingResult};
     /// # async fn example(transport: &WebSocketBidirectionalTransport) {
-    /// let request = PingRequest { _meta: None };
+    /// let request = PingRequest { params: PingParams::default() };
     /// let result = transport.send_ping(request, None).await.unwrap();
     /// # }
     /// ```

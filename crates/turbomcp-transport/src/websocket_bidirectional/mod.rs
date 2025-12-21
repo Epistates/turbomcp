@@ -21,11 +21,15 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,no_run
+//! ```rust,ignore
+//! // NOTE: This example uses the ElicitRequestParams::Form variant
 //! use turbomcp_transport::websocket_bidirectional::{
 //!     WebSocketBidirectionalTransport, WebSocketBidirectionalConfig
 //! };
-//! use turbomcp_protocol::types::{ElicitRequest, ElicitRequestParams, ElicitationAction};
+//! use turbomcp_protocol::types::{
+//!     ElicitRequest, ElicitRequestParams, FormElicitRequestParams,
+//!     ElicitationSchema, PrimitiveSchemaDefinition, StringSchema
+//! };
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create client configuration
@@ -37,8 +41,7 @@
 //! let mut transport = WebSocketBidirectionalTransport::new(config).await?;
 //! transport.connect().await?;
 //!
-//! // Send an elicitation request
-//! use turbomcp_protocol::types::{ElicitationSchema, PrimitiveSchemaDefinition, StringSchema};
+//! // Build elicitation schema
 //! let string_schema = StringSchema {
 //!     schema_type: "string".to_string(),
 //!     title: Some("Name".to_string()),
@@ -50,13 +53,16 @@
 //! };
 //! let schema = ElicitationSchema::new()
 //!     .add_property("name".to_string(), PrimitiveSchemaDefinition::String(string_schema));
+//!
+//! // Create elicitation request using Form variant
 //! let request = ElicitRequest {
-//!     params: ElicitRequestParams {
+//!     params: ElicitRequestParams::Form(FormElicitRequestParams {
 //!         message: "Please provide your name".to_string(),
 //!         schema,
 //!         timeout_ms: None,
 //!         cancellable: Some(true),
-//!     },
+//!     }),
+//!     task: None,
 //!     _meta: None,
 //! };
 //!

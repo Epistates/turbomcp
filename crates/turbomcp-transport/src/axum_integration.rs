@@ -174,48 +174,14 @@ pub struct WebSocketQuery {
     pub protocol: Option<String>,
 }
 
+// Re-export canonical JSON-RPC types for backward compatibility
+// These types are defined in turbomcp_protocol::jsonrpc::http for lenient HTTP boundary parsing
 #[cfg(feature = "http")]
-/// JSON-RPC request payload
-#[derive(Debug, Serialize, Deserialize)]
-pub struct JsonRpcRequest {
-    /// JSON-RPC version (should be "2.0")
-    pub jsonrpc: String,
-    /// Request ID for correlation
-    pub id: Option<serde_json::Value>,
-    /// Method name to call
-    pub method: String,
-    /// Method parameters
-    pub params: Option<serde_json::Value>,
-}
-
+pub use turbomcp_protocol::jsonrpc::http::HttpJsonRpcRequest as JsonRpcRequest;
 #[cfg(feature = "http")]
-/// JSON-RPC response payload
-#[derive(Debug, Serialize, Deserialize)]
-pub struct JsonRpcResponse {
-    /// JSON-RPC version
-    pub jsonrpc: String,
-    /// Request ID for correlation
-    pub id: Option<serde_json::Value>,
-    /// Success result
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<serde_json::Value>,
-    /// Error information
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<JsonRpcError>,
-}
-
+pub use turbomcp_protocol::jsonrpc::http::HttpJsonRpcResponse as JsonRpcResponse;
 #[cfg(feature = "http")]
-/// JSON-RPC error object
-#[derive(Debug, Serialize, Deserialize)]
-pub struct JsonRpcError {
-    /// Error code
-    pub code: i32,
-    /// Error message
-    pub message: String,
-    /// Additional error data
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<serde_json::Value>,
-}
+pub use turbomcp_protocol::jsonrpc::JsonRpcError;
 
 #[cfg(feature = "http")]
 /// Shared state for Axum application using trait objects for flexibility
@@ -341,55 +307,13 @@ pub enum FrameOptions {
     Disabled,
 }
 
+// Re-export canonical rate limiting types from axum config module
 #[cfg(feature = "http")]
-/// Rate limiting configuration
-#[derive(Debug, Clone)]
-pub struct RateLimitConfig {
-    /// Enable rate limiting
-    pub enabled: bool,
-    /// Requests per minute per IP
-    pub requests_per_minute: u32,
-    /// Burst capacity
-    pub burst_capacity: u32,
-    /// Key function (IP, User, Custom)
-    pub key_function: RateLimitKey,
-}
+pub use crate::axum::config::rate_limit::{RateLimitConfig, RateLimitKey};
 
+// Re-export canonical TLS types from axum config module
 #[cfg(feature = "http")]
-/// Rate limiting key strategies
-#[derive(Debug, Clone)]
-pub enum RateLimitKey {
-    /// Rate limit by IP address
-    IpAddress,
-    /// Rate limit by authenticated user ID
-    UserId,
-    /// Custom key extraction
-    Custom,
-}
-
-#[cfg(feature = "http")]
-/// TLS configuration
-#[derive(Debug, Clone)]
-pub struct TlsConfig {
-    /// Certificate file path
-    pub cert_file: String,
-    /// Private key file path
-    pub key_file: String,
-    /// Minimum TLS version
-    pub min_version: TlsVersion,
-    /// Enable HTTP/2
-    pub enable_http2: bool,
-}
-
-#[cfg(feature = "http")]
-/// TLS version specification
-#[derive(Debug, Clone)]
-pub enum TlsVersion {
-    /// TLS version 1.2
-    TlsV1_2,
-    /// TLS version 1.3  
-    TlsV1_3,
-}
+pub use crate::axum::config::tls::{TlsConfig, TlsVersion};
 
 #[cfg(feature = "http")]
 /// Authentication configuration for middleware
