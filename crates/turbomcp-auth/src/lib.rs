@@ -103,6 +103,7 @@
 
 // Submodules
 pub mod api_key_validation; // Sprint 2.3: Constant-time API key validation
+pub mod audit; // Structured audit logging for auth events
 pub mod config;
 pub mod context;
 pub mod introspection;
@@ -110,6 +111,7 @@ pub mod jwt;
 pub mod manager;
 pub mod oauth2;
 pub mod providers;
+pub mod rate_limit; // Rate limiting for auth endpoints
 pub mod server;
 pub mod types;
 
@@ -148,6 +150,14 @@ pub use providers::*;
 // Re-export manager
 #[doc(inline)]
 pub use manager::AuthManager;
+
+// Re-export audit logging
+#[doc(inline)]
+pub use audit::{AuditLogger, AuditRecord, AuthEvent, EventOutcome};
+
+// Re-export rate limiting
+#[doc(inline)]
+pub use rate_limit::{EndpointLimit, RateLimitConfig, RateLimitInfo, RateLimitKey, RateLimiter};
 
 // Re-export DPoP types when feature is enabled
 #[cfg(feature = "dpop")]

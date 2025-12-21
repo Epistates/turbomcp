@@ -49,8 +49,8 @@
 //! let metadata = fetcher.fetch("https://accounts.google.com").await?;
 //!
 //! // Access OAuth2 endpoints
-//! let auth_endpoint = metadata.oauth2().authorization_endpoint;
-//! let token_endpoint = metadata.oauth2().token_endpoint;
+//! let auth_endpoint = &metadata.oauth2().authorization_endpoint;
+//! let token_endpoint = &metadata.oauth2().token_endpoint;
 //!
 //! // Check PKCE support
 //! if metadata.oauth2().supports_pkce() {
