@@ -271,6 +271,7 @@ fn test_server_config_json_roundtrip() {
             cert_file: PathBuf::from("/tmp/cert.pem"),
             key_file: PathBuf::from("/tmp/key.pem"),
         }),
+        protocol_version: ProtocolVersionConfig::default(),
         timeouts: TimeoutConfig {
             request_timeout: Duration::from_secs(60),
             connection_timeout: Duration::from_secs(15),

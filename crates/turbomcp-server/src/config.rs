@@ -5,6 +5,99 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
+/// Protocol version configuration for MCP version negotiation
+///
+/// # Version Negotiation Behavior
+///
+/// When a client connects, the server negotiates protocol version as follows:
+///
+/// 1. If client requests a version in `supported` list → use client's version
+/// 2. If `allow_fallback` is true and client's version not supported → offer `preferred`
+/// 3. If `allow_fallback` is false → reject connection if versions don't match
+///
+/// # Examples
+///
+/// ```rust
+/// use turbomcp_server::ProtocolVersionConfig;
+///
+/// // Default: Latest spec with fallback enabled
+/// let config = ProtocolVersionConfig::default();
+///
+/// // Strict: Only accept latest spec, no fallback
+/// let config = ProtocolVersionConfig::strict("2025-11-25");
+///
+/// // Compatible: Prefer older version for maximum compatibility
+/// let config = ProtocolVersionConfig::compatible();
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolVersionConfig {
+    /// Preferred protocol version (default: "2025-11-25" - latest official spec)
+    pub preferred: String,
+
+    /// Supported versions in fallback order (first = most preferred)
+    /// Server will accept any of these versions from clients
+    pub supported: Vec<String>,
+
+    /// Allow fallback negotiation when client requests unsupported version
+    /// - true: Offer preferred version as fallback (client can accept or disconnect)
+    /// - false: Reject connection immediately if client version not in supported list
+    pub allow_fallback: bool,
+}
+
+impl ProtocolVersionConfig {
+    /// Create config with latest spec as preferred, fallback enabled
+    pub fn latest() -> Self {
+        Self {
+            preferred: "2025-11-25".to_string(),
+            supported: turbomcp_protocol::SUPPORTED_VERSIONS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+            allow_fallback: true,
+        }
+    }
+
+    /// Create config optimized for Claude Code compatibility
+    /// Prefers 2025-06-18 but supports all versions
+    pub fn compatible() -> Self {
+        Self {
+            preferred: "2025-06-18".to_string(),
+            supported: vec![
+                "2025-06-18".to_string(),
+                "2025-11-25".to_string(),
+                "2025-03-26".to_string(),
+                "2024-11-05".to_string(),
+            ],
+            allow_fallback: true,
+        }
+    }
+
+    /// Create strict config - only accept the specified version, no fallback
+    pub fn strict(version: impl Into<String>) -> Self {
+        let version = version.into();
+        Self {
+            preferred: version.clone(),
+            supported: vec![version],
+            allow_fallback: false,
+        }
+    }
+
+    /// Create custom config with specified versions
+    pub fn custom(preferred: impl Into<String>, supported: Vec<impl Into<String>>) -> Self {
+        Self {
+            preferred: preferred.into(),
+            supported: supported.into_iter().map(Into::into).collect(),
+            allow_fallback: true,
+        }
+    }
+}
+
+impl Default for ProtocolVersionConfig {
+    fn default() -> Self {
+        Self::latest()
+    }
+}
+
 /// Server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
@@ -22,6 +115,8 @@ pub struct ServerConfig {
     pub enable_tls: bool,
     /// TLS configuration
     pub tls: Option<TlsConfig>,
+    /// Protocol version configuration
+    pub protocol_version: ProtocolVersionConfig,
     /// Timeout configuration
     pub timeouts: TimeoutConfig,
     /// Rate limiting configuration
@@ -88,6 +183,7 @@ impl Default for ServerConfig {
             port: 8080,
             enable_tls: false,
             tls: None,
+            protocol_version: ProtocolVersionConfig::default(),
             timeouts: TimeoutConfig::default(),
             rate_limiting: RateLimitingConfig::default(),
             logging: LoggingConfig::default(),
@@ -351,6 +447,91 @@ impl ConfigurationBuilder {
     /// Set log level
     pub fn log_level(mut self, level: impl Into<String>) -> Self {
         self.config.logging.level = level.into();
+        self
+    }
+
+    /// Set preferred MCP protocol version
+    ///
+    /// Default is "2025-11-25" (latest official MCP spec).
+    /// Use "2025-06-18" for Claude Code compatibility.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_server::ServerConfig;
+    ///
+    /// // Use older spec for compatibility
+    /// let config = ServerConfig::builder()
+    ///     .protocol_version("2025-06-18")
+    ///     .build();
+    /// ```
+    pub fn protocol_version(mut self, version: impl Into<String>) -> Self {
+        self.config.protocol_version.preferred = version.into();
+        self
+    }
+
+    /// Set supported MCP protocol versions in fallback order
+    ///
+    /// The server will accept any of these versions from clients.
+    /// Order matters: first version is most preferred for fallback.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_server::ServerConfig;
+    ///
+    /// // Support specific versions with custom fallback order
+    /// let config = ServerConfig::builder()
+    ///     .supported_protocol_versions(vec!["2025-11-25", "2025-06-18"])
+    ///     .build();
+    /// ```
+    pub fn supported_protocol_versions(mut self, versions: Vec<impl Into<String>>) -> Self {
+        self.config.protocol_version.supported = versions.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Enable/disable protocol version fallback negotiation
+    ///
+    /// - `true` (default): If client requests unsupported version, offer preferred version
+    /// - `false`: Reject connection if client version not in supported list
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_server::ServerConfig;
+    ///
+    /// // Disable fallback - strict version matching only
+    /// let config = ServerConfig::builder()
+    ///     .protocol_version("2025-11-25")
+    ///     .allow_protocol_fallback(false)
+    ///     .build();
+    /// ```
+    #[must_use]
+    pub const fn allow_protocol_fallback(mut self, allow: bool) -> Self {
+        self.config.protocol_version.allow_fallback = allow;
+        self
+    }
+
+    /// Use pre-configured protocol version settings
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_server::{ServerConfig, ProtocolVersionConfig};
+    ///
+    /// // Use Claude Code compatible settings
+    /// let config = ServerConfig::builder()
+    ///     .protocol_version_config(ProtocolVersionConfig::compatible())
+    ///     .build();
+    ///
+    /// // Use strict mode for specific version
+    /// let config = ServerConfig::builder()
+    ///     .protocol_version_config(ProtocolVersionConfig::strict("2025-11-25"))
+    ///     .build();
+    /// ```
+    #[must_use]
+    pub fn protocol_version_config(mut self, config: ProtocolVersionConfig) -> Self {
+        self.config.protocol_version = config;
         self
     }
 
