@@ -680,13 +680,17 @@ mod protocol_version_compliance {
     /// **MCP Spec Requirement**: Validate protocol version constants match specification
     #[test]
     fn test_protocol_version_constants() {
-        // Test current protocol version matches spec
+        // Test current protocol version is latest official spec
         assert_eq!(PROTOCOL_VERSION, "2025-11-25");
 
         // Test supported versions include current and previous versions
         assert!(SUPPORTED_VERSIONS.contains(&PROTOCOL_VERSION));
+        assert!(SUPPORTED_VERSIONS.contains(&"2025-06-18")); // Claude Code compatible
         assert!(SUPPORTED_VERSIONS.contains(&"2025-03-26"));
         assert!(SUPPORTED_VERSIONS.contains(&"2024-11-05"));
+
+        // Latest should be first in preference order
+        assert_eq!(SUPPORTED_VERSIONS[0], PROTOCOL_VERSION);
 
         // Ensure versions are in descending order (latest first)
         let versions = SUPPORTED_VERSIONS;
