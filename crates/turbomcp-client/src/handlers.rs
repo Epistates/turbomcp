@@ -33,32 +33,34 @@
 //!
 //!         // Access the typed schema (not serde_json::Value!)
 //!         let mut content = std::collections::HashMap::new();
-//!         for (field_name, field_def) in &request.schema().properties {
-//!             eprint!("{}: ", field_name);
+//!         if let Some(schema) = request.schema() {
+//!             for (field_name, field_def) in &schema.properties {
+//!                 eprint!("{}: ", field_name);
 //!
-//!             let mut input = String::new();
-//!             std::io::stdin().read_line(&mut input)
-//!                 .map_err(|e| HandlerError::Generic {
-//!                     message: e.to_string()
-//!                 })?;
+//!                 let mut input = String::new();
+//!                 std::io::stdin().read_line(&mut input)
+//!                     .map_err(|e| HandlerError::Generic {
+//!                         message: e.to_string()
+//!                     })?;
 //!
-//!             let input = input.trim();
+//!                 let input = input.trim();
 //!
-//!             // Parse input based on field type (from typed schema!)
-//!             use turbomcp_protocol::types::PrimitiveSchemaDefinition;
-//!             let value: serde_json::Value = match field_def {
-//!                 PrimitiveSchemaDefinition::Boolean { .. } => {
-//!                     serde_json::json!(input == "true" || input == "yes" || input == "1")
-//!                 }
-//!                 PrimitiveSchemaDefinition::Number { .. } | PrimitiveSchemaDefinition::Integer { .. } => {
-//!                     input.parse::<f64>()
-//!                         .map(|n| serde_json::json!(n))
-//!                         .unwrap_or_else(|_| serde_json::json!(input))
-//!                 }
-//!                 _ => serde_json::json!(input),
-//!             };
+//!                 // Parse input based on field type (from typed schema!)
+//!                 use turbomcp_protocol::types::PrimitiveSchemaDefinition;
+//!                 let value: serde_json::Value = match field_def {
+//!                     PrimitiveSchemaDefinition::Boolean { .. } => {
+//!                         serde_json::json!(input == "true" || input == "yes" || input == "1")
+//!                     }
+//!                     PrimitiveSchemaDefinition::Number { .. } | PrimitiveSchemaDefinition::Integer { .. } => {
+//!                         input.parse::<f64>()
+//!                             .map(|n| serde_json::json!(n))
+//!                             .unwrap_or_else(|_| serde_json::json!(input))
+//!                     }
+//!                     _ => serde_json::json!(input),
+//!                 };
 //!
-//!             content.insert(field_name.clone(), value);
+//!                 content.insert(field_name.clone(), value);
+//!             }
 //!         }
 //!
 //!         Ok(ElicitationResponse::accept(content))
@@ -207,8 +209,10 @@ pub type HandlerResult<T> = Result<T, HandlerError>;
 ///     println!("Message: {}", request.message());
 ///
 ///     // Access typed schema (not Value!)
-///     for (name, property) in &request.schema().properties {
-///         println!("Field: {}", name);
+///     if let Some(schema) = request.schema() {
+///         for (name, property) in &schema.properties {
+///             println!("Field: {}", name);
+///         }
 ///     }
 ///
 ///     // Access timeout as Duration
@@ -265,15 +269,17 @@ impl ElicitationRequest {
     /// # use turbomcp_client::handlers::ElicitationRequest;
     /// # use turbomcp_protocol::types::PrimitiveSchemaDefinition;
     /// # async fn example(request: ElicitationRequest) {
-    /// for (name, definition) in &request.schema().properties {
-    ///     match definition {
-    ///         PrimitiveSchemaDefinition::String { description, .. } => {
-    ///             println!("String field: {}", name);
+    /// if let Some(schema) = request.schema() {
+    ///     for (name, definition) in &schema.properties {
+    ///         match definition {
+    ///             PrimitiveSchemaDefinition::String { description, .. } => {
+    ///                 println!("String field: {}", name);
+    ///             }
+    ///             PrimitiveSchemaDefinition::Number { minimum, maximum, .. } => {
+    ///                 println!("Number field: {} ({:?}-{:?})", name, minimum, maximum);
+    ///             }
+    ///             _ => {}
     ///         }
-    ///         PrimitiveSchemaDefinition::Number { minimum, maximum, .. } => {
-    ///             println!("Number field: {} ({:?}-{:?})", name, minimum, maximum);
-    ///         }
-    ///         _ => {}
     ///     }
     /// }
     /// # }
