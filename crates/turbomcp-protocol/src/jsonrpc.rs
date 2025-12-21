@@ -123,7 +123,7 @@ pub struct JsonRpcNotification {
 }
 
 /// JSON-RPC error object
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JsonRpcError {
     /// Error code
     pub code: i32,
@@ -132,6 +132,84 @@ pub struct JsonRpcError {
     /// Additional error data
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
+}
+
+impl JsonRpcError {
+    /// Create a new JSON-RPC error
+    pub fn new(code: i32, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: None,
+        }
+    }
+
+    /// Create a new JSON-RPC error with additional data
+    pub fn with_data(code: i32, message: impl Into<String>, data: Value) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            data: Some(data),
+        }
+    }
+
+    /// Create a parse error (-32700)
+    pub fn parse_error() -> Self {
+        Self::new(-32700, "Parse error")
+    }
+
+    /// Create a parse error with details
+    pub fn parse_error_with_details(details: impl Into<String>) -> Self {
+        Self::with_data(
+            -32700,
+            "Parse error",
+            serde_json::json!({ "details": details.into() }),
+        )
+    }
+
+    /// Create an invalid request error (-32600)
+    pub fn invalid_request() -> Self {
+        Self::new(-32600, "Invalid Request")
+    }
+
+    /// Create an invalid request error with reason
+    pub fn invalid_request_with_reason(reason: impl Into<String>) -> Self {
+        Self::with_data(
+            -32600,
+            "Invalid Request",
+            serde_json::json!({ "reason": reason.into() }),
+        )
+    }
+
+    /// Create a method not found error (-32601)
+    pub fn method_not_found(method: &str) -> Self {
+        Self::new(-32601, format!("Method not found: {method}"))
+    }
+
+    /// Create an invalid params error (-32602)
+    pub fn invalid_params(details: &str) -> Self {
+        Self::new(-32602, format!("Invalid params: {details}"))
+    }
+
+    /// Create an internal error (-32603)
+    pub fn internal_error(details: &str) -> Self {
+        Self::new(-32603, format!("Internal error: {details}"))
+    }
+
+    /// Check if this is a parse error
+    pub fn is_parse_error(&self) -> bool {
+        self.code == -32700
+    }
+
+    /// Check if this is an invalid request error
+    pub fn is_invalid_request(&self) -> bool {
+        self.code == -32600
+    }
+
+    /// Get the error code
+    pub fn code(&self) -> i32 {
+        self.code
+    }
 }
 
 /// JSON-RPC batch request/response
@@ -486,6 +564,205 @@ pub mod utils {
             return method.as_str().map(String::from);
         }
         None
+    }
+}
+
+/// HTTP boundary types for lenient JSON-RPC parsing
+///
+/// These types are designed for parsing JSON-RPC messages at HTTP boundaries where
+/// the input may not be strictly compliant. They accept any valid JSON structure
+/// and can be converted to the canonical types after validation.
+///
+/// # Usage
+///
+/// ```rust
+/// use turbomcp_protocol::jsonrpc::http::{HttpJsonRpcRequest, HttpJsonRpcResponse};
+/// use turbomcp_protocol::jsonrpc::JsonRpcError;
+///
+/// // Parse lenient request
+/// let raw_json = r#"{"jsonrpc":"2.0","method":"test","id":1}"#;
+/// let request: HttpJsonRpcRequest = serde_json::from_str(raw_json).unwrap();
+///
+/// // Validate and use
+/// if request.jsonrpc != "2.0" {
+///     // Return error with the id we managed to extract
+/// }
+/// ```
+pub mod http {
+    use serde::{Deserialize, Serialize};
+    use serde_json::Value;
+
+    /// Lenient JSON-RPC request for HTTP boundary parsing
+    ///
+    /// This type accepts any string for `jsonrpc` and any JSON value for `id`,
+    /// allowing proper error handling when clients send non-compliant requests.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct HttpJsonRpcRequest {
+        /// JSON-RPC version (should be "2.0" but accepts any string for error handling)
+        pub jsonrpc: String,
+        /// Request ID (can be string, number, or null)
+        #[serde(default)]
+        pub id: Option<Value>,
+        /// Method name
+        pub method: String,
+        /// Method parameters
+        #[serde(default)]
+        pub params: Option<Value>,
+    }
+
+    impl HttpJsonRpcRequest {
+        /// Check if this is a valid JSON-RPC 2.0 request
+        pub fn is_valid(&self) -> bool {
+            self.jsonrpc == "2.0" && !self.method.is_empty()
+        }
+
+        /// Check if this is a notification (no id)
+        pub fn is_notification(&self) -> bool {
+            self.id.is_none()
+        }
+
+        /// Get the id as a string if it's a string, or convert number to string
+        pub fn id_string(&self) -> Option<String> {
+            self.id.as_ref().map(|v| match v {
+                Value::String(s) => s.clone(),
+                Value::Number(n) => n.to_string(),
+                _ => v.to_string(),
+            })
+        }
+    }
+
+    /// Lenient JSON-RPC response for HTTP boundary
+    ///
+    /// Uses separate result/error fields for compatibility with various JSON-RPC
+    /// implementations.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct HttpJsonRpcResponse {
+        /// JSON-RPC version
+        pub jsonrpc: String,
+        /// Response ID
+        #[serde(default)]
+        pub id: Option<Value>,
+        /// Success result
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub result: Option<Value>,
+        /// Error information
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub error: Option<super::JsonRpcError>,
+    }
+
+    impl HttpJsonRpcResponse {
+        /// Create a success response
+        pub fn success(id: Option<Value>, result: Value) -> Self {
+            Self {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: Some(result),
+                error: None,
+            }
+        }
+
+        /// Create an error response
+        pub fn error(id: Option<Value>, error: super::JsonRpcError) -> Self {
+            Self {
+                jsonrpc: "2.0".to_string(),
+                id,
+                result: None,
+                error: Some(error),
+            }
+        }
+
+        /// Create an error response from error code
+        pub fn error_from_code(id: Option<Value>, code: i32, message: impl Into<String>) -> Self {
+            Self::error(id, super::JsonRpcError::new(code, message))
+        }
+
+        /// Create an invalid request error response
+        pub fn invalid_request(id: Option<Value>, reason: impl Into<String>) -> Self {
+            Self::error(id, super::JsonRpcError::invalid_request_with_reason(reason))
+        }
+
+        /// Create a parse error response (id is always null for parse errors)
+        pub fn parse_error(details: Option<String>) -> Self {
+            Self::error(
+                None,
+                details
+                    .map(super::JsonRpcError::parse_error_with_details)
+                    .unwrap_or_else(super::JsonRpcError::parse_error),
+            )
+        }
+
+        /// Create an internal error response
+        pub fn internal_error(id: Option<Value>, details: &str) -> Self {
+            Self::error(id, super::JsonRpcError::internal_error(details))
+        }
+
+        /// Create a method not found error response
+        pub fn method_not_found(id: Option<Value>, method: &str) -> Self {
+            Self::error(id, super::JsonRpcError::method_not_found(method))
+        }
+
+        /// Check if this is an error response
+        pub fn is_error(&self) -> bool {
+            self.error.is_some()
+        }
+
+        /// Check if this is a success response
+        pub fn is_success(&self) -> bool {
+            self.result.is_some() && self.error.is_none()
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_http_request_parsing() {
+            let json = r#"{"jsonrpc":"2.0","method":"test","id":1,"params":{"key":"value"}}"#;
+            let request: HttpJsonRpcRequest = serde_json::from_str(json).unwrap();
+            assert!(request.is_valid());
+            assert!(!request.is_notification());
+            assert_eq!(request.method, "test");
+        }
+
+        #[test]
+        fn test_http_request_invalid_version() {
+            let json = r#"{"jsonrpc":"1.0","method":"test","id":1}"#;
+            let request: HttpJsonRpcRequest = serde_json::from_str(json).unwrap();
+            assert!(!request.is_valid());
+        }
+
+        #[test]
+        fn test_http_response_success() {
+            let response = HttpJsonRpcResponse::success(
+                Some(Value::Number(1.into())),
+                serde_json::json!({"result": "ok"}),
+            );
+            assert!(response.is_success());
+            assert!(!response.is_error());
+        }
+
+        #[test]
+        fn test_http_response_error() {
+            let response = HttpJsonRpcResponse::invalid_request(
+                Some(Value::String("req-1".into())),
+                "jsonrpc must be 2.0",
+            );
+            assert!(!response.is_success());
+            assert!(response.is_error());
+        }
+
+        #[test]
+        fn test_http_response_serialization() {
+            let response = HttpJsonRpcResponse::success(
+                Some(Value::Number(1.into())),
+                serde_json::json!({"data": "test"}),
+            );
+            let json = serde_json::to_string(&response).unwrap();
+            assert!(json.contains(r#""jsonrpc":"2.0""#));
+            assert!(json.contains(r#""result""#));
+            assert!(!json.contains(r#""error""#));
+        }
     }
 }
 
