@@ -43,6 +43,7 @@ use crate::handlers::traits::{PromptHandler, ResourceHandler, ToolHandler};
 ///         is_error: None,
 ///         structured_content: None,
 ///         _meta: None,
+///         task_id: None,
 ///     })
 /// });
 /// ```

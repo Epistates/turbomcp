@@ -639,10 +639,10 @@ where
     // Helper to create MCP-compliant response headers
     fn mcp_response_headers(session_id: Option<&str>) -> HeaderMap {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "MCP-Protocol-Version",
-            HeaderValue::from_static("2025-11-25"),
-        );
+        // Use the constant for protocol version to ensure consistency
+        if let Ok(version) = HeaderValue::from_str(turbomcp_protocol::PROTOCOL_VERSION) {
+            headers.insert("MCP-Protocol-Version", version);
+        }
         if let Some(sid) = session_id
             && let Ok(hv) = HeaderValue::from_str(sid)
         {
@@ -816,10 +816,10 @@ where
         "Mcp-Session-Id",
         HeaderValue::from_str(&session_id).unwrap_or_else(|_| HeaderValue::from_static("invalid")),
     );
-    response_headers.insert(
-        "MCP-Protocol-Version",
-        HeaderValue::from_static("2025-11-25"),
-    );
+    // Use the constant for protocol version to ensure consistency
+    if let Ok(version) = HeaderValue::from_str(turbomcp_protocol::PROTOCOL_VERSION) {
+        response_headers.insert("MCP-Protocol-Version", version);
+    }
     response_headers.insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/event-stream"),

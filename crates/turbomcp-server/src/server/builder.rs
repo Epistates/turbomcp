@@ -4,7 +4,7 @@
 //! with handlers, configuration, and filesystem roots.
 
 use crate::{
-    config::ServerConfig,
+    config::{ProtocolVersionConfig, ServerConfig},
     error::ServerResult,
     handlers::{PromptHandler, ResourceHandler, ToolHandler},
     registry::HandlerRegistry,
@@ -117,6 +117,31 @@ impl ServerBuilder {
     /// Set multiple filesystem roots
     pub fn roots(self, roots: Vec<turbomcp_protocol::types::Root>) -> Self {
         self.registry.set_roots(roots);
+        self
+    }
+
+    /// Set protocol version configuration
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_server::{ServerBuilder, ProtocolVersionConfig};
+    ///
+    /// // Use Claude Code compatible settings
+    /// let server = ServerBuilder::new()
+    ///     .name("my-server")
+    ///     .protocol_version_config(ProtocolVersionConfig::compatible())
+    ///     .build();
+    ///
+    /// // Use strict mode for specific version
+    /// let server = ServerBuilder::new()
+    ///     .name("my-server")
+    ///     .protocol_version_config(ProtocolVersionConfig::strict("2025-11-25"))
+    ///     .build();
+    /// ```
+    #[must_use]
+    pub fn protocol_version_config(mut self, config: ProtocolVersionConfig) -> Self {
+        self.config.protocol_version = config;
         self
     }
 

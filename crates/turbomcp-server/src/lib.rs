@@ -83,6 +83,7 @@
 //!         include_context: Some(turbomcp_protocol::types::IncludeContext::None),
 //!         temperature: Some(0.7),
 //!         stop_sequences: None,
+//!         task: None,
 //!         _meta: None,
 //!     };
 //!
@@ -172,7 +173,7 @@ pub mod timeout;
 // pub mod simple_http;
 
 // Re-export main types for convenience
-pub use config::{Configuration, ConfigurationBuilder, ServerConfig};
+pub use config::{Configuration, ConfigurationBuilder, ProtocolVersionConfig, ServerConfig};
 pub use error::{ServerError, ServerResult};
 pub use handlers::{
     CompletionHandler, ElicitationHandler, LoggingHandler, PingHandler, PromptHandler,
