@@ -3,12 +3,42 @@
 //! This module provides comprehensive protocol version management and compatibility
 //! checking for MCP implementations.
 //!
+//! ## Production Guidance
+//!
+//! **For new deployments, use [`Version::latest()`] (2025-11-25)** - the official stable
+//! MCP specification released on November 25, 2025.
+//!
+//! **For maximum backwards compatibility**, use [`Version::stable()`] (2025-06-18) which
+//! is widely supported by existing MCP clients including older versions of Claude Code.
+//!
+//! ```rust
+//! use turbomcp_protocol::versioning::Version;
+//!
+//! // Recommended: Use latest() for the official 2025-11-25 spec
+//! let version = Version::latest(); // 2025-11-25 (official release)
+//!
+//! // Legacy compatibility: Use stable() for older clients
+//! let version = Version::stable(); // 2025-06-18
+//! ```
+//!
 //! ## Supported Versions
 //!
-//! TurboMCP supports two MCP specification versions:
+//! TurboMCP supports multiple MCP specification versions:
 //!
-//! - **MCP 2025-06-18** (see [`Version::current`]) - Stable, production-ready
-//! - **MCP 2025-11-25** (see [`Version::draft`]) - Draft with experimental features
+//! | Version | Constant | Status |
+//! |---------|----------|--------|
+//! | **2025-11-25** | [`Version::latest()`] | **Current** - Official MCP spec (Tasks, Extensions, CIMD) |
+//! | **2025-06-18** | [`Version::stable()`] | Stable - Widely deployed, legacy client compatibility |
+//! | 2025-03-26 | - | Legacy support |
+//! | 2024-11-05 | - | Legacy support |
+//!
+//! ## Version Selection Guidelines
+//!
+//! - **New production servers**: Use `Version::latest()` for the official 2025-11-25 spec
+//!   with Tasks API, Extensions, and modern authorization features
+//! - **Legacy compatibility**: Use `Version::stable()` if you need to support older
+//!   clients that haven't updated to the 2025-11-25 spec
+//! - **Building clients**: Support multiple versions and negotiate with the server
 //!
 //! ## Version Negotiation
 //!
@@ -17,38 +47,39 @@
 //! ```rust
 //! use turbomcp_protocol::versioning::{Version, VersionManager};
 //!
-//! // Server setup
+//! // Server setup - prefers stable for production compatibility
 //! let manager = VersionManager::with_default_versions();
 //!
-//! // Client requests draft features
-//! let client_versions = vec![Version::draft(), Version::current()];
+//! // Client requests the latest version
+//! let client_versions = vec![Version::latest(), Version::stable()];
 //!
 //! // Server negotiates (picks highest mutually supported version)
 //! let negotiated = manager.negotiate_version(&client_versions);
-//! assert_eq!(negotiated, Some(Version::draft()));
+//! assert_eq!(negotiated, Some(Version::latest()));
 //! ```
 //!
 //! ## Feature Flags vs Runtime Negotiation
 //!
 //! **Feature flags** (compile-time) control what types are available:
 //! ```toml
-//! # Enable draft types at compile time
-//! turbomcp-protocol = { version = "2.2", features = ["mcp-draft"] }
+//! # Enable all MCP features at compile time
+//! turbomcp-protocol = { version = "2.3", features = ["mcp-draft"] }
 //! ```
 //!
 //! **Runtime negotiation** determines what protocol version is used for a session:
 //! ```rust,ignore
 //! use turbomcp_protocol::{InitializeRequest, InitializeResult};
 //!
-//! // Client asks for draft
+//! // Client asks for latest spec
 //! let request = InitializeRequest { protocol_version: "2025-11-25".into(), ..Default::default() };
 //!
-//! // Server responds with actual version (may downgrade)
+//! // Server responds with actual version (may downgrade for compatibility)
 //! let response = InitializeResult { protocol_version: "2025-06-18".into(), ..Default::default() };
 //! ```
 //!
-//! **Key Principle:** Compile with draft features if you *might* use them, negotiate at runtime
-//! based on what the other party supports.
+//! **Key Principle:** The 2025-11-25 spec is the current official release. Use it for new
+//! deployments. The 2025-06-18 version remains available for backwards compatibility with
+//! older clients. Always negotiate at runtime based on what the other party supports.
 
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -135,8 +166,11 @@ impl Version {
         Ok(Self { year, month, day })
     }
 
-    /// Get the current MCP protocol version (latest stable)
-    pub fn current() -> Self {
+    /// Get the stable MCP protocol version (2025-06-18)
+    ///
+    /// This version is widely compatible with MCP clients including Claude Code.
+    /// Use this as the default for maximum compatibility.
+    pub fn stable() -> Self {
         Self {
             year: 2025,
             month: 6,
@@ -144,15 +178,31 @@ impl Version {
         }
     }
 
-    /// Get the draft MCP protocol version (2025-11-25)
+    /// Alias for `stable()` for backwards compatibility
+    #[deprecated(since = "2.4.0", note = "Use `stable()` or `latest()` instead")]
+    pub fn current() -> Self {
+        Self::stable()
+    }
+
+    /// Get the latest MCP protocol version (2025-11-25)
     ///
-    /// This version includes experimental features and is under active development.
-    pub fn draft() -> Self {
+    /// This is the current official MCP specification version.
+    /// Note: Some clients like Claude Code may not support this version yet.
+    pub fn latest() -> Self {
         Self {
             year: 2025,
             month: 11,
             day: 25,
         }
+    }
+
+    /// Alias for `latest()` for backwards compatibility
+    #[deprecated(
+        since = "2.4.0",
+        note = "Use `latest()` instead - 2025-11-25 is now official"
+    )]
+    pub fn draft() -> Self {
+        Self::latest()
     }
 
     /// Check if this version is newer than another
@@ -190,10 +240,10 @@ impl Version {
     /// Get all known MCP versions
     pub fn known_versions() -> Vec<Version> {
         vec![
-            Version::new(2025, 11, 25).unwrap(), // Draft (with experimental features)
-            Version::new(2025, 6, 18).unwrap(),  // Current stable
-            Version::new(2024, 11, 5).unwrap(),  // Previous
-            Version::new(2024, 6, 25).unwrap(),  // Older
+            Version::new(2025, 11, 25).unwrap(), // Latest official spec
+            Version::new(2025, 6, 18).unwrap(),  // Stable (Claude Code compatible)
+            Version::new(2025, 3, 26).unwrap(),  // Previous
+            Version::new(2024, 11, 5).unwrap(),  // Legacy
         ]
     }
 }
