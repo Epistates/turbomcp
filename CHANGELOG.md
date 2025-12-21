@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.5] - 2025-12-16
+
+### Added
+
+#### Protocol Version Configuration (`turbomcp-server`, `turbomcp-macros`)
+
+- **Configurable MCP protocol version negotiation** - Servers can now configure which protocol
+  versions they support and how version negotiation works with clients.
+
+- **Pre-built configurations**:
+  - `ProtocolVersionConfig::latest()` - Default: Prefer `2025-11-25` (latest official spec) with fallback enabled
+  - `ProtocolVersionConfig::compatible()` - Prefer `2025-06-18` for Claude Code compatibility
+  - `ProtocolVersionConfig::strict(version)` - Only accept the specified version, reject mismatches
+  - `ProtocolVersionConfig::custom(preferred, supported)` - Full control over version negotiation
+
+- **ServerBuilder support** (`turbomcp-server`):
+  ```rust
+  use turbomcp_server::{ServerBuilder, ProtocolVersionConfig};
+
+  // Use Claude Code compatible settings
+  let server = ServerBuilder::new()
+      .name("my-server")
+      .protocol_version_config(ProtocolVersionConfig::compatible())
+      .build();
+
+  // Use strict mode - only accept 2025-11-25
+  let server = ServerBuilder::new()
+      .protocol_version_config(ProtocolVersionConfig::strict("2025-11-25"))
+      .build();
+  ```
+
+- **Macro support** (`turbomcp-macros`):
+  ```rust
+  // Use Claude Code compatible mode
+  #[turbomcp::server(protocol_version = "compatible")]
+  impl MyServer { ... }
+
+  // Use latest spec (default)
+  #[turbomcp::server(protocol_version = "latest")]
+  impl MyServer { ... }
+
+  // Strict mode - only accept specific version
+  #[turbomcp::server(protocol_version = "strict:2025-11-25")]
+  impl MyServer { ... }
+
+  // Specify preferred version directly
+  #[turbomcp::server(protocol_version = "2025-06-18")]
+  impl MyServer { ... }
+  ```
+
+- **TOML/YAML/JSON configuration support**:
+  ```toml
+  [protocol_version]
+  preferred = "2025-11-25"
+  supported = ["2025-11-25", "2025-06-18", "2025-03-26"]
+  allow_fallback = true
+  ```
+
+#### Version Negotiation Flow
+
+1. Client sends `protocolVersion` in initialize request
+2. Server checks if client's version is in `supported` list
+3. If supported → server responds with client's version
+4. If not supported and `allow_fallback = true` → server offers `preferred` version
+5. If not supported and `allow_fallback = false` → server rejects connection
+6. Client decides to accept server's version or disconnect
+
+### Fixed
+
+#### Claude Code Compatibility
+- **Fixed Claude Code connection failures** - Claude Code only supports `2025-06-18`, but TurboMCP
+  was advertising `2025-11-25` without proper version negotiation. Servers using
+  `ProtocolVersionConfig::compatible()` (or the macro equivalent) will now successfully connect.
+
+### Changed
+
+#### Protocol Version Default
+- **Default protocol version remains `2025-11-25`** (latest official MCP spec)
+- **Default fallback enabled** - Servers will offer their preferred version if client requests unsupported version
+- Users who need Claude Code compatibility should use `ProtocolVersionConfig::compatible()` or
+  `#[turbomcp::server(protocol_version = "compatible")]`
+
 ## [2.3.4] - 2025-12-13
 
 ### Fixed
