@@ -68,6 +68,40 @@ impl Root {
     }
 }
 
+/// Protocol version preset for the server macro
+#[derive(Debug, Clone, Default)]
+pub enum ProtocolVersionPreset {
+    /// Use latest spec (2025-11-25) with fallback enabled
+    #[default]
+    Latest,
+    /// Use Claude Code compatible settings (prefer 2025-06-18)
+    Compatible,
+    /// Strict mode - only accept the specified version
+    Strict(String),
+    /// Custom version - prefer this version with fallback enabled
+    Custom(String),
+}
+
+impl ProtocolVersionPreset {
+    /// Parse from string value
+    /// - "latest" -> Latest
+    /// - "compatible" -> Compatible
+    /// - "strict:2025-11-25" -> Strict("2025-11-25")
+    /// - "2025-06-18" -> Custom("2025-06-18")
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "latest" => Self::Latest,
+            "compatible" => Self::Compatible,
+            s if s.starts_with("strict:") => Self::Strict(
+                s.strip_prefix("strict:")
+                    .unwrap_or("2025-11-25")
+                    .to_string(),
+            ),
+            version => Self::Custom(version.to_string()),
+        }
+    }
+}
+
 /// Server macro attributes with syn-based parsing
 #[derive(Debug, Default)]
 pub struct ServerAttrs {
@@ -79,6 +113,12 @@ pub struct ServerAttrs {
     /// If not specified, generates code for all enabled features
     /// Example: transports = ["http", "tcp"]
     pub transports: Option<Vec<String>>,
+    /// Protocol version configuration preset
+    /// - "latest" (default): 2025-11-25 with fallback
+    /// - "compatible": 2025-06-18 for Claude Code compatibility
+    /// - "strict:VERSION": Only accept specified version
+    /// - "VERSION": Prefer specified version with fallback
+    pub protocol_version: ProtocolVersionPreset,
 }
 
 impl ServerAttrs {
@@ -144,6 +184,11 @@ impl ServerAttrs {
                         attrs.transports = Some(transports);
                     }
                 }
+                "protocol_version" => {
+                    if let Some(value) = item.get_string_value() {
+                        attrs.protocol_version = ProtocolVersionPreset::from_str(&value);
+                    }
+                }
                 _ => {
                     // Ignore unknown attributes for forward compatibility
                 }
@@ -177,6 +222,43 @@ impl ServerAttrs {
 
         quote! {
             #(#root_configs)*
+        }
+    }
+
+    /// Generate the protocol version configuration code for the server builder
+    pub fn generate_protocol_version_config(&self) -> proc_macro2::TokenStream {
+        match &self.protocol_version {
+            ProtocolVersionPreset::Latest => {
+                quote! {
+                    builder = builder.protocol_version_config(
+                        ::turbomcp::ProtocolVersionConfig::latest()
+                    );
+                }
+            }
+            ProtocolVersionPreset::Compatible => {
+                quote! {
+                    builder = builder.protocol_version_config(
+                        ::turbomcp::ProtocolVersionConfig::compatible()
+                    );
+                }
+            }
+            ProtocolVersionPreset::Strict(version) => {
+                quote! {
+                    builder = builder.protocol_version_config(
+                        ::turbomcp::ProtocolVersionConfig::strict(#version)
+                    );
+                }
+            }
+            ProtocolVersionPreset::Custom(version) => {
+                quote! {
+                    builder = builder.protocol_version_config(
+                        ::turbomcp::ProtocolVersionConfig::custom(
+                            #version,
+                            vec!["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
+                        )
+                    );
+                }
+            }
         }
     }
 }

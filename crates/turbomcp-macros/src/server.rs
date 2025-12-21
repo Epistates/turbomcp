@@ -243,6 +243,9 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
     // Generate roots configuration code using the attrs module
     let roots_config = attrs.generate_roots_config();
 
+    // Generate protocol version configuration code
+    let protocol_version_config = attrs.generate_protocol_version_config();
+
     // Prepare tool method data for router generation
     let tool_method_data: Vec<_> = tool_methods
         .iter()
@@ -421,6 +424,9 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
 
                 // Configure roots if specified in macro
                 #roots_config
+
+                // Configure protocol version negotiation
+                #protocol_version_config
 
                 // Tool auto-discovery and registration with actual method calls
                 let server_instance = self;
