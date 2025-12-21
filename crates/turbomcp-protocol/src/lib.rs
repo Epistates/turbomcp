@@ -359,10 +359,11 @@ pub use versioning::{VersionCompatibility, VersionManager, VersionRequirement};
 /// Alias for RequestContext for backward compatibility
 pub type Context = RequestContext;
 
-/// Current MCP protocol version supported by this SDK
+/// Current MCP protocol version supported by this SDK (latest official spec)
 pub const PROTOCOL_VERSION: &str = "2025-11-25";
 
-/// Supported protocol versions for compatibility
+/// Supported protocol versions in preference order (latest first)
+/// Server will negotiate down this list if client doesn't support preferred version
 pub const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
 
 /// Maximum message size in bytes (1MB) - Reduced for security (DoS protection)
@@ -505,6 +506,8 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(PROTOCOL_VERSION, "2025-11-25");
         assert!(SUPPORTED_VERSIONS.contains(&PROTOCOL_VERSION));
+        // Latest should be first in supported versions
+        assert_eq!(SUPPORTED_VERSIONS[0], PROTOCOL_VERSION);
     }
 
     #[test]

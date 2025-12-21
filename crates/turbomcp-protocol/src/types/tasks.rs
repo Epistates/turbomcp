@@ -1,7 +1,11 @@
 //! Tasks API for durable long-running operations
 //!
-//! The Tasks API (MCP 2025-11-25, SEP-1686) provides durable state machines for
+//! The Tasks API (MCP 2025-11-25) provides durable state machines for
 //! long-running operations, enabling requestor polling and deferred result retrieval.
+//!
+//! This is an official feature of the MCP 2025-11-25 specification, released on
+//! November 25, 2025. See the [official specification](https://modelcontextprotocol.io/specification/2025-11-25)
+//! for authoritative documentation.
 //!
 //! ## Overview
 //!

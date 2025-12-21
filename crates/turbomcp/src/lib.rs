@@ -544,8 +544,8 @@ pub use turbomcp_protocol::types::{
     ToolInputSchema,
 };
 pub use turbomcp_server::{
-    McpServer, McpServer as Server, ServerBuilder, ServerError, ServerResult, ShutdownHandle,
-    handlers,
+    McpServer, McpServer as Server, ProtocolVersionConfig, ServerBuilder, ServerError,
+    ServerResult, ShutdownHandle, handlers,
 };
 
 // Re-export async_trait for macros

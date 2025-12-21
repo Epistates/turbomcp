@@ -92,85 +92,12 @@ pub type Base64String = String;
 /// Cursor for pagination
 pub type Cursor = String;
 
-/// Standard JSON-RPC error codes per specification
-pub mod error_codes {
-    /// Parse error - Invalid JSON was received by the server
-    pub const PARSE_ERROR: i32 = -32700;
-    /// Invalid Request - The JSON sent is not a valid Request object
-    pub const INVALID_REQUEST: i32 = -32600;
-    /// Method not found - The method does not exist / is not available
-    pub const METHOD_NOT_FOUND: i32 = -32601;
-    /// Invalid params - Invalid method parameter(s)
-    pub const INVALID_PARAMS: i32 = -32602;
-    /// Internal error - Internal JSON-RPC error
-    pub const INTERNAL_ERROR: i32 = -32603;
-}
+// Re-export error codes from canonical location (crate::error_codes has more codes)
+pub use crate::error_codes;
 
-/// JSON-RPC error structure per MCP 2025-06-18 specification
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct JsonRpcError {
-    /// The error type that occurred
-    pub code: i32,
-    /// A short description of the error (should be limited to a concise single sentence)
-    pub message: String,
-    /// Additional information about the error (detailed error information, nested errors, etc.)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub data: Option<serde_json::Value>,
-}
-
-impl JsonRpcError {
-    /// Create a new JSON-RPC error
-    pub fn new(code: i32, message: String) -> Self {
-        Self {
-            code,
-            message,
-            data: None,
-        }
-    }
-
-    /// Create a new JSON-RPC error with additional data
-    pub fn with_data(code: i32, message: String, data: serde_json::Value) -> Self {
-        Self {
-            code,
-            message,
-            data: Some(data),
-        }
-    }
-
-    /// Create a parse error
-    pub fn parse_error() -> Self {
-        Self::new(error_codes::PARSE_ERROR, "Parse error".to_string())
-    }
-
-    /// Create an invalid request error
-    pub fn invalid_request() -> Self {
-        Self::new(error_codes::INVALID_REQUEST, "Invalid Request".to_string())
-    }
-
-    /// Create a method not found error
-    pub fn method_not_found(method: &str) -> Self {
-        Self::new(
-            error_codes::METHOD_NOT_FOUND,
-            format!("Method not found: {method}"),
-        )
-    }
-
-    /// Create an invalid params error
-    pub fn invalid_params(details: &str) -> Self {
-        Self::new(
-            error_codes::INVALID_PARAMS,
-            format!("Invalid params: {details}"),
-        )
-    }
-
-    /// Create an internal error
-    pub fn internal_error(details: &str) -> Self {
-        Self::new(
-            error_codes::INTERNAL_ERROR,
-            format!("Internal error: {details}"),
-        )
-    }
-}
+// Re-export JsonRpcError from canonical jsonrpc module
+// This maintains backward compatibility for code importing from types::core
+pub use crate::jsonrpc::JsonRpcError;
 
 /// Base interface for metadata with name (identifier) and title (display name) properties.
 /// Per MCP specification 2025-06-18, this is the foundation for Tool, Resource, and Prompt metadata.
