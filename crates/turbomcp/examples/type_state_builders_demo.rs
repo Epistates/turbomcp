@@ -153,6 +153,7 @@ fn count_server_capabilities(caps: &turbomcp_protocol::types::ServerCapabilities
 }
 
 /// Count enabled client capabilities
+#[allow(dead_code)]
 fn count_client_capabilities(caps: &turbomcp_protocol::types::ClientCapabilities) -> usize {
     let mut count = 0;
     if caps.experimental.is_some() { count += 1; }

@@ -28,8 +28,9 @@
 //! ```rust
 //! use turbomcp_auth::api_key_validation::validate_api_key;
 //!
-//! let provided_key = "sk_live_abc123";
-//! let expected_key = "sk_live_abc123";
+//! // Use clearly fake test keys (>= 32 chars required)
+//! let provided_key = "test_key_abc123def456ghi789jkl012mno";
+//! let expected_key = "test_key_abc123def456ghi789jkl012mno";
 //!
 //! if validate_api_key(provided_key, expected_key) {
 //!     // Authenticated
@@ -59,6 +60,13 @@ fn hash_api_key(key: &str) -> [u8; 32] {
     blake3::hash(key.as_bytes()).into()
 }
 
+/// Minimum required length for API keys (security best practice)
+///
+/// Keys shorter than this are trivially brute-forceable and rejected.
+/// 32 characters provides ~192 bits of entropy with alphanumeric charset.
+/// v2.3.6: Added to prevent weak API keys
+pub const MIN_API_KEY_LENGTH: usize = 32;
+
 /// Validate an API key using constant-time comparison
 ///
 /// This function is timing-attack resistant. The comparison time is constant
@@ -84,17 +92,31 @@ fn hash_api_key(key: &str) -> [u8; 32] {
 /// ```rust
 /// use turbomcp_auth::api_key_validation::validate_api_key;
 ///
-/// let provided = "sk_live_correct_key";
-/// let expected = "sk_live_correct_key";
+/// // Keys must be >= 32 chars for security
+/// let provided = "test_key_correct_abcdefghij123456";
+/// let expected = "test_key_correct_abcdefghij123456";
 ///
 /// assert!(validate_api_key(provided, expected));
 ///
-/// let wrong_key = "sk_live_wrong_key";
+/// let wrong_key = "test_key_wrongxx_abcdefghij123456";
 /// assert!(!validate_api_key(wrong_key, expected));
 /// ```
 #[must_use]
 #[inline]
 pub fn validate_api_key(provided: &str, expected: &str) -> bool {
+    // SECURITY: Reject trivially short keys that could be brute-forced
+    // This check is NOT constant-time, but that's acceptable because:
+    // 1. The information leaked (key is too short) is not useful to attackers
+    // 2. Attackers should know the minimum length from documentation
+    if provided.len() < MIN_API_KEY_LENGTH || expected.len() < MIN_API_KEY_LENGTH {
+        tracing::warn!(
+            "API key validation failed: key length ({}) below minimum required ({} chars)",
+            provided.len().min(expected.len()),
+            MIN_API_KEY_LENGTH
+        );
+        return false;
+    }
+
     // Hash both keys to fixed 32-byte size
     let provided_hash = hash_api_key(provided);
     let expected_hash = hash_api_key(expected);
@@ -128,11 +150,12 @@ pub fn validate_api_key(provided: &str, expected: &str) -> bool {
 /// ```rust
 /// use turbomcp_auth::api_key_validation::validate_api_key_multiple;
 ///
-/// let provided = "sk_live_key2";
+/// // Keys must be >= 32 chars for security
+/// let provided = "test_key_second_abcdefghij1234567";
 /// let valid_keys = vec![
-///     "sk_live_key1",
-///     "sk_live_key2",
-///     "sk_live_key3",
+///     "test_key_first__abcdefghij1234567",
+///     "test_key_second_abcdefghij1234567",
+///     "test_key_third__abcdefghij1234567",
 /// ];
 ///
 /// assert!(validate_api_key_multiple(provided, &valid_keys));
@@ -158,78 +181,107 @@ mod tests {
     use super::*;
     use std::time::Instant;
 
+    // Test keys must be >= MIN_API_KEY_LENGTH (32 chars) to pass validation
+    // Using clearly fake patterns that won't trigger secret scanning
+    const TEST_KEY_1: &str = "test_key_1234567890abcdef1234567890abc";
+    const TEST_KEY_2: &str = "test_key_0000000000000000111111111111a";
+    const TEST_KEY_3: &str = "demo_key_1234567890abcdef1234567890abc";
+
     #[test]
     fn test_validate_correct_key() {
-        let key = "sk_live_1234567890abcdef";
-        assert!(validate_api_key(key, key));
+        assert!(validate_api_key(TEST_KEY_1, TEST_KEY_1));
     }
 
     #[test]
     fn test_validate_incorrect_key() {
-        let correct = "sk_live_1234567890abcdef";
-        let wrong = "sk_live_0000000000000000";
-        assert!(!validate_api_key(wrong, correct));
+        assert!(!validate_api_key(TEST_KEY_2, TEST_KEY_1));
     }
 
     #[test]
     fn test_validate_prefix_mismatch() {
-        let correct = "sk_live_1234567890abcdef";
-        let wrong_prefix = "sk_test_1234567890abcdef";
-        assert!(!validate_api_key(wrong_prefix, correct));
+        assert!(!validate_api_key(TEST_KEY_3, TEST_KEY_1));
     }
 
     #[test]
     fn test_validate_suffix_mismatch() {
-        let correct = "sk_live_1234567890abcdef";
-        let wrong_suffix = "sk_live_1234567890abcdex";
-        assert!(!validate_api_key(wrong_suffix, correct));
+        // Same key with last char changed
+        let wrong_suffix = "test_key_1234567890abcdef1234567890abx";
+        assert!(!validate_api_key(wrong_suffix, TEST_KEY_1));
     }
 
     #[test]
     fn test_validate_empty_keys() {
-        assert!(validate_api_key("", ""));
+        // Empty keys and short keys should all return false (security)
+        assert!(!validate_api_key("", ""));
         assert!(!validate_api_key("key", ""));
         assert!(!validate_api_key("", "key"));
     }
 
     #[test]
+    fn test_validate_short_keys_rejected() {
+        // Keys shorter than MIN_API_KEY_LENGTH should be rejected
+        let short_key = "test_key_short";
+        let long_key = TEST_KEY_1;
+
+        assert!(!validate_api_key(short_key, long_key));
+        assert!(!validate_api_key(long_key, short_key));
+        assert!(!validate_api_key(short_key, short_key));
+    }
+
+    #[test]
     fn test_validate_case_sensitive() {
-        let lower = "sk_live_abcdef";
-        let upper = "SK_LIVE_ABCDEF";
+        let lower = "test_key_abcdefghijklmnopqrstuvwxyz1234";
+        let upper = "SK_LIVE_ABCDEFGHIJKLMNOPQRSTUVWXYZ1234";
         assert!(!validate_api_key(lower, upper));
     }
 
     #[test]
     fn test_validate_multiple_keys_first_match() {
-        let provided = "sk_live_key1";
-        let valid_keys = vec!["sk_live_key1", "sk_live_key2", "sk_live_key3"];
+        let provided = "test_key_key1_abcdefghijklmnopqrstuv";
+        let valid_keys = vec![
+            "test_key_key1_abcdefghijklmnopqrstuv",
+            "test_key_key2_abcdefghijklmnopqrstuv",
+            "test_key_key3_abcdefghijklmnopqrstuv",
+        ];
         assert!(validate_api_key_multiple(provided, &valid_keys));
     }
 
     #[test]
     fn test_validate_multiple_keys_middle_match() {
-        let provided = "sk_live_key2";
-        let valid_keys = vec!["sk_live_key1", "sk_live_key2", "sk_live_key3"];
+        let provided = "test_key_key2_abcdefghijklmnopqrstuv";
+        let valid_keys = vec![
+            "test_key_key1_abcdefghijklmnopqrstuv",
+            "test_key_key2_abcdefghijklmnopqrstuv",
+            "test_key_key3_abcdefghijklmnopqrstuv",
+        ];
         assert!(validate_api_key_multiple(provided, &valid_keys));
     }
 
     #[test]
     fn test_validate_multiple_keys_last_match() {
-        let provided = "sk_live_key3";
-        let valid_keys = vec!["sk_live_key1", "sk_live_key2", "sk_live_key3"];
+        let provided = "test_key_key3_abcdefghijklmnopqrstuv";
+        let valid_keys = vec![
+            "test_key_key1_abcdefghijklmnopqrstuv",
+            "test_key_key2_abcdefghijklmnopqrstuv",
+            "test_key_key3_abcdefghijklmnopqrstuv",
+        ];
         assert!(validate_api_key_multiple(provided, &valid_keys));
     }
 
     #[test]
     fn test_validate_multiple_keys_no_match() {
-        let provided = "sk_live_wrong";
-        let valid_keys = vec!["sk_live_key1", "sk_live_key2", "sk_live_key3"];
+        let provided = "test_key_wrong_bcdefghijklmnopqrstuv";
+        let valid_keys = vec![
+            "test_key_key1_abcdefghijklmnopqrstuv",
+            "test_key_key2_abcdefghijklmnopqrstuv",
+            "test_key_key3_abcdefghijklmnopqrstuv",
+        ];
         assert!(!validate_api_key_multiple(provided, &valid_keys));
     }
 
     #[test]
     fn test_validate_multiple_keys_empty_list() {
-        let provided = "sk_live_key1";
+        let provided = "test_key_key1_abcdefghijklmnopqrstuv";
         let valid_keys: Vec<&str> = vec![];
         assert!(!validate_api_key_multiple(provided, &valid_keys));
     }
@@ -237,13 +289,13 @@ mod tests {
     #[test]
     fn test_timing_attack_resistance() {
         // This test verifies that comparison time is independent of where mismatch occurs
-        let correct_key = "sk_live_1234567890abcdef";
+        let correct_key = "test_key_1234567890abcdef1234567890abc";
 
         // Key with mismatch in first character
-        let wrong_prefix = "xk_live_1234567890abcdef";
+        let wrong_prefix = "xk_live_1234567890abcdef1234567890abc";
 
         // Key with mismatch in last character
-        let wrong_suffix = "sk_live_1234567890abcdex";
+        let wrong_suffix = "test_key_1234567890abcdef1234567890abx";
 
         // Warm up
         for _ in 0..1000 {
@@ -294,7 +346,7 @@ mod tests {
     #[test]
     fn test_blake3_hash_consistency() {
         // Verify that hashing is deterministic
-        let key = "sk_live_test";
+        let key = "test_key_test";
         let hash1 = hash_api_key(key);
         let hash2 = hash_api_key(key);
         assert_eq!(hash1, hash2);
@@ -303,8 +355,8 @@ mod tests {
     #[test]
     fn test_blake3_hash_collision_resistance() {
         // Different keys should produce different hashes
-        let key1 = "sk_live_1234567890abcdef";
-        let key2 = "sk_live_1234567890abcdeg"; // Last char different
+        let key1 = "test_key_1234567890abcdef";
+        let key2 = "test_key_1234567890abcdeg"; // Last char different
 
         let hash1 = hash_api_key(key1);
         let hash2 = hash_api_key(key2);
@@ -315,21 +367,22 @@ mod tests {
     #[test]
     fn test_long_keys() {
         // Test with very long keys
-        let long_key = "sk_live_".to_string() + &"a".repeat(1000);
+        let long_key = "test_key_".to_string() + &"a".repeat(1000);
         assert!(validate_api_key(&long_key, &long_key));
     }
 
     #[test]
     fn test_special_characters() {
         // Test with special characters
-        let key = "sk_live_!@#$%^&*()_+-={}[]|:;<>?,./";
+        let key = "test_key_!@#$%^&*()_+-={}[]|:;<>?,./";
         assert!(validate_api_key(key, key));
     }
 
     #[test]
     fn test_unicode_keys() {
-        // Test with Unicode characters
-        let key = "sk_live_你好世界🔒";
+        // Test with Unicode characters (must be >= MIN_API_KEY_LENGTH bytes)
+        // Note: Unicode chars can be multi-byte, this key is ~50 bytes
+        let key = "test_key_你好世界🔒abcdefghijklmnopqrst";
         assert!(validate_api_key(key, key));
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-transport"
-version = "2.3.5"
+version = "2.3.6"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Multi-protocol transport layer supporting HTTP, WebSocket, STDIO, and TCP for MCP communications"
@@ -37,8 +37,8 @@ tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 hyper = { version = "1.0", optional = true }
 hyper-util = { version = "0.1", optional = true }
-tokio-tungstenite = { version = "0.28.0", optional = true }
-reqwest = { version = "0.12", optional = true, features = ["json", "stream"] }
+tokio-tungstenite = { version = "0.28.0", optional = true, features = ["rustls-tls-native-roots"] }
+reqwest = { version = "0.12", optional = true, default-features = false, features = ["json", "stream", "rustls-tls"] }
 async-stream = { version = "0.3", optional = true }
 
 # Compression (optional)
@@ -55,8 +55,8 @@ tracing = { workspace = true }
 metrics = { workspace = true, optional = true }
 
 # Authentication (optional)
-turbomcp-auth = { version = "2.3.5", path = "../turbomcp-auth", optional = true }
-jsonwebtoken = { version = "9.3", optional = true }
+turbomcp-auth = { version = "2.3.6", path = "../turbomcp-auth", optional = true }
+jsonwebtoken = { version = "10.2", optional = true, features = ["aws_lc_rs", "use_pem"] }
 base64 = { version = "0.22", optional = true }
 
 # Utilities

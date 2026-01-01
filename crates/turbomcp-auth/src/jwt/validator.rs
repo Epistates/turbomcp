@@ -387,10 +387,34 @@ impl MultiIssuerValidator {
     }
 
     /// Validate a token (auto-detect issuer from JWT claims)
+    ///
+    /// v2.3.6: Added algorithm allowlist validation to prevent algorithm confusion attacks
     pub async fn validate(&self, token: &str) -> McpResult<JwtValidationResult> {
-        // Decode without validation to extract issuer
-        let _header = decode_header(token)
+        // Decode header to check algorithm BEFORE any other processing
+        // This prevents algorithm confusion attacks (e.g., none, HS256 with public key)
+        let header = decode_header(token)
             .map_err(|e| McpError::validation(format!("Invalid JWT format: {e}")))?;
+
+        // SECURITY: Validate algorithm is in allowlist before proceeding
+        // Only asymmetric algorithms are allowed for multi-issuer validation
+        const ALLOWED_ALGORITHMS: &[Algorithm] = &[
+            Algorithm::ES256,
+            Algorithm::ES384,
+            Algorithm::RS256,
+            Algorithm::RS384,
+            Algorithm::RS512,
+            Algorithm::PS256,
+            Algorithm::PS384,
+            Algorithm::PS512,
+        ];
+
+        if !ALLOWED_ALGORITHMS.contains(&header.alg) {
+            error!(algorithm = ?header.alg, "JWT algorithm not in allowlist");
+            return Err(McpError::validation(format!(
+                "JWT algorithm {:?} not allowed. Only asymmetric algorithms (ES*, RS*, PS*) are permitted.",
+                header.alg
+            )));
+        }
 
         // We need to peek at the payload to get the issuer
         // This is safe because we'll validate the signature next

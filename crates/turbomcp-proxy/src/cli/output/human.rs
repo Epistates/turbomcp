@@ -7,7 +7,7 @@
 //! - TTY detection for automatic color disabling
 
 use colored::Colorize;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 
 use super::OutputFormatter;
 use crate::error::ProxyResult;
@@ -23,7 +23,7 @@ impl HumanFormatter {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            use_color: atty::is(atty::Stream::Stdout) && std::env::var("NO_COLOR").is_err(),
+            use_color: std::io::stdout().is_terminal() && std::env::var("NO_COLOR").is_err(),
         }
     }
 

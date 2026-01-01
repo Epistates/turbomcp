@@ -8,6 +8,45 @@ use crate::Result;
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
+/// Decode URL-encoded patterns (handles single and double encoding)
+/// v2.3.6: Added for enhanced path traversal detection
+fn decode_url_encoded(s: &str) -> String {
+    let mut result = s.to_string();
+    // Decode double-encoded patterns first (%252e = %2e = .)
+    result = result.replace("%252e", ".");
+    result = result.replace("%252E", ".");
+    result = result.replace("%252f", "/");
+    result = result.replace("%252F", "/");
+    result = result.replace("%255c", "\\");
+    result = result.replace("%255C", "\\");
+    // Decode single-encoded patterns
+    result = result.replace("%2e", ".");
+    result = result.replace("%2E", ".");
+    result = result.replace("%2f", "/");
+    result = result.replace("%2F", "/");
+    result = result.replace("%5c", "\\");
+    result = result.replace("%5C", "\\");
+    result
+}
+
+/// Check for path traversal patterns including Unicode lookalikes
+/// v2.3.6: Added for enhanced path traversal detection
+fn contains_traversal_pattern(s: &str) -> bool {
+    // Standard traversal
+    if s.contains("..") {
+        return true;
+    }
+    // Unicode lookalikes for dots (fullwidth, ideographic)
+    if s.contains("．．") || s.contains("。。") {
+        return true;
+    }
+    // Backslash variants
+    if s.contains("..\\") || s.contains("\\..") {
+        return true;
+    }
+    false
+}
+
 /// Validates a path for basic security constraints
 ///
 /// This function performs essential security checks:
@@ -33,8 +72,22 @@ pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<PathBuf> {
     debug!("Validating path: {:?}", path);
 
     // Check for obvious path traversal patterns before filesystem operations
+    // v2.3.6: Enhanced with URL-encoded and Unicode detection
     let path_str = path.to_string_lossy();
-    if path_str.contains("..") {
+
+    // Check for null bytes (can be used to truncate paths)
+    if path_str.contains('\0') || path_str.contains("%00") {
+        return Err(crate::Error::security(format!(
+            "Null byte in path detected: {:?}",
+            path
+        )));
+    }
+
+    // Decode URL-encoded patterns for detection
+    let decoded = decode_url_encoded(&path_str);
+
+    // Check both original and decoded for traversal patterns
+    if contains_traversal_pattern(&path_str) || contains_traversal_pattern(&decoded) {
         return Err(crate::Error::security(format!(
             "Path traversal pattern detected: {:?}",
             path

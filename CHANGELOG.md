@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.6] - 2025-12-31
+
+### Security
+
+This release includes multiple security hardening improvements identified during a comprehensive audit.
+
+#### CRITICAL
+- **TLS certificate validation bypass gate** (`turbomcp-transport`) - Disabling certificate validation now requires explicit opt-in via `TURBOMCP_ALLOW_INSECURE_TLS=1` environment variable. Without this, the client will panic with a security error. This prevents accidental deployment of insecure configurations.
+- **jsonwebtoken consolidated to v10.2** - Unified all crates on `jsonwebtoken` v10.2.0 with `aws_lc_rs` crypto backend, eliminating version fragmentation and ensuring consistent security.
+
+#### HIGH
+- **TLS 1.3 default** (`turbomcp-transport`) - Default minimum TLS version changed from 1.2 to 1.3 for improved security. TLS 1.2 remains available via `TlsVersion::Tls12` but is now deprecated.
+- **Enhanced path traversal protection** (`turbomcp-protocol`) - Added detection for URL-encoded patterns (`%2e`, `%252e`), null byte injection (`\0`, `%00`), and Unicode lookalike characters.
+- **JWT algorithm allowlist** (`turbomcp-auth`) - `MultiIssuerValidator` now validates JWT algorithms before processing, only permitting asymmetric algorithms (ES256/384, RS256/384/512, PS256/384/512) to prevent algorithm confusion attacks.
+- **Explicit rustls backend** (`turbomcp-transport`, `turbomcp-proxy`) - HTTP client now explicitly uses rustls via `.use_rustls_tls()` to prevent native-tls fallback issues with TLS 1.3.
+
+#### MEDIUM
+- **API key minimum length** (`turbomcp-auth`) - API keys must now be at least 32 characters (`MIN_API_KEY_LENGTH`). Shorter keys are rejected to prevent brute-force attacks.
+- **DPoP nonce storage warnings** (`turbomcp-dpop`) - `MemoryNonceTracker` now logs security warnings about single-instance limitations in production deployments.
+
+### Changed
+- `TlsVersion::default()` now returns `Tls13` instead of `Tls12`
+- `validate_api_key()` returns `false` for keys shorter than 32 characters
+- `reqwest` dependency updated to use `rustls-tls` feature with default-features disabled
+
+### Dependencies
+- `jsonwebtoken`: 10.1 → 10.2 (with `aws_lc_rs` and `use_pem` features)
+- `reqwest`: Added `rustls-tls` feature, disabled native-tls default
+- `oauth2`: Added `rustls-tls` feature to eliminate native-tls dependency
+- `tokio-tungstenite`: Switched from `native-tls` to `rustls-tls-native-roots` feature
+- `criterion`: Unified all crates on v0.7.0 (workspace version)
+- Removed `atty` dependency in favor of `std::io::IsTerminal` (Rust 1.70+ stdlib)
+- **native-tls completely eliminated** from dependency tree (security + portability improvement)
+
 ## [2.3.5] - 2025-12-16
 
 ### Added

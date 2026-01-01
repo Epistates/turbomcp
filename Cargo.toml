@@ -107,7 +107,7 @@ tower = { version = "0.5.2", features = ["full"] }
 tower-http = { version = "0.6.8", features = ["full"] }
 hyper = { version = "1.0", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
-tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-native-roots"] }
 
 # Error handling and diagnostics
 thiserror = "2.0.16"
@@ -142,7 +142,7 @@ clap_complete = "4.4"
 ring = "0.17"
 base64 = "0.22"
 uuid = { version = "1.6", features = ["v4", "serde"] }
-jsonwebtoken = { version = "10.1", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "10.2", features = ["aws_lc_rs", "use_pem"] }
 
 # Time and date handling
 chrono = { version = "0.4", features = ["serde"] }
@@ -176,15 +176,15 @@ doc-comment = "0.3"
 
 # Workspace dependencies are defined below
 # Internal crate dependencies - 2.3.5 (with default-features = false for granular control)
-turbomcp = { version = "2.3.5", path = "crates/turbomcp" }
+turbomcp = { version = "2.3.6", path = "crates/turbomcp" }
 # turbomcp-core merged into turbomcp-protocol in v2.0.0
-turbomcp-protocol = { version = "2.3.5", path = "crates/turbomcp-protocol", default-features = false }
-turbomcp-transport = { version = "2.3.5", path = "crates/turbomcp-transport", default-features = false }
-turbomcp-client = { version = "2.3.5", path = "crates/turbomcp-client", default-features = false }
-turbomcp-server = { version = "2.3.5", path = "crates/turbomcp-server", default-features = false }
-turbomcp-macros = { version = "2.3.5", path = "crates/turbomcp-macros", default-features = false }
-turbomcp-cli = { version = "2.3.5", path = "crates/turbomcp-cli", default-features = false }
-# turbomcp-dpop = { version = "2.3.5", path = "crates/turbomcp-dpop" }  # Available as optional feature
+turbomcp-protocol = { version = "2.3.6", path = "crates/turbomcp-protocol", default-features = false }
+turbomcp-transport = { version = "2.3.6", path = "crates/turbomcp-transport", default-features = false }
+turbomcp-client = { version = "2.3.6", path = "crates/turbomcp-client", default-features = false }
+turbomcp-server = { version = "2.3.6", path = "crates/turbomcp-server", default-features = false }
+turbomcp-macros = { version = "2.3.6", path = "crates/turbomcp-macros", default-features = false }
+turbomcp-cli = { version = "2.3.6", path = "crates/turbomcp-cli", default-features = false }
+# turbomcp-dpop = { version = "2.3.6", path = "crates/turbomcp-dpop" }  # Available as optional feature
 
 [profile.dev]
 opt-level = 1

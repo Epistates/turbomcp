@@ -57,11 +57,10 @@ impl Default for TlsVersion {
     /// Returns the default TLS version.
     ///
     /// In v2.2.0, this is TLS 1.2 for backward compatibility.
-    /// Starting in v2.3.0, this will be TLS 1.3.
+    /// v2.3.6: Default is now TLS 1.3 for improved security.
     fn default() -> Self {
-        // v2.2.0: Keep TLS 1.2 as default for backward compatibility
-        #[allow(deprecated)]
-        Self::Tls12
+        // v2.3.6: TLS 1.3 is the modern secure default
+        Self::Tls13
     }
 }
 
@@ -878,22 +877,21 @@ mod tests {
     // TLS Configuration Tests
 
     #[test]
-    #[allow(deprecated)]
     fn test_tls_version_default() {
-        // v2.2.0: Default is TLS 1.2 for backward compatibility
+        // v2.3.6: Default is TLS 1.3 for improved security
         let version = TlsVersion::default();
-        assert_eq!(version, TlsVersion::Tls12);
+        assert_eq!(version, TlsVersion::Tls13);
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_tls_config_default() {
+        // v2.3.6: Default is now TLS 1.3
         let config = TlsConfig::default();
-        assert_eq!(config.min_version, TlsVersion::Tls12);
+        assert_eq!(config.min_version, TlsVersion::Tls13);
         assert!(config.validate_certificates);
         assert!(config.custom_ca_certs.is_none());
         assert!(config.allowed_ciphers.is_none());
-        assert!(config.is_deprecated());
+        assert!(!config.is_deprecated()); // TLS 1.3 is not deprecated
     }
 
     #[test]
@@ -1042,10 +1040,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
     fn test_transport_config_includes_tls() {
+        // v2.3.6: Default is now TLS 1.3
         let config = TransportConfig::default();
-        assert_eq!(config.tls.min_version, TlsVersion::Tls12);
+        assert_eq!(config.tls.min_version, TlsVersion::Tls13);
         assert!(config.tls.validate_certificates);
     }
 }

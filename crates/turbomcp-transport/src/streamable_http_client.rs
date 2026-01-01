@@ -208,7 +208,11 @@ impl StreamableHttpClientTransport {
         }
 
         // Build HTTP client with TLS configuration
+        // IMPORTANT: Must explicitly call use_rustls_tls() because cargo features are additive
+        // and other dependencies may bring in native-tls. Without this, TLS 1.3 minimum fails.
+        // See: https://github.com/seanmonstar/reqwest/issues/1314
         let mut client_builder = HttpClient::builder()
+            .use_rustls_tls()
             .timeout(config.timeout)
             .user_agent(&config.user_agent);
 
@@ -223,8 +227,35 @@ impl StreamableHttpClientTransport {
             }
         };
 
-        // Configure certificate validation
+        // Configure certificate validation with security gate
         if !config.tls.validate_certificates {
+            // SECURITY: Require explicit env var opt-in for insecure TLS
+            // This prevents accidental deployment of insecure configurations
+            const INSECURE_TLS_ENV_VAR: &str = "TURBOMCP_ALLOW_INSECURE_TLS";
+
+            if std::env::var(INSECURE_TLS_ENV_VAR).is_err() {
+                error!(
+                    "🚨 SECURITY ERROR: Certificate validation is disabled but {} is not set. \
+                     Disabling TLS certificate validation makes connections vulnerable to \
+                     man-in-the-middle attacks. To proceed (ONLY for testing/mTLS mesh): \
+                     export {}=1",
+                    INSECURE_TLS_ENV_VAR, INSECURE_TLS_ENV_VAR
+                );
+                panic!(
+                    "Certificate validation disabled without explicit opt-in. \
+                     Set {}=1 if you understand the security implications.",
+                    INSECURE_TLS_ENV_VAR
+                );
+            }
+
+            warn!(
+                "⚠️  SECURITY WARNING: TLS certificate validation is DISABLED. \
+                 This configuration is INSECURE and should ONLY be used: \
+                 (1) In development/testing environments, or \
+                 (2) In secure mTLS mesh where validation happens elsewhere. \
+                 NEVER use in production connecting to untrusted servers."
+            );
+
             client_builder = client_builder.danger_accept_invalid_certs(true);
         }
 

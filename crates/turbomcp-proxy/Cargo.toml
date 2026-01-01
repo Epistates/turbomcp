@@ -1,7 +1,7 @@
 [package]
 name = "turbomcp-proxy"
 
-version = "2.3.5"
+version = "2.3.6"
 
 edition = "2024"
 authors = ["TurboMCP Team"]
@@ -36,17 +36,17 @@ bytes = "1.5"
 # CLI (optional)
 clap = { version = "4.5", features = ["derive", "cargo", "env"], optional = true }
 colored = { version = "2.0", optional = true }
-atty = { version = "0.2", optional = true }
+# Removed atty (unmaintained) - use std::io::IsTerminal instead (Rust 1.70+)
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # HTTP/Web (optional)
 axum = { version = "0.8", optional = true }
 tower = { version = "0.5", optional = true }
 tower-http = { version = "0.6", features = ["cors", "trace"], optional = true }
-reqwest = { version = "0.12", features = ["json", "stream"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"], optional = true }
 
 # WebSocket (optional)
-tokio-tungstenite = { version = "0.28", optional = true }
+tokio-tungstenite = { version = "0.28", optional = true, features = ["rustls-tls-native-roots"] }
 
 # REST API & OpenAPI (optional)
 utoipa = { version = "5.4", features = ["axum_extras", "macros"], optional = true }
@@ -86,7 +86,7 @@ tokio-test = "0.4"
 tempfile = "3.8"
 proptest = "1.0"
 pretty_assertions = "1.4"
-criterion = { version = "0.5", features = ["async_tokio"] }
+criterion = { workspace = true, features = ["async_tokio"] }
 
 [features]
 default = ["cli", "runtime", "introspection"]
@@ -111,7 +111,7 @@ mcp-url-elicitation = ["turbomcp-protocol/mcp-url-elicitation"]
 mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
 
 # CLI
-cli = ["clap", "colored", "atty", "tracing-subscriber"]
+cli = ["clap", "colored", "tracing-subscriber"]
 
 # Full feature set
 full = ["introspection", "runtime", "codegen", "schema", "cli", "auth", "adapters"]

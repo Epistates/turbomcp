@@ -324,12 +324,15 @@ mod tests {
             metadata: HashMap::new(),
         };
 
+        // API keys must be >= 32 chars for security (v2.3.6+)
+        // Use clearly fake patterns that won't trigger secret scanning
+        let test_key = "test_key_abcdefghijklmnopqrstuvwxyz12";
         provider
-            .add_api_key("test_key_123".to_string(), user_info.clone())
+            .add_api_key(test_key.to_string(), user_info.clone())
             .await;
 
         let credentials = AuthCredentials::ApiKey {
-            key: "test_key_123".to_string(),
+            key: test_key.to_string(),
         };
 
         let auth_result = provider.authenticate(credentials).await;

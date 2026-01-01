@@ -466,8 +466,9 @@ mod tests {
 
     #[test]
     fn test_sanitize_secrets() {
+        // Use fake values that won't trigger GitHub secret scanning
         assert_eq!(
-            sanitize_secrets("API key: api_key=sk_test_1234567890abcdef"),
+            sanitize_secrets("API key: api_key=example_secret_1234567890abcdef"),
             "API key: api_key=[REDACTED]"
         );
         assert_eq!(
@@ -510,9 +511,10 @@ mod tests {
 
     #[test]
     fn test_full_sanitization() {
+        // Use fake secret values that won't trigger GitHub secret scanning
         let message = "Connection to postgres://admin:pass@192.168.1.100:5432/db failed. \
                        Check /etc/database/config.yml and contact support@company.com. \
-                       API key: api_key=sk_live_abc123";
+                       API key: api_key=example_secret_abc123";
 
         let sanitized = sanitize_error_message(message);
 
@@ -522,7 +524,7 @@ mod tests {
         assert!(!sanitized.contains("192.168.1.100"));
         assert!(!sanitized.contains("/etc/database"));
         assert!(!sanitized.contains("support@company.com"));
-        assert!(!sanitized.contains("sk_live_abc123"));
+        assert!(!sanitized.contains("example_secret_abc123"));
 
         // Should contain redacted markers
         assert!(sanitized.contains("[CONNECTION]"));

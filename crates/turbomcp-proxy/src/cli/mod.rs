@@ -26,6 +26,8 @@ pub mod commands;
 pub mod error;
 pub mod output;
 
+use std::io::IsTerminal;
+
 use clap::Parser;
 use tracing::Level;
 
@@ -76,7 +78,7 @@ impl Cli {
         self.init_tracing();
 
         // Configure colored output
-        if self.no_color || !atty::is(atty::Stream::Stdout) {
+        if self.no_color || !std::io::stdout().is_terminal() {
             colored::control::set_override(false);
         }
 
