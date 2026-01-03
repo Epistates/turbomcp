@@ -215,12 +215,22 @@ pub use plugins::{
 
 // Common protocol types
 pub use turbomcp_protocol::types::{
-    // Core types
-    Content, LogLevel, Prompt, Resource, ResourceContents, Role, Tool,
-    // Tool result types (for LLM integrations like rig)
-    CallToolResult, ContentBlock,
     // Resource content types (for processing embedded resources)
-    BlobResourceContents, EmbeddedResource, ResourceContent, TextResourceContents,
+    BlobResourceContents,
+    // Tool result types (for LLM integrations like rig)
+    CallToolResult,
+    // Core types
+    Content,
+    ContentBlock,
+    EmbeddedResource,
+    LogLevel,
+    Prompt,
+    Resource,
+    ResourceContent,
+    ResourceContents,
+    Role,
+    TextResourceContents,
+    Tool,
 };
 
 // Transport re-exports (with feature gates)

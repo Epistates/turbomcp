@@ -5,7 +5,7 @@
 //! zero-cost abstractions and advanced safety features.
 
 use turbomcp_protocol::capabilities::builders::{
-    ServerCapabilitiesBuilder, ClientCapabilitiesBuilder
+    ClientCapabilitiesBuilder, ServerCapabilitiesBuilder,
 };
 
 fn main() {
@@ -17,25 +17,31 @@ fn main() {
     println!("   -----------------------------------------------");
 
     let server_caps = ServerCapabilitiesBuilder::new()
-        .enable_experimental()  // Enables experimental capability state
-        .enable_tools()         // Enables tools capability state
-        .enable_prompts()       // Enables prompts capability state
-        .enable_resources()     // Enables resources capability state
+        .enable_experimental() // Enables experimental capability state
+        .enable_tools() // Enables tools capability state
+        .enable_prompts() // Enables prompts capability state
+        .enable_resources() // Enables resources capability state
         // These methods are only available because we enabled the parent capabilities!
-        .enable_tool_list_changed()     // ✅ Only available when tools enabled
-        .enable_prompts_list_changed()  // ✅ Only available when prompts enabled
+        .enable_tool_list_changed() // ✅ Only available when tools enabled
+        .enable_prompts_list_changed() // ✅ Only available when prompts enabled
         .enable_resources_list_changed() // ✅ Only available when resources enabled
-        .enable_resources_subscribe()   // ✅ Only available when resources enabled
+        .enable_resources_subscribe() // ✅ Only available when resources enabled
         // TurboMCP exclusive features!
-        .with_simd_optimization("avx2")       // 🚀 TurboMCP exclusive
-        .with_enterprise_security(true)       // 🚀 TurboMCP exclusive
+        .with_simd_optimization("avx2") // 🚀 TurboMCP exclusive
+        .with_enterprise_security(true) // 🚀 TurboMCP exclusive
         .build();
 
     println!("   ✅ Server capabilities configured with compile-time validation");
     println!("   📊 Tools enabled: {}", server_caps.tools.is_some());
     println!("   📝 Prompts enabled: {}", server_caps.prompts.is_some());
-    println!("   📚 Resources enabled: {}", server_caps.resources.is_some());
-    println!("   🧪 Experimental features: {}", server_caps.experimental.as_ref().map_or(0, |e| e.len()));
+    println!(
+        "   📚 Resources enabled: {}",
+        server_caps.resources.is_some()
+    );
+    println!(
+        "   🧪 Experimental features: {}",
+        server_caps.experimental.as_ref().map_or(0, |e| e.len())
+    );
 
     // Example 2: Client capabilities with opt-out model (TurboMCP 2.0)
     println!("\n2. Opt-Out Capability Model (Forward Compatible!)");
@@ -43,29 +49,47 @@ fn main() {
 
     // By default, ALL capabilities are enabled!
     let client_caps = ClientCapabilitiesBuilder::new()
-        .enable_roots_list_changed()  // Configure sub-capabilities
+        .enable_roots_list_changed() // Configure sub-capabilities
         .build();
 
     println!("   ✅ All capabilities enabled by default (opt-out model)");
     println!("   🗂️  Roots enabled: {}", client_caps.roots.is_some());
     println!("   🎯 Sampling enabled: {}", client_caps.sampling.is_some());
-    println!("   🤝 Elicitation enabled: {}", client_caps.elicitation.is_some());
-    println!("   🧪 Experimental enabled: {}", client_caps.experimental.is_some());
+    println!(
+        "   🤝 Elicitation enabled: {}",
+        client_caps.elicitation.is_some()
+    );
+    println!(
+        "   🧪 Experimental enabled: {}",
+        client_caps.experimental.is_some()
+    );
 
     // Example 2b: Selective disable (opt-out pattern)
     println!("\n2b. Selectively Disable Capabilities");
     println!("    ----------------------------------");
 
     let restricted_client = ClientCapabilitiesBuilder::new()
-        .without_elicitation()  // Disable user prompts
+        .without_elicitation() // Disable user prompts
         .without_experimental() // Disable experimental features
         .build();
 
     println!("   ✅ Disabled elicitation and experimental");
-    println!("   🗂️  Roots enabled: {}", restricted_client.roots.is_some());
-    println!("   🎯 Sampling enabled: {}", restricted_client.sampling.is_some());
-    println!("   🤝 Elicitation disabled: {}", restricted_client.elicitation.is_none());
-    println!("   🧪 Experimental disabled: {}", restricted_client.experimental.is_none());
+    println!(
+        "   🗂️  Roots enabled: {}",
+        restricted_client.roots.is_some()
+    );
+    println!(
+        "   🎯 Sampling enabled: {}",
+        restricted_client.sampling.is_some()
+    );
+    println!(
+        "   🤝 Elicitation disabled: {}",
+        restricted_client.elicitation.is_none()
+    );
+    println!(
+        "   🧪 Experimental disabled: {}",
+        restricted_client.experimental.is_none()
+    );
 
     // Example 3: Building servers with explicit capability selection
     println!("\n3. Building Servers with Explicit Capabilities");
@@ -84,30 +108,41 @@ fn main() {
         .enable_resources_list_changed()
         .enable_resources_subscribe()
         .build();
-    println!("   🚀 Full-featured server: {} capabilities enabled",
-        count_server_capabilities(&full_server));
+    println!(
+        "   🚀 Full-featured server: {} capabilities enabled",
+        count_server_capabilities(&full_server)
+    );
 
     // Minimal server - just enable what you need
-    let minimal_server = ServerCapabilitiesBuilder::new()
-        .enable_tools()
-        .build();
-    println!("   ⚡ Minimal server: {} capabilities enabled",
-        count_server_capabilities(&minimal_server));
+    let minimal_server = ServerCapabilitiesBuilder::new().enable_tools().build();
+    println!(
+        "   ⚡ Minimal server: {} capabilities enabled",
+        count_server_capabilities(&minimal_server)
+    );
 
     // Example 4: Opt-in pattern with minimal()
     println!("\n4. Opt-In Pattern (For Restrictive Clients)");
     println!("   -----------------------------------------");
 
     let minimal_client = ClientCapabilitiesBuilder::minimal()
-        .enable_sampling()      // Only enable what we need
+        .enable_sampling() // Only enable what we need
         .enable_roots()
         .build();
 
     println!("   ✅ Minimal client starts with nothing enabled");
     println!("   🗂️  Roots enabled: {}", minimal_client.roots.is_some());
-    println!("   🎯 Sampling enabled: {}", minimal_client.sampling.is_some());
-    println!("   🤝 Elicitation disabled: {}", minimal_client.elicitation.is_none());
-    println!("   🧪 Experimental disabled: {}", minimal_client.experimental.is_none());
+    println!(
+        "   🎯 Sampling enabled: {}",
+        minimal_client.sampling.is_some()
+    );
+    println!(
+        "   🤝 Elicitation disabled: {}",
+        minimal_client.elicitation.is_none()
+    );
+    println!(
+        "   🧪 Experimental disabled: {}",
+        minimal_client.experimental.is_none()
+    );
 
     println!("\n5. TurboMCP Exclusive Features");
     println!("   ----------------------------");
@@ -143,12 +178,24 @@ fn main() {
 /// Count enabled server capabilities
 fn count_server_capabilities(caps: &turbomcp_protocol::types::ServerCapabilities) -> usize {
     let mut count = 0;
-    if caps.experimental.is_some() { count += 1; }
-    if caps.logging.is_some() { count += 1; }
-    if caps.completions.is_some() { count += 1; }
-    if caps.prompts.is_some() { count += 1; }
-    if caps.resources.is_some() { count += 1; }
-    if caps.tools.is_some() { count += 1; }
+    if caps.experimental.is_some() {
+        count += 1;
+    }
+    if caps.logging.is_some() {
+        count += 1;
+    }
+    if caps.completions.is_some() {
+        count += 1;
+    }
+    if caps.prompts.is_some() {
+        count += 1;
+    }
+    if caps.resources.is_some() {
+        count += 1;
+    }
+    if caps.tools.is_some() {
+        count += 1;
+    }
     count
 }
 
@@ -156,9 +203,17 @@ fn count_server_capabilities(caps: &turbomcp_protocol::types::ServerCapabilities
 #[allow(dead_code)]
 fn count_client_capabilities(caps: &turbomcp_protocol::types::ClientCapabilities) -> usize {
     let mut count = 0;
-    if caps.experimental.is_some() { count += 1; }
-    if caps.roots.is_some() { count += 1; }
-    if caps.sampling.is_some() { count += 1; }
-    if caps.elicitation.is_some() { count += 1; }
+    if caps.experimental.is_some() {
+        count += 1;
+    }
+    if caps.roots.is_some() {
+        count += 1;
+    }
+    if caps.sampling.is_some() {
+        count += 1;
+    }
+    if caps.elicitation.is_some() {
+        count += 1;
+    }
     count
 }
