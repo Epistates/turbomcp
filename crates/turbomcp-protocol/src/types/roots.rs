@@ -38,4 +38,4 @@ pub struct ListRootsResult {
 
 /// Roots list changed notification (no parameters)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RootsListChangedNotification;
+pub struct RootsListChangedNotification {}

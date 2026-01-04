@@ -128,6 +128,7 @@
 //!         name: "my-client".to_string(),
 //!         title: None,
 //!         version: "1.0.0".to_string(),
+//!         ..Default::default()
 //!     },
 //!     _meta: None,
 //! };
@@ -141,6 +142,7 @@
 //!         name: "my-server".to_string(),
 //!         title: None,
 //!         version: "1.0.0".to_string(),
+//!         ..Default::default()
 //!     },
 //!     instructions: None,
 //!     _meta: None,

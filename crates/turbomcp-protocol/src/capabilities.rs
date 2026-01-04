@@ -527,7 +527,7 @@ mod tests {
         let matcher = CapabilityMatcher::new();
 
         let client = ClientCapabilities {
-            sampling: Some(SamplingCapabilities),
+            sampling: Some(SamplingCapabilities {}),
             roots: None,
             elicitation: None,
             experimental: None,
@@ -873,7 +873,7 @@ pub mod builders {
         {
             ServerCapabilitiesBuilder {
                 experimental: self.experimental,
-                logging: Some(LoggingCapabilities),
+                logging: Some(LoggingCapabilities {}),
                 completions: self.completions,
                 prompts: self.prompts,
                 resources: self.resources,
@@ -899,7 +899,7 @@ pub mod builders {
             ServerCapabilitiesBuilder {
                 experimental: self.experimental,
                 logging: self.logging,
-                completions: Some(CompletionCapabilities),
+                completions: Some(CompletionCapabilities {}),
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: self.tools,
@@ -1163,7 +1163,7 @@ pub mod builders {
             Self {
                 experimental: Some(HashMap::new()),
                 roots: Some(RootsCapabilities::default()),
-                sampling: Some(SamplingCapabilities),
+                sampling: Some(SamplingCapabilities {}),
                 elicitation: Some(ElicitationCapabilities::default()),
                 #[cfg(feature = "mcp-tasks")]
                 tasks: Some(ClientTasksCapabilities::default()),
@@ -1364,7 +1364,7 @@ pub mod builders {
             ClientCapabilitiesBuilder {
                 experimental: self.experimental,
                 roots: self.roots,
-                sampling: Some(SamplingCapabilities),
+                sampling: Some(SamplingCapabilities {}),
                 elicitation: self.elicitation,
                 #[cfg(feature = "mcp-tasks")]
                 tasks: self.tasks,

@@ -87,7 +87,7 @@ pub struct ServerCapabilities {
 
 /// Sampling capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SamplingCapabilities;
+pub struct SamplingCapabilities {}
 
 /// Elicitation capabilities per MCP 2025-11-25 specification
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -114,7 +114,7 @@ impl ElicitationCapabilities {
 
 /// Completion capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CompletionCapabilities;
+pub struct CompletionCapabilities {}
 
 /// Roots capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -126,7 +126,7 @@ pub struct RootsCapabilities {
 
 /// Logging capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LoggingCapabilities;
+pub struct LoggingCapabilities {}
 
 /// Prompts capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -240,12 +240,12 @@ pub struct ClientTasksCapabilities {
 /// Task list capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg(feature = "mcp-tasks")]
-pub struct TasksListCapabilities;
+pub struct TasksListCapabilities {}
 
 /// Task cancel capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg(feature = "mcp-tasks")]
-pub struct TasksCancelCapabilities;
+pub struct TasksCancelCapabilities {}
 
 /// Server-side task-augmented requests capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -281,7 +281,7 @@ pub struct TasksToolsCapabilities {
 /// Tools call task capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg(feature = "mcp-tasks")]
-pub struct TasksToolsCallCapabilities;
+pub struct TasksToolsCallCapabilities {}
 
 /// Sampling task capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -295,7 +295,7 @@ pub struct TasksSamplingCapabilities {
 /// Sampling create message task capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg(feature = "mcp-tasks")]
-pub struct TasksSamplingCreateMessageCapabilities;
+pub struct TasksSamplingCreateMessageCapabilities {}
 
 /// Elicitation task capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -309,4 +309,4 @@ pub struct TasksElicitationCapabilities {
 /// Elicitation create task capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[cfg(feature = "mcp-tasks")]
-pub struct TasksElicitationCreateCapabilities;
+pub struct TasksElicitationCreateCapabilities {}

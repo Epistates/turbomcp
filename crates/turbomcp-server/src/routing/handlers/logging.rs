@@ -49,7 +49,7 @@ pub async fn handle_set_level(
     match parse_params::<SetLevelRequest>(&request) {
         Ok(_set_level_request) => {
             // Protocol compliance: integrate with your logging framework for dynamic level changes
-            let result = SetLevelResult;
+            let result = SetLevelResult {};
             success_response(&request, result)
         }
         Err(e) => error_response(&request, e),

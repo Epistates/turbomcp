@@ -67,7 +67,7 @@ impl MockRootsClient {
 
     /// Send roots/list_changed notification
     async fn notify_roots_changed(&self) {
-        let notification = RootsListChangedNotification;
+        let notification = RootsListChangedNotification {};
         self.captured_notifications.lock().await.push(notification);
     }
 

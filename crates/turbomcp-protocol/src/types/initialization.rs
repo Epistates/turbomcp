@@ -57,4 +57,4 @@ pub struct InitializeResult {
 ///
 /// This notification has no parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InitializedNotification;
+pub struct InitializedNotification {}

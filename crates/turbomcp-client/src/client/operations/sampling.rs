@@ -96,7 +96,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             .expect("sampling_handler mutex poisoned")
             .is_some()
         {
-            Some(SamplingCapabilities)
+            Some(SamplingCapabilities {})
         } else {
             None
         }

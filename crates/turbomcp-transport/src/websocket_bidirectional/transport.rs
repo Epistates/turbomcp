@@ -86,6 +86,13 @@ impl Transport for WebSocketBidirectionalTransport {
     }
 
     async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
+        // Check if connected first to avoid hanging on the channel
+        if *self.state.read().await == TransportState::Disconnected {
+            return Err(TransportError::ConnectionLost(
+                "WebSocket not connected".to_string(),
+            ));
+        }
+
         // Read from the incoming channel instead of the raw WebSocket stream.
         //
         // The background `spawn_message_reader_task()` is the SINGLE consumer of the

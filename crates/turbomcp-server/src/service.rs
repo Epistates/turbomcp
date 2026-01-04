@@ -3,7 +3,6 @@
 //! This module provides the core MCP service that can be wrapped with middleware
 //! layers to create a complete, production-ready MCP server.
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -240,14 +239,8 @@ impl Service<Request<Bytes>> for McpService {
             let response_opt = match parsed {
                 Ok(message) => {
                     // Create properly configured context with server-to-client capabilities
-                    // Extract headers into HashMap for propagation
-                    let headers_map: HashMap<String, String> = headers
-                        .iter()
-                        .map(|(name, value)| (name.clone(), value.clone()))
-                        .collect();
-
                     let ctx =
-                        router.create_context(Some(headers_map), Some("http"), tenant_id.clone());
+                        router.create_context(Some(&headers), Some("http"), tenant_id.clone());
 
                     let service = McpService::new(registry, router, metrics);
                     service.process_jsonrpc(message, ctx).await

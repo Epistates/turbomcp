@@ -25,6 +25,6 @@ pub trait SamplingHandler: Send + Sync {
 
     /// Get supported sampling capabilities
     fn sampling_capabilities(&self) -> SamplingCapabilities {
-        SamplingCapabilities
+        SamplingCapabilities {}
     }
 }

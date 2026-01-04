@@ -35,7 +35,7 @@ pub struct SetLevelRequest {
 
 /// Set logging level result (empty)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetLevelResult;
+pub struct SetLevelResult {}
 
 /// Logging notification
 #[derive(Debug, Clone, Serialize, Deserialize)]

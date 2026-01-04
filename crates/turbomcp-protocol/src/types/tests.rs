@@ -862,9 +862,9 @@ fn test_empty_request_types() {
     let _list_tools = ListToolsRequest::default();
     let _list_prompts = ListPromptsRequest::default();
     let _list_roots = ListRootsRequest::default();
-    let _initialized = InitializedNotification;
-    let _set_level_result = SetLevelResult;
-    let _roots_changed = RootsListChangedNotification;
+    let _initialized = InitializedNotification {};
+    let _set_level_result = SetLevelResult {};
+    let _roots_changed = RootsListChangedNotification {};
 }
 
 #[test]
@@ -921,7 +921,7 @@ fn test_server_request_variants() {
 
 #[test]
 fn test_client_notification_variants() {
-    let initialized = ClientNotification::Initialized(InitializedNotification);
+    let initialized = ClientNotification::Initialized(InitializedNotification {});
 
     match initialized {
         ClientNotification::Initialized(_) => (),

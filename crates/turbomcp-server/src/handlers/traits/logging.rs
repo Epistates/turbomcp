@@ -22,6 +22,6 @@ pub trait LoggingHandler: Send + Sync {
 
     /// Get logging capabilities
     fn logging_capabilities(&self) -> LoggingCapabilities {
-        LoggingCapabilities
+        LoggingCapabilities {}
     }
 }

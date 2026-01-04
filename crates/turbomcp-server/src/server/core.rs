@@ -77,7 +77,7 @@ impl turbomcp_protocol::JsonRpcHandler for HttpHandlerWithHeaders {
         // tenant_id is extracted from request extensions by the HTTP/WebSocket handlers
         // if TenantExtractionLayer middleware was applied
         let ctx = self.router.create_context(
-            self.headers.clone(),
+            self.headers.as_ref(),
             Some(self.transport),
             self.tenant_id.clone(),
         );
@@ -319,11 +319,14 @@ impl McpServer {
                 strategy: RateLimitStrategy::Global,
                 limits: RateLimits {
                     requests_per_period: NonZeroU32::new(
-                        config.rate_limiting.requests_per_second * 60,
+                        (config.rate_limiting.requests_per_second * 60).max(1),
                     )
-                    .unwrap(), // Convert per-second to per-minute
+                    .expect("requests_per_period must be > 0"), // Safe due to max(1)
                     period: Duration::from_secs(60),
-                    burst_size: Some(NonZeroU32::new(config.rate_limiting.burst_capacity).unwrap()),
+                    burst_size: Some(
+                        NonZeroU32::new(config.rate_limiting.burst_capacity.max(1))
+                            .expect("burst_capacity must be > 0"), // Safe due to max(1)
+                    ),
                 },
                 enabled: true,
             };

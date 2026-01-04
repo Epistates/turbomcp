@@ -243,23 +243,23 @@ impl RequestRouter {
     ///
     /// # Arguments
     ///
-    /// * `headers` - Optional HTTP headers from the transport layer
+    /// * `headers` - Optional HTTP headers from the transport layer (reference to map)
     /// * `transport` - Optional transport type ("http", "websocket", etc.). Defaults to "http" if headers are provided.
     /// * `tenant_id` - Optional tenant identifier for multi-tenant deployments. Extracted by `TenantExtractionLayer` middleware.
     ///
     /// # Example
     /// ```rust,ignore
     /// // Single-tenant HTTP (tenant_id = None)
-    /// let ctx = router.create_context(Some(headers), None, None);
+    /// let ctx = router.create_context(Some(&headers), None, None);
     ///
     /// // Multi-tenant WebSocket (with tenant ID from middleware)
-    /// let ctx = router.create_context(Some(headers), Some("websocket"), Some("acme-corp".to_string()));
+    /// let ctx = router.create_context(Some(&headers), Some("websocket"), Some("acme-corp".to_string()));
     /// let response = router.route(request, ctx).await;
     /// ```
     #[must_use]
     pub fn create_context(
         &self,
-        headers: Option<HashMap<String, String>>,
+        headers: Option<&HashMap<String, String>>,
         transport: Option<&str>,
         tenant_id: Option<String>,
     ) -> RequestContext {
@@ -276,7 +276,7 @@ impl RequestRouter {
 
         // Add HTTP headers to context if provided
         if let Some(headers) = headers
-            && let Ok(headers_json) = serde_json::to_value(&headers)
+            && let Ok(headers_json) = serde_json::to_value(headers)
         {
             ctx = ctx.with_metadata("http_headers", headers_json);
             // Set transport type (default to "http" if not specified)
