@@ -607,6 +607,162 @@ impl From<ServerError> for Box<turbomcp_protocol::Error> {
     }
 }
 
+// ============================================================================
+// v3.0: Conversions with turbomcp-core::McpError (via turbomcp-protocol::core)
+// ============================================================================
+
+impl From<turbomcp_protocol::core::McpError> for ServerError {
+    fn from(err: turbomcp_protocol::core::McpError) -> Self {
+        use turbomcp_protocol::core::ErrorKind;
+
+        match err.kind {
+            // MCP-specific errors
+            ErrorKind::ToolNotFound | ErrorKind::PromptNotFound | ErrorKind::ResourceNotFound => {
+                Self::NotFound {
+                    resource: err.message,
+                }
+            }
+            ErrorKind::ToolExecutionFailed | ErrorKind::UserRejected => Self::Handler {
+                message: err.message,
+                context: err.context.and_then(|c| c.operation),
+            },
+            ErrorKind::ResourceAccessDenied | ErrorKind::PermissionDenied | ErrorKind::Security => {
+                Self::Authorization {
+                    message: err.message,
+                    resource: err.context.and_then(|c| c.component),
+                }
+            }
+            ErrorKind::CapabilityNotSupported | ErrorKind::ProtocolVersionMismatch => {
+                Self::Configuration {
+                    message: err.message,
+                    key: None,
+                }
+            }
+            ErrorKind::Authentication => Self::Authentication {
+                message: err.message,
+                method: None,
+            },
+            ErrorKind::RateLimited => Self::RateLimit {
+                message: err.message,
+                retry_after: None,
+            },
+            ErrorKind::ServerOverloaded | ErrorKind::Unavailable => Self::ResourceExhausted {
+                resource: "server_capacity".to_string(),
+                current: None,
+                max: None,
+            },
+            ErrorKind::Timeout => Self::Timeout {
+                operation: err
+                    .context
+                    .and_then(|c| c.operation)
+                    .unwrap_or_else(|| "unknown".to_string()),
+                timeout_ms: 30000,
+            },
+            ErrorKind::Transport => {
+                Self::Internal(format!("Transport error: {}", err.message))
+            }
+            ErrorKind::Configuration => Self::Configuration {
+                message: err.message,
+                key: None,
+            },
+            // JSON-RPC standard and general errors
+            ErrorKind::ParseError
+            | ErrorKind::InvalidRequest
+            | ErrorKind::MethodNotFound
+            | ErrorKind::InvalidParams
+            | ErrorKind::Internal
+            | ErrorKind::Serialization
+            | ErrorKind::ExternalService
+            | ErrorKind::Cancelled => Self::Internal(err.message),
+        }
+    }
+}
+
+impl From<ServerError> for turbomcp_protocol::core::McpError {
+    fn from(err: ServerError) -> Self {
+        use turbomcp_protocol::core::ErrorKind;
+
+        match err {
+            ServerError::Protocol(protocol_err) => {
+                // Convert through turbomcp_protocol::Error -> McpError
+                turbomcp_protocol::core::McpError::from(protocol_err)
+            }
+            ServerError::Transport(transport_err) => {
+                Self::new(ErrorKind::Transport, format!("Transport error: {}", transport_err))
+            }
+            ServerError::Handler { message, context } => Self::new(ErrorKind::Internal, message)
+                .with_operation(context.unwrap_or_else(|| "handler".to_string())),
+            ServerError::Core(err) => {
+                Self::new(ErrorKind::Internal, format!("Core error: {}", err))
+            }
+            ServerError::Configuration { message, key } => {
+                let mut err = Self::new(ErrorKind::Configuration, message);
+                if let Some(k) = key {
+                    err = err.with_component(k);
+                }
+                err
+            }
+            ServerError::Authentication { message, method } => {
+                let mut err = Self::new(ErrorKind::Authentication, message);
+                if let Some(m) = method {
+                    err = err.with_component(m);
+                }
+                err
+            }
+            ServerError::Authorization { message, resource } => {
+                let mut err = Self::new(ErrorKind::PermissionDenied, message);
+                if let Some(r) = resource {
+                    err = err.with_component(r);
+                }
+                err
+            }
+            ServerError::RateLimit { message, .. } => Self::new(ErrorKind::RateLimited, message),
+            ServerError::Timeout {
+                operation,
+                timeout_ms,
+            } => Self::new(
+                ErrorKind::Timeout,
+                format!("Operation '{}' timed out after {}ms", operation, timeout_ms),
+            )
+            .with_operation(operation),
+            ServerError::NotFound { resource } => Self::new(
+                ErrorKind::ResourceNotFound,
+                format!("Resource not found: {}", resource),
+            ),
+            ServerError::ResourceExhausted { resource, .. } => {
+                Self::new(ErrorKind::ServerOverloaded, format!("Resource exhausted: {}", resource))
+            }
+            ServerError::Internal(message) => Self::new(ErrorKind::Internal, message),
+            ServerError::Lifecycle(message) => {
+                Self::new(ErrorKind::Internal, format!("Lifecycle error: {}", message))
+            }
+            ServerError::Shutdown(message) => {
+                Self::new(ErrorKind::Internal, format!("Shutdown error: {}", message))
+            }
+            ServerError::Middleware { name, message } => Self::new(
+                ErrorKind::Internal,
+                format!("Middleware error ({}): {}", name, message),
+            ),
+            ServerError::Registry(message) => {
+                Self::new(ErrorKind::Internal, format!("Registry error: {}", message))
+            }
+            ServerError::Routing { message, method } => {
+                let mut err = Self::new(ErrorKind::Internal, format!("Routing error: {}", message));
+                if let Some(m) = method {
+                    err = err.with_operation(m);
+                }
+                err
+            }
+            ServerError::Io(io_err) => {
+                Self::new(ErrorKind::Transport, format!("IO error: {}", io_err))
+            }
+            ServerError::Serialization(json_err) => {
+                Self::new(ErrorKind::Serialization, format!("Serialization error: {}", json_err))
+            }
+        }
+    }
+}
+
 // Comprehensive tests in separate file (tokio/axum pattern)
 #[cfg(test)]
 mod tests;
