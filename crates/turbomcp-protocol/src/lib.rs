@@ -239,6 +239,11 @@
     clippy::wildcard_imports  // Used in test modules
 )]
 
+// v3.0: Re-export turbomcp-core foundation types
+// These provide no_std compatible types that can be used in WASM and embedded environments
+/// Re-export of turbomcp-core, the no_std foundation layer
+pub use turbomcp_core as core;
+
 // Core abstractions (merged from turbomcp-core in v2.0.0)
 /// Configuration for protocol components.
 pub mod config;

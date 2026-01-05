@@ -13,6 +13,9 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
+# v3.0: no_std core types (foundation layer)
+turbomcp-core = { workspace = true, default-features = false }
+
 # Core async
 tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
 tokio-util = { workspace = true }
