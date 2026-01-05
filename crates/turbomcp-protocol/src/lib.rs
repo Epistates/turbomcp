@@ -244,6 +244,12 @@
 /// Re-export of turbomcp-core, the no_std foundation layer
 pub use turbomcp_core as core;
 
+/// Re-export core error types for no_std use cases
+/// Users can use `turbomcp_protocol::core_error::McpError` for lightweight errors
+pub mod core_error {
+    pub use turbomcp_core::error::{ErrorContext as CoreErrorContext, ErrorKind as CoreErrorKind, McpError, McpResult};
+}
+
 // Core abstractions (merged from turbomcp-core in v2.0.0)
 /// Configuration for protocol components.
 pub mod config;

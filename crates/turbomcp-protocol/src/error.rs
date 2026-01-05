@@ -858,6 +858,129 @@ impl From<std::io::Error> for Box<Error> {
     }
 }
 
+// ============================================================================
+// v3.0: Conversions with turbomcp-core::McpError
+// ============================================================================
+
+impl From<turbomcp_core::McpError> for Box<Error> {
+    fn from(err: turbomcp_core::McpError) -> Self {
+        let kind = match err.kind {
+            // MCP-specific errors
+            turbomcp_core::ErrorKind::ToolNotFound => ErrorKind::ToolNotFound,
+            turbomcp_core::ErrorKind::ToolExecutionFailed => ErrorKind::ToolExecutionFailed,
+            turbomcp_core::ErrorKind::PromptNotFound => ErrorKind::PromptNotFound,
+            turbomcp_core::ErrorKind::ResourceNotFound => ErrorKind::ResourceNotFound,
+            turbomcp_core::ErrorKind::ResourceAccessDenied => ErrorKind::ResourceAccessDenied,
+            turbomcp_core::ErrorKind::CapabilityNotSupported => ErrorKind::CapabilityNotSupported,
+            turbomcp_core::ErrorKind::ProtocolVersionMismatch => ErrorKind::ProtocolVersionMismatch,
+            turbomcp_core::ErrorKind::UserRejected => ErrorKind::UserRejected,
+            // JSON-RPC standard (map to protocol equivalents)
+            turbomcp_core::ErrorKind::ParseError => ErrorKind::BadRequest, // -32700 -> BadRequest
+            turbomcp_core::ErrorKind::InvalidRequest => ErrorKind::BadRequest, // -32600 -> BadRequest
+            turbomcp_core::ErrorKind::MethodNotFound => ErrorKind::Protocol, // -32601 -> Protocol
+            turbomcp_core::ErrorKind::InvalidParams => ErrorKind::Validation, // -32602 -> Validation
+            turbomcp_core::ErrorKind::Internal => ErrorKind::Internal,
+            // General application errors
+            turbomcp_core::ErrorKind::Authentication => ErrorKind::Authentication,
+            turbomcp_core::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
+            turbomcp_core::ErrorKind::Transport => ErrorKind::Transport,
+            turbomcp_core::ErrorKind::Timeout => ErrorKind::Timeout,
+            turbomcp_core::ErrorKind::Unavailable => ErrorKind::Unavailable,
+            turbomcp_core::ErrorKind::RateLimited => ErrorKind::RateLimited,
+            turbomcp_core::ErrorKind::ServerOverloaded => ErrorKind::ServerOverloaded,
+            turbomcp_core::ErrorKind::Configuration => ErrorKind::Configuration,
+            turbomcp_core::ErrorKind::ExternalService => ErrorKind::ExternalService,
+            turbomcp_core::ErrorKind::Cancelled => ErrorKind::Cancelled,
+            turbomcp_core::ErrorKind::Security => ErrorKind::Security,
+            turbomcp_core::ErrorKind::Serialization => ErrorKind::Serialization,
+        };
+
+        let mut error = Error::new(kind, err.message);
+
+        // Transfer context
+        if let Some(ctx) = err.context {
+            if let Some(op) = ctx.operation {
+                error = error.with_operation(op);
+            }
+            if let Some(comp) = ctx.component {
+                error = error.with_component(comp);
+            }
+            if let Some(req_id) = ctx.request_id {
+                error = error.with_request_id(req_id);
+            }
+        }
+
+        // Transfer source location as metadata
+        if let Some(loc) = err.source_location {
+            error = error.with_context("source_location", loc);
+        }
+
+        error
+    }
+}
+
+impl From<&Error> for turbomcp_core::McpError {
+    fn from(err: &Error) -> Self {
+        use turbomcp_core::ErrorKind as CoreKind;
+
+        let kind = match err.kind {
+            // MCP-specific errors
+            ErrorKind::ToolNotFound => CoreKind::ToolNotFound,
+            ErrorKind::ToolExecutionFailed => CoreKind::ToolExecutionFailed,
+            ErrorKind::PromptNotFound => CoreKind::PromptNotFound,
+            ErrorKind::ResourceNotFound => CoreKind::ResourceNotFound,
+            ErrorKind::ResourceAccessDenied => CoreKind::ResourceAccessDenied,
+            ErrorKind::CapabilityNotSupported => CoreKind::CapabilityNotSupported,
+            ErrorKind::ProtocolVersionMismatch => CoreKind::ProtocolVersionMismatch,
+            ErrorKind::UserRejected => CoreKind::UserRejected,
+            // JSON-RPC standard (map from protocol equivalents)
+            ErrorKind::Validation => CoreKind::InvalidParams,
+            ErrorKind::BadRequest => CoreKind::InvalidRequest,
+            ErrorKind::Protocol => CoreKind::MethodNotFound,
+            ErrorKind::Internal => CoreKind::Internal,
+            ErrorKind::Serialization => CoreKind::Serialization,
+            // General application errors
+            ErrorKind::Authentication => CoreKind::Authentication,
+            ErrorKind::PermissionDenied => CoreKind::PermissionDenied,
+            ErrorKind::Transport => CoreKind::Transport,
+            ErrorKind::Timeout => CoreKind::Timeout,
+            ErrorKind::Unavailable => CoreKind::Unavailable,
+            ErrorKind::RateLimited => CoreKind::RateLimited,
+            ErrorKind::ServerOverloaded => CoreKind::ServerOverloaded,
+            ErrorKind::Configuration => CoreKind::Configuration,
+            ErrorKind::ExternalService => CoreKind::ExternalService,
+            ErrorKind::Cancelled => CoreKind::Cancelled,
+            ErrorKind::Security => CoreKind::Security,
+            // Deprecated variants map to closest match
+            #[allow(deprecated)]
+            ErrorKind::Handler => CoreKind::Internal,
+            #[allow(deprecated)]
+            ErrorKind::NotFound => CoreKind::ResourceNotFound,
+        };
+
+        let mut core_err = turbomcp_core::McpError::new(kind, err.message.clone());
+
+        // Transfer context
+        if let Some(op) = &err.context.operation {
+            core_err = core_err.with_operation(op.clone());
+        }
+        if let Some(comp) = &err.context.component {
+            core_err = core_err.with_component(comp.clone());
+        }
+        if let Some(req_id) = &err.context.request_id {
+            core_err = core_err.with_request_id(req_id.clone());
+        }
+
+        core_err
+    }
+}
+
+impl From<Box<Error>> for turbomcp_core::McpError {
+    fn from(err: Box<Error>) -> Self {
+        turbomcp_core::McpError::from(err.as_ref())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -867,6 +990,42 @@ mod tests {
         let error = Error::validation("Invalid input");
         assert_eq!(error.kind, ErrorKind::Validation);
         assert_eq!(error.message, "Invalid input");
+    }
+
+    // v3.0: Test McpError conversions
+    #[test]
+    fn test_core_error_to_protocol_error() {
+        let core_err = turbomcp_core::McpError::tool_not_found("calculator");
+        let protocol_err: Box<Error> = core_err.into();
+
+        assert_eq!(protocol_err.kind, ErrorKind::ToolNotFound);
+        assert!(protocol_err.message.contains("calculator"));
+        assert_eq!(protocol_err.context.operation, Some("tool_lookup".to_string()));
+    }
+
+    #[test]
+    fn test_protocol_error_to_core_error() {
+        let protocol_err = Error::tool_not_found("calculator");
+        let core_err: turbomcp_core::McpError = protocol_err.into();
+
+        assert_eq!(core_err.kind, turbomcp_core::ErrorKind::ToolNotFound);
+        assert!(core_err.message.contains("calculator"));
+    }
+
+    #[test]
+    fn test_error_roundtrip() {
+        // Protocol -> Core -> Protocol should preserve key information
+        let original = Error::internal("test error")
+            .with_operation("test_op")
+            .with_component("test_comp");
+
+        let core_err: turbomcp_core::McpError = original.as_ref().into();
+        let back: Box<Error> = core_err.into();
+
+        assert_eq!(back.kind, ErrorKind::Internal);
+        assert_eq!(back.message, "test error");
+        assert_eq!(back.context.operation, Some("test_op".to_string()));
+        assert_eq!(back.context.component, Some("test_comp".to_string()));
     }
 
     #[test]
