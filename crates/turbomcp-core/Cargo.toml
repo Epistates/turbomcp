@@ -1,0 +1,46 @@
+[package]
+name = "turbomcp-core"
+version = "3.0.0-alpha.1"
+edition = "2024"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "Core MCP types and primitives - no_std compatible for WASM targets"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+keywords = ["mcp", "protocol", "types", "no_std", "wasm"]
+categories = ["no-std", "encoding", "parser-implementations"]
+readme = "README.md"
+rust-version = "1.89.0"
+
+[dependencies]
+# Serialization (no_std compatible with alloc)
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+# no_std compatible HashMap
+hashbrown = { version = "0.15", features = ["serde"] }
+
+# Compact strings (no_std compatible)
+compact_str = { version = "0.8", default-features = false, features = ["serde"] }
+
+# Small vectors (no_std compatible)
+smallvec = { version = "1.13", default-features = false, features = ["serde"] }
+
+# Optional std features
+chrono = { version = "0.4", default-features = false, features = ["serde"], optional = true }
+uuid = { version = "1.11", default-features = false, features = ["serde"], optional = true }
+
+[dev-dependencies]
+serde_json = { version = "1.0", features = ["std"] }
+
+[features]
+default = ["std"]
+std = ["serde/std", "serde_json/std", "chrono", "uuid"]
+# Enable rich error context (requires std)
+rich-errors = ["std", "uuid"]
+# WASM-specific optimizations
+wasm = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

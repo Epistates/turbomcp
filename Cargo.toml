@@ -2,6 +2,7 @@
 
 [workspace]
 members = [
+    "crates/turbomcp-core",      # v3.0: no_std core types (foundation layer)
     "crates/turbomcp-protocol",
     "crates/turbomcp-transport",
     "crates/turbomcp-server",
@@ -175,9 +176,10 @@ testcontainers = "0.25.0"
 doc-comment = "0.3"
 
 # Workspace dependencies are defined below
-# Internal crate dependencies - 2.3.5 (with default-features = false for granular control)
+# Internal crate dependencies - v3.0.0-alpha (with default-features = false for granular control)
 turbomcp = { version = "2.3.7", path = "crates/turbomcp" }
-# turbomcp-core merged into turbomcp-protocol in v2.0.0
+# v3.0: turbomcp-core re-extracted as no_std foundation layer
+turbomcp-core = { version = "3.0.0-alpha.1", path = "crates/turbomcp-core", default-features = false }
 turbomcp-protocol = { version = "2.3.7", path = "crates/turbomcp-protocol", default-features = false }
 turbomcp-transport = { version = "2.3.7", path = "crates/turbomcp-transport", default-features = false }
 turbomcp-client = { version = "2.3.7", path = "crates/turbomcp-client", default-features = false }
