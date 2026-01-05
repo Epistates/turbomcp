@@ -282,6 +282,7 @@ mod tests {
     use super::*;
     use crate::context::{CompletionContext, ElicitationContext};
     use crate::handlers::{CompletionItem, ElicitationResponse};
+    use crate::Result;
     use async_trait::async_trait;
 
     struct TestElicitationHandler;
@@ -291,7 +292,7 @@ mod tests {
         async fn handle_elicitation(
             &self,
             _context: &ElicitationContext,
-        ) -> crate::error::Result<ElicitationResponse> {
+        ) -> Result<ElicitationResponse> {
             Ok(ElicitationResponse {
                 accepted: true,
                 content: None,
@@ -311,7 +312,7 @@ mod tests {
         async fn provide_completions(
             &self,
             _context: &CompletionContext,
-        ) -> crate::error::Result<Vec<CompletionItem>> {
+        ) -> Result<Vec<CompletionItem>> {
             Ok(vec![])
         }
 

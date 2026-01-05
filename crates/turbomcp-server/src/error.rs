@@ -479,14 +479,6 @@ impl From<turbomcp_protocol::McpError> for ServerError {
     }
 }
 
-// Legacy conversion from Box<Error> (for backwards compatibility during migration)
-impl From<Box<turbomcp_protocol::error::Error>> for ServerError {
-    fn from(core_error: Box<turbomcp_protocol::error::Error>) -> Self {
-        // Convert old Error to McpError, then to ServerError
-        let mcp_error: turbomcp_protocol::McpError = (*core_error).into();
-        mcp_error.into()
-    }
-}
 
 // Conversion from server errors to protocol errors (McpError)
 impl From<ServerError> for turbomcp_protocol::McpError {

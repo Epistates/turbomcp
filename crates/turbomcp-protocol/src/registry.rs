@@ -44,20 +44,22 @@ pub enum RegistryError {
     TypeMismatch(String),
 }
 
-// Conversion to main Error type for API boundary crossing
-impl From<RegistryError> for Box<crate::error::Error> {
+// Conversion to McpError for API boundary crossing (v3.0)
+impl From<RegistryError> for crate::McpError {
     fn from(err: RegistryError) -> Self {
-        use crate::error::Error;
         match err {
             RegistryError::NotFound(name) => {
-                Error::internal(format!("Component '{}' not found in registry", name))
+                crate::McpError::internal(format!("Component '{}' not found in registry", name))
                     .with_component("registry")
             }
             RegistryError::AlreadyExists(name) => {
-                Error::validation(format!("Component '{}' already exists in registry", name))
-                    .with_component("registry")
+                crate::McpError::invalid_params(format!(
+                    "Component '{}' already exists in registry",
+                    name
+                ))
+                .with_component("registry")
             }
-            RegistryError::TypeMismatch(name) => Error::internal(format!(
+            RegistryError::TypeMismatch(name) => crate::McpError::internal(format!(
                 "Type mismatch when accessing component '{}' in registry",
                 name
             ))

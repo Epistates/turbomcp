@@ -120,7 +120,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::context::{CompletionContext, ElicitationContext, ServerInitiatedContext};
-use crate::error::Result;
+use crate::Result;
 
 /// Handler for server-initiated elicitation requests
 #[async_trait]

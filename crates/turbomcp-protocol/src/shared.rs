@@ -386,14 +386,14 @@ pub enum SharedError {
     Consumed,
 }
 
-// Conversion to main Error type for API boundary crossing
-impl From<SharedError> for Box<crate::error::Error> {
+// Conversion to McpError for API boundary crossing (v3.0)
+impl From<SharedError> for crate::McpError {
     fn from(err: SharedError) -> Self {
-        use crate::error::Error;
         match err {
-            SharedError::Consumed => Error::validation("Shared value has already been consumed")
-                .with_component("shared_wrapper")
-                .with_context("note", "The value can only be consumed once"),
+            SharedError::Consumed => crate::McpError::invalid_params(
+                "Shared value has already been consumed",
+            )
+            .with_component("shared_wrapper"),
         }
     }
 }

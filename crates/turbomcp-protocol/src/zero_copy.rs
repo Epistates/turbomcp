@@ -54,7 +54,7 @@ use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::error::{Error, Result};
+use crate::{McpError as Error, Result};
 use crate::types::{ContentType, Timestamp};
 
 /// Zero-copy message with lazy deserialization
