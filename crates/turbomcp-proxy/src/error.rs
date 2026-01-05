@@ -384,16 +384,16 @@ impl From<turbomcp_protocol::Error> for ProxyError {
     }
 }
 
-/// Convert proxy errors back to protocol errors for JSON-RPC responses
-impl From<ProxyError> for Box<turbomcp_protocol::Error> {
+/// Convert proxy errors to McpError (v3.0)
+impl From<ProxyError> for turbomcp_protocol::McpError {
     fn from(err: ProxyError) -> Self {
         match err {
             // Unwrap protocol errors directly to preserve error codes (critical!)
-            ProxyError::Protocol(protocol_err) => protocol_err,
+            ProxyError::Protocol(protocol_err) => *protocol_err,
 
             // Map proxy-specific errors to appropriate protocol errors
             ProxyError::Transport(transport_err) => {
-                turbomcp_protocol::Error::transport(transport_err.to_string())
+                turbomcp_protocol::McpError::transport(transport_err.to_string())
             }
             ProxyError::Introspection { message, context } => {
                 let msg = if let Some(ctx) = context {
@@ -401,7 +401,7 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
                 } else {
                     message
                 };
-                turbomcp_protocol::Error::internal(msg)
+                turbomcp_protocol::McpError::internal(msg)
             }
             ProxyError::Codegen { message, template } => {
                 let msg = if let Some(tmpl) = template {
@@ -409,7 +409,7 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
                 } else {
                     message
                 };
-                turbomcp_protocol::Error::internal(msg)
+                turbomcp_protocol::McpError::internal(msg)
             }
             ProxyError::Configuration { message, key } => {
                 let msg = if let Some(k) = key {
@@ -417,7 +417,7 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
                 } else {
                     message
                 };
-                turbomcp_protocol::Error::invalid_params(msg)
+                turbomcp_protocol::McpError::invalid_params(msg)
             }
             ProxyError::BackendConnection {
                 message,
@@ -428,7 +428,7 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
                 } else {
                     message
                 };
-                turbomcp_protocol::Error::transport(msg)
+                turbomcp_protocol::McpError::transport(msg)
             }
             ProxyError::Backend { message, operation } => {
                 let msg = if let Some(op) = operation {
@@ -436,26 +436,26 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
                 } else {
                     message
                 };
-                turbomcp_protocol::Error::internal(msg)
+                turbomcp_protocol::McpError::internal(msg)
             }
             ProxyError::SchemaValidation { message, .. } => {
-                turbomcp_protocol::Error::invalid_params(message)
+                turbomcp_protocol::McpError::invalid_params(message)
             }
             ProxyError::Timeout {
                 operation,
                 timeout_ms,
-            } => turbomcp_protocol::Error::timeout(format!("{operation} exceeded {timeout_ms}ms")),
+            } => turbomcp_protocol::McpError::timeout(format!("{operation} exceeded {timeout_ms}ms")),
             ProxyError::RateLimitExceeded { message, .. } => {
-                turbomcp_protocol::Error::rate_limited(message)
+                turbomcp_protocol::McpError::rate_limited(message)
             }
             #[cfg(feature = "auth")]
             ProxyError::Auth(message) => {
-                turbomcp_protocol::Error::internal(format!("Authentication error: {message}"))
+                turbomcp_protocol::McpError::internal(format!("Authentication error: {message}"))
             }
             ProxyError::Serialization(err) => {
-                turbomcp_protocol::Error::serialization(err.to_string())
+                turbomcp_protocol::McpError::serialization(err.to_string())
             }
-            ProxyError::Io(err) => turbomcp_protocol::Error::transport(err.to_string()),
+            ProxyError::Io(err) => turbomcp_protocol::McpError::transport(err.to_string()),
             #[cfg(feature = "runtime")]
             ProxyError::Http {
                 message,
@@ -466,9 +466,16 @@ impl From<ProxyError> for Box<turbomcp_protocol::Error> {
                 } else {
                     message
                 };
-                turbomcp_protocol::Error::transport(msg)
+                turbomcp_protocol::McpError::transport(msg)
             }
         }
+    }
+}
+
+/// Legacy boxed conversion for backwards compatibility
+impl From<ProxyError> for Box<turbomcp_protocol::McpError> {
+    fn from(err: ProxyError) -> Self {
+        Box::new(turbomcp_protocol::McpError::from(err))
     }
 }
 

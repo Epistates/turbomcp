@@ -411,209 +411,10 @@ impl ErrorContext {
     }
 }
 
-// Conversion from core errors to server errors
-impl From<Box<turbomcp_protocol::Error>> for ServerError {
-    fn from(core_error: Box<turbomcp_protocol::Error>) -> Self {
+// Conversion from McpError to ServerError (v3.0)
+impl From<turbomcp_protocol::McpError> for ServerError {
+    fn from(err: turbomcp_protocol::McpError) -> Self {
         use turbomcp_protocol::ErrorKind;
-
-        match core_error.kind {
-            // MCP-specific errors
-            ErrorKind::UserRejected => Self::Handler {
-                message: core_error.message,
-                context: core_error.context.operation,
-            },
-            ErrorKind::ToolNotFound | ErrorKind::PromptNotFound | ErrorKind::ResourceNotFound => {
-                Self::NotFound {
-                    resource: core_error.message,
-                }
-            }
-            ErrorKind::ToolExecutionFailed => Self::Handler {
-                message: core_error.message,
-                context: core_error.context.operation,
-            },
-            ErrorKind::ResourceAccessDenied => Self::Authorization {
-                message: core_error.message,
-                resource: core_error.context.component,
-            },
-            ErrorKind::CapabilityNotSupported => Self::Handler {
-                message: format!("Capability not supported: {}", core_error.message),
-                context: None,
-            },
-            ErrorKind::ProtocolVersionMismatch => Self::Configuration {
-                message: core_error.message,
-                key: Some("protocol_version".to_string()),
-            },
-            ErrorKind::ServerOverloaded => Self::ResourceExhausted {
-                resource: "server_capacity".to_string(),
-                current: None,
-                max: None,
-            },
-
-            // Deprecated (backwards compatibility)
-            #[allow(deprecated)]
-            ErrorKind::Handler => Self::Handler {
-                message: core_error.message,
-                context: core_error.context.operation,
-            },
-            #[allow(deprecated)]
-            ErrorKind::NotFound => Self::NotFound {
-                resource: core_error.message,
-            },
-
-            // General errors
-            ErrorKind::Authentication => Self::Authentication {
-                message: core_error.message,
-                method: None,
-            },
-            ErrorKind::PermissionDenied => Self::Authorization {
-                message: core_error.message,
-                resource: None,
-            },
-            ErrorKind::BadRequest | ErrorKind::Validation => Self::Handler {
-                message: format!("Validation error: {}", core_error.message),
-                context: None,
-            },
-            ErrorKind::Timeout => Self::Timeout {
-                operation: core_error
-                    .context
-                    .operation
-                    .unwrap_or_else(|| "unknown".to_string()),
-                timeout_ms: 30000, // Default timeout
-            },
-            ErrorKind::RateLimited => Self::RateLimit {
-                message: core_error.message,
-                retry_after: None,
-            },
-            ErrorKind::Configuration => Self::Configuration {
-                message: core_error.message,
-                key: None,
-            },
-            ErrorKind::Transport => {
-                Self::Internal(format!("Transport error: {}", core_error.message))
-            }
-            ErrorKind::Serialization => {
-                Self::Internal(format!("Serialization error: {}", core_error.message))
-            }
-            ErrorKind::Protocol => {
-                Self::Internal(format!("Protocol error: {}", core_error.message))
-            }
-            ErrorKind::Unavailable => Self::ResourceExhausted {
-                resource: "service".to_string(),
-                current: None,
-                max: None,
-            },
-            ErrorKind::ExternalService => {
-                Self::Internal(format!("External service error: {}", core_error.message))
-            }
-            ErrorKind::Cancelled => {
-                Self::Internal(format!("Operation cancelled: {}", core_error.message))
-            }
-            ErrorKind::Internal => Self::Internal(core_error.message),
-            ErrorKind::Security => Self::Authorization {
-                message: format!("Security error: {}", core_error.message),
-                resource: None,
-            },
-        }
-    }
-}
-
-// Conversion from server errors to protocol errors
-///
-/// This conversion preserves protocol errors directly when they come from clients
-/// (ServerError::Protocol variant), ensuring error codes like `-1` for user rejection
-/// are maintained through the server layer.
-///
-/// # Error Code Preservation
-///
-/// When a client returns an error (e.g., user rejects sampling with code `-1`),
-/// the server receives it as `ServerError::Protocol(Error{ kind: UserRejected })`.
-/// This conversion unwraps it directly, preserving the original error code when
-/// the error is sent back to calling clients.
-impl From<ServerError> for Box<turbomcp_protocol::Error> {
-    fn from(server_error: ServerError) -> Self {
-        match server_error {
-            // Unwrap protocol errors directly to preserve error codes
-            ServerError::Protocol(protocol_err) => protocol_err,
-
-            // Map other server errors to appropriate protocol errors
-            ServerError::Transport(transport_err) => {
-                turbomcp_protocol::Error::transport(format!("Transport error: {}", transport_err))
-            }
-            ServerError::Handler { message, context } => {
-                turbomcp_protocol::Error::internal(format!(
-                    "Handler error{}: {}",
-                    context
-                        .as_ref()
-                        .map(|c| format!(" ({})", c))
-                        .unwrap_or_default(),
-                    message
-                ))
-            }
-            ServerError::Core(err) => {
-                turbomcp_protocol::Error::internal(format!("Core error: {}", err))
-            }
-            ServerError::Configuration { message, .. } => {
-                turbomcp_protocol::Error::configuration(message)
-            }
-            ServerError::Authentication { message, .. } => {
-                turbomcp_protocol::Error::new(turbomcp_protocol::ErrorKind::Authentication, message)
-            }
-            ServerError::Authorization { message, .. } => turbomcp_protocol::Error::new(
-                turbomcp_protocol::ErrorKind::PermissionDenied,
-                message,
-            ),
-            ServerError::RateLimit { message, .. } => {
-                turbomcp_protocol::Error::rate_limited(message)
-            }
-            ServerError::Timeout {
-                operation,
-                timeout_ms,
-            } => turbomcp_protocol::Error::timeout(format!(
-                "Operation '{}' timed out after {}ms",
-                operation, timeout_ms
-            )),
-            ServerError::NotFound { resource } => turbomcp_protocol::Error::new(
-                turbomcp_protocol::ErrorKind::ResourceNotFound,
-                format!("Resource not found: {}", resource),
-            ),
-            ServerError::ResourceExhausted { resource, .. } => turbomcp_protocol::Error::new(
-                turbomcp_protocol::ErrorKind::Unavailable,
-                format!("Resource exhausted: {}", resource),
-            ),
-            ServerError::Internal(message) => turbomcp_protocol::Error::internal(message),
-            ServerError::Lifecycle(message) => {
-                turbomcp_protocol::Error::internal(format!("Lifecycle error: {}", message))
-            }
-            ServerError::Shutdown(message) => {
-                turbomcp_protocol::Error::internal(format!("Shutdown error: {}", message))
-            }
-            ServerError::Middleware { name, message } => turbomcp_protocol::Error::internal(
-                format!("Middleware error ({}): {}", name, message),
-            ),
-            ServerError::Registry(message) => {
-                turbomcp_protocol::Error::internal(format!("Registry error: {}", message))
-            }
-            ServerError::Routing { message, .. } => {
-                turbomcp_protocol::Error::internal(format!("Routing error: {}", message))
-            }
-            ServerError::Io(err) => {
-                turbomcp_protocol::Error::internal(format!("IO error: {}", err))
-            }
-            ServerError::Serialization(err) => turbomcp_protocol::Error::new(
-                turbomcp_protocol::ErrorKind::Serialization,
-                format!("Serialization error: {}", err),
-            ),
-        }
-    }
-}
-
-// ============================================================================
-// v3.0: Conversions with turbomcp-core::McpError (via turbomcp-protocol::core)
-// ============================================================================
-
-impl From<turbomcp_protocol::core::McpError> for ServerError {
-    fn from(err: turbomcp_protocol::core::McpError) -> Self {
-        use turbomcp_protocol::core::ErrorKind;
 
         match err.kind {
             // MCP-specific errors
@@ -678,90 +479,123 @@ impl From<turbomcp_protocol::core::McpError> for ServerError {
     }
 }
 
-impl From<ServerError> for turbomcp_protocol::core::McpError {
-    fn from(err: ServerError) -> Self {
-        use turbomcp_protocol::core::ErrorKind;
+// Legacy conversion from Box<Error> (for backwards compatibility during migration)
+impl From<Box<turbomcp_protocol::error::Error>> for ServerError {
+    fn from(core_error: Box<turbomcp_protocol::error::Error>) -> Self {
+        // Convert old Error to McpError, then to ServerError
+        let mcp_error: turbomcp_protocol::McpError = (*core_error).into();
+        mcp_error.into()
+    }
+}
 
-        match err {
+// Conversion from server errors to protocol errors (McpError)
+impl From<ServerError> for turbomcp_protocol::McpError {
+    fn from(server_error: ServerError) -> Self {
+        use turbomcp_protocol::ErrorKind;
+
+        match server_error {
+            // Unwrap protocol errors directly to preserve error codes
             ServerError::Protocol(protocol_err) => {
-                // Convert through turbomcp_protocol::Error -> McpError
-                turbomcp_protocol::core::McpError::from(protocol_err)
+                // Convert Box<McpError> to McpError
+                *protocol_err
             }
+
+            // Map other server errors to appropriate protocol errors
             ServerError::Transport(transport_err) => {
-                Self::new(ErrorKind::Transport, format!("Transport error: {}", transport_err))
+                turbomcp_protocol::McpError::transport(format!("Transport error: {}", transport_err))
             }
-            ServerError::Handler { message, context } => Self::new(ErrorKind::Internal, message)
-                .with_operation(context.unwrap_or_else(|| "handler".to_string())),
+            ServerError::Handler { message, context } => {
+                let mut err = turbomcp_protocol::McpError::internal(format!(
+                    "Handler error{}: {}",
+                    context
+                        .as_ref()
+                        .map(|c| format!(" ({})", c))
+                        .unwrap_or_default(),
+                    message
+                ));
+                if let Some(ctx) = context {
+                    err = err.with_operation(ctx);
+                }
+                err
+            }
             ServerError::Core(err) => {
-                Self::new(ErrorKind::Internal, format!("Core error: {}", err))
+                turbomcp_protocol::McpError::internal(format!("Core error: {}", err))
             }
             ServerError::Configuration { message, key } => {
-                let mut err = Self::new(ErrorKind::Configuration, message);
+                let mut err = turbomcp_protocol::McpError::configuration(message);
                 if let Some(k) = key {
                     err = err.with_component(k);
                 }
                 err
             }
             ServerError::Authentication { message, method } => {
-                let mut err = Self::new(ErrorKind::Authentication, message);
+                let mut err = turbomcp_protocol::McpError::new(ErrorKind::Authentication, message);
                 if let Some(m) = method {
                     err = err.with_component(m);
                 }
                 err
             }
             ServerError::Authorization { message, resource } => {
-                let mut err = Self::new(ErrorKind::PermissionDenied, message);
+                let mut err = turbomcp_protocol::McpError::new(ErrorKind::PermissionDenied, message);
                 if let Some(r) = resource {
                     err = err.with_component(r);
                 }
                 err
             }
-            ServerError::RateLimit { message, .. } => Self::new(ErrorKind::RateLimited, message),
+            ServerError::RateLimit { message, .. } => {
+                turbomcp_protocol::McpError::rate_limited(message)
+            }
             ServerError::Timeout {
                 operation,
                 timeout_ms,
-            } => Self::new(
-                ErrorKind::Timeout,
-                format!("Operation '{}' timed out after {}ms", operation, timeout_ms),
-            )
+            } => turbomcp_protocol::McpError::timeout(format!(
+                "Operation '{}' timed out after {}ms",
+                operation, timeout_ms
+            ))
             .with_operation(operation),
-            ServerError::NotFound { resource } => Self::new(
+            ServerError::NotFound { resource } => turbomcp_protocol::McpError::new(
                 ErrorKind::ResourceNotFound,
                 format!("Resource not found: {}", resource),
             ),
-            ServerError::ResourceExhausted { resource, .. } => {
-                Self::new(ErrorKind::ServerOverloaded, format!("Resource exhausted: {}", resource))
-            }
-            ServerError::Internal(message) => Self::new(ErrorKind::Internal, message),
+            ServerError::ResourceExhausted { resource, .. } => turbomcp_protocol::McpError::new(
+                ErrorKind::Unavailable,
+                format!("Resource exhausted: {}", resource),
+            ),
+            ServerError::Internal(message) => turbomcp_protocol::McpError::internal(message),
             ServerError::Lifecycle(message) => {
-                Self::new(ErrorKind::Internal, format!("Lifecycle error: {}", message))
+                turbomcp_protocol::McpError::internal(format!("Lifecycle error: {}", message))
             }
             ServerError::Shutdown(message) => {
-                Self::new(ErrorKind::Internal, format!("Shutdown error: {}", message))
+                turbomcp_protocol::McpError::internal(format!("Shutdown error: {}", message))
             }
-            ServerError::Middleware { name, message } => Self::new(
-                ErrorKind::Internal,
+            ServerError::Middleware { name, message } => turbomcp_protocol::McpError::internal(
                 format!("Middleware error ({}): {}", name, message),
-            ),
+            )
+            .with_component(name),
             ServerError::Registry(message) => {
-                Self::new(ErrorKind::Internal, format!("Registry error: {}", message))
+                turbomcp_protocol::McpError::internal(format!("Registry error: {}", message))
             }
-            ServerError::Routing { message, method } => {
-                let mut err = Self::new(ErrorKind::Internal, format!("Routing error: {}", message));
-                if let Some(m) = method {
-                    err = err.with_operation(m);
-                }
-                err
+            ServerError::Routing { message, .. } => {
+                turbomcp_protocol::McpError::internal(format!("Routing error: {}", message))
             }
-            ServerError::Io(io_err) => {
-                Self::new(ErrorKind::Transport, format!("IO error: {}", io_err))
+            ServerError::Io(err) => {
+                turbomcp_protocol::McpError::internal(format!("IO error: {}", err))
             }
-            ServerError::Serialization(json_err) => {
-                Self::new(ErrorKind::Serialization, format!("Serialization error: {}", json_err))
-            }
+            ServerError::Serialization(err) => turbomcp_protocol::McpError::new(
+                ErrorKind::Serialization,
+                format!("Serialization error: {}", err),
+            ),
         }
     }
 }
+
+// Legacy boxed conversion for backwards compatibility
+impl From<ServerError> for Box<turbomcp_protocol::McpError> {
+    fn from(server_error: ServerError) -> Self {
+        Box::new(turbomcp_protocol::McpError::from(server_error))
+    }
+}
+
 
 // Comprehensive tests in separate file (tokio/axum pattern)
 #[cfg(test)]

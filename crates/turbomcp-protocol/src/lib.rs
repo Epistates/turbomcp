@@ -240,15 +240,15 @@
 )]
 
 // v3.0: Re-export turbomcp-core foundation types
-// These provide no_std compatible types that can be used in WASM and embedded environments
 /// Re-export of turbomcp-core, the no_std foundation layer
 pub use turbomcp_core as core;
 
-/// Re-export core error types for no_std use cases
-/// Users can use `turbomcp_protocol::core_error::McpError` for lightweight errors
-pub mod core_error {
-    pub use turbomcp_core::error::{ErrorContext as CoreErrorContext, ErrorKind as CoreErrorKind, McpError, McpResult};
-}
+// v3.0: McpError is THE error type - re-export at crate root
+pub use turbomcp_core::error::{ErrorContext as McpErrorContext, ErrorKind, McpError, McpResult};
+/// v3.0 Result alias using McpError
+pub type Result<T> = McpResult<T>;
+/// v3.0 Error alias for migration (prefer McpError directly)
+pub type Error = McpError;
 
 // Core abstractions (merged from turbomcp-core in v2.0.0)
 /// Configuration for protocol components.
@@ -313,7 +313,9 @@ pub use context::{
 };
 // Timestamp and ContentType are now in types module
 pub use enhanced_registry::{EnhancedRegistry, HandlerStats};
-pub use error::{Error, ErrorContext, ErrorKind, Result, RetryInfo};
+// v3.0: McpError is re-exported from turbomcp_core at crate root
+// Old error module kept for RetryInfo and legacy conversions during migration
+pub use error::RetryInfo;
 pub use handlers::{
     CompletionItem, CompletionProvider, ElicitationHandler, ElicitationResponse,
     HandlerCapabilities, JsonRpcHandler, PingHandler, PingResponse, ResolvedResource,

@@ -7,8 +7,13 @@
 //!
 //! 1. **Single Error Type**: One `McpError` across all crates
 //! 2. **no_std Compatible**: Core error works without std
-//! 3. **Rich Context**: Optional detailed context when `std` enabled
+//! 3. **Rich Context**: Optional detailed context when `rich-errors` feature enabled
 //! 4. **MCP Compliant**: Maps to JSON-RPC error codes per MCP spec
+//!
+//! ## Features
+//!
+//! - **Default (no_std)**: Lightweight error with kind, message, and basic context
+//! - **`rich-errors`**: Adds UUID tracking and timestamp for observability
 //!
 //! ## Example
 //!
@@ -31,8 +36,13 @@ pub type McpResult<T> = core::result::Result<T, McpError>;
 ///
 /// This is the single error type used across all TurboMCP crates in v3.
 /// It is `no_std` compatible and maps to JSON-RPC error codes per MCP spec.
+///
+/// With `rich-errors` feature enabled, includes UUID tracking and timestamps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpError {
+    /// Unique error ID for tracing (only with `rich-errors` feature)
+    #[cfg(feature = "rich-errors")]
+    pub id: uuid::Uuid,
     /// Error classification
     pub kind: ErrorKind,
     /// Human-readable error message
@@ -40,9 +50,12 @@ pub struct McpError {
     /// Source location (file:line for debugging)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_location: Option<String>,
-    /// Additional context key-value pairs
+    /// Additional context
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<ErrorContext>,
+    /// Timestamp when error occurred (only with `rich-errors` feature)
+    #[cfg(feature = "rich-errors")]
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 /// Additional error context
@@ -125,11 +138,29 @@ impl McpError {
     #[must_use]
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
+            #[cfg(feature = "rich-errors")]
+            id: uuid::Uuid::new_v4(),
             kind,
             message: message.into(),
             source_location: None,
             context: None,
+            #[cfg(feature = "rich-errors")]
+            timestamp: chrono::Utc::now(),
         }
+    }
+
+    /// Get the error ID (only available with `rich-errors` feature)
+    #[cfg(feature = "rich-errors")]
+    #[must_use]
+    pub const fn id(&self) -> uuid::Uuid {
+        self.id
+    }
+
+    /// Get the error timestamp (only available with `rich-errors` feature)
+    #[cfg(feature = "rich-errors")]
+    #[must_use]
+    pub const fn timestamp(&self) -> chrono::DateTime<chrono::Utc> {
+        self.timestamp
     }
 
     /// Create a validation/invalid params error
@@ -317,6 +348,46 @@ impl McpError {
         Self::new(ErrorKind::ServerOverloaded, "Server is currently overloaded")
     }
 
+    // =========================================================================
+    // Migration aliases (map old Error methods to McpError equivalents)
+    // =========================================================================
+
+    /// Create a validation error (alias for invalid_params)
+    #[must_use]
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self::invalid_params(message)
+    }
+
+    /// Create a bad request error (alias for invalid_request)
+    #[must_use]
+    pub fn bad_request(message: impl Into<String>) -> Self {
+        Self::invalid_request(message)
+    }
+
+    /// Create a handler error (maps to internal for v3)
+    #[must_use]
+    pub fn handler(message: impl Into<String>) -> Self {
+        Self::internal(message)
+    }
+
+    /// Create a protocol error (maps to method_not_found)
+    #[must_use]
+    pub fn protocol(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::MethodNotFound, message)
+    }
+
+    /// Create a not found error (alias for resource_not_found)
+    #[must_use]
+    pub fn not_found(message: impl Into<String>) -> Self {
+        Self::resource_not_found(message)
+    }
+
+    /// Create a JSON-RPC error from code and message (alias for from_rpc_code)
+    #[must_use]
+    pub fn rpc(code: i32, message: &str) -> Self {
+        Self::from_rpc_code(code, message)
+    }
+
     /// Create an error from a JSON-RPC error code
     #[must_use]
     pub fn from_rpc_code(code: i32, message: impl Into<String>) -> Self {
@@ -402,6 +473,12 @@ impl McpError {
     /// Get the JSON-RPC error code for this error
     #[must_use]
     pub const fn jsonrpc_code(&self) -> i32 {
+        self.jsonrpc_error_code()
+    }
+
+    /// Get the JSON-RPC error code (canonical name)
+    #[must_use]
+    pub const fn jsonrpc_error_code(&self) -> i32 {
         match self.kind {
             // JSON-RPC standard
             ErrorKind::ParseError => -32700,
@@ -526,6 +603,49 @@ impl fmt::Display for ErrorKind {
 #[cfg(feature = "std")]
 impl std::error::Error for McpError {}
 
+// =========================================================================
+// From implementations for common error types
+// =========================================================================
+
+impl From<Box<McpError>> for McpError {
+    fn from(boxed: Box<McpError>) -> Self {
+        *boxed
+    }
+}
+
+impl From<serde_json::Error> for McpError {
+    fn from(err: serde_json::Error) -> Self {
+        // Categorize serde_json errors
+        let kind = if err.is_syntax() || err.is_eof() {
+            ErrorKind::ParseError
+        } else if err.is_data() {
+            ErrorKind::InvalidParams
+        } else {
+            ErrorKind::Serialization
+        };
+        Self::new(kind, alloc::format!("JSON error: {}", err))
+    }
+}
+
+#[cfg(feature = "std")]
+impl From<std::io::Error> for McpError {
+    fn from(err: std::io::Error) -> Self {
+        use std::io::ErrorKind as IoKind;
+        let kind = match err.kind() {
+            IoKind::NotFound => ErrorKind::ResourceNotFound,
+            IoKind::PermissionDenied => ErrorKind::PermissionDenied,
+            IoKind::ConnectionRefused
+            | IoKind::ConnectionReset
+            | IoKind::ConnectionAborted
+            | IoKind::NotConnected
+            | IoKind::BrokenPipe => ErrorKind::Transport,
+            IoKind::TimedOut => ErrorKind::Timeout,
+            _ => ErrorKind::Internal,
+        };
+        Self::new(kind, alloc::format!("IO error: {}", err))
+    }
+}
+
 /// Convenience macro for creating errors with location
 #[macro_export]
 macro_rules! mcp_err {
@@ -542,6 +662,7 @@ macro_rules! mcp_err {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn test_error_creation() {

@@ -13,8 +13,8 @@ readme = "README.md"
 rust-version = "1.89.0"
 
 [dependencies]
-# v3.0: no_std core types (foundation layer)
-turbomcp-core = { workspace = true, default-features = false }
+# v3.0: Core types with rich error features (UUID, timestamps)
+turbomcp-core = { workspace = true, features = ["rich-errors"] }
 
 # Core async
 tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }

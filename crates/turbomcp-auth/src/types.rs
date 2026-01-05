@@ -357,6 +357,6 @@ impl AuthMiddleware for DefaultAuthMiddleware {
 
     async fn handle_auth_failure(&self, error: McpError) -> McpResult<()> {
         tracing::warn!("Authentication failed: {}", error);
-        Err(Box::new(error))
+        Err(error)
     }
 }

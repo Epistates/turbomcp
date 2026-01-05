@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::context::RequestContext;
-use crate::error::Error;
+use crate::McpError;
 use crate::types::{
     CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsResult,
 };
@@ -92,7 +92,7 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
         &self,
         request: CreateMessageRequest,
         ctx: RequestContext,
-    ) -> BoxFuture<'_, Result<CreateMessageResult, Error>>;
+    ) -> BoxFuture<'_, Result<CreateMessageResult, McpError>>;
 
     /// Send an elicitation request to the client for user input
     ///
@@ -116,7 +116,7 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
         &self,
         request: ElicitRequest,
         ctx: RequestContext,
-    ) -> BoxFuture<'_, Result<ElicitResult, Error>>;
+    ) -> BoxFuture<'_, Result<ElicitResult, McpError>>;
 
     /// List client's root capabilities
     ///
@@ -133,7 +133,7 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     /// - The client does not support roots
     /// - The transport layer fails
     /// - The client returns an error response
-    fn list_roots(&self, ctx: RequestContext) -> BoxFuture<'_, Result<ListRootsResult, Error>>;
+    fn list_roots(&self, ctx: RequestContext) -> BoxFuture<'_, Result<ListRootsResult, McpError>>;
 }
 
 /// Communication direction for bidirectional requests

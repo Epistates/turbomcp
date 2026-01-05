@@ -981,6 +981,12 @@ impl From<Box<Error>> for turbomcp_core::McpError {
     }
 }
 
+impl From<Error> for turbomcp_core::McpError {
+    fn from(err: Error) -> Self {
+        turbomcp_core::McpError::from(&err)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

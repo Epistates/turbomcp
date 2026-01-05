@@ -975,7 +975,7 @@ impl RuntimeProxy {
 
     /// Create response for a routed request
     fn create_response(
-        result: Result<Result<Value, Box<McpError>>, tokio::time::error::Elapsed>,
+        result: Result<Result<Value, McpError>, tokio::time::error::Elapsed>,
         request_id: RequestId,
         timeout_ms: u64,
     ) -> JsonRpcResponse {

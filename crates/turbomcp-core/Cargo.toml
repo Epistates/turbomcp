@@ -26,18 +26,18 @@ compact_str = { version = "0.8", default-features = false, features = ["serde"] 
 # Small vectors (no_std compatible)
 smallvec = { version = "1.13", default-features = false, features = ["serde"] }
 
-# Optional std features
-chrono = { version = "0.4", default-features = false, features = ["serde"], optional = true }
-uuid = { version = "1.11", default-features = false, features = ["serde"], optional = true }
+# Optional std features (for rich-errors)
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock", "std"], optional = true }
+uuid = { version = "1.11", default-features = false, features = ["serde", "v4", "std"], optional = true }
 
 [dev-dependencies]
 serde_json = { version = "1.0", features = ["std"] }
 
 [features]
 default = ["std"]
-std = ["serde/std", "serde_json/std", "chrono", "uuid"]
-# Enable rich error context (requires std)
-rich-errors = ["std", "uuid"]
+std = ["serde/std", "serde_json/std"]
+# Enable rich error context with UUID tracking and timestamps
+rich-errors = ["std", "uuid", "chrono"]
 # WASM-specific optimizations
 wasm = []
 

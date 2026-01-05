@@ -1218,7 +1218,7 @@ impl<T: Transport + 'static> Client<T> {
                 crate::plugins::ResponseContext::new(req_ctx, Some(response_value), None, duration)
             }
             Err(ref e) => {
-                crate::plugins::ResponseContext::new(req_ctx, None, Some(*e.clone()), duration)
+                crate::plugins::ResponseContext::new(req_ctx, None, Some(e.clone()), duration)
             }
         };
 

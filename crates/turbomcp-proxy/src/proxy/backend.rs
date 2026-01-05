@@ -26,8 +26,8 @@ use crate::introspection::{
     ServerInfo, ServerSpec, ToolInputSchema, ToolSpec, ToolsCapability,
 };
 
-/// Type alias for async result futures used in `ProxyClient` trait
-type ClientFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, Box<Error>>> + Send + 'a>>;
+/// Type alias for async result futures used in `ProxyClient` trait (v3.0: McpError not boxed)
+type ClientFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + Send + 'a>>;
 
 /// Trait that abstracts over MCP client operations with explicit Future return types
 ///

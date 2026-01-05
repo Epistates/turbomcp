@@ -161,10 +161,10 @@ impl ServerRequestDispatcher for StdioDispatcher {
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+            Err(ServerError::Protocol(Box::new(turbomcp_protocol::Error::rpc(
                 error.code,
                 &error.message,
-            )))
+            ))))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid elicitation response: missing result and error".to_string(),
@@ -194,10 +194,10 @@ impl ServerRequestDispatcher for StdioDispatcher {
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+            Err(ServerError::Protocol(Box::new(turbomcp_protocol::Error::rpc(
                 error.code,
                 &error.message,
-            )))
+            ))))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid ping response".to_string(),
@@ -232,10 +232,10 @@ impl ServerRequestDispatcher for StdioDispatcher {
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+            Err(ServerError::Protocol(Box::new(turbomcp_protocol::Error::rpc(
                 error.code,
                 &error.message,
-            )))
+            ))))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid sampling response: missing result and error".to_string(),
@@ -265,10 +265,10 @@ impl ServerRequestDispatcher for StdioDispatcher {
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+            Err(ServerError::Protocol(Box::new(turbomcp_protocol::Error::rpc(
                 error.code,
                 &error.message,
-            )))
+            ))))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid roots response: missing result and error".to_string(),
@@ -604,10 +604,10 @@ where
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+            Err(ServerError::Protocol(Box::new(turbomcp_protocol::Error::rpc(
                 error.code,
                 &error.message,
-            )))
+            ))))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid elicitation response: missing result and error".to_string(),
@@ -637,10 +637,10 @@ where
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+            Err(ServerError::Protocol(Box::new(turbomcp_protocol::Error::rpc(
                 error.code,
                 &error.message,
-            )))
+            ))))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid ping response".to_string(),
@@ -675,10 +675,10 @@ where
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+            Err(ServerError::Protocol(Box::new(turbomcp_protocol::Error::rpc(
                 error.code,
                 &error.message,
-            )))
+            ))))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid sampling response: missing result and error".to_string(),
@@ -708,10 +708,10 @@ where
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(turbomcp_protocol::Error::rpc(
+            Err(ServerError::Protocol(Box::new(turbomcp_protocol::Error::rpc(
                 error.code,
                 &error.message,
-            )))
+            ))))
         } else {
             Err(ServerError::Handler {
                 message: "Invalid roots response: missing result and error".to_string(),

@@ -102,7 +102,7 @@ macro_rules! with_plugins {
                 $crate::plugins::ResponseContext::new(
                     req_ctx,
                     None,
-                    Some(*e.clone()),
+                    Some(e.clone()),
                     duration
                 )
             }
