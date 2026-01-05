@@ -176,15 +176,15 @@ doc-comment = "0.3"
 
 # Workspace dependencies are defined below
 # Internal crate dependencies - 2.3.5 (with default-features = false for granular control)
-turbomcp = { version = "2.3.6", path = "crates/turbomcp" }
+turbomcp = { version = "2.3.7", path = "crates/turbomcp" }
 # turbomcp-core merged into turbomcp-protocol in v2.0.0
-turbomcp-protocol = { version = "2.3.6", path = "crates/turbomcp-protocol", default-features = false }
-turbomcp-transport = { version = "2.3.6", path = "crates/turbomcp-transport", default-features = false }
-turbomcp-client = { version = "2.3.6", path = "crates/turbomcp-client", default-features = false }
-turbomcp-server = { version = "2.3.6", path = "crates/turbomcp-server", default-features = false }
-turbomcp-macros = { version = "2.3.6", path = "crates/turbomcp-macros", default-features = false }
-turbomcp-cli = { version = "2.3.6", path = "crates/turbomcp-cli", default-features = false }
-# turbomcp-dpop = { version = "2.3.6", path = "crates/turbomcp-dpop" }  # Available as optional feature
+turbomcp-protocol = { version = "2.3.7", path = "crates/turbomcp-protocol", default-features = false }
+turbomcp-transport = { version = "2.3.7", path = "crates/turbomcp-transport", default-features = false }
+turbomcp-client = { version = "2.3.7", path = "crates/turbomcp-client", default-features = false }
+turbomcp-server = { version = "2.3.7", path = "crates/turbomcp-server", default-features = false }
+turbomcp-macros = { version = "2.3.7", path = "crates/turbomcp-macros", default-features = false }
+turbomcp-cli = { version = "2.3.7", path = "crates/turbomcp-cli", default-features = false }
+# turbomcp-dpop = { version = "2.3.7", path = "crates/turbomcp-dpop" }  # Available as optional feature
 
 [profile.dev]
 opt-level = 1

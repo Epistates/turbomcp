@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.3.7] - 2026-01-05
+
+### Added
+- **Protocol Compliance Tests** (`turbomcp-protocol`) - Added comprehensive MCP basic protocol compliance tests to ensure strict adherence to the specification.
+
+### Fixed
+- **WebSocket Stability** (`turbomcp-transport`) - Fixed a test hang issue by checking connection state before receiving messages, improving overall WebSocket transport reliability.
+- **Protocol Capabilities** - Updated server middleware and protocol capabilities to better align with compliance requirements.
+
 ## [2.3.6] - 2026-01-03
 
 ### Security
