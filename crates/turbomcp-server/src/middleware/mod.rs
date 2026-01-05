@@ -38,7 +38,7 @@ pub use auth::{AuthConfig, AuthContext, AuthLayer, Claims, UserInfo};
 #[cfg(feature = "input-validation")]
 pub use input_validation::{Garde, Validate, patterns, validators};
 #[cfg(feature = "rate-limiting")]
-pub use rate_limit::{RateLimitConfig, RateLimitLayer};
+pub use rate_limit::{RateLimitConfig, RateLimitLayer, mcp_rate_limit_error_handler};
 pub use security::{SecurityConfig, SecurityLayer};
 #[cfg(feature = "multi-tenancy")]
 pub use tenancy::{

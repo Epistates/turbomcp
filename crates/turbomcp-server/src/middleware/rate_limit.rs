@@ -9,9 +9,81 @@
 //! - Rate limit headers (X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset)
 //! - Retry-After header when rate limited
 //! - Latest versions: governor 0.10.1 + tower-governor 0.8.0
+//!
+//! ## Usage
+//!
+//! ### Zero-Configuration (Recommended)
+//!
+//! Use `into_governor_layer()` for MCP-compliant rate limiting with automatic
+//! JSON-RPC 2.0 error responses:
+//!
+//! ```rust,ignore
+//! use turbomcp_server::middleware::{RateLimitConfig, RateLimitLayer};
+//! use axum::Router;
+//!
+//! let rate_limiter = RateLimitLayer::new(RateLimitConfig::default())
+//!     .into_governor_layer();
+//!
+//! let app = Router::new()
+//!     .route("/mcp", post(mcp_handler))
+//!     .layer(rate_limiter);
+//!
+//! // IMPORTANT: Use connect_info for IP extraction
+//! let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+//! axum::serve(
+//!     listener,
+//!     app.into_make_service_with_connect_info::<std::net::SocketAddr>()
+//! ).await?;
+//! ```
+//!
+//! ### Manual Configuration
+//!
+//! For custom error handling or non-HTTP transports, use the helper methods
+//! to build your own `GovernorLayer`:
+//!
+//! ```rust,ignore
+//! use turbomcp_server::middleware::{RateLimitConfig, RateLimitLayer};
+//! use tower_governor::{GovernorConfigBuilder, GovernorLayer, key_extractor::SmartIpKeyExtractor};
+//! use std::sync::Arc;
+//!
+//! let layer = RateLimitLayer::new(RateLimitConfig::strict());
+//!
+//! let governor_conf = Arc::new(
+//!     GovernorConfigBuilder::default()
+//!         .per_second(layer.requests_per_second())
+//!         .burst_size(layer.burst_size())
+//!         .key_extractor(SmartIpKeyExtractor)
+//!         .use_headers()
+//!         .finish()
+//!         .unwrap()
+//! );
+//!
+//! let rate_limiter = GovernorLayer::new(governor_conf)
+//!     .error_handler(my_custom_error_handler);
+//! ```
 
 use std::num::NonZeroU32;
 use std::time::Duration;
+
+#[cfg(feature = "rate-limiting")]
+use std::sync::Arc;
+
+#[cfg(feature = "rate-limiting")]
+use bytes::Bytes;
+#[cfg(feature = "rate-limiting")]
+use governor::middleware::StateInformationMiddleware;
+#[cfg(feature = "rate-limiting")]
+use http::{Response, StatusCode, header::CONTENT_TYPE};
+#[cfg(feature = "rate-limiting")]
+use tower_governor::{
+    GovernorError, GovernorLayer, governor::GovernorConfigBuilder,
+    key_extractor::SmartIpKeyExtractor,
+};
+#[cfg(feature = "rate-limiting")]
+use turbomcp_protocol::{
+    error_codes,
+    jsonrpc::{JsonRpcError, JsonRpcResponse, JsonRpcResponsePayload, JsonRpcVersion, ResponseId},
+};
 
 /// Rate limiting configuration
 #[derive(Debug, Clone)]
@@ -217,6 +289,234 @@ impl RateLimitLayer {
     pub fn burst_size_nonzero(&self) -> NonZeroU32 {
         NonZeroU32::new(self.burst_size()).unwrap_or(NonZeroU32::new(1).unwrap())
     }
+
+    /// Create a ready-to-use GovernorLayer with MCP-compliant error responses
+    ///
+    /// This method creates a fully configured `tower_governor::GovernorLayer` that:
+    /// - Uses Smart IP extraction (X-Forwarded-For, X-Real-IP, CF-Connecting-IP, peer IP)
+    /// - Returns proper JSON-RPC 2.0 error responses on rate limit (HTTP 429)
+    /// - Includes standard rate limit headers (X-RateLimit-*, Retry-After)
+    ///
+    /// # Returns
+    ///
+    /// A `GovernorLayer` that can be added to any Tower/Axum service stack.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use turbomcp_server::middleware::{RateLimitConfig, RateLimitLayer};
+    /// use axum::Router;
+    ///
+    /// let app = Router::new()
+    ///     .route("/mcp", post(handler))
+    ///     .layer(RateLimitLayer::new(RateLimitConfig::default()).into_governor_layer());
+    ///
+    /// // CRITICAL: Must use connect_info for IP extraction
+    /// axum::serve(
+    ///     listener,
+    ///     app.into_make_service_with_connect_info::<std::net::SocketAddr>()
+    /// ).await?;
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the governor configuration is invalid (should never happen with
+    /// valid `RateLimitConfig` values).
+    #[cfg(feature = "rate-limiting")]
+    pub fn into_governor_layer(
+        self,
+    ) -> GovernorLayer<SmartIpKeyExtractor, StateInformationMiddleware, Bytes> {
+        let governor_conf = Arc::new(
+            GovernorConfigBuilder::default()
+                .per_second(self.requests_per_second())
+                .burst_size(self.burst_size())
+                .key_extractor(SmartIpKeyExtractor)
+                .use_headers()
+                .finish()
+                .expect("valid governor config from RateLimitConfig"),
+        );
+
+        GovernorLayer::new(governor_conf).error_handler(mcp_rate_limit_error_handler)
+    }
+
+    /// Create a GovernorLayer with a custom error handler
+    ///
+    /// Use this when you need custom error response formatting or want to
+    /// add additional logging/metrics on rate limit events.
+    ///
+    /// # Arguments
+    ///
+    /// * `error_handler` - A function that converts `GovernorError` to `Response<Bytes>`
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let layer = RateLimitLayer::new(RateLimitConfig::strict())
+    ///     .into_governor_layer_with_handler(|err| {
+    ///         tracing::warn!("Rate limit exceeded: {:?}", err);
+    ///         // Return custom response
+    ///         Response::builder()
+    ///             .status(429)
+    ///             .body(Bytes::from_static(b"Too many requests"))
+    ///             .unwrap()
+    ///     });
+    /// ```
+    #[cfg(feature = "rate-limiting")]
+    pub fn into_governor_layer_with_handler<F>(
+        self,
+        error_handler: F,
+    ) -> GovernorLayer<SmartIpKeyExtractor, StateInformationMiddleware, Bytes>
+    where
+        F: Fn(GovernorError) -> Response<Bytes> + Send + Sync + 'static,
+    {
+        let governor_conf = Arc::new(
+            GovernorConfigBuilder::default()
+                .per_second(self.requests_per_second())
+                .burst_size(self.burst_size())
+                .key_extractor(SmartIpKeyExtractor)
+                .use_headers()
+                .finish()
+                .expect("valid governor config from RateLimitConfig"),
+        );
+
+        GovernorLayer::new(governor_conf).error_handler(error_handler)
+    }
+}
+
+/// MCP-compliant rate limit error handler
+///
+/// Converts `GovernorError` into a proper JSON-RPC 2.0 error response with:
+/// - HTTP 429 Too Many Requests status
+/// - MCP error code `-32009` (RATE_LIMITED)
+/// - Retry-After header with wait time
+/// - X-RateLimit-* headers for client visibility
+///
+/// # Error Response Format
+///
+/// ```json
+/// {
+///   "jsonrpc": "2.0",
+///   "error": {
+///     "code": -32009,
+///     "message": "Rate limit exceeded. Retry after 60 seconds.",
+///     "data": { "retry_after_secs": 60 }
+///   },
+///   "id": null
+/// }
+/// ```
+#[cfg(feature = "rate-limiting")]
+pub fn mcp_rate_limit_error_handler(err: GovernorError) -> Response<Bytes> {
+    match err {
+        GovernorError::TooManyRequests { headers, wait_time } => {
+            // Extract retry-after from headers or use wait_time directly (already in seconds)
+            let retry_after_secs = headers
+                .as_ref()
+                .and_then(|h| h.get("retry-after"))
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or_else(|| wait_time.max(1));
+
+            let error_response = JsonRpcResponse {
+                jsonrpc: JsonRpcVersion,
+                payload: JsonRpcResponsePayload::Error {
+                    error: JsonRpcError {
+                        code: error_codes::RATE_LIMITED,
+                        message: format!(
+                            "Rate limit exceeded. Retry after {} seconds.",
+                            retry_after_secs
+                        ),
+                        data: Some(serde_json::json!({
+                            "retry_after_secs": retry_after_secs,
+                            "error_type": "rate_limit_exceeded"
+                        })),
+                    },
+                },
+                id: ResponseId::null(),
+            };
+
+            let body = serde_json::to_vec(&error_response)
+                .map(Bytes::from)
+                .unwrap_or_else(|_| {
+                    // Fallback: hand-crafted minimal JSON-RPC error
+                    Bytes::from_static(
+                        br#"{"jsonrpc":"2.0","error":{"code":-32009,"message":"Rate limit exceeded"},"id":null}"#
+                    )
+                });
+
+            let mut builder = Response::builder()
+                .status(StatusCode::TOO_MANY_REQUESTS)
+                .header(CONTENT_TYPE, "application/json")
+                .header("retry-after", retry_after_secs.to_string());
+
+            // Forward rate limit headers from governor if present
+            if let Some(rate_headers) = headers {
+                for (key, value) in rate_headers.iter() {
+                    if key.as_str().starts_with("x-ratelimit") {
+                        builder = builder.header(key, value);
+                    }
+                }
+            }
+
+            builder
+                .body(body)
+                .unwrap_or_else(|_| Response::new(Bytes::from_static(b"Rate limited")))
+        }
+
+        GovernorError::UnableToExtractKey => {
+            // This typically means the request doesn't have IP info
+            // (e.g., server not using into_make_service_with_connect_info)
+            let error_response = JsonRpcResponse {
+                jsonrpc: JsonRpcVersion,
+                payload: JsonRpcResponsePayload::Error {
+                    error: JsonRpcError {
+                        code: error_codes::INTERNAL_ERROR,
+                        message: "Unable to identify client for rate limiting".to_string(),
+                        data: Some(serde_json::json!({
+                            "error_type": "key_extraction_failed",
+                            "hint": "Ensure server uses into_make_service_with_connect_info::<SocketAddr>()"
+                        })),
+                    },
+                },
+                id: ResponseId::null(),
+            };
+
+            let body = serde_json::to_vec(&error_response)
+                .map(Bytes::from)
+                .unwrap_or_else(|_| Bytes::from_static(br#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error"},"id":null}"#));
+
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(CONTENT_TYPE, "application/json")
+                .body(body)
+                .unwrap_or_else(|_| Response::new(Bytes::from_static(b"Internal error")))
+        }
+
+        // Handle any future error variants gracefully
+        #[allow(unreachable_patterns)]
+        _ => {
+            let error_response = JsonRpcResponse {
+                jsonrpc: JsonRpcVersion,
+                payload: JsonRpcResponsePayload::Error {
+                    error: JsonRpcError {
+                        code: error_codes::INTERNAL_ERROR,
+                        message: "Rate limiting error".to_string(),
+                        data: None,
+                    },
+                },
+                id: ResponseId::null(),
+            };
+
+            let body = serde_json::to_vec(&error_response)
+                .map(Bytes::from)
+                .unwrap_or_else(|_| Bytes::from_static(br#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error"},"id":null}"#));
+
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(CONTENT_TYPE, "application/json")
+                .body(body)
+                .unwrap_or_else(|_| Response::new(Bytes::from_static(b"Internal error")))
+        }
+    }
 }
 
 // Note: We use SmartIpKeyExtractor from tower-governor which automatically:
@@ -350,5 +650,123 @@ mod tests {
         // Verify rate limiting parameters
         assert_eq!(layer.requests_per_second(), 16); // 1000 per 60 seconds = 16 per second
         assert_eq!(layer.burst_size(), 100);
+    }
+
+    #[test]
+    #[cfg(feature = "rate-limiting")]
+    fn test_into_governor_layer_creates_valid_layer() {
+        // Verify the zero-config layer creation works
+        let config = RateLimitConfig::default();
+        let layer = RateLimitLayer::new(config);
+
+        // This should not panic - if it does, the test fails
+        let _governor_layer = layer.into_governor_layer();
+    }
+
+    #[test]
+    #[cfg(feature = "rate-limiting")]
+    fn test_into_governor_layer_with_strict_config() {
+        let layer = RateLimitLayer::new(RateLimitConfig::strict());
+        let _governor_layer = layer.into_governor_layer();
+    }
+
+    #[test]
+    #[cfg(feature = "rate-limiting")]
+    fn test_into_governor_layer_with_permissive_config() {
+        let layer = RateLimitLayer::new(RateLimitConfig::permissive());
+        let _governor_layer = layer.into_governor_layer();
+    }
+
+    #[test]
+    #[cfg(feature = "rate-limiting")]
+    fn test_into_governor_layer_with_custom_handler() {
+        use http::Response;
+
+        let layer = RateLimitLayer::new(RateLimitConfig::default());
+        let _governor_layer = layer.into_governor_layer_with_handler(|_err| {
+            Response::builder()
+                .status(429)
+                .body(Bytes::from_static(b"Custom error"))
+                .unwrap()
+        });
+    }
+
+    #[test]
+    #[cfg(feature = "rate-limiting")]
+    fn test_mcp_error_handler_too_many_requests() {
+        use http::HeaderMap;
+
+        // Create a TooManyRequests error
+        let mut headers = HeaderMap::new();
+        headers.insert("retry-after", "30".parse().unwrap());
+        headers.insert("x-ratelimit-limit", "100".parse().unwrap());
+        headers.insert("x-ratelimit-remaining", "0".parse().unwrap());
+
+        let err = GovernorError::TooManyRequests {
+            wait_time: 30, // seconds as u64
+            headers: Some(headers),
+        };
+
+        let response = mcp_rate_limit_error_handler(err);
+
+        // Verify HTTP status
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Verify headers
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
+        assert_eq!(response.headers().get("retry-after").unwrap(), "30");
+
+        // Verify body is valid JSON-RPC error
+        let body = response.into_body();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["error"]["code"], error_codes::RATE_LIMITED);
+        assert!(json["error"]["message"].as_str().unwrap().contains("30"));
+        assert_eq!(json["error"]["data"]["retry_after_secs"], 30);
+        assert!(json["id"].is_null());
+    }
+
+    #[test]
+    #[cfg(feature = "rate-limiting")]
+    fn test_mcp_error_handler_unable_to_extract_key() {
+        let err = GovernorError::UnableToExtractKey;
+        let response = mcp_rate_limit_error_handler(err);
+
+        // Should return 500 Internal Server Error
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        // Verify body
+        let body = response.into_body();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(json["jsonrpc"], "2.0");
+        assert_eq!(json["error"]["code"], error_codes::INTERNAL_ERROR);
+        assert!(
+            json["error"]["data"]["hint"]
+                .as_str()
+                .unwrap()
+                .contains("connect_info")
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "rate-limiting")]
+    fn test_mcp_error_handler_without_headers() {
+        // Create error without headers
+        let err = GovernorError::TooManyRequests {
+            wait_time: 60, // seconds as u64
+            headers: None,
+        };
+
+        let response = mcp_rate_limit_error_handler(err);
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Should default to wait_time when no retry-after header
+        assert_eq!(response.headers().get("retry-after").unwrap(), "60");
     }
 }

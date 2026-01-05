@@ -319,10 +319,10 @@ async fn test_server_creation_with_zero_rate_limit() {
     let mut config = ServerConfig::default();
     config.rate_limiting.enabled = true;
     config.rate_limiting.requests_per_second = 0; // Should not panic (clamped to 1)
-    config.rate_limiting.burst_capacity = 0;      // Should not panic (clamped to 1)
+    config.rate_limiting.burst_capacity = 0; // Should not panic (clamped to 1)
 
     let server = McpServer::new(config);
-    
+
     // Verify it didn't panic and config is preserved (though internal limit is clamped)
     assert!(server.config().rate_limiting.enabled);
     assert_eq!(server.config().rate_limiting.requests_per_second, 0);
