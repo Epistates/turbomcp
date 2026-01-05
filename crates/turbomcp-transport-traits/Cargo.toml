@@ -1,0 +1,39 @@
+[package]
+name = "turbomcp-transport-traits"
+version = "3.0.0"
+edition = "2024"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "Core transport traits and types for TurboMCP - foundation for all transport implementations"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+keywords = ["mcp", "transport", "traits", "async"]
+categories = ["network-programming", "asynchronous"]
+readme = "README.md"
+rust-version = "1.89.0"
+
+[dependencies]
+# Core dependencies
+async-trait = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Protocol types (for MessageId)
+turbomcp-protocol = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+
+[features]
+default = []
+# Future transport types
+grpc = []
+quic = []

@@ -15,6 +15,7 @@ rust-version = "1.89.0"
 [dependencies]
 # Core dependencies
 turbomcp-protocol = { workspace = true }
+turbomcp-transport-traits = { workspace = true }
 tokio = { workspace = true, features = ["net", "io-std", "io-util", "process", "sync", "time", "fs"] }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 futures = { workspace = true }

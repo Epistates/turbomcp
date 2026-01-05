@@ -2,7 +2,8 @@
 
 [workspace]
 members = [
-    "crates/turbomcp-core",      # v3.0: no_std core types (foundation layer)
+    "crates/turbomcp-core",              # v3.0: no_std core types (foundation layer)
+    "crates/turbomcp-transport-traits",  # v3.0: lean transport traits (foundation layer)
     "crates/turbomcp-protocol",
     "crates/turbomcp-transport",
     "crates/turbomcp-server",
@@ -180,6 +181,8 @@ doc-comment = "0.3"
 turbomcp = { version = "2.3.7", path = "crates/turbomcp" }
 # v3.0: turbomcp-core re-extracted as no_std foundation layer
 turbomcp-core = { version = "3.0.0-alpha.1", path = "crates/turbomcp-core", default-features = false }
+# v3.0: turbomcp-transport-traits lean transport traits crate
+turbomcp-transport-traits = { version = "3.0.0", path = "crates/turbomcp-transport-traits", default-features = false }
 turbomcp-protocol = { version = "2.3.7", path = "crates/turbomcp-protocol", default-features = false }
 turbomcp-transport = { version = "2.3.7", path = "crates/turbomcp-transport", default-features = false }
 turbomcp-client = { version = "2.3.7", path = "crates/turbomcp-client", default-features = false }
