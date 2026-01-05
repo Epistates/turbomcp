@@ -38,6 +38,8 @@ pub type McpResult<T> = core::result::Result<T, McpError>;
 /// It is `no_std` compatible and maps to JSON-RPC error codes per MCP spec.
 ///
 /// With `rich-errors` feature enabled, includes UUID tracking and timestamps.
+///
+/// The `context` field is boxed to keep error size small for efficient Result<T, McpError> usage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpError {
     /// Unique error ID for tracing (only with `rich-errors` feature)
@@ -50,9 +52,9 @@ pub struct McpError {
     /// Source location (file:line for debugging)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_location: Option<String>,
-    /// Additional context
+    /// Additional context (boxed to keep McpError small)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub context: Option<ErrorContext>,
+    pub context: Option<alloc::boxed::Box<ErrorContext>>,
     /// Timestamp when error occurred (only with `rich-errors` feature)
     #[cfg(feature = "rich-errors")]
     pub timestamp: chrono::DateTime<chrono::Utc>,
@@ -416,7 +418,9 @@ impl McpError {
     /// Set the operation context
     #[must_use]
     pub fn with_operation(mut self, operation: impl Into<String>) -> Self {
-        let ctx = self.context.get_or_insert_with(ErrorContext::default);
+        let ctx = self
+            .context
+            .get_or_insert_with(|| alloc::boxed::Box::new(ErrorContext::default()));
         ctx.operation = Some(operation.into());
         self
     }
@@ -424,7 +428,9 @@ impl McpError {
     /// Set the component context
     #[must_use]
     pub fn with_component(mut self, component: impl Into<String>) -> Self {
-        let ctx = self.context.get_or_insert_with(ErrorContext::default);
+        let ctx = self
+            .context
+            .get_or_insert_with(|| alloc::boxed::Box::new(ErrorContext::default()));
         ctx.component = Some(component.into());
         self
     }
@@ -432,7 +438,9 @@ impl McpError {
     /// Set the request ID context
     #[must_use]
     pub fn with_request_id(mut self, request_id: impl Into<String>) -> Self {
-        let ctx = self.context.get_or_insert_with(ErrorContext::default);
+        let ctx = self
+            .context
+            .get_or_insert_with(|| alloc::boxed::Box::new(ErrorContext::default()));
         ctx.request_id = Some(request_id.into());
         self
     }

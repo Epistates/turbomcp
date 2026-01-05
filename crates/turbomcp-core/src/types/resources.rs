@@ -9,7 +9,7 @@ use super::content::ResourceContent;
 use super::core::{Annotations, MimeType, Uri};
 
 /// Resource definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Resource {
     /// Resource URI
     pub uri: Uri,
@@ -30,20 +30,6 @@ pub struct Resource {
     /// Optional annotations
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<Annotations>,
-}
-
-impl Default for Resource {
-    fn default() -> Self {
-        Self {
-            uri: String::new(),
-            name: String::new(),
-            description: None,
-            title: None,
-            mime_type: None,
-            size: None,
-            annotations: None,
-        }
-    }
 }
 
 impl Resource {
@@ -169,22 +155,13 @@ pub struct ReadResourceRequest {
 }
 
 /// Result of reading a resource
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReadResourceResult {
     /// Resource contents
     pub contents: Vec<ResourceContent>,
     /// Optional metadata
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub _meta: Option<Value>,
-}
-
-impl Default for ReadResourceResult {
-    fn default() -> Self {
-        Self {
-            contents: Vec::new(),
-            _meta: None,
-        }
-    }
 }
 
 /// Request to subscribe to resource updates

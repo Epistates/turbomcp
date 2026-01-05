@@ -9,7 +9,7 @@ use serde_json::Value;
 use super::content::Content;
 
 /// Tool definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Tool {
     /// Tool name (programmatic identifier)
     pub name: String,
@@ -25,18 +25,6 @@ pub struct Tool {
     /// Tool annotations (hints)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
-}
-
-impl Default for Tool {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            description: None,
-            input_schema: ToolInputSchema::default(),
-            title: None,
-            annotations: None,
-        }
-    }
 }
 
 impl Tool {
@@ -165,7 +153,7 @@ pub struct CallToolRequest {
 }
 
 /// Result of a tool call
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CallToolResult {
     /// Tool output content
     pub content: Vec<Content>,
@@ -175,16 +163,6 @@ pub struct CallToolResult {
     /// Optional metadata
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub _meta: Option<Value>,
-}
-
-impl Default for CallToolResult {
-    fn default() -> Self {
-        Self {
-            content: Vec::new(),
-            is_error: None,
-            _meta: None,
-        }
-    }
 }
 
 impl CallToolResult {

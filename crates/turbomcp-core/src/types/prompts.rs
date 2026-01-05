@@ -8,7 +8,7 @@ use serde_json::Value;
 use super::content::PromptMessage;
 
 /// Prompt definition
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Prompt {
     /// Prompt name (programmatic identifier)
     pub name: String,
@@ -21,17 +21,6 @@ pub struct Prompt {
     /// Prompt arguments
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Vec<PromptArgument>>,
-}
-
-impl Default for Prompt {
-    fn default() -> Self {
-        Self {
-            name: String::new(),
-            description: None,
-            title: None,
-            arguments: None,
-        }
-    }
 }
 
 impl Prompt {
@@ -139,7 +128,7 @@ pub struct GetPromptRequest {
 }
 
 /// Result of getting a prompt
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GetPromptResult {
     /// Prompt description
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -149,16 +138,6 @@ pub struct GetPromptResult {
     /// Optional metadata
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub _meta: Option<Value>,
-}
-
-impl Default for GetPromptResult {
-    fn default() -> Self {
-        Self {
-            description: None,
-            messages: Vec::new(),
-            _meta: None,
-        }
-    }
 }
 
 /// Notification that the prompt list changed

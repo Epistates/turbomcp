@@ -384,7 +384,7 @@ impl From<turbomcp_protocol::Error> for ProxyError {
     }
 }
 
-/// Convert proxy errors to McpError (v3.0)
+/// Convert proxy errors to `McpError` (v3.0)
 impl From<ProxyError> for turbomcp_protocol::McpError {
     fn from(err: ProxyError) -> Self {
         match err {

@@ -95,6 +95,7 @@ pub async fn handle(
                 }
             };
 
+            #[allow(clippy::needless_update)] // Default needed for feature-gated fields (description, icons)
             let result = InitializeResult {
                 protocol_version: negotiated_version,
                 server_info: Implementation {

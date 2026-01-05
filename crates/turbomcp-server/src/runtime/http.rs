@@ -265,7 +265,7 @@ impl ServerRequestDispatcher for HttpDispatcher {
             }
             JsonRpcResponsePayload::Error { error } => {
                 let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(protocol_err))
+                Err(ServerError::Protocol(Box::new(protocol_err)))
             }
         }
     }
@@ -291,7 +291,7 @@ impl ServerRequestDispatcher for HttpDispatcher {
             }),
             JsonRpcResponsePayload::Error { error } => {
                 let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(protocol_err))
+                Err(ServerError::Protocol(Box::new(protocol_err)))
             }
         }
     }
@@ -324,7 +324,7 @@ impl ServerRequestDispatcher for HttpDispatcher {
             }
             JsonRpcResponsePayload::Error { error } => {
                 let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(protocol_err))
+                Err(ServerError::Protocol(Box::new(protocol_err)))
             }
         }
     }
@@ -352,7 +352,7 @@ impl ServerRequestDispatcher for HttpDispatcher {
             }
             JsonRpcResponsePayload::Error { error } => {
                 let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(protocol_err))
+                Err(ServerError::Protocol(Box::new(protocol_err)))
             }
         }
     }

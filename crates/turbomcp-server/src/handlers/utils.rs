@@ -59,6 +59,7 @@ where
     let name = name.into();
     let description = description.into();
 
+    #[allow(clippy::needless_update)] // Default needed for feature-gated fields (icons)
     let tool_def = Tool {
         name: name.clone(),
         title: Some(name),
@@ -73,7 +74,7 @@ where
         execution: None,
         annotations: None,
         meta: None,
-        ..Tool::default()
+        ..Default::default()
     };
 
     FunctionToolHandler::new(tool_def, handler)
@@ -103,6 +104,7 @@ where
     let name = name.into();
     let description = description.into();
 
+    #[allow(clippy::needless_update)] // Default needed for feature-gated fields (icons)
     let tool_def = Tool {
         name: name.clone(),
         title: Some(name),
@@ -112,7 +114,7 @@ where
         execution: None,
         annotations: None,
         meta: None,
-        ..Tool::default()
+        ..Default::default()
     };
 
     FunctionToolHandler::new(tool_def, handler)

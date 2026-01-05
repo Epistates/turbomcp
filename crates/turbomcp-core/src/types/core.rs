@@ -27,19 +27,14 @@ pub type Base64String = String;
 pub type Cursor = String;
 
 /// Role in conversation
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     /// User role
+    #[default]
     User,
     /// Assistant role
     Assistant,
-}
-
-impl Default for Role {
-    fn default() -> Self {
-        Self::User
-    }
 }
 
 /// Implementation information for MCP clients and servers

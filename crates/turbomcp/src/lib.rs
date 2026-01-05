@@ -959,6 +959,28 @@ impl From<Box<turbomcp_protocol::Error>> for McpError {
     }
 }
 
+impl From<turbomcp_protocol::McpError> for McpError {
+    fn from(err: turbomcp_protocol::McpError) -> Self {
+        // Convert McpError to the appropriate variant based on kind
+        use turbomcp_protocol::ErrorKind;
+        match err.kind {
+            ErrorKind::ToolNotFound | ErrorKind::ToolExecutionFailed => Self::Tool(err.message),
+            ErrorKind::ResourceNotFound | ErrorKind::ResourceAccessDenied => {
+                Self::Resource(err.message)
+            }
+            ErrorKind::PromptNotFound => Self::Prompt(err.message),
+            ErrorKind::Authentication | ErrorKind::PermissionDenied | ErrorKind::Security => {
+                Self::Unauthorized(err.message)
+            }
+            ErrorKind::Transport => Self::Transport(err.message),
+            ErrorKind::InvalidParams | ErrorKind::InvalidRequest | ErrorKind::ParseError => {
+                Self::InvalidInput(err.message)
+            }
+            _ => Self::Protocol(err.message),
+        }
+    }
+}
+
 // Add From implementations for common error types to reduce boilerplate
 impl From<std::io::Error> for McpError {
     fn from(err: std::io::Error) -> Self {

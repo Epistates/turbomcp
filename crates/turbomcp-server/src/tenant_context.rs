@@ -149,12 +149,11 @@ impl TenantContextExt for RequestContext {
             Some(tenant_id) => Err(Error::new(
                 turbomcp_protocol::ErrorKind::ResourceAccessDenied,
                 format!(
-                    "Tenant '{}' is not authorized to access resource owned by tenant '{}'",
-                    tenant_id, resource_tenant_id
+                    "Tenant '{}' is not authorized to access resource owned by tenant '{}' (request_tenant: {}, resource_tenant: {})",
+                    tenant_id, resource_tenant_id, tenant_id, resource_tenant_id
                 ),
             )
-            .with_context("request_tenant_id", tenant_id.to_string())
-            .with_context("resource_tenant_id", resource_tenant_id.to_string())),
+            .with_component("tenant_context")),
         }
     }
 }
