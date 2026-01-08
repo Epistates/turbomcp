@@ -1,0 +1,45 @@
+[package]
+name = "turbomcp-http"
+version = "3.0.0"
+edition = "2024"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "HTTP/SSE transport implementation for MCP (Model Context Protocol) - Client transport"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+keywords = ["mcp", "http", "sse", "transport", "client"]
+categories = ["network-programming", "asynchronous", "web-programming"]
+readme = "README.md"
+rust-version = "1.89.0"
+
+[dependencies]
+# Core transport traits and types
+turbomcp-transport-traits = { workspace = true }
+turbomcp-protocol = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["sync", "time"] }
+
+# HTTP client
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+
+# Async utilities
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+
+# Observability
+tracing = { workspace = true }
+
+# URL handling
+url = "2.5"
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+
+[features]
+default = []

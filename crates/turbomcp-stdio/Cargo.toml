@@ -1,0 +1,40 @@
+[package]
+name = "turbomcp-stdio"
+version = "3.0.0"
+edition = "2024"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "Standard I/O transport implementation for TurboMCP - newline-delimited JSON over stdin/stdout"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+keywords = ["mcp", "transport", "stdio", "json-rpc"]
+categories = ["network-programming", "asynchronous"]
+readme = "README.md"
+rust-version = "1.89.0"
+
+[dependencies]
+# Transport traits
+turbomcp-transport-traits = { workspace = true }
+
+# Protocol types (for MessageId, MAX_MESSAGE_SIZE)
+turbomcp-protocol = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["io-std", "io-util", "sync", "time"] }
+tokio-util = { workspace = true, features = ["codec"] }
+futures = { workspace = true }
+async-trait = { workspace = true }
+
+# Serialization
+serde_json = { workspace = true }
+bytes = { workspace = true }
+
+# Observability
+tracing = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+pretty_assertions = { workspace = true }

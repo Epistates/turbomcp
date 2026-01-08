@@ -115,6 +115,11 @@ pub mod rate_limit; // Rate limiting for auth endpoints
 pub mod server;
 pub mod types;
 
+// Tower middleware integration
+#[cfg(feature = "middleware")]
+#[cfg_attr(docsrs, doc(cfg(feature = "middleware")))]
+pub mod tower;
+
 // MCP 2025-11-25 Draft Specification modules
 #[cfg(feature = "mcp-ssrf")]
 pub mod ssrf; // SSRF protection for HTTP fetching (used by CIMD and Discovery)

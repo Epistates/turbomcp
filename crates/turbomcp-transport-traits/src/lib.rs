@@ -44,6 +44,7 @@
     clippy::must_use_candidate
 )]
 
+mod bidirectional;
 mod config;
 mod error;
 mod events;
@@ -53,6 +54,7 @@ mod traits;
 mod types;
 
 // Re-export all public items
+pub use bidirectional::{ConnectionState, CorrelationContext, MessageDirection};
 pub use config::{LimitsConfig, TimeoutConfig, TlsConfig, TlsVersion};
 pub use error::{TransportError, TransportResult};
 pub use events::{TransportEvent, TransportEventEmitter};

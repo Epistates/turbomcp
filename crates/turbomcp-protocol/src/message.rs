@@ -53,8 +53,8 @@ use uuid::Uuid;
 #[cfg(feature = "messagepack")]
 use msgpacker::Packable;
 
-use crate::{McpError as Error, Result};
 use crate::types::{ContentType, ProtocolVersion, Timestamp};
+use crate::{McpError as Error, Result};
 
 /// A msgpacker-compatible representation of JSON values
 #[cfg(feature = "messagepack")]

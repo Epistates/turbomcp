@@ -37,6 +37,82 @@ pub enum Role {
     Assistant,
 }
 
+/// Icon representation for MCP entities (MCP 2025-11-25)
+///
+/// Icons can be specified as either:
+/// - A data URI (e.g., `data:image/svg+xml;base64,...`)
+/// - An HTTPS URL pointing to an image resource
+///
+/// # Example
+///
+/// ```rust
+/// use turbomcp_core::types::core::Icon;
+///
+/// // Data URI icon
+/// let icon = Icon::data_uri("data:image/svg+xml;base64,PHN2Zz4...");
+///
+/// // URL icon
+/// let icon = Icon::url("https://example.com/icon.svg");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Icon {
+    /// Data URI containing embedded image data
+    DataUri(String),
+    /// HTTPS URL pointing to an image resource
+    Url(String),
+}
+
+impl Icon {
+    /// Create an icon from a data URI
+    #[must_use]
+    pub fn data_uri(uri: impl Into<String>) -> Self {
+        Self::DataUri(uri.into())
+    }
+
+    /// Create an icon from a URL
+    #[must_use]
+    pub fn url(url: impl Into<String>) -> Self {
+        Self::Url(url.into())
+    }
+
+    /// Get the icon value as a string
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::DataUri(s) | Self::Url(s) => s,
+        }
+    }
+
+    /// Check if this is a data URI
+    #[must_use]
+    pub fn is_data_uri(&self) -> bool {
+        matches!(self, Self::DataUri(_))
+    }
+
+    /// Check if this is a URL
+    #[must_use]
+    pub fn is_url(&self) -> bool {
+        matches!(self, Self::Url(_))
+    }
+}
+
+impl From<String> for Icon {
+    fn from(s: String) -> Self {
+        if s.starts_with("data:") {
+            Self::DataUri(s)
+        } else {
+            Self::Url(s)
+        }
+    }
+}
+
+impl From<&str> for Icon {
+    fn from(s: &str) -> Self {
+        Self::from(s.to_string())
+    }
+}
+
 /// Implementation information for MCP clients and servers
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Implementation {
@@ -45,8 +121,14 @@ pub struct Implementation {
     /// Display title for UI
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Human-readable description (MCP 2025-11-25)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     /// Implementation version
     pub version: String,
+    /// Optional icon for the implementation (MCP 2025-11-25)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<Icon>,
 }
 
 impl Default for Implementation {
@@ -54,7 +136,9 @@ impl Default for Implementation {
         Self {
             name: "unknown".into(),
             title: None,
+            description: None,
             version: "0.0.0".into(),
+            icon: None,
         }
     }
 }
@@ -66,7 +150,9 @@ impl Implementation {
         Self {
             name: name.into(),
             title: None,
+            description: None,
             version: version.into(),
+            icon: None,
         }
     }
 
@@ -74,6 +160,20 @@ impl Implementation {
     #[must_use]
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
         self.title = Some(title.into());
+        self
+    }
+
+    /// Set the description (MCP 2025-11-25)
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Set the icon (MCP 2025-11-25)
+    #[must_use]
+    pub fn with_icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
         self
     }
 }
@@ -154,7 +254,10 @@ pub struct ModelPreferences {
     #[serde(rename = "speedPriority", skip_serializing_if = "Option::is_none")]
     pub speed_priority: Option<f64>,
     /// Intelligence priority (0-1, lower = prefer smarter)
-    #[serde(rename = "intelligencePriority", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "intelligencePriority",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub intelligence_priority: Option<f64>,
 }
 
@@ -164,9 +267,23 @@ mod tests {
 
     #[test]
     fn test_implementation() {
-        let impl_info = Implementation::new("test", "1.0.0").with_title("Test Server");
+        let impl_info = Implementation::new("test", "1.0.0")
+            .with_title("Test Server")
+            .with_description("A test server implementation");
         assert_eq!(impl_info.name, "test");
         assert_eq!(impl_info.title, Some("Test Server".into()));
+        assert_eq!(
+            impl_info.description,
+            Some("A test server implementation".into())
+        );
+    }
+
+    #[test]
+    fn test_implementation_with_icon() {
+        let impl_info = Implementation::new("test", "1.0.0")
+            .with_icon(Icon::url("https://example.com/icon.svg"));
+        assert!(impl_info.icon.is_some());
+        assert!(impl_info.icon.as_ref().unwrap().is_url());
     }
 
     #[test]
@@ -174,5 +291,42 @@ mod tests {
         let user = Role::User;
         let json = serde_json::to_string(&user).unwrap();
         assert_eq!(json, "\"user\"");
+    }
+
+    #[test]
+    fn test_icon_data_uri() {
+        let icon = Icon::data_uri("data:image/svg+xml;base64,PHN2Zz4=");
+        assert!(icon.is_data_uri());
+        assert!(!icon.is_url());
+        assert_eq!(icon.as_str(), "data:image/svg+xml;base64,PHN2Zz4=");
+    }
+
+    #[test]
+    fn test_icon_url() {
+        let icon = Icon::url("https://example.com/icon.png");
+        assert!(icon.is_url());
+        assert!(!icon.is_data_uri());
+        assert_eq!(icon.as_str(), "https://example.com/icon.png");
+    }
+
+    #[test]
+    fn test_icon_from_string() {
+        // Data URI detection
+        let icon: Icon = "data:image/png;base64,abc".into();
+        assert!(icon.is_data_uri());
+
+        // URL detection
+        let icon: Icon = "https://example.com/icon.svg".into();
+        assert!(icon.is_url());
+    }
+
+    #[test]
+    fn test_icon_serde() {
+        let icon = Icon::url("https://example.com/icon.svg");
+        let json = serde_json::to_string(&icon).unwrap();
+        assert_eq!(json, "\"https://example.com/icon.svg\"");
+
+        let parsed: Icon = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.as_str(), "https://example.com/icon.svg");
     }
 }

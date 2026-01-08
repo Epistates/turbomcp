@@ -16,6 +16,12 @@ rust-version = "1.89.0"
 # Core dependencies
 turbomcp-protocol = { workspace = true }
 turbomcp-transport-traits = { workspace = true }
+# v3.0: Individual transport crates (re-exported for backward compatibility)
+turbomcp-stdio = { workspace = true, optional = true }
+turbomcp-http = { workspace = true, optional = true }
+turbomcp-websocket = { workspace = true, optional = true }
+turbomcp-tcp = { workspace = true, optional = true }
+turbomcp-unix = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["net", "io-std", "io-util", "process", "sync", "time", "fs"] }
 tokio-util = { workspace = true, features = ["codec", "io"] }
 futures = { workspace = true }
@@ -85,11 +91,16 @@ tempfile = { workspace = true }
 default = ["stdio"]
 
 # Core transports
-stdio = []
-http = ["axum", "tower", "tower-http", "hyper", "hyper-util", "reqwest", "async-stream"]
-websocket = ["tokio-tungstenite", "http", "futures-util"]
-tcp = ["tokio/net"]
-unix = ["tokio/net"]
+# v3.0: stdio transport is now provided by turbomcp-stdio crate
+stdio = ["dep:turbomcp-stdio"]
+# v3.0: HTTP client provided by turbomcp-http crate; server-side config remains here
+http = ["dep:turbomcp-http", "axum", "tower", "tower-http", "hyper", "hyper-util", "async-stream"]
+# v3.0: WebSocket transport provided by turbomcp-websocket crate; axum integration remains here
+websocket = ["dep:turbomcp-websocket", "tokio-tungstenite", "http", "futures-util"]
+# v3.0: TCP transport provided by turbomcp-tcp crate
+tcp = ["dep:turbomcp-tcp", "tokio/net"]
+# v3.0: Unix socket transport provided by turbomcp-unix crate
+unix = ["dep:turbomcp-unix", "tokio/net"]
 
 # gRPC support (future)
 grpc = ["http"]

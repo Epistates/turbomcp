@@ -7,8 +7,8 @@ use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use crate::context::RequestContext;
 use crate::McpError;
+use crate::context::RequestContext;
 use crate::types::{
     CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsResult,
 };

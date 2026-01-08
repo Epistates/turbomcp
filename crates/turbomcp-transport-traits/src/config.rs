@@ -1,28 +1,17 @@
 //! Transport configuration types.
 
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// TLS protocol version specification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// As of TurboMCP v3.0, only TLS 1.3 is supported. TLS 1.2 support was removed
+/// for improved security.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TlsVersion {
-    /// TLS 1.2 protocol version.
-    ///
-    /// **Deprecated**: TLS 1.2 is deprecated as of v2.2.0 and will be removed in v3.0.0.
-    #[deprecated(
-        since = "2.2.0",
-        note = "TLS 1.2 is deprecated and will be removed in v3.0.0. Use TLS 1.3 with `TlsConfig::modern()`"
-    )]
-    Tls12,
-
-    /// TLS 1.3 protocol version (recommended).
+    /// TLS 1.3 protocol version (required).
+    #[default]
     Tls13,
-}
-
-impl Default for TlsVersion {
-    fn default() -> Self {
-        Self::Tls13
-    }
 }
 
 /// TLS/HTTPS configuration for secure transport connections.
@@ -64,22 +53,6 @@ impl TlsConfig {
         }
     }
 
-    /// Create a legacy TLS 1.2 configuration (deprecated).
-    #[must_use]
-    #[deprecated(
-        since = "2.2.0",
-        note = "TLS 1.2 is deprecated. Use `TlsConfig::modern()` for TLS 1.3"
-    )]
-    pub const fn legacy() -> Self {
-        #[allow(deprecated)]
-        Self {
-            min_version: TlsVersion::Tls12,
-            validate_certificates: true,
-            custom_ca_certs: None,
-            allowed_ciphers: None,
-        }
-    }
-
     /// Create an insecure TLS configuration that skips certificate validation.
     ///
     /// **Warning**: This configuration is insecure and should ONLY be used in testing.
@@ -91,13 +64,6 @@ impl TlsConfig {
             custom_ca_certs: None,
             allowed_ciphers: None,
         }
-    }
-
-    /// Check if this configuration uses a deprecated TLS version.
-    #[must_use]
-    #[allow(deprecated)]
-    pub const fn is_deprecated(&self) -> bool {
-        matches!(self.min_version, TlsVersion::Tls12)
     }
 
     /// Check if this configuration is insecure (skips certificate validation).
@@ -212,9 +178,9 @@ impl TimeoutConfig {
     pub const fn patient() -> Self {
         Self {
             connect: Duration::from_secs(60),
-            request: Some(Duration::from_secs(300)),  // 5 minutes
-            total: Some(Duration::from_secs(600)),    // 10 minutes
-            read: Some(Duration::from_secs(120)),     // 2 minutes
+            request: Some(Duration::from_secs(300)), // 5 minutes
+            total: Some(Duration::from_secs(600)),   // 10 minutes
+            read: Some(Duration::from_secs(120)),    // 2 minutes
         }
     }
 }

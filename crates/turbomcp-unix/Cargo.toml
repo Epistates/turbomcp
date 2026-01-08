@@ -1,0 +1,40 @@
+[package]
+name = "turbomcp-unix"
+version = "3.0.0"
+edition = "2024"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "Unix domain socket transport implementation for the TurboMCP SDK"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+keywords = ["mcp", "transport", "unix", "socket", "ipc"]
+categories = ["network-programming", "asynchronous"]
+readme = "README.md"
+rust-version = "1.89.0"
+
+[dependencies]
+# Core dependencies
+turbomcp-transport-traits = { workspace = true }
+turbomcp-protocol = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["net", "sync", "time", "fs"] }
+tokio-util = { workspace = true, features = ["codec"] }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tempfile = { workspace = true }
+
+[features]
+default = []

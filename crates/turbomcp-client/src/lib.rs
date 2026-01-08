@@ -162,6 +162,11 @@ pub mod plugins;
 pub mod prelude;
 pub mod sampling;
 
+// Tower middleware integration
+#[cfg(feature = "tower")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tower")))]
+pub mod tower;
+
 // Re-export key types for convenience
 pub use client::{ConnectionInfo, ConnectionState, ManagerConfig, ServerGroup, SessionManager};
 

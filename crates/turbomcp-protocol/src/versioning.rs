@@ -178,12 +178,6 @@ impl Version {
         }
     }
 
-    /// Alias for `stable()` for backwards compatibility
-    #[deprecated(since = "2.4.0", note = "Use `stable()` or `latest()` instead")]
-    pub fn current() -> Self {
-        Self::stable()
-    }
-
     /// Get the latest MCP protocol version (2025-11-25)
     ///
     /// This is the current official MCP specification version.
@@ -194,15 +188,6 @@ impl Version {
             month: 11,
             day: 25,
         }
-    }
-
-    /// Alias for `latest()` for backwards compatibility
-    #[deprecated(
-        since = "2.4.0",
-        note = "Use `latest()` instead - 2025-11-25 is now official"
-    )]
-    pub fn draft() -> Self {
-        Self::latest()
     }
 
     /// Check if this version is newer than another

@@ -52,13 +52,11 @@ impl From<RegistryError> for crate::McpError {
                 crate::McpError::internal(format!("Component '{}' not found in registry", name))
                     .with_component("registry")
             }
-            RegistryError::AlreadyExists(name) => {
-                crate::McpError::invalid_params(format!(
-                    "Component '{}' already exists in registry",
-                    name
-                ))
-                .with_component("registry")
-            }
+            RegistryError::AlreadyExists(name) => crate::McpError::invalid_params(format!(
+                "Component '{}' already exists in registry",
+                name
+            ))
+            .with_component("registry"),
             RegistryError::TypeMismatch(name) => crate::McpError::internal(format!(
                 "Type mismatch when accessing component '{}' in registry",
                 name

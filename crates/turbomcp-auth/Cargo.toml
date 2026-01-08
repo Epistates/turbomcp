@@ -41,6 +41,12 @@ url = "2.5"
 # HTTP types
 http = "1.0"
 
+# Tower integration (optional)
+tower = { version = "0.5.2", optional = true }
+tower-service = { version = "0.3", optional = true }
+futures-util = { version = "0.3", optional = true }
+pin-project-lite = { version = "0.2", optional = true }
+
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
 
@@ -101,8 +107,9 @@ token-revocation = []                           # Token revocation support
 metrics = []                                    # Metrics collection (future: dep:metrics)
 tracing-ext = []                                # Extended tracing (already have tracing as hard dep)
 
-# Middleware
-middleware = []                                 # Tower middleware support (future: dep:tower)
+# Middleware / Tower integration
+middleware = ["dep:tower", "dep:tower-service", "dep:futures-util", "dep:pin-project-lite"]  # Tower middleware support
+tower = ["middleware"]  # Alias for middleware (for consistency with other turbomcp crates)
 
 # MCP 2025-11-25 Draft Specification Features (Authorization)
 mcp-ssrf = []                               # SSRF protection for HTTP fetching (used by CIMD and Discovery)

@@ -311,17 +311,9 @@ impl ServerError {
     /// Get error code for JSON-RPC responses
     #[must_use]
     pub fn error_code(&self) -> i32 {
-        let code = match self {
+        match self {
             // Preserve protocol error codes directly
-            Self::Protocol(protocol_err) => {
-                let extracted_code = protocol_err.jsonrpc_error_code();
-                tracing::info!(
-                    "🔍 [ServerError::error_code] Protocol variant - extracted code: {}, kind: {:?}",
-                    extracted_code,
-                    protocol_err.kind
-                );
-                extracted_code
-            }
+            Self::Protocol(protocol_err) => protocol_err.jsonrpc_error_code(),
 
             // Map server errors to JSON-RPC codes
             Self::Core(_) => -32603,
@@ -342,13 +334,7 @@ impl ServerError {
             Self::Internal(_) => -32603,
             Self::Io(_) => -32603,
             Self::Serialization(_) => -32602,
-        };
-        tracing::info!(
-            "🔍 [ServerError::error_code] Returning code: {} for variant: {:?}",
-            code,
-            std::mem::discriminant(self)
-        );
-        code
+        }
     }
 }
 
@@ -459,9 +445,7 @@ impl From<turbomcp_protocol::McpError> for ServerError {
                     .unwrap_or_else(|| "unknown".to_string()),
                 timeout_ms: 30000,
             },
-            ErrorKind::Transport => {
-                Self::Internal(format!("Transport error: {}", err.message))
-            }
+            ErrorKind::Transport => Self::Internal(format!("Transport error: {}", err.message)),
             ErrorKind::Configuration => Self::Configuration {
                 message: err.message,
                 key: None,
@@ -479,7 +463,6 @@ impl From<turbomcp_protocol::McpError> for ServerError {
     }
 }
 
-
 // Conversion from server errors to protocol errors (McpError)
 impl From<ServerError> for turbomcp_protocol::McpError {
     fn from(server_error: ServerError) -> Self {
@@ -493,9 +476,9 @@ impl From<ServerError> for turbomcp_protocol::McpError {
             }
 
             // Map other server errors to appropriate protocol errors
-            ServerError::Transport(transport_err) => {
-                turbomcp_protocol::McpError::transport(format!("Transport error: {}", transport_err))
-            }
+            ServerError::Transport(transport_err) => turbomcp_protocol::McpError::transport(
+                format!("Transport error: {}", transport_err),
+            ),
             ServerError::Handler { message, context } => {
                 let mut err = turbomcp_protocol::McpError::internal(format!(
                     "Handler error{}: {}",
@@ -528,7 +511,8 @@ impl From<ServerError> for turbomcp_protocol::McpError {
                 err
             }
             ServerError::Authorization { message, resource } => {
-                let mut err = turbomcp_protocol::McpError::new(ErrorKind::PermissionDenied, message);
+                let mut err =
+                    turbomcp_protocol::McpError::new(ErrorKind::PermissionDenied, message);
                 if let Some(r) = resource {
                     err = err.with_component(r);
                 }
@@ -587,7 +571,6 @@ impl From<ServerError> for Box<turbomcp_protocol::McpError> {
         Box::new(turbomcp_protocol::McpError::from(server_error))
     }
 }
-
 
 // Comprehensive tests in separate file (tokio/axum pattern)
 #[cfg(test)]

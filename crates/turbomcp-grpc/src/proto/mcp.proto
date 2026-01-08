@@ -1,0 +1,531 @@
+// MCP (Model Context Protocol) gRPC Service Definition
+// Version: 2025-11-25
+//
+// This proto file defines the gRPC interface for the Model Context Protocol,
+// enabling high-performance RPC communication between MCP clients and servers.
+
+syntax = "proto3";
+
+package turbomcp.mcp.v1;
+
+option java_multiple_files = true;
+option java_package = "org.turbomcp.mcp.v1";
+option java_outer_classname = "McpProto";
+
+// =============================================================================
+// MCP Service
+// =============================================================================
+
+// The main MCP service providing all protocol operations.
+service McpService {
+  // Initialize the MCP session
+  rpc Initialize(InitializeRequest) returns (InitializeResult);
+
+  // Ping for keepalive/health check
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // List available tools
+  rpc ListTools(ListToolsRequest) returns (ListToolsResult);
+
+  // Call a tool
+  rpc CallTool(CallToolRequest) returns (CallToolResult);
+
+  // List available resources
+  rpc ListResources(ListResourcesRequest) returns (ListResourcesResult);
+
+  // List resource templates
+  rpc ListResourceTemplates(ListResourceTemplatesRequest) returns (ListResourceTemplatesResult);
+
+  // Read a resource
+  rpc ReadResource(ReadResourceRequest) returns (ReadResourceResult);
+
+  // List available prompts
+  rpc ListPrompts(ListPromptsRequest) returns (ListPromptsResult);
+
+  // Get a prompt
+  rpc GetPrompt(GetPromptRequest) returns (GetPromptResult);
+
+  // Complete (autocomplete)
+  rpc Complete(CompleteRequest) returns (CompleteResult);
+
+  // Subscribe to notifications (server streaming)
+  rpc Subscribe(SubscribeRequest) returns (stream Notification);
+
+  // Set logging level
+  rpc SetLoggingLevel(SetLoggingLevelRequest) returns (SetLoggingLevelResponse);
+
+  // List roots (client capability)
+  rpc ListRoots(ListRootsRequest) returns (ListRootsResult);
+
+  // Sampling (client capability - bidirectional streaming for complex interactions)
+  rpc CreateSamplingMessage(CreateSamplingMessageRequest) returns (CreateSamplingMessageResult);
+
+  // Elicitation (human-in-the-loop)
+  rpc Elicit(ElicitRequest) returns (ElicitResult);
+}
+
+// =============================================================================
+// Common Types
+// =============================================================================
+
+// JSON-RPC style request ID
+message RequestId {
+  oneof id {
+    int64 number = 1;
+    string text = 2;
+  }
+}
+
+// Implementation info
+message Implementation {
+  string name = 1;
+  string version = 2;
+}
+
+// Role enum
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_USER = 1;
+  ROLE_ASSISTANT = 2;
+}
+
+// Annotations for tools, resources, prompts
+message Annotations {
+  repeated string audience = 1;
+  double priority = 2;
+}
+
+// Icon for visual representation
+message Icon {
+  oneof icon {
+    string uri = 1;
+    string data_uri = 2;  // Base64 encoded with MIME type prefix
+  }
+}
+
+// =============================================================================
+// Initialize
+// =============================================================================
+
+message InitializeRequest {
+  string protocol_version = 1;
+  ClientCapabilities capabilities = 2;
+  Implementation client_info = 3;
+}
+
+message InitializeResult {
+  string protocol_version = 1;
+  ServerCapabilities capabilities = 2;
+  Implementation server_info = 3;
+  optional string instructions = 4;
+}
+
+message ClientCapabilities {
+  optional RootsCapability roots = 1;
+  optional SamplingCapability sampling = 2;
+  optional ExperimentalCapabilities experimental = 3;
+}
+
+message ServerCapabilities {
+  optional PromptsCapability prompts = 1;
+  optional ResourcesCapability resources = 2;
+  optional ToolsCapability tools = 3;
+  optional LoggingCapability logging = 4;
+  optional ExperimentalCapabilities experimental = 5;
+}
+
+message RootsCapability {
+  bool list_changed = 1;
+}
+
+message SamplingCapability {}
+
+message PromptsCapability {
+  bool list_changed = 1;
+}
+
+message ResourcesCapability {
+  bool subscribe = 1;
+  bool list_changed = 2;
+}
+
+message ToolsCapability {
+  bool list_changed = 1;
+}
+
+message LoggingCapability {}
+
+message ExperimentalCapabilities {
+  map<string, bytes> capabilities = 1;  // JSON-encoded capability data
+}
+
+// =============================================================================
+// Ping
+// =============================================================================
+
+message PingRequest {}
+
+message PingResponse {}
+
+// =============================================================================
+// Tools
+// =============================================================================
+
+message ListToolsRequest {
+  optional string cursor = 1;
+}
+
+message ListToolsResult {
+  repeated Tool tools = 1;
+  optional string next_cursor = 2;
+}
+
+message Tool {
+  string name = 1;
+  optional string description = 2;
+  bytes input_schema = 3;  // JSON Schema as bytes
+  optional Annotations annotations = 4;
+  optional Icon icon = 5;
+}
+
+message CallToolRequest {
+  string name = 1;
+  optional bytes arguments = 2;  // JSON object as bytes
+}
+
+message CallToolResult {
+  repeated Content content = 1;
+  optional bool is_error = 2;
+}
+
+// =============================================================================
+// Resources
+// =============================================================================
+
+message ListResourcesRequest {
+  optional string cursor = 1;
+}
+
+message ListResourcesResult {
+  repeated Resource resources = 1;
+  optional string next_cursor = 2;
+}
+
+message Resource {
+  string uri = 1;
+  string name = 2;
+  optional string description = 3;
+  optional string mime_type = 4;
+  optional Annotations annotations = 5;
+  optional Icon icon = 6;
+}
+
+message ListResourceTemplatesRequest {
+  optional string cursor = 1;
+}
+
+message ListResourceTemplatesResult {
+  repeated ResourceTemplate resource_templates = 1;
+  optional string next_cursor = 2;
+}
+
+message ResourceTemplate {
+  string uri_template = 1;
+  string name = 2;
+  optional string description = 3;
+  optional string mime_type = 4;
+  optional Annotations annotations = 5;
+  optional Icon icon = 6;
+}
+
+message ReadResourceRequest {
+  string uri = 1;
+}
+
+message ReadResourceResult {
+  repeated ResourceContent contents = 1;
+}
+
+message ResourceContent {
+  string uri = 1;
+  optional string mime_type = 2;
+  oneof content {
+    string text = 3;
+    bytes blob = 4;  // Base64 decoded binary content
+  }
+}
+
+// =============================================================================
+// Prompts
+// =============================================================================
+
+message ListPromptsRequest {
+  optional string cursor = 1;
+}
+
+message ListPromptsResult {
+  repeated Prompt prompts = 1;
+  optional string next_cursor = 2;
+}
+
+message Prompt {
+  string name = 1;
+  optional string description = 2;
+  repeated PromptArgument arguments = 3;
+  optional Icon icon = 4;
+}
+
+message PromptArgument {
+  string name = 1;
+  optional string description = 2;
+  optional bool required = 3;
+}
+
+message GetPromptRequest {
+  string name = 1;
+  optional bytes arguments = 2;  // JSON object as bytes
+}
+
+message GetPromptResult {
+  optional string description = 1;
+  repeated PromptMessage messages = 2;
+}
+
+message PromptMessage {
+  Role role = 1;
+  Content content = 2;
+}
+
+// =============================================================================
+// Content Types
+// =============================================================================
+
+message Content {
+  oneof content {
+    TextContent text = 1;
+    ImageContent image = 2;
+    AudioContent audio = 3;
+    ResourceContent resource = 4;
+  }
+  optional Annotations annotations = 10;
+}
+
+message TextContent {
+  string text = 1;
+}
+
+message ImageContent {
+  string data = 1;  // Base64 encoded
+  string mime_type = 2;
+}
+
+message AudioContent {
+  string data = 1;  // Base64 encoded
+  string mime_type = 2;
+}
+
+// =============================================================================
+// Completion
+// =============================================================================
+
+message CompleteRequest {
+  CompletionReference ref = 1;
+  CompletionArgument argument = 2;
+}
+
+message CompletionReference {
+  oneof reference {
+    PromptReference prompt = 1;
+    ResourceReference resource = 2;
+  }
+}
+
+message PromptReference {
+  string name = 1;
+}
+
+message ResourceReference {
+  string uri = 1;
+}
+
+message CompletionArgument {
+  string name = 1;
+  string value = 2;
+}
+
+message CompleteResult {
+  Completion completion = 1;
+}
+
+message Completion {
+  repeated string values = 1;
+  optional int64 total = 2;
+  optional bool has_more = 3;
+}
+
+// =============================================================================
+// Notifications
+// =============================================================================
+
+message SubscribeRequest {
+  repeated string topics = 1;  // Empty means all notifications
+}
+
+message Notification {
+  oneof notification {
+    ProgressNotification progress = 1;
+    LogNotification log = 2;
+    ResourceUpdatedNotification resource_updated = 3;
+    ResourceListChangedNotification resource_list_changed = 4;
+    ToolListChangedNotification tool_list_changed = 5;
+    PromptListChangedNotification prompt_list_changed = 6;
+    RootsListChangedNotification roots_list_changed = 7;
+    CancelledNotification cancelled = 8;
+  }
+}
+
+message ProgressNotification {
+  string progress_token = 1;
+  double progress = 2;
+  optional double total = 3;
+  optional string message = 4;
+}
+
+message LogNotification {
+  LogLevel level = 1;
+  string logger = 2;
+  string message = 3;
+  optional bytes data = 4;  // JSON as bytes
+}
+
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  LOG_LEVEL_DEBUG = 1;
+  LOG_LEVEL_INFO = 2;
+  LOG_LEVEL_NOTICE = 3;
+  LOG_LEVEL_WARNING = 4;
+  LOG_LEVEL_ERROR = 5;
+  LOG_LEVEL_CRITICAL = 6;
+  LOG_LEVEL_ALERT = 7;
+  LOG_LEVEL_EMERGENCY = 8;
+}
+
+message ResourceUpdatedNotification {
+  string uri = 1;
+}
+
+message ResourceListChangedNotification {}
+
+message ToolListChangedNotification {}
+
+message PromptListChangedNotification {}
+
+message RootsListChangedNotification {}
+
+message CancelledNotification {
+  string request_id = 1;
+  optional string reason = 2;
+}
+
+// =============================================================================
+// Logging
+// =============================================================================
+
+message SetLoggingLevelRequest {
+  LogLevel level = 1;
+}
+
+message SetLoggingLevelResponse {}
+
+// =============================================================================
+// Roots
+// =============================================================================
+
+message ListRootsRequest {}
+
+message ListRootsResult {
+  repeated Root roots = 1;
+}
+
+message Root {
+  string uri = 1;
+  optional string name = 2;
+}
+
+// =============================================================================
+// Sampling
+// =============================================================================
+
+message CreateSamplingMessageRequest {
+  repeated SamplingMessage messages = 1;
+  optional string model_preferences = 2;  // JSON as string
+  optional string system_prompt = 3;
+  optional ContextIncludeStrategy include_context = 4;
+  optional double temperature = 5;
+  optional int64 max_tokens = 6;
+  repeated string stop_sequences = 7;
+  optional bytes metadata = 8;  // JSON as bytes
+}
+
+enum ContextIncludeStrategy {
+  CONTEXT_INCLUDE_STRATEGY_UNSPECIFIED = 0;
+  CONTEXT_INCLUDE_STRATEGY_NONE = 1;
+  CONTEXT_INCLUDE_STRATEGY_THIS_SERVER = 2;
+  CONTEXT_INCLUDE_STRATEGY_ALL_SERVERS = 3;
+}
+
+message SamplingMessage {
+  Role role = 1;
+  Content content = 2;
+}
+
+message CreateSamplingMessageResult {
+  Role role = 1;
+  Content content = 2;
+  string model = 3;
+  optional string stop_reason = 4;
+}
+
+// =============================================================================
+// Elicitation
+// =============================================================================
+
+message ElicitRequest {
+  string message = 1;
+  optional ElicitationSchema schema = 2;
+}
+
+message ElicitationSchema {
+  oneof schema {
+    TextElicitation text = 1;
+    ConfirmElicitation confirm = 2;
+    SelectElicitation select = 3;
+  }
+}
+
+message TextElicitation {
+  optional string default_value = 1;
+  optional string placeholder = 2;
+}
+
+message ConfirmElicitation {
+  optional bool default_value = 1;
+}
+
+message SelectElicitation {
+  repeated string options = 1;
+  optional string default_value = 2;
+  optional bool multiple = 3;
+}
+
+message ElicitResult {
+  ElicitAction action = 1;
+  optional bytes content = 2;  // JSON as bytes
+}
+
+enum ElicitAction {
+  ELICIT_ACTION_UNSPECIFIED = 0;
+  ELICIT_ACTION_ACCEPT = 1;
+  ELICIT_ACTION_DECLINE = 2;
+  ELICIT_ACTION_DISMISS = 3;
+}

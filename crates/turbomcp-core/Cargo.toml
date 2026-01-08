@@ -26,20 +26,37 @@ compact_str = { version = "0.8", default-features = false, features = ["serde"] 
 # Small vectors (no_std compatible)
 smallvec = { version = "1.13", default-features = false, features = ["serde"] }
 
+# Zero-copy serialization (optional)
+rkyv = { version = "0.8", default-features = false, optional = true, features = [
+    "alloc",
+    "bytecheck",
+    "hashbrown-0_15",
+    "smallvec-1",
+] }
+rancor = { version = "0.1", default-features = false, optional = true, features = ["alloc"] }
+
 # Optional std features (for rich-errors)
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock", "std"], optional = true }
 uuid = { version = "1.11", default-features = false, features = ["serde", "v4", "std"], optional = true }
 
 [dev-dependencies]
 serde_json = { version = "1.0", features = ["std"] }
+criterion = { version = "0.7", features = ["html_reports"] }
+
+[[bench]]
+name = "rkyv_zero_copy_benchmark"
+harness = false
+required-features = ["zero-copy"]
 
 [features]
 default = ["std"]
-std = ["serde/std", "serde_json/std"]
+std = ["serde/std", "serde_json/std", "rkyv?/std"]
 # Enable rich error context with UUID tracking and timestamps
 rich-errors = ["std", "uuid", "chrono"]
 # WASM-specific optimizations
 wasm = []
+# Zero-copy serialization with rkyv
+zero-copy = ["rkyv", "rancor"]
 
 [package.metadata.docs.rs]
 all-features = true

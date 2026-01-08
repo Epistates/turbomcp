@@ -280,9 +280,9 @@ pub struct HandlerStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Result;
     use crate::context::{CompletionContext, ElicitationContext};
     use crate::handlers::{CompletionItem, ElicitationResponse};
-    use crate::Result;
     use async_trait::async_trait;
 
     struct TestElicitationHandler;

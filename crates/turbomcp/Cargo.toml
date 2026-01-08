@@ -44,6 +44,7 @@ futures = "0.3"
 # HTTP server for SSE support (optional - only needed for http/sse features)
 axum = { version = "0.8.4", features = ["ws"], optional = true }
 tower-http = { workspace = true, optional = true }
+tower = { workspace = true }  # Required for Tower middleware integration (always enabled)
 
 # Authentication and DPoP support (now as separate optional crates for clean minimal build)
 

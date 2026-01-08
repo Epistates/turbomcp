@@ -47,10 +47,11 @@ fn test_timeout_config_unlimited_preset() {
 fn test_timeout_config_patient_preset() {
     let config = TimeoutConfig::patient();
 
-    assert_eq!(config.connect, Duration::from_secs(30));
+    // v3.0: Values from turbomcp-transport-traits
+    assert_eq!(config.connect, Duration::from_secs(60));
     assert_eq!(config.request, Some(Duration::from_secs(300))); // 5 minutes
     assert_eq!(config.total, Some(Duration::from_secs(600))); // 10 minutes
-    assert_eq!(config.read, Some(Duration::from_secs(60)));
+    assert_eq!(config.read, Some(Duration::from_secs(120))); // 2 minutes
 }
 
 #[test]

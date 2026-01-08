@@ -1,8 +1,208 @@
-# TurboMCP 2.0.0 Migration Guide
+# TurboMCP Migration Guide
 
-This guide helps you migrate from TurboMCP 1.x to 2.0.0. The 2.0.0 release represents a major architectural overhaul focused on **clean minimal core + progressive enhancement**.
+This guide helps you migrate between major TurboMCP versions.
 
 ## 📋 Table of Contents
+
+- [v3.0.0 Migration (v2.x → v3.x)](#v300-migration-v2x--v3x)
+- [v2.0.0 Migration (v1.x → v2.x)](#v200-migration-v1x--v2x)
+
+---
+
+# v3.0.0 Migration (v2.x → v3.x)
+
+TurboMCP 3.0.0 represents a major modular architecture redesign with **individual transport crates**, a **`no_std` core layer**, and full **MCP 2025-11-25 specification compliance**.
+
+## 🚀 Quick Start for v3.0
+
+### Using the Compatibility Crate (Recommended)
+
+The `turbomcp-compat` crate provides deprecated type aliases with compiler warnings guiding migration:
+
+```toml
+[dependencies]
+turbomcp = "3.0"
+turbomcp-compat = "3.0"  # For gradual migration
+```
+
+```rust
+// Deprecation warnings will guide migration
+use turbomcp_compat::v2::{ServerError, ServerResult};
+```
+
+### Direct Migration
+
+```toml
+# Before (v2.x)
+[dependencies]
+turbomcp = "2.x"
+
+# After (v3.x)
+[dependencies]
+turbomcp = "3.0"
+```
+
+## 💥 Breaking Changes in v3.0.0
+
+### 1. Error Type Unification
+
+**What Changed:**
+- `ServerError`, `ClientError`, and protocol `Error` are unified into `McpError`
+- `ServerResult<T>` and `ClientResult<T>` are unified into `McpResult<T>`
+
+**Migration:**
+
+```rust
+// Before (v2.x)
+use turbomcp_server::ServerError;
+use turbomcp_server::ServerResult;
+
+fn my_handler() -> ServerResult<Value> {
+    Err(ServerError::internal("failed"))
+}
+
+// After (v3.x)
+use turbomcp::McpError;
+use turbomcp::McpResult;
+
+fn my_handler() -> McpResult<Value> {
+    Err(McpError::internal("failed"))
+}
+```
+
+### 2. Modular Transport Architecture
+
+**What Changed:**
+- Individual transport crates extracted from monolithic `turbomcp-transport`
+- Each transport is now a separate crate with its own feature flag
+
+**New Transport Crates:**
+| Crate | Feature | Use Case |
+|-------|---------|----------|
+| `turbomcp-stdio` | `stdio` | Standard MCP transport (default) |
+| `turbomcp-http` | `http` | HTTP/SSE for web apps |
+| `turbomcp-websocket` | `websocket` | Bidirectional WebSocket |
+| `turbomcp-tcp` | `tcp` | Raw TCP sockets |
+| `turbomcp-unix` | `unix` | Unix domain sockets |
+| `turbomcp-grpc` | `grpc` | gRPC transport |
+
+**Migration:**
+
+```toml
+# Before (v2.x) - monolithic transport
+turbomcp = { version = "2.x", features = ["http", "websocket"] }
+
+# After (v3.x) - same feature flags, modular internals
+turbomcp = { version = "3.0", features = ["http", "websocket"] }
+
+# Or use individual crates directly
+turbomcp-http = "3.0"
+turbomcp-websocket = "3.0"
+```
+
+### 3. `no_std` Core Layer
+
+**What Changed:**
+- `turbomcp-core` is now a `no_std` foundation layer
+- Core types work in embedded and WASM environments
+- Standard library features are opt-in via `std` feature
+
+**Migration:**
+
+```toml
+# For no_std environments
+turbomcp-core = { version = "3.0", default-features = false }
+
+# For standard environments (default)
+turbomcp-core = "3.0"
+```
+
+### 4. Protocol Version Support
+
+**What Changed:**
+- Default protocol version: `2025-11-25` (latest MCP spec)
+- Full compliance with MCP 2025-11-25 specification
+- Configurable protocol negotiation
+
+**Migration:**
+
+```rust
+// v3.x offers flexible protocol version configuration
+use turbomcp_server::{ServerConfig, ProtocolVersionConfig};
+
+// Default: Latest spec (2025-11-25) with fallback enabled
+let config = ServerConfig::builder().build();
+
+// Claude Code compatible: Prefer 2025-06-18
+let config = ServerConfig::builder()
+    .protocol_version_config(ProtocolVersionConfig::compatible())
+    .build();
+
+// Strict mode: Only accept specific version
+let config = ServerConfig::builder()
+    .protocol_version_config(ProtocolVersionConfig::strict("2025-11-25"))
+    .build();
+```
+
+### 5. New Crates in v3.0
+
+| Crate | Description |
+|-------|-------------|
+| `turbomcp-core` | `no_std` core types (re-extracted) |
+| `turbomcp-transport-traits` | Lean transport trait definitions |
+| `turbomcp-telemetry` | OpenTelemetry integration |
+| `turbomcp-grpc` | gRPC transport via tonic |
+| `turbomcp-wasm` | WebAssembly bindings |
+| `turbomcp-compat` | Backward compatibility for v2.x migration |
+
+### 6. Authentication Migration
+
+**What Changed:**
+- `Claims` type moved to `turbomcp_auth::AuthContext`
+- Enhanced authentication context with more metadata
+
+**Migration:**
+
+```rust
+// Before (v2.x)
+use turbomcp_server::middleware::Claims;
+
+// After (v3.x)
+use turbomcp_auth::AuthContext;
+```
+
+## 🔄 Type Mapping Reference
+
+| v2.x Type | v3.x Type | Notes |
+|-----------|-----------|-------|
+| `ServerError` | `McpError` | Unified error type |
+| `ServerResult<T>` | `McpResult<T>` | Unified result type |
+| `ClientError` | `McpError` | Unified error type |
+| `ClientResult<T>` | `McpResult<T>` | Unified result type |
+| `Error` (protocol) | `McpError` | Protocol errors consolidated |
+| `Claims` | `AuthContext` | Use turbomcp-auth crate |
+
+## ⏰ Deprecation Timeline
+
+- **v3.0.0**: All compat types marked with `#[deprecated]` warnings
+- **v3.1.0**: Deprecation warnings become errors with `#[deny(deprecated)]`
+- **v4.0.0**: `turbomcp-compat` crate removed
+
+## 📝 Version Compatibility
+
+| TurboMCP Version | Rust Version | MCP Spec | Status |
+|-----------------|--------------|----------|--------|
+| 3.0.x           | 1.89.0+      | 2025-11-25 | ✅ Current |
+| 2.3.x           | 1.89.0+      | 2025-06-18 | 🟡 Maintenance |
+| 2.0.x           | 1.89.0+      | 2024-11-05 | ⚠️ EOL |
+
+---
+
+# v2.0.0 Migration (v1.x → v2.x)
+
+This section helps you migrate from TurboMCP 1.x to 2.0.0. The 2.0.0 release represents a major architectural overhaul focused on **clean minimal core + progressive enhancement**.
+
+## 📋 v2.0.0 Table of Contents
 
 - [Quick Start](#quick-start)
 - [Breaking Changes Summary](#breaking-changes-summary)

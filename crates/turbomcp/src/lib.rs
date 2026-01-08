@@ -567,6 +567,8 @@ pub use turbomcp_server; // Re-export entire module for macro-generated code
 pub use turbomcp_transport;
 // Re-export tracing for logging in macro-generated code
 pub use tracing;
+// Re-export tower for Tower middleware integration in macro-generated code
+pub use tower;
 
 // Core TurboMCP modules
 // 2.0.0: Auth and DPoP extracted to separate optional crates

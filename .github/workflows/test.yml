@@ -108,3 +108,42 @@ jobs:
         rm -rf ~/.cargo/registry/cache/* 2>/dev/null || true
         echo "Final disk usage:"
         df -h /
+
+  wasm:
+    name: WebAssembly Build
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+
+    - name: Cache cargo dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-wasm-
+
+    - name: Build WASM (browser target)
+      run: |
+        cargo build -p turbomcp-wasm --target wasm32-unknown-unknown --profile wasm-release
+
+    - name: Check WASM binary size
+      run: |
+        SIZE=$(stat -c%s target/wasm32-unknown-unknown/wasm-release/turbomcp_wasm.wasm 2>/dev/null || stat -f%z target/wasm32-unknown-unknown/wasm-release/turbomcp_wasm.wasm)
+        echo "WASM binary size: ${SIZE} bytes ($(numfmt --to=iec ${SIZE}))"
+        # Warn if binary exceeds 2MB (before wasm-opt)
+        if [ $SIZE -gt 2097152 ]; then
+          echo "::warning::WASM binary is larger than 2MB. Consider optimizing dependencies."
+        fi
+
+    - name: Run unit tests
+      run: cargo test -p turbomcp-wasm --lib

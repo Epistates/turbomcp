@@ -456,7 +456,10 @@ mod tests {
     #[test]
     fn test_error_codes() {
         assert_eq!(JsonRpcErrorCode::ParseError.code(), -32700);
-        assert_eq!(JsonRpcErrorCode::from(-32601), JsonRpcErrorCode::MethodNotFound);
+        assert_eq!(
+            JsonRpcErrorCode::from(-32601),
+            JsonRpcErrorCode::MethodNotFound
+        );
     }
 
     #[test]

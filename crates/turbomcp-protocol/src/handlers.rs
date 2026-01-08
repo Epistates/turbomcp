@@ -119,8 +119,8 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::context::{CompletionContext, ElicitationContext, ServerInitiatedContext};
 use crate::Result;
+use crate::context::{CompletionContext, ElicitationContext, ServerInitiatedContext};
 
 /// Handler for server-initiated elicitation requests
 #[async_trait]

@@ -3,46 +3,24 @@
 //! This module provides enhanced transport capabilities for MCP 2025-06-18 protocol
 //! including server-initiated requests, message correlation, and protocol direction validation.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::time::timeout;
 use turbomcp_protocol::ServerInitiatedType;
 use uuid::Uuid;
 
+// v3.0: Import bidirectional types from core (which re-exports from traits crate)
 use crate::core::{
     BidirectionalTransport, Transport, TransportCapabilities, TransportError, TransportMessage,
     TransportResult, TransportState, TransportType,
 };
 
-/// Message direction in the transport layer
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MessageDirection {
-    /// Client to server message
-    ClientToServer,
-    /// Server to client message
-    ServerToClient,
-}
-
-/// Correlation context for request-response patterns
-#[derive(Debug)]
-pub struct CorrelationContext {
-    /// Unique correlation ID
-    pub correlation_id: String,
-    /// Original request message ID
-    pub request_id: String,
-    /// Response channel (not cloneable, so we don't derive Clone)
-    pub response_tx: Option<oneshot::Sender<TransportMessage>>,
-    /// Timeout duration
-    pub timeout: Duration,
-    /// Creation timestamp
-    pub created_at: std::time::Instant,
-}
+// v3.0: Re-export bidirectional types from traits crate for backward compatibility
+pub use crate::core::{ConnectionState, CorrelationContext, MessageDirection};
 
 /// Enhanced bidirectional transport wrapper
 #[derive(Debug)]
@@ -61,19 +39,6 @@ pub struct BidirectionalTransportWrapper<T: Transport> {
     router: Arc<MessageRouter>,
     /// Connection state
     state: Arc<RwLock<ConnectionState>>,
-}
-
-/// Connection state for bidirectional communication
-#[derive(Debug, Clone, Default)]
-pub struct ConnectionState {
-    /// Whether server-initiated requests are enabled
-    pub server_initiated_enabled: bool,
-    /// Active server-initiated request IDs
-    pub active_server_requests: Vec<String>,
-    /// Pending elicitations
-    pub pending_elicitations: Vec<String>,
-    /// Connection metadata
-    pub metadata: HashMap<String, serde_json::Value>,
 }
 
 /// Protocol direction validator

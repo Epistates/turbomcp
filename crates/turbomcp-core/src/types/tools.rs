@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::content::Content;
+use super::core::Icon;
 
 /// Tool definition
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -22,6 +23,9 @@ pub struct Tool {
     /// Optional display title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Optional icon (MCP 2025-11-25)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<Icon>,
     /// Tool annotations (hints)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
@@ -50,6 +54,13 @@ impl Tool {
         self.input_schema = schema;
         self
     }
+
+    /// Set the icon (MCP 2025-11-25)
+    #[must_use]
+    pub fn with_icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
 }
 
 /// JSON Schema for tool input
@@ -65,7 +76,10 @@ pub struct ToolInputSchema {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
     /// Additional properties allowed
-    #[serde(rename = "additionalProperties", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "additionalProperties",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub additional_properties: Option<bool>,
 }
 

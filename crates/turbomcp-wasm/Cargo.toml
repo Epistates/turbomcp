@@ -1,0 +1,77 @@
+[package]
+name = "turbomcp-wasm"
+version = "3.0.0-alpha.1"
+edition = "2024"
+rust-version = "1.85"
+description = "WebAssembly bindings for TurboMCP - MCP client for browsers and WASI environments"
+license = "MIT"
+repository = "https://github.com/ArcadeLabsInc/turbomcp"
+documentation = "https://docs.rs/turbomcp-wasm"
+keywords = ["mcp", "wasm", "webassembly", "browser", "wasi"]
+categories = ["wasm", "web-programming"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["browser"]
+# Browser target with wasm-bindgen
+browser = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "serde-wasm-bindgen", "futures-channel"]
+# WASI Preview 2 target (future)
+wasi = []
+# Console logging for debugging
+console-log = ["browser", "console_error_panic_hook"]
+
+[dependencies]
+# Core MCP types - no_std compatible with WASM optimizations
+turbomcp-core = { workspace = true, default-features = false, features = ["wasm"] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Browser dependencies (optional)
+wasm-bindgen = { version = "0.2.106", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3.83", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+
+# Async channel for WebSocket
+futures-channel = { version = "0.3", optional = true }
+
+# Console error panic hook for better debugging
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[dependencies.web-sys]
+version = "0.3.83"
+optional = true
+features = [
+    "console",
+    "Window",
+    "Document",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
+    "Headers",
+    "AbortController",
+    "AbortSignal",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "Blob",
+    "BlobPropertyBag",
+    "FormData",
+    "Url",
+    "WebSocket",
+    "BinaryType",
+    "MessageEvent",
+    "CloseEvent",
+    "ErrorEvent",
+]
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[package.metadata.docs.rs]
+targets = ["wasm32-unknown-unknown"]
+all-features = true

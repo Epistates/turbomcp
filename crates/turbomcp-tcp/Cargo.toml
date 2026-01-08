@@ -1,0 +1,43 @@
+[package]
+name = "turbomcp-tcp"
+version = "3.0.0"
+edition = "2024"
+rust-version = "1.89.0"
+license = "MIT"
+description = "TCP transport implementation for TurboMCP SDK"
+repository = "https://github.com/ArcadeLabsInc/turbomcp"
+documentation = "https://docs.rs/turbomcp-tcp"
+keywords = ["mcp", "tcp", "transport", "networking"]
+categories = ["network-programming", "asynchronous"]
+readme = "README.md"
+
+[dependencies]
+# Core dependencies
+turbomcp-transport-traits = { version = "3.0.0", path = "../turbomcp-transport-traits" }
+turbomcp-protocol = { version = "2.3.6", path = "../turbomcp-protocol" }
+
+# Async runtime
+tokio = { version = "1.43", features = ["sync", "rt", "time", "net"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+async-trait = "0.1"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+
+# Data structures
+bytes = "1.10"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Utilities
+uuid = { version = "1.16", features = ["v4"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1.43", features = ["full"] }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = "warn"

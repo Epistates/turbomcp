@@ -497,16 +497,6 @@ impl AuthContextBuilder {
         self
     }
 
-    /// Set subject (user ID) - deprecated alias
-    #[deprecated(
-        since = "2.0.5",
-        note = "Use `.subject()` instead to avoid confusion with std::ops::Sub trait"
-    )]
-    #[allow(clippy::should_implement_trait)]
-    pub fn sub(self, sub: impl Into<String>) -> Self {
-        self.subject(sub)
-    }
-
     /// Set issuer
     pub fn iss(mut self, iss: impl Into<String>) -> Self {
         self.iss = Some(iss.into());

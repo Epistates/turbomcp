@@ -160,7 +160,10 @@ impl McpIntrospector {
                 name: self.client_name.clone(),
                 title: None,
                 version: self.client_version.clone(),
-                ..Default::default()
+                #[cfg(feature = "mcp-draft")]
+                description: None,
+                #[cfg(feature = "mcp-icons")]
+                icons: None,
             },
             _meta: None,
         };

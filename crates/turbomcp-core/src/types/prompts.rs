@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::content::PromptMessage;
+use super::core::Icon;
 
 /// Prompt definition
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -18,6 +19,9 @@ pub struct Prompt {
     /// Optional display title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Optional icon (MCP 2025-11-25)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<Icon>,
     /// Prompt arguments
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Vec<PromptArgument>>,
@@ -44,6 +48,13 @@ impl Prompt {
     #[must_use]
     pub fn with_argument(mut self, arg: PromptArgument) -> Self {
         self.arguments.get_or_insert_with(Vec::new).push(arg);
+        self
+    }
+
+    /// Set icon (MCP 2025-11-25)
+    #[must_use]
+    pub fn with_icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
         self
     }
 }

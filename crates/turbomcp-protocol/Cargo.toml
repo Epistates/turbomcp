@@ -67,6 +67,10 @@ rand = "0.9"
 # Memory-mapped files (optional, requires unsafe feature)
 memmap2 = { version = "0.9.9", optional = true }
 
+# Zero-copy serialization (optional)
+rkyv_crate = { package = "rkyv", version = "0.8", default-features = false, optional = true, features = ["alloc", "bytecheck"] }
+rancor_crate = { package = "rancor", version = "0.1", default-features = false, optional = true, features = ["alloc"] }
+
 # Validation
 regex = "1.12"
 
@@ -91,6 +95,9 @@ wasm = []
 fancy-errors = ["miette"]
 mmap = ["memmap2"]  # Enable memory-mapped file support
 lock-free = []  # Enable lock-free data structures (requires unsafe)
+
+# Zero-copy serialization with rkyv (requires turbomcp-core/zero-copy)
+rkyv = ["turbomcp-core/zero-copy", "rkyv_crate", "rancor_crate"]
 
 # MCP 2025-11-25 Draft Specification Features
 # These features enable support for the draft specification (2025-11-25)

@@ -103,7 +103,7 @@ impl HttpBackend {
             // Explicit TLS configuration for security
             .danger_accept_invalid_certs(false) // Never accept invalid certificates
             .tls_built_in_root_certs(true) // Use system root certificates
-            .min_tls_version(reqwest::tls::Version::TLS_1_2) // Minimum TLS 1.2
+            .min_tls_version(reqwest::tls::Version::TLS_1_3) // TLS 1.3 required (v3.0+)
             .https_only(false) // Allow HTTP for localhost (validated by RuntimeProxyBuilder)
             .build()
             .map_err(|e| ProxyError::backend(format!("Failed to create HTTP client: {e}")))?;

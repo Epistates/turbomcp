@@ -1,0 +1,77 @@
+[package]
+name = "turbomcp-grpc"
+version = "3.0.0-alpha.1"
+edition = "2024"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "gRPC transport for TurboMCP - high-performance MCP over HTTP/2"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+keywords = ["mcp", "grpc", "tonic", "protocol", "transport"]
+categories = ["network-programming", "asynchronous"]
+readme = "README.md"
+rust-version = "1.89.0"
+
+[dependencies]
+# gRPC framework
+tonic = { version = "0.14", features = ["tls-ring", "gzip", "zstd"] }
+tonic-prost = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+
+# Async utilities
+async-trait = "0.1"
+async-stream = "0.3"
+
+# Async runtime
+tokio = { version = "1.47", features = ["rt-multi-thread", "sync", "time", "macros"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+futures = "0.3"
+
+# Internal dependencies
+turbomcp-core = { path = "../turbomcp-core", default-features = false, features = ["std"] }
+turbomcp-protocol = { path = "../turbomcp-protocol", default-features = false }
+turbomcp-transport-traits = { path = "../turbomcp-transport-traits", default-features = false }
+
+# Tower integration
+tower = { version = "0.5", features = ["timeout", "limit"] }
+tower-service = "0.3"
+http = "1.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "2.0"
+
+# Tracing
+tracing = "0.1"
+
+# Utilities
+bytes = "1.5"
+uuid = { version = "1.6", features = ["v4"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.0"
+
+[build-dependencies]
+tonic-build = "0.14"
+tonic-prost-build = "0.14"
+prost-build = "0.14"
+
+[features]
+default = ["server", "client"]
+server = []
+client = []
+# Health checking service
+health = ["tonic/channel"]
+# Reflection service for debugging
+reflection = []
+# TLS support
+tls = []
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

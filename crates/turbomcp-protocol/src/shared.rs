@@ -390,10 +390,10 @@ pub enum SharedError {
 impl From<SharedError> for crate::McpError {
     fn from(err: SharedError) -> Self {
         match err {
-            SharedError::Consumed => crate::McpError::invalid_params(
-                "Shared value has already been consumed",
-            )
-            .with_component("shared_wrapper"),
+            SharedError::Consumed => {
+                crate::McpError::invalid_params("Shared value has already been consumed")
+                    .with_component("shared_wrapper")
+            }
         }
     }
 }

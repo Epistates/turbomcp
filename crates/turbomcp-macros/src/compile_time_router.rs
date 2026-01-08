@@ -13,6 +13,7 @@ use syn::Ident;
 
 use crate::bidirectional_wrapper;
 use crate::context_aware_dispatch;
+use crate::tower_service;
 
 /// Generate compile-time router for HTTP transport
 pub fn generate_router(
@@ -305,6 +306,14 @@ pub fn generate_router(
     // Pass transports filter to only generate specified transports
     let bidirectional_transports =
         bidirectional_wrapper::generate_bidirectional_transport_methods(struct_name, transports);
+
+    // ===================================================================
+    // Tower Service Generation - Composable Middleware Support
+    // ===================================================================
+
+    // Generate Tower Layer and Service implementations
+    let tower_code =
+        tower_service::generate_tower_service(struct_name, server_name, server_version);
 
     quote! {
         // Helper function for URI template matching - generated at compile time for maximum performance
@@ -749,5 +758,11 @@ pub fn generate_router(
         // ===================================================================
 
         #bidirectional_transports
+
+        // ===================================================================
+        // Tower Integration - Composable Middleware Support
+        // ===================================================================
+
+        #tower_code
     }
 }

@@ -444,7 +444,9 @@ impl From<ProxyError> for turbomcp_protocol::McpError {
             ProxyError::Timeout {
                 operation,
                 timeout_ms,
-            } => turbomcp_protocol::McpError::timeout(format!("{operation} exceeded {timeout_ms}ms")),
+            } => {
+                turbomcp_protocol::McpError::timeout(format!("{operation} exceeded {timeout_ms}ms"))
+            }
             ProxyError::RateLimitExceeded { message, .. } => {
                 turbomcp_protocol::McpError::rate_limited(message)
             }

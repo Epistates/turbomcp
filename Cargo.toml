@@ -4,6 +4,11 @@
 members = [
     "crates/turbomcp-core",              # v3.0: no_std core types (foundation layer)
     "crates/turbomcp-transport-traits",  # v3.0: lean transport traits (foundation layer)
+    "crates/turbomcp-stdio",             # v3.0: STDIO transport (extracted)
+    "crates/turbomcp-http",              # v3.0: HTTP/SSE client transport (extracted)
+    "crates/turbomcp-websocket",         # v3.0: WebSocket bidirectional transport (extracted)
+    "crates/turbomcp-tcp",               # v3.0: TCP transport (extracted)
+    "crates/turbomcp-unix",              # v3.0: Unix domain socket transport (extracted)
     "crates/turbomcp-protocol",
     "crates/turbomcp-transport",
     "crates/turbomcp-server",
@@ -14,6 +19,10 @@ members = [
     "crates/turbomcp-dpop",  # 2.0.0: Re-extracted for clean minimal build
     "crates/turbomcp-auth",  # 2.0.0: Extracted for clean minimal build
     "crates/turbomcp-proxy", # Phase 2: Universal MCP adapter/generator
+    "crates/turbomcp-telemetry", # v3.0: OpenTelemetry integration
+    "crates/turbomcp-grpc",      # v3.0: gRPC transport with tonic
+    "crates/turbomcp-wasm",      # v3.0: WebAssembly bindings for browsers and WASI
+    "crates/turbomcp-compat",    # v3.0: Backward compatibility layer for v2.x migration
     # "crates/turbomcp-security", # DISSOLVED: Security functionality moved to individual crates per ephemeral strategy
     "demo",
 ]
@@ -183,12 +192,20 @@ turbomcp = { version = "2.3.7", path = "crates/turbomcp" }
 turbomcp-core = { version = "3.0.0-alpha.1", path = "crates/turbomcp-core", default-features = false }
 # v3.0: turbomcp-transport-traits lean transport traits crate
 turbomcp-transport-traits = { version = "3.0.0", path = "crates/turbomcp-transport-traits", default-features = false }
+# v3.0: Individual transport crates (extracted from monolithic turbomcp-transport)
+turbomcp-stdio = { version = "3.0.0", path = "crates/turbomcp-stdio", default-features = false }
+turbomcp-http = { version = "3.0.0", path = "crates/turbomcp-http", default-features = false }
+turbomcp-websocket = { version = "3.0.0", path = "crates/turbomcp-websocket", default-features = false }
+turbomcp-tcp = { version = "3.0.0", path = "crates/turbomcp-tcp", default-features = false }
+turbomcp-unix = { version = "3.0.0", path = "crates/turbomcp-unix", default-features = false }
 turbomcp-protocol = { version = "2.3.7", path = "crates/turbomcp-protocol", default-features = false }
 turbomcp-transport = { version = "2.3.7", path = "crates/turbomcp-transport", default-features = false }
 turbomcp-client = { version = "2.3.7", path = "crates/turbomcp-client", default-features = false }
 turbomcp-server = { version = "2.3.7", path = "crates/turbomcp-server", default-features = false }
 turbomcp-macros = { version = "2.3.7", path = "crates/turbomcp-macros", default-features = false }
 turbomcp-cli = { version = "2.3.7", path = "crates/turbomcp-cli", default-features = false }
+# v3.0: OpenTelemetry integration and observability
+turbomcp-telemetry = { version = "3.0.0", path = "crates/turbomcp-telemetry", default-features = false }
 # turbomcp-dpop = { version = "2.3.7", path = "crates/turbomcp-dpop" }  # Available as optional feature
 
 [profile.dev]
@@ -212,6 +229,15 @@ codegen-units = 16  # More units = less memory but parallel builds
 debug = false    # No debug info to save space
 strip = true     # Strip symbols
 panic = "abort"  # Smaller binaries
+
+# WASM-optimized profile for smallest binary size
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"      # Aggressive size optimization
+lto = "fat"          # Full LTO for maximum size reduction
+codegen-units = 1    # Single codegen unit for better optimization
+panic = "abort"      # Smaller panic handling
+strip = true         # Strip all symbols
 
 [profile.bench]
 inherits = "release"

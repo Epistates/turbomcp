@@ -1,510 +1,16 @@
 //! Transport configuration utilities.
+//!
+//! This module provides builders and presets for transport configurations.
+//! The core configuration types are re-exported from `turbomcp-transport-traits`.
 
 use std::collections::HashMap;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
-
-use crate::core::{TransportConfig, TransportError, TransportResult, TransportType};
-
-/// TLS protocol version specification.
-///
-/// TurboMCP follows a gradual migration path to TLS 1.3:
-/// - v2.2.0: TLS 1.2 default (backward compatible), TLS 1.3 recommended
-/// - v2.3.0: TLS 1.3 default, TLS 1.2 deprecated with warnings (Q1 2026)
-/// - v3.0.0: TLS 1.3 only, TLS 1.2 removed (Q2 2026)
-///
-/// # Examples
-///
-/// ```
-/// use turbomcp_transport::config::TlsVersion;
-///
-/// // Use TLS 1.3 (recommended)
-/// let version = TlsVersion::Tls13;
-///
-/// // TLS 1.2 is deprecated but still supported in v2.2.0
-/// #[allow(deprecated)]
-/// let legacy = TlsVersion::Tls12;
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TlsVersion {
-    /// TLS 1.2 protocol version.
-    ///
-    /// **Deprecated**: TLS 1.2 is deprecated as of v2.2.0 and will be removed in v3.0.0.
-    /// Please upgrade to TLS 1.3 using `TlsConfig::modern()` or `TlsVersion::Tls13`.
-    ///
-    /// # Migration Timeline
-    /// - v2.2.0: Deprecated (current)
-    /// - v2.3.0: Removed from defaults, loud warnings
-    /// - v3.0.0: Completely removed
-    #[deprecated(
-        since = "2.2.0",
-        note = "TLS 1.2 is deprecated and will be removed in v3.0.0. Use TLS 1.3 with `TlsConfig::modern()`"
-    )]
-    Tls12,
-
-    /// TLS 1.3 protocol version (recommended).
-    ///
-    /// TLS 1.3 provides improved security and performance over TLS 1.2:
-    /// - Faster handshakes (1-RTT vs 2-RTT)
-    /// - Stronger cipher suites
-    /// - Better forward secrecy
-    /// - Reduced attack surface
-    Tls13,
-}
-
-impl Default for TlsVersion {
-    /// Returns the default TLS version.
-    ///
-    /// In v2.2.0, this is TLS 1.2 for backward compatibility.
-    /// v2.3.6: Default is now TLS 1.3 for improved security.
-    fn default() -> Self {
-        // v2.3.6: TLS 1.3 is the modern secure default
-        Self::Tls13
-    }
-}
-
-/// TLS/HTTPS configuration for secure transport connections.
-///
-/// This configuration applies to HTTP and WebSocket transports that use TLS.
-/// It provides presets for common use cases and allows fine-grained control
-/// over TLS behavior.
-///
-/// # Philosophy: "Secure by default, flexible by design"
-///
-/// - **Default**: TLS 1.2 (v2.2.0 backward compat), validates certificates
-/// - **Recommended**: `TlsConfig::modern()` - TLS 1.3, validates certificates
-/// - **Legacy**: `TlsConfig::legacy()` - Deprecated TLS 1.2 with warnings
-/// - **Insecure**: `TlsConfig::insecure()` - For testing/mTLS mesh only
-///
-/// # Examples
-///
-/// ```
-/// use turbomcp_transport::config::TlsConfig;
-///
-/// // Use modern TLS 1.3 (recommended)
-/// let tls = TlsConfig::modern();
-///
-/// // Default configuration (TLS 1.2 for v2.2.0 compatibility)
-/// let tls = TlsConfig::default();
-///
-/// // Legacy TLS 1.2 (deprecated)
-/// let tls = TlsConfig::legacy();
-///
-/// // Disable certificate validation (testing only)
-/// let tls = TlsConfig::insecure();
-///
-/// // Custom configuration
-/// let tls = TlsConfig {
-///     min_version: turbomcp_transport::config::TlsVersion::Tls13,
-///     validate_certificates: true,
-///     custom_ca_certs: None,
-///     allowed_ciphers: None,
-/// };
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TlsConfig {
-    /// Minimum TLS protocol version to accept.
-    ///
-    /// Default: `TlsVersion::Tls12` (v2.2.0 backward compat)
-    /// Recommended: `TlsVersion::Tls13`
-    pub min_version: TlsVersion,
-
-    /// Whether to validate server certificates.
-    ///
-    /// **Warning**: Setting this to `false` disables certificate validation,
-    /// making connections vulnerable to man-in-the-middle attacks. Only use
-    /// this for testing or when running in a secure mTLS mesh environment.
-    ///
-    /// Default: `true`
-    pub validate_certificates: bool,
-
-    /// Custom CA certificates to trust (PEM or DER format).
-    ///
-    /// Use this when connecting to servers with self-signed certificates
-    /// or internal CAs not in the system trust store.
-    ///
-    /// Default: `None` (use system trust store)
-    pub custom_ca_certs: Option<Vec<Vec<u8>>>,
-
-    /// Allowed TLS cipher suites (cipher suite names).
-    ///
-    /// If specified, only these cipher suites will be used. If `None`,
-    /// the default set of secure cipher suites will be used.
-    ///
-    /// Default: `None` (use library defaults)
-    pub allowed_ciphers: Option<Vec<String>>,
-}
-
-impl Default for TlsConfig {
-    /// Returns the default TLS configuration.
-    ///
-    /// In v2.2.0, this uses TLS 1.2 for backward compatibility.
-    /// Starting in v2.3.0, this will use TLS 1.3.
-    fn default() -> Self {
-        Self {
-            min_version: TlsVersion::default(),
-            validate_certificates: true,
-            custom_ca_certs: None,
-            allowed_ciphers: None,
-        }
-    }
-}
-
-impl TlsConfig {
-    /// Create a modern TLS 1.3 configuration (recommended).
-    ///
-    /// This is the recommended configuration for new deployments.
-    /// It provides the best security and performance.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use turbomcp_transport::config::TlsConfig;
-    ///
-    /// let tls = TlsConfig::modern();
-    /// ```
-    #[must_use]
-    pub const fn modern() -> Self {
-        Self {
-            min_version: TlsVersion::Tls13,
-            validate_certificates: true,
-            custom_ca_certs: None,
-            allowed_ciphers: None,
-        }
-    }
-
-    /// Create a legacy TLS 1.2 configuration (deprecated).
-    ///
-    /// **Deprecated**: TLS 1.2 is deprecated and will be removed in v3.0.0.
-    /// Please migrate to TLS 1.3 using `TlsConfig::modern()`.
-    ///
-    /// This configuration is provided for compatibility with legacy systems
-    /// that do not yet support TLS 1.3.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use turbomcp_transport::config::TlsConfig;
-    ///
-    /// // Only use for legacy systems that don't support TLS 1.3
-    /// let tls = TlsConfig::legacy();
-    /// ```
-    #[must_use]
-    #[deprecated(
-        since = "2.2.0",
-        note = "TLS 1.2 is deprecated. Use `TlsConfig::modern()` for TLS 1.3"
-    )]
-    pub const fn legacy() -> Self {
-        #[allow(deprecated)]
-        Self {
-            min_version: TlsVersion::Tls12,
-            validate_certificates: true,
-            custom_ca_certs: None,
-            allowed_ciphers: None,
-        }
-    }
-
-    /// Create an insecure TLS configuration that skips certificate validation.
-    ///
-    /// **Warning**: This configuration is insecure and should ONLY be used:
-    /// - In development/testing environments
-    /// - In secure mTLS mesh environments where validation is handled elsewhere
-    ///
-    /// Never use this in production when connecting to untrusted servers.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use turbomcp_transport::config::TlsConfig;
-    ///
-    /// // For testing only
-    /// let tls = TlsConfig::insecure();
-    /// ```
-    #[must_use]
-    pub const fn insecure() -> Self {
-        Self {
-            min_version: TlsVersion::Tls13,
-            validate_certificates: false,
-            custom_ca_certs: None,
-            allowed_ciphers: None,
-        }
-    }
-
-    /// Check if this configuration uses a deprecated TLS version.
-    ///
-    /// Returns `true` if the minimum version is TLS 1.2 or earlier.
-    #[must_use]
-    #[allow(deprecated)]
-    pub const fn is_deprecated(&self) -> bool {
-        matches!(self.min_version, TlsVersion::Tls12)
-    }
-
-    /// Check if this configuration is insecure (skips certificate validation).
-    ///
-    /// Returns `true` if certificate validation is disabled.
-    #[must_use]
-    pub const fn is_insecure(&self) -> bool {
-        !self.validate_certificates
-    }
-}
-
-/// Configuration for request and response size limits.
-///
-/// By default, TurboMCP limits response sizes to 10MB and request sizes to 1MB
-/// to prevent memory exhaustion attacks. These limits can be customized or disabled
-/// for environments with infrastructure-level protections (e.g., API gateways).
-///
-/// # Philosophy: "Secure by default, flexible by design"
-///
-/// - **Default:** 10MB response limit, 1MB request limit (protects most users)
-/// - **Configurable:** Users can increase, decrease, or disable limits
-/// - **Clear errors:** When limit hit, explain how to adjust
-///
-/// # Examples
-///
-/// ```
-/// use turbomcp_transport::config::LimitsConfig;
-///
-/// // Use default limits (10MB response, 1MB request)
-/// let limits = LimitsConfig::default();
-///
-/// // Increase limits for large file handling
-/// let limits = LimitsConfig {
-///     max_response_size: Some(50 * 1024 * 1024),  // 50MB
-///     max_request_size: Some(5 * 1024 * 1024),    // 5MB
-///     enforce_on_streams: true,
-/// };
-///
-/// // Disable limits (for users behind API gateways)
-/// let limits = LimitsConfig::unlimited();
-///
-/// // Strict limits for untrusted servers
-/// let limits = LimitsConfig::strict();
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LimitsConfig {
-    /// Maximum response body size in bytes.
-    ///
-    /// `None` = unlimited (for users behind API gateways)
-    ///
-    /// Default: Some(10 * 1024 * 1024) = 10MB
-    pub max_response_size: Option<usize>,
-
-    /// Maximum request body size in bytes.
-    ///
-    /// `None` = unlimited
-    ///
-    /// Default: Some(1 * 1024 * 1024) = 1MB
-    pub max_request_size: Option<usize>,
-
-    /// Whether to enforce limits on streaming responses.
-    ///
-    /// Default: true
-    pub enforce_on_streams: bool,
-}
-
-impl Default for LimitsConfig {
-    fn default() -> Self {
-        Self {
-            max_response_size: Some(10 * 1024 * 1024), // 10MB
-            max_request_size: Some(1024 * 1024),       // 1MB
-            enforce_on_streams: true,
-        }
-    }
-}
-
-impl LimitsConfig {
-    /// Create a configuration with no limits.
-    ///
-    /// Use this when running behind infrastructure that already enforces
-    /// size limits (e.g., API gateway, reverse proxy, service mesh).
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use turbomcp_transport::config::LimitsConfig;
-    ///
-    /// // API Gateway (AWS, Kong) already enforces 10MB limit
-    /// let limits = LimitsConfig::unlimited();
-    /// ```
-    #[must_use]
-    pub const fn unlimited() -> Self {
-        Self {
-            max_response_size: None,
-            max_request_size: None,
-            enforce_on_streams: false,
-        }
-    }
-
-    /// Create a configuration with strict limits for untrusted servers.
-    ///
-    /// Use this when connecting to potentially malicious or buggy servers.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use turbomcp_transport::config::LimitsConfig;
-    ///
-    /// // Connecting to untrusted public MCP server
-    /// let limits = LimitsConfig::strict();
-    /// ```
-    #[must_use]
-    pub const fn strict() -> Self {
-        Self {
-            max_response_size: Some(1024 * 1024), // 1MB
-            max_request_size: Some(256 * 1024),   // 256KB
-            enforce_on_streams: true,
-        }
-    }
-}
-
-/// Configuration for request and operation timeouts.
-///
-/// By default, TurboMCP enforces balanced timeouts to prevent hanging requests
-/// and resource exhaustion. These timeouts can be customized or disabled for
-/// environments with infrastructure-level timeout management (e.g., API gateways).
-///
-/// # Philosophy: "Secure by default, flexible by design"
-///
-/// - **Default:** 30s connect, 60s request, 120s total (balanced)
-/// - **Configurable:** Users can increase, decrease, or disable timeouts
-/// - **Clear errors:** When timeout hit, explain how to adjust
-///
-/// # Examples
-///
-/// ```
-/// use turbomcp_transport::config::TimeoutConfig;
-/// use std::time::Duration;
-///
-/// // Use default timeouts (balanced)
-/// let timeouts = TimeoutConfig::default();
-///
-/// // Fast operations (short timeouts)
-/// let timeouts = TimeoutConfig::fast();
-///
-/// // Patient operations (LLM, file processing)
-/// let timeouts = TimeoutConfig::patient();
-///
-/// // No timeouts (for users behind API gateways)
-/// let timeouts = TimeoutConfig::unlimited();
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TimeoutConfig {
-    /// Connection establishment timeout.
-    ///
-    /// How long to wait for TCP/TLS handshake to complete.
-    ///
-    /// Default: 30 seconds
-    pub connect: Duration,
-
-    /// Single request timeout.
-    ///
-    /// How long to wait for a single request-response cycle.
-    /// `None` = no timeout (for users behind API gateways)
-    ///
-    /// Default: Some(60 seconds)
-    pub request: Option<Duration>,
-
-    /// Total operation timeout (including retries).
-    ///
-    /// Maximum time for entire operation including retries.
-    /// `None` = no timeout
-    ///
-    /// Default: Some(120 seconds)
-    pub total: Option<Duration>,
-
-    /// Read timeout (for streaming responses).
-    ///
-    /// Maximum time to wait per chunk in streaming responses.
-    /// `None` = no timeout
-    ///
-    /// Default: Some(30 seconds)
-    pub read: Option<Duration>,
-}
-
-impl Default for TimeoutConfig {
-    fn default() -> Self {
-        Self {
-            connect: Duration::from_secs(30),
-            request: Some(Duration::from_secs(60)),
-            total: Some(Duration::from_secs(120)),
-            read: Some(Duration::from_secs(30)),
-        }
-    }
-}
-
-impl TimeoutConfig {
-    /// Create a configuration with short timeouts for fast operations.
-    ///
-    /// Use this when you expect quick responses and want to fail fast.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use turbomcp_transport::config::TimeoutConfig;
-    ///
-    /// // Quick cache lookups, simple queries
-    /// let timeouts = TimeoutConfig::fast();
-    /// ```
-    #[must_use]
-    pub const fn fast() -> Self {
-        Self {
-            connect: Duration::from_secs(5),
-            request: Some(Duration::from_secs(10)),
-            total: Some(Duration::from_secs(15)),
-            read: Some(Duration::from_secs(5)),
-        }
-    }
-
-    /// Create a configuration with no timeouts.
-    ///
-    /// Use this when running behind infrastructure that already enforces
-    /// timeouts (e.g., API gateway, reverse proxy, service mesh).
-    ///
-    /// Note: Connect timeout is still enforced to prevent indefinite hangs.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use turbomcp_transport::config::TimeoutConfig;
-    ///
-    /// // API Gateway (AWS, Kong) already enforces timeouts
-    /// let timeouts = TimeoutConfig::unlimited();
-    /// ```
-    #[must_use]
-    pub const fn unlimited() -> Self {
-        Self {
-            connect: Duration::from_secs(30), // Keep connect timeout
-            request: None,
-            total: None,
-            read: None,
-        }
-    }
-
-    /// Create a configuration with long timeouts for slow operations.
-    ///
-    /// Use this for LLM sampling, large file processing, or other operations
-    /// that legitimately take a long time.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use turbomcp_transport::config::TimeoutConfig;
-    ///
-    /// // LLM sampling, large file processing
-    /// let timeouts = TimeoutConfig::patient();
-    /// ```
-    #[must_use]
-    pub const fn patient() -> Self {
-        Self {
-            connect: Duration::from_secs(30),
-            request: Some(Duration::from_secs(300)), // 5 minutes
-            total: Some(Duration::from_secs(600)),   // 10 minutes
-            read: Some(Duration::from_secs(60)),
-        }
-    }
-}
+// Re-export configuration types from traits crate (via core module)
+pub use crate::core::{
+    LimitsConfig, TimeoutConfig, TlsConfig, TlsVersion, TransportConfig, TransportError,
+    TransportResult, TransportType,
+};
 
 /// Builder for transport configurations
 #[derive(Debug, Clone)]
@@ -596,8 +102,7 @@ impl TransportConfigBuilder {
     /// # Example
     ///
     /// ```
-    /// use turbomcp_transport::config::{TransportConfigBuilder, LimitsConfig};
-    /// use turbomcp_transport::core::TransportType;
+    /// use turbomcp_transport::config::{TransportConfigBuilder, LimitsConfig, TransportType};
     ///
     /// let config = TransportConfigBuilder::new(TransportType::Http)
     ///     .limits(LimitsConfig::strict())
@@ -615,8 +120,7 @@ impl TransportConfigBuilder {
     /// # Example
     ///
     /// ```
-    /// use turbomcp_transport::config::{TransportConfigBuilder, TimeoutConfig};
-    /// use turbomcp_transport::core::TransportType;
+    /// use turbomcp_transport::config::{TransportConfigBuilder, TimeoutConfig, TransportType};
     ///
     /// let config = TransportConfigBuilder::new(TransportType::Http)
     ///     .timeouts(TimeoutConfig::fast())
@@ -634,8 +138,7 @@ impl TransportConfigBuilder {
     /// # Example
     ///
     /// ```
-    /// use turbomcp_transport::config::{TransportConfigBuilder, TlsConfig};
-    /// use turbomcp_transport::core::TransportType;
+    /// use turbomcp_transport::config::{TransportConfigBuilder, TlsConfig, TransportType};
     ///
     /// // Use modern TLS 1.3 (recommended)
     /// let config = TransportConfigBuilder::new(TransportType::Http)
@@ -643,7 +146,7 @@ impl TransportConfigBuilder {
     ///     .build()
     ///     .unwrap();
     ///
-    /// // Or use default (TLS 1.2 for v2.2.0 compatibility)
+    /// // Default uses TLS 1.3 (required in v3.0+)
     /// let config = TransportConfigBuilder::new(TransportType::Http)
     ///     .tls(TlsConfig::default())
     ///     .build()
@@ -855,10 +358,10 @@ mod tests {
     #[test]
     fn test_timeout_config_patient() {
         let timeouts = TimeoutConfig::patient();
-        assert_eq!(timeouts.connect, Duration::from_secs(30));
+        assert_eq!(timeouts.connect, Duration::from_secs(60));
         assert_eq!(timeouts.request, Some(Duration::from_secs(300))); // 5 min
         assert_eq!(timeouts.total, Some(Duration::from_secs(600))); // 10 min
-        assert_eq!(timeouts.read, Some(Duration::from_secs(60)));
+        assert_eq!(timeouts.read, Some(Duration::from_secs(120)));
     }
 
     #[test]
@@ -878,20 +381,17 @@ mod tests {
 
     #[test]
     fn test_tls_version_default() {
-        // v2.3.6: Default is TLS 1.3 for improved security
         let version = TlsVersion::default();
         assert_eq!(version, TlsVersion::Tls13);
     }
 
     #[test]
     fn test_tls_config_default() {
-        // v2.3.6: Default is now TLS 1.3
         let config = TlsConfig::default();
         assert_eq!(config.min_version, TlsVersion::Tls13);
         assert!(config.validate_certificates);
         assert!(config.custom_ca_certs.is_none());
         assert!(config.allowed_ciphers.is_none());
-        assert!(!config.is_deprecated()); // TLS 1.3 is not deprecated
     }
 
     #[test]
@@ -901,17 +401,6 @@ mod tests {
         assert!(config.validate_certificates);
         assert!(config.custom_ca_certs.is_none());
         assert!(config.allowed_ciphers.is_none());
-        assert!(!config.is_deprecated());
-        assert!(!config.is_insecure());
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_tls_config_legacy() {
-        let config = TlsConfig::legacy();
-        assert_eq!(config.min_version, TlsVersion::Tls12);
-        assert!(config.validate_certificates);
-        assert!(config.is_deprecated());
         assert!(!config.is_insecure());
     }
 
@@ -920,7 +409,6 @@ mod tests {
         let config = TlsConfig::insecure();
         assert_eq!(config.min_version, TlsVersion::Tls13);
         assert!(!config.validate_certificates);
-        assert!(!config.is_deprecated());
         assert!(config.is_insecure());
     }
 
@@ -937,28 +425,7 @@ mod tests {
         assert!(config.validate_certificates);
         assert_eq!(config.custom_ca_certs.as_ref().unwrap().len(), 1);
         assert_eq!(config.allowed_ciphers.as_ref().unwrap().len(), 1);
-        assert!(!config.is_deprecated());
         assert!(!config.is_insecure());
-    }
-
-    #[test]
-    fn test_tls_config_is_deprecated() {
-        #[allow(deprecated)]
-        let tls12_config = TlsConfig {
-            min_version: TlsVersion::Tls12,
-            validate_certificates: true,
-            custom_ca_certs: None,
-            allowed_ciphers: None,
-        };
-        assert!(tls12_config.is_deprecated());
-
-        let tls13_config = TlsConfig {
-            min_version: TlsVersion::Tls13,
-            validate_certificates: true,
-            custom_ca_certs: None,
-            allowed_ciphers: None,
-        };
-        assert!(!tls13_config.is_deprecated());
     }
 
     #[test]
@@ -989,20 +456,6 @@ mod tests {
 
         assert_eq!(config.tls.min_version, TlsVersion::Tls13);
         assert!(config.tls.validate_certificates);
-        assert!(!config.tls.is_deprecated());
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_config_builder_with_legacy_tls() {
-        let config = TransportConfigBuilder::new(TransportType::Http)
-            .tls(TlsConfig::legacy())
-            .build()
-            .unwrap();
-
-        assert_eq!(config.tls.min_version, TlsVersion::Tls12);
-        assert!(config.tls.validate_certificates);
-        assert!(config.tls.is_deprecated());
     }
 
     #[test]
@@ -1031,17 +484,10 @@ mod tests {
         let json = serde_json::to_string(&tls13).unwrap();
         let deserialized: TlsVersion = serde_json::from_str(&json).unwrap();
         assert_eq!(tls13, deserialized);
-
-        #[allow(deprecated)]
-        let tls12 = TlsVersion::Tls12;
-        let json = serde_json::to_string(&tls12).unwrap();
-        let deserialized: TlsVersion = serde_json::from_str(&json).unwrap();
-        assert_eq!(tls12, deserialized);
     }
 
     #[test]
     fn test_transport_config_includes_tls() {
-        // v2.3.6: Default is now TLS 1.3
         let config = TransportConfig::default();
         assert_eq!(config.tls.min_version, TlsVersion::Tls13);
         assert!(config.tls.validate_certificates);

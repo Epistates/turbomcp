@@ -10,6 +10,7 @@
 //! - `std` (default): Enable standard library support, including richer error types
 //! - `rich-errors`: Enable UUID-based error tracking (requires `std`)
 //! - `wasm`: Enable WASM-specific optimizations
+//! - `zero-copy`: Enable rkyv zero-copy serialization for internal message passing
 //!
 //! ## no_std Usage
 //!
@@ -54,11 +55,19 @@ pub mod error;
 pub mod jsonrpc;
 pub mod types;
 
+/// Zero-copy message types using rkyv serialization.
+///
+/// This module is only available when the `zero-copy` feature is enabled.
+/// It provides internal message types optimized for zero-copy deserialization.
+#[cfg(feature = "zero-copy")]
+#[cfg_attr(docsrs, doc(cfg(feature = "zero-copy")))]
+pub mod rkyv_types;
+
 // Re-export commonly used types at crate root
 pub use error::{ErrorKind, McpError, McpResult};
 pub use jsonrpc::{
-    JsonRpcError, JsonRpcErrorCode, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
-    JsonRpcVersion, JSONRPC_VERSION,
+    JSONRPC_VERSION, JsonRpcError, JsonRpcErrorCode, JsonRpcNotification, JsonRpcRequest,
+    JsonRpcResponse, JsonRpcVersion,
 };
 
 /// MCP Protocol version supported by this SDK (latest official spec)

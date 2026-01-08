@@ -216,12 +216,12 @@ impl TaskStorage {
 
         // Validate state transition
         if !stored_task.task.status.can_transition_to(&new_status) {
-            return Err(ServerError::Protocol(Box::new(ProtocolError::invalid_params(
-                format!(
+            return Err(ServerError::Protocol(Box::new(
+                ProtocolError::invalid_params(format!(
                     "Invalid state transition from {:?} to {:?}",
                     stored_task.task.status, new_status
-                ),
-            ))));
+                )),
+            )));
         }
 
         stored_task.task.status = new_status;
@@ -261,12 +261,12 @@ impl TaskStorage {
             .status
             .can_transition_to(&TaskStatus::Completed)
         {
-            return Err(ServerError::Protocol(Box::new(ProtocolError::invalid_params(
-                format!(
+            return Err(ServerError::Protocol(Box::new(
+                ProtocolError::invalid_params(format!(
                     "Cannot complete task in state {:?}",
                     stored_task.task.status
-                ),
-            ))));
+                )),
+            )));
         }
 
         stored_task.task.status = TaskStatus::Completed;
@@ -308,9 +308,12 @@ impl TaskStorage {
             .status
             .can_transition_to(&TaskStatus::Failed)
         {
-            return Err(ServerError::Protocol(Box::new(ProtocolError::invalid_params(
-                format!("Cannot fail task in state {:?}", stored_task.task.status),
-            ))));
+            return Err(ServerError::Protocol(Box::new(
+                ProtocolError::invalid_params(format!(
+                    "Cannot fail task in state {:?}",
+                    stored_task.task.status
+                )),
+            )));
         }
 
         stored_task.task.status = TaskStatus::Failed;
@@ -354,9 +357,12 @@ impl TaskStorage {
             .status
             .can_transition_to(&TaskStatus::Cancelled)
         {
-            return Err(ServerError::Protocol(Box::new(ProtocolError::invalid_params(
-                format!("Cannot cancel task in state {:?}", stored_task.task.status),
-            ))));
+            return Err(ServerError::Protocol(Box::new(
+                ProtocolError::invalid_params(format!(
+                    "Cannot cancel task in state {:?}",
+                    stored_task.task.status
+                )),
+            )));
         }
 
         stored_task.task.status = TaskStatus::Cancelled;
@@ -543,15 +549,19 @@ impl TaskStorage {
         match (&stored_task.auth_context, auth_context) {
             (Some(task_ctx), Some(provided_ctx)) => {
                 if task_ctx != provided_ctx {
-                    return Err(ServerError::Protocol(Box::new(ProtocolError::invalid_params(
-                        "Unauthorized: task belongs to different context".to_string(),
-                    ))));
+                    return Err(ServerError::Protocol(Box::new(
+                        ProtocolError::invalid_params(
+                            "Unauthorized: task belongs to different context".to_string(),
+                        ),
+                    )));
                 }
             }
             (Some(_), None) => {
-                return Err(ServerError::Protocol(Box::new(ProtocolError::invalid_params(
-                    "Unauthorized: task requires authentication".to_string(),
-                ))));
+                return Err(ServerError::Protocol(Box::new(
+                    ProtocolError::invalid_params(
+                        "Unauthorized: task requires authentication".to_string(),
+                    ),
+                )));
             }
             _ => {
                 // No auth context on task, or both None = allowed

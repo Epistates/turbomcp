@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::content::ResourceContent;
-use super::core::{Annotations, MimeType, Uri};
+use super::core::{Annotations, Icon, MimeType, Uri};
 
 /// Resource definition
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -21,6 +21,9 @@ pub struct Resource {
     /// Optional display title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Optional icon (MCP 2025-11-25)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<Icon>,
     /// Optional MIME type
     #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<MimeType>,
@@ -56,6 +59,13 @@ impl Resource {
         self.mime_type = Some(mime_type.into());
         self
     }
+
+    /// Set icon (MCP 2025-11-25)
+    #[must_use]
+    pub fn with_icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
 }
 
 /// Resource template for dynamic resources
@@ -72,6 +82,9 @@ pub struct ResourceTemplate {
     /// Optional display title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Optional icon (MCP 2025-11-25)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<Icon>,
     /// Optional MIME type
     #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<MimeType>,
@@ -89,9 +102,17 @@ impl ResourceTemplate {
             name: name.into(),
             description: None,
             title: None,
+            icon: None,
             mime_type: None,
             annotations: None,
         }
+    }
+
+    /// Set icon (MCP 2025-11-25)
+    #[must_use]
+    pub fn with_icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
+        self
     }
 }
 

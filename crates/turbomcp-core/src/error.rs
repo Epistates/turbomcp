@@ -25,6 +25,7 @@
 //! }
 //! ```
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use core::fmt;
 use serde::{Deserialize, Serialize};
@@ -193,16 +194,22 @@ impl McpError {
     #[must_use]
     pub fn method_not_found(method: impl Into<String>) -> Self {
         let method = method.into();
-        Self::new(ErrorKind::MethodNotFound, alloc::format!("Method not found: {}", method))
+        Self::new(
+            ErrorKind::MethodNotFound,
+            alloc::format!("Method not found: {}", method),
+        )
     }
 
     /// Create a tool not found error
     #[must_use]
     pub fn tool_not_found(tool_name: impl Into<String>) -> Self {
         let name = tool_name.into();
-        Self::new(ErrorKind::ToolNotFound, alloc::format!("Tool not found: {}", name))
-            .with_operation("tool_lookup")
-            .with_component("tool_registry")
+        Self::new(
+            ErrorKind::ToolNotFound,
+            alloc::format!("Tool not found: {}", name),
+        )
+        .with_operation("tool_lookup")
+        .with_component("tool_registry")
     }
 
     /// Create a tool execution failed error
@@ -221,18 +228,24 @@ impl McpError {
     #[must_use]
     pub fn prompt_not_found(prompt_name: impl Into<String>) -> Self {
         let name = prompt_name.into();
-        Self::new(ErrorKind::PromptNotFound, alloc::format!("Prompt not found: {}", name))
-            .with_operation("prompt_lookup")
-            .with_component("prompt_registry")
+        Self::new(
+            ErrorKind::PromptNotFound,
+            alloc::format!("Prompt not found: {}", name),
+        )
+        .with_operation("prompt_lookup")
+        .with_component("prompt_registry")
     }
 
     /// Create a resource not found error
     #[must_use]
     pub fn resource_not_found(uri: impl Into<String>) -> Self {
         let uri = uri.into();
-        Self::new(ErrorKind::ResourceNotFound, alloc::format!("Resource not found: {}", uri))
-            .with_operation("resource_lookup")
-            .with_component("resource_provider")
+        Self::new(
+            ErrorKind::ResourceNotFound,
+            alloc::format!("Resource not found: {}", uri),
+        )
+        .with_operation("resource_lookup")
+        .with_component("resource_provider")
     }
 
     /// Create a resource access denied error
@@ -268,7 +281,11 @@ impl McpError {
         let server = server_version.into();
         Self::new(
             ErrorKind::ProtocolVersionMismatch,
-            alloc::format!("Protocol version mismatch: client={}, server={}", client, server),
+            alloc::format!(
+                "Protocol version mismatch: client={}, server={}",
+                client,
+                server
+            ),
         )
     }
 
@@ -347,7 +364,10 @@ impl McpError {
     /// Create a server overloaded error
     #[must_use]
     pub fn server_overloaded() -> Self {
-        Self::new(ErrorKind::ServerOverloaded, "Server is currently overloaded")
+        Self::new(
+            ErrorKind::ServerOverloaded,
+            "Server is currently overloaded",
+        )
     }
 
     // =========================================================================

@@ -68,6 +68,11 @@ pub mod config;
 pub mod error;
 pub mod proxy;
 
+// Tower middleware integration
+#[cfg(feature = "runtime")]
+#[cfg_attr(docsrs, doc(cfg(feature = "runtime")))]
+pub mod tower;
+
 #[cfg(feature = "cli")]
 pub mod cli;
 

@@ -145,24 +145,26 @@ pub mod core;
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub mod streamable_http;
 
-/// Backwards-compatible re-export of `streamable_http` module.
+/// A streamable HTTP client transport implementation.
 ///
-/// **Deprecated**: Use `streamable_http` instead. This alias will be removed in v3.0.0.
+/// v3.0: This module re-exports from the `turbomcp-http` crate.
+/// The implementation has been extracted for modular builds.
 #[cfg(feature = "http")]
 #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
-#[deprecated(since = "2.4.0", note = "Use `streamable_http` instead")]
-pub mod streamable_http_v2 {
-    pub use crate::streamable_http::*;
+pub mod streamable_http_client {
+    pub use turbomcp_http::{
+        RetryPolicy, StreamableHttpClientConfig, StreamableHttpClientTransport,
+    };
 }
 
-/// A streamable HTTP client transport implementation.
-#[cfg(feature = "http")]
-#[cfg_attr(docsrs, doc(cfg(feature = "http")))]
-pub mod streamable_http_client;
-
 /// Standard I/O (stdio) transport for command-line applications.
+///
+/// v3.0: This module re-exports from the `turbomcp-stdio` crate.
+/// The implementation has been extracted for modular builds.
 #[cfg(feature = "stdio")]
-pub mod stdio;
+pub mod stdio {
+    pub use turbomcp_stdio::*;
+}
 
 // Tower service integration
 /// Integration with the Tower service abstraction.
@@ -173,16 +175,63 @@ pub mod tower;
 pub mod axum;
 
 /// WebSocket bidirectional transport for full-duplex communication with MCP 2025-06-18 compliance.
+///
+/// v3.0: This module re-exports from the `turbomcp-websocket` crate.
+/// The implementation has been extracted for modular builds.
 #[cfg(feature = "websocket")]
-pub mod websocket_bidirectional;
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
+pub mod websocket_bidirectional {
+    pub use turbomcp_websocket::{
+        CorrelationInfo, ElicitationInfo, MessageProcessingResult, PendingElicitation,
+        ReconnectConfig, TlsConfig, TransportStatus, WebSocketBidirectionalConfig,
+        WebSocketBidirectionalTransport, WebSocketConnectionStats, WebSocketStreamHandler,
+    };
+
+    /// Configuration types re-exported from turbomcp-websocket.
+    pub mod config {
+        pub use turbomcp_websocket::config::*;
+    }
+
+    /// Type definitions re-exported from turbomcp-websocket.
+    pub mod types {
+        pub use turbomcp_websocket::types::*;
+    }
+
+    /// Transport implementation re-exported from turbomcp-websocket.
+    pub mod transport {
+        pub use turbomcp_websocket::transport::*;
+    }
+
+    /// BidirectionalTransport impl re-exported from turbomcp-websocket.
+    pub mod bidirectional {
+        pub use turbomcp_websocket::bidirectional::*;
+    }
+
+    /// Elicitation handling re-exported from turbomcp-websocket.
+    pub mod elicitation {
+        pub use turbomcp_websocket::elicitation::*;
+    }
+}
 
 /// TCP socket transport for network communication.
+///
+/// v3.0: This module re-exports from the `turbomcp-tcp` crate.
+/// The implementation has been extracted for modular builds.
 #[cfg(feature = "tcp")]
-pub mod tcp;
+#[cfg_attr(docsrs, doc(cfg(feature = "tcp")))]
+pub mod tcp {
+    pub use turbomcp_tcp::{TcpConfig, TcpTransport, TcpTransportBuilder};
+}
 
 /// Unix domain socket transport for inter-process communication.
+///
+/// v3.0: This module re-exports from the `turbomcp-unix` crate.
+/// The implementation has been extracted for modular builds.
 #[cfg(feature = "unix")]
-pub mod unix;
+#[cfg_attr(docsrs, doc(cfg(feature = "unix")))]
+pub mod unix {
+    pub use turbomcp_unix::{UnixConfig, UnixTransport, UnixTransportBuilder};
+}
 
 /// Transport for managing child processes.
 pub mod child_process;

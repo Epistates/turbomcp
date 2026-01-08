@@ -283,6 +283,14 @@ pub mod utils;
 /// Zero-copy data handling utilities for performance-critical operations.
 pub mod zero_copy;
 
+/// Zero-copy rkyv bridge for internal message routing.
+///
+/// This module is only available when the `rkyv` feature is enabled.
+/// It provides efficient conversion between JSON-RPC and rkyv internal formats.
+#[cfg(feature = "rkyv")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rkyv")))]
+pub mod rkyv_bridge;
+
 // Protocol-specific modules
 /// Capability negotiation and management.
 pub mod capabilities;
