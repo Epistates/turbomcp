@@ -1,6 +1,6 @@
 //! Core protocol types shared across MCP.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
