@@ -32,7 +32,7 @@
 //! ```
 
 use crate::{McpError, Result};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 
 // Re-export wire codec types
 pub use turbomcp_wire::{
@@ -174,12 +174,16 @@ impl ProtocolCodec {
 
     /// Encode a value to bytes
     pub fn encode<T: Serialize>(&self, value: &T) -> Result<Vec<u8>> {
-        self.inner.encode(value).map_err(|e| McpError::parse_error(e.message))
+        self.inner
+            .encode(value)
+            .map_err(|e| McpError::parse_error(e.message))
     }
 
     /// Decode bytes to a value
     pub fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T> {
-        self.inner.decode(bytes).map_err(|e| McpError::parse_error(e.message))
+        self.inner
+            .decode(bytes)
+            .map_err(|e| McpError::parse_error(e.message))
     }
 
     /// Encode a value to a string (JSON only)
@@ -192,8 +196,7 @@ impl ProtocolCodec {
             ));
         }
         let bytes = self.encode(value)?;
-        String::from_utf8(bytes)
-            .map_err(|e| McpError::parse_error(format!("Invalid UTF-8: {e}")))
+        String::from_utf8(bytes).map_err(|e| McpError::parse_error(format!("Invalid UTF-8: {e}")))
     }
 }
 

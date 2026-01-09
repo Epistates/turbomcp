@@ -341,7 +341,7 @@ mod tests {
             }
         }
 
-        #[allow(dead_code)]  // Test utility for future use
+        #[allow(dead_code)] // Test utility for future use
         fn get_calls(&self) -> Vec<String> {
             self.calls.lock().unwrap().clone()
         }
