@@ -551,23 +551,56 @@ pub use turbomcp_server::{
 // Re-export async_trait for macros
 pub use async_trait::async_trait;
 
-// CRITICAL FIX: Re-export dependencies needed by macro-generated code
-// This allows generated code to use ::turbomcp::axum::Router instead of axum::Router
+/// Internal module for macro-generated code.
+///
+/// **WARNING: This module is not part of the public API.**
+///
+/// These re-exports are used by procedural macros to generate code that
+/// references dependencies without requiring users to add them to their
+/// Cargo.toml. This module is `#[doc(hidden)]` and may change without notice.
+///
+/// Do not depend on any types from this module directly.
+#[doc(hidden)]
+pub mod __macro_support {
+    // HTTP framework (when http feature enabled)
+    #[cfg(feature = "http")]
+    pub use axum;
+
+    // Async runtime
+    pub use tokio;
+
+    // Utilities for generated code
+    pub use uuid;
+    pub use serde_json;
+    pub use tracing;
+    pub use tower;
+
+    // Internal crates for generated code
+    pub use turbomcp_protocol;
+    pub use turbomcp_server;
+    pub use turbomcp_transport;
+}
+
+// Legacy re-exports for backward compatibility with v2.x macro-generated code
+// TODO(v4): Remove these re-exports
+#[doc(hidden)]
 #[cfg(feature = "http")]
 pub use axum;
-// tokio and turbomcp_transport are always dependencies, always re-export for macros
+#[doc(hidden)]
 pub use tokio;
-// Re-export uuid for HTTP session ID generation in macro-generated code
+#[doc(hidden)]
 pub use uuid;
-// Re-export serde_json for macro-generated code that uses json!() and to_value()
+#[doc(hidden)]
 pub use serde_json;
-// Re-export core and protocol types for macro use
+#[doc(hidden)]
 pub use turbomcp_protocol;
-pub use turbomcp_server; // Re-export entire module for macro-generated code
+#[doc(hidden)]
+pub use turbomcp_server;
+#[doc(hidden)]
 pub use turbomcp_transport;
-// Re-export tracing for logging in macro-generated code
+#[doc(hidden)]
 pub use tracing;
-// Re-export tower for Tower middleware integration in macro-generated code
+#[doc(hidden)]
 pub use tower;
 
 // Core TurboMCP modules

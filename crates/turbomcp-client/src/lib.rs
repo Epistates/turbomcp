@@ -158,13 +158,28 @@ pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 pub mod client;
 pub mod handlers;
 pub mod integration;
-pub mod plugins;
 pub mod prelude;
 pub mod sampling;
 
-// Tower middleware integration
+// v3.0 Tower-native middleware (recommended)
+pub mod middleware;
+
+// Legacy plugin system (deprecated in v3.0, use `middleware` instead)
+#[deprecated(
+    since = "3.0.0",
+    note = "Use Tower-native middleware from `turbomcp_client::middleware` instead. \
+            See migration guide: https://turbomcp.io/docs/v3/migration#plugins-to-middleware"
+)]
+pub mod plugins;
+
+// Tower middleware integration (legacy adapter, deprecated in v3.0)
 #[cfg(feature = "tower")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tower")))]
+#[deprecated(
+    since = "3.0.0",
+    note = "Use `turbomcp_client::middleware` instead. The `tower` module was an adapter \
+            for the legacy plugin system. v3.0 provides native Tower middleware."
+)]
 pub mod tower;
 
 // Re-export key types for convenience
@@ -212,7 +227,16 @@ pub use handlers::{
 // Sampling types
 pub use sampling::{SamplingHandler, ServerInfo, UserInteractionHandler};
 
-// Plugin system
+// v3.0 Tower middleware (recommended)
+pub use middleware::{
+    Cache, CacheConfig, CacheLayer, CacheService,
+    Metrics, MetricsLayer, MetricsService, MetricsSnapshot,
+    TracingLayer, TracingService,
+    McpRequest, McpResponse,
+};
+
+// Legacy plugin system (deprecated - use middleware instead)
+#[allow(deprecated)]
 pub use plugins::{
     CachePlugin, ClientPlugin, MetricsPlugin, PluginConfig, PluginContext, PluginError,
     PluginResult, RetryPlugin,

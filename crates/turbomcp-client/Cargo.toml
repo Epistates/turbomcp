@@ -26,15 +26,19 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
-# Plugin system dependencies
+# Plugin system dependencies (legacy)
 chrono = { workspace = true, features = ["serde"] }
 # LLM integration dependencies
 futures = { workspace = true }
 
-# Tower integration (optional)
-tower = { version = "0.5.2", optional = true }
-tower-service = { version = "0.3", optional = true }
-futures-util = { version = "0.3", optional = true }
+# Tower middleware (v3.0 - always enabled)
+tower = "0.5.2"
+tower-service = "0.3"
+tower-layer = "0.3"
+futures-util = "0.3"
+parking_lot = "0.12"
+
+# Legacy Tower integration (deprecated, kept for compatibility)
 pin-project-lite = { version = "0.2", optional = true }
 http = { version = "1.2", optional = true }
 
@@ -59,5 +63,5 @@ mcp-tasks = ["turbomcp-protocol/mcp-tasks"]
 mcp-url-elicitation = ["turbomcp-protocol/mcp-url-elicitation"]
 mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
 
-# Tower middleware integration
-tower = ["dep:tower", "dep:tower-service", "dep:futures-util", "dep:pin-project-lite", "dep:http"]
+# Legacy Tower adapter (deprecated - middleware module is always available)
+tower = ["dep:pin-project-lite", "dep:http"]
