@@ -77,7 +77,8 @@ mod tests {
 
     #[test]
     fn test_version() {
-        assert!(!VERSION.is_empty());
+        // Verify version is a valid semver-like format (contains at least one dot)
+        assert!(VERSION.contains('.'), "VERSION should be semver format");
     }
 
     #[test]

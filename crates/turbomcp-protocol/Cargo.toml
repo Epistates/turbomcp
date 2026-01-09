@@ -15,6 +15,8 @@ rust-version = "1.89.0"
 [dependencies]
 # v3.0: Core types with rich error features (UUID, timestamps)
 turbomcp-core = { workspace = true, features = ["rich-errors"] }
+# v3.0: Wire codec abstraction for JSON-RPC encoding/decoding
+turbomcp-wire = { workspace = true, optional = true }
 
 # Core async
 tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
@@ -98,6 +100,12 @@ lock-free = []  # Enable lock-free data structures (requires unsafe)
 
 # Zero-copy serialization with rkyv (requires turbomcp-core/zero-copy)
 rkyv = ["turbomcp-core/zero-copy", "rkyv_crate", "rancor_crate"]
+# Wire codec integration (enables turbomcp-wire codec abstraction)
+wire = ["dep:turbomcp-wire"]
+# Wire codec with SIMD acceleration
+wire-simd = ["wire", "turbomcp-wire/simd"]
+# Wire codec with MessagePack support
+wire-msgpack = ["wire", "turbomcp-wire/msgpack"]
 
 # MCP 2025-11-25 Draft Specification Features
 # These features enable support for the draft specification (2025-11-25)

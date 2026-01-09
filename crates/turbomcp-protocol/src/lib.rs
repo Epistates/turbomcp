@@ -291,6 +291,17 @@ pub mod zero_copy;
 #[cfg_attr(docsrs, doc(cfg(feature = "rkyv")))]
 pub mod rkyv_bridge;
 
+/// Wire codec integration for message serialization.
+///
+/// This module provides a unified interface for encoding/decoding MCP messages
+/// using the [`turbomcp_wire`] codec abstraction.
+///
+/// Enable with the `wire` feature flag. Optional SIMD acceleration available
+/// with `wire-simd`, and MessagePack support with `wire-msgpack`.
+#[cfg(feature = "wire")]
+#[cfg_attr(docsrs, doc(cfg(feature = "wire")))]
+pub mod codec;
+
 // Protocol-specific modules
 /// Capability negotiation and management.
 pub mod capabilities;

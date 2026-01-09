@@ -10,6 +10,9 @@ use web_sys::{
     AbortController, Headers, MessageEvent, Request, RequestInit, RequestMode, Response, WebSocket,
 };
 
+/// Type alias for WebSocket message handler to reduce type complexity
+type MessageHandler = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
+
 /// HTTP transport using the Fetch API
 #[derive(Clone)]
 pub struct FetchTransport {
@@ -163,7 +166,7 @@ impl FetchTransport {
 /// WebSocket transport for bidirectional MCP communication
 pub struct WebSocketTransport {
     ws: WebSocket,
-    message_handler: Rc<RefCell<Option<Box<dyn Fn(String)>>>>,
+    message_handler: MessageHandler,
 }
 
 impl WebSocketTransport {
@@ -174,7 +177,7 @@ impl WebSocketTransport {
 
         ws.set_binary_type(web_sys::BinaryType::Arraybuffer);
 
-        let message_handler: Rc<RefCell<Option<Box<dyn Fn(String)>>>> = Rc::new(RefCell::new(None));
+        let message_handler: MessageHandler = Rc::new(RefCell::new(None));
         let handler_clone = message_handler.clone();
 
         // Set up message handler
