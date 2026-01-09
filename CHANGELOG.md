@@ -7,6 +7,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-alpha.1] - 2026-01-08
+
+### 🚀 Major Architectural Redesign
+
+TurboMCP v3.0 represents a ground-up architectural redesign for the next generation of MCP development:
+
+- **Edge-Native**: First-class WASM/WASI support for edge computing
+- **Enterprise-Grade**: OpenTelemetry integration, Tower middleware
+- **Zero-Copy**: rkyv serialization for maximum performance
+- **Modular**: Individual transport crates, lean dependencies
+
+### Added
+
+#### New Foundation Crates
+- **`turbomcp-core`** (`no_std`) - Core types extracted as foundation layer
+  - Works in embedded and WASM environments
+  - rkyv zero-copy message types (`InternalMessage`, `InternalResponse`, `InternalBatch`)
+  - Unified `McpError` type consolidating all error types
+
+- **`turbomcp-wire`** - Wire format codec abstraction
+  - `Codec` trait for pluggable serialization
+  - `JsonCodec` - Standard serde_json (default)
+  - `SimdJsonCodec` - SIMD-accelerated via sonic-rs (optional)
+  - `MsgPackCodec` - MessagePack binary format (optional)
+  - `StreamingJsonDecoder` for SSE transports
+
+- **`turbomcp-transport-traits`** - Lean transport trait definitions
+  - Decoupled from implementations for minimal dependencies
+
+#### New Transport Crates (Extracted from monolithic `turbomcp-transport`)
+- **`turbomcp-stdio`** - Standard MCP STDIO transport
+- **`turbomcp-http`** - HTTP/SSE client transport
+- **`turbomcp-websocket`** - WebSocket bidirectional transport
+- **`turbomcp-tcp`** - Raw TCP socket transport
+- **`turbomcp-unix`** - Unix domain socket transport
+- **`turbomcp-grpc`** - gRPC transport via tonic (NEW)
+
+#### Enterprise Features
+- **`turbomcp-telemetry`** - OpenTelemetry integration
+  - Traces, metrics, and logs
+  - OTLP export support
+  - Tower middleware layer
+
+- **`turbomcp-wasm`** - WebAssembly bindings
+  - Browser client via wasm-bindgen
+  - WASI runtime support (planned)
+
+#### Migration Support
+- **`turbomcp-compat`** - Backward compatibility layer
+  - Deprecated type aliases with migration guidance
+  - `ServerError` → `McpError`
+  - `ServerResult<T>` → `McpResult<T>`
+  - `Claims` → `AuthContext`
+
+#### Tower Integration
+- Tower `Layer` and `Service` implementations for:
+  - `turbomcp-auth` - Authentication middleware
+  - `turbomcp-client` - Plugin middleware
+  - `turbomcp-proxy` - Proxy middleware
+  - `turbomcp-telemetry` - Observability middleware
+
+### Changed
+
+#### Error Type Unification
+- `ServerError`, `ClientError`, and protocol `Error` unified into `McpError`
+- `ServerResult<T>` and `ClientResult<T>` unified into `McpResult<T>`
+- All error types now in `turbomcp_core::error`
+
+#### Protocol Compliance
+- Full MCP 2025-11-25 specification compliance
+- 23/23 protocol compliance tests passing
+- Configurable protocol version negotiation
+
+#### Version Alignment
+- All 21 crates aligned to `3.0.0-alpha.1`
+- Consistent dependency versions across workspace
+
+### Migration
+
+See [MIGRATION.md](./MIGRATION.md) for detailed v2.x → v3.x migration guide.
+
+```toml
+# Quick migration with compatibility layer
+[dependencies]
+turbomcp = "3.0.0-alpha.1"
+turbomcp-compat = "3.0.0-alpha.1"  # Provides deprecated type aliases
+```
+
+### Deprecation Timeline
+- **v3.0.0**: All compat types marked with `#[deprecated]` warnings
+- **v3.1.0**: Deprecation warnings become errors
+- **v4.0.0**: `turbomcp-compat` crate removed
+
 ## [2.3.7] - 2026-01-05
 
 ### Added
