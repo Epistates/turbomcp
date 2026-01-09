@@ -908,7 +908,7 @@ pub enum McpError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
-    /// Internal error - for backwards compatibility
+    /// Internal error
     #[error("Internal error: {0}")]
     Internal(String),
 

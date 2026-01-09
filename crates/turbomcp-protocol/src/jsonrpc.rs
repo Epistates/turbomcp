@@ -212,24 +212,6 @@ impl JsonRpcError {
     }
 }
 
-/// JSON-RPC batch request/response
-///
-/// **IMPORTANT**: JSON-RPC batching is NOT supported in MCP 2025-06-18 specification.
-/// This type exists only for defensive deserialization and will return errors if used.
-/// Per MCP spec changelog (PR #416), batch support was explicitly removed.
-///
-/// Do not use this type in new code. It will be removed in a future version.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-#[deprecated(
-    since = "2.2.3",
-    note = "JSON-RPC batching removed from MCP 2025-06-18 spec (PR #416). This type exists only for defensive handling and will be removed."
-)]
-pub struct JsonRpcBatch<T> {
-    /// Batch items
-    pub items: Vec<T>,
-}
-
 /// Standard JSON-RPC error codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JsonRpcErrorCode {
@@ -304,39 +286,16 @@ impl From<i32> for JsonRpcErrorCode {
 
 /// JSON-RPC message type (union of request, response, notification)
 ///
-/// **MCP 2025-06-18 Compliance Note:**
-/// Batch variants exist only for defensive deserialization and are NOT supported
-/// per MCP specification (PR #416 removed batch support). They will return errors if encountered.
+/// Per MCP 2025-06-18 specification, batch operations are not supported.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum JsonRpcMessage {
-    /// Request message (MCP-compliant)
+    /// Request message
     Request(JsonRpcRequest),
-    /// Response message (MCP-compliant)
+    /// Response message
     Response(JsonRpcResponse),
-    /// Notification message (MCP-compliant)
+    /// Notification message
     Notification(JsonRpcNotification),
-    /// Batch of messages (NOT SUPPORTED - defensive deserialization only)
-    ///
-    /// **Deprecated**: MCP 2025-06-18 removed batch support.
-    /// This variant exists only to return proper errors if batches are received.
-    #[deprecated(since = "2.2.3", note = "Batching removed from MCP spec")]
-    #[allow(deprecated)] // Internal use of deprecated batch type for defensive deserialization
-    RequestBatch(JsonRpcBatch<JsonRpcRequest>),
-    /// Batch of responses (NOT SUPPORTED - defensive deserialization only)
-    ///
-    /// **Deprecated**: MCP 2025-06-18 removed batch support.
-    /// This variant exists only to return proper errors if batches are received.
-    #[deprecated(since = "2.2.3", note = "Batching removed from MCP spec")]
-    #[allow(deprecated)] // Internal use of deprecated batch type for defensive deserialization
-    ResponseBatch(JsonRpcBatch<JsonRpcResponse>),
-    /// Mixed batch (NOT SUPPORTED - defensive deserialization only)
-    ///
-    /// **Deprecated**: MCP 2025-06-18 removed batch support.
-    /// This variant exists only to return proper errors if batches are received.
-    #[deprecated(since = "2.2.3", note = "Batching removed from MCP spec")]
-    #[allow(deprecated)] // Internal use of deprecated batch type for defensive deserialization
-    MessageBatch(JsonRpcBatch<JsonRpcMessage>),
 }
 
 impl JsonRpcRequest {
@@ -484,58 +443,6 @@ impl JsonRpcNotification {
     }
 }
 
-// Allow deprecated warnings for internal implementation of deprecated batch types
-// External users will still see deprecation warnings, but implementation won't spam warnings
-#[allow(deprecated)]
-impl<T> JsonRpcBatch<T> {
-    /// Create a new batch
-    pub fn new(items: Vec<T>) -> Self {
-        Self { items }
-    }
-
-    /// Create an empty batch
-    pub fn empty() -> Self {
-        Self::new(Vec::new())
-    }
-
-    /// Add an item to the batch
-    pub fn push(&mut self, item: T) {
-        self.items.push(item);
-    }
-
-    /// Get the number of items in the batch
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
-
-    /// Check if the batch is empty
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-
-    /// Iterate over batch items
-    pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.items.iter()
-    }
-}
-
-#[allow(deprecated)]
-impl<T> IntoIterator for JsonRpcBatch<T> {
-    type Item = T;
-    type IntoIter = std::vec::IntoIter<T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.items.into_iter()
-    }
-}
-
-#[allow(deprecated)]
-impl<T> From<Vec<T>> for JsonRpcBatch<T> {
-    fn from(items: Vec<T>) -> Self {
-        Self::new(items)
-    }
-}
-
 /// Utility functions for JSON-RPC message handling
 pub mod utils {
     use super::*;
@@ -548,11 +455,6 @@ pub mod utils {
     /// Serialize a JSON-RPC message to a string
     pub fn serialize_message(message: &JsonRpcMessage) -> Result<String, serde_json::Error> {
         serde_json::to_string(message)
-    }
-
-    /// Check if a string looks like a JSON-RPC batch
-    pub fn is_batch(json: &str) -> bool {
-        json.trim_start().starts_with('[')
     }
 
     /// Extract the method name from a JSON-RPC message string
@@ -846,24 +748,6 @@ mod tests {
     }
 
     #[test]
-    fn test_batch() {
-        let mut batch = JsonRpcBatch::<JsonRpcRequest>::empty();
-        assert!(batch.is_empty());
-
-        batch.push(JsonRpcRequest::without_params(
-            "method1".to_string(),
-            RequestId::String("1".to_string()),
-        ));
-        batch.push(JsonRpcRequest::without_params(
-            "method2".to_string(),
-            RequestId::String("2".to_string()),
-        ));
-
-        assert_eq!(batch.len(), 2);
-        assert!(!batch.is_empty());
-    }
-
-    #[test]
     fn test_serialization() {
         let request = JsonRpcRequest::new(
             "test_method".to_string(),
@@ -881,12 +765,7 @@ mod tests {
     #[test]
     fn test_utils() {
         let json = r#"{"jsonrpc":"2.0","method":"test","id":"123"}"#;
-
-        assert!(!utils::is_batch(json));
         assert_eq!(utils::extract_method(json), Some("test".to_string()));
-
-        let batch_json = r#"[{"jsonrpc":"2.0","method":"test","id":"123"}]"#;
-        assert!(utils::is_batch(batch_json));
     }
 
     #[test]

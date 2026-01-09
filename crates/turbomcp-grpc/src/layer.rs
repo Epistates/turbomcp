@@ -4,7 +4,7 @@
 //! middleware with the gRPC transport.
 
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tower::{Layer, Service};
 use tracing::{Instrument, debug, info_span};
 
@@ -13,8 +13,6 @@ use tracing::{Instrument, debug, info_span};
 /// Provides request/response logging, timing, and metadata handling.
 #[derive(Debug, Clone)]
 pub struct McpGrpcLayer {
-    /// Request timeout
-    timeout: Option<Duration>,
     /// Enable request/response logging
     logging: bool,
     /// Enable timing metrics
@@ -26,17 +24,9 @@ impl McpGrpcLayer {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            timeout: None,
             logging: true,
             timing: true,
         }
-    }
-
-    /// Set request timeout
-    #[must_use]
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = Some(timeout);
-        self
     }
 
     /// Enable or disable logging
@@ -66,7 +56,6 @@ impl<S> Layer<S> for McpGrpcLayer {
     fn layer(&self, inner: S) -> Self::Service {
         McpGrpcService {
             inner,
-            timeout: self.timeout,
             logging: self.logging,
             timing: self.timing,
         }
@@ -77,8 +66,6 @@ impl<S> Layer<S> for McpGrpcLayer {
 #[derive(Debug, Clone)]
 pub struct McpGrpcService<S> {
     inner: S,
-    #[allow(dead_code)] // Reserved for future timeout implementation
-    timeout: Option<Duration>,
     logging: bool,
     timing: bool,
 }
@@ -196,11 +183,9 @@ mod tests {
     #[test]
     fn test_layer_builder() {
         let layer = McpGrpcLayer::new()
-            .timeout(Duration::from_secs(30))
             .logging(true)
             .timing(true);
 
-        assert_eq!(layer.timeout, Some(Duration::from_secs(30)));
         assert!(layer.logging);
         assert!(layer.timing);
     }

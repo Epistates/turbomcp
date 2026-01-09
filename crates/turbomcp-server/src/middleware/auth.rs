@@ -3,105 +3,18 @@
 //! This middleware handles JWT token verification and user identity extraction using
 //! the unified AuthContext type. It follows security best practices for token validation
 //! and claim extraction.
-//!
-//! # Migration Note
-//!
-//! This module now uses `turbomcp_auth::AuthContext` as the canonical authentication type.
-//! The old `Claims` type is deprecated and will be removed in a future version.
 
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use secrecy::{ExposeSecret, Secret};
-use serde::{Deserialize, Serialize};
 use tower::{Layer, Service};
 use tracing::{debug, warn};
 
 // Re-export unified types from turbomcp-auth
 pub use turbomcp_auth::{AuthContext, UserInfo};
-
-/// Legacy Claims structure (DEPRECATED)
-///
-/// This type is deprecated and will be removed in a future version.
-/// Use `turbomcp_auth::AuthContext` instead.
-///
-/// For backward compatibility, this type can still be deserialized from JWT tokens.
-#[deprecated(
-    since = "2.0.5",
-    note = "Use turbomcp_auth::AuthContext instead. This type will be removed in 3.0.0"
-)]
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Claims {
-    /// Subject (user ID)
-    pub sub: String,
-    /// User roles for authorization
-    pub roles: Vec<String>,
-    /// Token expiration time (Unix timestamp)
-    pub exp: u64,
-    /// Token issued at (Unix timestamp)
-    pub iat: u64,
-    /// Issuer
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub iss: Option<String>,
-    /// Audience
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub aud: Option<String>,
-}
-
-#[allow(deprecated)]
-impl Claims {
-    /// Check if the token is expired
-    pub fn is_expired(&self) -> bool {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        self.exp < now
-    }
-
-    /// Check if user has a specific role
-    pub fn has_role(&self, role: &str) -> bool {
-        self.roles.iter().any(|r| r == role)
-    }
-
-    /// Convert legacy Claims to unified AuthContext
-    ///
-    /// This provides a migration path from the old Claims type to the new AuthContext.
-    pub fn to_auth_context(&self) -> AuthContext {
-        AuthContext {
-            sub: self.sub.clone(),
-            iss: self.iss.clone(),
-            aud: self.aud.clone(),
-            exp: Some(self.exp),
-            iat: Some(self.iat),
-            nbf: None,
-            jti: None,
-            user: UserInfo {
-                id: self.sub.clone(),
-                username: self.sub.clone(), // Default to sub if no username
-                email: None,
-                display_name: None,
-                avatar_url: None,
-                metadata: HashMap::new(),
-            },
-            roles: self.roles.clone(),
-            permissions: Vec::new(),
-            scopes: Vec::new(),
-            request_id: None,
-            authenticated_at: SystemTime::now(),
-            expires_at: Some(UNIX_EPOCH + std::time::Duration::from_secs(self.exp)),
-            token: None,
-            provider: "jwt".to_string(),
-            #[cfg(feature = "dpop")]
-            dpop_jkt: None,
-            metadata: HashMap::new(),
-        }
-    }
-}
 
 /// Authentication configuration
 #[derive(Debug, Clone)]
@@ -352,29 +265,16 @@ fn extract_and_validate_token<B>(
     let decoding_key = DecodingKey::from_secret(config.secret.expose_secret().as_bytes());
     let token_data = decode::<serde_json::Value>(token, &decoding_key, &validation)?;
 
-    // Try to convert to unified AuthContext
-    match AuthContext::from_jwt_claims(token_data.claims) {
-        Ok(auth_context) => {
-            // Additional validation using AuthContext methods
-            if auth_context.is_expired() {
-                return Err(AuthError::TokenExpired);
-            }
-            Ok(auth_context)
-        }
-        Err(_) => {
-            // Fallback: Try legacy Claims format and convert
-            #[allow(deprecated)]
-            let token_data = decode::<Claims>(token, &decoding_key, &validation)?;
-            let claims = token_data.claims;
+    // Convert to unified AuthContext
+    let auth_context = AuthContext::from_jwt_claims(token_data.claims)
+        .map_err(|_| AuthError::InvalidAuthFormat)?;
 
-            if claims.is_expired() {
-                return Err(AuthError::TokenExpired);
-            }
-
-            // Convert legacy Claims to unified AuthContext
-            Ok(claims.to_auth_context())
-        }
+    // Additional validation using AuthContext methods
+    if auth_context.is_expired() {
+        return Err(AuthError::TokenExpired);
     }
+
+    Ok(auth_context)
 }
 
 #[cfg(test)]
@@ -384,21 +284,24 @@ mod tests {
     use secrecy::Secret;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[allow(deprecated)]
     fn create_test_token(secret: &str, exp_offset: i64) -> String {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
 
-        let claims = Claims {
-            sub: "test_user".to_string(),
-            roles: vec!["user".to_string()],
-            exp: (now + exp_offset) as u64,
-            iat: now as u64,
-            iss: None,
-            aud: None,
-        };
+        // Create AuthContext-compatible claims structure
+        let claims = serde_json::json!({
+            "sub": "test_user",
+            "roles": ["user"],
+            "exp": (now + exp_offset),
+            "iat": now,
+            "user": {
+                "id": "test_user",
+                "username": "test_user",
+            },
+            "provider": "jwt",
+        });
 
         let header = Header::new(Algorithm::HS256);
         let encoding_key = EncodingKey::from_secret(secret.as_bytes());

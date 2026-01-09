@@ -190,8 +190,7 @@ pub use middleware::{
 };
 
 #[cfg(all(feature = "middleware", feature = "auth"))]
-#[allow(deprecated)]
-pub use middleware::{AuthConfig, AuthLayer, Claims};
+pub use middleware::{AuthConfig, AuthLayer};
 
 #[cfg(all(feature = "middleware", feature = "rate-limiting"))]
 pub use middleware::{RateLimitConfig, RateLimitLayer};
@@ -254,8 +253,7 @@ pub mod prelude {
 
     // Auth middleware (requires middleware + auth features)
     #[cfg(all(feature = "middleware", feature = "auth"))]
-    #[allow(deprecated)]
-    pub use crate::{AuthConfig, AuthLayer, Claims};
+    pub use crate::{AuthConfig, AuthLayer};
 
     // Rate limiting middleware (requires middleware + rate-limiting features)
     #[cfg(all(feature = "middleware", feature = "rate-limiting"))]

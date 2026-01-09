@@ -1,8 +1,4 @@
 //! Comprehensive tests
-//!
-//! Note: Some tests cover deprecated batch functionality for defensive deserialization.
-//! These tests ensure batch types work correctly even though they're not supported by MCP 2025-06-18.
-#![allow(deprecated)]
 
 use super::*;
 
@@ -258,81 +254,6 @@ fn test_jsonrpc_error_from_i32() {
 }
 
 #[test]
-fn test_jsonrpc_batch_new() {
-    let requests = vec![
-        JsonRpcRequest::without_params("method1".to_string(), RequestId::Number(1)),
-        JsonRpcRequest::without_params("method2".to_string(), RequestId::Number(2)),
-    ];
-
-    let batch = JsonRpcBatch::new(requests.clone());
-    assert_eq!(batch.items.len(), 2);
-    assert_eq!(batch.items[0].method, "method1");
-    assert_eq!(batch.items[1].method, "method2");
-}
-
-#[test]
-fn test_jsonrpc_batch_empty() {
-    let batch = JsonRpcBatch::<JsonRpcRequest>::empty();
-    assert!(batch.is_empty());
-    assert_eq!(batch.len(), 0);
-}
-
-#[test]
-fn test_jsonrpc_batch_push() {
-    let mut batch = JsonRpcBatch::<JsonRpcRequest>::empty();
-
-    let request = JsonRpcRequest::without_params("method1".to_string(), RequestId::Number(1));
-    batch.push(request.clone());
-
-    assert_eq!(batch.len(), 1);
-    assert!(!batch.is_empty());
-    assert_eq!(batch.items[0].method, "method1");
-}
-
-#[test]
-fn test_jsonrpc_batch_iter() {
-    let requests = vec![
-        JsonRpcRequest::without_params("method1".to_string(), RequestId::Number(1)),
-        JsonRpcRequest::without_params("method2".to_string(), RequestId::Number(2)),
-    ];
-
-    let batch = JsonRpcBatch::new(requests.clone());
-
-    let collected: Vec<_> = batch.iter().collect();
-    assert_eq!(collected.len(), 2);
-    assert_eq!(collected[0].method, "method1");
-    assert_eq!(collected[1].method, "method2");
-}
-
-#[test]
-fn test_jsonrpc_batch_into_iter() {
-    let requests = vec![
-        JsonRpcRequest::without_params("method1".to_string(), RequestId::Number(1)),
-        JsonRpcRequest::without_params("method2".to_string(), RequestId::Number(2)),
-    ];
-
-    let batch = JsonRpcBatch::new(requests.clone());
-
-    let collected: Vec<_> = batch.into_iter().collect();
-    assert_eq!(collected.len(), 2);
-    assert_eq!(collected[0].method, "method1");
-    assert_eq!(collected[1].method, "method2");
-}
-
-#[test]
-fn test_jsonrpc_batch_from_vec() {
-    let requests = vec![
-        JsonRpcRequest::without_params("method1".to_string(), RequestId::Number(1)),
-        JsonRpcRequest::without_params("method2".to_string(), RequestId::Number(2)),
-    ];
-
-    let batch: JsonRpcBatch<JsonRpcRequest> = requests.clone().into();
-    assert_eq!(batch.items.len(), 2);
-    assert_eq!(batch.items[0].method, "method1");
-    assert_eq!(batch.items[1].method, "method2");
-}
-
-#[test]
 fn test_jsonrpc_message_request() {
     let request = JsonRpcRequest::without_params("method1".to_string(), RequestId::Number(1));
     let message = JsonRpcMessage::Request(request.clone());
@@ -366,36 +287,6 @@ fn test_jsonrpc_message_notification() {
 }
 
 #[test]
-fn test_jsonrpc_message_request_batch() {
-    let requests = vec![
-        JsonRpcRequest::without_params("method1".to_string(), RequestId::Number(1)),
-        JsonRpcRequest::without_params("method2".to_string(), RequestId::Number(2)),
-    ];
-    let batch = JsonRpcBatch::new(requests);
-    let message = JsonRpcMessage::RequestBatch(batch.clone());
-
-    match message {
-        JsonRpcMessage::RequestBatch(b) => assert_eq!(b.len(), batch.len()),
-        _ => panic!("Expected RequestBatch variant"),
-    }
-}
-
-#[test]
-fn test_jsonrpc_message_response_batch() {
-    let responses = vec![
-        JsonRpcResponse::success(json!({"result1": true}), RequestId::Number(1)),
-        JsonRpcResponse::success(json!({"result2": false}), RequestId::Number(2)),
-    ];
-    let batch = JsonRpcBatch::new(responses);
-    let message = JsonRpcMessage::ResponseBatch(batch.clone());
-
-    match message {
-        JsonRpcMessage::ResponseBatch(b) => assert_eq!(b.len(), batch.len()),
-        _ => panic!("Expected ResponseBatch variant"),
-    }
-}
-
-#[test]
 fn test_utils_parse_message() {
     let json = r#"{"jsonrpc":"2.0","method":"test","id":"123"}"#;
     let message = utils::parse_message(json).unwrap();
@@ -425,21 +316,6 @@ fn test_utils_serialize_message() {
     assert!(json.contains("\"jsonrpc\":\"2.0\""));
     assert!(json.contains("\"method\":\"test\""));
     assert!(json.contains("\"id\":1"));
-}
-
-#[test]
-fn test_utils_is_batch() {
-    let single_json = r#"{"jsonrpc":"2.0","method":"test","id":"123"}"#;
-    assert!(!utils::is_batch(single_json));
-
-    let batch_json = r#"[{"jsonrpc":"2.0","method":"test","id":"123"}]"#;
-    assert!(utils::is_batch(batch_json));
-
-    let batch_json_with_whitespace = r#"  [{"jsonrpc":"2.0","method":"test","id":"123"}]"#;
-    assert!(utils::is_batch(batch_json_with_whitespace));
-
-    let empty_string = "";
-    assert!(!utils::is_batch(empty_string));
 }
 
 #[test]
@@ -509,30 +385,6 @@ fn test_notification_serialization_deserialization_roundtrip() {
 }
 
 #[test]
-fn test_batch_serialization_deserialization_roundtrip() {
-    let requests = vec![
-        JsonRpcRequest::without_params("method1".to_string(), RequestId::Number(1)),
-        JsonRpcRequest::with_params(
-            "method2".to_string(),
-            json!({"key": "value"}),
-            RequestId::String("test-id".to_string()),
-        )
-        .unwrap(),
-    ];
-
-    let batch = JsonRpcBatch::new(requests.clone());
-    let json = serde_json::to_string(&batch).unwrap();
-    let parsed: JsonRpcBatch<JsonRpcRequest> = serde_json::from_str(&json).unwrap();
-
-    assert_eq!(parsed.len(), batch.len());
-    for (original, parsed_item) in requests.iter().zip(parsed.iter()) {
-        assert_eq!(original.method, parsed_item.method);
-        assert_eq!(original.params, parsed_item.params);
-        assert_eq!(original.id, parsed_item.id);
-    }
-}
-
-#[test]
 fn test_error_response_with_data() {
     let error = JsonRpcError {
         code: -32001,
@@ -596,30 +448,3 @@ fn test_empty_method_name() {
     assert_eq!(parsed.method, "");
 }
 
-#[test]
-fn test_large_batch_operations() {
-    let mut large_batch = JsonRpcBatch::<JsonRpcRequest>::empty();
-
-    // Add 1000 requests
-    for i in 0..1000 {
-        large_batch.push(JsonRpcRequest::without_params(
-            format!("method_{i}"),
-            RequestId::Number(i as i64),
-        ));
-    }
-
-    assert_eq!(large_batch.len(), 1000);
-    assert!(!large_batch.is_empty());
-
-    // Test iteration
-    let count = large_batch.iter().count();
-    assert_eq!(count, 1000);
-
-    // Test serialization of large batch (performance test)
-    let json = serde_json::to_string(&large_batch).unwrap();
-    assert!(json.len() > 10000); // Should be a substantial JSON string
-
-    // Test deserialization
-    let parsed: JsonRpcBatch<JsonRpcRequest> = serde_json::from_str(&json).unwrap();
-    assert_eq!(parsed.len(), 1000);
-}

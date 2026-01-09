@@ -249,24 +249,6 @@ impl<T: Transport + 'static> ProtocolClient<T> {
             .map_err(|e| Error::transport(format!("Transport send failed: {e}")))
     }
 
-    /// Connect the transport
-    #[allow(dead_code)] // Reserved for future use
-    pub(super) async fn connect(&self) -> Result<()> {
-        self.transport
-            .connect()
-            .await
-            .map_err(|e| Error::transport(format!("Transport connect failed: {e}")))
-    }
-
-    /// Disconnect the transport
-    #[allow(dead_code)] // Reserved for future use
-    pub(super) async fn disconnect(&self) -> Result<()> {
-        self.transport
-            .disconnect()
-            .await
-            .map_err(|e| Error::transport(format!("Transport disconnect failed: {e}")))
-    }
-
     /// Get transport reference
     ///
     /// Returns an Arc reference to the transport, allowing it to be shared

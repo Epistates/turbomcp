@@ -51,12 +51,6 @@ pub mod path_security;
 pub mod prelude;
 pub mod transport;
 
-// Legacy modules removed in 2.0 - all functionality is now in the new architecture
-// If you were using the legacy API (tools-list, tools-call, schema-export):
-// - Use the new hierarchical commands: tools list, tools call, tools schema
-// - Use `#[tokio::main]` instead of `run_cli()`
-// - Import from `cli` module instead of `cli_new`
-
 use clap::Parser;
 
 // Clean re-exports (no more "New" suffixes!)

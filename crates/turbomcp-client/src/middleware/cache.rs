@@ -386,10 +386,10 @@ where
             let result = inner.call(req).await.map_err(Into::into)?;
 
             // Cache successful responses
-            if result.is_success() {
-                if let Some(ref data) = result.result {
-                    cache.put(cache_key, data.clone());
-                }
+            if result.is_success()
+                && let Some(ref data) = result.result
+            {
+                cache.put(cache_key, data.clone());
             }
 
             let mut response = result;

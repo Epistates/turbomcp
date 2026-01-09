@@ -33,8 +33,7 @@ pub mod validation;
 
 pub use audit::{AuditConfig, AuditLayer};
 #[cfg(feature = "auth")]
-#[allow(deprecated)]
-pub use auth::{AuthConfig, AuthContext, AuthLayer, Claims, UserInfo};
+pub use auth::{AuthConfig, AuthContext, AuthLayer, UserInfo};
 #[cfg(feature = "input-validation")]
 pub use input_validation::{Garde, Validate, patterns, validators};
 #[cfg(feature = "rate-limiting")]

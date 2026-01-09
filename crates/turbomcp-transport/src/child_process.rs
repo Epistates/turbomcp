@@ -8,11 +8,10 @@
 //!
 //! This transport follows the research-backed hybrid mutex pattern:
 //!
-//! - **std::sync::Mutex** for state/queue (short-lived locks, never cross .await)
+//! - **std::sync::Mutex** for state (short-lived locks, never cross .await)
 //! - **AtomicMetrics** for lock-free counter updates (10-100x faster than Mutex)
 //! - **tokio::sync::Mutex** for child process and I/O (cross .await points)
 
-use std::collections::VecDeque;
 use std::process::Stdio;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -87,7 +86,6 @@ impl Default for ChildProcessConfig {
 /// Following research-backed 2025 Rust async best practices:
 ///
 /// - `state`: std::sync::Mutex (short-lived locks, never held across .await)
-/// - `outbound_queue`: std::sync::Mutex (infrequent access, short-lived locks)
 /// - `metrics`: AtomicMetrics (lock-free counters, 10-100x faster than Mutex)
 /// - `child`/I/O: tokio::sync::Mutex (held across .await, necessary for async operations)
 #[derive(Debug)]
@@ -109,10 +107,6 @@ pub struct ChildProcessTransport {
 
     /// Event emitter
     event_emitter: TransportEventEmitter,
-
-    /// Outbound message queue (std::sync::Mutex - short-lived locks)
-    #[allow(dead_code)] // Reserved for future buffering implementation
-    outbound_queue: Arc<StdMutex<VecDeque<TransportMessage>>>,
 
     /// STDIO communication channels (tokio::sync::Mutex - crosses await boundaries)
     stdin_sender: Arc<TokioMutex<Option<mpsc::Sender<String>>>>,
@@ -143,7 +137,6 @@ impl ChildProcessTransport {
             capabilities,
             metrics: Arc::new(AtomicMetrics::default()),
             event_emitter: TransportEventEmitter::new().0,
-            outbound_queue: Arc::new(StdMutex::new(VecDeque::new())),
             stdin_sender: Arc::new(TokioMutex::new(None)),
             stdout_receiver: Arc::new(TokioMutex::new(None)),
             _stdin_task: Arc::new(TokioMutex::new(None)),

@@ -60,34 +60,3 @@ pub fn validate_response(response: &JsonRpcResponse) -> ServerResult<()> {
     }
 }
 
-/// Check if URI matches a simple pattern with wildcards and parameters
-#[allow(dead_code)] // Reserved for future URI template matching
-pub fn matches_uri_pattern(pattern: &str, uri: &str) -> bool {
-    // Convert simple templates to regex (very basic):
-    // - '*' => '.*'
-    // - '{param}' => '[^/]+'
-    let mut regex_str = String::from("^");
-    let mut chars = pattern.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '*' => regex_str.push_str(".*"),
-            '{' => {
-                // consume until '}'
-                for nc in chars.by_ref() {
-                    if nc == '}' {
-                        break;
-                    }
-                }
-                regex_str.push_str("[^/]+");
-            }
-            '.' | '+' | '?' | '(' | ')' | '|' | '^' | '$' | '[' | ']' | '\\' => {
-                regex_str.push('\\');
-                regex_str.push(c);
-            }
-            other => regex_str.push(other),
-        }
-    }
-    regex_str.push('$');
-    let re = regex::Regex::new(&regex_str).unwrap_or_else(|_| regex::Regex::new("^$").unwrap());
-    re.is_match(uri)
-}

@@ -13,8 +13,7 @@ use tower::{Layer, Service};
 use tracing::{debug, info, warn};
 
 #[cfg(feature = "auth")]
-#[allow(deprecated)]
-use super::auth::Claims;
+use super::auth::AuthContext;
 
 /// Audit configuration
 #[derive(Debug, Clone)]
@@ -166,11 +165,10 @@ where
 
             // Extract user info if available (only when auth feature is enabled)
             #[cfg(feature = "auth")]
-            #[allow(deprecated)]
             let user_id = req
                 .extensions()
-                .get::<Claims>()
-                .map(|claims| claims.sub.clone());
+                .get::<AuthContext>()
+                .map(|ctx| ctx.sub.clone());
 
             #[cfg(not(feature = "auth"))]
             let user_id: Option<String> = None;

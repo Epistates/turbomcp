@@ -22,9 +22,6 @@ pub struct RedisNonceStorage {
     /// Key prefix for JTI (JWT ID) tracking
     jti_prefix: String,
 
-    /// Key prefix for rate limiting
-    rate_limit_prefix: String,
-
     /// Default expiration time for nonces (5 minutes as per RFC 9449)
     default_ttl: Duration,
 
@@ -86,7 +83,6 @@ impl RedisNonceStorage {
             client,
             nonce_prefix: "turbomcp:dpop:nonce:".to_string(),
             jti_prefix: "turbomcp:dpop:jti:".to_string(),
-            rate_limit_prefix: "turbomcp:dpop:rate:".to_string(),
             default_ttl: Duration::from_secs(300), // 5 minutes per RFC 9449
             max_retries: 3,
         })
@@ -102,7 +98,6 @@ impl RedisNonceStorage {
         storage.default_ttl = nonce_ttl;
         storage.nonce_prefix = format!("{}:dpop:nonce:", key_prefix);
         storage.jti_prefix = format!("{}:dpop:jti:", key_prefix);
-        storage.rate_limit_prefix = format!("{}:dpop:rate:", key_prefix);
         Ok(storage)
     }
 
@@ -141,12 +136,6 @@ impl RedisNonceStorage {
     /// Generate unique key for JTI tracking
     fn jti_key(&self, jti: &str, client_id: &str) -> String {
         format!("{}{}__{}", self.jti_prefix, client_id, jti)
-    }
-
-    /// Generate key for rate limiting
-    #[allow(dead_code)] // Reserved for future rate limiting feature
-    fn rate_limit_key(&self, client_id: &str) -> String {
-        format!("{}{}", self.rate_limit_prefix, client_id)
     }
 
     /// Current timestamp as Unix seconds

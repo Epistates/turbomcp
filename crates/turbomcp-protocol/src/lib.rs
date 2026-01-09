@@ -333,7 +333,6 @@ pub use context::{
 // Timestamp and ContentType are now in types module
 pub use enhanced_registry::{EnhancedRegistry, HandlerStats};
 // v3.0: McpError is re-exported from turbomcp_core at crate root
-// Old error module kept for RetryInfo and legacy conversions during migration
 pub use error::RetryInfo;
 pub use handlers::{
     CompletionItem, CompletionProvider, ElicitationHandler, ElicitationResponse,
@@ -373,10 +372,8 @@ pub use types::{
 // Note: types module is already declared as `pub mod types;` above
 // Users access other types via turbomcp_protocol::types::Tool, etc.
 
-// Allow deprecated on re-export - users importing JsonRpcBatch will still get deprecation warnings
-#[allow(deprecated)]
 pub use jsonrpc::{
-    JsonRpcBatch, JsonRpcError, JsonRpcErrorCode, JsonRpcNotification, JsonRpcRequest,
+    JsonRpcError, JsonRpcErrorCode, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, JsonRpcVersion,
 };
 
@@ -389,9 +386,6 @@ pub use capabilities::{
 };
 
 pub use versioning::{VersionCompatibility, VersionManager, VersionRequirement};
-
-/// Alias for RequestContext for backward compatibility
-pub type Context = RequestContext;
 
 /// Current MCP protocol version supported by this SDK (latest official spec)
 pub const PROTOCOL_VERSION: &str = "2025-11-25";
