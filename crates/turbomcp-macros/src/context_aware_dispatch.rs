@@ -43,7 +43,7 @@ pub fn generate_context_aware_tool_dispatch(
                     // instead of creating empty RequestContext::new()
                     match self.#handler_fn(request, ctx.clone()).await {
                         Ok(result) => {
-                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
+                            ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
                                 serde_json::json!({
                                     "content": result.content
                                 }),
@@ -52,8 +52,8 @@ pub fn generate_context_aware_tool_dispatch(
                         }
                         // FIXED: Extract actual error code from ServerError
                         Err(e) => {
-                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                            ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
                                     code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
@@ -90,7 +90,7 @@ pub fn generate_context_aware_prompt_dispatch(
                             map
                         });
 
-                    let request = ::turbomcp::turbomcp_protocol::GetPromptRequest {
+                    let request = ::turbomcp::__macro_support::turbomcp_protocol::GetPromptRequest {
                         name: #method_str.to_string(),
                         arguments: prompt_args,
                         _meta: None,
@@ -100,12 +100,12 @@ pub fn generate_context_aware_prompt_dispatch(
                     match self.#handler_fn(request, ctx.clone()).await {
                         Ok(result) => {
                             // Wrap string result in proper MCP GetPromptResult format
-                            let get_prompt_result = ::turbomcp::turbomcp_protocol::GetPromptResult {
+                            let get_prompt_result = ::turbomcp::__macro_support::turbomcp_protocol::GetPromptResult {
                                 description: None,
-                                messages: vec![::turbomcp::turbomcp_protocol::types::PromptMessage {
-                                    role: ::turbomcp::turbomcp_protocol::types::Role::User,
-                                    content: ::turbomcp::turbomcp_protocol::types::Content::Text(
-                                        ::turbomcp::turbomcp_protocol::types::TextContent {
+                                messages: vec![::turbomcp::__macro_support::turbomcp_protocol::types::PromptMessage {
+                                    role: ::turbomcp::__macro_support::turbomcp_protocol::types::Role::User,
+                                    content: ::turbomcp::__macro_support::turbomcp_protocol::types::Content::Text(
+                                        ::turbomcp::__macro_support::turbomcp_protocol::types::TextContent {
                                             text: result,
                                             annotations: None,
                                             meta: None,
@@ -115,12 +115,12 @@ pub fn generate_context_aware_prompt_dispatch(
                                 _meta: None,
                             };
                             match serde_json::to_value(&get_prompt_result) {
-                                Ok(value) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
+                                Ok(value) => ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
                                     value,
                                     req.id.clone()
                                 ),
-                                Err(e) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                    ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                                Err(e) => ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                    ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
                                         code: -32603,
                                         message: format!("Failed to serialize prompt result: {}", e),
                                         data: None,
@@ -131,8 +131,8 @@ pub fn generate_context_aware_prompt_dispatch(
                         }
                         // FIXED: Extract actual error code from ServerError
                         Err(e) => {
-                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                            ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
                                     code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
@@ -167,7 +167,7 @@ pub fn generate_context_aware_resource_dispatch(
                     let template = #template_string;
                     #uri_match_fn_name(resource_uri, template)
                 } => {
-                    let request = ::turbomcp::turbomcp_protocol::ReadResourceRequest {
+                    let request = ::turbomcp::__macro_support::turbomcp_protocol::ReadResourceRequest {
                         uri: resource_uri.to_string(),
                         _meta: None,
                     };
@@ -176,9 +176,9 @@ pub fn generate_context_aware_resource_dispatch(
                     match self.#handler_fn(request, ctx.clone()).await {
                         Ok(result) => {
                             // Wrap string result in proper MCP ReadResourceResult format
-                            let read_resource_result = ::turbomcp::turbomcp_protocol::ReadResourceResult {
-                                contents: vec![::turbomcp::turbomcp_protocol::types::ResourceContent::Text(
-                                    ::turbomcp::turbomcp_protocol::types::TextResourceContents {
+                            let read_resource_result = ::turbomcp::__macro_support::turbomcp_protocol::ReadResourceResult {
+                                contents: vec![::turbomcp::__macro_support::turbomcp_protocol::types::ResourceContent::Text(
+                                    ::turbomcp::__macro_support::turbomcp_protocol::types::TextResourceContents {
                                         uri: resource_uri.to_string(),
                                         mime_type: Some("text/plain".to_string()),
                                         text: result,
@@ -188,12 +188,12 @@ pub fn generate_context_aware_resource_dispatch(
                                 _meta: None,
                             };
                             match serde_json::to_value(&read_resource_result) {
-                                Ok(value) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
+                                Ok(value) => ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
                                     value,
                                     req.id.clone()
                                 ),
-                                Err(e) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                    ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                                Err(e) => ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                    ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
                                         code: -32603,
                                         message: format!("Failed to serialize resource result: {}", e),
                                         data: None,
@@ -204,8 +204,8 @@ pub fn generate_context_aware_resource_dispatch(
                         }
                         // FIXED: Extract actual error code from ServerError
                         Err(e) => {
-                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                            ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
                                     code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
@@ -307,16 +307,16 @@ pub fn generate_handle_request_with_context(
         /// layer. It should not be invoked directly by user code.
         async fn handle_request_with_context(
             self: ::std::sync::Arc<Self>,
-            req: ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcRequest,
-            ctx: ::turbomcp::turbomcp_protocol::RequestContext,
-        ) -> ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse {
-            use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcResponse, JsonRpcError};
+            req: ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcRequest,
+            ctx: ::turbomcp::__macro_support::turbomcp_protocol::RequestContext,
+        ) -> ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse {
+            use ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::{JsonRpcResponse, JsonRpcError};
 
             match req.method.as_str() {
                 "initialize" => {
                     JsonRpcResponse::success(
                         serde_json::json!({
-                            "protocolVersion": ::turbomcp::turbomcp_protocol::PROTOCOL_VERSION,
+                            "protocolVersion": ::turbomcp::__macro_support::turbomcp_protocol::PROTOCOL_VERSION,
                             "serverInfo": {
                                 "name": #server_name,
                                 "version": #server_version

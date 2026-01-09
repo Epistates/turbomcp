@@ -213,7 +213,7 @@ pub fn generate_tower_service(
             }
         }
 
-        impl<S> ::turbomcp::tower::Layer<S> for #layer_name {
+        impl<S> ::turbomcp::__macro_support::tower::Layer<S> for #layer_name {
             type Service = #service_name;
 
             fn layer(&self, _inner: S) -> Self::Service {
@@ -274,7 +274,7 @@ pub fn generate_tower_service(
         #[derive(Debug, Clone)]
         pub struct #response_name {
             /// The JSON-RPC response
-            pub response: ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse,
+            pub response: ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse,
             /// Request duration
             pub duration: ::std::time::Duration,
             /// Response metadata
@@ -285,7 +285,7 @@ pub fn generate_tower_service(
             /// Create a new response
             #[must_use]
             pub fn new(
-                response: ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse,
+                response: ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse,
                 duration: ::std::time::Duration
             ) -> Self {
                 Self {
@@ -302,12 +302,12 @@ pub fn generate_tower_service(
         }
 
         // Service implementation for JSON-RPC requests
-        impl ::turbomcp::tower::Service<::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcRequest> for #service_name
+        impl ::turbomcp::__macro_support::tower::Service<::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcRequest> for #service_name
         where
             #struct_name: Clone + Send + Sync + 'static,
         {
             type Response = #response_name;
-            type Error = ::turbomcp::turbomcp_protocol::McpError;
+            type Error = ::turbomcp::__macro_support::turbomcp_protocol::McpError;
             type Future = ::std::pin::Pin<Box<dyn ::std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
             fn poll_ready(
@@ -317,7 +317,7 @@ pub fn generate_tower_service(
                 ::std::task::Poll::Ready(Ok(()))
             }
 
-            fn call(&mut self, req: ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcRequest) -> Self::Future {
+            fn call(&mut self, req: ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcRequest) -> Self::Future {
                 let method = req.method.clone();
                 let start = ::std::time::Instant::now();
                 let server = ::std::sync::Arc::clone(&self.server);
@@ -326,35 +326,35 @@ pub fn generate_tower_service(
                 Box::pin(async move {
                     // Check if method should bypass processing
                     if config.should_bypass(&method) {
-                        return Err(::turbomcp::turbomcp_protocol::McpError::protocol(
+                        return Err(::turbomcp::__macro_support::turbomcp_protocol::McpError::protocol(
                             format!("Method '{}' is bypassed by configuration", method)
                         ));
                     }
 
                     if config.enable_logging {
-                        ::tracing::debug!(method = %method, "Processing request via Tower service");
+                        ::turbomcp::__macro_support::tracing::debug!(method = %method, "Processing request via Tower service");
                     }
 
                     // Convert request to JSON value for the handler
                     let req_value = serde_json::to_value(&req)
-                        .map_err(|e| ::turbomcp::turbomcp_protocol::McpError::serialization(e.to_string()))?;
+                        .map_err(|e| ::turbomcp::__macro_support::turbomcp_protocol::McpError::serialization(e.to_string()))?;
 
                     // Use the JsonRpcHandler trait implementation with fully qualified syntax
                     // to avoid conflict with the generated handle_request method
-                    let response_value = <#struct_name as ::turbomcp::turbomcp_protocol::JsonRpcHandler>::handle_request(
+                    let response_value = <#struct_name as ::turbomcp::__macro_support::turbomcp_protocol::JsonRpcHandler>::handle_request(
                         server.as_ref(),
                         req_value
                     ).await;
 
                     // Parse response back to JsonRpcResponse
-                    let response: ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse =
+                    let response: ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse =
                         serde_json::from_value(response_value)
-                            .map_err(|e| ::turbomcp::turbomcp_protocol::McpError::serialization(e.to_string()))?;
+                            .map_err(|e| ::turbomcp::__macro_support::turbomcp_protocol::McpError::serialization(e.to_string()))?;
 
                     let duration = start.elapsed();
 
                     if config.enable_logging {
-                        ::tracing::debug!(
+                        ::turbomcp::__macro_support::tracing::debug!(
                             method = %method,
                             duration_ms = duration.as_millis(),
                             "Request completed via Tower service"
@@ -376,12 +376,12 @@ pub fn generate_tower_service(
         }
 
         // Service implementation for raw JSON values
-        impl ::turbomcp::tower::Service<serde_json::Value> for #service_name
+        impl ::turbomcp::__macro_support::tower::Service<serde_json::Value> for #service_name
         where
             #struct_name: Clone + Send + Sync + 'static,
         {
             type Response = serde_json::Value;
-            type Error = ::turbomcp::turbomcp_protocol::McpError;
+            type Error = ::turbomcp::__macro_support::turbomcp_protocol::McpError;
             type Future = ::std::pin::Pin<Box<dyn ::std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
             fn poll_ready(
@@ -402,12 +402,12 @@ pub fn generate_tower_service(
                         .unwrap_or("unknown");
 
                     if config.enable_logging {
-                        ::tracing::debug!(method = %method, "Processing raw JSON request via Tower service");
+                        ::turbomcp::__macro_support::tracing::debug!(method = %method, "Processing raw JSON request via Tower service");
                     }
 
                     // Use the JsonRpcHandler trait implementation with fully qualified syntax
                     // to avoid conflict with the generated handle_request method
-                    let response = <#struct_name as ::turbomcp::turbomcp_protocol::JsonRpcHandler>::handle_request(
+                    let response = <#struct_name as ::turbomcp::__macro_support::turbomcp_protocol::JsonRpcHandler>::handle_request(
                         server.as_ref(),
                         req
                     ).await;

@@ -483,8 +483,8 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
 
                         // Create prompt handler using utils helper
                         use ::turbomcp::handlers::utils;
-                        use ::turbomcp::turbomcp_protocol::{GetPromptRequest, GetPromptResult};
-                        use ::turbomcp::turbomcp_protocol::types::{PromptMessage, Role, Content, TextContent};
+                        use ::turbomcp::__macro_support::turbomcp_protocol::{GetPromptRequest, GetPromptResult};
+                        use ::turbomcp::__macro_support::turbomcp_protocol::types::{PromptMessage, Role, Content, TextContent};
 
                         let prompt_handler = utils::prompt(
                             prompt_name,
@@ -523,11 +523,11 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
 
                         // Create resource handler using the FunctionResourceHandler
                         use ::turbomcp::handlers::FunctionResourceHandler;
-                        use ::turbomcp::turbomcp_protocol::{ReadResourceRequest, ReadResourceResult};
-                        use ::turbomcp::turbomcp_protocol::types::{ResourceContent, TextResourceContents};
+                        use ::turbomcp::__macro_support::turbomcp_protocol::{ReadResourceRequest, ReadResourceResult};
+                        use ::turbomcp::__macro_support::turbomcp_protocol::types::{ResourceContent, TextResourceContents};
 
                         let resource_handler = FunctionResourceHandler::new(
-                            ::turbomcp::turbomcp_protocol::types::Resource {
+                            ::turbomcp::__macro_support::turbomcp_protocol::types::Resource {
                                 name: resource_name.to_string(),
                                 title: Some(resource_title.to_string()),
                                 uri: resource_uri_template.to_string(),

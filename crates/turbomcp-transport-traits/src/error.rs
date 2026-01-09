@@ -10,6 +10,7 @@ pub type TransportResult<T> = std::result::Result<T, TransportError>;
 
 /// Represents errors that can occur during transport operations.
 #[derive(Error, Debug, Clone)]
+#[non_exhaustive]
 pub enum TransportError {
     /// Failed to establish a connection.
     #[error("Connection failed: {0}")]

@@ -11,6 +11,7 @@ use crate::config::{LimitsConfig, TimeoutConfig, TlsConfig};
 /// Enumerates the types of transports supported by the system.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum TransportType {
     /// Standard Input/Output, for command-line servers.
     Stdio,
@@ -51,6 +52,7 @@ impl fmt::Display for TransportType {
 
 /// Represents the current state of a transport connection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TransportState {
     /// The transport is not connected.
     Disconnected,

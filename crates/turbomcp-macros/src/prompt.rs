@@ -116,7 +116,7 @@ pub fn generate_prompt_impl(args: TokenStream, input: TokenStream) -> TokenStrea
         // Generate handler function that bridges GetPromptRequest to the actual method
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #handler_fn_name(&self, request: ::turbomcp::turbomcp_protocol::GetPromptRequest, context: ::turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, ::turbomcp::ServerError>> + Send + '_>> {
+        fn #handler_fn_name(&self, request: ::turbomcp::__macro_support::turbomcp_protocol::GetPromptRequest, context: ::turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, ::turbomcp::ServerError>> + Send + '_>> {
             Box::pin(async move {
                 // Context injection using ContextFactory pattern
                 let turbomcp_ctx = {

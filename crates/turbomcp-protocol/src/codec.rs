@@ -47,6 +47,7 @@ pub use turbomcp_wire::MsgPackCodec;
 
 /// Protocol codec type selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum CodecType {
     /// Standard JSON codec (default, MCP-compliant)
     #[default]

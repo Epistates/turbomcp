@@ -9,6 +9,7 @@ use crate::types::TransportType;
 
 /// Represents events that occur within a transport's lifecycle.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TransportEvent {
     /// A new connection has been established.
     Connected {

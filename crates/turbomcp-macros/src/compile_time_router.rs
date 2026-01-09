@@ -109,7 +109,7 @@ pub fn generate_router(
 
                     match self.#handler_fn(request, ctx).await {
                         Ok(result) => {
-                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
+                            ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
                                 serde_json::json!({
                                     "content": result.content
                                 }),
@@ -118,8 +118,8 @@ pub fn generate_router(
                         }
                         // FIXED: Extract actual error code from ServerError
                         Err(e) => {
-                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                            ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
                                     code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
@@ -152,7 +152,7 @@ pub fn generate_router(
                             map
                         });
 
-                    let request = ::turbomcp::turbomcp_protocol::GetPromptRequest {
+                    let request = ::turbomcp::__macro_support::turbomcp_protocol::GetPromptRequest {
                         name: #method_str.to_string(),
                         arguments: prompt_args,
                         _meta: None,
@@ -163,11 +163,11 @@ pub fn generate_router(
                     match self.#handler_fn(request, ctx).await {
                         Ok(result) => {
                             // Wrap string result in proper MCP GetPromptResult format
-                            let get_prompt_result = ::turbomcp::turbomcp_protocol::GetPromptResult {
+                            let get_prompt_result = ::turbomcp::__macro_support::turbomcp_protocol::GetPromptResult {
                                 description: None,
-                                messages: vec![::turbomcp::turbomcp_protocol::types::PromptMessage {
-                                    role: ::turbomcp::turbomcp_protocol::types::Role::User,
-                                    content: ::turbomcp::turbomcp_protocol::types::Content::Text(::turbomcp::turbomcp_protocol::types::TextContent {
+                                messages: vec![::turbomcp::__macro_support::turbomcp_protocol::types::PromptMessage {
+                                    role: ::turbomcp::__macro_support::turbomcp_protocol::types::Role::User,
+                                    content: ::turbomcp::__macro_support::turbomcp_protocol::types::Content::Text(::turbomcp::__macro_support::turbomcp_protocol::types::TextContent {
                                         text: result,
                                         annotations: None,
                                         meta: None,
@@ -176,12 +176,12 @@ pub fn generate_router(
                                 _meta: None,
                             };
                             match serde_json::to_value(&get_prompt_result) {
-                                Ok(value) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
+                                Ok(value) => ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
                                     value,
                                     req.id.clone()
                                 ),
-                                Err(e) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                    ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                                Err(e) => ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                    ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
                                         code: -32603,
                                         message: format!("Failed to serialize prompt result: {}", e),
                                         data: None,
@@ -192,8 +192,8 @@ pub fn generate_router(
                         }
                         // FIXED: Extract actual error code from ServerError
                         Err(e) => {
-                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                            ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
                                     code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
@@ -230,7 +230,7 @@ pub fn generate_router(
                     let template = #template_string;
                     #uri_match_fn_name(resource_uri, template)
                 } => {
-                    let request = ::turbomcp::turbomcp_protocol::ReadResourceRequest {
+                    let request = ::turbomcp::__macro_support::turbomcp_protocol::ReadResourceRequest {
                         uri: resource_uri.to_string(),
                         _meta: None,
                     };
@@ -240,8 +240,8 @@ pub fn generate_router(
                     match self.#handler_fn(request, ctx).await {
                         Ok(result) => {
                             // Wrap string result in proper MCP ReadResourceResult format
-                            let read_resource_result = ::turbomcp::turbomcp_protocol::ReadResourceResult {
-                                contents: vec![::turbomcp::turbomcp_protocol::types::ResourceContent::Text(::turbomcp::turbomcp_protocol::types::TextResourceContents {
+                            let read_resource_result = ::turbomcp::__macro_support::turbomcp_protocol::ReadResourceResult {
+                                contents: vec![::turbomcp::__macro_support::turbomcp_protocol::types::ResourceContent::Text(::turbomcp::__macro_support::turbomcp_protocol::types::TextResourceContents {
                                     uri: resource_uri.to_string(),
                                     mime_type: Some("text/plain".to_string()),
                                     text: result,
@@ -250,12 +250,12 @@ pub fn generate_router(
                                 _meta: None,
                             };
                             match serde_json::to_value(&read_resource_result) {
-                                Ok(value) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
+                                Ok(value) => ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::success(
                                     value,
                                     req.id.clone()
                                 ),
-                                Err(e) => ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                    ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                                Err(e) => ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                    ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
                                         code: -32603,
                                         message: format!("Failed to serialize resource result: {}", e),
                                         data: None,
@@ -266,8 +266,8 @@ pub fn generate_router(
                         }
                         // FIXED: Extract actual error code from ServerError
                         Err(e) => {
-                            ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
-                                ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcError {
+                            ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
+                                ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
                                     code: e.error_code(),
                                     message: e.to_string(),
                                     data: None,
@@ -351,7 +351,7 @@ pub fn generate_router(
         // ===================================================================
 
         #[::turbomcp::async_trait]
-        impl ::turbomcp::turbomcp_protocol::JsonRpcHandler for #struct_name
+        impl ::turbomcp::__macro_support::turbomcp_protocol::JsonRpcHandler for #struct_name
         where
             Self: Clone + Send + Sync + 'static,
         {
@@ -359,7 +359,7 @@ pub fn generate_router(
                 &self,
                 req_value: serde_json::Value,
             ) -> serde_json::Value {
-                use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcError};
+                use ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcError};
 
                 // Parse the request
                 let req: JsonRpcRequest = match serde_json::from_value(req_value) {
@@ -562,8 +562,8 @@ pub fn generate_router(
                 })
             }
 
-            fn server_info(&self) -> ::turbomcp::turbomcp_protocol::ServerInfo {
-                ::turbomcp::turbomcp_protocol::ServerInfo {
+            fn server_info(&self) -> ::turbomcp::__macro_support::turbomcp_protocol::ServerInfo {
+                ::turbomcp::__macro_support::turbomcp_protocol::ServerInfo {
                     name: #server_name.to_string(),
                     version: #server_version.to_string(),
                 }
@@ -601,15 +601,15 @@ pub fn generate_router(
             /// Handle a single JSON-RPC request with compile-time dispatch
             async fn handle_request(
                 self: ::std::sync::Arc<Self>,
-                req: ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcRequest
-            ) -> ::turbomcp::turbomcp_protocol::jsonrpc::JsonRpcResponse {
-                use ::turbomcp::turbomcp_protocol::jsonrpc::{JsonRpcResponse, JsonRpcVersion, JsonRpcError};
+                req: ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcRequest
+            ) -> ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse {
+                use ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::{JsonRpcResponse, JsonRpcVersion, JsonRpcError};
 
                 match req.method.as_str() {
                     "initialize" => {
                         JsonRpcResponse::success(
                             serde_json::json!({
-                                "protocolVersion": ::turbomcp::turbomcp_protocol::PROTOCOL_VERSION,
+                                "protocolVersion": ::turbomcp::__macro_support::turbomcp_protocol::PROTOCOL_VERSION,
                                 "serverInfo": {
                                     "name": #server_name,
                                     "version": #server_version
