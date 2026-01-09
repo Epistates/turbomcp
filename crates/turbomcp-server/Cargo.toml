@@ -56,7 +56,8 @@ async-stream = { version = "0.3", optional = true }
 syn = { version = "2", features = ["parsing", "full"], optional = true }  # Handler name validation
 
 # Input Validation (Sprint 3.4)
-garde = { version = "0.22", optional = true, features = ["email", "url", "credit-card", "phone-number"] }
+# Note: phone-number feature removed due to unmaintained bincode transitive dependency (RUSTSEC-2025-0141)
+garde = { version = "0.22", optional = true, features = ["email", "url", "credit-card"] }
 axum-valid = { version = "0.24", optional = true, features = ["garde"], default-features = false }
 
 # Observability dependencies

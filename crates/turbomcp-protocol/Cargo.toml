@@ -70,7 +70,7 @@ rand = "0.9"
 memmap2 = { version = "0.9.9", optional = true }
 
 # Zero-copy serialization (optional)
-rkyv_crate = { package = "rkyv", version = "0.8", default-features = false, optional = true, features = ["alloc", "bytecheck"] }
+rkyv_crate = { package = "rkyv", version = ">=0.8.13", default-features = false, optional = true, features = ["alloc", "bytecheck"] }
 rancor_crate = { package = "rancor", version = "0.1", default-features = false, optional = true, features = ["alloc"] }
 
 # Validation

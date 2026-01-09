@@ -27,7 +27,7 @@ compact_str = { version = "0.8", default-features = false, features = ["serde"] 
 smallvec = { version = "1.13", default-features = false, features = ["serde"] }
 
 # Zero-copy serialization (optional)
-rkyv = { version = "0.8", default-features = false, optional = true, features = [
+rkyv = { version = ">=0.8.13", default-features = false, optional = true, features = [
     "alloc",
     "bytecheck",
     "hashbrown-0_15",
