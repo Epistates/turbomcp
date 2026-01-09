@@ -639,7 +639,6 @@ mod capability_negotiation_compliance {
                 exp.insert("custom_feature".to_string(), json!({"enabled": true}));
                 exp
             }),
-            ..Default::default()
         };
 
         let server_caps = ServerCapabilities {
@@ -660,7 +659,6 @@ mod capability_negotiation_compliance {
                 exp.insert("advanced_tools".to_string(), json!({"version": "2.0"}));
                 exp
             }),
-            ..Default::default()
         };
 
         // Validate serialization matches MCP spec structure
@@ -685,7 +683,6 @@ mod capability_negotiation_compliance {
             sampling: None, // Client doesn't support sampling
             elicitation: None,
             experimental: None,
-            ..Default::default()
         };
 
         let server_caps = ServerCapabilities {
@@ -697,7 +694,6 @@ mod capability_negotiation_compliance {
             logging: None,
             completions: None,
             experimental: None,
-            ..Default::default()
         };
 
         // Test that only negotiated capabilities can be used
