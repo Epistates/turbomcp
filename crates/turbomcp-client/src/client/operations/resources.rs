@@ -54,9 +54,8 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Execute with plugin middleware
-        let response: ListResourcesResult =
-            self.execute_with_plugins("resources/list", None).await?;
+        // Send resources/list request
+        let response: ListResourcesResult = self.inner.protocol.request("resources/list", None).await?;
 
         Ok(response.resources)
     }
@@ -114,7 +113,9 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         };
 
         let response: ReadResourceResult = self
-            .execute_with_plugins("resources/read", Some(serde_json::to_value(request)?))
+            .inner
+            .protocol
+            .request("resources/read", Some(serde_json::to_value(request)?))
             .await?;
         Ok(response)
     }
@@ -157,9 +158,11 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send resources/templates request with plugin middleware
+        // Send resources/templates request
         let response: ListResourceTemplatesResult = self
-            .execute_with_plugins("resources/templates", None)
+            .inner
+            .protocol
+            .request("resources/templates", None)
             .await?;
         let template_uris = response
             .resource_templates

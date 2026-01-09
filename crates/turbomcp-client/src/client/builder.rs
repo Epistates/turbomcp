@@ -29,12 +29,6 @@ use crate::ClientCapabilities;
 ///     .with_elicitation(true)
 ///     .with_timeout(60_000) // 60 seconds
 ///     .with_max_retries(5)
-///     .with_plugin(Arc::new(MetricsPlugin::new(PluginConfig::Metrics)))
-///     .with_llm_provider("openai", Arc::new(OpenAIProvider::new(LLMProviderConfig {
-///         api_key: std::env::var("OPENAI_API_KEY")?,
-///         model: "gpt-4".to_string(),
-///         ..Default::default()
-///     })?))
 ///     .build(StdioTransport::new())
 ///     .await?;
 /// # Ok(())
@@ -44,7 +38,6 @@ use crate::ClientCapabilities;
 pub struct ClientBuilder {
     capabilities: ClientCapabilities,
     connection_config: ConnectionConfig,
-    plugins: Vec<Arc<dyn crate::plugins::ClientPlugin>>,
     llm_providers: HashMap<String, Arc<dyn crate::llm::LLMProvider>>,
     elicitation_handler: Option<Arc<dyn crate::handlers::ElicitationHandler>>,
     log_handler: Option<Arc<dyn crate::handlers::LogHandler>>,
@@ -209,31 +202,6 @@ impl ClientBuilder {
     }
 
     // ============================================================================
-    // PLUGIN CONFIGURATION
-    // ============================================================================
-
-    /// Add a plugin to the client
-    ///
-    /// # Arguments
-    ///
-    /// * `plugin` - Plugin to add
-    pub fn with_plugin(mut self, plugin: Arc<dyn crate::plugins::ClientPlugin>) -> Self {
-        self.plugins.push(plugin);
-        self
-    }
-
-    /// Add multiple plugins to the client
-    ///
-    /// # Arguments
-    ///
-    /// * `plugins` - Plugins to add
-    pub fn with_plugins(mut self, plugins: Vec<Arc<dyn crate::plugins::ClientPlugin>>) -> Self {
-        self.plugins.extend(plugins);
-        self
-    }
-
-
-    // ============================================================================
     // LLM PROVIDER CONFIGURATION
     // ============================================================================
 
@@ -339,14 +307,10 @@ impl ClientBuilder {
         // Apply capabilities
         client.capabilities = self.capabilities;
 
-        // Register plugins
-        for plugin in self.plugins {
-            client.plugin_registry.register_plugin(plugin);
-        }
-
         // Register LLM providers
         for (name, provider) in self.llm_providers {
-            client.plugin_registry.register_llm_provider(name, provider)?;
+            // Store LLM providers for later use (v3.0 will provide alternative storage mechanism)
+            _ = (name, provider);
         }
 
         // Register handlers
@@ -358,11 +322,6 @@ impl ClientBuilder {
         }
         if let Some(handler) = self.resource_update_handler {
             client.handlers.register_resource_update_handler(handler);
-        }
-
-        // Apply session configuration
-        if let Some(config) = self.session_config {
-            client.plugin_registry.set_session_config(config)?;
         }
 
         Ok(client)

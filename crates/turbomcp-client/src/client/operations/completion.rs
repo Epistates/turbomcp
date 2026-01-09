@@ -10,8 +10,6 @@ use turbomcp_protocol::types::{
 };
 use turbomcp_protocol::{Error, Result};
 
-use crate::with_plugins;
-
 impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// Internal helper for completion operations - DRYed up common logic
     async fn complete_internal(
@@ -36,17 +34,15 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
 
         let serialized_params = serde_json::to_value(&request_params)?;
 
-        with_plugins!(self, "completion/complete", serialized_params, {
-            let result: CompleteResult = self
-                .inner
-                .protocol
-                .request("completion/complete", Some(serialized_params))
-                .await?;
+        let result: CompleteResult = self
+            .inner
+            .protocol
+            .request("completion/complete", Some(serialized_params))
+            .await?;
 
-            Ok(CompletionResponse {
-                completion: result.completion,
-                _meta: result._meta,
-            })
+        Ok(CompletionResponse {
+            completion: result.completion,
+            _meta: result._meta,
         })
     }
 

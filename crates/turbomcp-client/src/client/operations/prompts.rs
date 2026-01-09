@@ -62,8 +62,8 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Execute with plugin middleware - return full Prompt objects per MCP spec
-        let response: ListPromptsResult = self.execute_with_plugins("prompts/list", None).await?;
+        // Send prompts/list request - return full Prompt objects per MCP spec
+        let response: ListPromptsResult = self.inner.protocol.request("prompts/list", None).await?;
         Ok(response.prompts)
     }
 
@@ -139,12 +139,14 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             _meta: None,
         };
 
-        self.execute_with_plugins(
-            "prompts/get",
-            Some(serde_json::to_value(request).map_err(|e| {
-                Error::protocol(format!("Failed to serialize prompt request: {}", e))
-            })?),
-        )
-        .await
+        self.inner
+            .protocol
+            .request(
+                "prompts/get",
+                Some(serde_json::to_value(request).map_err(|e| {
+                    Error::protocol(format!("Failed to serialize prompt request: {}", e))
+                })?),
+            )
+            .await
     }
 }

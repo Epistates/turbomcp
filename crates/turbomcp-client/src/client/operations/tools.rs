@@ -9,8 +9,6 @@ use std::sync::atomic::Ordering;
 use turbomcp_protocol::types::{CallToolRequest, CallToolResult, ListToolsResult, Tool};
 use turbomcp_protocol::{Error, Result};
 
-use crate::with_plugins;
-
 impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// List all available tools from the MCP server
     ///
@@ -45,8 +43,8 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send tools/list request with plugin middleware
-        let response: ListToolsResult = self.execute_with_plugins("tools/list", None).await?;
+        // Send tools/list request
+        let response: ListToolsResult = self.inner.protocol.request("tools/list", None).await?;
         Ok(response.tools) // Return full Tool objects with schemas
     }
 
@@ -197,15 +195,13 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             ..Default::default()
         };
 
-        with_plugins!(self, "tools/call", request_data, {
-            // Core protocol call - plugins execute automatically around this
-            let result: CallToolResult = self
-                .inner
-                .protocol
-                .request("tools/call", Some(serde_json::to_value(&request_data)?))
-                .await?;
+        // Core protocol call
+        let result: CallToolResult = self
+            .inner
+            .protocol
+            .request("tools/call", Some(serde_json::to_value(&request_data)?))
+            .await?;
 
-            Ok(result) // Return full CallToolResult - MCP spec compliant!
-        })
+        Ok(result) // Return full CallToolResult - MCP spec compliant!
     }
 }

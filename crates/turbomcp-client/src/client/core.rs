@@ -61,9 +61,6 @@ pub(super) struct ClientInner<T: Transport + 'static> {
     /// Handler registry for bidirectional communication (mutex for registration)
     pub(super) handlers: Arc<StdMutex<HandlerRegistry>>,
 
-    /// Plugin registry for middleware (tokio mutex - holds across await)
-    pub(super) plugin_registry: Arc<tokio::sync::Mutex<crate::plugins::PluginRegistry>>,
-
     /// ✅ Semaphore for bounded concurrency of request/notification handlers
     /// Limits concurrent server-initiated request handlers to prevent resource exhaustion
     pub(super) handler_semaphore: Arc<Semaphore>,
@@ -206,9 +203,6 @@ impl<T: Transport + 'static> Client<T> {
                 initialized: AtomicBool::new(false),
                 sampling_handler: Arc::new(StdMutex::new(None)),
                 handlers: Arc::new(StdMutex::new(HandlerRegistry::new())),
-                plugin_registry: Arc::new(tokio::sync::Mutex::new(
-                    crate::plugins::PluginRegistry::new(),
-                )),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
             }),
         };
@@ -251,9 +245,6 @@ impl<T: Transport + 'static> Client<T> {
                 initialized: AtomicBool::new(false),
                 sampling_handler: Arc::new(StdMutex::new(None)),
                 handlers: Arc::new(StdMutex::new(HandlerRegistry::new())),
-                plugin_registry: Arc::new(tokio::sync::Mutex::new(
-                    crate::plugins::PluginRegistry::new(),
-                )),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
             }),
         };
@@ -1167,109 +1158,6 @@ impl<T: Transport + 'static> Client<T> {
         })
     }
 
-    /// Execute a protocol method with plugin middleware
-    ///
-    /// This is a generic helper for wrapping protocol calls with plugin middleware.
-    pub(crate) async fn execute_with_plugins<R>(
-        &self,
-        method_name: &str,
-        params: Option<serde_json::Value>,
-    ) -> Result<R>
-    where
-        R: serde::de::DeserializeOwned + serde::Serialize + Clone,
-    {
-        // Create JSON-RPC request for plugin context
-        let json_rpc_request = turbomcp_protocol::jsonrpc::JsonRpcRequest {
-            jsonrpc: turbomcp_protocol::jsonrpc::JsonRpcVersion,
-            id: turbomcp_protocol::MessageId::Number(1),
-            method: method_name.to_string(),
-            params: params.clone(),
-        };
-
-        // 1. Create request context for plugins
-        let mut req_ctx =
-            crate::plugins::RequestContext::new(json_rpc_request, std::collections::HashMap::new());
-
-        // 2. Execute before_request plugin middleware
-        if let Err(e) = self
-            .inner
-            .plugin_registry
-            .lock()
-            .await
-            .execute_before_request(&mut req_ctx)
-            .await
-        {
-            return Err(Error::bad_request(format!(
-                "Plugin before_request failed: {}",
-                e
-            )));
-        }
-
-        // 3. Execute the actual protocol call
-        let start_time = std::time::Instant::now();
-        let protocol_result: Result<R> = self
-            .inner
-            .protocol
-            .request(method_name, req_ctx.params().cloned())
-            .await;
-        let duration = start_time.elapsed();
-
-        // 4. Prepare response context
-        let mut resp_ctx = match protocol_result {
-            Ok(ref response) => {
-                let response_value = serde_json::to_value(response.clone())?;
-                crate::plugins::ResponseContext::new(req_ctx, Some(response_value), None, duration)
-            }
-            Err(ref e) => {
-                crate::plugins::ResponseContext::new(req_ctx, None, Some(e.clone()), duration)
-            }
-        };
-
-        // 5. Execute after_response plugin middleware
-        if let Err(e) = self
-            .inner
-            .plugin_registry
-            .lock()
-            .await
-            .execute_after_response(&mut resp_ctx)
-            .await
-        {
-            return Err(Error::bad_request(format!(
-                "Plugin after_response failed: {}",
-                e
-            )));
-        }
-
-        // 6. Return the final result, checking for plugin modifications
-        match protocol_result {
-            Ok(ref response) => {
-                // Check if plugins modified the response
-                if let Some(modified_response) = resp_ctx.response {
-                    // Try to deserialize the modified response
-                    if let Ok(modified_result) =
-                        serde_json::from_value::<R>(modified_response.clone())
-                    {
-                        return Ok(modified_result);
-                    }
-                }
-
-                // No plugin modifications, use original response
-                Ok(response.clone())
-            }
-            Err(e) => {
-                // Check if plugins provided an error recovery response
-                if let Some(recovery_response) = resp_ctx.response {
-                    if let Ok(recovery_result) = serde_json::from_value::<R>(recovery_response) {
-                        Ok(recovery_result)
-                    } else {
-                        Err(e)
-                    }
-                } else {
-                    Err(e)
-                }
-            }
-        }
-    }
 
     /// Subscribe to resource change notifications
     ///
@@ -1317,18 +1205,20 @@ impl<T: Transport + 'static> Client<T> {
             return Err(Error::bad_request("Subscription URI cannot be empty"));
         }
 
-        // Send resources/subscribe request with plugin middleware
+        // Send resources/subscribe request
         let request = SubscribeRequest {
             uri: uri.to_string(),
         };
 
-        self.execute_with_plugins(
-            "resources/subscribe",
-            Some(serde_json::to_value(request).map_err(|e| {
-                Error::protocol(format!("Failed to serialize subscribe request: {}", e))
-            })?),
-        )
-        .await
+        self.inner
+            .protocol
+            .request(
+                "resources/subscribe",
+                Some(serde_json::to_value(request).map_err(|e| {
+                    Error::protocol(format!("Failed to serialize subscribe request: {}", e))
+                })?),
+            )
+            .await
     }
 
     /// Unsubscribe from resource change notifications
@@ -1376,18 +1266,20 @@ impl<T: Transport + 'static> Client<T> {
             return Err(Error::bad_request("Unsubscription URI cannot be empty"));
         }
 
-        // Send resources/unsubscribe request with plugin middleware
+        // Send resources/unsubscribe request
         let request = UnsubscribeRequest {
             uri: uri.to_string(),
         };
 
-        self.execute_with_plugins(
-            "resources/unsubscribe",
-            Some(serde_json::to_value(request).map_err(|e| {
-                Error::protocol(format!("Failed to serialize unsubscribe request: {}", e))
-            })?),
-        )
-        .await
+        self.inner
+            .protocol
+            .request(
+                "resources/unsubscribe",
+                Some(serde_json::to_value(request).map_err(|e| {
+                    Error::protocol(format!("Failed to serialize unsubscribe request: {}", e))
+                })?),
+            )
+            .await
     }
 
     /// Get the client's capabilities configuration
@@ -1396,80 +1288,6 @@ impl<T: Transport + 'static> Client<T> {
         &self.inner.capabilities
     }
 
-    /// Initialize all registered plugins
-    ///
-    /// This should be called after registration but before using the client.
-    pub async fn initialize_plugins(&self) -> Result<()> {
-        // Set up client context for plugins with actual client capabilities
-        let mut capabilities = std::collections::HashMap::new();
-        capabilities.insert(
-            "protocol_version".to_string(),
-            serde_json::json!("2024-11-05"),
-        );
-        capabilities.insert(
-            "mcp_version".to_string(),
-            serde_json::json!(env!("CARGO_PKG_VERSION")),
-        );
-        capabilities.insert(
-            "supports_notifications".to_string(),
-            serde_json::json!(true),
-        );
-        capabilities.insert(
-            "supports_sampling".to_string(),
-            serde_json::json!(self.has_sampling_handler()),
-        );
-        capabilities.insert("supports_progress".to_string(), serde_json::json!(true));
-        capabilities.insert("supports_roots".to_string(), serde_json::json!(true));
-
-        // Extract client configuration
-        let mut config = std::collections::HashMap::new();
-        config.insert(
-            "client_name".to_string(),
-            serde_json::json!("turbomcp-client"),
-        );
-        config.insert(
-            "initialized".to_string(),
-            serde_json::json!(self.inner.initialized.load(Ordering::Relaxed)),
-        );
-        config.insert(
-            "plugin_count".to_string(),
-            serde_json::json!(self.inner.plugin_registry.lock().await.plugin_count()),
-        );
-
-        let context = crate::plugins::PluginContext::new(
-            "turbomcp-client".to_string(),
-            env!("CARGO_PKG_VERSION").to_string(),
-            capabilities,
-            config,
-            vec![], // Will be populated by the registry
-        );
-
-        self.inner
-            .plugin_registry
-            .lock()
-            .await
-            .set_client_context(context);
-
-        // Note: Individual plugins are initialized automatically during registration
-        // via PluginRegistry::register_plugin(). This method ensures the registry
-        // has proper client context for any future plugin registrations.
-        Ok(())
-    }
-
-    /// Cleanup all registered plugins
-    ///
-    /// This should be called when the client is being shut down.
-    pub async fn cleanup_plugins(&self) -> Result<()> {
-        // Clear the plugin registry - plugins will be dropped and cleaned up automatically
-        // The Rust ownership system ensures proper cleanup when the Arc<dyn ClientPlugin>
-        // references are dropped.
-
-        // Note: The plugin system uses RAII (Resource Acquisition Is Initialization)
-        // pattern where plugins clean up their resources in their Drop implementation.
-        // Replace the registry with a fresh one (mutex ensures safe access)
-        *self.inner.plugin_registry.lock().await = crate::plugins::PluginRegistry::new();
-        Ok(())
-    }
 
     // ============================================================================
     // Tasks API Methods (MCP 2025-11-25 Draft - SEP-1686)
@@ -1492,13 +1310,15 @@ impl<T: Transport + 'static> Client<T> {
             task_id: task_id.to_string(),
         };
 
-        self.execute_with_plugins(
-            "tasks/get",
-            Some(serde_json::to_value(request).map_err(|e| {
-                Error::protocol(format!("Failed to serialize get_task request: {}", e))
-            })?),
-        )
-        .await
+        self.inner
+            .protocol
+            .request(
+                "tasks/get",
+                Some(serde_json::to_value(request).map_err(|e| {
+                    Error::protocol(format!("Failed to serialize get_task request: {}", e))
+                })?),
+            )
+            .await
     }
 
     /// Cancel a running task (tasks/cancel)
@@ -1518,13 +1338,15 @@ impl<T: Transport + 'static> Client<T> {
             task_id: task_id.to_string(),
         };
 
-        self.execute_with_plugins(
-            "tasks/cancel",
-            Some(serde_json::to_value(request).map_err(|e| {
-                Error::protocol(format!("Failed to serialize cancel_task request: {}", e))
-            })?),
-        )
-        .await
+        self.inner
+            .protocol
+            .request(
+                "tasks/cancel",
+                Some(serde_json::to_value(request).map_err(|e| {
+                    Error::protocol(format!("Failed to serialize cancel_task request: {}", e))
+                })?),
+            )
+            .await
     }
 
     /// List all tasks (tasks/list)
@@ -1547,13 +1369,15 @@ impl<T: Transport + 'static> Client<T> {
     ) -> Result<ListTasksResult> {
         let request = ListTasksRequest { cursor, limit };
 
-        self.execute_with_plugins(
-            "tasks/list",
-            Some(serde_json::to_value(request).map_err(|e| {
-                Error::protocol(format!("Failed to serialize list_tasks request: {}", e))
-            })?),
-        )
-        .await
+        self.inner
+            .protocol
+            .request(
+                "tasks/list",
+                Some(serde_json::to_value(request).map_err(|e| {
+                    Error::protocol(format!("Failed to serialize list_tasks request: {}", e))
+                })?),
+            )
+            .await
     }
 
     /// Retrieve the result of a completed task (tasks/result)
@@ -1574,16 +1398,18 @@ impl<T: Transport + 'static> Client<T> {
             task_id: task_id.to_string(),
         };
 
-        self.execute_with_plugins(
-            "tasks/result",
-            Some(serde_json::to_value(request).map_err(|e| {
-                Error::protocol(format!(
-                    "Failed to serialize get_task_result request: {}",
-                    e
-                ))
-            })?),
-        )
-        .await
+        self.inner
+            .protocol
+            .request(
+                "tasks/result",
+                Some(serde_json::to_value(request).map_err(|e| {
+                    Error::protocol(format!(
+                        "Failed to serialize get_task_result request: {}",
+                        e
+                    ))
+                })?),
+            )
+            .await
     }
 
     // Note: Capability detection methods (has_*_handler, get_*_capabilities)

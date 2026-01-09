@@ -22,7 +22,6 @@ members = [
     "crates/turbomcp-telemetry", # v3.0: OpenTelemetry integration
     "crates/turbomcp-grpc",      # v3.0: gRPC transport with tonic
     "crates/turbomcp-wasm",      # v3.0: WebAssembly bindings for browsers and WASI
-    "crates/turbomcp-compat",    # v3.0: Backward compatibility layer for v2.x migration
     "crates/turbomcp-wire",      # v3.0: Wire format codec abstraction
     # "crates/turbomcp-security", # DISSOLVED: Security functionality moved to individual crates per ephemeral strategy
     "demo",

@@ -17,7 +17,6 @@
 //! // - Transport trait for generic bounds in agent definitions
 //! // - Tool, Resource, Prompt for protocol types
 //! // - All handler types for server-initiated requests
-//! // - Plugin system for middleware and metrics
 //!
 //! // Example: Generic function that works with any transport type
 //! pub fn process_tool_with_client<T: Transport + 'static>(

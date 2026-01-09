@@ -44,8 +44,8 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             return Err(Error::bad_request("Client not initialized"));
         }
 
-        // Send ping request with plugin middleware (no parameters needed)
-        let response: PingResult = self.execute_with_plugins("ping", None).await?;
+        // Send ping request (no parameters needed)
+        let response: PingResult = self.inner.protocol.request("ping", None).await?;
         Ok(response)
     }
 
@@ -94,7 +94,9 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         let request = SetLevelRequest { level };
 
         let response: SetLevelResult = self
-            .execute_with_plugins("logging/setLevel", Some(serde_json::to_value(request)?))
+            .inner
+            .protocol
+            .request("logging/setLevel", Some(serde_json::to_value(request)?))
             .await?;
         Ok(response)
     }

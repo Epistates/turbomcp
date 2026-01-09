@@ -161,26 +161,8 @@ pub mod integration;
 pub mod prelude;
 pub mod sampling;
 
-// v3.0 Tower-native middleware (recommended)
+// v3.0 Tower-native middleware
 pub mod middleware;
-
-// Legacy plugin system (deprecated in v3.0, use `middleware` instead)
-#[deprecated(
-    since = "3.0.0",
-    note = "Use Tower-native middleware from `turbomcp_client::middleware` instead. \
-            See migration guide: https://turbomcp.io/docs/v3/migration#plugins-to-middleware"
-)]
-pub mod plugins;
-
-// Tower middleware integration (legacy adapter, deprecated in v3.0)
-#[cfg(feature = "tower")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tower")))]
-#[deprecated(
-    since = "3.0.0",
-    note = "Use `turbomcp_client::middleware` instead. The `tower` module was an adapter \
-            for the legacy plugin system. v3.0 provides native Tower middleware."
-)]
-pub mod tower;
 
 // Re-export key types for convenience
 pub use client::{ConnectionInfo, ConnectionState, ManagerConfig, ServerGroup, SessionManager};
@@ -227,19 +209,12 @@ pub use handlers::{
 // Sampling types
 pub use sampling::{SamplingHandler, ServerInfo, UserInteractionHandler};
 
-// v3.0 Tower middleware (recommended)
+// v3.0 Tower middleware
 pub use middleware::{
     Cache, CacheConfig, CacheLayer, CacheService,
     Metrics, MetricsLayer, MetricsService, MetricsSnapshot,
     TracingLayer, TracingService,
     McpRequest, McpResponse,
-};
-
-// Legacy plugin system (deprecated - use middleware instead)
-#[allow(deprecated)]
-pub use plugins::{
-    CachePlugin, ClientPlugin, MetricsPlugin, PluginConfig, PluginContext, PluginError,
-    PluginResult, RetryPlugin,
 };
 
 // Common protocol types
@@ -605,12 +580,12 @@ impl Default for ConnectionConfig {
 /// # }
 /// ```
 ///
-/// Advanced configuration:
+/// Advanced configuration with Tower middleware:
 /// ```rust,no_run
 /// use turbomcp_client::{ClientBuilder, ConnectionConfig};
-/// use turbomcp_client::plugins::{MetricsPlugin, PluginConfig};
+/// use turbomcp_client::middleware::MetricsLayer;
 /// use turbomcp_transport::stdio::StdioTransport;
-/// use std::sync::Arc;
+/// use tower::ServiceBuilder;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// let client = ClientBuilder::new()
@@ -624,7 +599,6 @@ impl Default for ConnectionConfig {
 ///         retry_delay_ms: 2_000,
 ///         keepalive_ms: 30_000,
 ///     })
-///     .with_plugin(Arc::new(MetricsPlugin::new(PluginConfig::Metrics)))
 ///     .build(StdioTransport::new())
 ///     .await?;
 /// # Ok(())
@@ -634,7 +608,6 @@ impl Default for ConnectionConfig {
 pub struct ClientBuilder {
     capabilities: ClientCapabilities,
     connection_config: ConnectionConfig,
-    plugins: Vec<Arc<dyn crate::plugins::ClientPlugin>>,
     elicitation_handler: Option<Arc<dyn crate::handlers::ElicitationHandler>>,
     log_handler: Option<Arc<dyn crate::handlers::LogHandler>>,
     resource_update_handler: Option<Arc<dyn crate::handlers::ResourceUpdateHandler>>,
@@ -942,53 +915,6 @@ impl ClientBuilder {
     }
 
     // ============================================================================
-    // PLUGIN SYSTEM CONFIGURATION
-    // ============================================================================
-
-    /// Register a plugin with the client
-    ///
-    /// Plugins provide middleware functionality for request/response processing,
-    /// metrics collection, retry logic, caching, and other cross-cutting concerns.
-    ///
-    /// # Arguments
-    ///
-    /// * `plugin` - The plugin implementation
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use turbomcp_client::{ClientBuilder, ConnectionConfig};
-    /// use turbomcp_client::plugins::{MetricsPlugin, RetryPlugin, PluginConfig, RetryConfig};
-    /// use std::sync::Arc;
-    ///
-    /// let client = ClientBuilder::new()
-    ///     .with_plugin(Arc::new(MetricsPlugin::new(PluginConfig::Metrics)))
-    ///     .with_plugin(Arc::new(RetryPlugin::new(PluginConfig::Retry(RetryConfig {
-    ///         max_retries: 5,
-    ///         base_delay_ms: 1000,
-    ///         max_delay_ms: 30000,
-    ///         backoff_multiplier: 2.0,
-    ///         retry_on_timeout: true,
-    ///         retry_on_connection_error: true,
-    ///     }))));
-    /// ```
-    pub fn with_plugin(mut self, plugin: Arc<dyn crate::plugins::ClientPlugin>) -> Self {
-        self.plugins.push(plugin);
-        self
-    }
-
-    /// Register multiple plugins at once
-    ///
-    /// # Arguments
-    ///
-    /// * `plugins` - Vector of plugin implementations
-    #[must_use]
-    pub fn with_plugins(mut self, plugins: Vec<Arc<dyn crate::plugins::ClientPlugin>>) -> Self {
-        self.plugins.extend(plugins);
-        self
-    }
-
-    // ============================================================================
     // HANDLER REGISTRATION
     // ============================================================================
 
@@ -1073,21 +999,6 @@ impl ClientBuilder {
         }
         if let Some(handler) = self.resource_update_handler {
             client.set_resource_update_handler(handler);
-        }
-
-        // Apply connection configuration (store for future use in actual connections)
-        // Note: The current Client doesn't expose connection config setters,
-        // so we'll store this for when the transport supports it
-
-        // Register plugins with the client
-        let has_plugins = !self.plugins.is_empty();
-        for plugin in self.plugins {
-            client.register_plugin(plugin).await?;
-        }
-
-        // Initialize plugins after registration
-        if has_plugins {
-            client.initialize_plugins().await?;
         }
 
         Ok(client)
@@ -1177,23 +1088,12 @@ impl ClientBuilder {
             client.set_resource_update_handler(handler);
         }
 
-        // Register plugins
-        let has_plugins = !self.plugins.is_empty();
-        for plugin in self.plugins {
-            client.register_plugin(plugin).await?;
-        }
-
-        if has_plugins {
-            client.initialize_plugins().await?;
-        }
-
         Ok(client)
     }
 
     /// Build a client synchronously with basic configuration only
     ///
-    /// This is a convenience method for simple use cases where no async setup
-    /// is required. For advanced features like plugins, use `build()` instead.
+    /// This is a convenience method for simple use cases.
     ///
     /// # Arguments
     ///
@@ -1244,12 +1144,6 @@ impl ClientBuilder {
     #[must_use]
     pub fn connection_config(&self) -> &ConnectionConfig {
         &self.connection_config
-    }
-
-    /// Get the number of registered plugins
-    #[must_use]
-    pub fn plugin_count(&self) -> usize {
-        self.plugins.len()
     }
 
     /// Check if any handlers are registered

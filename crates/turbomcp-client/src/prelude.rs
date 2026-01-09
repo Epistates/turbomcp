@@ -25,15 +25,12 @@
 pub use crate::{CRATE_NAME, VERSION};
 
 pub use crate::{
-    CachePlugin,
     CancellationHandler,
     CancelledNotification,
     // Core client types
     Client,
     ClientBuilder,
     ClientCapabilities,
-    // Plugin system
-    ClientPlugin,
     ConnectionConfig,
     ElicitationAction,
     // Handlers (bidirectional communication)
@@ -49,18 +46,12 @@ pub use crate::{
 
     LogHandler,
     LoggingNotification,
-    MetricsPlugin,
-    PluginConfig,
-    PluginContext,
-    PluginError,
-    PluginResult,
     PromptListChangedHandler,
     ResourceListChangedHandler,
     ResourceUpdateHandler,
     ResourceUpdatedNotification,
     // Result/Error (most commonly used) - re-exported from turbomcp_protocol
     Result, // Note: This is Result<T, Box<Error>> from protocol
-    RetryPlugin,
     RootsHandler,
     // Sampling
     SamplingHandler,

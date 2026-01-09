@@ -581,27 +581,7 @@ pub mod __macro_support {
     pub use turbomcp_transport;
 }
 
-// Legacy re-exports for backward compatibility with v2.x macro-generated code
-// TODO(v4): Remove these re-exports
-#[doc(hidden)]
-#[cfg(feature = "http")]
-pub use axum;
-#[doc(hidden)]
-pub use tokio;
-#[doc(hidden)]
-pub use uuid;
-#[doc(hidden)]
-pub use serde_json;
-#[doc(hidden)]
-pub use turbomcp_protocol;
-#[doc(hidden)]
-pub use turbomcp_server;
-#[doc(hidden)]
-pub use turbomcp_transport;
-#[doc(hidden)]
-pub use tracing;
-#[doc(hidden)]
-pub use tower;
+// v3.0: Legacy re-exports removed. Use __macro_support for macro-generated code.
 
 // Core TurboMCP modules
 // 2.0.0: Auth and DPoP extracted to separate optional crates
