@@ -6,9 +6,8 @@
 use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::{debug, error, trace};
-use turbomcp_protocol::{Error as McpError, Result as McpResult, jsonrpc::JsonRpcRequest};
+use turbomcp_protocol::{jsonrpc::JsonRpcRequest, Error as McpError, Result as McpResult};
 use turbomcp_transport::tower::SessionInfo;
 
 use super::BackendConnector;
@@ -19,10 +18,16 @@ use crate::introspection::ServerSpec;
 /// This service implements the `McpService` trait, allowing it to be used
 /// with turbomcp-transport's Axum integration for HTTP/SSE transport.
 /// All requests are forwarded to the backend server via turbomcp-client.
+///
+/// # Performance Note
+///
+/// The backend connector is wrapped in `Arc` without an additional lock
+/// because `BackendConnector` internally uses Arc-wrapped fields and only
+/// requires `&self` access. This eliminates read-lock contention on the hot path.
 #[derive(Clone)]
 pub struct ProxyService {
-    /// Backend connector (Arc+RwLock for cheap cloning and async access)
-    backend: Arc<RwLock<BackendConnector>>,
+    /// Backend connector (Arc for cheap cloning, no lock needed - all access is &self)
+    backend: Arc<BackendConnector>,
 
     /// Cached server spec from introspection
     spec: Arc<ServerSpec>,
@@ -38,7 +43,7 @@ impl ProxyService {
     #[must_use]
     pub fn new(backend: BackendConnector, spec: ServerSpec) -> Self {
         Self {
-            backend: Arc::new(RwLock::new(backend)),
+            backend: Arc::new(backend),
             spec: Arc::new(spec),
         }
     }
@@ -55,8 +60,8 @@ impl ProxyService {
             // Tools
             "tools/list" => {
                 debug!("Forwarding tools/list to backend");
-                let backend = self.backend.read().await;
-                let tools = backend
+                let tools = self
+                    .backend
                     .list_tools()
                     .await
                     .map_err(|e| McpError::internal(e.to_string()))?;
@@ -76,8 +81,8 @@ impl ProxyService {
                     serde_json::from_value(params)
                         .map_err(|e| McpError::invalid_params(e.to_string()))?;
 
-                let backend = self.backend.read().await;
-                let result = backend
+                let result = self
+                    .backend
                     .call_tool(&call_request.name, call_request.arguments)
                     .await
                     .map_err(|e| McpError::internal(e.to_string()))?;
@@ -88,8 +93,8 @@ impl ProxyService {
             // Resources
             "resources/list" => {
                 debug!("Forwarding resources/list to backend");
-                let backend = self.backend.read().await;
-                let resources = backend
+                let resources = self
+                    .backend
                     .list_resources()
                     .await
                     .map_err(|e| McpError::internal(e.to_string()))?;
@@ -109,8 +114,8 @@ impl ProxyService {
                     serde_json::from_value(params)
                         .map_err(|e| McpError::invalid_params(e.to_string()))?;
 
-                let backend = self.backend.read().await;
-                let contents = backend
+                let contents = self
+                    .backend
                     .read_resource(&read_request.uri)
                     .await
                     .map_err(|e| McpError::internal(e.to_string()))?;
@@ -123,8 +128,8 @@ impl ProxyService {
             // Prompts
             "prompts/list" => {
                 debug!("Forwarding prompts/list to backend");
-                let backend = self.backend.read().await;
-                let prompts = backend
+                let prompts = self
+                    .backend
                     .list_prompts()
                     .await
                     .map_err(|e| McpError::internal(e.to_string()))?;
@@ -147,8 +152,8 @@ impl ProxyService {
                 // Arguments are already HashMap<String, Value>
                 let arguments = get_request.arguments;
 
-                let backend = self.backend.read().await;
-                let result = backend
+                let result = self
+                    .backend
                     .get_prompt(&get_request.name, arguments)
                     .await
                     .map_err(|e| McpError::internal(e.to_string()))?;

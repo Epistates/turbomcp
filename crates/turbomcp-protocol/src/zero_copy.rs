@@ -160,22 +160,14 @@ impl ZeroCopyMessage {
     pub fn deserialize<T: for<'de> Deserialize<'de>>(&self) -> Result<T> {
         #[cfg(feature = "simd")]
         {
-            // Use simd-json for faster parsing when payload is large enough
-            if self.payload.len() >= 64 {
-                // Clone to mutable buffer for SIMD parsing
-                let mut buffer = self.payload.to_vec();
-                simd_json::from_slice(&mut buffer)
-                    .map_err(|e| Error::serialization(format!("SIMD deserialize error: {}", e)))
-            } else {
-                // Fall back to standard parsing for small payloads
-                serde_json::from_slice(&self.payload)
-                    .map_err(|e| Error::serialization(format!("Deserialization error: {}", e)))
-            }
+            // Use sonic-rs for SIMD parsing (no mutable buffer needed, true zero-copy)
+            sonic_rs::from_slice(&self.payload)
+                .map_err(|e| Error::serialization(format!("SIMD deserialize error: {e}")))
         }
         #[cfg(not(feature = "simd"))]
         {
             serde_json::from_slice(&self.payload)
-                .map_err(|e| Error::serialization(format!("Deserialization error: {}", e)))
+                .map_err(|e| Error::serialization(format!("Deserialization error: {e}")))
         }
     }
 
@@ -344,14 +336,8 @@ pub mod fast {
     #[cfg(feature = "simd")]
     #[inline]
     pub fn validate_json_fast(bytes: &[u8]) -> bool {
-        if bytes.len() >= 64 {
-            // Use simd-json for validation
-            let mut owned = bytes.to_vec();
-            simd_json::to_borrowed_value(&mut owned).is_ok()
-        } else {
-            // Fall back to standard validation for small inputs
-            serde_json::from_slice::<serde_json::Value>(bytes).is_ok()
-        }
+        // Use sonic-rs for SIMD validation (no mutable buffer needed)
+        sonic_rs::from_slice::<sonic_rs::Value>(bytes).is_ok()
     }
 
     /// Standard JSON validation (non-SIMD fallback)
