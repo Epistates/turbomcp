@@ -186,27 +186,27 @@ testcontainers = "0.25.0"
 doc-comment = "0.3"
 
 # Workspace dependencies are defined below
-# Internal crate dependencies - v3.0.0-alpha (with default-features = false for granular control)
-turbomcp = { version = "2.3.7", path = "crates/turbomcp" }
+# Internal crate dependencies - v3.0.0-alpha.1 (with default-features = false for granular control)
+turbomcp = { version = "3.0.0-alpha.1", path = "crates/turbomcp" }
 # v3.0: turbomcp-core re-extracted as no_std foundation layer
 turbomcp-core = { version = "3.0.0-alpha.1", path = "crates/turbomcp-core", default-features = false }
 # v3.0: turbomcp-transport-traits lean transport traits crate
-turbomcp-transport-traits = { version = "3.0.0", path = "crates/turbomcp-transport-traits", default-features = false }
+turbomcp-transport-traits = { version = "3.0.0-alpha.1", path = "crates/turbomcp-transport-traits", default-features = false }
 # v3.0: Individual transport crates (extracted from monolithic turbomcp-transport)
-turbomcp-stdio = { version = "3.0.0", path = "crates/turbomcp-stdio", default-features = false }
-turbomcp-http = { version = "3.0.0", path = "crates/turbomcp-http", default-features = false }
-turbomcp-websocket = { version = "3.0.0", path = "crates/turbomcp-websocket", default-features = false }
-turbomcp-tcp = { version = "3.0.0", path = "crates/turbomcp-tcp", default-features = false }
-turbomcp-unix = { version = "3.0.0", path = "crates/turbomcp-unix", default-features = false }
-turbomcp-protocol = { version = "2.3.7", path = "crates/turbomcp-protocol", default-features = false }
-turbomcp-transport = { version = "2.3.7", path = "crates/turbomcp-transport", default-features = false }
-turbomcp-client = { version = "2.3.7", path = "crates/turbomcp-client", default-features = false }
-turbomcp-server = { version = "2.3.7", path = "crates/turbomcp-server", default-features = false }
-turbomcp-macros = { version = "2.3.7", path = "crates/turbomcp-macros", default-features = false }
-turbomcp-cli = { version = "2.3.7", path = "crates/turbomcp-cli", default-features = false }
+turbomcp-stdio = { version = "3.0.0-alpha.1", path = "crates/turbomcp-stdio", default-features = false }
+turbomcp-http = { version = "3.0.0-alpha.1", path = "crates/turbomcp-http", default-features = false }
+turbomcp-websocket = { version = "3.0.0-alpha.1", path = "crates/turbomcp-websocket", default-features = false }
+turbomcp-tcp = { version = "3.0.0-alpha.1", path = "crates/turbomcp-tcp", default-features = false }
+turbomcp-unix = { version = "3.0.0-alpha.1", path = "crates/turbomcp-unix", default-features = false }
+turbomcp-protocol = { version = "3.0.0-alpha.1", path = "crates/turbomcp-protocol", default-features = false }
+turbomcp-transport = { version = "3.0.0-alpha.1", path = "crates/turbomcp-transport", default-features = false }
+turbomcp-client = { version = "3.0.0-alpha.1", path = "crates/turbomcp-client", default-features = false }
+turbomcp-server = { version = "3.0.0-alpha.1", path = "crates/turbomcp-server", default-features = false }
+turbomcp-macros = { version = "3.0.0-alpha.1", path = "crates/turbomcp-macros", default-features = false }
+turbomcp-cli = { version = "3.0.0-alpha.1", path = "crates/turbomcp-cli", default-features = false }
 # v3.0: OpenTelemetry integration and observability
-turbomcp-telemetry = { version = "3.0.0", path = "crates/turbomcp-telemetry", default-features = false }
-# turbomcp-dpop = { version = "2.3.7", path = "crates/turbomcp-dpop" }  # Available as optional feature
+turbomcp-telemetry = { version = "3.0.0-alpha.1", path = "crates/turbomcp-telemetry", default-features = false }
+turbomcp-dpop = { version = "3.0.0-alpha.1", path = "crates/turbomcp-dpop", default-features = false }
 
 [profile.dev]
 opt-level = 1
