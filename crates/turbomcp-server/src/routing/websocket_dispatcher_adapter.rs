@@ -12,7 +12,7 @@ use turbomcp_protocol::types::{
 use turbomcp_transport::axum::WebSocketDispatcher;
 
 use super::traits::ServerRequestDispatcher;
-use crate::{ServerError, ServerResult};
+use crate::{McpError, ServerResult};
 
 /// Adapter that wraps transport layer's WebSocketDispatcher and implements ServerRequestDispatcher
 ///
@@ -41,9 +41,8 @@ impl ServerRequestDispatcher for WebSocketDispatcherAdapter {
         self.dispatcher
             .send_elicitation_request(request)
             .await
-            .map_err(|e| ServerError::Handler {
-                message: e,
-                context: Some("WebSocket elicitation request".to_string()),
+            .map_err(|e| {
+                McpError::internal(e).with_operation("WebSocket elicitation request")
             })
     }
 
@@ -55,10 +54,7 @@ impl ServerRequestDispatcher for WebSocketDispatcherAdapter {
         self.dispatcher
             .send_ping_request(request)
             .await
-            .map_err(|e| ServerError::Handler {
-                message: e,
-                context: Some("WebSocket ping request".to_string()),
-            })
+            .map_err(|e| McpError::internal(e).with_operation("WebSocket ping request"))
     }
 
     async fn send_create_message(
@@ -69,10 +65,7 @@ impl ServerRequestDispatcher for WebSocketDispatcherAdapter {
         self.dispatcher
             .send_create_message_request(request)
             .await
-            .map_err(|e| ServerError::Handler {
-                message: e,
-                context: Some("WebSocket sampling request".to_string()),
-            })
+            .map_err(|e| McpError::internal(e).with_operation("WebSocket sampling request"))
     }
 
     async fn send_list_roots(
@@ -83,10 +76,7 @@ impl ServerRequestDispatcher for WebSocketDispatcherAdapter {
         self.dispatcher
             .send_list_roots_request(request)
             .await
-            .map_err(|e| ServerError::Handler {
-                message: e,
-                context: Some("WebSocket roots list request".to_string()),
-            })
+            .map_err(|e| McpError::internal(e).with_operation("WebSocket roots list request"))
     }
 
     fn supports_bidirectional(&self) -> bool {

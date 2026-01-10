@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, warn};
 use uuid::Uuid;
 
-use crate::ServerError;
+use crate::McpError;
 use crate::config::TimeoutConfig;
 use crate::metrics::ServerMetrics;
 
@@ -82,7 +82,7 @@ impl ToolTimeoutManager {
         operation: F,
     ) -> Result<(T, CancellationToken), ToolTimeoutError>
     where
-        F: std::future::Future<Output = Result<T, ServerError>>,
+        F: std::future::Future<Output = Result<T, McpError>>,
         T: Send,
     {
         let execution_id = Uuid::new_v4();
@@ -244,7 +244,7 @@ impl ToolTimeoutManager {
         cancellation_token: CancellationToken,
     ) -> Result<T, ToolTimeoutError>
     where
-        F: std::future::Future<Output = Result<T, ServerError>>,
+        F: std::future::Future<Output = Result<T, McpError>>,
         T: Send,
     {
         let execution_id = Uuid::new_v4();
@@ -392,7 +392,7 @@ impl ToolTimeoutManager {
         operation: F,
     ) -> Result<T, ToolTimeoutError>
     where
-        F: std::future::Future<Output = Result<T, ServerError>>,
+        F: std::future::Future<Output = Result<T, McpError>>,
         T: Send,
     {
         // Use the new method and discard the cancellation token for compatibility
@@ -510,30 +510,31 @@ pub enum ToolTimeoutError {
 
     /// Tool execution failed with server error
     #[error("Tool execution failed: {0}")]
-    ServerError(ServerError),
+    ServerError(McpError),
 }
 
 /// Internal result type for timeout operations
 #[derive(Debug)]
 enum TimeoutResult<T> {
-    Completed(Result<T, ServerError>),
+    Completed(Result<T, McpError>),
     TimedOut,
     Cancelled,
 }
 
-impl From<ToolTimeoutError> for ServerError {
+impl From<ToolTimeoutError> for McpError {
     fn from(timeout_error: ToolTimeoutError) -> Self {
         match timeout_error {
             ToolTimeoutError::Timeout {
                 tool_name,
                 timeout_duration,
                 ..
-            } => ServerError::timeout(
-                format!("Tool '{}'", tool_name),
-                timeout_duration.as_millis() as u64,
-            ),
+            } => McpError::timeout(format!(
+                "Tool '{}' timed out after {}ms",
+                tool_name,
+                timeout_duration.as_millis()
+            )),
             ToolTimeoutError::Cancelled { tool_name, .. } => {
-                ServerError::handler(format!("Tool '{}' was cancelled", tool_name))
+                McpError::handler(format!("Tool '{}' was cancelled", tool_name))
             }
             ToolTimeoutError::ServerError(server_error) => server_error,
         }
@@ -543,7 +544,7 @@ impl From<ToolTimeoutError> for ServerError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ServerError;
+    use crate::McpError;
     use tokio::time::{Duration, sleep};
 
     fn create_test_config() -> TimeoutConfig {
@@ -571,7 +572,7 @@ mod tests {
         let result = manager
             .execute_with_timeout("test_tool", async {
                 sleep(Duration::from_millis(100)).await;
-                Ok::<String, ServerError>("success".to_string())
+                Ok::<String, McpError>("success".to_string())
             })
             .await;
 
@@ -587,7 +588,7 @@ mod tests {
         let result = manager
             .execute_with_timeout("fast_tool", async {
                 sleep(Duration::from_secs(2)).await; // Sleep longer than timeout
-                Ok::<String, ServerError>("should_not_reach".to_string())
+                Ok::<String, McpError>("should_not_reach".to_string())
             })
             .await;
 
@@ -628,7 +629,7 @@ mod tests {
 
         let result = manager
             .execute_with_timeout("test_tool", async {
-                Err::<String, ServerError>(ServerError::handler("custom error"))
+                Err::<String, McpError>(McpError::handler("custom error"))
             })
             .await;
 
@@ -650,7 +651,7 @@ mod tests {
             let _ = manager_clone
                 .execute_with_timeout("long_running", async {
                     sleep(Duration::from_millis(100)).await;
-                    Ok::<String, ServerError>("done".to_string())
+                    Ok::<String, McpError>("done".to_string())
                 })
                 .await;
         });

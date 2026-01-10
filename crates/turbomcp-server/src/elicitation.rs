@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use turbomcp_protocol::types::{ElicitRequest, ElicitResult, ElicitationAction};
 
-use crate::ServerError;
+use crate::McpError;
 use turbomcp_protocol::Shareable;
 
 /// Global elicitation coordinator for a server instance.
@@ -312,7 +312,7 @@ impl ElicitationCoordinator {
         &self,
         request: ElicitRequest,
         tool_name: Option<String>,
-    ) -> Result<ElicitResult, ServerError> {
+    ) -> Result<ElicitResult, McpError> {
         self.send_with_options(request, tool_name, None, 0, 3).await
     }
 
@@ -324,7 +324,7 @@ impl ElicitationCoordinator {
         timeout: Option<Duration>,
         retry_count: u32,
         max_retries: u32,
-    ) -> Result<ElicitResult, ServerError> {
+    ) -> Result<ElicitResult, McpError> {
         let request_id = Uuid::new_v4().to_string();
         let timeout = timeout.unwrap_or(self.default_timeout);
 
@@ -359,7 +359,7 @@ impl ElicitationCoordinator {
 
             if let Err(e) = self.request_sender.lock().await.send(outgoing) {
                 self.pending.write().await.remove(&request_id);
-                return Err(ServerError::Internal(format!(
+                return Err(McpError::internal(format!(
                     "Failed to send elicitation: {}",
                     e
                 )));
@@ -371,7 +371,7 @@ impl ElicitationCoordinator {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => {
                 self.pending.write().await.remove(&request_id);
-                Err(ServerError::Internal(
+                Err(McpError::internal(
                     "Elicitation response channel closed".to_string(),
                 ))
             }
@@ -398,10 +398,10 @@ impl ElicitationCoordinator {
                     .await
                 } else {
                     self.pending.write().await.remove(&request_id);
-                    Err(ServerError::Timeout {
-                        operation: "Elicitation request".to_string(),
-                        timeout_ms: timeout.as_millis() as u64,
-                    })
+                    Err(McpError::timeout(format!(
+                        "Elicitation request timed out after {}ms",
+                        timeout.as_millis()
+                    )))
                 }
             }
         }
@@ -616,7 +616,7 @@ impl std::fmt::Debug for ElicitationCoordinator {
 /// #[async_trait::async_trait]
 /// impl ElicitationTransport for MyTransport {
 ///     async fn send_elicitation(&self, request: OutgoingElicitation)
-///         -> Result<(), ServerError> {
+///         -> Result<(), McpError> {
 ///         // Send to client and wait for response
 ///         // Client responds with matching request_id
 ///         // Call coordinator.submit_response(response)
@@ -635,7 +635,7 @@ impl std::fmt::Debug for ElicitationCoordinator {
 #[async_trait::async_trait]
 pub trait ElicitationTransport: Send + Sync {
     /// Send an elicitation request to the client
-    async fn send_elicitation(&self, request: OutgoingElicitation) -> Result<(), ServerError>;
+    async fn send_elicitation(&self, request: OutgoingElicitation) -> Result<(), McpError>;
 
     /// Check if this transport supports elicitation
     fn supports_elicitation(&self) -> bool;
@@ -762,7 +762,7 @@ impl SharedElicitationCoordinator {
         &self,
         request: ElicitRequest,
         tool_name: Option<String>,
-    ) -> Result<ElicitResult, ServerError> {
+    ) -> Result<ElicitResult, McpError> {
         self.inner.send_elicitation(request, tool_name).await
     }
 
@@ -776,7 +776,7 @@ impl SharedElicitationCoordinator {
         timeout: Option<Duration>,
         retry_count: u32,
         max_retries: u32,
-    ) -> Result<ElicitResult, ServerError> {
+    ) -> Result<ElicitResult, McpError> {
         self.inner
             .send_with_options(request, tool_name, timeout, retry_count, max_retries)
             .await
@@ -874,7 +874,8 @@ mod tests {
 
         // Should timeout since no response is provided
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ServerError::Timeout { .. }));
+        let err = result.unwrap_err();
+        assert!(matches!(err.kind, crate::error::ErrorKind::Timeout));
     }
 
     #[tokio::test]

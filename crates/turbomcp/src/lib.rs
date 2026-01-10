@@ -544,7 +544,7 @@ pub use turbomcp_protocol::types::{
     ToolInputSchema,
 };
 pub use turbomcp_server::{
-    McpServer, McpServer as Server, ProtocolVersionConfig, ServerBuilder, ServerError,
+    McpServer, McpServer as Server, ProtocolVersionConfig, ServerBuilder, ServerErrorExt,
     ServerResult, ShutdownHandle, handlers,
 };
 
@@ -718,8 +718,9 @@ pub mod prelude {
     pub use super::{
         CallToolRequest, CallToolResult, Context, ElicitationManager, HandlerMetadata,
         HandlerRegistration, McpError, McpErrorExt, McpResult, McpServer, RequestContext, Server,
-        ServerBuilder, ServerError, Transport, TransportConfig, TransportFactory, TurboMcpServer,
-        error_text, handlers, prompt_result, resource_result, text, tool_error, tool_success,
+        ServerBuilder, ServerErrorExt, ServerResult, Transport, TransportConfig, TransportFactory,
+        TurboMcpServer, error_text, handlers, prompt_result, resource_result, text, tool_error,
+        tool_success,
     };
 
     // Auth types (feature-gated)
@@ -862,7 +863,7 @@ pub type McpResult<T> = Result<T, McpError>;
 pub enum McpError {
     /// Server error
     #[error("Server error: {0}")]
-    Server(#[from] turbomcp_server::ServerError),
+    Server(turbomcp_protocol::McpError),
 
     /// Protocol error  
     #[error("Protocol error: {0}")]
@@ -967,10 +968,8 @@ impl From<turbomcp_transport::core::TransportError> for McpError {
 
 impl From<Box<turbomcp_protocol::Error>> for McpError {
     fn from(core_error: Box<turbomcp_protocol::Error>) -> Self {
-        // Preserve protocol error codes by wrapping as Protocol variant
-        // Don't use .into() which would lose error code context through
-        // From<Box<Error>> for ServerError conversion
-        Self::Server(turbomcp_server::ServerError::Protocol(core_error))
+        // Convert protocol Error to McpError
+        Self::Protocol(core_error.to_string())
     }
 }
 
@@ -1027,9 +1026,8 @@ impl Clone for McpError {
     fn clone(&self) -> Self {
         match self {
             Self::Server(e) => {
-                // Convert the server error to string to avoid any complex cloning issues
-                let error_msg = format!("{e}");
-                Self::Server(turbomcp_server::ServerError::Internal(error_msg))
+                // Clone the McpError directly since it implements Clone
+                Self::Server(e.clone())
             }
             Self::Protocol(s) => Self::Protocol(s.clone()),
             Self::Tool(s) => Self::Tool(s.clone()),

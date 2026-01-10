@@ -10,7 +10,7 @@ use turbomcp_protocol::{
 };
 
 use super::HandlerContext;
-use crate::ServerError;
+use crate::McpError;
 use crate::routing::utils::{error_response, parse_params, success_response};
 
 /// Handle list resources request
@@ -42,7 +42,7 @@ pub async fn handle_read(
                     Err(e) => error_response(&request, e),
                 }
             } else {
-                let error = ServerError::not_found(format!("Resource '{}'", read_request.uri));
+                let error = McpError::not_found(format!("Resource '{}'", read_request.uri));
                 error_response(&request, error)
             }
         }

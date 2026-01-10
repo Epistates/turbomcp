@@ -20,7 +20,7 @@ use turbomcp_protocol::jsonrpc::{
 };
 
 use crate::{
-    ServerError, metrics::ServerMetrics, registry::HandlerRegistry, routing::RequestRouter,
+    McpError, metrics::ServerMetrics, registry::HandlerRegistry, routing::RequestRouter,
 };
 
 /// Core MCP service that handles JSON-RPC requests
@@ -119,7 +119,7 @@ impl McpService {
 
 impl Service<Request<Bytes>> for McpService {
     type Response = Response<Bytes>;
-    type Error = ServerError;
+    type Error = McpError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -241,8 +241,8 @@ pub type WrappedMcpService = Box<
     dyn Service<
             Request<Bytes>,
             Response = Response<Bytes>,
-            Error = ServerError,
-            Future = Pin<Box<dyn Future<Output = Result<Response<Bytes>, ServerError>> + Send>>,
+            Error = McpError,
+            Future = Pin<Box<dyn Future<Output = Result<Response<Bytes>, McpError>> + Send>>,
         > + Send
         + Sync,
 >;

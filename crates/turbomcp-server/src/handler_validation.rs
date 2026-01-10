@@ -128,18 +128,18 @@ const MAX_HANDLER_NAME_LENGTH: usize = 128;
 /// - Name is a reserved system name
 #[cfg(feature = "security")]
 pub fn validate_handler_name(name: &str) -> ServerResult<()> {
-    use crate::ServerError;
+    use crate::McpError;
 
     // Check for empty names
     if name.is_empty() {
-        return Err(ServerError::handler(
+        return Err(McpError::handler(
             "Handler name cannot be empty".to_string(),
         ));
     }
 
     // Check length limits (prevent DoS)
     if name.len() > MAX_HANDLER_NAME_LENGTH {
-        return Err(ServerError::handler(format!(
+        return Err(McpError::handler(format!(
             "Handler name '{}...' exceeds maximum length of {} characters",
             &name[..50.min(name.len())],
             MAX_HANDLER_NAME_LENGTH
@@ -150,7 +150,7 @@ pub fn validate_handler_name(name: &str) -> ServerResult<()> {
     // This prevents injection attacks by ensuring the name only contains
     // valid identifier characters (alphanumeric + underscore, starting with letter/_)
     syn::parse_str::<syn::Ident>(name).map_err(|e| {
-        ServerError::handler(format!(
+        McpError::handler(format!(
             "Invalid handler name '{}': {}\n\
              \n\
              Handler names must be valid Rust identifiers:\n\
@@ -166,7 +166,7 @@ pub fn validate_handler_name(name: &str) -> ServerResult<()> {
 
     // Check against reserved system names
     if RESERVED_HANDLER_NAMES.contains(&name) {
-        return Err(ServerError::handler(format!(
+        return Err(McpError::handler(format!(
             "Handler name '{}' is reserved for system use.\n\
              \n\
              Reserved names: {:?}\n\
@@ -185,10 +185,10 @@ pub fn validate_handler_name(name: &str) -> ServerResult<()> {
 /// (empty check only) to maintain API compatibility while keeping the binary small.
 #[cfg(not(feature = "security"))]
 pub fn validate_handler_name(name: &str) -> ServerResult<()> {
-    use crate::ServerError;
+    use crate::McpError;
 
     if name.is_empty() {
-        return Err(ServerError::handler(
+        return Err(McpError::handler(
             "Handler name cannot be empty".to_string(),
         ));
     }

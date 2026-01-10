@@ -59,7 +59,7 @@ use turbomcp_protocol::types::{
 use turbomcp_transport::streamable_http::{PendingRequestsMap, Session, SessionsMap, StoredEvent};
 
 use crate::routing::ServerRequestDispatcher;
-use crate::{MessageId, ServerError, ServerResult};
+use crate::{McpError, MessageId, ServerResult};
 
 /// HTTP dispatcher for server-initiated requests
 ///
@@ -179,20 +179,17 @@ impl HttpDispatcher {
         {
             let mut sessions = self.sessions.write().await;
             if let Some(session) = sessions.get_mut(&self.session_id) {
-                let request_value =
-                    serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                        message: format!("Failed to serialize request: {}", e),
-                        context: Some("http_dispatcher".to_string()),
-                    })?;
+                let request_value = serde_json::to_value(&request).map_err(|e| {
+                    McpError::internal(format!("Failed to serialize request: {}", e))
+                        .with_operation("http_dispatcher")
+                })?;
 
                 let event = StoredEvent {
                     id: Uuid::new_v4().to_string(),
                     event_type: "message".to_string(),
                     data: serde_json::to_string(&request_value).map_err(|e| {
-                        ServerError::Handler {
-                            message: format!("Failed to serialize event: {}", e),
-                            context: Some("http_dispatcher".to_string()),
-                        }
+                        McpError::internal(format!("Failed to serialize event: {}", e))
+                            .with_operation("http_dispatcher")
                     })?,
                 };
 
@@ -200,10 +197,11 @@ impl HttpDispatcher {
             } else {
                 // Session not found - clean up pending request
                 self.pending_requests.lock().await.remove(&request_id);
-                return Err(ServerError::Handler {
-                    message: format!("Session not found: {}", self.session_id),
-                    context: Some("http_dispatcher".to_string()),
-                });
+                return Err(McpError::internal(format!(
+                    "Session not found: {}",
+                    self.session_id
+                ))
+                .with_operation("http_dispatcher"));
             }
         }
 
@@ -213,18 +211,14 @@ impl HttpDispatcher {
             Ok(Err(_)) => {
                 // Channel closed without response
                 self.pending_requests.lock().await.remove(&request_id);
-                Err(ServerError::Handler {
-                    message: "Response channel closed".to_string(),
-                    context: Some("http_dispatcher".to_string()),
-                })
+                Err(McpError::internal("Response channel closed")
+                    .with_operation("http_dispatcher"))
             }
             Err(_) => {
                 // Timeout
                 self.pending_requests.lock().await.remove(&request_id);
-                Err(ServerError::Handler {
-                    message: "Request timeout (60s)".to_string(),
-                    context: Some("http_dispatcher".to_string()),
-                })
+                Err(McpError::timeout("Request timeout (60s)")
+                    .with_operation("http_dispatcher"))
             }
         }
     }
@@ -245,12 +239,10 @@ impl ServerRequestDispatcher for HttpDispatcher {
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "elicitation/create".to_string(),
-            params: Some(
-                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to serialize elicitation request: {}", e),
-                    context: Some("MCP 2025-11-25 compliance".to_string()),
-                })?,
-            ),
+            params: Some(serde_json::to_value(&request).map_err(|e| {
+                McpError::internal(format!("Failed to serialize elicitation request: {}", e))
+                    .with_operation("MCP 2025-11-25 compliance")
+            })?),
             id: Self::generate_request_id(),
         };
 
@@ -258,14 +250,13 @@ impl ServerRequestDispatcher for HttpDispatcher {
 
         match response.payload {
             JsonRpcResponsePayload::Success { result } => {
-                serde_json::from_value(result).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to deserialize elicitation result: {}", e),
-                    context: Some("MCP 2025-11-25 compliance".to_string()),
+                serde_json::from_value(result).map_err(|e| {
+                    McpError::internal(format!("Failed to deserialize elicitation result: {}", e))
+                        .with_operation("MCP 2025-11-25 compliance")
                 })
             }
             JsonRpcResponsePayload::Error { error } => {
-                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(Box::new(protocol_err)))
+                Err(McpError::rpc(error.code, &error.message))
             }
         }
     }
@@ -289,10 +280,7 @@ impl ServerRequestDispatcher for HttpDispatcher {
                 _meta: None,
                 data: None,
             }),
-            JsonRpcResponsePayload::Error { error } => {
-                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(Box::new(protocol_err)))
-            }
+            JsonRpcResponsePayload::Error { error } => Err(McpError::rpc(error.code, &error.message)),
         }
     }
 
@@ -304,12 +292,10 @@ impl ServerRequestDispatcher for HttpDispatcher {
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "sampling/createMessage".to_string(),
-            params: Some(
-                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to serialize sampling request: {}", e),
-                    context: Some("MCP 2025-11-25 compliance".to_string()),
-                })?,
-            ),
+            params: Some(serde_json::to_value(&request).map_err(|e| {
+                McpError::internal(format!("Failed to serialize sampling request: {}", e))
+                    .with_operation("MCP 2025-11-25 compliance")
+            })?),
             id: Self::generate_request_id(),
         };
 
@@ -317,15 +303,12 @@ impl ServerRequestDispatcher for HttpDispatcher {
 
         match response.payload {
             JsonRpcResponsePayload::Success { result } => {
-                serde_json::from_value(result).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to deserialize sampling result: {}", e),
-                    context: Some("MCP 2025-11-25 compliance".to_string()),
+                serde_json::from_value(result).map_err(|e| {
+                    McpError::internal(format!("Failed to deserialize sampling result: {}", e))
+                        .with_operation("MCP 2025-11-25 compliance")
                 })
             }
-            JsonRpcResponsePayload::Error { error } => {
-                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(Box::new(protocol_err)))
-            }
+            JsonRpcResponsePayload::Error { error } => Err(McpError::rpc(error.code, &error.message)),
         }
     }
 
@@ -345,15 +328,12 @@ impl ServerRequestDispatcher for HttpDispatcher {
 
         match response.payload {
             JsonRpcResponsePayload::Success { result } => {
-                serde_json::from_value(result).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to deserialize roots result: {}", e),
-                    context: Some("MCP 2025-11-25 compliance".to_string()),
+                serde_json::from_value(result).map_err(|e| {
+                    McpError::internal(format!("Failed to deserialize roots result: {}", e))
+                        .with_operation("MCP 2025-11-25 compliance")
                 })
             }
-            JsonRpcResponsePayload::Error { error } => {
-                let protocol_err = turbomcp_protocol::Error::rpc(error.code, &error.message);
-                Err(ServerError::Protocol(Box::new(protocol_err)))
-            }
+            JsonRpcResponsePayload::Error { error } => Err(McpError::rpc(error.code, &error.message)),
         }
     }
 

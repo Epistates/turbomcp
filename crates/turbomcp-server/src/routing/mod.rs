@@ -39,7 +39,7 @@ use turbomcp_protocol::{
 use crate::capabilities::ServerToClientAdapter;
 use crate::metrics::ServerMetrics;
 use crate::registry::HandlerRegistry;
-use crate::{ServerError, ServerResult};
+use crate::{McpError, ServerErrorExt, ServerResult};
 
 use handlers::{HandlerContext, ProtocolHandlers};
 use turbomcp_protocol::context::capabilities::ServerToClientRequests;
@@ -215,10 +215,10 @@ impl RequestRouter {
 
         for method in &metadata.methods {
             if self.custom_routes.contains_key(method) {
-                return Err(ServerError::routing_with_method(
-                    format!("Route for method '{method}' already exists"),
-                    method.clone(),
-                ));
+                return Err(McpError::routing(format!(
+                    "Route for method '{method}' already exists"
+                ))
+                .with_operation(method.clone()));
             }
             self.custom_routes
                 .insert(method.clone(), Arc::clone(&handler_arc));

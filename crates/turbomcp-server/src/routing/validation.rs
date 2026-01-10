@@ -2,7 +2,7 @@
 
 use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
 
-use crate::{ServerError, ServerResult};
+use crate::{McpError, ServerErrorExt, ServerResult};
 
 /// Validate JSON-RPC request using protocol validator
 pub fn validate_request(request: &JsonRpcRequest) -> ServerResult<()> {
@@ -24,10 +24,8 @@ pub fn validate_request(request: &JsonRpcRequest) -> ServerResult<()> {
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
-            Err(ServerError::routing_with_method(
-                format!("Request validation failed: {msg}"),
-                request.method.clone(),
-            ))
+            Err(McpError::routing(format!("Request validation failed: {msg}"))
+                .with_operation(request.method.clone()))
         }
         _ => Ok(()),
     }
@@ -52,7 +50,7 @@ pub fn validate_response(response: &JsonRpcResponse) -> ServerResult<()> {
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
-            Err(ServerError::routing(format!(
+            Err(McpError::routing(format!(
                 "Response validation failed: {msg}"
             )))
         }

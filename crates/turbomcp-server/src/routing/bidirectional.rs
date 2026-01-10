@@ -5,7 +5,7 @@ use turbomcp_protocol::types::{
     CreateMessageRequest, ElicitRequest, ElicitResult, ListRootsResult, PingRequest, PingResult,
 };
 
-use crate::{ServerError, ServerResult};
+use crate::{McpError, ServerResult};
 
 use super::traits::ServerRequestDispatcher;
 
@@ -55,11 +55,10 @@ impl BidirectionalRouter {
         if let Some(dispatcher) = &self.dispatcher {
             dispatcher.send_elicitation(request, ctx).await
         } else {
-            Err(ServerError::Handler {
-                message: "Server request dispatcher not configured for bidirectional communication"
-                    .to_string(),
-                context: Some("elicitation".to_string()),
-            })
+            Err(McpError::internal(
+                "Server request dispatcher not configured for bidirectional communication",
+            )
+            .with_operation("elicitation"))
         }
     }
 
@@ -72,11 +71,10 @@ impl BidirectionalRouter {
         if let Some(dispatcher) = &self.dispatcher {
             dispatcher.send_ping(request, ctx).await
         } else {
-            Err(ServerError::Handler {
-                message: "Server request dispatcher not configured for bidirectional communication"
-                    .to_string(),
-                context: Some("ping".to_string()),
-            })
+            Err(McpError::internal(
+                "Server request dispatcher not configured for bidirectional communication",
+            )
+            .with_operation("ping"))
         }
     }
 
@@ -89,11 +87,10 @@ impl BidirectionalRouter {
         if let Some(dispatcher) = &self.dispatcher {
             dispatcher.send_create_message(request, ctx).await
         } else {
-            Err(ServerError::Handler {
-                message: "Server request dispatcher not configured for bidirectional communication"
-                    .to_string(),
-                context: Some("create_message".to_string()),
-            })
+            Err(McpError::internal(
+                "Server request dispatcher not configured for bidirectional communication",
+            )
+            .with_operation("create_message"))
         }
     }
 
@@ -106,11 +103,10 @@ impl BidirectionalRouter {
         if let Some(dispatcher) = &self.dispatcher {
             dispatcher.send_list_roots(request, ctx).await
         } else {
-            Err(ServerError::Handler {
-                message: "Server request dispatcher not configured for bidirectional communication"
-                    .to_string(),
-                context: Some("list_roots".to_string()),
-            })
+            Err(McpError::internal(
+                "Server request dispatcher not configured for bidirectional communication",
+            )
+            .with_operation("list_roots"))
         }
     }
 }

@@ -64,7 +64,7 @@ use turbomcp_protocol::types::{Prompt, Resource, Root, Tool};
 use crate::handlers::{
     HandlerMetadata, LoggingHandler, PromptHandler, ResourceHandler, SamplingHandler, ToolHandler,
 };
-use crate::{ServerError, ServerResult};
+use crate::{McpError, ServerResult};
 
 /// Handler registry for managing all server handlers
 pub struct HandlerRegistry {
@@ -231,7 +231,7 @@ impl HandlerRegistry {
 
         // Check limits
         if self.tools.len() >= self.config.read().max_handlers_per_type {
-            return Err(ServerError::handler(format!(
+            return Err(McpError::handler(format!(
                 "Maximum number of tool handlers ({}) exceeded",
                 self.config.read().max_handlers_per_type
             )));
@@ -282,7 +282,7 @@ impl HandlerRegistry {
 
         // Check limits
         if self.prompts.len() >= self.config.read().max_handlers_per_type {
-            return Err(ServerError::handler(format!(
+            return Err(McpError::handler(format!(
                 "Maximum number of prompt handlers ({}) exceeded",
                 self.config.read().max_handlers_per_type
             )));
@@ -334,7 +334,7 @@ impl HandlerRegistry {
 
         // Check limits
         if self.resources.len() >= self.config.read().max_handlers_per_type {
-            return Err(ServerError::handler(format!(
+            return Err(McpError::handler(format!(
                 "Maximum number of resource handlers ({}) exceeded",
                 self.config.read().max_handlers_per_type
             )));
@@ -382,7 +382,7 @@ impl HandlerRegistry {
 
         // Check limits
         if self.sampling.len() >= self.config.read().max_handlers_per_type {
-            return Err(ServerError::handler(format!(
+            return Err(McpError::handler(format!(
                 "Maximum number of sampling handlers ({}) exceeded",
                 self.config.read().max_handlers_per_type
             )));
@@ -424,7 +424,7 @@ impl HandlerRegistry {
 
         // Check limits
         if self.logging.len() >= self.config.read().max_handlers_per_type {
-            return Err(ServerError::handler(format!(
+            return Err(McpError::handler(format!(
                 "Maximum number of logging handlers ({}) exceeded",
                 self.config.read().max_handlers_per_type
             )));
@@ -657,18 +657,18 @@ impl HandlerRegistry {
         let tool_def = handler.tool_definition();
 
         if tool_def.name.is_empty() {
-            return Err(ServerError::handler("Tool name cannot be empty"));
+            return Err(McpError::handler("Tool name cannot be empty"));
         }
 
         if tool_def.name.len() > 100 {
-            return Err(ServerError::handler(
+            return Err(McpError::handler(
                 "Tool name too long (max 100 characters)",
             ));
         }
 
         // Check for duplicate names
         if self.tools.contains_key(&tool_def.name) {
-            return Err(ServerError::handler(format!(
+            return Err(McpError::handler(format!(
                 "Tool with name '{}' already exists",
                 tool_def.name
             )));
@@ -681,18 +681,18 @@ impl HandlerRegistry {
         let prompt_def = handler.prompt_definition();
 
         if prompt_def.name.is_empty() {
-            return Err(ServerError::handler("Prompt name cannot be empty"));
+            return Err(McpError::handler("Prompt name cannot be empty"));
         }
 
         if prompt_def.name.len() > 100 {
-            return Err(ServerError::handler(
+            return Err(McpError::handler(
                 "Prompt name too long (max 100 characters)",
             ));
         }
 
         // Check for duplicate names
         if self.prompts.contains_key(&prompt_def.name) {
-            return Err(ServerError::handler(format!(
+            return Err(McpError::handler(format!(
                 "Prompt with name '{}' already exists",
                 prompt_def.name
             )));
@@ -705,17 +705,17 @@ impl HandlerRegistry {
         let resource_def = handler.resource_definition();
 
         if resource_def.uri.is_empty() {
-            return Err(ServerError::handler("Resource URI cannot be empty"));
+            return Err(McpError::handler("Resource URI cannot be empty"));
         }
 
         if resource_def.name.is_empty() {
-            return Err(ServerError::handler("Resource name cannot be empty"));
+            return Err(McpError::handler("Resource name cannot be empty"));
         }
 
         // Check for duplicate URIs
         for entry in &self.resources {
             if entry.value().resource_definition().uri == resource_def.uri {
-                return Err(ServerError::handler(format!(
+                return Err(McpError::handler(format!(
                     "Resource with URI '{}' already exists",
                     resource_def.uri
                 )));

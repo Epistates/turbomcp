@@ -38,7 +38,7 @@ use turbomcp_protocol::types::{
 };
 
 use crate::routing::{RequestRouter, ServerRequestDispatcher};
-use crate::{ServerError, ServerResult};
+use crate::{McpError, ServerResult};
 
 type MessageId = turbomcp_protocol::MessageId;
 
@@ -104,25 +104,23 @@ impl StdioDispatcher {
         // Send to stdout writer
         self.request_tx
             .send(StdioMessage::ServerRequest { request })
-            .map_err(|e| ServerError::Handler {
-                message: format!("Failed to send request to stdout: {}", e),
-                context: Some("stdio_dispatcher".to_string()),
+            .map_err(|e| {
+                McpError::internal(format!("Failed to send request to stdout: {}", e))
+                    .with_operation("stdio_dispatcher")
             })?;
 
         // Wait for response with timeout (60 seconds per MCP recommendation)
         match tokio::time::timeout(tokio::time::Duration::from_secs(60), response_rx).await {
             Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(ServerError::Handler {
-                message: "Response channel closed".to_string(),
-                context: Some("stdio_dispatcher".to_string()),
-            }),
+            Ok(Err(_)) => {
+                Err(McpError::internal("Response channel closed")
+                    .with_operation("stdio_dispatcher"))
+            }
             Err(_) => {
                 // Timeout - remove from pending
                 self.pending_requests.lock().await.remove(&request_id);
-                Err(ServerError::Handler {
-                    message: "Request timeout (60s)".to_string(),
-                    context: Some("stdio_dispatcher".to_string()),
-                })
+                Err(McpError::timeout("Request timeout (60s)")
+                    .with_operation("stdio_dispatcher"))
             }
         }
     }
@@ -144,9 +142,9 @@ impl ServerRequestDispatcher for StdioDispatcher {
             jsonrpc: JsonRpcVersion,
             method: "elicitation/create".to_string(),
             params: Some(
-                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to serialize elicitation request: {}", e),
-                    context: Some("MCP compliance".to_string()),
+                serde_json::to_value(&request).map_err(|e| {
+                    McpError::internal(format!("Failed to serialize elicitation request: {}", e))
+                        .with_operation("MCP compliance")
                 })?,
             ),
             id: Self::generate_request_id(),
@@ -155,20 +153,20 @@ impl ServerRequestDispatcher for StdioDispatcher {
         let response = self.send_request(json_rpc_request).await?;
 
         if let Some(result) = response.result() {
-            serde_json::from_value(result.clone()).map_err(|e| ServerError::Handler {
-                message: format!("Invalid elicitation response format: {}", e),
-                context: Some("MCP compliance".to_string()),
+            serde_json::from_value(result.clone()).map_err(|e| {
+                McpError::internal(format!("Invalid elicitation response format: {}", e))
+                    .with_operation("MCP compliance")
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(Box::new(
-                turbomcp_protocol::Error::rpc(error.code, &error.message),
-            )))
+            Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
-            Err(ServerError::Handler {
-                message: "Invalid elicitation response: missing result and error".to_string(),
-                context: Some("MCP compliance".to_string()),
-            })
+            Err(
+                McpError::internal(
+                    "Invalid elicitation response: missing result and error",
+                )
+                .with_operation("MCP compliance"),
+            )
         }
     }
 
@@ -193,14 +191,12 @@ impl ServerRequestDispatcher for StdioDispatcher {
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(Box::new(
-                turbomcp_protocol::Error::rpc(error.code, &error.message),
-            )))
+            Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
-            Err(ServerError::Handler {
-                message: "Invalid ping response".to_string(),
-                context: Some("MCP compliance".to_string()),
-            })
+            Err(
+                McpError::internal("Invalid ping response")
+                    .with_operation("MCP compliance"),
+            )
         }
     }
 
@@ -213,9 +209,9 @@ impl ServerRequestDispatcher for StdioDispatcher {
             jsonrpc: JsonRpcVersion,
             method: "sampling/createMessage".to_string(),
             params: Some(
-                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to serialize sampling request: {}", e),
-                    context: Some("MCP compliance".to_string()),
+                serde_json::to_value(&request).map_err(|e| {
+                    McpError::internal(format!("Failed to serialize sampling request: {}", e))
+                        .with_operation("MCP compliance")
                 })?,
             ),
             id: Self::generate_request_id(),
@@ -224,20 +220,18 @@ impl ServerRequestDispatcher for StdioDispatcher {
         let response = self.send_request(json_rpc_request).await?;
 
         if let Some(result) = response.result() {
-            serde_json::from_value(result.clone()).map_err(|e| ServerError::Handler {
-                message: format!("Invalid sampling response format: {}", e),
-                context: Some("MCP compliance".to_string()),
+            serde_json::from_value(result.clone()).map_err(|e| {
+                McpError::internal(format!("Invalid sampling response format: {}", e))
+                    .with_operation("MCP compliance")
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(Box::new(
-                turbomcp_protocol::Error::rpc(error.code, &error.message),
-            )))
+            Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
-            Err(ServerError::Handler {
-                message: "Invalid sampling response: missing result and error".to_string(),
-                context: Some("MCP compliance".to_string()),
-            })
+            Err(
+                McpError::internal("Invalid sampling response: missing result and error")
+                    .with_operation("MCP compliance"),
+            )
         }
     }
 
@@ -256,20 +250,18 @@ impl ServerRequestDispatcher for StdioDispatcher {
         let response = self.send_request(json_rpc_request).await?;
 
         if let Some(result) = response.result() {
-            serde_json::from_value(result.clone()).map_err(|e| ServerError::Handler {
-                message: format!("Invalid roots response format: {}", e),
-                context: Some("MCP compliance".to_string()),
+            serde_json::from_value(result.clone()).map_err(|e| {
+                McpError::internal(format!("Invalid roots response format: {}", e))
+                    .with_operation("MCP compliance")
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(Box::new(
-                turbomcp_protocol::Error::rpc(error.code, &error.message),
-            )))
+            Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
-            Err(ServerError::Handler {
-                message: "Invalid roots response: missing result and error".to_string(),
-                context: Some("MCP compliance".to_string()),
-            })
+            Err(
+                McpError::internal("Invalid roots response: missing result and error")
+                    .with_operation("MCP compliance"),
+            )
         }
     }
 
@@ -513,9 +505,9 @@ where
             .insert(request_id.clone(), response_tx);
 
         // Serialize request to JSON
-        let json = serde_json::to_vec(&request).map_err(|e| ServerError::Handler {
-            message: format!("Failed to serialize request: {}", e),
-            context: Some("transport_dispatcher".to_string()),
+        let json = serde_json::to_vec(&request).map_err(|e| {
+            McpError::internal(format!("Failed to serialize request: {}", e))
+                .with_operation("transport_dispatcher")
         })?;
 
         // Send via transport
@@ -528,25 +520,23 @@ where
         self.transport
             .send(transport_msg)
             .await
-            .map_err(|e| ServerError::Handler {
-                message: format!("Failed to send request via transport: {}", e),
-                context: Some("transport_dispatcher".to_string()),
+            .map_err(|e| {
+                McpError::internal(format!("Failed to send request via transport: {}", e))
+                    .with_operation("transport_dispatcher")
             })?;
 
         // Wait for response with timeout (60 seconds per MCP recommendation)
         match tokio::time::timeout(tokio::time::Duration::from_secs(60), response_rx).await {
             Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(ServerError::Handler {
-                message: "Response channel closed".to_string(),
-                context: Some("transport_dispatcher".to_string()),
-            }),
+            Ok(Err(_)) => {
+                Err(McpError::internal("Response channel closed")
+                    .with_operation("transport_dispatcher"))
+            }
             Err(_) => {
                 // Timeout - remove from pending
                 self.pending_requests.lock().await.remove(&request_id);
-                Err(ServerError::Handler {
-                    message: "Request timeout (60s)".to_string(),
-                    context: Some("transport_dispatcher".to_string()),
-                })
+                Err(McpError::timeout("Request timeout (60s)")
+                    .with_operation("transport_dispatcher"))
             }
         }
     }
@@ -583,9 +573,9 @@ where
             jsonrpc: JsonRpcVersion,
             method: "elicitation/create".to_string(),
             params: Some(
-                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to serialize elicitation request: {}", e),
-                    context: Some("MCP compliance".to_string()),
+                serde_json::to_value(&request).map_err(|e| {
+                    McpError::internal(format!("Failed to serialize elicitation request: {}", e))
+                        .with_operation("MCP compliance")
                 })?,
             ),
             id: Self::generate_request_id(),
@@ -594,20 +584,20 @@ where
         let response = self.send_request(json_rpc_request).await?;
 
         if let Some(result) = response.result() {
-            serde_json::from_value(result.clone()).map_err(|e| ServerError::Handler {
-                message: format!("Invalid elicitation response format: {}", e),
-                context: Some("MCP compliance".to_string()),
+            serde_json::from_value(result.clone()).map_err(|e| {
+                McpError::internal(format!("Invalid elicitation response format: {}", e))
+                    .with_operation("MCP compliance")
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(Box::new(
-                turbomcp_protocol::Error::rpc(error.code, &error.message),
-            )))
+            Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
-            Err(ServerError::Handler {
-                message: "Invalid elicitation response: missing result and error".to_string(),
-                context: Some("MCP compliance".to_string()),
-            })
+            Err(
+                McpError::internal(
+                    "Invalid elicitation response: missing result and error",
+                )
+                .with_operation("MCP compliance"),
+            )
         }
     }
 
@@ -632,14 +622,12 @@ where
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(Box::new(
-                turbomcp_protocol::Error::rpc(error.code, &error.message),
-            )))
+            Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
-            Err(ServerError::Handler {
-                message: "Invalid ping response".to_string(),
-                context: Some("MCP compliance".to_string()),
-            })
+            Err(
+                McpError::internal("Invalid ping response")
+                    .with_operation("MCP compliance"),
+            )
         }
     }
 
@@ -652,9 +640,9 @@ where
             jsonrpc: JsonRpcVersion,
             method: "sampling/createMessage".to_string(),
             params: Some(
-                serde_json::to_value(&request).map_err(|e| ServerError::Handler {
-                    message: format!("Failed to serialize sampling request: {}", e),
-                    context: Some("MCP compliance".to_string()),
+                serde_json::to_value(&request).map_err(|e| {
+                    McpError::internal(format!("Failed to serialize sampling request: {}", e))
+                        .with_operation("MCP compliance")
                 })?,
             ),
             id: Self::generate_request_id(),
@@ -663,20 +651,18 @@ where
         let response = self.send_request(json_rpc_request).await?;
 
         if let Some(result) = response.result() {
-            serde_json::from_value(result.clone()).map_err(|e| ServerError::Handler {
-                message: format!("Invalid sampling response format: {}", e),
-                context: Some("MCP compliance".to_string()),
+            serde_json::from_value(result.clone()).map_err(|e| {
+                McpError::internal(format!("Invalid sampling response format: {}", e))
+                    .with_operation("MCP compliance")
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(Box::new(
-                turbomcp_protocol::Error::rpc(error.code, &error.message),
-            )))
+            Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
-            Err(ServerError::Handler {
-                message: "Invalid sampling response: missing result and error".to_string(),
-                context: Some("MCP compliance".to_string()),
-            })
+            Err(
+                McpError::internal("Invalid sampling response: missing result and error")
+                    .with_operation("MCP compliance"),
+            )
         }
     }
 
@@ -695,20 +681,18 @@ where
         let response = self.send_request(json_rpc_request).await?;
 
         if let Some(result) = response.result() {
-            serde_json::from_value(result.clone()).map_err(|e| ServerError::Handler {
-                message: format!("Invalid roots response format: {}", e),
-                context: Some("MCP compliance".to_string()),
+            serde_json::from_value(result.clone()).map_err(|e| {
+                McpError::internal(format!("Invalid roots response format: {}", e))
+                    .with_operation("MCP compliance")
             })
         } else if let Some(error) = response.error() {
             // Preserve client error code by wrapping as Protocol error
-            Err(ServerError::Protocol(Box::new(
-                turbomcp_protocol::Error::rpc(error.code, &error.message),
-            )))
+            Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
-            Err(ServerError::Handler {
-                message: "Invalid roots response: missing result and error".to_string(),
-                context: Some("MCP compliance".to_string()),
-            })
+            Err(
+                McpError::internal("Invalid roots response: missing result and error")
+                    .with_operation("MCP compliance"),
+            )
         }
     }
 

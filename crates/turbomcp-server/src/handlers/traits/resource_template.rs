@@ -34,10 +34,7 @@ pub trait ResourceTemplateHandler: Send + Sync {
     fn validate_uri_template(&self, uri_template: &str) -> ServerResult<()> {
         // Basic validation - can be overridden for more sophisticated checking
         if uri_template.is_empty() {
-            return Err(crate::ServerError::Handler {
-                message: "URI template cannot be empty".to_string(),
-                context: None,
-            });
+            return Err(crate::McpError::handler("URI template cannot be empty"));
         }
         Ok(())
     }

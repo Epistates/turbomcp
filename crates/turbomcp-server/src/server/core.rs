@@ -162,7 +162,7 @@ pub struct McpServer {
     ///
     /// See `server/transport.rs` for integration with transport layer.
     pub(crate) service:
-        tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::ServerError>,
+        tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::McpError>,
     /// Server lifecycle (Arc-wrapped for cheap cloning)
     pub(crate) lifecycle: Arc<ServerLifecycle>,
     /// Server metrics (Arc-wrapped for cheap cloning)
@@ -211,7 +211,7 @@ impl McpServer {
     fn build_middleware_stack(
         core_service: McpService,
         stack: MiddlewareStack,
-    ) -> tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::ServerError> {
+    ) -> tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::McpError> {
         // COMPREHENSIVE TOWER COMPOSITION - Conditional Layer Stacking
         //
         // This approach builds the middleware stack incrementally, boxing at each step.
@@ -230,7 +230,7 @@ impl McpServer {
         let mut service: tower::util::BoxCloneService<
             Request<Bytes>,
             Response<Bytes>,
-            crate::ServerError,
+            crate::McpError,
         > = tower::util::BoxCloneService::new(core_service);
 
         // Authorization layer removed in 2.0.0 - handle at application layer
@@ -427,7 +427,7 @@ impl McpServer {
     #[doc(hidden)]
     pub fn service(
         &self,
-    ) -> tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::ServerError> {
+    ) -> tower::util::BoxCloneService<Request<Bytes>, Response<Bytes>, crate::McpError> {
         self.service.clone()
     }
 
@@ -510,7 +510,7 @@ impl McpServer {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ServerError::Transport`] if:
+    /// Returns [`crate::McpError`] (with transport kind) if:
     /// - STDIO transport connection fails
     /// - Message sending/receiving fails
     /// - Transport disconnection fails
@@ -551,9 +551,9 @@ impl McpServer {
         // - Server→Client requests (sampling, elicitation, roots, ping)
         crate::runtime::run_stdio_bidirectional(self.router.clone(), dispatcher, request_rx)
             .await
-            .map_err(|e| crate::ServerError::Handler {
-                message: format!("STDIO bidirectional runtime failed: {}", e),
-                context: Some("run_stdio".to_string()),
+            .map_err(|e| {
+                crate::McpError::internal(format!("STDIO bidirectional runtime failed: {}", e))
+                    .with_operation("run_stdio")
             })
     }
 
@@ -616,7 +616,7 @@ impl McpServer {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ServerError::Transport`] if:
+    /// Returns [`crate::McpError`] (with transport kind) if:
     /// - Address resolution fails
     /// - HTTP server fails to start
     /// - Transport disconnection fails
@@ -744,7 +744,7 @@ impl McpServer {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ServerError::Transport`] if:
+    /// Returns [`crate::McpError`] (with transport kind) if:
     /// - Address resolution fails
     /// - HTTP server fails to start
     /// - Transport disconnection fails
@@ -773,9 +773,9 @@ impl McpServer {
         // Resolve address to string
         let socket_addr = addr
             .to_socket_addrs()
-            .map_err(|e| crate::ServerError::configuration(format!("Invalid address: {}", e)))?
+            .map_err(|e| crate::McpError::configuration(format!("Invalid address: {}", e)))?
             .next()
-            .ok_or_else(|| crate::ServerError::configuration("No address resolved"))?;
+            .ok_or_else(|| crate::McpError::configuration("No address resolved"))?;
 
         info!("Resolved address: {}", socket_addr);
 
@@ -890,7 +890,7 @@ impl McpServer {
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "HTTP server failed");
-                crate::ServerError::handler(e.to_string())
+                crate::McpError::handler(e.to_string())
             })?;
 
         info!("HTTP server shutdown complete");
@@ -982,9 +982,9 @@ impl McpServer {
         // Resolve address to string
         let socket_addr = addr
             .to_socket_addrs()
-            .map_err(|e| crate::ServerError::configuration(format!("Invalid address: {}", e)))?
+            .map_err(|e| crate::McpError::configuration(format!("Invalid address: {}", e)))?
             .next()
-            .ok_or_else(|| crate::ServerError::configuration("No address resolved"))?;
+            .ok_or_else(|| crate::McpError::configuration("No address resolved"))?;
 
         info!("Resolved address: {}", socket_addr);
 
@@ -1069,7 +1069,7 @@ impl McpServer {
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "HTTP server with middleware failed");
-            crate::ServerError::handler(e.to_string())
+            crate::McpError::handler(e.to_string())
         })?;
 
         info!("HTTP server shutdown complete");
@@ -1177,9 +1177,9 @@ impl McpServer {
         // Resolve address to string
         let socket_addr = addr
             .to_socket_addrs()
-            .map_err(|e| crate::ServerError::configuration(format!("Invalid address: {}", e)))?
+            .map_err(|e| crate::McpError::configuration(format!("Invalid address: {}", e)))?
             .next()
-            .ok_or_else(|| crate::ServerError::configuration("No address resolved"))?;
+            .ok_or_else(|| crate::McpError::configuration("No address resolved"))?;
 
         info!("Resolved address: {}", socket_addr);
 
@@ -1273,11 +1273,11 @@ impl McpServer {
         // Serve using Axum
         let listener = tokio::net::TcpListener::bind(socket_addr)
             .await
-            .map_err(|e| crate::ServerError::configuration(format!("Failed to bind: {}", e)))?;
+            .map_err(|e| crate::McpError::configuration(format!("Failed to bind: {}", e)))?;
 
         axum::serve(listener, app).await.map_err(|e| {
             tracing::error!(error = %e, "WebSocket server failed");
-            crate::ServerError::handler(e.to_string())
+            crate::McpError::handler(e.to_string())
         })?;
 
         info!("WebSocket server shutdown complete");
@@ -1314,13 +1314,13 @@ impl McpServer {
                 None => {
                     tracing::error!("No socket address resolved from provided address");
                     self.lifecycle.shutdown().await;
-                    return Err(crate::ServerError::configuration("Invalid socket address"));
+                    return Err(crate::McpError::configuration("Invalid socket address"));
                 }
             },
             Err(e) => {
                 tracing::error!(error = %e, "Failed to resolve socket address");
                 self.lifecycle.shutdown().await;
-                return Err(crate::ServerError::configuration(format!(
+                return Err(crate::McpError::configuration(format!(
                     "Address resolution failed: {e}"
                 )));
             }
@@ -1330,7 +1330,7 @@ impl McpServer {
         if let Err(e) = transport.connect().await {
             tracing::error!(error = %e, "Failed to connect TCP transport");
             self.lifecycle.shutdown().await;
-            return Err(e.into());
+            return Err(crate::McpError::transport(e.to_string()));
         }
 
         // BIDIRECTIONAL TCP SETUP
@@ -1348,9 +1348,9 @@ impl McpServer {
         // - Server→Client requests (sampling, elicitation, roots, ping)
         crate::runtime::run_transport_bidirectional(self.router.clone(), dispatcher)
             .await
-            .map_err(|e| crate::ServerError::Handler {
-                message: format!("TCP bidirectional runtime failed: {}", e),
-                context: Some("run_tcp".to_string()),
+            .map_err(|e| {
+                crate::McpError::internal(format!("TCP bidirectional runtime failed: {}", e))
+                    .with_operation("run_tcp")
             })
     }
 
@@ -1377,7 +1377,7 @@ impl McpServer {
         if let Err(e) = transport.connect().await {
             tracing::error!(error = %e, "Failed to connect Unix socket transport");
             self.lifecycle.shutdown().await;
-            return Err(e.into());
+            return Err(crate::McpError::transport(e.to_string()));
         }
 
         // BIDIRECTIONAL UNIX SOCKET SETUP
@@ -1395,9 +1395,9 @@ impl McpServer {
         // - Server→Client requests (sampling, elicitation, roots, ping)
         crate::runtime::run_transport_bidirectional(self.router.clone(), dispatcher)
             .await
-            .map_err(|e| crate::ServerError::Handler {
-                message: format!("Unix socket bidirectional runtime failed: {}", e),
-                context: Some("run_unix".to_string()),
+            .map_err(|e| {
+                crate::McpError::internal(format!("Unix socket bidirectional runtime failed: {}", e))
+                    .with_operation("run_unix")
             })
     }
 

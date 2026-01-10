@@ -3,7 +3,7 @@
 //! This module provides helper functions for tools to make sampling requests
 //! to clients, enabling server-initiated LLM interactions.
 
-use crate::{ServerError, ServerResult};
+use crate::{McpError, ServerResult};
 use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::types::{
     CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsResult,
@@ -33,56 +33,49 @@ impl SamplingExt for RequestContext {
         &self,
         request: CreateMessageRequest,
     ) -> ServerResult<CreateMessageResult> {
-        let capabilities = self
-            .server_to_client()
-            .ok_or_else(|| ServerError::Handler {
-                message: "No server capabilities available for sampling requests".to_string(),
-                context: Some("sampling".to_string()),
-            })?;
+        let capabilities = self.server_to_client().ok_or_else(|| {
+            McpError::internal("No server capabilities available for sampling requests")
+                .with_operation("sampling")
+        })?;
 
         // Fully typed - no serialization needed!
         capabilities
             .create_message(request, self.clone())
             .await
-            .map_err(|e| ServerError::Handler {
-                message: format!("Sampling request failed: {}", e),
-                context: Some("sampling".to_string()),
+            .map_err(|e| {
+                McpError::internal(format!("Sampling request failed: {}", e))
+                    .with_operation("sampling")
             })
     }
 
     async fn elicit(&self, request: ElicitRequest) -> ServerResult<ElicitResult> {
-        let capabilities = self
-            .server_to_client()
-            .ok_or_else(|| ServerError::Handler {
-                message: "No server capabilities available for elicitation requests".to_string(),
-                context: Some("elicitation".to_string()),
-            })?;
+        let capabilities = self.server_to_client().ok_or_else(|| {
+            McpError::internal("No server capabilities available for elicitation requests")
+                .with_operation("elicitation")
+        })?;
 
         // Fully typed - no serialization needed!
         capabilities
             .elicit(request, self.clone())
             .await
-            .map_err(|e| ServerError::Handler {
-                message: format!("Elicitation request failed: {}", e),
-                context: Some("elicitation".to_string()),
+            .map_err(|e| {
+                McpError::internal(format!("Elicitation request failed: {}", e))
+                    .with_operation("elicitation")
             })
     }
 
     async fn list_roots(&self) -> ServerResult<ListRootsResult> {
-        let capabilities = self
-            .server_to_client()
-            .ok_or_else(|| ServerError::Handler {
-                message: "No server capabilities available for roots listing".to_string(),
-                context: Some("roots".to_string()),
-            })?;
+        let capabilities = self.server_to_client().ok_or_else(|| {
+            McpError::internal("No server capabilities available for roots listing")
+                .with_operation("roots")
+        })?;
 
         // Fully typed - no serialization needed!
         capabilities
             .list_roots(self.clone())
             .await
-            .map_err(|e| ServerError::Handler {
-                message: format!("Roots listing failed: {}", e),
-                context: Some("roots".to_string()),
+            .map_err(|e| {
+                McpError::internal(format!("Roots listing failed: {}", e)).with_operation("roots")
             })
     }
 }

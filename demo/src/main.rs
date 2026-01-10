@@ -13,7 +13,7 @@ use turbomcp_server::{handlers::FunctionToolHandler, ServerBuilder};
 async fn hello(
     req: CallToolRequest,
     _ctx: turbomcp_protocol::RequestContext,
-) -> Result<CallToolResult, turbomcp_server::ServerError> {
+) -> Result<CallToolResult, turbomcp_server::McpError> {
     let name = req
         .arguments
         .as_ref()

@@ -2,7 +2,7 @@
 
 use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcResponse};
 
-use crate::{ServerError, ServerResult};
+use crate::{McpError, ServerErrorExt, ServerResult};
 
 /// Parse request parameters from JSON-RPC request
 pub fn parse_params<T>(request: &JsonRpcRequest) -> ServerResult<T>
@@ -11,15 +11,11 @@ where
 {
     match &request.params {
         Some(params) => serde_json::from_value(params.clone()).map_err(|e| {
-            ServerError::routing_with_method(
-                format!("Invalid parameters: {e}"),
-                request.method.clone(),
-            )
+            McpError::routing(format!("Invalid parameters: {e}"))
+                .with_operation(request.method.clone())
         }),
-        None => Err(ServerError::routing_with_method(
-            "Missing required parameters".to_string(),
-            request.method.clone(),
-        )),
+        None => Err(McpError::routing("Missing required parameters".to_string())
+            .with_operation(request.method.clone())),
     }
 }
 
@@ -32,10 +28,10 @@ where
 }
 
 /// Create an error response for JSON-RPC request
-pub fn error_response(request: &JsonRpcRequest, error: ServerError) -> JsonRpcResponse {
+pub fn error_response(request: &JsonRpcRequest, error: McpError) -> JsonRpcResponse {
     JsonRpcResponse::error_response(
         turbomcp_protocol::jsonrpc::JsonRpcError {
-            code: error.error_code(),
+            code: error.jsonrpc_code(),
             message: error.to_string(),
             data: None,
         },

@@ -87,10 +87,8 @@ pub async fn handle(
                 Err(msg) => {
                     return error_response(
                         &request,
-                        crate::ServerError::Handler {
-                            message: msg,
-                            context: Some("protocol_version_negotiation".to_string()),
-                        },
+                        crate::McpError::handler(msg)
+                            .with_operation("protocol_version_negotiation"),
                     );
                 }
             };

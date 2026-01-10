@@ -10,7 +10,7 @@ use turbomcp_protocol::{
 };
 
 use super::HandlerContext;
-use crate::ServerError;
+use crate::McpError;
 use crate::routing::utils::{error_response, parse_params, success_response};
 
 /// Handle list tools request
@@ -124,7 +124,7 @@ pub async fn handle_call(
                     Err(e) => error_response(&request, e),
                 }
             } else {
-                let error = ServerError::not_found(format!("Tool '{tool_name}'"));
+                let error = McpError::not_found(format!("Tool '{tool_name}'"));
                 error_response(&request, error)
             }
         }

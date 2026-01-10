@@ -174,7 +174,7 @@ pub mod timeout;
 
 // Re-export main types for convenience
 pub use config::{Configuration, ConfigurationBuilder, ProtocolVersionConfig, ServerConfig};
-pub use error::{ServerError, ServerResult};
+pub use error::{ErrorRecovery, McpError, McpResult, ServerErrorExt, ServerResult};
 pub use handlers::{
     CompletionHandler, ElicitationHandler, LoggingHandler, PingHandler, PromptHandler,
     ResourceHandler, ResourceTemplateHandler, SamplingHandler, ToolHandler,
@@ -239,9 +239,9 @@ pub fn server() -> ServerBuilder {
 pub mod prelude {
     // Core types (always available)
     pub use crate::{
-        HealthStatus, McpServer, PromptHandler, Registry, RegistryBuilder, RequestRouter,
-        ResourceHandler, Router, SamplingHandler, ServerBuilder, ServerConfig, ServerError,
-        ServerLifecycle, ServerResult, ToolHandler, default_config, server,
+        HealthStatus, McpError, McpResult, McpServer, PromptHandler, Registry, RegistryBuilder,
+        RequestRouter, ResourceHandler, Router, SamplingHandler, ServerBuilder, ServerConfig,
+        ServerErrorExt, ServerLifecycle, ServerResult, ToolHandler, default_config, server,
     };
 
     // Middleware types (requires middleware feature)

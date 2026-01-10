@@ -163,10 +163,10 @@ impl ServerToolHandler for TurboToolHandlerWrapper {
     ) -> turbomcp_server::ServerResult<CallToolResult> {
         let args = request.arguments.unwrap_or_default();
         let args_value = serde_json::to_value(args)
-            .map_err(|e| turbomcp_server::ServerError::Internal(e.to_string()))?;
+            .map_err(|e| turbomcp_server::McpError::internal(e.to_string()))?;
         match (self.handler)(args_value).await {
             Ok(result) => Ok(result),
-            Err(e) => Err(turbomcp_server::ServerError::Internal(e.to_string())),
+            Err(e) => Err(turbomcp_server::McpError::internal(e.to_string())),
         }
     }
 

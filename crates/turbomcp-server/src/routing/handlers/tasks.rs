@@ -13,7 +13,7 @@ use turbomcp_protocol::{
 };
 
 use super::HandlerContext;
-use crate::error::ServerError;
+use crate::error::{McpError, ServerErrorExt};
 use crate::routing::utils::{error_response, parse_params, success_response};
 
 /// Handle tasks/get request - retrieve task status
@@ -56,19 +56,17 @@ pub async fn handle_result(
                         TaskResultState::Completed(value) => success_response(&request, value),
                         TaskResultState::Failed(error_msg) => error_response(
                             &request,
-                            ServerError::Lifecycle(format!("Task failed: {}", error_msg)),
+                            McpError::lifecycle(format!("Task failed: {}", error_msg)),
                         ),
                         TaskResultState::Cancelled => error_response(
                             &request,
-                            ServerError::Lifecycle("Task was cancelled".to_string()),
+                            McpError::lifecycle("Task was cancelled"),
                         ),
                         TaskResultState::Pending => {
                             // Should never happen since get_task_result blocks
                             error_response(
                                 &request,
-                                ServerError::Lifecycle(
-                                    "Task still pending (unexpected)".to_string(),
-                                ),
+                                McpError::lifecycle("Task still pending (unexpected)"),
                             )
                         }
                     }

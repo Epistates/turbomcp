@@ -7,7 +7,7 @@ use turbomcp_protocol::{
 };
 
 use super::HandlerContext;
-use crate::ServerError;
+use crate::McpError;
 use crate::routing::utils::{error_response, parse_params, success_response};
 
 /// Handle list prompts request
@@ -39,7 +39,7 @@ pub async fn handle_get(
                     Err(e) => error_response(&request, e),
                 }
             } else {
-                let error = ServerError::not_found(format!("Prompt '{}'", prompt_request.name));
+                let error = McpError::not_found(format!("Prompt '{}'", prompt_request.name));
                 error_response(&request, error)
             }
         }

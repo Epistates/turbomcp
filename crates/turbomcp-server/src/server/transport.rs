@@ -11,7 +11,7 @@
 use tower::ServiceExt; // For oneshot
 use tracing::info_span;
 
-use crate::{ServerError, ServerResult};
+use crate::{McpError, ServerResult};
 use bytes::Bytes;
 use http::{Request, Response};
 use turbomcp_transport::core::TransportMessageMetadata;
@@ -45,7 +45,7 @@ impl McpServer {
             .uri("/mcp")
             .header("content-type", "application/json")
             .body(message.payload.clone())
-            .map_err(|e| ServerError::Internal(format!("Failed to build HTTP request: {e}")))?;
+            .map_err(|e| McpError::internal(format!("Failed to build HTTP request: {e}")))?;
 
         // Clone the service to get a mutable instance for the call
         // BoxCloneService is designed for this pattern (Clone but !Sync)
