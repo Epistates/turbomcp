@@ -428,9 +428,7 @@ mod tests {
             temperature: None,
             max_tokens: 100,
             stop_sequences: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tools: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
             task: None,
             _meta: None,

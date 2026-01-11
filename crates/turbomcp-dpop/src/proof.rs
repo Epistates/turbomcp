@@ -443,7 +443,7 @@ impl DpopProofGenerator {
         })?;
 
         // 2. Validate algorithm is allowed (whitelist - prevents "none" algorithm attack)
-        // Only ES256 is supported as of TurboMCP v2.2+ (RSA removed due to RUSTSEC-2023-0071)
+        // Only ES256 is supported as of TurboMCP v3.0+ (RSA removed due to RUSTSEC-2023-0071)
         const ALLOWED_ALGS: &[jsonwebtoken::Algorithm] = &[jsonwebtoken::Algorithm::ES256];
         if !ALLOWED_ALGS.contains(&header.alg) {
             return Err(DpopError::InvalidProofStructure {

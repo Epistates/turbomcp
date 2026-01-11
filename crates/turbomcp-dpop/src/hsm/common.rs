@@ -14,7 +14,7 @@ use tracing::trace;
 /// This implements the canonical JWK thumbprint computation as specified in RFC 7638,
 /// using the exact same logic for both PKCS#11 and YubiHSM backends.
 ///
-/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v3.0+
 ///
 /// # RFC 7638 Compliance
 ///

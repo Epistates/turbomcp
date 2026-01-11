@@ -1,5 +1,6 @@
 //! Server lifespan management with startup/shutdown hooks
 
+use crate::McpErrorConstructors;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -164,7 +165,7 @@ impl LifespanManager {
                 } else {
                     let error_msg = format!("Hook '{hook_name}' timed out after {timeout:?}");
                     error!("{}", error_msg);
-                    Err(McpError::Context(error_msg))
+                    Err(McpError::context(error_msg))
                 }
             } else {
                 // Execute without timeout
@@ -212,7 +213,7 @@ impl LifespanManager {
         } else {
             let error_msg = format!("Some hooks failed for event {event:?}");
             error!("{}", error_msg);
-            Err(McpError::Context(error_msg))
+            Err(McpError::context(error_msg))
         }
     }
 

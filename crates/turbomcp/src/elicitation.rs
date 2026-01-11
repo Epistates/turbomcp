@@ -4,6 +4,7 @@
 //! interactive input from clients during tool execution, supporting various
 //! input types, validation, and user experience patterns.
 
+use crate::McpErrorConstructors;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -483,12 +484,12 @@ impl ElicitationManager {
             Ok(Err(_)) => {
                 // Channel closed unexpectedly
                 self.pending_requests.write().await.remove(&request_id);
-                Err(McpError::Tool("Elicitation request cancelled".to_string()))
+                Err(McpError::tool("Elicitation request cancelled".to_string()))
             }
             Err(_) => {
                 // Timeout
                 self.mark_request_timed_out(request_id.clone()).await;
-                Err(McpError::Tool(format!(
+                Err(McpError::tool(format!(
                     "Elicitation request {request_id} timed out"
                 )))
             }
@@ -505,7 +506,7 @@ impl ElicitationManager {
             }
             Ok(())
         } else {
-            Err(McpError::Tool(format!(
+            Err(McpError::tool(format!(
                 "No pending elicitation request with ID {request_id}"
             )))
         }
@@ -524,7 +525,7 @@ impl ElicitationManager {
             }
             Ok(())
         } else {
-            Err(McpError::Tool(format!(
+            Err(McpError::tool(format!(
                 "No pending elicitation request with ID {request_id_clone}"
             )))
         }
@@ -618,16 +619,16 @@ where
     let response = global_elicitation_manager().request_input(request).await?;
 
     if response.cancelled {
-        return Err(McpError::Tool("User cancelled input request".to_string()));
+        return Err(McpError::tool("User cancelled input request".to_string()));
     }
 
     if let Some(error) = response.error {
-        return Err(McpError::Tool(format!("Input error: {error}")));
+        return Err(McpError::tool(format!("Input error: {error}")));
     }
 
     response
         .get_value::<String>()?
-        .ok_or_else(|| McpError::Tool("No value provided".to_string()))
+        .ok_or_else(|| McpError::tool("No value provided".to_string()))
 }
 
 /// Request password input from user
@@ -647,14 +648,14 @@ where
     let response = global_elicitation_manager().request_input(request).await?;
 
     if response.cancelled {
-        return Err(McpError::Tool(
+        return Err(McpError::tool(
             "User cancelled password request".to_string(),
         ));
     }
 
     response
         .get_value::<String>()?
-        .ok_or_else(|| McpError::Tool("No password provided".to_string()))
+        .ok_or_else(|| McpError::tool("No password provided".to_string()))
 }
 
 /// Request number input from user
@@ -674,12 +675,12 @@ where
     let response = global_elicitation_manager().request_input(request).await?;
 
     if response.cancelled {
-        return Err(McpError::Tool("User cancelled number request".to_string()));
+        return Err(McpError::tool("User cancelled number request".to_string()));
     }
 
     response
         .get_value::<f64>()?
-        .ok_or_else(|| McpError::Tool("No number provided".to_string()))
+        .ok_or_else(|| McpError::tool("No number provided".to_string()))
 }
 
 /// Request yes/no confirmation from user
@@ -698,14 +699,14 @@ where
     let response = global_elicitation_manager().request_input(request).await?;
 
     if response.cancelled {
-        return Err(McpError::Tool(
+        return Err(McpError::tool(
             "User cancelled confirmation request".to_string(),
         ));
     }
 
     response
         .get_value::<bool>()?
-        .ok_or_else(|| McpError::Tool("No confirmation provided".to_string()))
+        .ok_or_else(|| McpError::tool("No confirmation provided".to_string()))
 }
 
 /// Request choice selection from user
@@ -724,12 +725,12 @@ where
     let response = global_elicitation_manager().request_input(request).await?;
 
     if response.cancelled {
-        return Err(McpError::Tool("User cancelled choice request".to_string()));
+        return Err(McpError::tool("User cancelled choice request".to_string()));
     }
 
     response
         .get_value::<String>()?
-        .ok_or_else(|| McpError::Tool("No choice made".to_string()))
+        .ok_or_else(|| McpError::tool("No choice made".to_string()))
 }
 
 #[cfg(test)]

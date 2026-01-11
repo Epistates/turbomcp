@@ -24,8 +24,10 @@ pub fn validate_request(request: &JsonRpcRequest) -> ServerResult<()> {
                 })
                 .collect::<Vec<_>>()
                 .join("; ");
-            Err(McpError::routing(format!("Request validation failed: {msg}"))
-                .with_operation(request.method.clone()))
+            Err(
+                McpError::routing(format!("Request validation failed: {msg}"))
+                    .with_operation(request.method.clone()),
+            )
         }
         _ => Ok(()),
     }
@@ -57,4 +59,3 @@ pub fn validate_response(response: &JsonRpcResponse) -> ServerResult<()> {
         _ => Ok(()),
     }
 }
-

@@ -113,7 +113,7 @@ async fn configure_preferences(&self, ctx: Context) -> McpResult<String> {
         let theme = data.get("theme").and_then(|v| v.as_str()).unwrap_or("default");
         Ok(format!("Configured with {} theme", theme))
     } else {
-        Err(McpError::Context("Configuration cancelled".to_string()))
+        Err(McpError::context("Configuration cancelled".to_string()))
     }
 }
 ```
@@ -287,7 +287,7 @@ async fn read_file(
     ctx.info(&format!("Reading file: {}", path)).await?;
     
     tokio::fs::read_to_string(&path).await
-        .map_err(|e| McpError::Resource(e.to_string()))
+        .map_err(|e| McpError::resource(e.to_string()))
 }
 ```
 

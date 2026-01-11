@@ -110,7 +110,7 @@ async fn handler(info: RequestInfo, logger: Logger) -> McpResult<String> {
 ### OpenTelemetry Integration
 
 ```toml
-turbomcp = { version = "2.3", features = ["tracing"] }
+turbomcp = { version = "3.0.0-exp", features = ["tracing"] }
 opentelemetry = "0.21"
 opentelemetry-jaeger = "0.20"
 ```

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 // use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::{McpError, McpResult};
+use crate::{McpError, McpErrorConstructors, McpResult};
 
 /// Service provider trait for dependency injection
 #[async_trait]
@@ -254,7 +254,7 @@ impl Container {
             let services = self.services.read().await;
             if let Some(service) = services.get(name) {
                 return service.downcast_ref::<T>().cloned().ok_or_else(|| {
-                    McpError::Context("Type mismatch in service resolution".to_string())
+                    McpError::context("Type mismatch in service resolution".to_string())
                 });
             }
         }
@@ -265,12 +265,12 @@ impl Container {
             if let Some(provider) = providers.get(name) {
                 let service_any = provider.provide(self).await?;
                 return service_any.downcast_ref::<T>().cloned().ok_or_else(|| {
-                    McpError::Context("Type mismatch in provider resolution".to_string())
+                    McpError::context("Type mismatch in provider resolution".to_string())
                 });
             }
         }
 
-        Err(McpError::Context(format!("Service '{name}' not found")))
+        Err(McpError::context(format!("Service '{name}' not found")))
     }
 
     /// Resolve with dependency injection
@@ -286,7 +286,7 @@ impl Container {
         chain: &mut Vec<String>,
     ) -> McpResult<()> {
         if chain.contains(&name.to_string()) {
-            return Err(McpError::Context(format!(
+            return Err(McpError::context(format!(
                 "Circular dependency detected: {} -> {}",
                 chain.join(" -> "),
                 name

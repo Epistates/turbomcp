@@ -119,8 +119,7 @@ impl StdioDispatcher {
             Err(_) => {
                 // Timeout - remove from pending
                 self.pending_requests.lock().await.remove(&request_id);
-                Err(McpError::timeout("Request timeout (60s)")
-                    .with_operation("stdio_dispatcher"))
+                Err(McpError::timeout("Request timeout (60s)").with_operation("stdio_dispatcher"))
             }
         }
     }
@@ -141,12 +140,10 @@ impl ServerRequestDispatcher for StdioDispatcher {
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "elicitation/create".to_string(),
-            params: Some(
-                serde_json::to_value(&request).map_err(|e| {
-                    McpError::internal(format!("Failed to serialize elicitation request: {}", e))
-                        .with_operation("MCP compliance")
-                })?,
-            ),
+            params: Some(serde_json::to_value(&request).map_err(|e| {
+                McpError::internal(format!("Failed to serialize elicitation request: {}", e))
+                    .with_operation("MCP compliance")
+            })?),
             id: Self::generate_request_id(),
         };
 
@@ -162,10 +159,8 @@ impl ServerRequestDispatcher for StdioDispatcher {
             Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
             Err(
-                McpError::internal(
-                    "Invalid elicitation response: missing result and error",
-                )
-                .with_operation("MCP compliance"),
+                McpError::internal("Invalid elicitation response: missing result and error")
+                    .with_operation("MCP compliance"),
             )
         }
     }
@@ -193,10 +188,7 @@ impl ServerRequestDispatcher for StdioDispatcher {
             // Preserve client error code by wrapping as Protocol error
             Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
-            Err(
-                McpError::internal("Invalid ping response")
-                    .with_operation("MCP compliance"),
-            )
+            Err(McpError::internal("Invalid ping response").with_operation("MCP compliance"))
         }
     }
 
@@ -208,12 +200,10 @@ impl ServerRequestDispatcher for StdioDispatcher {
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "sampling/createMessage".to_string(),
-            params: Some(
-                serde_json::to_value(&request).map_err(|e| {
-                    McpError::internal(format!("Failed to serialize sampling request: {}", e))
-                        .with_operation("MCP compliance")
-                })?,
-            ),
+            params: Some(serde_json::to_value(&request).map_err(|e| {
+                McpError::internal(format!("Failed to serialize sampling request: {}", e))
+                    .with_operation("MCP compliance")
+            })?),
             id: Self::generate_request_id(),
         };
 
@@ -517,21 +507,16 @@ where
             TransportMessageMetadata::with_content_type("application/json"),
         );
 
-        self.transport
-            .send(transport_msg)
-            .await
-            .map_err(|e| {
-                McpError::internal(format!("Failed to send request via transport: {}", e))
-                    .with_operation("transport_dispatcher")
-            })?;
+        self.transport.send(transport_msg).await.map_err(|e| {
+            McpError::internal(format!("Failed to send request via transport: {}", e))
+                .with_operation("transport_dispatcher")
+        })?;
 
         // Wait for response with timeout (60 seconds per MCP recommendation)
         match tokio::time::timeout(tokio::time::Duration::from_secs(60), response_rx).await {
             Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => {
-                Err(McpError::internal("Response channel closed")
-                    .with_operation("transport_dispatcher"))
-            }
+            Ok(Err(_)) => Err(McpError::internal("Response channel closed")
+                .with_operation("transport_dispatcher")),
             Err(_) => {
                 // Timeout - remove from pending
                 self.pending_requests.lock().await.remove(&request_id);
@@ -572,12 +557,10 @@ where
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "elicitation/create".to_string(),
-            params: Some(
-                serde_json::to_value(&request).map_err(|e| {
-                    McpError::internal(format!("Failed to serialize elicitation request: {}", e))
-                        .with_operation("MCP compliance")
-                })?,
-            ),
+            params: Some(serde_json::to_value(&request).map_err(|e| {
+                McpError::internal(format!("Failed to serialize elicitation request: {}", e))
+                    .with_operation("MCP compliance")
+            })?),
             id: Self::generate_request_id(),
         };
 
@@ -593,10 +576,8 @@ where
             Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
             Err(
-                McpError::internal(
-                    "Invalid elicitation response: missing result and error",
-                )
-                .with_operation("MCP compliance"),
+                McpError::internal("Invalid elicitation response: missing result and error")
+                    .with_operation("MCP compliance"),
             )
         }
     }
@@ -624,10 +605,7 @@ where
             // Preserve client error code by wrapping as Protocol error
             Err(McpError::from_rpc_code(error.code, &error.message))
         } else {
-            Err(
-                McpError::internal("Invalid ping response")
-                    .with_operation("MCP compliance"),
-            )
+            Err(McpError::internal("Invalid ping response").with_operation("MCP compliance"))
         }
     }
 
@@ -639,12 +617,10 @@ where
         let json_rpc_request = JsonRpcRequest {
             jsonrpc: JsonRpcVersion,
             method: "sampling/createMessage".to_string(),
-            params: Some(
-                serde_json::to_value(&request).map_err(|e| {
-                    McpError::internal(format!("Failed to serialize sampling request: {}", e))
-                        .with_operation("MCP compliance")
-                })?,
-            ),
+            params: Some(serde_json::to_value(&request).map_err(|e| {
+                McpError::internal(format!("Failed to serialize sampling request: {}", e))
+                    .with_operation("MCP compliance")
+            })?),
             id: Self::generate_request_id(),
         };
 

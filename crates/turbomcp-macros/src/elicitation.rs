@@ -74,7 +74,7 @@ pub fn generate_elicitation_impl(args: TokenStream, input: TokenStream) -> Token
         // Generate handler function that bridges ElicitRequest to the actual method
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #handler_fn_name(&self, request: turbomcp::ElicitRequest, context: turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<turbomcp::ElicitResult, turbomcp::ServerError>> + Send + '_>> {
+        fn #handler_fn_name(&self, request: turbomcp::ElicitRequest, context: turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<turbomcp::ElicitResult, ::turbomcp::__macro_support::turbomcp_server::McpError>> + Send + '_>> {
             Box::pin(async move {
                 // Context injection using ContextFactory pattern
                 let turbomcp_ctx = {
@@ -111,23 +111,7 @@ pub fn generate_elicitation_impl(args: TokenStream, input: TokenStream) -> Token
                 #param_extraction
 
                 // Call the actual method and convert result to ElicitResult
-                let result = self.#fn_name(#call_args).await
-                    .map_err(|e| match e {
-                        turbomcp::McpError::Server(server_err) => server_err,
-                        turbomcp::McpError::Tool(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Resource(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Prompt(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Protocol(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Context(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Unauthorized(msg) => turbomcp::ServerError::authorization(msg),
-                        turbomcp::McpError::Network(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::InvalidInput(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Schema(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Transport(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Serialization(e) => turbomcp::ServerError::from(e),
-                        turbomcp::McpError::Internal(msg) => turbomcp::ServerError::Internal(msg),
-                        turbomcp::McpError::InvalidRequest(msg) => turbomcp::ServerError::handler(msg),
-                    })?;
+                let result = self.#fn_name(#call_args).await?;
 
                 let content = match ::serde_json::to_value(&result) {
                     Ok(val) if val.is_object() => {

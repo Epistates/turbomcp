@@ -291,7 +291,6 @@ mod meta_field_compliance {
 // =============================================================================
 
 #[cfg(test)]
-#[cfg(feature = "mcp-icons")]
 mod icon_compliance {
     use turbomcp_protocol::types::core::Icon;
     use url::Url;
@@ -639,7 +638,7 @@ mod capability_negotiation_compliance {
                 exp.insert("custom_feature".to_string(), json!({"enabled": true}));
                 exp
             }),
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             tasks: None,
         };
 
@@ -661,7 +660,7 @@ mod capability_negotiation_compliance {
                 exp.insert("advanced_tools".to_string(), json!({"version": "2.0"}));
                 exp
             }),
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             tasks: None,
         };
 
@@ -687,7 +686,7 @@ mod capability_negotiation_compliance {
             sampling: None, // Client doesn't support sampling
             elicitation: None,
             experimental: None,
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             tasks: None,
         };
 
@@ -700,7 +699,7 @@ mod capability_negotiation_compliance {
             logging: None,
             completions: None,
             experimental: None,
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             tasks: None,
         };
 

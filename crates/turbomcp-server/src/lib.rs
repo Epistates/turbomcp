@@ -84,6 +84,8 @@
 //!         temperature: Some(0.7),
 //!         stop_sequences: None,
 //!         task: None,
+//!         tools: None,
+//!         tool_choice: None,
 //!         _meta: None,
 //!     };
 //!
@@ -153,6 +155,7 @@ pub mod handlers; // Sprint 2.4: Handler name injection prevention
 // #[cfg(feature = "http")]
 // pub mod http_server;
 pub mod lifecycle;
+pub mod logging;
 pub mod metrics;
 #[cfg(feature = "middleware")]
 pub mod middleware;
@@ -164,7 +167,7 @@ pub mod sampling;
 pub mod security_checks; // Sprint 2.6: Runtime security validation
 pub mod server;
 pub mod service;
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub mod task_storage; // Tasks API storage and lifecycle (SEP-1686)
 #[cfg(feature = "multi-tenancy")]
 pub mod tenant_context; // Sprint 3.2: Multi-tenant context extension trait
@@ -173,7 +176,11 @@ pub mod timeout;
 // pub mod simple_http;
 
 // Re-export main types for convenience
-pub use config::{Configuration, ConfigurationBuilder, ProtocolVersionConfig, ServerConfig};
+pub use config::{
+    Configuration, ConfigurationBuilder, LogOutput, LogRotation, LoggingConfig,
+    ProtocolVersionConfig, ServerConfig,
+};
+pub use logging::LoggingGuard;
 pub use error::{ErrorRecovery, McpError, McpResult, ServerErrorExt, ServerResult};
 pub use handlers::{
     CompletionHandler, ElicitationHandler, LoggingHandler, PingHandler, PromptHandler,
@@ -239,9 +246,10 @@ pub fn server() -> ServerBuilder {
 pub mod prelude {
     // Core types (always available)
     pub use crate::{
-        HealthStatus, McpError, McpResult, McpServer, PromptHandler, Registry, RegistryBuilder,
-        RequestRouter, ResourceHandler, Router, SamplingHandler, ServerBuilder, ServerConfig,
-        ServerErrorExt, ServerLifecycle, ServerResult, ToolHandler, default_config, server,
+        HealthStatus, LogOutput, LogRotation, LoggingConfig, LoggingGuard, McpError, McpResult,
+        McpServer, PromptHandler, Registry, RegistryBuilder, RequestRouter, ResourceHandler,
+        Router, SamplingHandler, ServerBuilder, ServerConfig, ServerErrorExt, ServerLifecycle,
+        ServerResult, ToolHandler, default_config, server,
     };
 
     // Middleware types (requires middleware feature)

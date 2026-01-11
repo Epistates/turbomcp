@@ -1,11 +1,13 @@
 [package]
 name = "turbomcp-tcp"
-version = "3.0.0-alpha.1"
+version = "3.0.0-exp"
 edition = "2024"
 rust-version = "1.89.0"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
 license = "MIT"
 description = "TCP transport implementation for TurboMCP SDK"
-repository = "https://github.com/ArcadeLabsInc/turbomcp"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
 documentation = "https://docs.rs/turbomcp-tcp"
 keywords = ["mcp", "tcp", "transport", "networking"]
 categories = ["network-programming", "asynchronous"]
@@ -13,17 +15,17 @@ readme = "README.md"
 
 [dependencies]
 # Core dependencies
-turbomcp-transport-traits = { version = "3.0.0-alpha.1", path = "../turbomcp-transport-traits" }
-turbomcp-protocol = { version = "3.0.0-alpha.1", path = "../turbomcp-protocol" }
+turbomcp-transport-traits = { version = "3.0.0-exp", path = "../turbomcp-transport-traits" }
+turbomcp-protocol = { version = "3.0.0-exp", path = "../turbomcp-protocol" }
 
 # Async runtime
-tokio = { version = "1.43", features = ["sync", "rt", "time", "net"] }
-tokio-util = { version = "0.7", features = ["codec"] }
-async-trait = "0.1"
-futures = { version = "0.3", default-features = false, features = ["std"] }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
 
 # Data structures
-bytes = "1.10"
+bytes = { workspace = true }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -34,10 +36,7 @@ uuid = { version = "1.16", features = ["v4"] }
 tracing = "0.1"
 
 [dev-dependencies]
-tokio = { version = "1.43", features = ["full"] }
+tokio = { workspace = true }
 
-[lints.rust]
-unsafe_code = "deny"
-
-[lints.clippy]
-all = "warn"
+[lints]
+workspace = true

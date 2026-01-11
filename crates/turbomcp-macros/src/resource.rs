@@ -171,7 +171,7 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
         // Generate handler function that bridges ReadResourceRequest to the actual method
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #handler_fn_name(&self, request: ::turbomcp::__macro_support::turbomcp_protocol::ReadResourceRequest, context: ::turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, ::turbomcp::ServerError>> + Send + '_>> {
+        fn #handler_fn_name(&self, request: ::turbomcp::__macro_support::turbomcp_protocol::ReadResourceRequest, context: ::turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, ::turbomcp::__macro_support::turbomcp_server::McpError>> + Send + '_>> {
             Box::pin(async move {
                 // Context injection using ContextFactory pattern
                 let turbomcp_ctx = {
@@ -202,23 +202,7 @@ pub fn generate_resource_impl(args: TokenStream, input: TokenStream) -> TokenStr
                 #param_extraction
 
                 // Call the actual method with extracted parameters
-                let result = self.#fn_name(#call_args).await
-                    .map_err(|e| match e {
-                        ::turbomcp::McpError::Server(server_err) => server_err,
-                        ::turbomcp::McpError::Resource(msg) => ::turbomcp::ServerError::handler(msg),
-                        ::turbomcp::McpError::Tool(msg) => ::turbomcp::ServerError::handler(msg),
-                        ::turbomcp::McpError::Prompt(msg) => ::turbomcp::ServerError::handler(msg),
-                        ::turbomcp::McpError::Protocol(msg) => ::turbomcp::ServerError::handler(msg),
-                        ::turbomcp::McpError::Context(msg) => ::turbomcp::ServerError::handler(msg),
-                        ::turbomcp::McpError::Unauthorized(msg) => ::turbomcp::ServerError::authorization(msg),
-                        ::turbomcp::McpError::Network(msg) => ::turbomcp::ServerError::handler(msg),
-                        ::turbomcp::McpError::InvalidInput(msg) => ::turbomcp::ServerError::handler(msg),
-                        ::turbomcp::McpError::Schema(msg) => ::turbomcp::ServerError::handler(msg),
-                        ::turbomcp::McpError::Transport(msg) => ::turbomcp::ServerError::handler(msg),
-                        ::turbomcp::McpError::Serialization(e) => ::turbomcp::ServerError::from(e),
-                        ::turbomcp::McpError::Internal(msg) => ::turbomcp::ServerError::Internal(msg),
-                        ::turbomcp::McpError::InvalidRequest(msg) => ::turbomcp::ServerError::handler(msg),
-                    })?;
+                let result = self.#fn_name(#call_args).await?;
 
                 Ok(result)
             })

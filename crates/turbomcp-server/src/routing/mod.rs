@@ -67,7 +67,7 @@ pub struct RequestRouter {
     /// This is injected into RequestContext so tools can make server-initiated requests
     server_to_client: Arc<dyn ServerToClientRequests>,
     /// Task storage for MCP Tasks API (SEP-1686)
-    #[cfg(feature = "mcp-tasks")]
+    #[cfg(feature = "experimental-tasks")]
     task_storage: Option<Arc<crate::task_storage::TaskStorage>>,
 }
 
@@ -87,7 +87,9 @@ impl RequestRouter {
         registry: Arc<HandlerRegistry>,
         _metrics: Arc<ServerMetrics>,
         server_config: crate::config::ServerConfig,
-        #[cfg(feature = "mcp-tasks")] task_storage: Option<Arc<crate::task_storage::TaskStorage>>,
+        #[cfg(feature = "experimental-tasks")] task_storage: Option<
+            Arc<crate::task_storage::TaskStorage>,
+        >,
     ) -> Self {
         // Timeout management is now handled by middleware
         let config = RouterConfig::default();
@@ -95,7 +97,7 @@ impl RequestRouter {
         let handler_context = HandlerContext::new(
             Arc::clone(&registry),
             server_config.clone(),
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             task_storage.clone().unwrap_or_else(|| {
                 // Fallback: create empty storage if none provided
                 use tokio::time::Duration;
@@ -121,7 +123,7 @@ impl RequestRouter {
             bidirectional,
             handlers: ProtocolHandlers::new(handler_context),
             server_to_client,
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             task_storage,
         }
     }
@@ -133,14 +135,16 @@ impl RequestRouter {
         config: RouterConfig,
         _metrics: Arc<ServerMetrics>,
         server_config: crate::config::ServerConfig,
-        #[cfg(feature = "mcp-tasks")] task_storage: Option<Arc<crate::task_storage::TaskStorage>>,
+        #[cfg(feature = "experimental-tasks")] task_storage: Option<
+            Arc<crate::task_storage::TaskStorage>,
+        >,
     ) -> Self {
         // Timeout management is now handled by middleware
 
         let handler_context = HandlerContext::new(
             Arc::clone(&registry),
             server_config.clone(),
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             task_storage.clone().unwrap_or_else(|| {
                 // Fallback: create empty storage if none provided
                 use tokio::time::Duration;
@@ -166,7 +170,7 @@ impl RequestRouter {
             bidirectional,
             handlers: ProtocolHandlers::new(handler_context),
             server_to_client,
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             task_storage,
         }
     }
@@ -205,7 +209,7 @@ impl RequestRouter {
     ///
     /// # Errors
     ///
-    /// Returns [`ServerError::Routing`] if a route for the same method already exists.
+    /// Returns an [`crate::McpError`] if a route for the same method already exists.
     pub fn add_route<H>(&mut self, handler: H) -> ServerResult<()>
     where
         H: RouteHandler + 'static,
@@ -351,13 +355,13 @@ impl RequestRouter {
             "ping" => self.handlers.handle_ping(request, ctx).await,
 
             // Tasks API (MCP 2025-11-25 draft - SEP-1686)
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             "tasks/get" => self.handlers.handle_get_task(request, ctx).await,
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             "tasks/result" => self.handlers.handle_task_result(request, ctx).await,
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             "tasks/list" => self.handlers.handle_list_tasks(request, ctx).await,
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             "tasks/cancel" => self.handlers.handle_cancel_task(request, ctx).await,
 
             // Custom routes
@@ -406,7 +410,7 @@ impl RequestRouter {
     ///
     /// # Errors
     ///
-    /// Returns [`ServerError::Transport`] if:
+    /// Returns an [`crate::McpError`] if:
     /// - The bidirectional dispatcher is not configured
     /// - The client request fails
     /// - The client does not respond
@@ -424,7 +428,7 @@ impl RequestRouter {
     ///
     /// # Errors
     ///
-    /// Returns [`ServerError::Transport`] if:
+    /// Returns an [`crate::McpError`] if:
     /// - The bidirectional dispatcher is not configured
     /// - The client request fails
     /// - The client does not respond
@@ -440,7 +444,7 @@ impl RequestRouter {
     ///
     /// # Errors
     ///
-    /// Returns [`ServerError::Transport`] if:
+    /// Returns an [`crate::McpError`] if:
     /// - The bidirectional dispatcher is not configured
     /// - The client request fails
     /// - The client does not support sampling
@@ -458,7 +462,7 @@ impl RequestRouter {
     ///
     /// # Errors
     ///
-    /// Returns [`ServerError::Transport`] if:
+    /// Returns an [`crate::McpError`] if:
     /// - The bidirectional dispatcher is not configured
     /// - The client request fails
     /// - The client does not support roots
@@ -473,7 +477,7 @@ impl RequestRouter {
     }
 
     /// Get task storage (exposed for testing)
-    #[cfg(feature = "mcp-tasks")]
+    #[cfg(feature = "experimental-tasks")]
     #[doc(hidden)]
     pub fn get_task_storage(&self) -> Option<Arc<crate::task_storage::TaskStorage>> {
         self.task_storage.clone()
@@ -492,7 +496,7 @@ impl Clone for RequestRouter {
             handlers: ProtocolHandlers::new(HandlerContext::new(
                 Arc::clone(&self.registry),
                 self.server_config.clone(),
-                #[cfg(feature = "mcp-tasks")]
+                #[cfg(feature = "experimental-tasks")]
                 self.task_storage.clone().unwrap_or_else(|| {
                     // Fallback: create empty storage if none provided
                     use tokio::time::Duration;
@@ -502,7 +506,7 @@ impl Clone for RequestRouter {
                 }),
             )),
             server_to_client: Arc::clone(&self.server_to_client),
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             task_storage: self.task_storage.clone(),
         }
     }

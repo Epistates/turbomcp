@@ -28,7 +28,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use turbomcp::{Context, McpResult, server, tool};
+use turbomcp::{Context, McpError, McpErrorConstructors, McpResult, server, tool};
 use turbomcp_server::TenantContextExt; // Extension trait for tenant methods
 use turbomcp_server::config::multi_tenant::{
     StaticTenantConfigProvider, TenantConfig, TenantConfigProvider,
@@ -48,7 +48,7 @@ struct MultiTenantServer {
     metrics: Arc<MultiTenantMetrics>,
 }
 
-#[server(name = "multi-tenant-saas", version = "1.0.0")]
+#[server(name = "multi-tenant-saas", version = "1.0.0", transports = ["http"])]
 impl MultiTenantServer {
     /// Create a new multi-tenant server with configuration
     async fn new() -> McpResult<Self> {
@@ -232,7 +232,7 @@ impl MultiTenantServer {
             .to_string();
 
         if plan != "enterprise" {
-            return Err(turbomcp::McpError::Tool(
+            return Err(McpError::tool(
                 "This operation requires an enterprise plan".to_string(),
             ));
         }

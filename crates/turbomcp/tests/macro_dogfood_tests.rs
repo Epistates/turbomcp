@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use turbomcp::{prompt, resource, server, tool};
+use turbomcp::{McpErrorConstructors, prompt, resource, server, tool};
 
 // Basic calculator tests removed - covered comprehensively in macro_end_to_end_tests.rs
 
@@ -66,7 +66,7 @@ mod complex_parameter_tests {
         async fn create_user(&self, user: User) -> turbomcp::McpResult<u32> {
             let mut users = self.users.lock().unwrap();
             if users.contains_key(&user.id) {
-                return Err(turbomcp::McpError::Tool(format!(
+                return Err(turbomcp::McpError::tool(format!(
                     "User with ID {} already exists",
                     user.id
                 )));
@@ -93,7 +93,7 @@ mod complex_parameter_tests {
             let mut users = self.users.lock().unwrap();
             let user = users
                 .get_mut(&id)
-                .ok_or_else(|| turbomcp::McpError::Tool(format!("User {id} not found")))?;
+                .ok_or_else(|| turbomcp::McpError::tool(format!("User {id} not found")))?;
 
             if let Some(n) = name {
                 user.name = n;
@@ -255,7 +255,7 @@ mod resource_prompt_tests {
             let docs = self.documents.lock().unwrap();
             docs.get(name)
                 .cloned()
-                .ok_or_else(|| turbomcp::McpError::Tool(format!("Document '{name}' not found")))
+                .ok_or_else(|| turbomcp::McpError::tool(format!("Document '{name}' not found")))
         }
 
         #[resource("list://documents")]
@@ -278,7 +278,7 @@ mod resource_prompt_tests {
                 .unwrap_or("greeting");
 
             let template = self.templates.get(template_name).ok_or_else(|| {
-                turbomcp::McpError::Tool(format!("Template '{template_name}' not found"))
+                turbomcp::McpError::tool(format!("Template '{template_name}' not found"))
             })?;
 
             let mut result = template.clone();
@@ -310,7 +310,7 @@ mod resource_prompt_tests {
 
             let docs = self.documents.lock().unwrap();
             let content = docs.get(doc_name).ok_or_else(|| {
-                turbomcp::McpError::Tool(format!("Document '{doc_name}' not found"))
+                turbomcp::McpError::tool(format!("Document '{doc_name}' not found"))
             })?;
 
             // Simple suggestions based on content
@@ -402,7 +402,7 @@ mod concurrency_tests {
         async fn decrement(&self) -> turbomcp::McpResult<usize> {
             let current = self.counter.load(Ordering::SeqCst);
             if current == 0 {
-                return Err(turbomcp::McpError::Tool(
+                return Err(turbomcp::McpError::tool(
                     "Counter cannot go below zero".to_string(),
                 ));
             }
@@ -495,15 +495,15 @@ mod error_handling_tests {
         #[tool("Validate email")]
         async fn validate_email(&self, email: String) -> turbomcp::McpResult<bool> {
             if email.is_empty() {
-                return Err(turbomcp::McpError::Tool(
+                return Err(turbomcp::McpError::tool(
                     "Email cannot be empty".to_string(),
                 ));
             }
             if !email.contains('@') {
-                return Err(turbomcp::McpError::Tool("Invalid email format".to_string()));
+                return Err(turbomcp::McpError::tool("Invalid email format".to_string()));
             }
             if email.len() > 254 {
-                return Err(turbomcp::McpError::Tool("Email too long".to_string()));
+                return Err(turbomcp::McpError::tool("Email too long".to_string()));
             }
             Ok(true)
         }
@@ -512,15 +512,15 @@ mod error_handling_tests {
         async fn parse_int(&self, value: String) -> turbomcp::McpResult<i32> {
             value
                 .parse::<i32>()
-                .map_err(|e| turbomcp::McpError::Tool(format!("Failed to parse integer: {e}")))
+                .map_err(|e| turbomcp::McpError::tool(format!("Failed to parse integer: {e}")))
         }
 
         #[tool("Safe divide")]
         async fn safe_divide(&self, a: f64, b: f64) -> turbomcp::McpResult<f64> {
             if b == 0.0 {
-                Err(turbomcp::McpError::Tool("Division by zero".to_string()))
+                Err(turbomcp::McpError::tool("Division by zero".to_string()))
             } else if !a.is_finite() || !b.is_finite() {
-                Err(turbomcp::McpError::Tool(
+                Err(turbomcp::McpError::tool(
                     "Invalid number (infinite or NaN)".to_string(),
                 ))
             } else {
@@ -537,7 +537,7 @@ mod error_handling_tests {
                 .collect();
 
             if parts.len() != 2 {
-                return Err(turbomcp::McpError::Tool("Invalid URI format".to_string()));
+                return Err(turbomcp::McpError::tool("Invalid URI format".to_string()));
             }
 
             match parts[0] {
@@ -549,7 +549,7 @@ mod error_handling_tests {
                     let value = self.parse_int(parts[1].to_string()).await?;
                     Ok(format!("Valid integer: {value}"))
                 }
-                _ => Err(turbomcp::McpError::Tool(format!(
+                _ => Err(turbomcp::McpError::tool(format!(
                     "Unknown validation type: {}",
                     parts[0]
                 ))),

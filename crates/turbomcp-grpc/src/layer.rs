@@ -182,9 +182,7 @@ mod tests {
 
     #[test]
     fn test_layer_builder() {
-        let layer = McpGrpcLayer::new()
-            .logging(true)
-            .timing(true);
+        let layer = McpGrpcLayer::new().logging(true).timing(true);
 
         assert!(layer.logging);
         assert!(layer.timing);

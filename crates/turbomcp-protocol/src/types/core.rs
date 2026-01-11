@@ -132,7 +132,7 @@ pub struct Implementation {
     /// or tools it provides, while a client might describe its intended use case.
     ///
     /// **MCP 2025-11-25 draft**: New field added for better context during initialization
-    #[cfg(feature = "mcp-draft")]
+    /// Optional description of this implementation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Optional set of sized icons that the client can display in a user interface
@@ -146,7 +146,6 @@ pub struct Implementation {
     /// - `image/webp` - WebP images (modern, efficient format)
     ///
     /// **MCP 2025-11-25 draft**: New field added (SEP-973)
-    #[cfg(feature = "mcp-icons")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icons: Option<Vec<Icon>>,
 }
@@ -157,9 +156,7 @@ impl Default for Implementation {
             name: "unknown".to_string(),
             title: None,
             version: "0.0.0".to_string(),
-            #[cfg(feature = "mcp-draft")]
             description: None,
-            #[cfg(feature = "mcp-icons")]
             icons: None,
         }
     }
@@ -191,7 +188,7 @@ impl Default for Implementation {
 /// - Resources
 /// - Prompts
 ///
-/// For tools, use [`ToolAnnotations`] which includes additional hints like
+/// For tools, use [`ToolAnnotations`](crate::types::ToolAnnotations) which includes additional hints like
 /// `destructive_hint`, `read_only_hint`, etc. However, the MCP spec warns:
 /// *"Clients should never make tool use decisions based on ToolAnnotations
 /// received from untrusted servers."*
@@ -302,7 +299,6 @@ pub struct ModelHint {
 /// Theme specifier for icons (MCP 2025-11-25 draft, SEP-973)
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
-#[cfg(feature = "mcp-icons")]
 pub enum IconTheme {
     /// Icon designed for light backgrounds
     Light,
@@ -342,7 +338,6 @@ pub enum IconTheme {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[cfg(feature = "mcp-icons")]
 pub struct Icon {
     /// A standard URI pointing to an icon resource
     ///
@@ -381,7 +376,6 @@ pub struct Icon {
     pub theme: Option<IconTheme>,
 }
 
-#[cfg(feature = "mcp-icons")]
 mod url_string_serde {
     use serde::{Deserialize, Deserializer, Serializer};
     use url::Url;

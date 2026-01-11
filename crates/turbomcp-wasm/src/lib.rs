@@ -6,7 +6,7 @@
 //! # Features
 //!
 //! - **browser** (default): Browser bindings using wasm-bindgen and web-sys
-//! - **wasi**: WASI Preview 2 support for server-side WASM runtimes
+//! - **wasi**: WASI Preview 2 support for server-side WASM runtimes (Wasmtime, WasmEdge, Wasmer)
 //!
 //! # Browser Usage
 //!
@@ -25,6 +25,42 @@
 //! console.log("Result:", result);
 //! ```
 //!
+//! # WASI Usage
+//!
+//! For WASI environments (Wasmtime, WasmEdge, Wasmer, etc.):
+//!
+//! ```ignore
+//! use turbomcp_wasm::wasi::{McpClient, StdioTransport, HttpTransport};
+//!
+//! // STDIO transport (for MCP servers via process communication)
+//! let transport = StdioTransport::new();
+//! let mut client = McpClient::with_stdio(transport);
+//! client.initialize()?;
+//!
+//! // HTTP transport (for HTTP-based MCP servers)
+//! let transport = HttpTransport::new("https://api.example.com/mcp")
+//!     .with_header("Authorization", "Bearer token");
+//! let mut client = McpClient::with_http(transport);
+//! client.initialize()?;
+//!
+//! // Use the client
+//! let tools = client.list_tools()?;
+//! let result = client.call_tool("my_tool", Some(serde_json::json!({"arg": "value"})))?;
+//! ```
+//!
+//! ## Building for WASI
+//!
+//! ```bash
+//! # Add the wasm32-wasip2 target
+//! rustup target add wasm32-wasip2
+//!
+//! # Build with WASI feature
+//! cargo build -p turbomcp-wasm --target wasm32-wasip2 --features wasi --no-default-features
+//!
+//! # Run with Wasmtime (with HTTP support)
+//! wasmtime run --wasi http target/wasm32-wasip2/debug/your_app.wasm
+//! ```
+//!
 //! # Binary Size
 //!
 //! This crate targets minimal binary size with proper optimization:
@@ -37,8 +73,14 @@
 //!
 //! For smallest binaries, build with `--profile wasm-release` and use `wasm-opt -Oz`:
 //! ```bash
+//! # Browser target
 //! cargo build -p turbomcp-wasm --target wasm32-unknown-unknown --profile wasm-release
 //! wasm-opt -Oz -o optimized.wasm target/wasm32-unknown-unknown/wasm-release/turbomcp_wasm.wasm
+//!
+//! # WASI target
+//! cargo build -p turbomcp-wasm --target wasm32-wasip2 --features wasi \
+//!     --no-default-features --profile wasm-release
+//! wasm-opt -Oz -o optimized.wasm target/wasm32-wasip2/wasm-release/turbomcp_wasm.wasm
 //! ```
 
 #![deny(unsafe_code)]

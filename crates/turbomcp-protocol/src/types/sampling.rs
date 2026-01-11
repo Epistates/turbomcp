@@ -9,7 +9,6 @@ use std::collections::HashMap;
 
 use super::{content::Content, core::Role};
 
-#[cfg(feature = "mcp-sampling-tools")]
 use super::tools::Tool;
 
 /// Include context options for sampling
@@ -62,14 +61,12 @@ pub struct CreateMessageRequest {
     /// Tools that the model may use during generation (MCP 2025-11-25 draft, SEP-1577)
     /// The client MUST return an error if this field is provided but
     /// ClientCapabilities.sampling.tools is not declared
-    #[cfg(feature = "mcp-sampling-tools")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<Tool>>,
     /// Controls how the model uses tools (MCP 2025-11-25 draft, SEP-1577)
     /// The client MUST return an error if this field is provided but
     /// ClientCapabilities.sampling.tools is not declared
     /// Default is `{ mode: "auto" }`
-    #[cfg(feature = "mcp-sampling-tools")]
     #[serde(rename = "toolChoice", skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
     /// Task metadata for task-augmented sampling (MCP 2025-11-25 draft, SEP-1686)
@@ -182,7 +179,6 @@ pub struct UsageStats {
 /// Tool choice mode (MCP 2025-11-25 draft, SEP-1577)
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]
-#[cfg(feature = "mcp-sampling-tools")]
 pub enum ToolChoiceMode {
     /// Model decides whether to use tools (default)
     #[default]
@@ -195,7 +191,6 @@ pub enum ToolChoiceMode {
 
 /// Controls tool selection behavior for sampling requests (MCP 2025-11-25 draft, SEP-1577)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg(feature = "mcp-sampling-tools")]
 pub struct ToolChoice {
     /// Controls the tool use ability of the model
     /// - "auto": Model decides whether to use tools (default)
@@ -205,7 +200,6 @@ pub struct ToolChoice {
     pub mode: Option<ToolChoiceMode>,
 }
 
-#[cfg(feature = "mcp-sampling-tools")]
 impl ToolChoice {
     /// Create a new ToolChoice with auto mode
     pub fn auto() -> Self {
@@ -229,7 +223,6 @@ impl ToolChoice {
     }
 }
 
-#[cfg(feature = "mcp-sampling-tools")]
 impl Default for ToolChoice {
     fn default() -> Self {
         Self::auto()
@@ -237,7 +230,6 @@ impl Default for ToolChoice {
 }
 
 #[cfg(test)]
-#[cfg(feature = "mcp-sampling-tools")]
 mod tests {
     use super::*;
 

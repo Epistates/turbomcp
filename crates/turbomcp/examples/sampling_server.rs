@@ -15,10 +15,10 @@ use turbomcp_protocol::types::{
     TextContent, Tool, ToolInputSchema,
 };
 use turbomcp_server::sampling::SamplingExt;
-use turbomcp_server::{ServerBuilder, ServerError, handlers::FunctionToolHandler};
+use turbomcp_server::{McpError, ServerBuilder, handlers::FunctionToolHandler};
 
 /// Ask the LLM a question via sampling
-async fn ask_llm(req: CallToolRequest, ctx: RequestContext) -> Result<CallToolResult, ServerError> {
+async fn ask_llm(req: CallToolRequest, ctx: RequestContext) -> Result<CallToolResult, McpError> {
     // Extract question from tool arguments
     let question = req
         .arguments
@@ -44,9 +44,7 @@ async fn ask_llm(req: CallToolRequest, ctx: RequestContext) -> Result<CallToolRe
         include_context: Some(turbomcp_protocol::types::IncludeContext::None),
         temperature: Some(0.7),
         stop_sequences: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
         _meta: None,
@@ -100,7 +98,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         execution: None,
         annotations: None,
         meta: None,
-        #[cfg(feature = "mcp-icons")]
         icons: None,
     };
 

@@ -7,7 +7,7 @@ use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::RequestId;
 use turbomcp_protocol::jsonrpc::*;
 use turbomcp_server::middleware::*;
-use turbomcp_server::{ServerError, ServerResult};
+use turbomcp_server::{McpError, ServerResult};
 
 /// Test helper macro for default config tests to reduce duplication
 #[macro_export]
@@ -110,7 +110,7 @@ impl Middleware for TestMiddleware {
         }
 
         if self.should_fail {
-            return Err(ServerError::handler(format!(
+            return Err(McpError::internal(format!(
                 "Test middleware {} failed",
                 self.name
             )));
@@ -129,7 +129,7 @@ impl Middleware for TestMiddleware {
         _ctx: &RequestContext,
     ) -> ServerResult<()> {
         if self.should_fail {
-            return Err(ServerError::handler(format!(
+            return Err(McpError::internal(format!(
                 "Test middleware {} failed on response",
                 self.name
             )));

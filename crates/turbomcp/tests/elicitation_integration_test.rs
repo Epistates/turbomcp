@@ -85,13 +85,13 @@ impl TestServer {
                     ))
                 }
                 ElicitationResult::Decline(_) => {
-                    Err(McpError::Tool("User declined configuration".to_string()))
+                    Err(McpError::tool("User declined configuration".to_string()))
                 }
                 ElicitationResult::Cancel => {
-                    Err(McpError::Tool("User cancelled configuration".to_string()))
+                    Err(McpError::tool("User cancelled configuration".to_string()))
                 }
             },
-            Err(_) => Err(McpError::Tool(
+            Err(_) => Err(McpError::tool(
                 "Failed to receive elicitation response".to_string(),
             )),
         }
@@ -128,9 +128,9 @@ impl TestServer {
                 ElicitationResult::Accept(data) => {
                     data.get_string("env").unwrap_or_else(|_| "dev".to_string())
                 }
-                _ => return Err(McpError::Tool("Deployment cancelled".to_string())),
+                _ => return Err(McpError::tool("Deployment cancelled".to_string())),
             },
-            Err(_) => return Err(McpError::Tool("Failed to get environment".to_string())),
+            Err(_) => return Err(McpError::tool("Failed to get environment".to_string())),
         };
 
         // If production, require confirmation
@@ -173,18 +173,18 @@ impl TestServer {
                             .unwrap_or_else(|_| String::new());
 
                         if !confirmed || typed_name != project {
-                            return Err(McpError::Tool(
+                            return Err(McpError::tool(
                                 "Production deployment not confirmed".to_string(),
                             ));
                         }
                     }
                     _ => {
-                        return Err(McpError::Tool(
+                        return Err(McpError::tool(
                             "Production deployment cancelled".to_string(),
                         ));
                     }
                 },
-                Err(_) => return Err(McpError::Tool("Failed to get confirmation".to_string())),
+                Err(_) => return Err(McpError::tool("Failed to get confirmation".to_string())),
             }
         }
 

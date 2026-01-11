@@ -38,7 +38,8 @@ async fn test_websocket_basic_connection_and_tool_call() {
     #[server(
         name = "WebSocket Test Server",
         version = "1.0.0",
-        description = "Test server for WebSocket integration"
+        description = "Test server for WebSocket integration",
+        transports = ["websocket"]
     )]
     impl TestServer {
         fn new() -> Self {
@@ -219,7 +220,7 @@ async fn test_websocket_concurrent_connections() {
     #[derive(Clone)]
     struct ConcurrentServer;
 
-    #[server(name = "Concurrent Server", version = "1.0.0")]
+    #[server(name = "Concurrent Server", version = "1.0.0", transports = ["websocket"])]
     impl ConcurrentServer {
         fn new() -> Self {
             Self
@@ -326,7 +327,7 @@ async fn test_websocket_invalid_json_handling() {
     #[derive(Clone)]
     struct InvalidJsonServer;
 
-    #[server(name = "Invalid JSON Server", version = "1.0.0")]
+    #[server(name = "Invalid JSON Server", version = "1.0.0", transports = ["websocket"])]
     impl InvalidJsonServer {
         fn new() -> Self {
             Self
@@ -402,7 +403,7 @@ async fn test_websocket_ping_pong_keepalive() {
     #[derive(Clone)]
     struct KeepAliveServer;
 
-    #[server(name = "Keep-Alive Server", version = "1.0.0")]
+    #[server(name = "Keep-Alive Server", version = "1.0.0", transports = ["websocket"])]
     impl KeepAliveServer {
         fn new() -> Self {
             Self
@@ -452,7 +453,7 @@ async fn test_websocket_custom_path() {
     #[derive(Clone)]
     struct CustomPathServer;
 
-    #[server(name = "Custom Path Server", version = "1.0.0")]
+    #[server(name = "Custom Path Server", version = "1.0.0", transports = ["websocket"])]
     impl CustomPathServer {
         fn new() -> Self {
             Self
@@ -538,7 +539,8 @@ async fn test_websocket_header_propagation_comprehensive() {
     #[server(
         name = "WebSocket Header Test Server",
         version = "1.0.0",
-        description = "Server for testing header propagation"
+        description = "Server for testing header propagation",
+        transports = ["websocket"]
     )]
     impl HeaderTestServer {
         fn new() -> Self {

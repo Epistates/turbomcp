@@ -1,4 +1,4 @@
-#[cfg(all(test, feature = "mcp-tasks"))]
+#[cfg(all(test, feature = "experimental-tasks"))]
 mod tasks_tests {
     use crate::Client;
     use turbomcp_transport::stdio::StdioTransport;

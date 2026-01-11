@@ -3,6 +3,7 @@
 //! Provides enhanced session management API while leveraging the comprehensive
 //! `mcp-core::state` infrastructure for actual state management.
 
+use crate::McpErrorConstructors;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -339,7 +340,7 @@ impl SessionManager {
         self.state_manager.set(
             session_key,
             serde_json::to_value(&session_info)
-                .map_err(|e| McpError::Tool(format!("Failed to serialize session: {e}")))?,
+                .map_err(|e| McpError::tool(format!("Failed to serialize session: {e}")))?,
         );
 
         // Store in local metadata for quick access
@@ -410,7 +411,7 @@ impl SessionManager {
             self.state_manager.set(
                 session_key,
                 serde_json::to_value(session)
-                    .map_err(|e| McpError::Tool(format!("Failed to serialize session: {e}")))?,
+                    .map_err(|e| McpError::tool(format!("Failed to serialize session: {e}")))?,
             );
 
             // Update access order for LRU tracking
@@ -430,7 +431,7 @@ impl SessionManager {
         // Check session data size limits
         if let Some(max_size) = self.config.max_session_data_size {
             let value_size = serde_json::to_string(&value)
-                .map_err(|e| McpError::Tool(format!("Failed to serialize value: {e}")))?
+                .map_err(|e| McpError::tool(format!("Failed to serialize value: {e}")))?
                 .len();
 
             let current_size = self
@@ -442,7 +443,7 @@ impl SessionManager {
                 .unwrap_or(0);
 
             if current_size + value_size > max_size {
-                return Err(McpError::Tool(format!(
+                return Err(McpError::tool(format!(
                     "Session data size limit exceeded: {current_size} + {value_size} > {max_size}"
                 )));
             }
@@ -776,7 +777,7 @@ impl SessionManager {
             session.metadata = metadata;
             Ok(())
         } else {
-            Err(McpError::Tool("Session not found".to_string()))
+            Err(McpError::tool("Session not found".to_string()))
         }
     }
 

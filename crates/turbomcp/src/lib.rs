@@ -173,7 +173,7 @@
 //!     #[tool("Divide two numbers")]
 //!     async fn divide(&self, a: f64, b: f64) -> McpResult<f64> {
 //!         if b == 0.0 {
-//!             return Err(turbomcp::McpError::Tool("Cannot divide by zero".to_string()));
+//!             return Err(McpError::tool("Cannot divide by zero"));
 //!         }
 //!         Ok(a / b)
 //!     }
@@ -258,7 +258,7 @@
 //!         if let Some(user_id) = sessions.get(&session_token) {
 //!             Ok(format!("Authenticated user: {}", user_id))
 //!         } else {
-//!             Err(McpError::InvalidInput("Authentication required".to_string()))
+//!             Err(McpError::invalid_input("Authentication required"))
 //!         }
 //!     }
 //!
@@ -268,7 +268,7 @@
 //!             "github" | "google" | "microsoft" => {
 //!                 Ok(format!("Visit: https://{}.com/oauth/authorize", provider))
 //!             }
-//!             _ => Err(McpError::InvalidInput(format!("Unknown provider: {}", provider))),
+//!             _ => Err(McpError::invalid_input(format!("Unknown provider: {}", provider))),
 //!         }
 //!     }
 //! }
@@ -570,10 +570,10 @@ pub mod __macro_support {
     pub use tokio;
 
     // Utilities for generated code
-    pub use uuid;
     pub use serde_json;
-    pub use tracing;
     pub use tower;
+    pub use tracing;
+    pub use uuid;
 
     // Internal crates for generated code
     pub use turbomcp_protocol;
@@ -717,10 +717,10 @@ pub mod prelude {
     // Core types (always available)
     pub use super::{
         CallToolRequest, CallToolResult, Context, ElicitationManager, HandlerMetadata,
-        HandlerRegistration, McpError, McpErrorExt, McpResult, McpServer, RequestContext, Server,
-        ServerBuilder, ServerErrorExt, ServerResult, Transport, TransportConfig, TransportFactory,
-        TurboMcpServer, error_text, handlers, prompt_result, resource_result, text, tool_error,
-        tool_success,
+        HandlerRegistration, McpError, McpErrorConstructors, McpErrorExt, McpResult, McpServer,
+        RequestContext, Server, ServerBuilder, ServerErrorExt, ServerResult, Transport,
+        TransportConfig, TransportFactory, TurboMcpServer, error_text, handlers, prompt_result,
+        resource_result, text, tool_error, tool_success,
     };
 
     // Auth types (feature-gated)
@@ -855,203 +855,164 @@ pub mod prelude {
     pub use turbomcp_transport::unix::{UnixTransport, UnixTransportBuilder};
 }
 
-/// `TurboMCP` result type
+/// TurboMCP error type - re-exported from protocol for unified error handling
+///
+/// This is the unified error type used across all TurboMCP crates in v3.0.
+/// It provides MCP-compliant error codes, rich context, and is no_std compatible.
+///
+/// See [`turbomcp_protocol::McpError`] for full documentation.
+pub use turbomcp_protocol::McpError;
+
+/// TurboMCP result type alias
 pub type McpResult<T> = Result<T, McpError>;
 
-/// `TurboMCP` error type
-#[derive(Debug, thiserror::Error)]
-pub enum McpError {
-    /// Server error
-    #[error("Server error: {0}")]
-    Server(turbomcp_protocol::McpError),
+// Note: From implementations for common error types should be added to turbomcp-core
+// instead of here to avoid orphan rules. For now, users can use the extension trait
+// methods (tool_error, network_error, etc.) or map_err with the constructor methods.
 
-    /// Protocol error  
-    #[error("Protocol error: {0}")]
-    Protocol(String),
-
-    /// Tool execution error
-    #[error("Tool error: {0}")]
-    Tool(String),
-
-    /// Resource access error
-    #[error("Resource error: {0}")]
-    Resource(String),
-
-    /// Prompt processing error
-    #[error("Prompt error: {0}")]
-    Prompt(String),
-
-    /// Context error
-    #[error("Context error: {0}")]
-    Context(String),
-
-    /// Authorization/authentication error
-    #[error("Unauthorized: {0}")]
-    Unauthorized(String),
-
-    /// Network/connectivity error
-    #[error("Network error: {0}")]
-    Network(String),
-
-    /// Invalid input error
-    #[error("Invalid input: {0}")]
-    InvalidInput(String),
-
-    /// Schema generation error
-    #[error("Schema error: {0}")]
-    Schema(String),
-
-    /// Transport error
-    #[error("Transport error: {0}")]
-    Transport(String),
-
-    /// Serialization error
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-
-    /// Internal error
-    #[error("Internal error: {0}")]
-    Internal(String),
-
-    /// Invalid request error
-    #[error("Invalid request: {0}")]
-    InvalidRequest(String),
-}
-
-impl McpError {
-    /// Create an internal error
-    pub fn internal(msg: impl Into<String>) -> Self {
-        Self::Internal(msg.into())
-    }
-
-    /// Create an invalid request error
-    pub fn invalid_request(msg: impl Into<String>) -> Self {
-        Self::InvalidRequest(msg.into())
-    }
-
-    /// Create a tool error
-    pub fn tool(msg: impl Into<String>) -> Self {
-        Self::Tool(msg.into())
-    }
-
-    /// Create a protocol error
-    pub fn protocol(msg: impl Into<String>) -> Self {
-        Self::Protocol(msg.into())
-    }
+// Backward-compatible error constructor extension trait for ergonomic error creation
+//
+// Since we can't add inherent methods to McpError (it's defined in turbomcp_core),
+// we provide an extension trait that adds the same functionality.
+/// Extension trait for ergonomic `McpError` construction
+///
+/// This trait adds convenient constructor methods to `McpError` for common error types.
+/// It extends the core error type with high-level error creation methods that map to
+/// appropriate `ErrorKind` variants.
+///
+/// # Example
+///
+/// ```rust
+/// use turbomcp::prelude::*;
+///
+/// fn divide(a: f64, b: f64) -> McpResult<f64> {
+///     if b == 0.0 {
+///         return Err(McpError::tool("Division by zero"));
+///     }
+///     Ok(a / b)
+/// }
+/// ```
+pub trait McpErrorConstructors: Sized {
+    /// Create a tool execution error
+    ///
+    /// This is a convenience method that creates an error with `ErrorKind::ToolExecutionFailed`.
+    fn tool(message: impl Into<String>) -> Self;
 
     /// Create a resource error
-    pub fn resource(msg: impl Into<String>) -> Self {
-        Self::Resource(msg.into())
-    }
+    ///
+    /// This is a convenience method that creates an error with `ErrorKind::ResourceAccessDenied`.
+    fn resource(message: impl Into<String>) -> Self;
 
-    /// Create an unauthorized error
-    pub fn unauthorized(msg: impl Into<String>) -> Self {
-        Self::Unauthorized(msg.into())
-    }
+    /// Create a prompt error
+    ///
+    /// This is a convenience method that creates an error with `ErrorKind::PromptNotFound`.
+    fn prompt(message: impl Into<String>) -> Self;
+
+    /// Create a context error (mapped to Internal)
+    ///
+    /// This is a convenience method for dependency injection and context-related errors.
+    fn context(message: impl Into<String>) -> Self;
+
+    /// Create an unauthorized/authentication error
+    ///
+    /// This is a convenience method that creates an error with `ErrorKind::Authentication`.
+    fn unauthorized(message: impl Into<String>) -> Self;
 
     /// Create a network error
-    pub fn network(msg: impl Into<String>) -> Self {
-        Self::Network(msg.into())
-    }
+    ///
+    /// This is a convenience method that creates an error with `ErrorKind::Transport`.
+    fn network(message: impl Into<String>) -> Self;
+
+    /// Create a transport error
+    ///
+    /// This is a convenience method that creates an error with `ErrorKind::Transport`.
+    fn transport(message: impl Into<String>) -> Self;
+
+    /// Create a protocol error (mapped to Internal)
+    ///
+    /// This is a convenience method for protocol-level errors.
+    fn protocol(message: impl Into<String>) -> Self;
+
+    /// Create a schema error (mapped to InvalidParams)
+    ///
+    /// This is a convenience method for schema validation errors.
+    fn schema(message: impl Into<String>) -> Self;
 
     /// Create an invalid input error
-    pub fn invalid_input(msg: impl Into<String>) -> Self {
-        Self::InvalidInput(msg.into())
-    }
+    ///
+    /// This is a convenience method that creates an error with `ErrorKind::InvalidParams`.
+    /// Alias for `invalid_params()` to maintain backward compatibility.
+    fn invalid_input(message: impl Into<String>) -> Self;
 }
 
-impl From<turbomcp_transport::core::TransportError> for McpError {
-    fn from(err: turbomcp_transport::core::TransportError) -> Self {
-        Self::Transport(err.to_string())
-    }
-}
-
-impl From<Box<turbomcp_protocol::Error>> for McpError {
-    fn from(core_error: Box<turbomcp_protocol::Error>) -> Self {
-        // Convert protocol Error to McpError
-        Self::Protocol(core_error.to_string())
-    }
-}
-
-impl From<turbomcp_protocol::McpError> for McpError {
-    fn from(err: turbomcp_protocol::McpError) -> Self {
-        // Convert McpError to the appropriate variant based on kind
+impl McpErrorConstructors for McpError {
+    fn tool(message: impl Into<String>) -> Self {
         use turbomcp_protocol::ErrorKind;
-        match err.kind {
-            ErrorKind::ToolNotFound | ErrorKind::ToolExecutionFailed => Self::Tool(err.message),
-            ErrorKind::ResourceNotFound | ErrorKind::ResourceAccessDenied => {
-                Self::Resource(err.message)
-            }
-            ErrorKind::PromptNotFound => Self::Prompt(err.message),
-            ErrorKind::Authentication | ErrorKind::PermissionDenied | ErrorKind::Security => {
-                Self::Unauthorized(err.message)
-            }
-            ErrorKind::Transport => Self::Transport(err.message),
-            ErrorKind::InvalidParams | ErrorKind::InvalidRequest | ErrorKind::ParseError => {
-                Self::InvalidInput(err.message)
-            }
-            _ => Self::Protocol(err.message),
-        }
+        Self::new(ErrorKind::ToolExecutionFailed, message)
+    }
+
+    fn resource(message: impl Into<String>) -> Self {
+        use turbomcp_protocol::ErrorKind;
+        Self::new(ErrorKind::ResourceAccessDenied, message)
+    }
+
+    fn prompt(message: impl Into<String>) -> Self {
+        use turbomcp_protocol::ErrorKind;
+        Self::new(ErrorKind::PromptNotFound, message)
+    }
+
+    fn context(message: impl Into<String>) -> Self {
+        use turbomcp_protocol::ErrorKind;
+        Self::new(ErrorKind::Internal, message)
+    }
+
+    fn unauthorized(message: impl Into<String>) -> Self {
+        use turbomcp_protocol::ErrorKind;
+        Self::new(ErrorKind::Authentication, message)
+    }
+
+    fn network(message: impl Into<String>) -> Self {
+        use turbomcp_protocol::ErrorKind;
+        Self::new(ErrorKind::Transport, message)
+    }
+
+    fn transport(message: impl Into<String>) -> Self {
+        use turbomcp_protocol::ErrorKind;
+        Self::new(ErrorKind::Transport, message)
+    }
+
+    fn protocol(message: impl Into<String>) -> Self {
+        use turbomcp_protocol::ErrorKind;
+        Self::new(ErrorKind::Internal, message)
+    }
+
+    fn schema(message: impl Into<String>) -> Self {
+        use turbomcp_protocol::ErrorKind;
+        Self::new(ErrorKind::InvalidParams, message)
+    }
+
+    fn invalid_input(message: impl Into<String>) -> Self {
+        Self::invalid_params(message)
     }
 }
 
-// Add From implementations for common error types to reduce boilerplate
-impl From<std::io::Error> for McpError {
-    fn from(err: std::io::Error) -> Self {
-        Self::Transport(format!("IO error: {err}"))
-    }
-}
-
-#[cfg(feature = "http")]
-impl From<reqwest::Error> for McpError {
-    fn from(err: reqwest::Error) -> Self {
-        Self::Network(format!("Network error: {err}"))
-    }
-}
-
-#[cfg(feature = "uri-templates")]
-impl From<regex::Error> for McpError {
-    fn from(err: regex::Error) -> Self {
-        Self::InvalidInput(format!("Regex error: {err}"))
-    }
-}
-
-impl From<chrono::ParseError> for McpError {
-    fn from(err: chrono::ParseError) -> Self {
-        Self::InvalidInput(format!("Date parse error: {err}"))
-    }
-}
-
-impl Clone for McpError {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Server(e) => {
-                // Clone the McpError directly since it implements Clone
-                Self::Server(e.clone())
-            }
-            Self::Protocol(s) => Self::Protocol(s.clone()),
-            Self::Tool(s) => Self::Tool(s.clone()),
-            Self::Resource(s) => Self::Resource(s.clone()),
-            Self::Prompt(s) => Self::Prompt(s.clone()),
-            Self::Context(s) => Self::Context(s.clone()),
-            Self::Unauthorized(s) => Self::Unauthorized(s.clone()),
-            Self::Network(s) => Self::Network(s.clone()),
-            Self::InvalidInput(s) => Self::InvalidInput(s.clone()),
-            Self::Schema(s) => Self::Schema(s.clone()),
-            Self::Transport(s) => Self::Transport(s.clone()),
-            Self::Internal(s) => Self::Internal(s.clone()),
-            Self::InvalidRequest(s) => Self::InvalidRequest(s.clone()),
-            Self::Serialization(e) => {
-                // Convert the serialization error to string to avoid cloning complexity
-                let error_msg = format!("{e}");
-                let io_error = std::io::Error::other(error_msg);
-                Self::Serialization(serde_json::Error::io(io_error))
-            }
-        }
-    }
-}
-
-/// Extension trait for convenient error conversion
+/// Extension trait for convenient error conversion with context
+///
+/// This trait provides ergonomic methods for converting errors into MCP errors
+/// with additional context. All methods preserve the error message while adding
+/// context information.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use turbomcp::prelude::*;
+///
+/// fn my_tool() -> McpResult<String> {
+///     std::fs::read_to_string("config.json")
+///         .tool_error("Failed to read configuration")?;
+///     Ok("success".to_string())
+/// }
+/// ```
 pub trait McpErrorExt<T> {
     /// Convert any error to a Tool error with context
     fn tool_error(self, context: impl Into<String>) -> McpResult<T>;
@@ -1071,23 +1032,38 @@ pub trait McpErrorExt<T> {
 
 impl<T, E: std::fmt::Display> McpErrorExt<T> for Result<T, E> {
     fn tool_error(self, context: impl Into<String>) -> McpResult<T> {
-        self.map_err(|e| McpError::Tool(format!("{}: {}", context.into(), e)))
+        use turbomcp_protocol::ErrorKind;
+        self.map_err(|e| {
+            McpError::new(
+                ErrorKind::ToolExecutionFailed,
+                format!("{}: {}", context.into(), e),
+            )
+        })
     }
 
     fn protocol_error(self, context: impl Into<String>) -> McpResult<T> {
-        self.map_err(|e| McpError::Protocol(format!("{}: {}", context.into(), e)))
+        use turbomcp_protocol::ErrorKind;
+        self.map_err(|e| McpError::new(ErrorKind::Internal, format!("{}: {}", context.into(), e)))
     }
 
     fn resource_error(self, context: impl Into<String>) -> McpResult<T> {
-        self.map_err(|e| McpError::Resource(format!("{}: {}", context.into(), e)))
+        use turbomcp_protocol::ErrorKind;
+        self.map_err(|e| {
+            McpError::new(
+                ErrorKind::ResourceAccessDenied,
+                format!("{}: {}", context.into(), e),
+            )
+        })
     }
 
     fn network_error(self, context: impl Into<String>) -> McpResult<T> {
-        self.map_err(|e| McpError::Network(format!("{}: {}", context.into(), e)))
+        use turbomcp_protocol::ErrorKind;
+        self.map_err(|e| McpError::new(ErrorKind::Transport, format!("{}: {}", context.into(), e)))
     }
 
     fn transport_error(self, context: impl Into<String>) -> McpResult<T> {
-        self.map_err(|e| McpError::Transport(format!("{}: {}", context.into(), e)))
+        use turbomcp_protocol::ErrorKind;
+        self.map_err(|e| McpError::new(ErrorKind::Transport, format!("{}: {}", context.into(), e)))
     }
 }
 
@@ -1208,7 +1184,7 @@ impl Context {
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Context`] if:
+    /// Returns an error with `ErrorKind::Internal` if:
     /// - The service is not registered in the container
     /// - Type mismatch occurs during downcast
     /// - Circular dependency is detected
@@ -1220,7 +1196,7 @@ impl Context {
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Context`] if:
+    /// Returns an error with `ErrorKind::Internal` if:
     /// - The service is not registered in the container
     /// - Type mismatch occurs during downcast
     /// - Circular dependency is detected
@@ -1283,7 +1259,7 @@ impl Context {
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Serialization`] if the value cannot be serialized to JSON.
+    /// Returns an [`McpError`] with `ErrorKind::Serialization` if the value cannot be serialized to JSON.
     pub async fn set<T: Serialize>(&self, key: &str, value: T) -> McpResult<()> {
         let json_value = serde_json::to_value(value)?;
         self.data.write().await.insert(key.to_string(), json_value);
@@ -1294,7 +1270,7 @@ impl Context {
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Serialization`] if the stored value cannot be deserialized to type `T`.
+    /// Returns an [`McpError`] with `ErrorKind::Serialization` if the stored value cannot be deserialized to type `T`.
     pub async fn get<T: for<'de> Deserialize<'de>>(&self, key: &str) -> McpResult<Option<T>> {
         if let Some(value) = self.data.read().await.get(key) {
             Ok(Some(serde_json::from_value(value.clone())?))
@@ -1451,7 +1427,7 @@ impl Context {
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Context`] if:
+    /// Returns an error with `ErrorKind::Internal` if:
     /// - Server capabilities are not available in the context
     /// - The sampling request fails
     /// - The client does not support sampling
@@ -1477,6 +1453,9 @@ impl Context {
     ///     include_context: None,
     ///     temperature: None,
     ///     stop_sequences: None,
+    ///     task: None,
+    ///     tools: None,
+    ///     tool_choice: None,
     ///     _meta: None,
     /// };
     ///
@@ -1492,7 +1471,7 @@ impl Context {
                 .await
                 .map_err(|e| McpError::from(Box::new(e)))
         } else {
-            Err(McpError::Context(
+            Err(McpError::context(
                 "Server capabilities not available for sampling".to_string(),
             ))
         }

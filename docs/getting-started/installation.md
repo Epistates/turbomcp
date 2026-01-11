@@ -26,7 +26,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-turbomcp = "2.3"
+turbomcp = "3.0.0-exp"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -48,7 +48,7 @@ TurboMCP has optional features for different use cases. Choose what you need:
 ### Minimal (STDIO only)
 
 ```toml
-turbomcp = "2.3"
+turbomcp = "3.0.0-exp"
 ```
 
 - Just STDIO transport
@@ -58,7 +58,7 @@ turbomcp = "2.3"
 ### Full Stack (All Transports + Auth)
 
 ```toml
-turbomcp = { version = "2.3", features = ["full"] }
+turbomcp = { version = "3.0.0-exp", features = ["full"] }
 ```
 
 - All transports (STDIO, HTTP, WebSocket, TCP, Unix)
@@ -71,26 +71,26 @@ turbomcp = { version = "2.3", features = ["full"] }
 **For HTTP servers:**
 
 ```toml
-turbomcp = { version = "2.3", features = ["http", "websocket"] }
+turbomcp = { version = "3.0.0-exp", features = ["http", "websocket"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
 **For OAuth authentication:**
 
 ```toml
-turbomcp = { version = "2.3", features = ["full", "auth"] }
+turbomcp = { version = "3.0.0-exp", features = ["full", "auth"] }
 ```
 
 **For DPoP token binding:**
 
 ```toml
-turbomcp = { version = "2.3", features = ["full", "auth", "dpop"] }
+turbomcp = { version = "3.0.0-exp", features = ["full", "auth", "dpop"] }
 ```
 
 **For performance-critical applications:**
 
 ```toml
-turbomcp = { version = "2.3", features = ["full", "simd"] }
+turbomcp = { version = "3.0.0-exp", features = ["full", "simd"] }
 ```
 
 ## Feature Reference
@@ -137,7 +137,7 @@ Make sure you have tokio in your dependencies:
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-turbomcp = "2.3"
+turbomcp = "3.0.0-exp"
 ```
 
 ### `error: extern crate 'turbomcp' is unused`
@@ -150,10 +150,10 @@ TurboMCP has many optional features. If you only need STDIO, don't enable unnece
 
 ```toml
 # Fast compilation, minimal features
-turbomcp = "2.3"  # Just STDIO
+turbomcp = "3.0.0-exp"  # Just STDIO
 
 # Slow compilation, all features
-turbomcp = { version = "2.3", features = ["full"] }
+turbomcp = { version = "3.0.0-exp", features = ["full"] }
 ```
 
 ### `error: failed to resolve: use of undeclared crate or module 'McpResult'`

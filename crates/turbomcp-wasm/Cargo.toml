@@ -1,14 +1,17 @@
 [package]
 name = "turbomcp-wasm"
-version = "3.0.0-alpha.1"
+version = "3.0.0-exp"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89.0"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "WebAssembly bindings for TurboMCP - MCP client for browsers and WASI environments"
 license = "MIT"
-repository = "https://github.com/ArcadeLabsInc/turbomcp"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
 documentation = "https://docs.rs/turbomcp-wasm"
 keywords = ["mcp", "wasm", "webassembly", "browser", "wasi"]
 categories = ["wasm", "web-programming"]
+readme = "README.md"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -17,8 +20,8 @@ crate-type = ["cdylib", "rlib"]
 default = ["browser"]
 # Browser target with wasm-bindgen
 browser = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "serde-wasm-bindgen", "futures-channel"]
-# WASI Preview 2 target (future)
-wasi = []
+# WASI Preview 2 target - full runtime support for Wasmtime, WasmEdge, etc.
+wasi = ["dep:wasi", "dep:wit-bindgen", "dep:url"]
 # Console logging for debugging
 console-log = ["browser", "console_error_panic_hook"]
 
@@ -41,6 +44,11 @@ futures-channel = { version = "0.3", optional = true }
 
 # Console error panic hook for better debugging
 console_error_panic_hook = { version = "0.1", optional = true }
+
+# WASI Preview 2 dependencies (optional - for wasi feature)
+wasi = { version = "0.14", optional = true }
+wit-bindgen = { version = "0.39", optional = true }
+url = { version = "2.5", optional = true }
 
 [dependencies.web-sys]
 version = "0.3.83"

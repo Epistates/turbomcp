@@ -49,7 +49,7 @@ pub struct JsonRpcRequest {
     /// Request method name
     pub method: String,
     /// Request parameters
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub params: Option<Value>,
     /// Request identifier
     pub id: RequestId,
@@ -118,7 +118,7 @@ pub struct JsonRpcNotification {
     /// Notification method name
     pub method: String,
     /// Notification parameters
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub params: Option<Value>,
 }
 
@@ -130,7 +130,7 @@ pub struct JsonRpcError {
     /// Error message
     pub message: String,
     /// Additional error data
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub data: Option<Value>,
 }
 

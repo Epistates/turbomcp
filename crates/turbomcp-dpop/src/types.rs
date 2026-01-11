@@ -25,7 +25,7 @@ use zeroize::Zeroize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DpopAlgorithm {
     /// Elliptic Curve Digital Signature Algorithm with P-256 curve and SHA-256 (RFC 7518)
-    /// This is the only supported algorithm for DPoP in TurboMCP v2.2+
+    /// This is the only supported algorithm for DPoP in TurboMCP v3.0+
     #[serde(rename = "ES256")]
     ES256,
 }
@@ -443,7 +443,7 @@ impl DpopProof {
         }
 
         // Convert jsonwebtoken::Header to our DpopHeader
-        // Only ES256 is supported in TurboMCP v2.2+
+        // Only ES256 is supported in TurboMCP v3.0+
         let algorithm = match jwt_header.alg {
             Algorithm::ES256 => DpopAlgorithm::ES256,
             other => {
@@ -593,7 +593,7 @@ pub fn generate_ticket_id() -> TicketId {
 
 /// Compute JWK thumbprint as defined in RFC 7638
 ///
-/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v3.0+
 pub fn compute_jwk_thumbprint(jwk: &DpopJwk) -> super::Result<String> {
     use sha2::{Digest, Sha256};
 
@@ -645,7 +645,7 @@ fn is_valid_http_uri(uri: &str) -> bool {
 /// with the jsonwebtoken crate for signature verification. This is critical
 /// for proper DPoP security as per RFC 9449 requirements.
 ///
-/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v3.0+
 fn create_decoding_key_from_jwk(
     jwk: &DpopJwk,
 ) -> Result<jsonwebtoken::DecodingKey, Box<dyn std::error::Error>> {

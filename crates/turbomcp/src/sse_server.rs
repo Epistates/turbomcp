@@ -573,7 +573,7 @@ pub async fn start_sse_server(
     let bind_addr = format!("{}:{}", config.bind_address, config.port);
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
-        .map_err(|e| McpError::Transport(format!("Failed to bind to {bind_addr}: {e}")))?;
+        .map_err(|e| McpError::transport(format!("Failed to bind to {bind_addr}: {e}")))?;
 
     tracing::info!(
         address = %bind_addr,
@@ -596,7 +596,7 @@ pub async fn start_sse_server(
     // Start server
     axum::serve(listener, router)
         .await
-        .map_err(|e| McpError::Transport(format!("SSE server error: {e}")))?;
+        .map_err(|e| McpError::transport(format!("SSE server error: {e}")))?;
 
     Ok(())
 }

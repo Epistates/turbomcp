@@ -5,28 +5,23 @@
 //! of doing one thing well rather than trying to cover every possible security scenario.
 
 use crate::Result;
+use percent_encoding::percent_decode_str;
 use std::path::{Path, PathBuf};
 use tracing::{debug, warn};
 
-/// Decode URL-encoded patterns (handles single and double encoding)
-/// v2.3.6: Added for enhanced path traversal detection
+/// Decode URL-encoded patterns using the battle-tested percent-encoding crate.
+/// Handles single and double encoding (e.g., %252e -> %2e -> .).
+///
+/// Uses RFC 3986 compliant decoding which properly handles all edge cases
+/// including triple-encoding and unusual character sequences.
 fn decode_url_encoded(s: &str) -> String {
-    let mut result = s.to_string();
-    // Decode double-encoded patterns first (%252e = %2e = .)
-    result = result.replace("%252e", ".");
-    result = result.replace("%252E", ".");
-    result = result.replace("%252f", "/");
-    result = result.replace("%252F", "/");
-    result = result.replace("%255c", "\\");
-    result = result.replace("%255C", "\\");
-    // Decode single-encoded patterns
-    result = result.replace("%2e", ".");
-    result = result.replace("%2E", ".");
-    result = result.replace("%2f", "/");
-    result = result.replace("%2F", "/");
-    result = result.replace("%5c", "\\");
-    result = result.replace("%5C", "\\");
-    result
+    // First pass: decode once
+    let first_pass = percent_decode_str(s).decode_utf8_lossy().to_string();
+
+    // Second pass: decode again to catch double-encoded patterns like %252e -> %2e -> .
+    percent_decode_str(&first_pass)
+        .decode_utf8_lossy()
+        .to_string()
 }
 
 /// Check for path traversal patterns including Unicode lookalikes

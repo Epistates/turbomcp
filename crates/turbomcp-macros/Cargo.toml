@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-macros"
-version = "3.0.0-alpha.1"
+version = "3.0.0-exp"
 edition = "2024"
 description = "Procedural macros for ergonomic MCP tool and resource registration"
 license = "MIT"
@@ -32,8 +32,8 @@ schemars = { version = "1.0" }
 axum = { version = "0.8.4", optional = true, features = ["ws", "tracing", "macros"] }
 tokio = { workspace = true, optional = true }
 
-turbomcp-protocol = { version = "3.0.0-alpha.1", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "3.0.0-alpha.1", path = "../turbomcp-transport", optional = true }
+turbomcp-protocol = { version = "3.0.0-exp", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "3.0.0-exp", path = "../turbomcp-transport", optional = true }
 
 [dev-dependencies]
 async-trait = "0.1"
@@ -47,11 +47,7 @@ http = ["axum"]
 tcp = ["tokio", "dep:turbomcp-transport"]
 unix = ["tokio", "dep:turbomcp-transport"]
 
-# MCP draft specification features (pass-through to turbomcp-protocol)
-mcp-draft = ["turbomcp-protocol/mcp-draft"]
-mcp-icons = ["turbomcp-protocol/mcp-icons"]
-mcp-tasks = ["turbomcp-protocol/mcp-tasks"]
-mcp-url-elicitation = ["turbomcp-protocol/mcp-url-elicitation"]
-mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
+# Experimental features (pass-through to turbomcp-protocol)
+experimental-tasks = ["turbomcp-protocol/experimental-tasks"]
 
 # Note: schemars is always required and not a feature - it's used by all macros

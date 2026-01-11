@@ -168,7 +168,7 @@ pub struct McpServer {
     /// Server metrics (Arc-wrapped for cheap cloning)
     pub(crate) metrics: Arc<ServerMetrics>,
     /// Task storage for MCP Tasks API (SEP-1686)
-    #[cfg(feature = "mcp-tasks")]
+    #[cfg(feature = "experimental-tasks")]
     pub(crate) task_storage: Arc<crate::task_storage::TaskStorage>,
 }
 
@@ -287,7 +287,7 @@ impl McpServer {
         let metrics = Arc::new(ServerMetrics::new());
 
         // Initialize task storage (SEP-1686)
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         let task_storage = {
             use tokio::time::Duration;
             let storage = crate::task_storage::TaskStorage::new(Duration::from_secs(60));
@@ -300,7 +300,7 @@ impl McpServer {
             Arc::clone(&registry),
             Arc::clone(&metrics),
             config.clone(),
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             Some(Arc::clone(&task_storage)),
         ));
         // Build middleware stack configuration
@@ -371,7 +371,7 @@ impl McpServer {
             service,
             lifecycle,
             metrics,
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             task_storage,
         }
     }
@@ -409,8 +409,8 @@ impl McpServer {
     /// Get task storage (MCP Tasks API - SEP-1686)
     ///
     /// Returns the task storage instance for managing long-running operations.
-    /// Only available when the `mcp-tasks` feature is enabled.
-    #[cfg(feature = "mcp-tasks")]
+    /// Only available when the `experimental-tasks` feature is enabled.
+    #[cfg(feature = "experimental-tasks")]
     #[must_use]
     pub const fn task_storage(&self) -> &Arc<crate::task_storage::TaskStorage> {
         &self.task_storage
@@ -1396,8 +1396,11 @@ impl McpServer {
         crate::runtime::run_transport_bidirectional(self.router.clone(), dispatcher)
             .await
             .map_err(|e| {
-                crate::McpError::internal(format!("Unix socket bidirectional runtime failed: {}", e))
-                    .with_operation("run_unix")
+                crate::McpError::internal(format!(
+                    "Unix socket bidirectional runtime failed: {}",
+                    e
+                ))
+                .with_operation("run_unix")
             })
     }
 

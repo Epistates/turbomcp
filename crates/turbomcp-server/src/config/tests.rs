@@ -41,7 +41,8 @@ fn test_server_config_default() {
     let logging = &config.logging;
     assert_eq!(logging.level, "info");
     assert!(logging.structured);
-    assert!(logging.file.is_none());
+    assert_eq!(logging.output, LogOutput::Stderr);
+    assert!(logging.directory.is_none());
 
     // Test additional fields
     assert!(config.additional.is_empty());
@@ -71,7 +72,34 @@ fn test_logging_config_default() {
 
     assert_eq!(log_config.level, "info");
     assert!(log_config.structured);
-    assert!(log_config.file.is_none());
+    assert_eq!(log_config.output, LogOutput::Stderr);
+    assert!(log_config.directory.is_none());
+    assert_eq!(log_config.file_prefix, "server");
+    assert_eq!(log_config.rotation, LogRotation::Never);
+}
+
+#[test]
+fn test_logging_config_presets() {
+    // stderr_minimal preset
+    let config = LoggingConfig::stderr_minimal();
+    assert_eq!(config.level, "error");
+    assert_eq!(config.output, LogOutput::Stderr);
+    assert!(config.directory.is_none());
+
+    // stdio_file preset
+    let config = LoggingConfig::stdio_file("/var/log/test");
+    assert_eq!(config.output, LogOutput::FileOnly);
+    assert!(config.directory.is_some());
+
+    // stderr_debug preset
+    let config = LoggingConfig::stderr_debug();
+    assert_eq!(config.level, "debug");
+    assert_eq!(config.output, LogOutput::Stderr);
+
+    // production preset
+    let config = LoggingConfig::production("/var/log/prod");
+    assert_eq!(config.output, LogOutput::Both);
+    assert_eq!(config.rotation, LogRotation::Hourly);
 }
 
 // ============================================================================
@@ -287,7 +315,10 @@ fn test_server_config_json_roundtrip() {
         logging: LoggingConfig {
             level: "warn".to_string(),
             structured: false,
-            file: Some(PathBuf::from("/var/log/server.log")),
+            output: LogOutput::FileOnly,
+            directory: Some(PathBuf::from("/var/log")),
+            file_prefix: "server".to_string(),
+            rotation: LogRotation::Daily,
         },
         additional,
     };

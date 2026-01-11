@@ -19,9 +19,7 @@ use turbomcp_protocol::jsonrpc::{
     ResponseId,
 };
 
-use crate::{
-    McpError, metrics::ServerMetrics, registry::HandlerRegistry, routing::RequestRouter,
-};
+use crate::{McpError, metrics::ServerMetrics, registry::HandlerRegistry, routing::RequestRouter};
 
 /// Core MCP service that handles JSON-RPC requests
 #[derive(Debug, Clone)]

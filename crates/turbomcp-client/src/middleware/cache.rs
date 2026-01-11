@@ -24,8 +24,8 @@ use parking_lot::RwLock;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tower_layer::Layer;
@@ -74,7 +74,10 @@ impl CacheConfig {
 
         // If specific methods are configured, check membership
         if !self.cache_methods.is_empty() {
-            return self.cache_methods.iter().any(|m| method.starts_with(m) || method == m);
+            return self
+                .cache_methods
+                .iter()
+                .any(|m| method.starts_with(m) || method == m);
         }
 
         // Default: cache read-like operations
@@ -534,7 +537,13 @@ mod tests {
         let request = test_request("resources/list");
 
         // First call - cache miss
-        let response = service.ready().await.unwrap().call(request.clone()).await.unwrap();
+        let response = service
+            .ready()
+            .await
+            .unwrap()
+            .call(request.clone())
+            .await
+            .unwrap();
         assert!(response.is_success());
         assert_eq!(call_count.load(Ordering::Relaxed), 1);
 

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, error, trace};
-use turbomcp_protocol::{jsonrpc::JsonRpcRequest, Error as McpError, Result as McpResult};
+use turbomcp_protocol::{Error as McpError, Result as McpResult, jsonrpc::JsonRpcRequest};
 use turbomcp_transport::tower::SessionInfo;
 
 use super::BackendConnector;

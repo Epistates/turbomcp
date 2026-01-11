@@ -498,7 +498,7 @@ impl ProductionServer {
     async fn process_user(&self, ctx: Context, target_user_id: String) -> McpResult<User> {
         // Example: Use Context API for authentication
         if !ctx.is_authenticated() {
-            return Err(McpError::Unauthorized("Authentication required".to_string()));
+            return Err(McpError::unauthorized("Authentication required".to_string()));
         }
 
         let current_user = ctx.user_id.as_deref().unwrap_or("anonymous");
@@ -508,7 +508,7 @@ impl ProductionServer {
 
         // Check permissions
         if !roles.contains(&"admin".to_string()) && Some(current_user) != Some(&target_user_id) {
-            return Err(McpError::Unauthorized("Insufficient permissions".to_string()));
+            return Err(McpError::unauthorized("Insufficient permissions".to_string()));
         }
 
         // Context provides:

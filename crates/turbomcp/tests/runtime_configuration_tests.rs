@@ -12,7 +12,7 @@ struct ConfigurableServer {
     environment: String,
 }
 
-#[server]
+#[server(transports = ["tcp", "unix"])]
 impl ConfigurableServer {
     #[tool("Get environment")]
     async fn get_environment(&self) -> McpResult<String> {

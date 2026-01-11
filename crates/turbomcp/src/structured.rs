@@ -1,5 +1,6 @@
 //! Structured output support with automatic JSON schema generation
 
+use crate::McpErrorConstructors;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -89,7 +90,7 @@ where
     T: Serialize,
 {
     fn to_structured_output(&self) -> crate::McpResult<StructuredOutput> {
-        let content = serde_json::to_value(&self.0).map_err(crate::McpError::Serialization)?;
+        let content = serde_json::to_value(&self.0)?;
 
         Ok(StructuredOutput {
             content,
@@ -148,7 +149,7 @@ where
     /// Parse parameters from a JSON value
     pub fn from_json(value: serde_json::Value) -> crate::McpResult<Self> {
         let params = serde_json::from_value(value)
-            .map_err(|e| crate::McpError::Tool(format!("Parameter parsing error: {e}")))?;
+            .map_err(|e| crate::McpError::tool(format!("Parameter parsing error: {e}")))?;
         Ok(Self(params))
     }
 
@@ -156,7 +157,7 @@ where
     pub fn from_map(
         map: std::collections::HashMap<String, serde_json::Value>,
     ) -> crate::McpResult<Self> {
-        let value = serde_json::to_value(map).map_err(crate::McpError::Serialization)?;
+        let value = serde_json::to_value(map)?;
         Self::from_json(value)
     }
 }

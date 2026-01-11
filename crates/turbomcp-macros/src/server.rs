@@ -101,10 +101,10 @@ fn validate_stdio_safety(
     transports: &Option<Vec<String>>,
 ) -> Result<(), syn::Error> {
     // Check if stdio is in the transports list
-    // If transports is None, it defaults to all transports (including stdio)
+    // If transports is None, it defaults to stdio only (matching default features)
     let should_check = match transports {
         Some(transports) => transports.contains(&"stdio".to_string()),
-        None => true, // Default includes all transports
+        None => true, // Default is stdio, so check for safety
     };
 
     if !should_check {
@@ -391,7 +391,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
             ///
             /// Essential for production deployments, container orchestration, and coordinated
             /// system shutdown. Returns both the server and a handle for external control.
-            pub fn into_server_with_shutdown(self) -> Result<(turbomcp::Server, turbomcp::ShutdownHandle), turbomcp::ServerError> {
+            pub fn into_server_with_shutdown(self) -> Result<(turbomcp::Server, turbomcp::ShutdownHandle), ::turbomcp::__macro_support::turbomcp_server::McpError> {
                 let server = self.create_server()?;
                 let shutdown_handle = server.shutdown_handle();
                 Ok((server, shutdown_handle))
@@ -401,7 +401,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
             ///
             /// Essential for production deployments, container orchestration, and coordinated
             /// system shutdown. Enables external control over server lifecycle.
-            pub fn shutdown_handle(&self) -> Result<turbomcp::ShutdownHandle, turbomcp::ServerError> {
+            pub fn shutdown_handle(&self) -> Result<turbomcp::ShutdownHandle, ::turbomcp::__macro_support::turbomcp_server::McpError> {
                 // For compatibility, we clone self to create the server
                 // This works because the actual tool implementations will be captured properly
                 let server = self.clone().create_server()?;
@@ -412,7 +412,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
             // to avoid lifetime issues and provide maximum performance through static dispatch
 
             /// Create and configure the underlying server instance
-            fn create_server(self) -> Result<turbomcp::Server, turbomcp::ServerError> {
+            fn create_server(self) -> Result<turbomcp::Server, ::turbomcp::__macro_support::turbomcp_server::McpError> {
                 use ::turbomcp::{RequestContext, ServerBuilder};
                 use ::turbomcp::handlers::utils;
                 use ::turbomcp::{CallToolRequest, CallToolResult, Content, TextContent};
@@ -582,7 +582,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                 &self,
                 tool_name: &str,
                 arguments: serde_json::Value
-            ) -> Result<turbomcp::CallToolResult, turbomcp::ServerError> {
+            ) -> Result<turbomcp::CallToolResult, ::turbomcp::__macro_support::turbomcp_server::McpError> {
                 use ::turbomcp::{CallToolRequest, RequestContext};
                 use std::collections::HashMap;
 
@@ -616,7 +616,7 @@ pub fn generate_server_impl(args: TokenStream, input_impl: ItemImpl) -> TokenStr
                     }
                 )*
 
-                Err(turbomcp::ServerError::handler(format!("Tool '{}' not found", tool_name)))
+                Err(::turbomcp::__macro_support::turbomcp_server::McpError::internal(format!("Tool '{}' not found", tool_name)))
             }
 
             /// Get server information (for integration with other systems)

@@ -211,10 +211,8 @@ pub use sampling::{SamplingHandler, ServerInfo, UserInteractionHandler};
 
 // v3.0 Tower middleware
 pub use middleware::{
-    Cache, CacheConfig, CacheLayer, CacheService,
-    Metrics, MetricsLayer, MetricsService, MetricsSnapshot,
-    TracingLayer, TracingService,
-    McpRequest, McpResponse,
+    Cache, CacheConfig, CacheLayer, CacheService, McpRequest, McpResponse, Metrics, MetricsLayer,
+    MetricsService, MetricsSnapshot, TracingLayer, TracingService,
 };
 
 // Common protocol types

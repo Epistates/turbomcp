@@ -13,7 +13,7 @@
 //!
 //! ## Security Notice
 //!
-//! **TurboMCP v2.2.0+** removes RSA algorithm support (RS256, PS256) to eliminate
+//! **TurboMCP v3.0+** removes RSA algorithm support (RS256, PS256) to eliminate
 //! timing attack vulnerabilities (RUSTSEC-2023-0071). Only ES256 (ECDSA P-256) is supported.
 //! ES256 provides superior security, faster performance, and smaller key sizes.
 //!

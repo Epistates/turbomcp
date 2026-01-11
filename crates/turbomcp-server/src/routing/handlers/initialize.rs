@@ -139,7 +139,7 @@ fn get_server_capabilities(context: &HandlerContext) -> ServerCapabilities {
         },
         experimental: None,
         completions: None,
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         tasks: {
             // Import ServerTasksCapabilities for task capability reporting
             use turbomcp_protocol::types::ServerTasksCapabilities;

@@ -1,7 +1,7 @@
 [package]
 name = "turbomcp-client"
 
-version = "3.0.0-alpha.1"
+version = "3.0.0-exp"
 
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -56,12 +56,8 @@ websocket = ["turbomcp-transport/websocket"]
 tcp = ["turbomcp-transport/tcp"]
 unix = ["turbomcp-transport/unix"]
 
-# MCP draft specification features (pass-through to turbomcp-protocol)
-mcp-draft = ["turbomcp-protocol/mcp-draft"]
-mcp-icons = ["turbomcp-protocol/mcp-icons"]
-mcp-tasks = ["turbomcp-protocol/mcp-tasks"]
-mcp-url-elicitation = ["turbomcp-protocol/mcp-url-elicitation"]
-mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
+# Experimental features (pass-through to turbomcp-protocol)
+experimental-tasks = ["turbomcp-protocol/experimental-tasks"]
 
 # Legacy Tower adapter (deprecated - middleware module is always available)
 tower = ["dep:pin-project-lite", "dep:http"]

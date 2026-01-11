@@ -144,7 +144,48 @@ let config = ServerConfig::builder()
     .build();
 ```
 
-### 5. New Crates in v3.0
+### 5. Feature Flag Simplification
+
+**What Changed:**
+- All MCP 2025-11-25 features are now **always available** (no feature flags needed)
+- The `mcp-*` feature flags have been removed
+- Only `experimental-tasks` remains for experimental features
+
+**Removed Features (now always enabled):**
+| Old Feature Flag | Types Now Always Available |
+|-----------------|---------------------------|
+| `mcp-icons` | `Icons`, `IconTheme` |
+| `mcp-url-elicitation` | `URLElicitRequestParams` |
+| `mcp-sampling-tools` | `tools`/`tool_choice` in `CreateMessageRequest` |
+| `mcp-enum-improvements` | `EnumSchema`, `EnumOption` |
+| `mcp-draft` | `description` on `Implementation` |
+
+**Migration:**
+
+```toml
+# Before (v2.x) - with feature flags
+turbomcp-protocol = { version = "2.x", features = ["mcp-icons", "mcp-url-elicitation"] }
+
+# After (v3.x) - no feature flags needed
+turbomcp-protocol = "3.0"
+```
+
+```rust
+// Before (v2.x) - conditional compilation
+#[cfg(feature = "mcp-sampling-tools")]
+tools: None,
+
+// After (v3.x) - always available
+tools: None,
+```
+
+**Experimental Features:**
+```toml
+# Only experimental features require feature flags
+turbomcp = { version = "3.0", features = ["experimental-tasks"] }
+```
+
+### 6. New Crates in v3.0
 
 | Crate | Description |
 |-------|-------------|
@@ -153,9 +194,9 @@ let config = ServerConfig::builder()
 | `turbomcp-telemetry` | OpenTelemetry integration |
 | `turbomcp-grpc` | gRPC transport via tonic |
 | `turbomcp-wasm` | WebAssembly bindings |
-| `turbomcp-compat` | Backward compatibility for v2.x migration |
+| `turbomcp-wire` | Wire format codec abstraction |
 
-### 6. Authentication Migration
+### 7. Authentication Migration
 
 **What Changed:**
 - `Claims` type moved to `turbomcp_auth::AuthContext`

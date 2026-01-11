@@ -80,6 +80,8 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     ///         max_tokens: 100,
     ///         stop_sequences: None,
     ///         task: None,
+    ///         tools: None,
+    ///         tool_choice: None,
     ///         _meta: None,
     ///     };
     ///

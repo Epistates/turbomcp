@@ -50,11 +50,11 @@ pub fn generate_context_aware_tool_dispatch(
                                 req.id.clone()
                             )
                         }
-                        // FIXED: Extract actual error code from ServerError
+                        // Extract JSON-RPC error code from McpError
                         Err(e) => {
                             ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
                                 ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
-                                    code: e.error_code(),
+                                    code: e.jsonrpc_code(),
                                     message: e.to_string(),
                                     data: None,
                                 },
@@ -129,11 +129,11 @@ pub fn generate_context_aware_prompt_dispatch(
                                 )
                             }
                         }
-                        // FIXED: Extract actual error code from ServerError
+                        // Extract JSON-RPC error code from McpError
                         Err(e) => {
                             ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
                                 ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
-                                    code: e.error_code(),
+                                    code: e.jsonrpc_code(),
                                     message: e.to_string(),
                                     data: None,
                                 },
@@ -202,11 +202,11 @@ pub fn generate_context_aware_resource_dispatch(
                                 )
                             }
                         }
-                        // FIXED: Extract actual error code from ServerError
+                        // Extract JSON-RPC error code from McpError
                         Err(e) => {
                             ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcResponse::error_response(
                                 ::turbomcp::__macro_support::turbomcp_protocol::jsonrpc::JsonRpcError {
-                                    code: e.error_code(),
+                                    code: e.jsonrpc_code(),
                                     message: e.to_string(),
                                     data: None,
                                 },

@@ -182,12 +182,12 @@ mod request_handler;
 // Prefer ? operator for error propagation
 fn read_file(path: &str) -> McpResult<String> {
     let contents = fs::read_to_string(path)
-        .map_err(|e| McpError::Resource(format!("Failed to read {}: {}", path, e)))?;
+        .map_err(|e| McpError::resource(format!("Failed to read {}: {}", path, e)))?;
     Ok(contents)
 }
 
 // Use descriptive error messages
-return Err(McpError::Tool("Invalid input: expected positive number".to_string()));
+return Err(McpError::tool("Invalid input: expected positive number".to_string()));
 ```
 
 #### Documentation

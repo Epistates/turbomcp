@@ -4,6 +4,7 @@
 //! for improved performance in high-throughput message processing scenarios.
 
 //use std::collections::HashMap;
+use crate::McpErrorConstructors;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -192,7 +193,7 @@ impl SimdJsonProcessor {
     {
         let bytes = self.serialize(value).await?;
         String::from_utf8(bytes)
-            .map_err(|e| McpError::Tool(format!("Invalid UTF-8 in serialized JSON: {e}")))
+            .map_err(|e| McpError::tool(format!("Invalid UTF-8 in serialized JSON: {e}")))
     }
 
     /// Check if input is suitable for SIMD processing
@@ -212,15 +213,15 @@ impl SimdJsonProcessor {
             // Use simd-json for maximum performance
             let mut owned = json_bytes.to_vec();
             let parsed = simd_json::to_borrowed_value(&mut owned)
-                .map_err(|e| McpError::Tool(format!("SIMD JSON parse error: {e}")))?;
+                .map_err(|e| McpError::tool(format!("SIMD JSON parse error: {e}")))?;
             simd_json::serde::from_borrowed_value(parsed)
-                .map_err(|e| McpError::Tool(format!("SIMD JSON deserialize error: {e}")))
+                .map_err(|e| McpError::tool(format!("SIMD JSON deserialize error: {e}")))
         }
         #[cfg(not(feature = "simd"))]
         {
             // Fallback to serde_json
             serde_json::from_slice(json_bytes)
-                .map_err(|e| McpError::Tool(format!("JSON parse error: {}", e)))
+                .map_err(|e| McpError::tool(format!("JSON parse error: {}", e)))
         }
     }
 
@@ -230,7 +231,7 @@ impl SimdJsonProcessor {
         T: for<'de> Deserialize<'de>,
     {
         serde_json::from_slice(json_bytes)
-            .map_err(|e| McpError::Tool(format!("JSON parse error: {e}")))
+            .map_err(|e| McpError::tool(format!("JSON parse error: {e}")))
     }
 
     /// Serialize with SIMD acceleration using sonic-rs
@@ -242,13 +243,13 @@ impl SimdJsonProcessor {
         {
             // Use sonic-rs for fast serialization
             sonic_rs::to_vec(value)
-                .map_err(|e| McpError::Tool(format!("SIMD JSON serialize error: {e}")))
+                .map_err(|e| McpError::tool(format!("SIMD JSON serialize error: {e}")))
         }
         #[cfg(not(feature = "simd"))]
         {
             // Fallback to serde_json
             serde_json::to_vec(value)
-                .map_err(|e| McpError::Tool(format!("JSON serialize error: {}", e)))
+                .map_err(|e| McpError::tool(format!("JSON serialize error: {}", e)))
         }
     }
 
@@ -257,7 +258,7 @@ impl SimdJsonProcessor {
     where
         T: Serialize,
     {
-        serde_json::to_vec(value).map_err(|e| McpError::Tool(format!("JSON serialize error: {e}")))
+        serde_json::to_vec(value).map_err(|e| McpError::tool(format!("JSON serialize error: {e}")))
     }
 
     /// Get performance metrics
@@ -396,7 +397,7 @@ where
     } else {
         // Fallback to standard serde_json
         serde_json::from_slice(json_bytes)
-            .map_err(|e| McpError::Tool(format!("JSON parse error: {e}")))
+            .map_err(|e| McpError::tool(format!("JSON parse error: {e}")))
     }
 }
 
@@ -409,7 +410,7 @@ where
         processor.serialize(value).await
     } else {
         // Fallback to standard serde_json
-        serde_json::to_vec(value).map_err(|e| McpError::Tool(format!("JSON serialize error: {e}")))
+        serde_json::to_vec(value).map_err(|e| McpError::tool(format!("JSON serialize error: {e}")))
     }
 }
 
@@ -423,7 +424,7 @@ where
     } else {
         // Fallback to standard serde_json
         serde_json::to_string(value)
-            .map_err(|e| McpError::Tool(format!("JSON serialize error: {e}")))
+            .map_err(|e| McpError::tool(format!("JSON serialize error: {e}")))
     }
 }
 

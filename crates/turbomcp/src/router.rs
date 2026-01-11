@@ -4,6 +4,7 @@
 //! `mcp-server::routing` infrastructure for actual implementation.
 
 //use std::collections::HashMap;
+use crate::McpErrorConstructors;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -55,7 +56,7 @@ where
     pub fn new(server: T) -> Self {
         let registry = Arc::new(HandlerRegistry::new());
         let metrics = Arc::new(turbomcp_server::metrics::ServerMetrics::new());
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         let router = Arc::new(RequestRouter::new(
             registry.clone(),
             metrics,
@@ -63,7 +64,7 @@ where
             None, // No task storage for simple tool router
         ));
 
-        #[cfg(not(feature = "mcp-tasks"))]
+        #[cfg(not(feature = "experimental-tasks"))]
         let router = Arc::new(RequestRouter::new(
             registry.clone(),
             metrics,
@@ -91,7 +92,7 @@ where
 
         self.registry
             .register_tool(name, wrapper)
-            .map_err(|e| McpError::Tool(format!("Registration failed: {e}")))
+            .map_err(|e| McpError::tool(format!("Registration failed: {e}")))
     }
 
     /// List all registered tools (delegates to mcp-server)
@@ -124,14 +125,14 @@ where
         // Convert response back to CallToolResult
         if let Some(result) = response.result() {
             serde_json::from_value(result.clone())
-                .map_err(|e| McpError::Tool(format!("Response parsing failed: {e}")))
+                .map_err(|e| McpError::tool(format!("Response parsing failed: {e}")))
         } else if let Some(error) = response.error() {
-            Err(McpError::Tool(format!(
+            Err(McpError::tool(format!(
                 "Tool execution failed: {}",
                 error.message
             )))
         } else {
-            Err(McpError::Tool("Invalid response format".to_string()))
+            Err(McpError::tool("Invalid response format".to_string()))
         }
     }
 
@@ -209,7 +210,7 @@ where
 {
     fn combine(routers: Vec<Self>) -> McpResult<Self> {
         if routers.is_empty() {
-            return Err(McpError::Tool(
+            return Err(McpError::tool(
                 "Cannot combine empty router list".to_string(),
             ));
         }
@@ -217,7 +218,7 @@ where
         // Create combined registry by merging all router registries
         let combined_registry = Arc::new(HandlerRegistry::new());
         let metrics = Arc::new(turbomcp_server::metrics::ServerMetrics::new());
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         let combined_router = Arc::new(RequestRouter::new(
             combined_registry.clone(),
             metrics,
@@ -225,7 +226,7 @@ where
             None, // No task storage for combined router
         ));
 
-        #[cfg(not(feature = "mcp-tasks"))]
+        #[cfg(not(feature = "experimental-tasks"))]
         let combined_router = Arc::new(RequestRouter::new(
             combined_registry.clone(),
             metrics,

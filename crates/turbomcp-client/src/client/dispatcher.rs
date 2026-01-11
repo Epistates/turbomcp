@@ -244,6 +244,7 @@ impl MessageDispatcher {
 
             let mut consecutive_errors = 0u32;
             let max_consecutive_errors = 20; // After 20 consecutive errors, back off significantly
+            let mut has_ever_connected = false; // Track if we've ever received a message
 
             loop {
                 tokio::select! {
@@ -259,6 +260,7 @@ impl MessageDispatcher {
                             Ok(Some(msg)) => {
                                 // Successfully received message - reset error counter
                                 consecutive_errors = 0;
+                                has_ever_connected = true;
 
                                 // Route the message
                                 if let Err(e) = Self::route_message(
@@ -283,8 +285,14 @@ impl MessageDispatcher {
                                 let is_fatal = matches!(state, turbomcp_transport::TransportState::Disconnected
                                                              | turbomcp_transport::TransportState::Failed { .. });
 
-                                if consecutive_errors == 1 {
-                                    // First error - log at error level
+                                // During initial connection, log at debug level to avoid scary errors
+                                // that are expected during the connection handshake race condition.
+                                // Only escalate to error/warn once we've successfully connected once.
+                                if !has_ever_connected && consecutive_errors <= 3 {
+                                    // Initial connection errors - log at debug level
+                                    tracing::debug!("Transport connecting (attempt {}): {}", consecutive_errors, e);
+                                } else if consecutive_errors == 1 || (consecutive_errors == 4 && !has_ever_connected) {
+                                    // First error after connection, or first error after startup phase
                                     tracing::error!("Transport receive error: {}", e);
                                 } else if consecutive_errors <= max_consecutive_errors {
                                     // Subsequent errors - log at warn to reduce noise
@@ -307,6 +315,9 @@ impl MessageDispatcher {
                                     } else {
                                         1000 // 1 second initially
                                     }
+                                } else if !has_ever_connected {
+                                    // During initial connection, use shorter delays
+                                    50u64.saturating_mul(2u64.saturating_pow(consecutive_errors.min(4)))
                                 } else {
                                     // Transient error - shorter backoff
                                     100u64.saturating_mul(2u64.saturating_pow(consecutive_errors.min(5)))
@@ -374,7 +385,13 @@ impl MessageDispatcher {
                         );
                     }
                 } else {
-                    tracing::warn!("Received response with null ID (parse error)");
+                    // Per JSON-RPC 2.0 spec, a response with null ID indicates a parse error
+                    // or invalid request where the server couldn't determine the request ID.
+                    // This is not an error - it's the server reporting it couldn't parse our message.
+                    tracing::debug!(
+                        "Received response with null ID (server parse error): {:?}",
+                        response.error()
+                    );
                 }
             }
 
@@ -425,7 +442,6 @@ impl MessageDispatcher {
                     );
                 }
             }
-
         }
 
         Ok(())

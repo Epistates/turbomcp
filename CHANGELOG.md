@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [3.0.0-alpha.1] - 2026-01-08
+## [3.0.0-exp] - 2026-01-10
 
 ### 🚀 Major Architectural Redesign
 
@@ -17,6 +17,7 @@ TurboMCP v3.0 represents a ground-up architectural redesign for the next generat
 - **Enterprise-Grade**: OpenTelemetry integration, Tower middleware
 - **Zero-Copy**: rkyv serialization for maximum performance
 - **Modular**: Individual transport crates, lean dependencies
+- **Pristine Error Types**: Unified `McpError` with no legacy `ServerError`
 
 ### Added
 
@@ -52,14 +53,11 @@ TurboMCP v3.0 represents a ground-up architectural redesign for the next generat
 
 - **`turbomcp-wasm`** - WebAssembly bindings
   - Browser client via wasm-bindgen
-  - WASI runtime support (planned)
-
-#### Migration Support
-- **`turbomcp-compat`** - Backward compatibility layer
-  - Deprecated type aliases with migration guidance
-  - `ServerError` → `McpError`
-  - `ServerResult<T>` → `McpResult<T>`
-  - `Claims` → `AuthContext`
+  - **WASI Preview 2 runtime support** - Full implementation for Wasmtime, WasmEdge, Wasmer
+    - `StdioTransport` - MCP over STDIO using `wasi:cli/stdin` and `wasi:cli/stdout`
+    - `HttpTransport` - HTTP-based MCP using `wasi:http/outgoing-handler`
+    - `McpClient` - Full MCP client with tools, resources, prompts support
+    - Build target: `wasm32-wasip2`
 
 #### Tower Integration
 - Tower `Layer` and `Service` implementations for:
@@ -68,12 +66,32 @@ TurboMCP v3.0 represents a ground-up architectural redesign for the next generat
   - `turbomcp-proxy` - Proxy middleware
   - `turbomcp-telemetry` - Observability middleware
 
+#### Server Error Helpers
+- **`ServerErrorExt` trait** (`turbomcp-server`) - Extension trait for server-specific error helpers
+  ```rust
+  use turbomcp_server::{McpError, ServerErrorExt};
+
+  // Server-specific error constructors
+  let err = McpError::lifecycle("startup failed");
+  let err = McpError::shutdown("shutdown interrupted");
+  let err = McpError::middleware("auth", "token expired");
+  let err = McpError::registry("handler not found");
+  let err = McpError::routing("no route for method");
+  let err = McpError::resource_exhausted("connection pool");
+
+  // Check if error is fatal
+  if err.is_fatal() {
+      // Handle unrecoverable error
+  }
+  ```
+
 ### Changed
 
 #### Error Type Unification
 - `ServerError`, `ClientError`, and protocol `Error` unified into `McpError`
 - `ServerResult<T>` and `ClientResult<T>` unified into `McpResult<T>`
 - All error types now in `turbomcp_core::error`
+- `turbomcp-server` re-exports `McpError`, `McpResult`, and `ErrorKind` from `turbomcp-protocol`
 
 #### Protocol Compliance
 - Full MCP 2025-11-25 specification compliance
@@ -81,24 +99,57 @@ TurboMCP v3.0 represents a ground-up architectural redesign for the next generat
 - Configurable protocol version negotiation
 
 #### Version Alignment
-- All 21 crates aligned to `3.0.0-alpha.1`
+- All 21 crates aligned to `3.0.0-exp`
 - Consistent dependency versions across workspace
+
+#### Feature Flag Simplification
+- **All MCP 2025-11-25 features are now core** - No feature flags required for standard protocol features
+- **Removed `mcp-*` feature flags** (`turbomcp-protocol`):
+  - `mcp-icons` → Icons and IconTheme always available
+  - `mcp-url-elicitation` → URL elicitation always available
+  - `mcp-sampling-tools` → tools/tool_choice in CreateMessageRequest always available
+  - `mcp-enum-improvements` → EnumSchema/EnumOption always available
+  - `mcp-draft` → Draft features (description on Implementation) always available
+- **Renamed `mcp-tasks` → `experimental-tasks`** - Only experimental features remain feature-gated
+- **Migration**: Simply remove `mcp-*` features from your `Cargo.toml` - all types are now always available
+
+### Removed
+
+- **`ServerError` enum** (`turbomcp-server`) - Completely removed in favor of unified `McpError`
+  - Use `McpError::internal(msg)` instead of `ServerError::Handler { message, context }`
+  - Use `McpError::lifecycle(msg)` (via `ServerErrorExt`) instead of `ServerError::Lifecycle`
+  - Use `McpError::timeout(msg)` instead of `ServerError::Timeout`
+  - Use `McpError::resource_not_found(name)` instead of `ServerError::NotFound`
+  - Use `error.jsonrpc_code()` instead of `error.error_code()`
 
 ### Migration
 
 See [MIGRATION.md](./MIGRATION.md) for detailed v2.x → v3.x migration guide.
 
 ```toml
-# Quick migration with compatibility layer
 [dependencies]
-turbomcp = "3.0.0-alpha.1"
-turbomcp-compat = "3.0.0-alpha.1"  # Provides deprecated type aliases
+turbomcp = "3.0.0-exp"
 ```
 
-### Deprecation Timeline
-- **v3.0.0**: All compat types marked with `#[deprecated]` warnings
-- **v3.1.0**: Deprecation warnings become errors
-- **v4.0.0**: `turbomcp-compat` crate removed
+#### Error Migration Examples
+
+```rust
+// Before (v2.x)
+use turbomcp_server::ServerError;
+Err(ServerError::Handler { message: "failed".into(), context: None })
+
+// After (v3.0.0-exp)
+use turbomcp_server::{McpError, ServerErrorExt};
+Err(McpError::internal("failed"))
+// Or with context:
+Err(McpError::internal("failed").with_operation("my_operation"))
+```
+
+### Test Results
+
+- 1070 tests passing
+- Zero clippy warnings with `--all-features`
+- All transports verified: STDIO, TCP, HTTP, WebSocket, Unix socket
 
 ## [2.3.7] - 2026-01-05
 

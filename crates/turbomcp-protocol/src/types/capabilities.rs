@@ -40,7 +40,7 @@ pub struct ClientCapabilities {
     ///
     /// When present, indicates the client can act as a receiver for task-augmented requests
     /// from the server (e.g., sampling/createMessage, elicitation/create).
-    #[cfg(feature = "mcp-tasks")]
+    #[cfg(feature = "experimental-tasks")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tasks: Option<ClientTasksCapabilities>,
 }
@@ -80,7 +80,7 @@ pub struct ServerCapabilities {
     ///
     /// When present, indicates the server can act as a receiver for task-augmented requests
     /// from the client (e.g., tools/call).
-    #[cfg(feature = "mcp-tasks")]
+    #[cfg(feature = "experimental-tasks")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tasks: Option<ServerTasksCapabilities>,
 }
@@ -181,7 +181,7 @@ pub struct ToolsCapabilities {
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct ServerTasksCapabilities {
     /// Present if the server supports tasks/list
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -222,7 +222,7 @@ pub struct ServerTasksCapabilities {
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct ClientTasksCapabilities {
     /// Present if the client supports tasks/list
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -239,17 +239,17 @@ pub struct ClientTasksCapabilities {
 
 /// Task list capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct TasksListCapabilities {}
 
 /// Task cancel capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct TasksCancelCapabilities {}
 
 /// Server-side task-augmented requests capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct ServerTasksRequestsCapabilities {
     /// Present if the server supports task-augmented tools/call
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -258,7 +258,7 @@ pub struct ServerTasksRequestsCapabilities {
 
 /// Client-side task-augmented requests capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct ClientTasksRequestsCapabilities {
     /// Present if the client supports task-augmented sampling/createMessage
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -271,7 +271,7 @@ pub struct ClientTasksRequestsCapabilities {
 
 /// Tools task capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct TasksToolsCapabilities {
     /// Present if task-augmented tools/call is supported
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -280,12 +280,12 @@ pub struct TasksToolsCapabilities {
 
 /// Tools call task capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct TasksToolsCallCapabilities {}
 
 /// Sampling task capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct TasksSamplingCapabilities {
     /// Present if task-augmented sampling/createMessage is supported
     #[serde(rename = "createMessage", skip_serializing_if = "Option::is_none")]
@@ -294,12 +294,12 @@ pub struct TasksSamplingCapabilities {
 
 /// Sampling create message task capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct TasksSamplingCreateMessageCapabilities {}
 
 /// Elicitation task capabilities
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct TasksElicitationCapabilities {
     /// Present if task-augmented elicitation/create is supported
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -308,5 +308,5 @@ pub struct TasksElicitationCapabilities {
 
 /// Elicitation create task capability
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 pub struct TasksElicitationCreateCapabilities {}

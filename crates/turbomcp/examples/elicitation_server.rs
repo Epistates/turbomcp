@@ -13,13 +13,13 @@ use turbomcp_protocol::types::{
     ToolInputSchema,
 };
 use turbomcp_server::sampling::SamplingExt;
-use turbomcp_server::{ServerBuilder, ServerError, handlers::FunctionToolHandler};
+use turbomcp_server::{McpError, ServerBuilder, handlers::FunctionToolHandler};
 
 /// Request user's name via elicitation
 async fn get_user_name(
     _req: CallToolRequest,
     ctx: RequestContext,
-) -> Result<CallToolResult, ServerError> {
+) -> Result<CallToolResult, McpError> {
     // Create simple text input schema
     let mut schema = ElicitationSchema::new();
     schema.properties.insert(
@@ -82,7 +82,7 @@ async fn get_user_name(
 async fn configure_model(
     _req: CallToolRequest,
     ctx: RequestContext,
-) -> Result<CallToolResult, ServerError> {
+) -> Result<CallToolResult, McpError> {
     // Create schema with multiple field types
     let mut schema = ElicitationSchema::new();
 
@@ -188,7 +188,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         execution: None,
         annotations: None,
         meta: None,
-        #[cfg(feature = "mcp-icons")]
         icons: None,
     };
 
@@ -206,7 +205,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         execution: None,
         annotations: None,
         meta: None,
-        #[cfg(feature = "mcp-icons")]
         icons: None,
     };
 

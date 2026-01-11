@@ -3,12 +3,17 @@
 use serde::{Serialize, de::DeserializeOwned};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use turbomcp_core::error::McpError;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
     AbortController, Headers, MessageEvent, Request, RequestInit, RequestMode, Response, WebSocket,
 };
+
+/// Global atomic request ID counter for browser transports
+/// Ensures unique IDs across concurrent requests
+static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Type alias for WebSocket message handler to reduce type complexity
 type MessageHandler = Rc<RefCell<Option<Box<dyn Fn(String)>>>>;
@@ -51,10 +56,11 @@ impl FetchTransport {
     ) -> Result<R, McpError> {
         let url = format!("{}/{}", self.base_url, method);
 
-        // Create request body
+        // Create request body with unique ID
+        let request_id = NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
         let body = serde_json::json!({
             "jsonrpc": "2.0",
-            "id": 1,
+            "id": request_id,
             "method": method,
             "params": params,
         });
@@ -163,10 +169,14 @@ impl FetchTransport {
     }
 }
 
+/// Type alias for WebSocket close handler
+type CloseHandler = Rc<RefCell<Option<Box<dyn Fn(u16, String)>>>>;
+
 /// WebSocket transport for bidirectional MCP communication
 pub struct WebSocketTransport {
     ws: WebSocket,
     message_handler: MessageHandler,
+    close_handler: CloseHandler,
 }
 
 impl WebSocketTransport {
@@ -182,15 +192,28 @@ impl WebSocketTransport {
 
         // Set up message handler
         let onmessage = Closure::wrap(Box::new(move |e: MessageEvent| {
-            if let Some(text) = e.data().as_string() {
-                if let Some(ref handler) = *handler_clone.borrow() {
-                    handler(text);
-                }
+            if let Some(text) = e.data().as_string()
+                && let Some(ref handler) = *handler_clone.borrow()
+            {
+                handler(text);
             }
         }) as Box<dyn Fn(MessageEvent)>);
 
         ws.set_onmessage(Some(onmessage.as_ref().unchecked_ref()));
         onmessage.forget();
+
+        // Set up close handler
+        let close_handler: CloseHandler = Rc::new(RefCell::new(None));
+        let close_handler_clone = close_handler.clone();
+
+        let onclose = Closure::wrap(Box::new(move |e: web_sys::CloseEvent| {
+            if let Some(ref handler) = *close_handler_clone.borrow() {
+                handler(e.code(), e.reason());
+            }
+        }) as Box<dyn Fn(web_sys::CloseEvent)>);
+
+        ws.set_onclose(Some(onclose.as_ref().unchecked_ref()));
+        onclose.forget();
 
         // Wait for connection
         let ws_clone = ws.clone();
@@ -223,6 +246,7 @@ impl WebSocketTransport {
         Ok(Self {
             ws: ws_clone,
             message_handler,
+            close_handler,
         })
     }
 
@@ -236,6 +260,17 @@ impl WebSocketTransport {
     /// Set message handler
     pub fn on_message(&self, handler: impl Fn(String) + 'static) {
         *self.message_handler.borrow_mut() = Some(Box::new(handler));
+    }
+
+    /// Set close handler
+    ///
+    /// The handler receives the close code and reason string.
+    /// Common close codes:
+    /// - 1000: Normal closure
+    /// - 1001: Going away (e.g., server shutting down)
+    /// - 1006: Abnormal closure (connection lost)
+    pub fn on_close(&self, handler: impl Fn(u16, String) + 'static) {
+        *self.close_handler.borrow_mut() = Some(Box::new(handler));
     }
 
     /// Close the connection

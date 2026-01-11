@@ -23,7 +23,7 @@ async fn test_http_headers_extracted() {
         Arc::clone(&registry),
         Arc::clone(&metrics),
         config,
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     ));
 

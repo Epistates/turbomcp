@@ -82,7 +82,7 @@ pub fn generate_tool_impl(args: TokenStream, input: TokenStream) -> TokenStream 
         // Generate handler function that bridges CallToolRequest to the actual method
         #[doc(hidden)]
         #[allow(non_snake_case)]
-        fn #handler_fn_name(&self, request: turbomcp::CallToolRequest, context: turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<turbomcp::CallToolResult, turbomcp::ServerError>> + Send + '_>> {
+        fn #handler_fn_name(&self, request: turbomcp::CallToolRequest, context: turbomcp::RequestContext) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<turbomcp::CallToolResult, ::turbomcp::__macro_support::turbomcp_server::McpError>> + Send + '_>> {
             Box::pin(async move {
                 // Context injection using ContextFactory pattern
                 let turbomcp_ctx = {
@@ -118,23 +118,7 @@ pub fn generate_tool_impl(args: TokenStream, input: TokenStream) -> TokenStream 
                 #param_extraction
 
                 // Call the actual method with extracted parameters (self is already available)
-                let result = self.#fn_name(#call_args).await
-                    .map_err(|e| match e {
-                        turbomcp::McpError::Server(server_err) => server_err,
-                        turbomcp::McpError::Tool(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Resource(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Prompt(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Protocol(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Context(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Unauthorized(msg) => turbomcp::ServerError::authorization(msg),
-                        turbomcp::McpError::Network(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::InvalidInput(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Schema(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Transport(msg) => turbomcp::ServerError::handler(msg),
-                        turbomcp::McpError::Serialization(e) => turbomcp::ServerError::from(e),
-                        turbomcp::McpError::Internal(msg) => turbomcp::ServerError::Internal(msg),
-                        turbomcp::McpError::InvalidRequest(msg) => turbomcp::ServerError::handler(msg),
-                    })?;
+                let result = self.#fn_name(#call_args).await?;
 
                 // Convert result to CallToolResult - properly serialize the result
                 let text = match ::serde_json::to_value(&result) {
@@ -279,7 +263,7 @@ fn generate_parameter_extraction(analysis: &FunctionAnalysis) -> TokenStream2 {
                 let #param_name_ident: #param_ty = if let Some(args) = arguments {
                     args.get(#param_name_str)
                         .map(|v| ::serde_json::from_value(v.clone())
-                            .map_err(|e| turbomcp::ServerError::handler(
+                            .map_err(|e| ::turbomcp::__macro_support::turbomcp_server::McpError::internal(
                                 format!("Invalid parameter {}: {}", #param_name_str, e)
                             )))
                         .transpose()?
@@ -293,13 +277,13 @@ fn generate_parameter_extraction(analysis: &FunctionAnalysis) -> TokenStream2 {
             extraction_code.extend(quote! {
                 let #param_name_ident = arguments
                     .as_ref()
-                    .ok_or_else(|| turbomcp::ServerError::handler("Missing arguments"))?
+                    .ok_or_else(|| ::turbomcp::__macro_support::turbomcp_server::McpError::internal("Missing arguments"))?
                     .get(#param_name_str)
-                    .ok_or_else(|| turbomcp::ServerError::handler(
+                    .ok_or_else(|| ::turbomcp::__macro_support::turbomcp_server::McpError::internal(
                         format!("Missing required parameter: {}", #param_name_str)
                     ))?;
                 let #param_name_ident: #param_ty = ::serde_json::from_value(#param_name_ident.clone())
-                    .map_err(|e| turbomcp::ServerError::handler(
+                    .map_err(|e| ::turbomcp::__macro_support::turbomcp_server::McpError::internal(
                         format!("Invalid parameter {}: {}", #param_name_str, e)
                     ))?;
             });

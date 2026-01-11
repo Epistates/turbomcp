@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Semaphore;
 
 use turbomcp_protocol::jsonrpc::*;
-#[cfg(feature = "mcp-tasks")]
+#[cfg(feature = "experimental-tasks")]
 use turbomcp_protocol::types::tasks::*;
 use turbomcp_protocol::types::{
     ClientCapabilities as ProtocolClientCapabilities, InitializeResult as ProtocolInitializeResult,
@@ -1128,9 +1128,7 @@ impl<T: Transport + 'static> Client<T> {
                 name: "turbomcp-client".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 title: Some("TurboMCP Client".to_string()),
-                #[cfg(feature = "mcp-draft")]
                 description: None,
-                #[cfg(feature = "mcp-icons")]
                 icons: None,
             },
             _meta: None,
@@ -1157,7 +1155,6 @@ impl<T: Transport + 'static> Client<T> {
             server_capabilities: protocol_response.capabilities,
         })
     }
-
 
     /// Subscribe to resource change notifications
     ///
@@ -1288,7 +1285,6 @@ impl<T: Transport + 'static> Client<T> {
         &self.inner.capabilities
     }
 
-
     // ============================================================================
     // Tasks API Methods (MCP 2025-11-25 Draft - SEP-1686)
     // ============================================================================
@@ -1304,7 +1300,7 @@ impl<T: Transport + 'static> Client<T> {
     /// # Returns
     ///
     /// Returns the current `Task` state including status, timestamps, and messages.
-    #[cfg(feature = "mcp-tasks")]
+    #[cfg(feature = "experimental-tasks")]
     pub async fn get_task(&self, task_id: &str) -> Result<Task> {
         let request = GetTaskRequest {
             task_id: task_id.to_string(),
@@ -1332,7 +1328,7 @@ impl<T: Transport + 'static> Client<T> {
     /// # Returns
     ///
     /// Returns the updated `Task` state (typically with status "cancelled").
-    #[cfg(feature = "mcp-tasks")]
+    #[cfg(feature = "experimental-tasks")]
     pub async fn cancel_task(&self, task_id: &str) -> Result<Task> {
         let request = CancelTaskRequest {
             task_id: task_id.to_string(),
@@ -1361,7 +1357,7 @@ impl<T: Transport + 'static> Client<T> {
     /// # Returns
     ///
     /// Returns a `ListTasksResult` containing the list of tasks and next cursor.
-    #[cfg(feature = "mcp-tasks")]
+    #[cfg(feature = "experimental-tasks")]
     pub async fn list_tasks(
         &self,
         cursor: Option<String>,
@@ -1392,7 +1388,7 @@ impl<T: Transport + 'static> Client<T> {
     /// # Returns
     ///
     /// Returns a `GetTaskPayloadResult` containing the operation result (e.g. CallToolResult).
-    #[cfg(feature = "mcp-tasks")]
+    #[cfg(feature = "experimental-tasks")]
     pub async fn get_task_result(&self, task_id: &str) -> Result<GetTaskPayloadResult> {
         let request = GetTaskPayloadRequest {
             task_id: task_id.to_string(),

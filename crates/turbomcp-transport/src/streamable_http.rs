@@ -1,10 +1,10 @@
 //! MCP 2025-06-18 Compliant Streamable HTTP Transport - Types and Configuration
 //!
 //! This module provides configuration and session management types for HTTP transport:
-//! - [`StreamableHttpConfig`] - Configuration for HTTP transport
-//! - [`StreamableHttpConfigBuilder`] - Ergonomic builder for configuration
-//! - [`Session`] - Session state with SSE broadcast and replay support
-//! - [`StoredEvent`] - SSE event with metadata for replay
+//! - `StreamableHttpConfig` - Configuration for HTTP transport
+//! - `StreamableHttpConfigBuilder` - Ergonomic builder for configuration
+//! - `Session` - Session state with SSE broadcast and replay support
+//! - `StoredEvent` - SSE event with metadata for replay
 //!
 //! The actual HTTP server implementation lives in `turbomcp_server::runtime::http`.
 //!

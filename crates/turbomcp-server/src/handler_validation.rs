@@ -120,7 +120,7 @@ const MAX_HANDLER_NAME_LENGTH: usize = 128;
 ///
 /// ## Errors
 ///
-/// Returns [`crate::ServerError::Handler`] if:
+/// Returns [`crate::McpError`] if:
 /// - Name is empty
 /// - Name exceeds `MAX_HANDLER_NAME_LENGTH` (128 characters)
 /// - Name is not a valid Rust identifier

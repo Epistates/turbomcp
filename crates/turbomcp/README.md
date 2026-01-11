@@ -136,7 +136,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "2.1"
+turbomcp = "3.0.0-exp"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -294,7 +294,7 @@ async fn read_file(
     ctx.info(&format!("Reading file: {}", path)).await?;
     
     tokio::fs::read_to_string(&path).await
-        .map_err(|e| McpError::Resource(e.to_string()))
+        .map_err(|e| McpError::resource(e.to_string()))
 }
 ```
 
@@ -370,7 +370,7 @@ async fn configure_app(&self, ctx: Context) -> McpResult<String> {
             .unwrap_or("default");
         Ok(format!("Configured with {} theme", theme))
     } else {
-        Err(McpError::Context("Configuration cancelled".to_string()))
+        Err(McpError::context("Configuration cancelled".to_string()))
     }
 }
 ```
@@ -503,7 +503,7 @@ impl SecureServer {
     #[tool("Get user profile")]
     async fn get_user_profile(&self, ctx: Context) -> McpResult<UserProfile> {
         let user = ctx.authenticated_user()
-            .ok_or_else(|| McpError::Unauthorized("Authentication required".to_string()))?;
+            .ok_or_else(|| McpError::unauthorized("Authentication required".to_string()))?;
         
         Ok(UserProfile {
             id: user.id,
@@ -749,13 +749,13 @@ match result {
     Err(McpError::InvalidInput(msg)) => {
         // Handle validation errors
     },
-    Err(McpError::Unauthorized(msg)) => {
+    Err(McpError::unauthorized(msg)) => {
         // Handle authentication errors
     },
-    Err(McpError::Resource(msg)) => {
+    Err(McpError::resource(msg)) => {
         // Handle resource access errors
     },
-    Err(McpError::Transport(msg)) => {
+    Err(McpError::transport(msg)) => {
         // Handle transport errors
     },
     Ok(value) => {
@@ -870,7 +870,7 @@ Enable SIMD acceleration for maximum performance:
 
 ```toml
 [dependencies]
-turbomcp = { version = "2.1", features = ["simd"] }
+turbomcp = { version = "3.0.0-exp", features = ["simd"] }
 ```
 
 Configure performance settings:
@@ -1024,15 +1024,15 @@ When using `default-features = false`, you must explicitly enable at least one t
 ```toml
 # Minimal STDIO-only server
 [dependencies]
-turbomcp = { version = "2.1", default-features = false, features = ["stdio"] }
+turbomcp = { version = "3.0.0-exp", default-features = false, features = ["stdio"] }
 
 # HTTP-only server
 [dependencies]
-turbomcp = { version = "2.1", default-features = false, features = ["http"] }
+turbomcp = { version = "3.0.0-exp", default-features = false, features = ["http"] }
 
 # Multiple transports without default features
 [dependencies]
-turbomcp = { version = "2.1", default-features = false, features = ["stdio", "http", "websocket"] }
+turbomcp = { version = "3.0.0-exp", default-features = false, features = ["stdio", "http", "websocket"] }
 ```
 
 Without at least one transport feature enabled, the server will not be able to communicate using the MCP protocol.

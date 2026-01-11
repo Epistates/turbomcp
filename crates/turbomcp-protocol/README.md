@@ -31,25 +31,25 @@ Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and 
 
 ### MCP Version Support
 
-TurboMCP supports multiple MCP specification versions through feature flags:
+TurboMCP v3.0 fully implements MCP 2025-11-25 with all specification features enabled by default.
+No feature flags needed for core protocol capabilities.
 
-| Spec Version | Status | Feature Flag | Description |
-|--------------|--------|--------------|-------------|
-| **MCP 2025-06-18** | ✅ Stable | (default) | Current stable specification |
-| **MCP 2025-11-25** | 🚧 Draft | `mcp-draft` | Draft specification with experimental features |
+| Spec Version | Status | Notes |
+|--------------|--------|-------|
+| **MCP 2025-11-25** | ✅ Full Support | Icons, URL elicitation, sampling tools, enum improvements |
+| **MCP 2025-06-18** | ✅ Compatible | Negotiated at runtime via protocol version |
 
 **Quick Start:**
 ```toml
-# Stable (MCP 2025-06-18) - Production ready
 [dependencies]
-turbomcp-protocol = "2.2"
-
-# Draft (MCP 2025-11-25) - Experimental features
-[dependencies]
-turbomcp-protocol = { version = "2.2", features = ["mcp-draft"] }
+turbomcp-protocol = "3.0.0-exp"
 ```
 
-See [Version Selection Guide](#version-selection-guide) for detailed guidance.
+Only the experimental Tasks API (SEP-1686) requires a feature flag:
+```toml
+[dependencies]
+turbomcp-protocol = { version = "3.0.0-exp", features = ["experimental-tasks"] }
+```
 
 ## Key Features
 
@@ -414,7 +414,7 @@ use turbomcp::{McpError, McpResult};
 
 #[tool("My tool")]
 async fn my_tool(&self) -> McpResult<String> {
-    Err(McpError::Tool("Something failed".into()))  // Simple error
+    Err(McpError::tool("Something failed".into()))  // Simple error
 }
 
 // Server layer converts to:
@@ -489,18 +489,18 @@ sequenceDiagram
 - Contributing to MCP specification development
 - Willing to accept potential breaking changes in future releases
 
-### Feature-by-Feature Selection
+### Core Features (Always Enabled)
 
-Don't need all draft features? Enable specific ones:
+All core MCP 2025-11-25 features are now always available - no feature flags needed:
+
+- **URL Elicitation** (SEP-1036) - URL mode for OAuth/sensitive data
+- **Sampling Tools** (SEP-1577) - Tool calling in LLM sampling
+- **Icons** (SEP-973) - Icon metadata for tools, resources, prompts
+- **Enum Improvements** (SEP-1330) - Standards-compliant enum schemas
 
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "2.2", features = [
-    "mcp-url-elicitation",      # URL mode for OAuth/sensitive data
-    "mcp-sampling-tools",       # Tool calling in LLM sampling
-    "mcp-icons",                # Icon metadata for UI
-    "mcp-enum-improvements",    # Standards-compliant enum schemas
-] }
+turbomcp-protocol = "3.0.0-exp"  # All core features included
 ```
 
 ### Runtime Version Negotiation
@@ -534,28 +534,27 @@ let result = InitializeResult {
 
 **Key Principle:** Clients request, servers decide. The server's response version is the negotiated protocol version for the session.
 
-### Migration Path
+### Migration from v2.x
 
-**Gradual Adoption:**
-1. Start with stable 2025-06-18
-2. Add specific draft features as needed
-3. Test with `cfg(feature = "...")` guards
-4. Upgrade to full draft when stable
+TurboMCP v3.0 simplifies feature flags - all MCP 2025-11-25 features are now core:
+
+**Before (v2.x):**
+```toml
+turbomcp-protocol = { version = "2.x", features = ["mcp-url-elicitation", "mcp-icons"] }
+```
+
+**After (v3.0):**
+```toml
+turbomcp-protocol = "3.0.0-exp"  # All features included by default
+```
 
 **Example:**
 ```rust
-#[cfg(feature = "mcp-url-elicitation")]
+// No feature guards needed - URLElicitRequestParams is always available
 use turbomcp_protocol::types::URLElicitRequestParams;
 
-// Fallback for stable clients
-#[cfg(not(feature = "mcp-url-elicitation"))]
-fn handle_sensitive_input() {
-    // Use traditional form mode
-}
-
-#[cfg(feature = "mcp-url-elicitation")]
-fn handle_sensitive_input() {
-    // Use URL mode for better security
+fn handle_sensitive_input(params: URLElicitRequestParams) {
+    // URL mode is always available
 }
 ```
 
@@ -591,28 +590,27 @@ fn handle_sensitive_input() {
 |---------|-------------|---------|
 | `wasm` | WebAssembly support (no_std compatible) | ❌ |
 
-### MCP 2025-11-25 Draft Specification Features
+### MCP 2025-11-25 Features
 
-#### Meta-Feature (Enable All Draft Features)
+#### Core Features (Always Enabled)
 
-| Feature | Description | Enabled by Default |
-|---------|-------------|--------------------|
-| `mcp-draft` | Enable **all** MCP 2025-11-25 draft features | ❌ |
+These MCP 2025-11-25 features are now **always available** - no feature flag needed:
 
-Equivalent to enabling all features below.
+| Feature | SEP | Description |
+|---------|-----|-------------|
+| URL Elicitation | SEP-1036 | URL mode for OAuth/sensitive data collection |
+| Sampling Tools | SEP-1577 | Tool calling support in LLM sampling |
+| Icons | SEP-973 | Icon metadata for tools/resources/prompts |
+| Enum Improvements | SEP-1330 | Standards-based enum schemas (oneOf, anyOf) |
 
-#### Individual Draft Features (SEP = Specification Enhancement Proposal)
+#### Experimental Features (Require Feature Flag)
 
 | Feature | SEP | Description | Enabled by Default |
 |---------|-----|-------------|--------------------|
-| `mcp-tasks` | SEP-1686 | Experimental Tasks API for durable long-running requests | ❌ |
-| `mcp-url-elicitation` | SEP-1036 | URL mode elicitation for OAuth/sensitive data | ❌ |
-| `mcp-sampling-tools` | SEP-1577 | Tool calling support in LLM sampling requests | ❌ |
-| `mcp-icons` | SEP-973 | Icon metadata for tools/resources/prompts | ❌ |
-| `mcp-enum-improvements` | SEP-1330 | Standards-based enum schemas (oneOf, anyOf) | ❌ |
+| `experimental-tasks` | SEP-1686 | Experimental Tasks API for durable long-running requests | ❌ |
 
 **Legend:**
-- ✅ : Enabled by default (standard feature)
+- ✅ : Always enabled (core feature)
 - ❌ : Disabled by default (requires explicit feature flag)
 
 **Authentication & Security Features (Auth-Related SEPs):**
@@ -631,35 +629,31 @@ Equivalent to enabling all features below.
 **Minimal build (stable spec only):**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "2.2", default-features = false, features = ["std"] }
+turbomcp-protocol = { version = "3.0.0-exp", default-features = false, features = ["std"] }
 ```
 
 **High-performance build:**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "2.2", features = ["simd", "zero-copy", "lock-free"] }
+turbomcp-protocol = { version = "3.0.0-exp", features = ["simd", "zero-copy", "lock-free"] }
 ```
 
 **Observable production build:**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "2.2", features = ["simd", "tracing", "metrics"] }
+turbomcp-protocol = { version = "3.0.0-exp", features = ["simd", "tracing", "metrics"] }
 ```
 
-**Full draft specification:**
+**Full MCP 2025-11-25 support (default):**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "2.2", features = ["mcp-draft"] }
+turbomcp-protocol = "3.0.0-exp"  # All core features included
 ```
 
-**Selective draft features (recommended):**
+**With experimental Tasks API:**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "2.2", features = [
-    "mcp-url-elicitation",      # Need OAuth support
-    "mcp-sampling-tools",       # Need tool calling in sampling
-    "mcp-enum-improvements",    # Want standards-compliant forms
-] }
+turbomcp-protocol = { version = "3.0.0-exp", features = ["experimental-tasks"] }
 ```
 
 ## Supported MCP Methods

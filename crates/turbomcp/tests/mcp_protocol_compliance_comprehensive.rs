@@ -804,7 +804,6 @@ async fn test_annotations_and_metadata_support() {
                 );
                 m
             }),
-            #[cfg(feature = "mcp-icons")]
             icons: None,
         };
 

@@ -21,9 +21,7 @@ mod mcp_compliance_tests {
                 name: "test".to_string(),
                 version: "1.0.0".to_string(),
                 title: None,
-                #[cfg(feature = "mcp-draft")]
                 description: None,
-                #[cfg(feature = "mcp-icons")]
                 icons: None,
             },
             capabilities: ServerCapabilities::default(),
@@ -133,9 +131,7 @@ mod mcp_compliance_tests {
                 name: "test".to_string(),
                 version: "1.0.0".to_string(),
                 title: None,
-                #[cfg(feature = "mcp-draft")]
                 description: None,
-                #[cfg(feature = "mcp-icons")]
                 icons: None,
             },
             _meta: Some(json!({"init_meta": "test"})),
@@ -192,9 +188,7 @@ mod mcp_compliance_tests {
             temperature: None,
             max_tokens: 100,
             stop_sequences: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tools: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
             task: None,
             _meta: Some(json!({"message_meta": "test"})),
@@ -214,9 +208,7 @@ mod mcp_compliance_tests {
                 name: "test".to_string(),
                 version: "1.0.0".to_string(),
                 title: None,
-                #[cfg(feature = "mcp-draft")]
                 description: None,
-                #[cfg(feature = "mcp-icons")]
                 icons: None,
             },
             capabilities: ServerCapabilities::default(),

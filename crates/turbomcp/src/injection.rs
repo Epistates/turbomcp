@@ -3,6 +3,7 @@
 //! This module provides sophisticated dependency injection capabilities for `TurboMCP` servers,
 //! allowing handlers to automatically receive typed dependencies through method parameters.
 
+use crate::McpErrorConstructors;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -453,7 +454,9 @@ impl Database {
         // For now, provide a structured response that indicates the query was processed
 
         if sql.trim().is_empty() {
-            return Err(crate::McpError::InvalidInput("Empty SQL query".to_string()));
+            return Err(crate::McpError::invalid_input(
+                "Empty SQL query".to_string(),
+            ));
         }
 
         // Validate SQL syntax minimally
@@ -463,7 +466,7 @@ impl Database {
             && !sql_lower.starts_with("update")
             && !sql_lower.starts_with("delete")
         {
-            return Err(crate::McpError::InvalidInput(
+            return Err(crate::McpError::invalid_input(
                 "Invalid SQL statement".to_string(),
             ));
         }
@@ -498,7 +501,7 @@ impl Database {
     /// - Database connection fails
     pub async fn execute(&self, sql: &str) -> McpResult<u64> {
         if sql.trim().is_empty() {
-            return Err(crate::McpError::InvalidInput(
+            return Err(crate::McpError::invalid_input(
                 "Empty SQL command".to_string(),
             ));
         }
@@ -510,7 +513,7 @@ impl Database {
             && !sql_lower.starts_with("create")
             && !sql_lower.starts_with("drop")
         {
-            return Err(crate::McpError::InvalidInput(
+            return Err(crate::McpError::invalid_input(
                 "Invalid SQL command".to_string(),
             ));
         }
@@ -607,7 +610,7 @@ impl HttpClient {
 
         // Parse URL to extract host and path
         let url = url.strip_prefix("http://").ok_or_else(|| {
-            crate::McpError::InvalidInput(
+            crate::McpError::invalid_input(
                 "Only HTTP URLs supported (HTTPS requires additional dependencies)".to_string(),
             )
         })?;
@@ -624,11 +627,11 @@ impl HttpClient {
 
         // Connect with timeout
         let mut stream = TcpStream::connect(&host)
-            .map_err(|e| crate::McpError::Network(format!("Connection failed to {host}: {e}")))?;
+            .map_err(|e| crate::McpError::network(format!("Connection failed to {host}: {e}")))?;
 
         stream
             .set_read_timeout(Some(Duration::from_secs(30)))
-            .map_err(|e| crate::McpError::Network(format!("Failed to set timeout: {e}")))?;
+            .map_err(|e| crate::McpError::network(format!("Failed to set timeout: {e}")))?;
 
         // Send HTTP request
         let request = format!(
@@ -638,7 +641,7 @@ impl HttpClient {
 
         stream
             .write_all(request.as_bytes())
-            .map_err(|e| crate::McpError::Network(format!("Failed to send request: {e}")))?;
+            .map_err(|e| crate::McpError::network(format!("Failed to send request: {e}")))?;
 
         // Read response
         let mut reader = BufReader::new(stream);
@@ -684,7 +687,7 @@ impl HttpClient {
 
         // Parse URL to extract host and path
         let url = url.strip_prefix("http://").ok_or_else(|| {
-            crate::McpError::InvalidInput(
+            crate::McpError::invalid_input(
                 "Only HTTP URLs supported (HTTPS requires additional dependencies)".to_string(),
             )
         })?;
@@ -701,11 +704,11 @@ impl HttpClient {
 
         // Connect with timeout
         let mut stream = TcpStream::connect(&host)
-            .map_err(|e| crate::McpError::Network(format!("Connection failed to {host}: {e}")))?;
+            .map_err(|e| crate::McpError::network(format!("Connection failed to {host}: {e}")))?;
 
         stream
             .set_read_timeout(Some(Duration::from_secs(30)))
-            .map_err(|e| crate::McpError::Network(format!("Failed to set timeout: {e}")))?;
+            .map_err(|e| crate::McpError::network(format!("Failed to set timeout: {e}")))?;
 
         // Send HTTP POST request
         let request = format!(
@@ -719,7 +722,7 @@ impl HttpClient {
 
         stream
             .write_all(request.as_bytes())
-            .map_err(|e| crate::McpError::Network(format!("Failed to send request: {e}")))?;
+            .map_err(|e| crate::McpError::network(format!("Failed to send request: {e}")))?;
 
         // Read response
         let mut reader = BufReader::new(stream);

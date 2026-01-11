@@ -3,6 +3,7 @@
 //! This module provides a high-level, type-safe API for elicitation that integrates
 //! with our Context system and compile-time routing architecture.
 
+use crate::McpErrorConstructors;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, oneshot};
@@ -239,7 +240,7 @@ impl ElicitationBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Protocol`] if:
+    /// Returns an [`McpError`] if:
     /// - Server capabilities are not available in the context
     /// - Request serialization fails
     /// - Response deserialization fails
@@ -248,7 +249,7 @@ impl ElicitationBuilder {
         // Get server capabilities from context
         let capabilities = ctx
             .server_to_client()
-            .ok_or_else(|| McpError::Protocol("No server capabilities in context".to_string()))?;
+            .ok_or_else(|| McpError::protocol("No server capabilities in context".to_string()))?;
 
         // Convert to MCP protocol type
         let request = turbomcp_protocol::types::ElicitRequest {
@@ -266,7 +267,7 @@ impl ElicitationBuilder {
         let response = capabilities
             .elicit(request, ctx.clone())
             .await
-            .map_err(|e| McpError::Protocol(format!("Elicitation failed: {}", e)))?;
+            .map_err(|e| McpError::protocol(format!("Elicitation failed: {}", e)))?;
 
         // Convert protocol result to API result type
         match response.action {
@@ -322,25 +323,25 @@ impl ElicitationData {
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Protocol`] if the field is not found or is not a string.
+    /// Returns an [`McpError`] if the field is not found or is not a string.
     pub fn get_string(&self, key: &str) -> McpResult<String> {
         self.content
             .get(key)
             .and_then(|v| v.as_str().map(|s| s.to_string()))
-            .ok_or_else(|| McpError::Protocol(format!("Field '{}' not found or not a string", key)))
+            .ok_or_else(|| McpError::protocol(format!("Field '{}' not found or not a string", key)))
     }
 
     /// Get an integer field
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Protocol`] if the field is not found or is not an integer.
+    /// Returns an [`McpError`] if the field is not found or is not an integer.
     pub fn get_integer(&self, key: &str) -> McpResult<i64> {
         self.content
             .get(key)
             .and_then(|v| v.as_i64())
             .ok_or_else(|| {
-                McpError::Protocol(format!("Field '{}' not found or not an integer", key))
+                McpError::protocol(format!("Field '{}' not found or not an integer", key))
             })
     }
 
@@ -348,13 +349,13 @@ impl ElicitationData {
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Protocol`] if the field is not found or is not a boolean.
+    /// Returns an [`McpError`] if the field is not found or is not a boolean.
     pub fn get_boolean(&self, key: &str) -> McpResult<bool> {
         self.content
             .get(key)
             .and_then(|v| v.as_bool())
             .ok_or_else(|| {
-                McpError::Protocol(format!("Field '{}' not found or not a boolean", key))
+                McpError::protocol(format!("Field '{}' not found or not a boolean", key))
             })
     }
 
@@ -362,7 +363,7 @@ impl ElicitationData {
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Protocol`] if the field is not found or cannot be extracted to type `T`.
+    /// Returns an [`McpError`] if the field is not found or cannot be extracted to type `T`.
     pub fn get<T: ElicitationExtract>(&self, key: &str) -> McpResult<T> {
         T::extract(self, key)
     }
@@ -409,7 +410,7 @@ impl ElicitationExtract for f64 {
         data.content
             .get(key)
             .and_then(|v| v.as_f64().or_else(|| v.as_i64().map(|i| i as f64)))
-            .ok_or_else(|| McpError::Protocol(format!("Field '{}' not found or not a number", key)))
+            .ok_or_else(|| McpError::protocol(format!("Field '{}' not found or not a number", key)))
     }
 }
 
@@ -446,7 +447,7 @@ impl<T: ServerToClientRequests + ?Sized> ServerElicitation for T {
             }));
         }
 
-        Err(McpError::Protocol(
+        Err(McpError::protocol(
             "Elicitation not configured for this transport".to_string(),
         ))
     }
@@ -525,17 +526,17 @@ impl ElicitationManager {
     ///
     /// # Errors
     ///
-    /// Returns [`McpError::Tool`] if sending the result fails.
-    /// Returns [`McpError::Protocol`] if the elicitation ID is not found in pending requests.
+    /// Returns an [`McpError`] if sending the result fails.
+    /// Returns an [`McpError`] if the elicitation ID is not found in pending requests.
     pub async fn complete(&self, id: String, result: ElicitResult) -> McpResult<()> {
         if let Some(handle) = self.pending.write().await.remove(&id) {
             handle
                 .sender
                 .send(result)
-                .map_err(|_| McpError::Tool("Failed to send elicitation result".to_string()))?;
+                .map_err(|_| McpError::tool("Failed to send elicitation result".to_string()))?;
         } else {
             // Request might have timed out or doesn't exist
-            return Err(McpError::Protocol(format!(
+            return Err(McpError::protocol(format!(
                 "No pending elicitation with id: {}",
                 id
             )));

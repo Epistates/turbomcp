@@ -85,7 +85,7 @@ impl MultiTenantServer {
         let resources = self.resources.read().await;
         let resource = resources
             .get(&resource_id)
-            .ok_or_else(|| McpError::Tool(format!("Resource not found: {}", resource_id)))?;
+            .ok_or_else(|| McpError::tool(format!("Resource not found: {}", resource_id)))?;
 
         // CRITICAL: Validate tenant owns this resource
         ctx.request.validate_tenant_ownership(&resource.tenant_id)?;
@@ -105,13 +105,13 @@ impl MultiTenantServer {
         // Check if tenant is allowed to create resources
         if let Some(config) = self.tenant_configs.get_config(tenant_id).await {
             if !config.is_tool_enabled("create_resource") {
-                return Err(McpError::Tool(
+                return Err(McpError::tool(
                     "Creating resources is not enabled for your subscription plan".to_string(),
                 ));
             }
 
             if !config.is_active() {
-                return Err(McpError::Tool(
+                return Err(McpError::tool(
                     "Account is suspended. Please contact support.".to_string(),
                 ));
             }

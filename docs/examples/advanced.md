@@ -46,9 +46,7 @@ async fn ask_llm(
         include_context: Some(turbomcp_protocol::types::IncludeContext::None),
         temperature: Some(0.7),
         stop_sequences: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
         _meta: None,
@@ -134,9 +132,7 @@ async fn continue_conversation(
         model_preferences: None,
         include_context: Some(turbomcp_protocol::types::IncludeContext::None),
         stop_sequences: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
         _meta: None,
@@ -208,9 +204,7 @@ async fn ask_with_model_preference(
         temperature: Some(0.3), // Lower for more deterministic responses
         include_context: Some(turbomcp_protocol::types::IncludeContext::None),
         stop_sequences: Some(vec!["###END###".to_string()]),
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
         _meta: None,
@@ -712,9 +706,7 @@ async fn code_review_workflow(
         model_preferences: None,
         include_context: Some(turbomcp_protocol::types::IncludeContext::None),
         stop_sequences: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
         _meta: None,
@@ -799,9 +791,7 @@ async fn code_review_workflow(
                 model_preferences: None,
                 include_context: Some(turbomcp_protocol::types::IncludeContext::None),
                 stop_sequences: None,
-                #[cfg(feature = "mcp-sampling-tools")]
                 tools: None,
-                #[cfg(feature = "mcp-sampling-tools")]
                 tool_choice: None,
                 task: None,
                 _meta: None,
@@ -883,9 +873,7 @@ async fn process_data_pipeline(
         model_preferences: None,
         include_context: Some(turbomcp_protocol::types::IncludeContext::None),
         stop_sequences: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
         _meta: None,

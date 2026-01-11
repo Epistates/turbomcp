@@ -54,11 +54,9 @@ pub enum ContentBlock {
     #[serde(rename = "resource")]
     Resource(EmbeddedResource),
     /// Tool use (MCP 2025-11-25 draft, SEP-1577)
-    #[cfg(feature = "mcp-sampling-tools")]
     #[serde(rename = "tool_use")]
     ToolUse(ToolUseContent),
     /// Tool result (MCP 2025-11-25 draft, SEP-1577)
-    #[cfg(feature = "mcp-sampling-tools")]
     #[serde(rename = "tool_result")]
     ToolResult(ToolResultContent),
 }
@@ -222,7 +220,6 @@ pub enum ResourceContent {
 /// Represents a request from the LLM to call a tool during sampling.
 /// The model wants to execute a function and receive its results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-sampling-tools")]
 pub struct ToolUseContent {
     /// A unique identifier for this tool use
     /// This ID is used to match tool results to their corresponding tool uses
@@ -246,7 +243,6 @@ pub struct ToolUseContent {
 /// Represents the result of executing a tool that was requested by the LLM.
 /// The server provides the tool execution results back to the model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-sampling-tools")]
 pub struct ToolResultContent {
     /// The ID of the tool use this result corresponds to
     /// This MUST match the ID from a previous ToolUseContent

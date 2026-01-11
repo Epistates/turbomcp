@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use turbomcp::McpErrorConstructors;
 use turbomcp_macros::{prompt, resource, server, tool};
 
 /// Type alias for config validator function
@@ -58,7 +59,7 @@ impl CalculatorServer {
     #[tool("Divide two numbers")]
     async fn divide(&self, a: f64, b: f64) -> turbomcp::McpResult<f64> {
         if b == 0.0 {
-            return Err(turbomcp::McpError::Tool("Division by zero".to_string()));
+            return Err(turbomcp::McpError::tool("Division by zero".to_string()));
         }
         let result = a / b;
         self.history
@@ -154,7 +155,7 @@ impl UserDatabase {
             .unwrap()
             .get(&id)
             .cloned()
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("User {id} not found")))
+            .ok_or_else(|| turbomcp::McpError::tool(format!("User {id} not found")))
     }
 
     #[tool("Update user")]
@@ -168,7 +169,7 @@ impl UserDatabase {
         let mut users = self.users.lock().unwrap();
         let user = users
             .get_mut(&id)
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("User {id} not found")))?;
+            .ok_or_else(|| turbomcp::McpError::tool(format!("User {id} not found")))?;
 
         if let Some(name) = name {
             user.name = name;
@@ -190,7 +191,7 @@ impl UserDatabase {
             .unwrap()
             .remove(&id)
             .map(|user| format!("Deleted user: {}", user.name))
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("User {id} not found")))
+            .ok_or_else(|| turbomcp::McpError::tool(format!("User {id} not found")))
     }
 
     #[tool("List all users")]
@@ -295,14 +296,14 @@ impl ContentServer {
     async fn get_document(&self, uri: String) -> turbomcp::McpResult<String> {
         let name = uri
             .strip_prefix("document://")
-            .ok_or_else(|| turbomcp::McpError::Tool("Invalid URI format".to_string()))?;
+            .ok_or_else(|| turbomcp::McpError::tool("Invalid URI format".to_string()))?;
 
         self.documents
             .lock()
             .unwrap()
             .get(name)
             .cloned()
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("Document '{name}' not found")))
+            .ok_or_else(|| turbomcp::McpError::tool(format!("Document '{name}' not found")))
     }
 
     #[prompt("Generate a blog post")]
@@ -376,7 +377,7 @@ impl ContentServer {
             .unwrap()
             .remove(&name)
             .map(|_| format!("Document '{name}' deleted"))
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("Document '{name}' not found")))
+            .ok_or_else(|| turbomcp::McpError::tool(format!("Document '{name}' not found")))
     }
 }
 
@@ -527,7 +528,7 @@ impl AnalyticsServer {
             .unwrap()
             .get(&name)
             .copied()
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("No aggregate for metric: {name}")))
+            .ok_or_else(|| turbomcp::McpError::tool(format!("No aggregate for metric: {name}")))
     }
 
     #[tool("Get metrics by tag")]
@@ -558,7 +559,7 @@ impl AnalyticsServer {
             .collect();
 
         if metrics.is_empty() {
-            return Err(turbomcp::McpError::Tool(format!(
+            return Err(turbomcp::McpError::tool(format!(
                 "No metrics found for: {name}"
             )));
         }
@@ -666,7 +667,7 @@ impl FileSystemServer {
     #[tool("Create file")]
     async fn create_file(&self, path: String, content: Vec<u8>) -> turbomcp::McpResult<String> {
         if self.files.lock().unwrap().contains_key(&path) {
-            return Err(turbomcp::McpError::Tool(format!(
+            return Err(turbomcp::McpError::tool(format!(
                 "File already exists: {path}"
             )));
         }
@@ -694,7 +695,7 @@ impl FileSystemServer {
             .unwrap()
             .get(&path)
             .cloned()
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("File not found: {path}")))
+            .ok_or_else(|| turbomcp::McpError::tool(format!("File not found: {path}")))
     }
 
     #[tool("Delete file")]
@@ -704,7 +705,7 @@ impl FileSystemServer {
             .unwrap()
             .remove(&path)
             .map(|_| format!("Deleted file: {path}"))
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("File not found: {path}")))
+            .ok_or_else(|| turbomcp::McpError::tool(format!("File not found: {path}")))
     }
 
     #[tool("List directory")]
@@ -714,7 +715,7 @@ impl FileSystemServer {
             .unwrap()
             .get(&path)
             .cloned()
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("Directory not found: {path}")))
+            .ok_or_else(|| turbomcp::McpError::tool(format!("Directory not found: {path}")))
     }
 
     #[tool("File exists")]
@@ -729,7 +730,7 @@ impl FileSystemServer {
             .unwrap()
             .get(&path)
             .map(|content| content.len())
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("File not found: {path}")))
+            .ok_or_else(|| turbomcp::McpError::tool(format!("File not found: {path}")))
     }
 }
 
@@ -839,7 +840,7 @@ impl ConfigServer {
         };
 
         if !validated {
-            return Err(turbomcp::McpError::Tool(format!(
+            return Err(turbomcp::McpError::tool(format!(
                 "Validation failed for key: {key}"
             )));
         }
@@ -861,7 +862,7 @@ impl ConfigServer {
             .unwrap()
             .get(&key)
             .cloned()
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("Config not found: {key}")))
+            .ok_or_else(|| turbomcp::McpError::tool(format!("Config not found: {key}")))
     }
 
     #[tool("Delete configuration")]
@@ -871,7 +872,7 @@ impl ConfigServer {
             .unwrap()
             .remove(&key)
             .map(|_| format!("Deleted config: {key}"))
-            .ok_or_else(|| turbomcp::McpError::Tool(format!("Config not found: {key}")))
+            .ok_or_else(|| turbomcp::McpError::tool(format!("Config not found: {key}")))
     }
 
     #[tool("List all configurations")]

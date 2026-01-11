@@ -242,7 +242,6 @@ pub enum PrimitiveSchemaDefinition {
 /// { "const": "#FF0000", "title": "Red" }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[cfg(feature = "mcp-enum-improvements")]
 pub struct EnumOption {
     /// The enum value (must match one of the allowed values)
     #[serde(rename = "const")]
@@ -268,7 +267,6 @@ pub struct EnumOption {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-enum-improvements")]
 pub struct TitledSingleSelectEnumSchema {
     /// Schema type (must be "string")
     #[serde(rename = "type")]
@@ -300,7 +298,6 @@ pub struct TitledSingleSelectEnumSchema {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-enum-improvements")]
 pub struct UntitledSingleSelectEnumSchema {
     /// Schema type (must be "string")
     #[serde(rename = "type")]
@@ -341,7 +338,6 @@ pub struct UntitledSingleSelectEnumSchema {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-enum-improvements")]
 pub struct TitledMultiSelectEnumSchema {
     /// Schema type (must be "array")
     #[serde(rename = "type")]
@@ -381,7 +377,6 @@ pub struct TitledMultiSelectEnumSchema {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-enum-improvements")]
 pub struct UntitledMultiSelectEnumSchema {
     /// Schema type (must be "array")
     #[serde(rename = "type")]
@@ -407,7 +402,6 @@ pub struct UntitledMultiSelectEnumSchema {
 
 /// Array items schema for titled multi-select (using anyOf)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-enum-improvements")]
 pub struct MultiSelectItems {
     /// Array of enum options with const/title pairs (JSON Schema 2020-12)
     #[serde(rename = "anyOf")]
@@ -416,7 +410,6 @@ pub struct MultiSelectItems {
 
 /// Array items schema for untitled multi-select (using simple enum)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-enum-improvements")]
 pub struct UntitledMultiSelectItems {
     /// Item type (must be "string")
     #[serde(rename = "type")]
@@ -443,7 +436,6 @@ pub struct UntitledMultiSelectItems {
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-enum-improvements")]
 pub struct LegacyTitledEnumSchema {
     /// Schema type (must be "string")
     #[serde(rename = "type")]
@@ -489,7 +481,6 @@ pub struct LegacyTitledEnumSchema {
 /// and has been replaced with standards-compliant patterns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-#[cfg(feature = "mcp-enum-improvements")]
 pub enum EnumSchema {
     /// Single-select enum with display titles (oneOf pattern)
     TitledSingleSelect(TitledSingleSelectEnumSchema),
@@ -506,7 +497,6 @@ pub enum EnumSchema {
 /// Elicit request mode (MCP 2025-11-25 draft, SEP-1036)
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
-#[cfg(feature = "mcp-url-elicitation")]
 pub enum ElicitMode {
     /// Form mode: In-band structured data collection (MCP 2025-11-25)
     Form,
@@ -519,7 +509,6 @@ pub enum ElicitMode {
 /// Used for out-of-band interactions where sensitive information must not
 /// pass through the MCP client (e.g., OAuth flows, API keys, credentials).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-url-elicitation")]
 pub struct URLElicitRequestParams {
     /// Elicitation mode (must be "url")
     pub mode: ElicitMode,
@@ -537,7 +526,6 @@ pub struct URLElicitRequestParams {
 }
 
 // Custom serde for url::Url to serialize as string
-#[cfg(feature = "mcp-url-elicitation")]
 mod url_serde {
     use serde::{Deserialize, Deserializer, Serializer};
     use url::Url;
@@ -584,15 +572,9 @@ pub struct FormElicitRequestParams {
 #[serde(untagged)]
 pub enum ElicitRequestParams {
     /// Form mode: In-band structured data collection
-    #[cfg(not(feature = "mcp-url-elicitation"))]
-    Form(FormElicitRequestParams),
-
-    /// Form mode: In-band structured data collection
-    #[cfg(feature = "mcp-url-elicitation")]
     Form(FormElicitRequestParams),
 
     /// URL mode: Out-of-band sensitive data collection (MCP 2025-11-25 draft)
-    #[cfg(feature = "mcp-url-elicitation")]
     Url(URLElicitRequestParams),
 }
 
@@ -612,8 +594,7 @@ impl ElicitRequestParams {
         })
     }
 
-    /// Create a new URL mode elicitation request (requires mcp-url-elicitation feature)
-    #[cfg(feature = "mcp-url-elicitation")]
+    /// Create a new URL mode elicitation request
     pub fn url(elicitation_id: String, message: String, url: url::Url) -> Self {
         ElicitRequestParams::Url(URLElicitRequestParams {
             mode: ElicitMode::Url,
@@ -627,7 +608,6 @@ impl ElicitRequestParams {
     pub fn message(&self) -> &str {
         match self {
             ElicitRequestParams::Form(form) => &form.message,
-            #[cfg(feature = "mcp-url-elicitation")]
             ElicitRequestParams::Url(url_params) => &url_params.message,
         }
     }
@@ -728,7 +708,6 @@ pub struct ElicitResult {
 /// Sent by the server to indicate that an out-of-band elicitation has been completed.
 /// This allows the client to know when to retry the original request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg(feature = "mcp-url-elicitation")]
 pub struct ElicitationCompleteParams {
     /// The ID of the completed elicitation
     #[serde(rename = "elicitationId")]
@@ -779,7 +758,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "mcp-url-elicitation")]
     fn test_url_elicit_params() {
         use url::Url;
 
@@ -800,7 +778,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "mcp-url-elicitation")]
     fn test_elicit_mode_serialization() {
         assert_eq!(
             serde_json::to_string(&ElicitMode::Form).unwrap(),
@@ -810,7 +787,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "mcp-url-elicitation")]
     fn test_completion_notification() {
         let params = ElicitationCompleteParams {
             elicitation_id: "550e8400-e29b-41d4-a716-446655440000".to_string(),
@@ -854,7 +830,6 @@ mod tests {
     // ========== SEP-1330 Enum Schema Tests ==========
 
     #[test]
-    #[cfg(feature = "mcp-enum-improvements")]
     fn test_titled_single_select_enum_schema() {
         use super::{EnumOption, TitledSingleSelectEnumSchema};
 
@@ -894,7 +869,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "mcp-enum-improvements")]
     fn test_untitled_single_select_enum_schema() {
         use super::UntitledSingleSelectEnumSchema;
 
@@ -921,7 +895,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "mcp-enum-improvements")]
     fn test_titled_multi_select_enum_schema() {
         use super::{EnumOption, MultiSelectItems, TitledMultiSelectEnumSchema};
 
@@ -961,7 +934,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "mcp-enum-improvements")]
     fn test_untitled_multi_select_enum_schema() {
         use super::{UntitledMultiSelectEnumSchema, UntitledMultiSelectItems};
 
@@ -992,7 +964,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "mcp-enum-improvements")]
     fn test_legacy_titled_enum_schema() {
         use super::LegacyTitledEnumSchema;
 
@@ -1020,7 +991,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "mcp-enum-improvements")]
     fn test_enum_schema_union_type() {
         use super::EnumSchema;
 
@@ -1058,7 +1028,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "mcp-enum-improvements")]
     fn test_enum_option_serialization() {
         use super::EnumOption;
 

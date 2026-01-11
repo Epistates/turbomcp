@@ -3,6 +3,7 @@
 //! This module provides JSON schema generation, validation,
 //! and integration with the MCP protocol type system.
 
+use crate::McpErrorConstructors;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -295,7 +296,7 @@ pub fn validate_against_schema(data: &Value, schema: &Value) -> McpResult<()> {
                 if let Value::String(prop_name) = req_prop
                     && !data_obj.contains_key(prop_name)
                 {
-                    return Err(McpError::Tool(format!(
+                    return Err(McpError::tool(format!(
                         "Missing required property: {prop_name}"
                     )));
                 }
@@ -310,7 +311,7 @@ pub fn validate_against_schema(data: &Value, schema: &Value) -> McpResult<()> {
         {
             for data_key in data_obj.keys() {
                 if !properties.contains_key(data_key) {
-                    return Err(McpError::Tool(format!(
+                    return Err(McpError::tool(format!(
                         "Additional property not allowed: {data_key}"
                     )));
                 }
@@ -388,14 +389,14 @@ fn validate_format_constraint(value: &Value, format: &str, field_name: &str) -> 
         match format {
             "email" => {
                 if !s.contains('@') || !s.contains('.') {
-                    return Err(McpError::Tool(format!(
+                    return Err(McpError::tool(format!(
                         "Invalid email format in field '{field_name}': {s}"
                     )));
                 }
             }
             "uri" => {
                 if !s.starts_with("http://") && !s.starts_with("https://") {
-                    return Err(McpError::Tool(format!(
+                    return Err(McpError::tool(format!(
                         "Invalid URI format in field '{field_name}': {s}"
                     )));
                 }
@@ -403,7 +404,7 @@ fn validate_format_constraint(value: &Value, format: &str, field_name: &str) -> 
             "date-time" => {
                 // Basic ISO 8601 validation
                 if !s.contains('T') || !s.contains(':') {
-                    return Err(McpError::Tool(format!(
+                    return Err(McpError::tool(format!(
                         "Invalid date-time format in field '{field_name}': {s}"
                     )));
                 }

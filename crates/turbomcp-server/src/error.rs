@@ -58,8 +58,7 @@ impl ServerErrorExt for McpError {
     }
 
     fn shutdown(message: impl Into<String>) -> McpError {
-        McpError::internal(format!("Shutdown error: {}", message.into()))
-            .with_component("shutdown")
+        McpError::internal(format!("Shutdown error: {}", message.into())).with_component("shutdown")
     }
 
     fn middleware(name: impl Into<String>, message: impl Into<String>) -> McpError {
@@ -69,13 +68,11 @@ impl ServerErrorExt for McpError {
     }
 
     fn registry(message: impl Into<String>) -> McpError {
-        McpError::internal(format!("Registry error: {}", message.into()))
-            .with_component("registry")
+        McpError::internal(format!("Registry error: {}", message.into())).with_component("registry")
     }
 
     fn routing(message: impl Into<String>) -> McpError {
-        McpError::internal(format!("Routing error: {}", message.into()))
-            .with_component("routing")
+        McpError::internal(format!("Routing error: {}", message.into())).with_component("routing")
     }
 
     fn resource_exhausted(resource: impl Into<String>) -> McpError {

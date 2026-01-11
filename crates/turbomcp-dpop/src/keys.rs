@@ -64,7 +64,7 @@ impl DpopKeyManager {
 
     /// Generate a new DPoP key pair
     ///
-    /// Only ES256 (ECDSA P-256) is supported as of TurboMCP v2.2+
+    /// Only ES256 (ECDSA P-256) is supported as of TurboMCP v3.0+
     /// The algorithm parameter is kept for API compatibility but must be ES256
     pub async fn generate_key_pair(&self, algorithm: DpopAlgorithm) -> Result<DpopKeyPair> {
         // Validate algorithm (only ES256 supported)
@@ -417,7 +417,7 @@ fn generate_es256_key_pair() -> Result<(DpopPrivateKey, DpopPublicKey)> {
 
 /// Compute JWK thumbprint for a public key
 ///
-/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v3.0+
 fn compute_thumbprint(public_key: &DpopPublicKey, algorithm: DpopAlgorithm) -> Result<String> {
     use sha2::{Digest, Sha256};
 

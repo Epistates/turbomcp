@@ -162,15 +162,181 @@ pub struct RateLimitingConfig {
     pub burst_capacity: u32,
 }
 
+/// File rotation strategy for log files
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LogRotation {
+    /// Create a new log file each minute (useful for debugging)
+    Minute,
+    /// Create a new log file each hour
+    Hourly,
+    /// Create a new log file each day
+    Daily,
+    /// Never rotate (single file)
+    #[default]
+    Never,
+}
+
+/// Logging output target
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LogOutput {
+    /// Output to stderr (default, MCP spec compliant for STDIO)
+    #[default]
+    Stderr,
+    /// Output to file only (pristine STDIO - no stderr pollution)
+    FileOnly,
+    /// Output to both stderr and file
+    Both,
+    /// Disable all logging output
+    None,
+}
+
 /// Logging configuration
+///
+/// # STDIO Transport
+///
+/// For STDIO transport, logs must NOT go to stdout (protocol channel).
+/// Use `LogOutput::Stderr` (default) for MCP-compliant logging, or
+/// `LogOutput::FileOnly` for pristine operation.
+///
+/// # Example
+///
+/// ```rust
+/// use turbomcp_server::{LoggingConfig, LogOutput, LogRotation};
+///
+/// // Pristine STDIO - all logs to file, stderr clean
+/// let config = LoggingConfig::stdio_pristine("/var/log/myserver");
+///
+/// // Standard STDIO - minimal logs to stderr
+/// let config = LoggingConfig::stdio_minimal();
+///
+/// // Development - verbose logs to stderr
+/// let config = LoggingConfig::default();
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
-    /// Log level
+    /// Log level filter (e.g., "info", "debug", "error,myapp=debug")
     pub level: String,
-    /// Enable structured logging
+    /// Enable structured JSON logging
     pub structured: bool,
-    /// Log file path
-    pub file: Option<PathBuf>,
+    /// Log output target
+    pub output: LogOutput,
+    /// Log file directory (used when output includes file)
+    pub directory: Option<PathBuf>,
+    /// Log file prefix (default: "server")
+    pub file_prefix: String,
+    /// File rotation strategy
+    pub rotation: LogRotation,
+}
+
+impl LoggingConfig {
+    /// Create file-only logging for STDIO servers
+    ///
+    /// All logs go to file, stderr remains clean. Ideal for STDIO MCP servers
+    /// where you want pristine stderr for protocol debugging or diagnostics.
+    ///
+    /// **Important:** This returns a guard from `.init()` that must be held
+    /// for the program duration to ensure logs are flushed.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_server::LoggingConfig;
+    ///
+    /// // Guard must be held - logs flush when it's dropped
+    /// let _guard = LoggingConfig::stdio_file("/var/log/myserver").init()?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn stdio_file(log_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            level: "info".to_string(),
+            structured: true,
+            output: LogOutput::FileOnly,
+            directory: Some(log_dir.into()),
+            file_prefix: "mcp-server".to_string(),
+            rotation: LogRotation::Daily,
+        }
+    }
+
+    /// Create stderr-only logging for STDIO servers (error level)
+    ///
+    /// Per MCP spec, servers MAY write to stderr for logging.
+    /// This preset only logs errors to keep output minimal.
+    ///
+    /// **No guard needed** - stderr logging doesn't require buffering.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_server::LoggingConfig;
+    ///
+    /// // No guard needed for stderr-only
+    /// LoggingConfig::stderr_minimal().init()?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn stderr_minimal() -> Self {
+        Self {
+            level: "error".to_string(),
+            structured: false,
+            output: LogOutput::Stderr,
+            directory: None,
+            file_prefix: "server".to_string(),
+            rotation: LogRotation::Never,
+        }
+    }
+
+    /// Create stderr-only logging for development (debug level)
+    ///
+    /// **No guard needed** - stderr logging doesn't require buffering.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_server::LoggingConfig;
+    ///
+    /// // No guard needed for stderr-only
+    /// LoggingConfig::stderr_debug().init()?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn stderr_debug() -> Self {
+        Self {
+            level: "debug".to_string(),
+            structured: false,
+            output: LogOutput::Stderr,
+            directory: None,
+            file_prefix: "server".to_string(),
+            rotation: LogRotation::Never,
+        }
+    }
+
+    /// Create production logging - stderr + file with rotation
+    ///
+    /// Logs to both stderr and rotating files. Good for production
+    /// HTTP/WebSocket servers where stdout isn't the protocol channel.
+    ///
+    /// **Important:** This returns a guard from `.init()` that must be held
+    /// for the program duration to ensure file logs are flushed.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use turbomcp_server::LoggingConfig;
+    ///
+    /// // Guard must be held for file logging
+    /// let _guard = LoggingConfig::production("/var/log/myserver").init()?;
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn production(log_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            level: "info,tower_http=debug".to_string(),
+            structured: true,
+            output: LogOutput::Both,
+            directory: Some(log_dir.into()),
+            file_prefix: "mcp-server".to_string(),
+            rotation: LogRotation::Hourly,
+        }
+    }
 }
 
 impl Default for ServerConfig {
@@ -365,7 +531,10 @@ impl Default for LoggingConfig {
         Self {
             level: "info".to_string(),
             structured: true,
-            file: None,
+            output: LogOutput::Stderr,
+            directory: None,
+            file_prefix: "server".to_string(),
+            rotation: LogRotation::Never,
         }
     }
 }
@@ -447,6 +616,62 @@ impl ConfigurationBuilder {
     /// Set log level
     pub fn log_level(mut self, level: impl Into<String>) -> Self {
         self.config.logging.level = level.into();
+        self
+    }
+
+    /// Set logging configuration
+    ///
+    /// Use predefined presets for common scenarios:
+    /// - `LoggingConfig::stdio_minimal()` - Error-only to stderr
+    /// - `LoggingConfig::stdio_pristine(dir)` - All logs to file, stderr clean
+    /// - `LoggingConfig::development()` - Debug level to stderr
+    /// - `LoggingConfig::production(dir)` - Info level to both stderr and file
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_server::{ServerConfig, LoggingConfig};
+    ///
+    /// // Pristine STDIO - no stderr pollution
+    /// let config = ServerConfig::builder()
+    ///     .logging(LoggingConfig::stdio_pristine("/var/log/myserver"))
+    ///     .build();
+    /// ```
+    #[must_use]
+    pub fn logging(mut self, logging: LoggingConfig) -> Self {
+        self.config.logging = logging;
+        self
+    }
+
+    /// Set log output target
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_server::{ServerConfig, LogOutput};
+    ///
+    /// // File-only logging for pristine STDIO
+    /// let config = ServerConfig::builder()
+    ///     .log_output(LogOutput::FileOnly)
+    ///     .log_directory("/var/log/myserver")
+    ///     .build();
+    /// ```
+    #[must_use]
+    pub const fn log_output(mut self, output: LogOutput) -> Self {
+        self.config.logging.output = output;
+        self
+    }
+
+    /// Set log file directory
+    pub fn log_directory(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.config.logging.directory = Some(dir.into());
+        self
+    }
+
+    /// Set log file rotation strategy
+    #[must_use]
+    pub const fn log_rotation(mut self, rotation: LogRotation) -> Self {
+        self.config.logging.rotation = rotation;
         self
     }
 

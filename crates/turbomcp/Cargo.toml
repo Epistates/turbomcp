@@ -1,7 +1,7 @@
 [package]
 name = "turbomcp"
 
-version = "3.0.0-alpha.1"
+version = "3.0.0-exp"
 
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -48,8 +48,8 @@ tower = { workspace = true }  # Required for Tower middleware integration (alway
 
 # Authentication and DPoP support (now as separate optional crates for clean minimal build)
 
-turbomcp-auth = { version = "3.0.0-alpha.1", path = "../turbomcp-auth", optional = true }
-turbomcp-dpop = { version = "3.0.0-alpha.1", path = "../turbomcp-dpop", optional = true }
+turbomcp-auth = { version = "3.0.0-exp", path = "../turbomcp-auth", optional = true }
+turbomcp-dpop = { version = "3.0.0-exp", path = "../turbomcp-dpop", optional = true }
 
 # JSON Schema generation (always required by macros)
 schemars = { version = "1.0", features = ["chrono04", "uuid1"] }
@@ -69,13 +69,13 @@ async-stream = { version = "0.3", optional = true }
 # Internal dependencies (always required)
 # CRITICAL: Use default-features = false to prevent feature leakage
 
-turbomcp-protocol = { version = "3.0.0-alpha.1", path = "../turbomcp-protocol", default-features = false }
-turbomcp-transport = { version = "3.0.0-alpha.1", path = "../turbomcp-transport", default-features = false }
-turbomcp-server = { version = "3.0.0-alpha.1", path = "../turbomcp-server", default-features = false }
-turbomcp-macros = { version = "3.0.0-alpha.1", path = "../turbomcp-macros", default-features = false }
+turbomcp-protocol = { version = "3.0.0-exp", path = "../turbomcp-protocol", default-features = false }
+turbomcp-transport = { version = "3.0.0-exp", path = "../turbomcp-transport", default-features = false }
+turbomcp-server = { version = "3.0.0-exp", path = "../turbomcp-server", default-features = false }
+turbomcp-macros = { version = "3.0.0-exp", path = "../turbomcp-macros", default-features = false }
 
 # Client library (optional - only needed for full-stack development)
-turbomcp-client = { version = "3.0.0-alpha.1", path = "../turbomcp-client", optional = true, default-features = false }
+turbomcp-client = { version = "3.0.0-exp", path = "../turbomcp-client", optional = true, default-features = false }
 
 # Client library (optional - only needed for full-stack development)
 
@@ -93,7 +93,7 @@ tokio-tungstenite = "0.28.0"
 proptest = "1.5"
 oauth2 = { version = "5.0", default-features = false, features = ["reqwest"] }  # Required for oauth_integration_tests.rs
 tower = { workspace = true }  # Required for multi_tenant_saas.rs example
-turbomcp-client = { version = "3.0.0-alpha.1", path = "../turbomcp-client" }  # Required for resource subscription tests
+turbomcp-client = { version = "3.0.0-exp", path = "../turbomcp-client" }  # Required for resource subscription tests
 
 # Example configurations with required features
 # Server examples
@@ -190,7 +190,7 @@ required-features = ["stdio", "http", "tcp"]
 # Tasks API example
 [[example]]
 name = "tasks_demo"
-required-features = ["stdio", "mcp-tasks"]
+required-features = ["stdio", "experimental-tasks"]
 
 # Type-state builders demo
 [[example]]
@@ -278,12 +278,8 @@ unix = ["turbomcp-transport/unix", "turbomcp-server/unix", "turbomcp-macros/unix
 # Performance
 simd = ["turbomcp-protocol/simd", "simd-json", "sonic-rs"]  # SIMD JSON acceleration
 
-# MCP draft specification features (pass-through to turbomcp-protocol)
-mcp-draft = ["turbomcp-protocol/mcp-draft"]
-mcp-icons = ["turbomcp-protocol/mcp-icons"]
-mcp-tasks = ["turbomcp-protocol/mcp-tasks", "turbomcp-server/mcp-tasks"]
-mcp-url-elicitation = ["turbomcp-protocol/mcp-url-elicitation"]
-mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
+# Experimental features (pass-through to turbomcp-protocol)
+experimental-tasks = ["turbomcp-protocol/experimental-tasks", "turbomcp-server/experimental-tasks"]
 
 # Advanced combinations
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]  # All transports without extra features

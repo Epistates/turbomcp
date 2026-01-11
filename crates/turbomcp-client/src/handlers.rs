@@ -289,7 +289,7 @@ impl ElicitationRequest {
         #[allow(unreachable_patterns)]
         match &self.inner.params {
             turbomcp_protocol::types::ElicitRequestParams::Form(form) => Some(&form.schema),
-            _ => None, // URL elicitation (when mcp-url-elicitation feature is enabled)
+            _ => None, // URL elicitation doesn't have this field
         }
     }
 
@@ -304,7 +304,7 @@ impl ElicitationRequest {
             turbomcp_protocol::types::ElicitRequestParams::Form(form) => {
                 form.timeout_ms.map(|ms| Duration::from_millis(ms as u64))
             }
-            _ => None, // URL elicitation (when mcp-url-elicitation feature is enabled)
+            _ => None, // URL elicitation doesn't have this field
         }
     }
 
@@ -316,7 +316,7 @@ impl ElicitationRequest {
             turbomcp_protocol::types::ElicitRequestParams::Form(form) => {
                 form.cancellable.unwrap_or(false)
             }
-            _ => false, // URL elicitation (when mcp-url-elicitation feature is enabled)
+            _ => false, // URL elicitation doesn't have this field
         }
     }
 

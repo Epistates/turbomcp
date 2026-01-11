@@ -28,12 +28,12 @@
 
 use super::request::{McpRequest, McpResponse};
 use futures_util::future::BoxFuture;
+use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
 use tower_layer::Layer;
 use tower_service::Service;
 use turbomcp_protocol::McpError;
@@ -160,8 +160,8 @@ impl Metrics {
                 entry.error_count += 1;
             }
             // Running average
-            entry.avg_duration_ms =
-                (entry.avg_duration_ms * (entry.count - 1) as f64 + duration_ms as f64)
+            entry.avg_duration_ms = (entry.avg_duration_ms * (entry.count - 1) as f64
+                + duration_ms as f64)
                 / entry.count as f64;
         }
     }

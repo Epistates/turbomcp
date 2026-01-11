@@ -25,7 +25,7 @@ Or use through the main transport crate:
 
 ```toml
 [dependencies]
-turbomcp-transport = { version = "2.3", features = ["unix"] }
+turbomcp-transport = { version = "3.0.0-exp", features = ["unix"] }
 ```
 
 ## Quick Start

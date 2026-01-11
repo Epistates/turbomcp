@@ -7,7 +7,7 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::jwk::{AlgorithmParameters, CommonParameters, Jwk, KeyAlgorithm, PublicKeyUse};
 use jsonwebtoken::jwk::{EllipticCurve, EllipticCurveKeyParameters, EllipticCurveKeyType};
-// RSA support removed in v2.2.0 due to RUSTSEC-2023-0071 timing vulnerability
+// RSA support removed in v3.0 due to RUSTSEC-2023-0071 timing vulnerability
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey};
 use p256::SecretKey;
 use p256::pkcs8::EncodePrivateKey;
@@ -18,7 +18,7 @@ use crate::types::{DpopAlgorithm, DpopPrivateKey, DpopPublicKey};
 
 /// Convert DpopAlgorithm to jsonwebtoken Algorithm
 ///
-/// Only ES256 is supported as of TurboMCP v2.2+
+/// Only ES256 is supported as of TurboMCP v3.0+
 pub fn algorithm_to_jwt(algorithm: DpopAlgorithm) -> Algorithm {
     match algorithm {
         DpopAlgorithm::ES256 => Algorithm::ES256,
@@ -27,7 +27,7 @@ pub fn algorithm_to_jwt(algorithm: DpopAlgorithm) -> Algorithm {
 
 /// Convert jsonwebtoken Algorithm to DpopAlgorithm
 ///
-/// Returns error for unsupported algorithms (only ES256 allowed as of TurboMCP v2.2+)
+/// Returns error for unsupported algorithms (only ES256 allowed as of TurboMCP v3.0+)
 pub fn jwt_to_algorithm(algorithm: Algorithm) -> Result<DpopAlgorithm> {
     match algorithm {
         Algorithm::ES256 => Ok(DpopAlgorithm::ES256),
@@ -45,7 +45,7 @@ pub fn jwt_to_algorithm(algorithm: Algorithm) -> Result<DpopAlgorithm> {
 /// This handles the conversion from our DpopPrivateKey enum to jsonwebtoken's EncodingKey,
 /// including necessary format conversions (SEC1 → PKCS#8 for EC keys).
 ///
-/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v3.0+
 ///
 /// # Security Note
 ///
@@ -80,7 +80,7 @@ pub fn private_key_to_encoding_key(key: &DpopPrivateKey) -> Result<EncodingKey> 
 /// This creates a RFC 7517 compliant JWK from our DpopPublicKey enum.
 /// The JWK will be embedded in the DPoP proof header per RFC 9449.
 ///
-/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v3.0+
 ///
 /// # Security Note
 ///
@@ -126,7 +126,7 @@ pub fn public_key_to_jwk(key: &DpopPublicKey) -> Result<Jwk> {
 /// This extracts the public key from a JWK and creates a DecodingKey for signature verification.
 /// Used during DPoP proof validation to verify the signature using the embedded public key.
 ///
-/// Only supports ES256 (ECDSA P-256) as of TurboMCP v2.2+
+/// Only supports ES256 (ECDSA P-256) as of TurboMCP v3.0+
 ///
 /// # Security Note
 ///

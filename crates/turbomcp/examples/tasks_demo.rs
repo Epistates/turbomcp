@@ -9,7 +9,7 @@
 //! ## Run the Demo
 //!
 //! ```bash
-//! cargo run --example tasks_demo --features "stdio mcp-tasks"
+//! cargo run --example tasks_demo --features "stdio experimental-tasks"
 //! ```
 //!
 //! ## Client Interaction Example (JSON-RPC)

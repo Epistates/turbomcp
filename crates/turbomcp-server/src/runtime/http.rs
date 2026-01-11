@@ -197,11 +197,10 @@ impl HttpDispatcher {
             } else {
                 // Session not found - clean up pending request
                 self.pending_requests.lock().await.remove(&request_id);
-                return Err(McpError::internal(format!(
-                    "Session not found: {}",
-                    self.session_id
-                ))
-                .with_operation("http_dispatcher"));
+                return Err(
+                    McpError::internal(format!("Session not found: {}", self.session_id))
+                        .with_operation("http_dispatcher"),
+                );
             }
         }
 
@@ -211,14 +210,12 @@ impl HttpDispatcher {
             Ok(Err(_)) => {
                 // Channel closed without response
                 self.pending_requests.lock().await.remove(&request_id);
-                Err(McpError::internal("Response channel closed")
-                    .with_operation("http_dispatcher"))
+                Err(McpError::internal("Response channel closed").with_operation("http_dispatcher"))
             }
             Err(_) => {
                 // Timeout
                 self.pending_requests.lock().await.remove(&request_id);
-                Err(McpError::timeout("Request timeout (60s)")
-                    .with_operation("http_dispatcher"))
+                Err(McpError::timeout("Request timeout (60s)").with_operation("http_dispatcher"))
             }
         }
     }
@@ -280,7 +277,9 @@ impl ServerRequestDispatcher for HttpDispatcher {
                 _meta: None,
                 data: None,
             }),
-            JsonRpcResponsePayload::Error { error } => Err(McpError::rpc(error.code, &error.message)),
+            JsonRpcResponsePayload::Error { error } => {
+                Err(McpError::rpc(error.code, &error.message))
+            }
         }
     }
 
@@ -308,7 +307,9 @@ impl ServerRequestDispatcher for HttpDispatcher {
                         .with_operation("MCP 2025-11-25 compliance")
                 })
             }
-            JsonRpcResponsePayload::Error { error } => Err(McpError::rpc(error.code, &error.message)),
+            JsonRpcResponsePayload::Error { error } => {
+                Err(McpError::rpc(error.code, &error.message))
+            }
         }
     }
 
@@ -333,7 +334,9 @@ impl ServerRequestDispatcher for HttpDispatcher {
                         .with_operation("MCP 2025-11-25 compliance")
                 })
             }
-            JsonRpcResponsePayload::Error { error } => Err(McpError::rpc(error.code, &error.message)),
+            JsonRpcResponsePayload::Error { error } => {
+                Err(McpError::rpc(error.code, &error.message))
+            }
         }
     }
 

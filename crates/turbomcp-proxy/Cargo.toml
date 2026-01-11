@@ -1,15 +1,18 @@
 [package]
 name = "turbomcp-proxy"
 
-version = "3.0.0-alpha.1"
+version = "3.0.0-exp"
 
 edition = "2024"
-authors = ["TurboMCP Team"]
+authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Universal MCP adapter/generator - introspection, proxying, and code generation for any MCP server"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/turbomcp/turbomcp"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+documentation = "https://docs.rs/turbomcp-proxy"
 keywords = ["mcp", "proxy", "adapter", "code-generation", "introspection"]
 categories = ["command-line-utilities", "web-programming", "development-tools"]
+readme = "README.md"
 rust-version = "1.89.0"
 
 [lints]
@@ -18,11 +21,11 @@ workspace = true
 [dependencies]
 # TurboMCP (consumer-only - we only depend ON these, nothing depends on us)
 
-turbomcp-protocol = { path = "../turbomcp-protocol", version = "3.0.0-alpha.1" }
-turbomcp-transport = { path = "../turbomcp-transport", version = "3.0.0-alpha.1", features = ["http", "tcp", "unix", "websocket"] }
-turbomcp-client = { path = "../turbomcp-client", version = "3.0.0-alpha.1" }
-turbomcp-server = { path = "../turbomcp-server", version = "3.0.0-alpha.1", optional = true }
-turbomcp-auth = { path = "../turbomcp-auth", version = "3.0.0-alpha.1", optional = true }
+turbomcp-protocol = { path = "../turbomcp-protocol", version = "3.0.0-exp" }
+turbomcp-transport = { path = "../turbomcp-transport", version = "3.0.0-exp", features = ["http", "tcp", "unix", "websocket"] }
+turbomcp-client = { path = "../turbomcp-client", version = "3.0.0-exp" }
+turbomcp-server = { path = "../turbomcp-server", version = "3.0.0-exp", optional = true }
+turbomcp-auth = { path = "../turbomcp-auth", version = "3.0.0-exp", optional = true }
 
 # Async runtime
 tokio = { version = "1.47", features = ["full"] }
@@ -106,12 +109,8 @@ rest = ["utoipa", "utoipa-swagger-ui", "axum", "tower", "tower-http"]
 graphql = ["axum", "tower", "tower-http"]  # async-graphql dependencies optional for now
 adapters = ["rest", "graphql"]
 
-# MCP draft specification features (pass-through to turbomcp-protocol)
-mcp-draft = ["turbomcp-protocol/mcp-draft"]
-mcp-icons = ["turbomcp-protocol/mcp-icons"]
-mcp-tasks = ["turbomcp-protocol/mcp-tasks"]
-mcp-url-elicitation = ["turbomcp-protocol/mcp-url-elicitation"]
-mcp-sampling-tools = ["turbomcp-protocol/mcp-sampling-tools"]
+# Experimental features (pass-through to turbomcp-protocol)
+experimental-tasks = ["turbomcp-protocol/experimental-tasks"]
 
 # CLI
 cli = ["clap", "colored", "tracing-subscriber"]

@@ -231,17 +231,13 @@ where
                     // Validate token
                     match provider.validate_token(&token).await {
                         Ok(auth_context) => {
-                            // Rebuild request and call inner service
-                            let req = http::Request::from_parts(parts, body);
+                            // Rebuild request with auth context in extensions
+                            let mut req = http::Request::from_parts(parts, body);
 
-                            // TODO(Sprint 3): Inject auth_context into request extensions
-                            // Will need: let mut req = ...; req.extensions_mut().insert(auth_context);
-                            // This would allow downstream services to access auth info via:
+                            // Inject auth_context into request extensions
+                            // Downstream services can access auth info via:
                             //   req.extensions().get::<AuthContext>()
-                            // Currently blocked by: need to define AuthContext extension type
-                            // that works with http::Request<B> for any body type B.
-                            // Tracking: TURBO-3XX
-                            let _ = &auth_context; // Suppress unused warning until injection implemented
+                            req.extensions_mut().insert(auth_context);
 
                             inner.call(req).await.map_err(Into::into)
                         }

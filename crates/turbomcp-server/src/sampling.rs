@@ -71,11 +71,8 @@ impl SamplingExt for RequestContext {
         })?;
 
         // Fully typed - no serialization needed!
-        capabilities
-            .list_roots(self.clone())
-            .await
-            .map_err(|e| {
-                McpError::internal(format!("Roots listing failed: {}", e)).with_operation("roots")
-            })
+        capabilities.list_roots(self.clone()).await.map_err(|e| {
+            McpError::internal(format!("Roots listing failed: {}", e)).with_operation("roots")
+        })
     }
 }

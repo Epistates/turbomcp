@@ -149,7 +149,7 @@ fn test_request_router_new() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -170,7 +170,7 @@ fn test_request_router_with_config() {
         config,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -186,7 +186,7 @@ fn test_request_router_debug() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -208,7 +208,7 @@ async fn test_route_method_not_found() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -237,7 +237,7 @@ async fn test_route_initialize_request() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -274,7 +274,7 @@ async fn test_route_tools_list_request() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -309,7 +309,7 @@ async fn test_route_with_validation_disabled() {
         config,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -338,7 +338,7 @@ async fn test_route_resource_methods() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -377,7 +377,7 @@ async fn test_route_logging_and_sampling() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -410,7 +410,7 @@ async fn test_route_empty_method() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -435,7 +435,7 @@ async fn test_route_very_long_method() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -465,7 +465,7 @@ fn test_router_add_route() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -483,7 +483,7 @@ async fn test_custom_route_integration() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 
@@ -545,7 +545,7 @@ async fn test_router_different_configurations() {
             config,
             metrics,
             crate::config::ServerConfig::default(),
-            #[cfg(feature = "mcp-tasks")]
+            #[cfg(feature = "experimental-tasks")]
             None,
         );
 
@@ -593,7 +593,7 @@ async fn test_simple_route_handler_handle() {
         registry,
         metrics,
         crate::config::ServerConfig::default(),
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         None,
     );
 

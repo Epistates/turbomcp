@@ -11,7 +11,7 @@
 pub use turbomcp_transport::{StdioTransport, Transport, TransportConfig, TransportResult};
 
 #[cfg(feature = "websocket")]
-use crate::McpResult;
+use crate::{McpError, McpResult};
 
 #[cfg(feature = "http")]
 pub use turbomcp_transport::{AxumMcpExt, McpAppState, McpServerConfig, McpService};
@@ -46,9 +46,11 @@ impl TransportFactory {
             url: Some(ep),
             ..Default::default()
         };
-        let transport = rt.block_on(async {
-            turbomcp_transport::WebSocketBidirectionalTransport::new(config).await
-        })?;
+        let transport = rt
+            .block_on(async {
+                turbomcp_transport::WebSocketBidirectionalTransport::new(config).await
+            })
+            .map_err(|e| McpError::transport(e.to_string()))?;
         Ok(transport)
     }
 }

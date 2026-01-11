@@ -8,7 +8,7 @@
 //! - Task cancellation (tasks/cancel)
 //! - Error scenarios and edge cases
 
-#![cfg(feature = "mcp-tasks")]
+#![cfg(feature = "experimental-tasks")]
 
 use std::sync::Arc;
 use std::time::Duration;

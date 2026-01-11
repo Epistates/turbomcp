@@ -5,23 +5,23 @@
 //!
 //! ## MCP Version Support
 //!
-//! TurboMCP supports multiple MCP specification versions:
+//! TurboMCP v3.0 fully implements MCP 2025-11-25 with all specification features enabled
+//! by default. No feature flags needed for core protocol capabilities.
 //!
-//! | Specification | Status | Feature Flag | Use Case |
-//! |---------------|--------|--------------|----------|
-//! | **MCP 2025-06-18** | ✅ Stable | (default) | Production systems |
-//! | **MCP 2025-11-25** | 🚧 Draft | `mcp-draft` | Experimental features |
+//! | Specification | Status | Notes |
+//! |---------------|--------|-------|
+//! | **MCP 2025-11-25** | ✅ Full Support | Icons, URL elicitation, sampling tools, enum improvements |
+//! | **MCP 2025-06-18** | ✅ Compatible | Negotiated at runtime via protocol version |
 //!
 //! **Quick Start:**
 //! ```toml
-//! # Stable (recommended for production)
-//! turbomcp-protocol = "2.2"
-//!
-//! # Draft (experimental features)
-//! turbomcp-protocol = { version = "2.2", features = ["mcp-draft"] }
+//! turbomcp-protocol = "3.0"
 //! ```
 //!
-//! See [Version Selection Guide](#version-selection) below for detailed guidance.
+//! Only the experimental Tasks API (SEP-1686) requires a feature flag:
+//! ```toml
+//! turbomcp-protocol = { version = "3.0", features = ["experimental-tasks"] }
+//! ```
 //!
 //! ## What's Inside
 //!
@@ -53,17 +53,19 @@
 //! - **Server-to-Client Requests** - Fully typed trait for sampling, elicitation, and roots
 //! - **Comprehensive Schema Builders** - Type-safe builders for all schema types
 //!
-//! ### Draft Specification Features (MCP 2025-11-25)
+//! ### MCP 2025-11-25 Features (Always Enabled)
 //!
-//! Enable with `features = ["mcp-draft"]` or individual feature flags:
+//! All core MCP 2025-11-25 specification features are now always available:
 //!
-//! | Feature Flag | SEP | Description |
-//! |-------------|-----|-------------|
-//! | `mcp-url-elicitation` | SEP-1036 | URL mode for OAuth/sensitive data |
-//! | `mcp-sampling-tools` | SEP-1577 | Tool calling in LLM sampling |
-//! | `mcp-icons` | SEP-973 | Icon metadata for UI |
-//! | `mcp-enum-improvements` | SEP-1330 | Standards-based enum schemas |
-//! | `mcp-tasks` | SEP-1686 | Experimental tasks API |
+//! | Feature | SEP | Description |
+//! |---------|-----|-------------|
+//! | URL Elicitation | SEP-1036 | URL mode for OAuth/sensitive data collection |
+//! | Sampling Tools | SEP-1577 | Tool calling in LLM sampling requests |
+//! | Icons | SEP-973 | Icon metadata for tools, resources, prompts |
+//! | Enum Improvements | SEP-1330 | Standards-based JSON Schema enum patterns |
+//!
+//! **Experimental Feature (requires feature flag):**
+//! - `experimental-tasks` - Tasks API (SEP-1686) for long-running operations
 //!
 //! **Authentication & Security** (always enabled):
 //! - SSRF protection for URL validation
@@ -80,36 +82,19 @@
 //!
 //! ## Version Selection
 //!
-//! ### When to Use Each Version
+//! TurboMCP v3.0 includes all MCP 2025-11-25 features by default. Runtime protocol
+//! version negotiation determines actual feature availability per session.
 //!
-//! **MCP 2025-06-18 (Stable - Recommended for Production):**
-//! - ✅ Production systems requiring stability
-//! - ✅ Maximum interoperability with existing MCP implementations
-//! - ✅ Long-term API stability guarantees
-//! - ✅ Well-tested, battle-hardened features
-//!
-//! **MCP 2025-11-25 (Draft - Experimental):**
-//! - 🧪 Experimenting with cutting-edge features
-//! - 🧪 Advanced capabilities (multi-select forms, tasks API, etc.)
-//! - 🧪 Contributing to MCP specification development
-//! - ⚠️ Accept potential breaking changes in future releases
-//!
-//! ### Feature Flag Selection
-//!
-//! **All draft features:**
+//! **Typical Usage:**
 //! ```toml
 //! [dependencies]
-//! turbomcp-protocol = { version = "2.2", features = ["mcp-draft"] }
+//! turbomcp-protocol = "3.0"  # All core features included
 //! ```
 //!
-//! **Selective draft features (recommended):**
+//! **With Experimental Tasks API:**
 //! ```toml
 //! [dependencies]
-//! turbomcp-protocol = { version = "2.2", features = [
-//!     "mcp-url-elicitation",    # Need OAuth/sensitive data support
-//!     "mcp-sampling-tools",     # Need tool calling in sampling
-//!     "mcp-icons",              # Want icon metadata
-//! ] }
+//! turbomcp-protocol = { version = "3.0", features = ["experimental-tasks"] }
 //! ```
 //!
 //! ### Runtime Version Negotiation
@@ -203,6 +188,8 @@
 //!             temperature: None,
 //!             stop_sequences: None,
 //!             task: None,
+//!             tools: None,
+//!             tool_choice: None,
 //!             _meta: None,
 //!         };
 //!         let response = capabilities.create_message(request, ctx).await?;
@@ -373,8 +360,8 @@ pub use types::{
 // Users access other types via turbomcp_protocol::types::Tool, etc.
 
 pub use jsonrpc::{
-    JsonRpcError, JsonRpcErrorCode, JsonRpcNotification, JsonRpcRequest,
-    JsonRpcResponse, JsonRpcVersion,
+    JsonRpcError, JsonRpcErrorCode, JsonRpcNotification, JsonRpcRequest, JsonRpcResponse,
+    JsonRpcVersion,
 };
 
 pub use capabilities::{

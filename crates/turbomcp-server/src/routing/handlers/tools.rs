@@ -40,7 +40,7 @@ pub async fn handle_call(
 
             if let Some(handler) = context.registry.get_tool(&tool_name) {
                 // Check if task augmentation is requested (MCP 2025-11-25 draft - SEP-1686)
-                #[cfg(feature = "mcp-tasks")]
+                #[cfg(feature = "experimental-tasks")]
                 if let Some(task_metadata) = call_request.task.clone() {
                     // Create task before executing tool
                     match context.task_storage.create_task(task_metadata, None) {
@@ -117,9 +117,9 @@ pub async fn handle_call(
 
                 // Normal execution (synchronous / no task)
                 match handler.handle(call_request, ctx).await {
-                    #[cfg(feature = "mcp-tasks")]
+                    #[cfg(feature = "experimental-tasks")]
                     Ok(tool_result) => success_response(&request, tool_result),
-                    #[cfg(not(feature = "mcp-tasks"))]
+                    #[cfg(not(feature = "experimental-tasks"))]
                     Ok(tool_result) => success_response(&request, tool_result),
                     Err(e) => error_response(&request, e),
                 }

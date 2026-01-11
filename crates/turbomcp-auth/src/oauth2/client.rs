@@ -11,8 +11,9 @@
 use std::collections::HashMap;
 
 use oauth2::{
-    AuthUrl, ClientId, ClientSecret, EndpointNotSet, EndpointSet, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, RefreshToken, RevocationUrl, Scope, TokenResponse, TokenUrl,
+    AuthUrl, ClientId, ClientSecret, EndpointMaybeSet, EndpointNotSet, EndpointSet,
+    PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, RevocationUrl, Scope,
+    TokenResponse, TokenUrl,
     basic::{BasicClient, BasicTokenType},
 };
 use secrecy::ExposeSecret;
@@ -27,10 +28,9 @@ use super::super::types::TokenInfo;
 pub struct OAuth2Client {
     /// Authorization code flow client (most common)
     /// oauth2 5.0: Typestate params = (HasAuthUrl, HasDeviceAuthUrl, HasIntrospectionUrl, HasRevocationUrl, HasTokenUrl)
-    /// Note: HasRevocationUrl uses EndpointNotSet here, but we conditionally set it in new()
-    /// The oauth2 crate will return an error if revoke_token is called without endpoint configured
+    /// HasRevocationUrl uses EndpointMaybeSet for optional revocation support via set_revocation_url_option()
     pub(crate) auth_code_client:
-        BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
+        BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointMaybeSet, EndpointSet>,
     /// Client credentials client (server-to-server)
     pub(crate) client_credentials_client: Option<
         BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>,
@@ -82,27 +82,27 @@ impl OAuth2Client {
         };
 
         // Build auth code client with typestate pattern
-        // oauth2 5.0: Construct client in single expression to maintain consistent type
+        // oauth2 5.0: Use set_revocation_url_option() for optional revocation support
+        // This sets the typestate to EndpointMaybeSet, allowing fallible revoke_token() calls
+        let revocation_url = if let Some(ref revocation_url_str) = config.revocation_url {
+            Some(
+                RevocationUrl::new(revocation_url_str.clone())
+                    .map_err(|_| McpError::validation("Invalid revocation URL".to_string()))?,
+            )
+        } else {
+            None
+        };
+
         let auth_code_client = {
             let mut client = BasicClient::new(ClientId::new(config.client_id.clone()))
                 .set_auth_uri(auth_url.clone())
                 .set_token_uri(token_url.clone())
-                .set_redirect_uri(redirect_url);
+                .set_redirect_uri(redirect_url)
+                .set_revocation_url_option(revocation_url);
 
             // Conditionally set client secret (only if present)
             if let Some(ref secret) = client_secret {
                 client = client.set_client_secret(secret.clone());
-            }
-
-            // oauth2 5.0 typestate issue: revocation URL changes type from EndpointNotSet to EndpointSet
-            // We can't conditionally set it without using generics or dynamic dispatch
-            // For now, validate the URL but don't set it (revoke_token will need separate handling)
-            // TODO(oauth2-5.0): Consider making OAuth2Client generic over revocation endpoint typestate
-            if let Some(ref revocation_url_str) = config.revocation_url {
-                let _revocation_url = RevocationUrl::new(revocation_url_str.clone())
-                    .map_err(|_| McpError::validation("Invalid revocation URL".to_string()))?;
-                // NOTE: Not setting revocation URL due to typestate constraints
-                // revoke_token will return an error if called without configuration
             }
 
             client
@@ -338,7 +338,7 @@ impl OAuth2Client {
     #[must_use]
     pub fn auth_code_client(
         &self,
-    ) -> &BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointNotSet, EndpointSet>
+    ) -> &BasicClient<EndpointSet, EndpointNotSet, EndpointNotSet, EndpointMaybeSet, EndpointSet>
     {
         &self.auth_code_client
     }
@@ -567,26 +567,54 @@ impl OAuth2Client {
 
     /// Revoke a token using RFC 7009 Token Revocation
     ///
-    /// **NOTE (oauth2 5.0 limitation)**: Due to oauth2 crate's typestate system,
-    /// token revocation is currently not supported. The revocation endpoint changes
-    /// the client type at compile time, making it incompatible with conditional
-    /// configuration.
+    /// This method revokes the access token (and optionally refresh token) with
+    /// the OAuth provider. Per RFC 7009, token revocation is a best-effort operation
+    /// - even if it fails, the token may still be invalid on the server side.
     ///
-    /// # TODO
-    /// Consider one of these approaches to restore revocation support:
-    /// 1. Make OAuth2Client generic over the revocation endpoint typestate
-    /// 2. Store revocation URL separately and build a new client on demand
-    /// 3. Use dynamic dispatch (Box<dyn>) for the client
+    /// # Arguments
+    /// * `token_info` - The token information containing access and/or refresh tokens
     ///
     /// # Errors
-    /// Currently always returns an error indicating revocation is not supported
-    pub async fn revoke_token(&self, _token_info: &TokenInfo) -> McpResult<()> {
-        Err(McpError::internal(
-            "Token revocation is temporarily unavailable due to oauth2 5.0 typestate constraints. \
-             This will be addressed in a future update. \
-             As a workaround, tokens will naturally expire based on their expiration time."
-                .to_string(),
-        ))
+    /// Returns an error if:
+    /// - No revocation URL was configured when creating the client
+    /// - The revocation request fails
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Revoke a token when user logs out
+    /// if let Err(e) = client.revoke_token(&token_info).await {
+    ///     tracing::warn!("Token revocation failed (best-effort): {}", e);
+    /// }
+    /// ```
+    pub async fn revoke_token(&self, token_info: &TokenInfo) -> McpResult<()> {
+        // oauth2 5.0: Use EndpointMaybeSet typestate for optional revocation
+        // revoke_token() returns Result with ConfigurationError::MissingUrl if not configured
+        self.auth_code_client
+            .revoke_token(oauth2::StandardRevocableToken::AccessToken(
+                oauth2::AccessToken::new(token_info.access_token.clone()),
+            ))
+            .map_err(|e| {
+                McpError::internal(format!(
+                    "Token revocation not configured. Provide revocation_url in OAuth2Config: {e}"
+                ))
+            })?
+            .request_async(&self.http_client)
+            .await
+            .map_err(|e| McpError::internal(format!("Token revocation failed: {e}")))?;
+
+        // Also revoke refresh token if present (best practice per RFC 7009)
+        if let Some(ref refresh_token) = token_info.refresh_token {
+            // Ignore errors for refresh token revocation - access token was already revoked
+            if let Ok(request) = self.auth_code_client.revoke_token(
+                oauth2::StandardRevocableToken::RefreshToken(oauth2::RefreshToken::new(
+                    refresh_token.clone(),
+                )),
+            ) {
+                let _ = request.request_async(&self.http_client).await;
+            }
+        }
+
+        Ok(())
     }
 
     /// Validate that an access token is still valid

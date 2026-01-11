@@ -117,8 +117,8 @@ pub type CodecResult<T> = Result<T, CodecError>;
 /// # Implementors
 ///
 /// - [`JsonCodec`] - Standard JSON encoding (default)
-/// - [`SimdJsonCodec`] - SIMD-accelerated JSON (with `simd` feature)
-/// - [`MsgPackCodec`] - MessagePack binary format (with `msgpack` feature)
+/// - `SimdJsonCodec` - SIMD-accelerated JSON (requires `simd` feature)
+/// - `MsgPackCodec` - MessagePack binary format (requires `msgpack` feature)
 pub trait Codec: Send + Sync {
     /// Encode a value to bytes
     fn encode<T: Serialize>(&self, value: &T) -> CodecResult<Vec<u8>>;
@@ -250,7 +250,8 @@ impl MsgPackCodec {
 #[cfg(feature = "msgpack")]
 impl Codec for MsgPackCodec {
     fn encode<T: Serialize>(&self, value: &T) -> CodecResult<Vec<u8>> {
-        rmp_serde::to_vec(value).map_err(|e| CodecError::encode(e.to_string()))
+        // Use named serialization to support skip_serializing_if on optional fields
+        rmp_serde::to_vec_named(value).map_err(|e| CodecError::encode(e.to_string()))
     }
 
     fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> CodecResult<T> {

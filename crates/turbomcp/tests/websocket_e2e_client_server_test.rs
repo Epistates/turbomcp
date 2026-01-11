@@ -48,7 +48,8 @@ struct E2ETestServer {
 #[server(
     name = "E2E WebSocket Test Server",
     version = "1.0.0",
-    description = "Server for end-to-end WebSocket client/server testing"
+    description = "Server for end-to-end WebSocket client/server testing",
+    transports = ["websocket"]
 )]
 impl E2ETestServer {
     fn new() -> Self {

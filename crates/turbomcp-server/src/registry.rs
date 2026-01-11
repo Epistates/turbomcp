@@ -216,7 +216,7 @@ impl HandlerRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ServerError::Handler`] if:
+    /// Returns [`crate::McpError`] if:
     /// - Maximum handler limit is exceeded
     /// - Tool name is empty or too long
     /// - A tool with the same name already exists
@@ -267,7 +267,7 @@ impl HandlerRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ServerError::Handler`] if:
+    /// Returns [`crate::McpError`] if:
     /// - Maximum handler limit is exceeded
     /// - Prompt name is empty or too long
     /// - A prompt with the same name already exists
@@ -318,7 +318,7 @@ impl HandlerRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ServerError::Handler`] if:
+    /// Returns [`crate::McpError`] if:
     /// - Maximum handler limit is exceeded
     /// - Resource name or URI is empty
     /// - A resource with the same URI already exists
@@ -370,7 +370,7 @@ impl HandlerRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ServerError::Handler`] if maximum handler limit is exceeded.
+    /// Returns [`crate::McpError`] if maximum handler limit is exceeded.
     pub fn register_sampling<S>(&self, name: impl Into<String>, handler: S) -> ServerResult<()>
     where
         S: SamplingHandler + 'static,
@@ -412,7 +412,7 @@ impl HandlerRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::ServerError::Handler`] if maximum handler limit is exceeded.
+    /// Returns [`crate::McpError`] if maximum handler limit is exceeded.
     pub fn register_logging<L>(&self, name: impl Into<String>, handler: L) -> ServerResult<()>
     where
         L: LoggingHandler + 'static,
@@ -661,9 +661,7 @@ impl HandlerRegistry {
         }
 
         if tool_def.name.len() > 100 {
-            return Err(McpError::handler(
-                "Tool name too long (max 100 characters)",
-            ));
+            return Err(McpError::handler("Tool name too long (max 100 characters)"));
         }
 
         // Check for duplicate names

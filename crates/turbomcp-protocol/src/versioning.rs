@@ -5,10 +5,10 @@
 //!
 //! ## Production Guidance
 //!
-//! **For new deployments, use [`Version::latest()`] (2025-11-25)** - the official stable
+//! **For new deployments, use `Version::latest()` (2025-11-25)** - the official stable
 //! MCP specification released on November 25, 2025.
 //!
-//! **For maximum backwards compatibility**, use [`Version::stable()`] (2025-06-18) which
+//! **For maximum backwards compatibility**, use `Version::stable()` (2025-06-18) which
 //! is widely supported by existing MCP clients including older versions of Claude Code.
 //!
 //! ```rust
@@ -27,8 +27,8 @@
 //!
 //! | Version | Constant | Status |
 //! |---------|----------|--------|
-//! | **2025-11-25** | [`Version::latest()`] | **Current** - Official MCP spec (Tasks, Extensions, CIMD) |
-//! | **2025-06-18** | [`Version::stable()`] | Stable - Widely deployed, legacy client compatibility |
+//! | **2025-11-25** | `Version::latest()` | **Current** - Official MCP spec (Tasks, Extensions, CIMD) |
+//! | **2025-06-18** | `Version::stable()` | Stable - Widely deployed, legacy client compatibility |
 //! | 2025-03-26 | - | Legacy support |
 //! | 2024-11-05 | - | Legacy support |
 //!
@@ -60,10 +60,11 @@
 //!
 //! ## Feature Flags vs Runtime Negotiation
 //!
-//! **Feature flags** (compile-time) control what types are available:
+//! Most MCP 2025-11-25 features are now **always available** (no feature flag needed).
+//! Only experimental features like the Tasks API require a feature flag:
 //! ```toml
-//! # Enable all MCP features at compile time
-//! turbomcp-protocol = { version = "2.3", features = ["mcp-draft"] }
+//! # Enable experimental Tasks API
+//! turbomcp-protocol = { version = "3.0", features = ["experimental-tasks"] }
 //! ```
 //!
 //! **Runtime negotiation** determines what protocol version is used for a session:

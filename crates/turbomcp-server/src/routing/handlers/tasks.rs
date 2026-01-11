@@ -58,10 +58,9 @@ pub async fn handle_result(
                             &request,
                             McpError::lifecycle(format!("Task failed: {}", error_msg)),
                         ),
-                        TaskResultState::Cancelled => error_response(
-                            &request,
-                            McpError::lifecycle("Task was cancelled"),
-                        ),
+                        TaskResultState::Cancelled => {
+                            error_response(&request, McpError::lifecycle("Task was cancelled"))
+                        }
                         TaskResultState::Pending => {
                             // Should never happen since get_task_result blocks
                             error_response(

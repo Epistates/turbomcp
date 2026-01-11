@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-protocol"
-version = "3.0.0-alpha.1"
+version = "3.0.0-exp"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Complete MCP protocol implementation with types, traits, context management, and message handling"
@@ -36,6 +36,9 @@ flate2 = "1.0" # For gzip compression
 # Error handling
 thiserror = { workspace = true }
 miette = { workspace = true, optional = true }
+
+# URL encoding/decoding for security validation
+percent-encoding = { workspace = true }
 
 # Observability
 tracing = { workspace = true }
@@ -76,8 +79,8 @@ rancor_crate = { package = "rancor", version = "0.1", default-features = false, 
 # Validation
 regex = "1.12"
 
-# URL parsing (for mcp-url-elicitation feature)
-url = { version = "2.5", optional = true }
+# URL parsing (for icons and URL elicitation - core protocol feature)
+url = "2.5"
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -107,17 +110,22 @@ wire-simd = ["wire", "turbomcp-wire/simd"]
 # Wire codec with MessagePack support
 wire-msgpack = ["wire", "turbomcp-wire/msgpack"]
 
-# MCP 2025-11-25 Draft Specification Features
-# These features enable support for the draft specification (2025-11-25)
-# which includes experimental and in-development protocol enhancements.
-mcp-draft = [
-    "mcp-tasks",
-    "mcp-url-elicitation",
-    "mcp-sampling-tools",
-    "mcp-icons",
-]
-mcp-tasks = []              # Experimental Tasks API (SEP-1686)
-mcp-url-elicitation = ["dep:url"]    # URL mode elicitation (SEP-1036)
-mcp-sampling-tools = []     # Tool calling in sampling (SEP-1577)
-mcp-icons = ["dep:url"]     # Icon metadata support (SEP-973)
-mcp-enum-improvements = []  # ElicitResult/EnumSchema updates (SEP-1330)
+# =============================================================================
+# MCP 2025-11-25 Specification Notes
+# =============================================================================
+#
+# The following are CORE protocol features (always available, no feature flag):
+# - Icons: Optional metadata on Tool/Resource/Prompt (SEP-973)
+# - URL elicitation: Mode of elicitation for sensitive data (SEP-1036)
+# - Sampling tools: Tool calling in createMessage (SEP-1577)
+# - Enum improvements: Schema refinements for ElicitResult (SEP-1330)
+#
+# These are capability-negotiated at runtime, not compile-time gated.
+# Types are always available for serialization/deserialization.
+#
+# =============================================================================
+# Experimental Features (design may evolve in future protocol versions)
+# =============================================================================
+#
+# Tasks API (SEP-1686) - marked experimental in MCP 2025-11-25 spec
+experimental-tasks = []

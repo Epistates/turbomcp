@@ -1,7 +1,7 @@
 [package]
 name = "turbomcp-server"
 
-version = "3.0.0-alpha.1"
+version = "3.0.0-exp"
 
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -16,10 +16,10 @@ rust-version = "1.89.0"
 
 [dependencies]
 
-turbomcp-protocol = { version = "3.0.0-alpha.1", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "3.0.0-alpha.1", path = "../turbomcp-transport", optional = true }
-turbomcp-macros = { version = "3.0.0-alpha.1", path = "../turbomcp-macros" }
-turbomcp-auth = { version = "3.0.0-alpha.1", path = "../turbomcp-auth", optional = true }
+turbomcp-protocol = { version = "3.0.0-exp", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "3.0.0-exp", path = "../turbomcp-transport", optional = true }
+turbomcp-macros = { version = "3.0.0-exp", path = "../turbomcp-macros" }
+turbomcp-auth = { version = "3.0.0-exp", path = "../turbomcp-auth", optional = true }
 
 async-trait = { workspace = true }
 serde = { workspace = true }
@@ -28,6 +28,7 @@ tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
 thiserror = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
@@ -89,8 +90,8 @@ http = ["dep:turbomcp-transport", "turbomcp-transport/http", "middleware", "dep:
 websocket = ["dep:turbomcp-transport", "turbomcp-transport/websocket", "http"]
 tcp = ["dep:turbomcp-transport", "turbomcp-transport/tcp"]
 unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
-# MCP specification features
-mcp-tasks = ["turbomcp-protocol/mcp-tasks"]  # Tasks API (MCP 2025-11-25 draft, SEP-1686)
+# Experimental features (pass-through to turbomcp-protocol)
+experimental-tasks = ["turbomcp-protocol/experimental-tasks"]  # Tasks API (SEP-1686)
 # Convenience feature bundles
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]
-full = ["all-transports", "auth", "dpop", "sessions", "security", "input-validation", "multi-tenancy", "health-checks", "metrics", "middleware", "rate-limiting", "mcp-tasks"]
+full = ["all-transports", "auth", "dpop", "sessions", "security", "input-validation", "multi-tenancy", "health-checks", "metrics", "middleware", "rate-limiting", "experimental-tasks"]

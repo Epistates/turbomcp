@@ -1,11 +1,11 @@
 [package]
 name = "turbomcp-telemetry"
-version = "3.0.0-alpha.1"
+version = "3.0.0-exp"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT"
 description = "OpenTelemetry integration and observability for TurboMCP SDK"
-repository = "https://github.com/turbomcp/turbomcp"
+repository = "https://github.com/Epistates/turbomcp"
 documentation = "https://docs.rs/turbomcp-telemetry"
 homepage = "https://turbomcp.org"
 keywords = ["mcp", "opentelemetry", "telemetry", "tracing", "metrics"]
@@ -14,7 +14,7 @@ readme = "README.md"
 
 [dependencies]
 # Core dependencies
-turbomcp-protocol = { version = "3.0.0-alpha.1", path = "../turbomcp-protocol" }
+turbomcp-protocol = { version = "3.0.0-exp", path = "../turbomcp-protocol" }
 
 # Tracing foundation (always required)
 tracing = "0.1"

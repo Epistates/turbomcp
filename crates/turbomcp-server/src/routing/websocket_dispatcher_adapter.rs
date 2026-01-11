@@ -41,9 +41,7 @@ impl ServerRequestDispatcher for WebSocketDispatcherAdapter {
         self.dispatcher
             .send_elicitation_request(request)
             .await
-            .map_err(|e| {
-                McpError::internal(e).with_operation("WebSocket elicitation request")
-            })
+            .map_err(|e| McpError::internal(e).with_operation("WebSocket elicitation request"))
     }
 
     async fn send_ping(

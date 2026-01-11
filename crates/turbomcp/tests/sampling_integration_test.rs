@@ -100,9 +100,7 @@ async fn test_sampling_basic_request_response() {
         max_tokens: 100,
         stop_sequences: None,
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -179,9 +177,7 @@ async fn test_sampling_model_preferences() {
         max_tokens: 500,
         stop_sequences: None,
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -244,9 +240,7 @@ async fn test_sampling_stop_reasons() {
         max_tokens: 10, // Very low to trigger max_tokens stop
         stop_sequences: Some(vec!["STOP".to_string()]),
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -311,9 +305,7 @@ async fn test_sampling_include_context() {
             max_tokens: 100,
             stop_sequences: None,
             _meta: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tools: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
             task: None,
         };
@@ -368,9 +360,7 @@ async fn test_sampling_parameter_validation() {
             max_tokens: 100,
             stop_sequences: None,
             _meta: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tools: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
             task: None,
         };
@@ -421,9 +411,7 @@ async fn test_sampling_error_cases() {
         max_tokens: 100,
         stop_sequences: None,
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -480,9 +468,7 @@ async fn test_sampling_multi_turn_conversation() {
         max_tokens: 100,
         stop_sequences: None,
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -564,9 +550,7 @@ async fn test_sampling_concurrent_requests() {
                 max_tokens: 100,
                 stop_sequences: None,
                 _meta: None,
-                #[cfg(feature = "mcp-sampling-tools")]
                 tools: None,
-                #[cfg(feature = "mcp-sampling-tools")]
                 tool_choice: None,
                 task: None,
             };
@@ -618,9 +602,7 @@ async fn test_sampling_image_content() {
         max_tokens: 500,
         stop_sequences: None,
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -686,9 +668,7 @@ async fn test_sampling_audio_content() {
         max_tokens: 1000,
         stop_sequences: None,
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -745,9 +725,7 @@ async fn test_sampling_malformed_response_handling() {
         max_tokens: 100,
         stop_sequences: None,
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -776,9 +754,7 @@ async fn test_sampling_empty_messages_validation() {
         max_tokens: 100,
         stop_sequences: None,
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -838,9 +814,7 @@ async fn test_sampling_metadata_propagation() {
             "correlation_id": "corr-99999",
             "timestamp": "2025-10-03T12:00:00Z"
         })),
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -911,9 +885,7 @@ async fn test_sampling_stop_sequences_edge_cases() {
             "\n\n\n".to_string(),
         ]),
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -958,9 +930,7 @@ async fn test_sampling_stop_sequences_edge_cases() {
         max_tokens: 100,
         stop_sequences: Some(vec![]),
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };
@@ -1041,9 +1011,7 @@ async fn test_sampling_model_preference_combinations() {
             max_tokens: 100,
             stop_sequences: None,
             _meta: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tools: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
             task: None,
         };
@@ -1114,9 +1082,7 @@ async fn test_sampling_system_prompt_variations() {
             max_tokens: 100,
             stop_sequences: None,
             _meta: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tools: None,
-            #[cfg(feature = "mcp-sampling-tools")]
             tool_choice: None,
             task: None,
         };
@@ -1218,9 +1184,7 @@ async fn test_sampling_mixed_content_multimodal_conversation() {
         max_tokens: 500,
         stop_sequences: None,
         _meta: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tools: None,
-        #[cfg(feature = "mcp-sampling-tools")]
         tool_choice: None,
         task: None,
     };

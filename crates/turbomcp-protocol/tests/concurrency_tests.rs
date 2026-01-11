@@ -21,7 +21,6 @@ fn test_concurrent_serialization_safety() {
             task_support: Some(TaskSupportMode::Optional),
         }),
         annotations: None,
-        #[cfg(feature = "mcp-icons")]
         icons: None,
         meta: None,
     });
@@ -178,7 +177,6 @@ fn test_concurrent_tool_list_access() {
                     None
                 },
                 annotations: None,
-                #[cfg(feature = "mcp-icons")]
                 icons: None,
                 meta: None,
             })
@@ -337,7 +335,7 @@ fn test_concurrent_type_cloning() {
         logging: Some(LoggingCapabilities {}),
         experimental: None,
         completions: None,
-        #[cfg(feature = "mcp-tasks")]
+        #[cfg(feature = "experimental-tasks")]
         tasks: None,
     });
 

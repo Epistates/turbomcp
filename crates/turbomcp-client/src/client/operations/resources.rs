@@ -55,7 +55,8 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         }
 
         // Send resources/list request
-        let response: ListResourcesResult = self.inner.protocol.request("resources/list", None).await?;
+        let response: ListResourcesResult =
+            self.inner.protocol.request("resources/list", None).await?;
 
         Ok(response.resources)
     }

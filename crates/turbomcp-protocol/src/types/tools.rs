@@ -164,7 +164,6 @@ pub struct Tool {
     pub annotations: Option<ToolAnnotations>,
 
     /// Optional set of icons for UI display (MCP 2025-11-25 draft, SEP-973)
-    #[cfg(feature = "mcp-icons")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icons: Option<Vec<super::core::Icon>>,
 
@@ -183,7 +182,6 @@ impl Default for Tool {
             output_schema: None,
             execution: None,
             annotations: None,
-            #[cfg(feature = "mcp-icons")]
             icons: None,
             meta: None,
         }
@@ -206,7 +204,6 @@ impl Tool {
             output_schema: None,
             execution: None,
             annotations: None,
-            #[cfg(feature = "mcp-icons")]
             icons: None,
             meta: None,
         }
@@ -227,7 +224,6 @@ impl Tool {
             output_schema: None,
             execution: None,
             annotations: None,
-            #[cfg(feature = "mcp-icons")]
             icons: None,
             meta: None,
         }
@@ -703,14 +699,12 @@ impl CallToolResult {
                 ContentBlock::Resource(_resource) => {
                     parts.push(format!("[Embedded Resource #{}]", i + 1));
                 }
-                #[cfg(feature = "mcp-sampling-tools")]
                 ContentBlock::ToolUse(tool_use) => {
                     parts.push(format!(
                         "[Tool Use: {} (id: {})]",
                         tool_use.name, tool_use.id
                     ));
                 }
-                #[cfg(feature = "mcp-sampling-tools")]
                 ContentBlock::ToolResult(tool_result) => {
                     parts.push(format!(
                         "[Tool Result for: {}{}]",

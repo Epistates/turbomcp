@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use turbomcp_protocol::RequestContext;
 use turbomcp_server::{
-    ServerError,
+    McpError,
     config::TimeoutConfig,
     metrics::ServerMetrics,
     timeout::{ToolTimeoutError, ToolTimeoutManager},
@@ -178,7 +178,7 @@ async fn test_operation_error_propagation() {
 
     let result = manager
         .execute_with_timeout::<_, ()>("error_tool", async {
-            Err(ServerError::handler("operation failed"))
+            Err(McpError::internal("operation failed"))
         })
         .await;
 
@@ -238,7 +238,7 @@ async fn test_context_integration_with_cancellation_token() {
             if let Some(token) = &ctx.cancellation_token
                 && token.is_cancelled()
             {
-                return Err(ServerError::handler("cancelled"));
+                return Err(McpError::internal("cancelled"));
             }
 
             sleep(Duration::from_millis(100)).await;
@@ -247,7 +247,7 @@ async fn test_context_integration_with_cancellation_token() {
             if let Some(token) = &ctx.cancellation_token
                 && token.is_cancelled()
             {
-                return Err(ServerError::handler("cancelled_after_work"));
+                return Err(McpError::internal("cancelled_after_work"));
             }
 
             Ok("completed_with_context")
@@ -267,7 +267,7 @@ async fn test_timeout_error_conversion_to_server_error() {
         elapsed: Duration::from_millis(600),
     };
 
-    let server_error: ServerError = timeout_error.into();
+    let server_error: McpError = timeout_error.into();
 
     // Check that error conversion works correctly
     assert!(server_error.to_string().contains("test_tool"));
@@ -281,7 +281,7 @@ async fn test_cancellation_error_conversion_to_server_error() {
         elapsed: Duration::from_millis(300),
     };
 
-    let server_error: ServerError = cancellation_error.into();
+    let server_error: McpError = cancellation_error.into();
 
     // Check that error conversion works correctly
     assert!(server_error.to_string().contains("cancelled_tool"));

@@ -191,10 +191,8 @@ fn test_implementation() {
         name: "test-server".to_string(),
         title: Some("Test Server".to_string()),
         version: "1.0.0".to_string(),
-        #[cfg(feature = "mcp-draft")]
-        description: None,
-        #[cfg(feature = "mcp-icons")]
-        icons: None,
+                description: None,
+                icons: None,
     };
 
     assert_eq!(impl_info.name, "test-server");
@@ -208,10 +206,8 @@ fn test_implementation_no_title() {
         name: "minimal-server".to_string(),
         title: None,
         version: "0.1.0".to_string(),
-        #[cfg(feature = "mcp-draft")]
-        description: None,
-        #[cfg(feature = "mcp-icons")]
-        icons: None,
+                description: None,
+                icons: None,
     };
 
     assert_eq!(impl_info.name, "minimal-server");
@@ -225,10 +221,8 @@ fn test_implementation_serialization() {
         name: "server".to_string(),
         title: Some("Server".to_string()),
         version: "2.0.0".to_string(),
-        #[cfg(feature = "mcp-draft")]
-        description: None,
-        #[cfg(feature = "mcp-icons")]
-        icons: None,
+                description: None,
+                icons: None,
     };
 
     let json = serde_json::to_string(&impl_info).unwrap();
@@ -583,10 +577,8 @@ fn test_initialize_request() {
             name: "test-client".to_string(),
             title: None,
             version: "1.0.0".to_string(),
-            #[cfg(feature = "mcp-draft")]
-            description: None,
-            #[cfg(feature = "mcp-icons")]
-            icons: None,
+                        description: None,
+                        icons: None,
         },
         _meta: None,
     };
@@ -604,10 +596,8 @@ fn test_initialize_result() {
             name: "test-server".to_string(),
             title: Some("Test Server".to_string()),
             version: "1.0.0".to_string(),
-            #[cfg(feature = "mcp-draft")]
-            description: None,
-            #[cfg(feature = "mcp-icons")]
-            icons: None,
+                        description: None,
+                        icons: None,
         },
         instructions: Some("Welcome to the server".to_string()),
         _meta: None,
@@ -887,10 +877,8 @@ fn test_client_request_variants() {
             name: "client".to_string(),
             title: None,
             version: "1.0.0".to_string(),
-            #[cfg(feature = "mcp-draft")]
-            description: None,
-            #[cfg(feature = "mcp-icons")]
-            icons: None,
+                        description: None,
+                        icons: None,
         },
         _meta: None,
     });

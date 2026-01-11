@@ -78,7 +78,7 @@ impl LifespanHook for TestHook {
 
         if self.should_fail.load(Ordering::SeqCst) {
             self.should_fail.store(false, Ordering::SeqCst);
-            return Err(McpError::Context(format!(
+            return Err(McpError::context(format!(
                 "Hook {} intentionally failed",
                 self.name
             )));
@@ -516,7 +516,7 @@ async fn test_hook_execution_result() {
         event: LifespanEvent::Shutdown,
         success: false,
         duration: Duration::from_millis(50),
-        error: Some(McpError::Context("Something went wrong".to_string())),
+        error: Some(McpError::context("Something went wrong".to_string())),
     };
 
     assert_eq!(error_result.hook_name, "failing_hook");

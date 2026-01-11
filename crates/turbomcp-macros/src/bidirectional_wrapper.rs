@@ -223,35 +223,41 @@ pub fn generate_bidirectional_transport_methods(
     transports: &Option<Vec<String>>,
 ) -> TokenStream {
     // Determine which transports to generate code for
-    // If transports is specified, use only those; otherwise generate all
+    // If transports is specified, use only those; otherwise default to just stdio
+    // This matches the default features in turbomcp (default = ["stdio"])
+    //
+    // Users who want HTTP/WebSocket/TCP/Unix must explicitly request them:
+    //   #[server(transports = ["stdio", "http"])]
+    //
+    // This ensures generated code only references methods that exist based on
+    // the features enabled on turbomcp-server.
     let should_generate_http = transports
         .as_ref()
         .map(|t| t.contains(&"http".to_string()))
-        .unwrap_or(true);
+        .unwrap_or(false); // Default: don't generate HTTP methods
 
     let should_generate_websocket = transports
         .as_ref()
         .map(|t| t.contains(&"websocket".to_string()))
-        .unwrap_or(true);
+        .unwrap_or(false); // Default: don't generate WebSocket methods
 
     let should_generate_tcp = transports
         .as_ref()
         .map(|t| t.contains(&"tcp".to_string()))
-        .unwrap_or(true);
+        .unwrap_or(false); // Default: don't generate TCP methods
 
     let should_generate_unix = transports
         .as_ref()
         .map(|t| t.contains(&"unix".to_string()))
-        .unwrap_or(true);
+        .unwrap_or(false); // Default: don't generate Unix methods
     // Generate HTTP methods conditionally
     let http_methods = if should_generate_http {
         quote! {
             /// Run server with HTTP transport (MCP 2025-06-18 compliant)
             ///
             /// **Note**: Requires the `http` feature to be enabled on `turbomcp`.
-            /// Add `turbomcp = { version = "2.0", features = ["http"] }` to your Cargo.toml.
-            #[cfg(feature = "http")]
-            pub async fn run_http<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
+            /// Add `turbomcp = { version = "3.0", features = ["http"] }` to your Cargo.toml.
+                        pub async fn run_http<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A
             ) -> Result<(), Box<dyn ::std::error::Error>> {
@@ -261,9 +267,8 @@ pub fn generate_bidirectional_transport_methods(
             /// Run HTTP server with custom endpoint path (MCP 2025-11-25 compliant)
             ///
             /// **Note**: Requires the `http` feature to be enabled on `turbomcp`.
-            /// Add `turbomcp = { version = "2.0", features = ["http"] }` to your Cargo.toml.
-            #[cfg(feature = "http")]
-            pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
+            /// Add `turbomcp = { version = "3.0", features = ["http"] }` to your Cargo.toml.
+                        pub async fn run_http_with_path<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A,
                 path: &str
@@ -289,7 +294,7 @@ pub fn generate_bidirectional_transport_methods(
             /// rate limiting, and security settings.
             ///
             /// **Note**: Requires the `http` feature to be enabled on `turbomcp`.
-            /// Add `turbomcp = { version = "2.0", features = ["http"] }` to your Cargo.toml.
+            /// Add `turbomcp = { version = "3.0", features = ["http"] }` to your Cargo.toml.
             ///
             /// # Example: Enable CORS for browser-based tools
             ///
@@ -305,8 +310,7 @@ pub fn generate_bidirectional_transport_methods(
             ///
             /// server.run_http_with_config("127.0.0.1:3000", config).await?;
             /// ```
-            #[cfg(feature = "http")]
-            pub async fn run_http_with_config<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
+                        pub async fn run_http_with_config<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A,
                 config: ::turbomcp::__macro_support::turbomcp_transport::streamable_http::StreamableHttpConfig
@@ -325,7 +329,7 @@ pub fn generate_bidirectional_transport_methods(
             /// cross-cutting concerns by allowing Tower middleware layers to be applied to the router.
             ///
             /// **Note**: Requires the `http` feature to be enabled on `turbomcp`.
-            /// Add `turbomcp = { version = "2.0", features = ["http"] }` to your Cargo.toml.
+            /// Add `turbomcp = { version = "3.0", features = ["http"] }` to your Cargo.toml.
             ///
             /// # Multi-Tenancy Example
             ///
@@ -358,8 +362,7 @@ pub fn generate_bidirectional_transport_methods(
             // Users can write middleware using either:
             //   - `turbomcp::axum::Router` (always works)
             //   - `axum::Router` (works if their axum version matches turbomcp's)
-            #[cfg(feature = "http")]
-            pub async fn run_http_with_middleware<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
+                        pub async fn run_http_with_middleware<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A,
                 middleware_fn: Box<dyn FnOnce(::turbomcp::__macro_support::axum::Router) -> ::turbomcp::__macro_support::axum::Router + Send>,
@@ -382,9 +385,8 @@ pub fn generate_bidirectional_transport_methods(
             /// Run server with WebSocket transport (MCP 2025-06-18 compliant)
             ///
             /// **Note**: Requires the `websocket` feature to be enabled on `turbomcp`.
-            /// Add `turbomcp = { version = "2.0", features = ["websocket"] }` to your Cargo.toml.
-            #[cfg(feature = "websocket")]
-            pub async fn run_websocket<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
+            /// Add `turbomcp = { version = "3.0", features = ["websocket"] }` to your Cargo.toml.
+                        pub async fn run_websocket<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A
             ) -> Result<(), Box<dyn ::std::error::Error>> {
@@ -394,9 +396,8 @@ pub fn generate_bidirectional_transport_methods(
             /// Run WebSocket server with custom endpoint path (MCP 2025-06-18 compliant)
             ///
             /// **Note**: Requires the `websocket` feature to be enabled on `turbomcp`.
-            /// Add `turbomcp = { version = "2.0", features = ["websocket"] }` to your Cargo.toml.
-            #[cfg(feature = "websocket")]
-            pub async fn run_websocket_with_path<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
+            /// Add `turbomcp = { version = "3.0", features = ["websocket"] }` to your Cargo.toml.
+                        pub async fn run_websocket_with_path<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A,
                 path: &str
@@ -435,7 +436,7 @@ pub fn generate_bidirectional_transport_methods(
             /// TCP is useful for local network communication or when stdio/HTTP aren't suitable.
             ///
             /// **Note**: Requires the `tcp` feature to be enabled on `turbomcp`.
-            /// Add `turbomcp = { version = "2.0", features = ["tcp"] }` to your Cargo.toml.
+            /// Add `turbomcp = { version = "3.0", features = ["tcp"] }` to your Cargo.toml.
             ///
             /// # Example
             ///
@@ -445,8 +446,7 @@ pub fn generate_bidirectional_transport_methods(
             ///     MyServer.run_tcp("127.0.0.1:8765").await
             /// }
             /// ```
-            #[cfg(feature = "tcp")]
-            pub async fn run_tcp<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
+                        pub async fn run_tcp<A: ::std::net::ToSocketAddrs + Send + ::std::fmt::Debug>(
                 self,
                 addr: A
             ) -> Result<(), Box<dyn ::std::error::Error>> {
@@ -468,7 +468,7 @@ pub fn generate_bidirectional_transport_methods(
             /// Unix sockets are ideal for same-machine communication with lower overhead than TCP.
             ///
             /// **Note**: Requires the `unix` feature to be enabled on `turbomcp` and is only available on Unix-like systems.
-            /// Add `turbomcp = { version = "2.0", features = ["unix"] }` to your Cargo.toml.
+            /// Add `turbomcp = { version = "3.0", features = ["unix"] }` to your Cargo.toml.
             ///
             /// # Example
             ///

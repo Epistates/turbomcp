@@ -1,5 +1,6 @@
 //! URI template matching and parameter extraction
 
+use crate::McpErrorConstructors;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::collections::HashMap;
@@ -36,7 +37,7 @@ impl UriTemplate {
 
         // Escape other regex special characters but preserve our named groups
         let pattern = Regex::new(&format!("^{regex_pattern}$"))
-            .map_err(|e| McpError::Resource(format!("Invalid URI template regex: {e}")))?;
+            .map_err(|e| McpError::resource(format!("Invalid URI template regex: {e}")))?;
 
         Ok(Self {
             pattern,

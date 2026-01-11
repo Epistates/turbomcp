@@ -26,12 +26,12 @@
 //!     .service(transport);
 //! ```
 
-mod metrics;
 mod cache;
-mod tracing_layer;
+mod metrics;
 mod request;
+mod tracing_layer;
 
-pub use metrics::{Metrics, MetricsLayer, MetricsService, MetricsSnapshot};
 pub use cache::{Cache, CacheConfig, CacheLayer, CacheService};
-pub use tracing_layer::{TracingLayer, TracingService};
+pub use metrics::{Metrics, MetricsLayer, MetricsService, MetricsSnapshot};
 pub use request::{McpRequest, McpResponse};
+pub use tracing_layer::{TracingLayer, TracingService};
