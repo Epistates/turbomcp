@@ -1,6 +1,19 @@
 # TurboMCP Documentation
 
-Welcome to **TurboMCP** – a production-ready Rust SDK for the Model Context Protocol (MCP) with zero-boilerplate development and progressive enhancement.
+Welcome to **TurboMCP v3** – a production-ready Rust SDK for the Model Context Protocol (MCP) with zero-boilerplate development, modular architecture, and edge computing support.
+
+## What's New in v3
+
+TurboMCP 3.0 introduces a **modular architecture** with significant improvements:
+
+- **`no_std` Core** - Run in embedded and WASM environments with `turbomcp-core`
+- **Unified Errors** - Single `McpError` type across the entire SDK
+- **Modular Transports** - Individual crates for each transport (STDIO, HTTP, WebSocket, TCP, Unix, gRPC)
+- **Wire Codec Abstraction** - Pluggable serialization with JSON, SIMD-JSON, and MessagePack
+- **Tower Integration** - Native Tower middleware for authentication and telemetry
+- **WASM Support** - Full browser client and WASI Preview 2 runtime support
+- **OpenTelemetry** - First-class distributed tracing and metrics
+- **MCP 2025-11-25** - Full compliance with the latest MCP specification
 
 ## What is TurboMCP?
 
@@ -11,29 +24,30 @@ TurboMCP enables you to build MCP servers with:
 - **Full Protocol Support** - Tools, resources, prompts, sampling, elicitation, and more
 - **Type Safety** - Rust's type system prevents entire classes of bugs
 - **Production Ready** - Graceful shutdown, observability, error handling built-in
-- **Multiple Transports** - STDIO, HTTP/SSE, WebSocket, TCP, Unix sockets
+- **Multiple Transports** - STDIO, HTTP/SSE, WebSocket, TCP, Unix sockets, gRPC
+- **Edge Ready** - Deploy to browsers, edge workers, and WASI runtimes
 
 ## Quick Navigation
 
 <div class="grid cards" markdown>
 
-- **🚀 [Getting Started](getting-started/overview.md)**
+- **[Getting Started](getting-started/overview.md)**
   Learn the basics and create your first MCP server in minutes
 
-- **📚 [Complete Guide](guide/architecture.md)**
+- **[Complete Guide](guide/architecture.md)**
   Deep dive into architecture, handlers, context injection, and authentication
 
-- **🔧 [API Reference](api/protocol.md)**
+- **[API Reference](api/protocol.md)**
   Comprehensive reference for all crates and their APIs
 
-- **💡 [Examples](examples/basic.md)**
+- **[Examples](examples/basic.md)**
   Real-world patterns and advanced usage examples
 
-- **🏗️ [Architecture](architecture/system-design.md)**
+- **[Architecture](architecture/system-design.md)**
   System design, context lifecycle, and design decisions
 
-- **🚢 [Deployment](deployment/docker.md)**
-  Deploy to production with Docker, Kubernetes, and observability
+- **[Deployment](deployment/docker.md)**
+  Deploy to production with Docker, Kubernetes, edge, and observability
 
 </div>
 
@@ -66,20 +80,16 @@ async fn get_weather(
 }
 ```
 
-### Dependency Injection
+### Unified Error Handling (v3)
 
-Request handlers automatically receive injected dependencies:
+A single `McpError` type across the entire SDK with JSON-RPC code mapping:
 
 ```rust
-#[tool]
-async fn process_data(
-    config: Config,
-    logger: Logger,
-    cache: Cache,
-    db: Database,
-) -> McpResult<String> {
-    logger.info("Processing data").await?;
-    Ok("Result".to_string())
+use turbomcp::McpError;
+
+fn my_handler() -> McpResult<String> {
+    // Unified error type with rich context
+    Err(McpError::tool_not_found("unknown_tool"))
 }
 ```
 
@@ -93,6 +103,7 @@ let server = McpServer::new()
     .http(8080)        // HTTP with Server-Sent Events
     .websocket(8081)   // WebSocket support
     .tcp(9000)         // TCP networking
+    .grpc(50051)       // gRPC transport (v3)
     .run()
     .await?;
 ```
@@ -116,22 +127,48 @@ async fn my_handler(
 }
 ```
 
+### WASM & Edge Support (v3)
+
+Run MCP clients in browsers and edge environments:
+
+```javascript
+import init, { McpClient } from 'turbomcp-wasm';
+
+await init();
+const client = new McpClient("https://api.example.com/mcp");
+await client.initialize();
+
+const tools = await client.listTools();
+const result = await client.callTool("my_tool", { arg: "value" });
+```
+
 ## Core Crates
 
-### Foundation
-- **turbomcp-protocol** - Complete MCP 2025-06-18 implementation
-- **turbomcp-transport** - Multi-protocol transport layer
-- **turbomcp-macros** - Zero-overhead procedural macros
+### Foundation Layer
+- **turbomcp-core** - `no_std` core types for WASM and embedded (v3)
+- **turbomcp-protocol** - Complete MCP 2025-11-25 implementation
+- **turbomcp-wire** - Wire format codec abstraction (v3)
 
-### Infrastructure
+### Transport Layer
+- **turbomcp-transport** - Multi-protocol transport orchestration
+- **turbomcp-stdio** - Standard I/O transport (v3 modular)
+- **turbomcp-http** - HTTP/SSE transport (v3 modular)
+- **turbomcp-websocket** - WebSocket transport (v3 modular)
+- **turbomcp-tcp** - TCP transport (v3 modular)
+- **turbomcp-unix** - Unix socket transport (v3 modular)
+- **turbomcp-grpc** - gRPC transport (v3)
+
+### Infrastructure Layer
 - **turbomcp-server** - Server framework with middleware
 - **turbomcp-client** - Client implementation with auto-retry
 - **turbomcp-auth** - OAuth 2.1 and authentication
+- **turbomcp-telemetry** - OpenTelemetry integration (v3)
 
-### Developer API
+### Developer API Layer
 - **turbomcp** - Main SDK combining all layers
+- **turbomcp-macros** - Zero-overhead procedural macros
 - **turbomcp-cli** - CLI tools for testing and debugging
-- **turbomcp-proxy** - Universal MCP adapter
+- **turbomcp-wasm** - WebAssembly bindings (v3)
 
 ## Getting Started
 
@@ -141,7 +178,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "3.0.0-exp"
+turbomcp = "3.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -177,8 +214,21 @@ cargo run
 
 - **[Getting Started Guide](getting-started/overview.md)** - Complete introduction
 - **[Architecture Overview](guide/architecture.md)** - How TurboMCP works
+- **[Error Handling](guide/error-handling.md)** - Unified McpError system (v3)
+- **[WASM & Edge](guide/wasm.md)** - Browser and edge deployment (v3)
+- **[Tower Middleware](guide/tower-middleware.md)** - Composable middleware (v3)
 - **[API Documentation](api/protocol.md)** - Detailed API reference
 - **[Examples](examples/basic.md)** - Real-world patterns
+
+## Migration from v2
+
+See the **[v3 Migration Guide](architecture/v3-migration.md)** for:
+
+- Unified `McpError` migration
+- Modular transport architecture
+- Feature flag simplification
+- Tower middleware integration
+- `no_std` core usage
 
 ## Community & Support
 
@@ -192,4 +242,4 @@ TurboMCP is licensed under the MIT License. See LICENSE for details.
 
 ---
 
-**Ready to build your MCP server?** Start with the [Getting Started guide →](getting-started/overview.md)
+**Ready to build your MCP server?** Start with the [Getting Started guide](getting-started/overview.md)

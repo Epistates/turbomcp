@@ -1,16 +1,19 @@
 # Transports
 
-Configure and use multiple transport protocols for your MCP server.
+Configure and use multiple transport protocols for your MCP server. TurboMCP v3 introduces modular transport crates for maximum flexibility.
 
 ## Overview
 
-TurboMCP supports multiple transport protocols for different use cases:
+TurboMCP v3 supports multiple transport protocols through individual crates:
 
-- **STDIO** - Standard input/output for CLI integration
-- **HTTP** - REST API with Server-Sent Events for server-to-client messages
-- **WebSocket** - Full-duplex bidirectional communication
-- **TCP** - Low-level TCP networking
-- **Unix Sockets** - Local inter-process communication
+| Transport | Crate | Feature | Use Case |
+|-----------|-------|---------|----------|
+| **STDIO** | `turbomcp-stdio` | `stdio` | CLI, Claude desktop |
+| **HTTP** | `turbomcp-http` | `http` | Web applications, REST APIs |
+| **WebSocket** | `turbomcp-websocket` | `websocket` | Real-time bidirectional |
+| **TCP** | `turbomcp-tcp` | `tcp` | High performance |
+| **Unix** | `turbomcp-unix` | `unix` | Local IPC |
+| **gRPC** | `turbomcp-grpc` | `grpc` | Enterprise, microservices (v3) |
 
 ## Basic Usage
 
@@ -36,13 +39,12 @@ let server = McpServer::new()
     .http(8080)               // Enable HTTP on port 8080
     .websocket(8081)          // Enable WebSocket on port 8081
     .tcp(9000)                // Enable TCP on port 9000
+    .grpc(50051)              // Enable gRPC on port 50051 (v3)
     .run()
     .await?;
 ```
 
-## Transport Details
-
-### STDIO Transport
+## STDIO Transport
 
 Standard input/output for CLI tools and local testing.
 
@@ -64,7 +66,7 @@ let server = McpServer::new()
     .await?;
 ```
 
-### HTTP Transport
+## HTTP Transport
 
 REST API with Server-Sent Events (SSE) for server-to-client communication.
 
@@ -88,11 +90,14 @@ let server = McpServer::new()
 ```
 
 **Endpoints:**
-- `POST /tools/call` - Call a tool
-- `GET /tools/list` - List available tools
-- `POST /resources/read` - Read a resource
-- `GET /resources/list` - List resources
-- `GET /events` - Server-Sent Events stream
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/tools/call` | Call a tool |
+| GET | `/tools/list` | List available tools |
+| POST | `/resources/read` | Read a resource |
+| GET | `/resources/list` | List resources |
+| GET | `/events` | Server-Sent Events stream |
 
 **Example client:**
 
@@ -106,7 +111,7 @@ curl -X POST http://localhost:8080/tools/call \
   }'
 ```
 
-### WebSocket Transport
+## WebSocket Transport
 
 Full-duplex WebSocket for bidirectional real-time communication.
 
@@ -154,7 +159,7 @@ ws.onmessage = (event) => {
 };
 ```
 
-### TCP Transport
+## TCP Transport
 
 Low-level TCP networking for custom protocols.
 
@@ -173,7 +178,7 @@ let server = McpServer::new()
 
 **Protocol:** JSON-RPC 2.0 messages separated by newlines
 
-### Unix Socket Transport
+## Unix Socket Transport
 
 Local inter-process communication.
 
@@ -189,6 +194,56 @@ let server = McpServer::new()
     .await?;
 ```
 
+## gRPC Transport (v3)
+
+High-performance gRPC transport using tonic.
+
+**Use cases:**
+- Enterprise applications
+- Microservices
+- Load balancing
+- Streaming
+
+```rust
+use turbomcp_grpc::server::McpGrpcServer;
+
+let server = McpGrpcServer::builder()
+    .server_info("my-server", "1.0.0")
+    .add_tool(my_tool)
+    .build();
+
+tonic::transport::Server::builder()
+    .add_service(server.into_service())
+    .serve("[::1]:50051".parse()?)
+    .await?;
+```
+
+See [gRPC API Reference](../api/grpc.md) for full details.
+
+## Wire Codecs (v3)
+
+TurboMCP v3 supports pluggable wire codecs:
+
+```rust
+use turbomcp_wire::{Codec, JsonCodec, SimdJsonCodec};
+
+// Standard JSON (default)
+let codec = JsonCodec::new();
+
+// SIMD-accelerated JSON (2-4x faster)
+let codec = SimdJsonCodec::new();
+```
+
+Configure per transport:
+
+```rust
+use turbomcp_http::HttpTransportConfig;
+
+let config = HttpTransportConfig::builder()
+    .codec("simd")  // Use SIMD codec
+    .build();
+```
+
 ## Configuration
 
 ### Port Configuration
@@ -198,6 +253,7 @@ let server = McpServer::new()
     .http(8080)        // HTTP on port 8080
     .websocket(8081)   // WebSocket on port 8081
     .tcp(9000)         // TCP on port 9000
+    .grpc(50051)       // gRPC on port 50051
     .run()
     .await?;
 ```
@@ -274,6 +330,36 @@ let server = McpServer::new()
     .await?;
 ```
 
+## Transport Selection Guide
+
+| Transport | Latency | Throughput | Duplex | Best For |
+|-----------|---------|-----------|--------|----------|
+| STDIO | Low | Medium | Half | CLI, local dev |
+| HTTP | Medium | High | Half | Web, REST APIs |
+| WebSocket | Low | Medium | Full | Real-time, interactive |
+| TCP | Low | Very High | Full | High performance |
+| Unix Socket | Very Low | Very High | Full | Local IPC |
+| gRPC | Low | Very High | Full | Enterprise, microservices |
+
+## Using Individual Transport Crates
+
+For fine-grained control, depend on individual crates:
+
+```toml
+[dependencies]
+turbomcp-http = "3.0"
+turbomcp-websocket = "3.0"
+turbomcp-grpc = "3.0"
+```
+
+```rust
+use turbomcp_http::HttpTransport;
+use turbomcp_websocket::WebSocketTransport;
+
+let http = HttpTransport::new(8080);
+let ws = WebSocketTransport::new(8081);
+```
+
 ## Monitoring & Metrics
 
 Get transport statistics:
@@ -286,15 +372,15 @@ println!("Total requests: {}", stats.total_requests);
 println!("Error rate: {}%", stats.error_rate);
 ```
 
-## Transport Selection Guide
+With OpenTelemetry (v3):
 
-| Transport | Latency | Throughput | Duplex | Use Case |
-|-----------|---------|-----------|--------|----------|
-| STDIO | Low | Medium | Half | CLI, local dev |
-| HTTP | Medium | High | Half | Web, REST APIs |
-| WebSocket | Low | Medium | Full | Real-time, interactive |
-| TCP | Low | Very High | Full | High performance |
-| Unix Socket | Very Low | Very High | Full | Local IPC |
+```rust
+use turbomcp_telemetry::tower::TelemetryLayer;
+
+let service = ServiceBuilder::new()
+    .layer(TelemetryLayer::new(config))
+    .service(transport);
+```
 
 ## Troubleshooting
 
@@ -319,24 +405,44 @@ Increase timeout or adjust network:
 Client may not support long connections. Implement reconnection:
 
 ```javascript
-// Reconnect on close
 ws.onclose = () => {
     setTimeout(() => {
         ws = new WebSocket('ws://localhost:8081');
-    }, 5000);  // Try again after 5 seconds
+    }, 5000);
 };
+```
+
+### gRPC connection issues
+
+Check TLS configuration and port accessibility:
+
+```rust
+// Without TLS (development)
+tonic::transport::Server::builder()
+    .add_service(server.into_service())
+    .serve("[::1]:50051".parse()?)
+    .await?;
+
+// With TLS (production)
+let identity = Identity::from_pem(cert, key);
+tonic::transport::Server::builder()
+    .tls_config(ServerTlsConfig::new().identity(identity))?
+    .add_service(server.into_service())
+    .serve("[::1]:50051".parse()?)
+    .await?;
 ```
 
 ## Performance Tuning
 
 ### For High Throughput
 
-Use TCP or WebSocket:
+Use TCP, WebSocket, or gRPC:
 
 ```rust
 let server = McpServer::new()
     .tcp(9000)
     .websocket(8081)
+    .grpc(50051)
     .with_buffer_size(1024 * 1024)  // 1MB buffers
     .run()
     .await?;
@@ -344,20 +450,30 @@ let server = McpServer::new()
 
 ### For Low Latency
 
-Use WebSocket or Unix Socket:
+Use WebSocket, Unix Socket, or gRPC:
 
 ```rust
 let server = McpServer::new()
     .websocket(8081)
     .unix("/tmp/mcp.sock")
+    .grpc(50051)
     .with_tcp_nodelay(true)  // Disable Nagle's algorithm
     .run()
     .await?;
 ```
 
+### SIMD-Accelerated JSON (v3)
+
+Enable SIMD codec for faster JSON processing:
+
+```toml
+turbomcp = { version = "3.0", features = ["simd"] }
+```
+
 ## Next Steps
 
+- **[gRPC API](../api/grpc.md)** - gRPC transport details (v3)
+- **[Wire Codecs](wire-codecs.md)** - Codec configuration (v3)
 - **[Authentication](authentication.md)** - Add OAuth and security
 - **[Observability](observability.md)** - Monitor transport metrics
 - **[Examples](../examples/basic.md)** - Real-world transport usage
-

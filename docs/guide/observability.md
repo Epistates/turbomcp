@@ -1,16 +1,45 @@
 # Observability, Logging & Monitoring
 
-Implement comprehensive logging, tracing, and monitoring for production MCP servers.
+Implement comprehensive logging, tracing, and monitoring for production MCP servers. TurboMCP v3 introduces first-class OpenTelemetry integration via `turbomcp-telemetry`.
 
 ## Overview
 
 TurboMCP provides first-class observability support:
 
 - **Structured Logging** - JSON logs with correlation IDs
-- **Distributed Tracing** - Trace requests across async boundaries
-- **Metrics** - Built-in performance and health metrics
+- **Distributed Tracing** - OpenTelemetry traces with MCP-specific attributes (v3)
+- **Metrics** - Prometheus-compatible metrics with OTLP export (v3)
+- **Tower Middleware** - Automatic instrumentation via Tower layers (v3)
 - **Health Checks** - Liveness and readiness probes
 - **Error Tracking** - Automatic error categorization and reporting
+
+## Quick Start (v3)
+
+```rust
+use turbomcp_telemetry::{TelemetryConfig, TelemetryGuard};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize OpenTelemetry
+    let config = TelemetryConfig::builder()
+        .service_name("my-mcp-server")
+        .service_version("1.0.0")
+        .otlp_endpoint("http://jaeger:4317")
+        .prometheus_port(9090)
+        .log_level("info,turbomcp=debug")
+        .build();
+
+    let _guard = config.init()?;
+
+    // Your MCP server runs with full observability
+    let server = McpServer::new()
+        .stdio()
+        .run()
+        .await?;
+
+    Ok(())
+}
+```
 
 ## Structured Logging
 
@@ -107,32 +136,63 @@ async fn handler(info: RequestInfo, logger: Logger) -> McpResult<String> {
 
 ## Distributed Tracing
 
-### OpenTelemetry Integration
+### OpenTelemetry Integration (v3)
+
+TurboMCP v3 provides first-class OpenTelemetry support via `turbomcp-telemetry`:
 
 ```toml
-turbomcp = { version = "3.0.0-exp", features = ["tracing"] }
-opentelemetry = "0.21"
-opentelemetry-jaeger = "0.20"
+[dependencies]
+turbomcp = { version = "3.0", features = ["telemetry"] }
+# Or use the crate directly
+turbomcp-telemetry = "3.0"
 ```
 
 ### Configuration
 
 ```rust
-use turbomcp::tracing::TracingConfig;
+use turbomcp_telemetry::TelemetryConfig;
 
-let tracer = opentelemetry_jaeger::new_agent_pipeline()
-    .install_simple()
-    .unwrap();
+let config = TelemetryConfig::builder()
+    .service_name("my-server")
+    .otlp_endpoint("http://jaeger:4317")
+    .sampling_ratio(1.0)  // Sample all requests
+    .build();
 
-let server = McpServer::new()
-    .with_tracing(TracingConfig {
-        enabled: true,
-        sample_rate: 1.0,  // Sample all requests
-    })
-    .stdio()
-    .run()
-    .await?;
+let _guard = config.init()?;
 ```
+
+### Tower Middleware (v3)
+
+Use Tower layers for automatic request instrumentation:
+
+```rust
+use turbomcp_telemetry::tower::{TelemetryLayer, TelemetryLayerConfig};
+use tower::ServiceBuilder;
+
+let config = TelemetryLayerConfig::new()
+    .service_name("my-mcp-server")
+    .exclude_method("ping");  // Don't trace pings
+
+let service = ServiceBuilder::new()
+    .layer(TelemetryLayer::new(config))
+    .service(my_handler);
+```
+
+### MCP Span Attributes (v3)
+
+The telemetry layer records MCP-specific attributes:
+
+| Attribute | Description |
+|-----------|-------------|
+| `mcp.method` | MCP method (e.g., "tools/call") |
+| `mcp.tool.name` | Tool name for tools/call |
+| `mcp.resource.uri` | Resource URI for resources/read |
+| `mcp.prompt.name` | Prompt name for prompts/get |
+| `mcp.request.id` | JSON-RPC request ID |
+| `mcp.session.id` | MCP session ID |
+| `mcp.transport` | Transport type |
+| `mcp.duration_ms` | Request duration |
+| `mcp.status` | success/error |
 
 ### Span Creation
 

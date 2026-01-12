@@ -14,7 +14,7 @@ repo_name: turbomcp/turbomcp
 repo_url: https://github.com/turbomcp/turbomcp
 
 # Copyright
-copyright: Copyright &copy; 2024 - 2025 TurboMCP Contributors
+copyright: Copyright &copy; 2024 - 2026 TurboMCP Contributors
 
 # Configuration
 theme:
@@ -125,15 +125,24 @@ nav:
     - Handlers: guide/handlers.md
     - Context & DI: guide/context-injection.md
     - Transports: guide/transports.md
+    - Error Handling: guide/error-handling.md
     - Authentication: guide/authentication.md
     - Observability: guide/observability.md
+    - Tower Middleware: guide/tower-middleware.md
+    - Wire Codecs: guide/wire-codecs.md
+    - WASM & Edge: guide/wasm.md
     - Advanced Patterns: guide/advanced-patterns.md
 
   - API Reference:
     - Protocol: api/protocol.md
+    - Core Types: api/core.md
     - Server Framework: api/server.md
     - Client: api/client.md
     - Macros: api/macros.md
+    - Wire Codecs: api/wire.md
+    - gRPC Transport: api/grpc.md
+    - WASM Bindings: api/wasm.md
+    - Telemetry: api/telemetry.md
     - Utilities: api/utilities.md
 
   - Examples:
@@ -144,6 +153,7 @@ nav:
   - Deployment:
     - Docker: deployment/docker.md
     - Production Setup: deployment/production.md
+    - Edge & WASM: deployment/edge.md
     - Monitoring: deployment/monitoring.md
 
   - Architecture Deep Dives:
@@ -151,6 +161,7 @@ nav:
     - Context Lifecycle: architecture/context-lifecycle.md
     - Dependency Injection: architecture/dependency-injection.md
     - Protocol Compliance: architecture/protocol-compliance.md
+    - v3 Migration: architecture/v3-migration.md
 
   - Contributing:
     - Code of Conduct: contributing/code-of-conduct.md

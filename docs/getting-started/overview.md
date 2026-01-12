@@ -1,13 +1,34 @@
 # Overview
 
-TurboMCP is a production-ready Rust SDK for building Model Context Protocol (MCP) servers. It provides:
+TurboMCP is a production-ready Rust SDK for building Model Context Protocol (MCP) servers. Version 3 introduces a modular architecture with significant improvements.
+
+## What is TurboMCP?
+
+TurboMCP provides:
 
 - **Zero-boilerplate development** with automatic schema generation
 - **Type-safe handlers** with compile-time validation
-- **Multiple transports** (STDIO, HTTP/SSE, WebSocket, TCP, Unix sockets)
+- **Multiple transports** (STDIO, HTTP/SSE, WebSocket, TCP, Unix sockets, gRPC)
 - **Full protocol support** including tools, resources, prompts, sampling, and elicitation
 - **Dependency injection** for clean separation of concerns
 - **Production features** like graceful shutdown, observability, and error handling
+- **Edge computing support** with WASM and WASI (v3)
+
+## What's New in v3
+
+TurboMCP 3.0 represents a major modular architecture redesign:
+
+| Feature | Description |
+|---------|-------------|
+| **Unified Errors** | Single `McpError` type replaces `ServerError`, `ClientError` |
+| **Modular Transports** | Individual crates for each transport |
+| **`no_std` Core** | `turbomcp-core` works in WASM and embedded |
+| **Wire Codecs** | Pluggable JSON, SIMD-JSON, MessagePack |
+| **Tower Integration** | Native Tower middleware for auth and telemetry |
+| **WASM Support** | Browser clients and WASI Preview 2 |
+| **gRPC Transport** | High-performance gRPC via tonic |
+| **OpenTelemetry** | First-class distributed tracing and metrics |
+| **MCP 2025-11-25** | Full spec compliance |
 
 ## What is MCP?
 
@@ -21,7 +42,7 @@ The Model Context Protocol (MCP) is a standard protocol that enables Claude and 
 
 ## Why TurboMCP?
 
-### Traditional Approach ❌
+### Traditional Approach
 
 Building MCP servers traditionally requires:
 
@@ -50,7 +71,7 @@ match request.method {
 }
 ```
 
-### TurboMCP Approach ✅
+### TurboMCP Approach
 
 With TurboMCP, you just write handlers:
 
@@ -62,15 +83,16 @@ async fn get_weather(city: String) -> McpResult<String> {
 ```
 
 That's it! TurboMCP handles:
-- ✅ Schema generation
-- ✅ Request parsing
-- ✅ Response serialization
-- ✅ Error handling
-- ✅ Type validation
+
+- Schema generation
+- Request parsing
+- Response serialization
+- Error handling
+- Type validation
 
 ## Architecture Layers
 
-TurboMCP is organized in layers, so you can use what you need:
+TurboMCP v3 is organized in modular layers:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -79,18 +101,31 @@ TurboMCP is organized in layers, so you can use what you need:
 └─────────────────────────────────────────┘
             ↓
 ┌─────────────────────────────────────────┐
-│  Framework Layer (turbomcp-server)      │
-│  (Handler registry, middleware, auth)   │
+│  Developer API (turbomcp)               │
+│  (Macros, prelude, configuration)       │
 └─────────────────────────────────────────┘
             ↓
 ┌─────────────────────────────────────────┐
-│  Transport Layer (turbomcp-transport)   │
-│  (STDIO, HTTP, WebSocket, TCP, Unix)    │
+│  Infrastructure Layer                   │
+│  (turbomcp-server, turbomcp-client)     │
 └─────────────────────────────────────────┘
             ↓
 ┌─────────────────────────────────────────┐
-│  Protocol Layer (turbomcp-protocol)     │
-│  (MCP types, JSON-RPC, validation)      │
+│  Transport Layer (v3 modular)           │
+│  turbomcp-stdio  │ turbomcp-http        │
+│  turbomcp-websocket │ turbomcp-tcp      │
+│  turbomcp-unix │ turbomcp-grpc          │
+└─────────────────────────────────────────┘
+            ↓
+┌─────────────────────────────────────────┐
+│  Wire Layer (turbomcp-wire)             │
+│  (JSON, SIMD-JSON, MessagePack codecs)  │
+└─────────────────────────────────────────┘
+            ↓
+┌─────────────────────────────────────────┐
+│  Foundation Layer                       │
+│  turbomcp-core (no_std)                 │
+│  turbomcp-protocol                      │
 └─────────────────────────────────────────┘
 ```
 
@@ -119,9 +154,25 @@ async fn my_prompt() -> McpResult<String> {
 }
 ```
 
+### Unified Error Handling (v3)
+
+All error types unified into `McpError`:
+
+```rust
+use turbomcp::{McpError, McpResult};
+
+#[tool]
+async fn handler(input: String) -> McpResult<String> {
+    if input.is_empty() {
+        return Err(McpError::invalid_params("Input required"));
+    }
+    Ok(input)
+}
+```
+
 ### Context Injection
 
-Handlers can request injected dependencies that are available throughout the request:
+Handlers can request injected dependencies:
 
 ```rust
 #[tool]
@@ -146,22 +197,38 @@ let server = McpServer::new()
     .http(8080)           // HTTP + Server-Sent Events
     .websocket(8081)      // WebSocket support
     .tcp(9000)            // TCP networking
+    .grpc(50051)          // gRPC (v3)
     .run()
     .await?;
 ```
 
-### Observability
+### Tower Middleware (v3)
 
-Built-in logging, tracing, and metrics:
+Compose middleware using Tower:
 
 ```rust
-#[tool]
-async fn my_tool(logger: Logger) -> McpResult<String> {
-    logger.info("Starting").await?;
-    logger.warn("Cache miss").await?;
-    logger.error("Failed to connect").await?;
-    Ok("result".to_string())
-}
+use tower::ServiceBuilder;
+use turbomcp_auth::tower::AuthLayer;
+use turbomcp_telemetry::tower::TelemetryLayer;
+
+let service = ServiceBuilder::new()
+    .layer(TelemetryLayer::new(config))
+    .layer(AuthLayer::new(auth_config))
+    .service(my_handler);
+```
+
+### WASM Support (v3)
+
+Run MCP clients in browsers:
+
+```javascript
+import init, { McpClient } from 'turbomcp-wasm';
+
+await init();
+const client = new McpClient("https://api.example.com/mcp");
+await client.initialize();
+
+const tools = await client.listTools();
 ```
 
 ## Next Steps
@@ -170,6 +237,8 @@ async fn my_tool(logger: Logger) -> McpResult<String> {
 - **[Quick Start](quick-start.md)** - 5-minute tutorial
 - **[Your First Server](first-server.md)** - Build a real example
 - **[Architecture Guide](../guide/architecture.md)** - Deep dive into design
+- **[Error Handling](../guide/error-handling.md)** - Unified McpError (v3)
+- **[WASM & Edge](../guide/wasm.md)** - Browser and edge (v3)
 
 ## Examples Repository
 
@@ -191,4 +260,4 @@ See the [examples/](https://github.com/turbomcp/turbomcp/tree/main/crates/turbom
 
 ---
 
-Ready to get started? → [Installation](installation.md)
+Ready to get started? [Installation](installation.md)
