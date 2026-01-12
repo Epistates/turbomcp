@@ -194,24 +194,21 @@ pub enum LogOutput {
 
 /// Logging configuration
 ///
-/// # STDIO Transport
-///
 /// For STDIO transport, logs must NOT go to stdout (protocol channel).
-/// Use `LogOutput::Stderr` (default) for MCP-compliant logging, or
-/// `LogOutput::FileOnly` for pristine operation.
+/// Use `LogOutput::Stderr` (default) or `LogOutput::FileOnly`.
 ///
 /// # Example
 ///
 /// ```rust
 /// use turbomcp_server::{LoggingConfig, LogOutput, LogRotation};
 ///
-/// // Pristine STDIO - all logs to file, stderr clean
-/// let config = LoggingConfig::stdio_pristine("/var/log/myserver");
+/// // File-only logging (pristine stderr)
+/// let config = LoggingConfig::stdio_file("/var/log/myserver");
 ///
-/// // Standard STDIO - minimal logs to stderr
-/// let config = LoggingConfig::stdio_minimal();
+/// // Minimal stderr logging
+/// let config = LoggingConfig::stderr_minimal();
 ///
-/// // Development - verbose logs to stderr
+/// // Default development config
 /// let config = LoggingConfig::default();
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -621,20 +618,19 @@ impl ConfigurationBuilder {
 
     /// Set logging configuration
     ///
-    /// Use predefined presets for common scenarios:
-    /// - `LoggingConfig::stdio_minimal()` - Error-only to stderr
-    /// - `LoggingConfig::stdio_pristine(dir)` - All logs to file, stderr clean
-    /// - `LoggingConfig::development()` - Debug level to stderr
-    /// - `LoggingConfig::production(dir)` - Info level to both stderr and file
+    /// Use predefined presets:
+    /// - `LoggingConfig::stderr_minimal()` - Error-only to stderr
+    /// - `LoggingConfig::stdio_file(dir)` - All logs to file
+    /// - `LoggingConfig::stderr_debug()` - Debug level to stderr
+    /// - `LoggingConfig::production(dir)` - Info to both stderr and file
     ///
     /// # Example
     ///
     /// ```rust
     /// use turbomcp_server::{ServerConfig, LoggingConfig};
     ///
-    /// // Pristine STDIO - no stderr pollution
     /// let config = ServerConfig::builder()
-    ///     .logging(LoggingConfig::stdio_pristine("/var/log/myserver"))
+    ///     .logging(LoggingConfig::stdio_file("/var/log/myserver"))
     ///     .build();
     /// ```
     #[must_use]

@@ -92,8 +92,8 @@ impl LoggingConfig {
     /// # Ok::<(), std::io::Error>(())
     /// ```
     pub fn init(&self) -> io::Result<Option<LoggingGuard>> {
-        let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new(&self.level));
+        let filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&self.level));
 
         match self.output {
             LogOutput::None => Ok(None),

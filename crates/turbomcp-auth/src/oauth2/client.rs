@@ -605,11 +605,12 @@ impl OAuth2Client {
         // Also revoke refresh token if present (best practice per RFC 7009)
         if let Some(ref refresh_token) = token_info.refresh_token {
             // Ignore errors for refresh token revocation - access token was already revoked
-            if let Ok(request) = self.auth_code_client.revoke_token(
-                oauth2::StandardRevocableToken::RefreshToken(oauth2::RefreshToken::new(
-                    refresh_token.clone(),
-                )),
-            ) {
+            if let Ok(request) =
+                self.auth_code_client
+                    .revoke_token(oauth2::StandardRevocableToken::RefreshToken(
+                        oauth2::RefreshToken::new(refresh_token.clone()),
+                    ))
+            {
                 let _ = request.request_async(&self.http_client).await;
             }
         }

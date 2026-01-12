@@ -1,58 +1,15 @@
-//! Secure Handler Name Validation
+//! Handler name validation - prevents injection attacks using `syn::Ident`
 //!
-//! This module prevents handler name injection attacks by validating that handler names
-//! are valid Rust identifiers using the `syn` crate (Sprint 2.4).
-//!
-//! ## Security Properties
-//!
-//! - **Injection Prevention**: Prevents malicious handler names like `../../../etc/passwd`,
-//!   `foo"; DROP TABLE handlers; --`, or other injection attempts
-//! - **Keyword Prevention**: Blocks Rust reserved keywords (`async`, `await`, `impl`, etc.)
-//! - **Path Traversal Prevention**: Blocks path components like `..`
-//! - **Canonical Validation**: Uses `syn::Ident` - the same validator used by rustc
-//!
-//! ## Attack Scenarios Prevented
-//!
-//! Without validation, an attacker could register handlers with names like:
-//! - `../../../sensitive_file` - Path traversal
-//! - `handler"; os.system("rm -rf /"); "` - Command injection
-//! - `<script>alert(1)</script>` - XSS in web UIs
-//! - `admin` or `system` - Privilege escalation attempts
-//!
-//! ## Implementation
-//!
-//! Uses the industry-standard `syn` crate (maintained by dtolnay) for identifier validation.
-//! This is the same crate used by every Rust procedural macro and provides:
-//! - Complete coverage of all Rust identifier rules
-//! - Automatic keyword detection (including weak keywords)
-//! - Zero maintenance (tracks Rust language evolution)
-//! - Battle-tested by millions of Rust projects
-//!
-//! ## Usage
-//!
-//! ```rust,ignore
-//! use turbomcp_server::handler_validation::validate_handler_name;
-//!
-//! // Valid handler names
-//! assert!(validate_handler_name("get_user").is_ok());
-//! assert!(validate_handler_name("fetch_data").is_ok());
-//! assert!(validate_handler_name("tool_123").is_ok());
-//!
-//! // Invalid handler names
-//! assert!(validate_handler_name("async").is_err());  // Reserved keyword
-//! assert!(validate_handler_name("../etc/passwd").is_err());  // Path traversal
-//! assert!(validate_handler_name("foo-bar").is_err());  // Invalid character
-//! ```
+//! Validates handler names are valid Rust identifiers, preventing:
+//! - Path traversal (`../etc/passwd`)
+//! - Injection attempts (`handler"; DROP TABLE`)
+//! - Reserved keywords (`async`, `impl`)
+//! - Reserved system names (`admin`, `initialize`)
 
 use crate::ServerResult;
 
-/// Reserved handler names that should not be allowed
-///
-/// These names are reserved for internal system use or represent potential
-/// privilege escalation attempts.
 #[cfg(feature = "security")]
 const RESERVED_HANDLER_NAMES: &[&str] = &[
-    // System handlers
     "initialize",
     "initialized",
     "shutdown",
@@ -60,14 +17,12 @@ const RESERVED_HANDLER_NAMES: &[&str] = &[
     "pong",
     "health",
     "status",
-    // Privilege escalation attempts
     "admin",
     "root",
     "system",
     "sudo",
     "su",
     "superuser",
-    // Internal methods
     "internal",
     "private",
     "protected",
@@ -75,69 +30,20 @@ const RESERVED_HANDLER_NAMES: &[&str] = &[
     "__main__",
 ];
 
-/// Maximum length for handler names (prevents DoS via extremely long names)
 #[cfg(feature = "security")]
 const MAX_HANDLER_NAME_LENGTH: usize = 128;
 
-/// Validate a handler name for security
-///
-/// This function validates that a handler name is:
-/// 1. A valid Rust identifier (using `syn::Ident`)
-/// 2. Not a Rust reserved keyword
-/// 3. Not a reserved system name
-/// 4. Within reasonable length limits
-///
-/// ## Security Properties
-///
-/// - **Injection Prevention**: Uses `syn::Ident` which only accepts valid Rust identifiers
-/// - **Keyword Protection**: Automatically rejects Rust keywords (`async`, `await`, etc.)
-/// - **Reserved Name Protection**: Rejects internal system names
-/// - **Length Limits**: Prevents DoS via extremely long names
-///
-/// ## Performance
-///
-/// - Validation time: ~100-200ns per name (syn parsing is very fast)
-/// - No allocations for valid names
-/// - Fails fast on obviously invalid names
-///
-/// ## Examples
-///
-/// ```rust,ignore
-/// use turbomcp_server::handler_validation::validate_handler_name;
-///
-/// // Valid names
-/// assert!(validate_handler_name("get_user_info").is_ok());
-/// assert!(validate_handler_name("tool_v2").is_ok());
-/// assert!(validate_handler_name("_private_helper").is_ok());
-///
-/// // Invalid names
-/// assert!(validate_handler_name("").is_err());  // Empty
-/// assert!(validate_handler_name("async").is_err());  // Keyword
-/// assert!(validate_handler_name("admin").is_err());  // Reserved
-/// assert!(validate_handler_name("../etc/passwd").is_err());  // Invalid chars
-/// assert!(validate_handler_name("foo-bar").is_err());  // Hyphen not allowed
-/// ```
-///
-/// ## Errors
-///
-/// Returns [`crate::McpError`] if:
-/// - Name is empty
-/// - Name exceeds `MAX_HANDLER_NAME_LENGTH` (128 characters)
-/// - Name is not a valid Rust identifier
-/// - Name is a Rust reserved keyword
-/// - Name is a reserved system name
+/// Validate handler name: must be valid Rust identifier, not a keyword or reserved name
 #[cfg(feature = "security")]
 pub fn validate_handler_name(name: &str) -> ServerResult<()> {
     use crate::McpError;
 
-    // Check for empty names
     if name.is_empty() {
         return Err(McpError::handler(
             "Handler name cannot be empty".to_string(),
         ));
     }
 
-    // Check length limits (prevent DoS)
     if name.len() > MAX_HANDLER_NAME_LENGTH {
         return Err(McpError::handler(format!(
             "Handler name '{}...' exceeds maximum length of {} characters",
@@ -146,43 +52,24 @@ pub fn validate_handler_name(name: &str) -> ServerResult<()> {
         )));
     }
 
-    // Validate as Rust identifier using syn::Ident
-    // This prevents injection attacks by ensuring the name only contains
-    // valid identifier characters (alphanumeric + underscore, starting with letter/_)
     syn::parse_str::<syn::Ident>(name).map_err(|e| {
         McpError::handler(format!(
-            "Invalid handler name '{}': {}\n\
-             \n\
-             Handler names must be valid Rust identifiers:\n\
-             - Start with a letter or underscore\n\
-             - Contain only letters, numbers, and underscores\n\
-             - Not be a Rust reserved keyword\n\
-             \n\
-             Reserved keywords include: async, await, fn, impl, let, match, struct, type, etc.\n\
-             See: https://doc.rust-lang.org/reference/keywords.html",
+            "Invalid handler name '{}': {} (must be valid Rust identifier)",
             name, e
         ))
     })?;
 
-    // Check against reserved system names
     if RESERVED_HANDLER_NAMES.contains(&name) {
         return Err(McpError::handler(format!(
-            "Handler name '{}' is reserved for system use.\n\
-             \n\
-             Reserved names: {:?}\n\
-             \n\
-             Please choose a different name for your handler.",
-            name, RESERVED_HANDLER_NAMES
+            "Handler name '{}' is reserved for system use",
+            name
         )));
     }
 
     Ok(())
 }
 
-/// Validate a handler name (no-op when security feature is disabled)
-///
-/// When the `security` feature is not enabled, this function performs minimal validation
-/// (empty check only) to maintain API compatibility while keeping the binary small.
+/// No-op when security feature disabled (empty check only)
 #[cfg(not(feature = "security"))]
 pub fn validate_handler_name(name: &str) -> ServerResult<()> {
     use crate::McpError;
@@ -308,12 +195,4 @@ mod tests {
         let max_name = "a".repeat(MAX_HANDLER_NAME_LENGTH);
         assert!(validate_handler_name(&max_name).is_ok());
     }
-
-    // Note: syn::Ident can parse Unicode characters as raw identifiers (r#identifier),
-    // so we don't explicitly reject them. While ASCII identifiers are preferred, Unicode
-    // identifiers are technically valid in Rust and don't pose a security risk since
-    // syn validates them properly.
-    //
-    // The security boundary is maintained by syn::Ident - it only accepts valid Rust
-    // identifiers, preventing injection attacks regardless of character set.
 }

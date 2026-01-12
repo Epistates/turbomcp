@@ -180,13 +180,13 @@ pub use config::{
     Configuration, ConfigurationBuilder, LogOutput, LogRotation, LoggingConfig,
     ProtocolVersionConfig, ServerConfig,
 };
-pub use logging::LoggingGuard;
 pub use error::{ErrorRecovery, McpError, McpResult, ServerErrorExt, ServerResult};
 pub use handlers::{
     CompletionHandler, ElicitationHandler, LoggingHandler, PingHandler, PromptHandler,
     ResourceHandler, ResourceTemplateHandler, SamplingHandler, ToolHandler,
 };
 pub use lifecycle::{HealthStatus, ServerLifecycle, ShutdownSignal};
+pub use logging::LoggingGuard;
 pub use metrics::{MetricsCollector, ServerMetrics};
 
 // Re-export middleware components (feature-gated)
