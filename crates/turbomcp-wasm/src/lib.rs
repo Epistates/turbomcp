@@ -8,6 +8,7 @@
 //! - **browser** (default): Browser MCP client using wasm-bindgen and web-sys
 //! - **wasi**: WASI Preview 2 MCP client for server-side WASM runtimes
 //! - **wasm-server**: Full MCP server support for WASM environments (Cloudflare Workers, etc.)
+//! - **macros**: Zero-boilerplate procedural macros for WASM MCP servers
 //!
 //! # Browser Usage (Client)
 //!
@@ -80,6 +81,64 @@
 //!
 //! # Or build manually
 //! cargo build --target wasm32-unknown-unknown --release
+//! ```
+//!
+//! # Macro Usage (Zero-Boilerplate)
+//!
+//! With the `macros` feature, you can define MCP servers with minimal code:
+//!
+//! ```ignore
+//! use turbomcp_wasm::prelude::*;
+//! use serde::Deserialize;
+//!
+//! #[derive(Clone)]
+//! struct MyServer {
+//!     greeting: String,
+//! }
+//!
+//! #[derive(Deserialize, schemars::JsonSchema)]
+//! struct GreetArgs {
+//!     name: String,
+//! }
+//!
+//! #[server(name = "my-server", version = "1.0.0")]
+//! impl MyServer {
+//!     #[tool("Greet someone by name")]
+//!     async fn greet(&self, args: GreetArgs) -> String {
+//!         format!("{}, {}!", self.greeting, args.name)
+//!     }
+//!
+//!     #[tool("Get server status")]
+//!     async fn status(&self) -> String {
+//!         "Server is running".to_string()
+//!     }
+//!
+//!     #[resource("config://app")]
+//!     async fn config(&self, uri: String) -> ResourceResult {
+//!         ResourceResult::text(&uri, r#"{"theme": "dark"}"#)
+//!     }
+//!
+//!     #[prompt("Default greeting")]
+//!     async fn greeting_prompt(&self) -> PromptResult {
+//!         PromptResult::user("Hello! How can I help?")
+//!     }
+//! }
+//!
+//! #[event(fetch)]
+//! async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+//!     let server = MyServer { greeting: "Hello".into() };
+//!     server.into_mcp_server().handle(req).await
+//! }
+//! ```
+//!
+//! ## Macros Setup
+//!
+//! ```toml
+//! [dependencies]
+//! turbomcp-wasm = { version = "3.0", default-features = false, features = ["macros"] }
+//! worker = "0.7"
+//! serde = { version = "1.0", features = ["derive"] }
+//! schemars = "1.0"
 //! ```
 //!
 //! # WASI Usage (Client)
@@ -167,6 +226,15 @@ pub mod wasi;
 #[cfg(feature = "wasm-server")]
 #[cfg_attr(docsrs, doc(cfg(feature = "wasm-server")))]
 pub mod wasm_server;
+
+#[cfg(feature = "wasm-server")]
+#[cfg_attr(docsrs, doc(cfg(feature = "wasm-server")))]
+pub mod prelude;
+
+// Re-export proc macros when the macros feature is enabled
+#[cfg(feature = "macros")]
+#[cfg_attr(docsrs, doc(cfg(feature = "macros")))]
+pub use turbomcp_wasm_macros::{prompt, resource, tool, wasm_server as server};
 
 /// Version of the TurboMCP WASM bindings
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

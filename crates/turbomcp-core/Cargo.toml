@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-core"
-version = "3.0.0-exp.1"
+version = "3.0.0-exp.2"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Core MCP types and primitives - no_std compatible for WASM targets"

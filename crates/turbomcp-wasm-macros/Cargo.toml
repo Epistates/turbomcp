@@ -1,0 +1,22 @@
+[package]
+name = "turbomcp-wasm-macros"
+version = "3.0.0-exp.2"
+edition = "2024"
+rust-version = "1.89.0"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "Procedural macros for TurboMCP WASM servers - zero-boilerplate MCP server development"
+license = "MIT"
+repository = "https://github.com/anthropics/turbomcp"
+homepage = "https://turbomcp.org"
+documentation = "https://docs.rs/turbomcp-wasm-macros"
+keywords = ["mcp", "wasm", "macros", "cloudflare", "serverless"]
+categories = ["wasm", "web-programming", "development-tools::procedural-macro-helpers"]
+readme = "README.md"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "parsing", "extra-traits"] }

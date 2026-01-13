@@ -253,29 +253,15 @@ impl<'a> McpHandler<'a> {
         };
 
         let args = params.arguments.unwrap_or(serde_json::json!({}));
-        let result = (registered_tool.handler)(args).await;
+        let tool_result = (registered_tool.handler)(args).await;
 
-        match result {
-            Ok(tool_result) => match serde_json::to_value(&tool_result) {
-                Ok(value) => JsonRpcResponse::success(req.id.clone(), value),
-                Err(e) => JsonRpcResponse::error(
-                    req.id.clone(),
-                    error_codes::INTERNAL_ERROR,
-                    format!("Failed to serialize result: {e}"),
-                ),
-            },
-            Err(e) => {
-                // Return error as tool result with isError: true (MCP pattern)
-                let error_result = super::types::ToolResult::error(e);
-                match serde_json::to_value(&error_result) {
-                    Ok(value) => JsonRpcResponse::success(req.id.clone(), value),
-                    Err(e) => JsonRpcResponse::error(
-                        req.id.clone(),
-                        error_codes::INTERNAL_ERROR,
-                        format!("Failed to serialize error result: {e}"),
-                    ),
-                }
-            }
+        match serde_json::to_value(&tool_result) {
+            Ok(value) => JsonRpcResponse::success(req.id.clone(), value),
+            Err(e) => JsonRpcResponse::error(
+                req.id.clone(),
+                error_codes::INTERNAL_ERROR,
+                format!("Failed to serialize result: {e}"),
+            ),
         }
     }
 

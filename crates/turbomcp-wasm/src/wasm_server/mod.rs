@@ -9,39 +9,54 @@
 //! - Zero tokio dependencies - uses wasm-bindgen-futures for async
 //! - Full MCP protocol support (tools, resources, prompts)
 //! - Type-safe handler registration with automatic JSON schema generation
+//! - Ergonomic API inspired by axum's IntoResponse pattern
+//! - Idiomatic error handling with `?` operator support
 //! - Integration with Cloudflare Workers SDK
 //!
 //! # Example
 //!
 //! ```ignore
-//! use turbomcp_wasm::wasm_server::{McpServer, ToolResult};
+//! use turbomcp_wasm::wasm_server::*;
 //! use worker::*;
+//! use serde::Deserialize;
 //!
-//! #[event(fetch)]
-//! async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-//!     let server = McpServer::builder("my-mcp-server", "1.0.0")
-//!         .with_tool("hello", "Say hello to someone", |args: HelloArgs| async move {
-//!             Ok(ToolResult::text(format!("Hello, {}!", args.name)))
-//!         })
-//!         .with_tool("add", "Add two numbers", |args: AddArgs| async move {
-//!             Ok(ToolResult::text(format!("{}", args.a + args.b)))
-//!         })
-//!         .build();
-//!
-//!     server.handle(req).await
-//! }
-//!
-//! #[derive(serde::Deserialize, schemars::JsonSchema)]
+//! #[derive(Deserialize, schemars::JsonSchema)]
 //! struct HelloArgs {
 //!     name: String,
 //! }
 //!
-//! #[derive(serde::Deserialize, schemars::JsonSchema)]
-//! struct AddArgs {
-//!     a: i64,
-//!     b: i64,
+//! // Simple handler - just return a String!
+//! async fn hello(args: HelloArgs) -> String {
+//!     format!("Hello, {}!", args.name)
+//! }
+//!
+//! // With error handling using ?
+//! async fn fetch_data(args: FetchArgs) -> Result<Json<Data>, ToolError> {
+//!     let data = do_fetch(&args.url).await?;
+//!     Ok(Json(data))
+//! }
+//!
+//! #[event(fetch)]
+//! async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+//!     let server = McpServer::builder("my-mcp-server", "1.0.0")
+//!         .tool("hello", "Say hello to someone", hello)
+//!         .tool("fetch", "Fetch data from URL", fetch_data)
+//!         .build();
+//!
+//!     server.handle(req).await
 //! }
 //! ```
+//!
+//! # Handler Return Types
+//!
+//! Tool handlers can return any type that implements `IntoToolResponse`:
+//!
+//! - `String`, `&str` - Returns as text content
+//! - `Json<T>` - Serializes to JSON text
+//! - `ToolResult` - Full control over the response
+//! - `Result<T, E>` where `T: IntoToolResponse`, `E: Into<ToolError>` - Automatic error handling
+//! - `()` - Empty success response
+//! - `Option<T>` - None returns "No result"
 //!
 //! # Building for WASM Environments
 //!
@@ -54,12 +69,32 @@
 //! ```
 
 mod handler;
+mod handler_traits;
+#[cfg(test)]
+mod integration_tests;
+mod response;
 mod server;
+mod traits;
 mod types;
 
-pub use handler::McpHandler;
+// Re-export the main server types
 pub use server::{McpServer, McpServerBuilder};
+
+// Re-export result types
 pub use types::{PromptResult, ResourceResult, ToolResult};
+
+// Re-export the response trait and types for ergonomic handlers
+pub use response::{Image, IntoToolResponse, Json, Text, ToolError};
+
+// Re-export handler traits for advanced use cases
+pub use response::IntoToolError;
+pub use traits::{
+    IntoPromptResponse, IntoResourceResponse, PromptHandlerFn, ResourceHandlerFn, ResultExt,
+    ToolHandlerFn,
+};
+
+// Re-export handler trait bounds for advanced use cases
+pub use handler_traits::{IntoPromptHandler, IntoResourceHandler, IntoToolHandler};
 
 /// Re-export worker types for convenience
 pub use worker::{Context, Env, Request, Response};

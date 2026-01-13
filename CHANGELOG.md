@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-exp.2] - 2026-01-13
+
+### Added
+
+#### Ergonomic Handler System (wasm-server feature)
+- **`IntoToolResponse` Trait** - Axum-inspired response conversion for tool handlers
+  - `String`, `&str` - Returns as text content
+  - `Json<T>` - Serializes to JSON text
+  - `Text(String)` - Explicit text wrapper
+  - `Image { data, mime_type }` - Binary image content
+  - `ToolResult` - Full control over the response
+  - `Result<T, E>` - Automatic error handling with `?` operator support
+  - `()` - Empty success response
+  - `Option<T>` - None returns "No result"
+
+- **`IntoToolError` Trait** - Ergonomic error conversion
+  - Any type implementing `std::error::Error` can be converted
+  - `ToolError::new(message)` for custom errors
+  - `ResultExt::map_tool_err()` for easy error mapping
+
+- **Handler Traits** - Type-safe handler registration
+  - `IntoToolHandler` - Convert functions to tool handlers
+  - `IntoResourceHandler` - Convert functions to resource handlers
+  - `IntoPromptHandler` - Convert functions to prompt handlers
+
+- **Improved Builder API** - Cleaner method names
+  - `.tool()` instead of `.with_tool()` (deprecated)
+  - `.tool_no_args()` for tools without arguments
+  - `.tool_raw()` for raw JSON arguments
+  - `.resource()` instead of `.with_resource()` (deprecated)
+  - `.resource_template()` instead of `.with_resource_template()` (deprecated)
+  - `.prompt()` instead of `.with_prompt()` (deprecated)
+  - `.prompt_no_args()` instead of `.with_simple_prompt()` (deprecated)
+
+#### WASM Server Procedural Macros (NEW CRATE)
+- **`turbomcp-wasm-macros`** - Zero-boilerplate proc-macro crate for WASM MCP servers
+  - `#[server(name = "...", version = "...")]` - Transform impl blocks into MCP servers
+  - `#[tool("description")]` - Mark methods as tool handlers
+  - `#[resource("uri://template")]` - Mark methods as resource handlers
+  - `#[prompt("description")]` - Mark methods as prompt handlers
+
+- **Generated Methods**
+  - `into_mcp_server(self) -> McpServer` - Convert to configured server
+  - `server_info() -> (&'static str, &'static str)` - Get (name, version)
+  - `get_tools_metadata()` - List registered tools
+  - `get_resources_metadata()` - List registered resources
+  - `get_prompts_metadata()` - List registered prompts
+
+- **Prelude Module** - Convenient imports via `use turbomcp_wasm::prelude::*`
+
+#### Integration Tests
+- 65 tests for WASM server and macro functionality
+- Comprehensive coverage of handler traits and response types
+
+### Changed
+
+- **Builder Method Naming** - Cleaner API without `with_` prefix
+  - Old: `.with_tool()`, `.with_resource()`, `.with_prompt()`
+  - New: `.tool()`, `.resource()`, `.prompt()` (old methods deprecated)
+
+### Example
+
+```rust
+use turbomcp_wasm::prelude::*;
+use serde::Deserialize;
+
+#[derive(Clone)]
+struct MyServer;
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GreetArgs { name: String }
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    #[tool("Greet someone")]
+    async fn greet(&self, args: GreetArgs) -> String {
+        format!("Hello, {}!", args.name)
+    }
+
+    #[tool("Get status")]
+    async fn status(&self) -> Result<String, ToolError> {
+        Ok("running".into())
+    }
+
+    #[resource("config://app")]
+    async fn config(&self, uri: String) -> ResourceResult {
+        ResourceResult::text(&uri, r#"{"theme": "dark"}"#)
+    }
+}
+
+#[event(fetch)]
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+    MyServer.into_mcp_server().handle(req).await
+}
+```
+
 ## [3.0.0-exp.1] - 2026-01-13
 
 ### Added

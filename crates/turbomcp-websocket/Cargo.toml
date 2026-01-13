@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-websocket"
-version = "3.0.0-exp.1"
+version = "3.0.0-exp.2"
 edition = "2024"
 rust-version = "1.89.0"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -20,8 +20,8 @@ experimental-tasks = ["turbomcp-protocol/experimental-tasks"]
 
 [dependencies]
 # Core dependencies
-turbomcp-transport-traits = { version = "3.0.0-exp.1", path = "../turbomcp-transport-traits" }
-turbomcp-protocol = { version = "3.0.0-exp.1", path = "../turbomcp-protocol" }
+turbomcp-transport-traits = { version = "3.0.0-exp.2", path = "../turbomcp-transport-traits" }
+turbomcp-protocol = { version = "3.0.0-exp.2", path = "../turbomcp-protocol" }
 
 # Async runtime
 tokio = { workspace = true }

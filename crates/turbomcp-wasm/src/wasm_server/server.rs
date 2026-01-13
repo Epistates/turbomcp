@@ -1,36 +1,68 @@
-//! MCP Server builder for Cloudflare Workers
+//! MCP Server builder for WASM environments
+//!
+//! Provides an ergonomic builder API for creating MCP servers with automatic
+//! schema generation and type-safe handlers.
+//!
+//! # Example
+//!
+//! ```ignore
+//! use turbomcp_wasm::wasm_server::*;
+//!
+//! #[derive(Deserialize, JsonSchema)]
+//! struct GreetArgs {
+//!     name: String,
+//! }
+//!
+//! // Simple async function - just works!
+//! async fn greet(args: GreetArgs) -> String {
+//!     format!("Hello, {}!", args.name)
+//! }
+//!
+//! // With error handling using ?
+//! async fn fetch(args: FetchArgs) -> Result<Json<Data>, ToolError> {
+//!     let data = do_fetch(&args.url).await?;
+//!     Ok(Json(data))
+//! }
+//!
+//! let server = McpServer::builder("my-server", "1.0.0")
+//!     .tool("greet", "Say hello", greet)
+//!     .tool("fetch", "Fetch data", fetch)
+//!     .build();
+//! ```
 
 use hashbrown::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use serde::de::DeserializeOwned;
 use turbomcp_core::types::capabilities::ServerCapabilities;
 use turbomcp_core::types::core::Implementation;
-use turbomcp_core::types::prompts::{Prompt, PromptArgument};
+use turbomcp_core::types::prompts::Prompt;
 use turbomcp_core::types::resources::{Resource, ResourceTemplate};
 use turbomcp_core::types::tools::{Tool, ToolInputSchema};
 
 use super::handler::McpHandler;
+use super::handler_traits::{
+    IntoPromptHandler, IntoResourceHandler, IntoToolHandler, NoArgs, PromptNoArgs, RawArgs,
+};
+use super::response::IntoToolResponse;
+use super::traits::IntoPromptResponse;
 use super::types::{PromptResult, ResourceResult, ToolResult};
 
 /// Type alias for async tool handlers
 pub type ToolHandler = Arc<
-    dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = Result<ToolResult, String>> + Send>>
-        + Send
-        + Sync,
+    dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = ToolResult> + Send>> + Send + Sync,
 >;
 
 /// Type alias for async resource handlers
-pub type ResourceHandler = Arc<
+pub type ResourceHandlerFn = Arc<
     dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<ResourceResult, String>> + Send>>
         + Send
         + Sync,
 >;
 
 /// Type alias for async prompt handlers
-pub type PromptHandler = Arc<
+pub type PromptHandlerFn = Arc<
     dyn Fn(
             Option<serde_json::Value>,
         ) -> Pin<Box<dyn Future<Output = Result<PromptResult, String>> + Send>>
@@ -47,22 +79,33 @@ pub(crate) struct RegisteredTool {
 /// Registered resource with metadata and handler
 pub(crate) struct RegisteredResource {
     pub resource: Resource,
-    pub handler: ResourceHandler,
+    pub handler: ResourceHandlerFn,
 }
 
 /// Registered resource template
 pub(crate) struct RegisteredResourceTemplate {
     pub template: ResourceTemplate,
-    pub handler: ResourceHandler,
+    pub handler: ResourceHandlerFn,
 }
 
 /// Registered prompt with metadata and handler
 pub(crate) struct RegisteredPrompt {
     pub prompt: Prompt,
-    pub handler: PromptHandler,
+    pub handler: PromptHandlerFn,
 }
 
 /// Builder for creating an MCP server
+///
+/// # Example
+///
+/// ```ignore
+/// let server = McpServer::builder("my-server", "1.0.0")
+///     .description("A helpful MCP server")
+///     .tool("greet", "Greet someone", greet_handler)
+///     .resource("config://app", "Config", "App configuration", read_config)
+///     .prompt("greeting", "Generate greeting", greeting_prompt)
+///     .build();
+/// ```
 pub struct McpServerBuilder {
     name: String,
     version: String,
@@ -101,38 +144,15 @@ impl McpServerBuilder {
         self
     }
 
-    /// Register a simple prompt (no arguments)
-    ///
-    /// For prompts that require arguments, use `with_prompt` instead.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// server.with_simple_prompt("greeting", "Generate a greeting", || async move {
-    ///     Ok(PromptResult::user("Hello! How can I help you today?"))
-    /// })
-    /// ```
-    pub fn with_simple_prompt<F, Fut>(
-        self,
-        name: impl Into<String>,
-        description: impl Into<String>,
-        handler: F,
-    ) -> Self
-    where
-        F: Fn() -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<PromptResult, String>> + Send + 'static,
-    {
-        let handler = Arc::new(handler);
-        self.with_prompt(name, description, vec![], move |_args| {
-            let handler = handler.clone();
-            async move { handler().await }
-        })
-    }
+    // ========================================================================
+    // Tool Registration - Ergonomic API
+    // ========================================================================
 
-    /// Register a tool with typed arguments
+    /// Register a tool with typed arguments.
     ///
-    /// The argument type must implement `DeserializeOwned` and `JsonSchema` for
-    /// automatic schema generation.
+    /// This is the primary way to register tools. The handler can be any async function
+    /// that takes a typed argument (implementing `Deserialize + JsonSchema`) and returns
+    /// anything implementing `IntoToolResponse`.
     ///
     /// # Example
     ///
@@ -140,29 +160,46 @@ impl McpServerBuilder {
     /// #[derive(Deserialize, JsonSchema)]
     /// struct AddArgs { a: i64, b: i64 }
     ///
-    /// server.with_tool("add", "Add two numbers", |args: AddArgs| async move {
-    ///     Ok(ToolResult::text(format!("{}", args.a + args.b)))
-    /// })
+    /// // Simple return
+    /// async fn add(args: AddArgs) -> String {
+    ///     format!("{}", args.a + args.b)
+    /// }
+    ///
+    /// // With error handling
+    /// async fn divide(args: DivideArgs) -> Result<String, ToolError> {
+    ///     if args.b == 0 {
+    ///         return Err(ToolError::new("Cannot divide by zero"));
+    ///     }
+    ///     Ok(format!("{}", args.a / args.b))
+    /// }
+    ///
+    /// // With JSON response
+    /// async fn get_user(args: GetUserArgs) -> Result<Json<User>, ToolError> {
+    ///     let user = fetch_user(args.id).await?;
+    ///     Ok(Json(user))
+    /// }
+    ///
+    /// server
+    ///     .tool("add", "Add numbers", add)
+    ///     .tool("divide", "Divide numbers", divide)
+    ///     .tool("get_user", "Get user by ID", get_user)
     /// ```
-    pub fn with_tool<A, F, Fut>(
+    pub fn tool<A, M, H>(
         mut self,
         name: impl Into<String>,
         description: impl Into<String>,
-        handler: F,
+        handler: H,
     ) -> Self
     where
-        A: DeserializeOwned + schemars::JsonSchema + 'static,
-        F: Fn(A) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<ToolResult, String>> + Send + 'static,
+        H: IntoToolHandler<A, M>,
     {
         let name = name.into();
         let description = description.into();
 
-        // Generate JSON schema from the argument type using schemars 1.x API
-        let schema = schemars::schema_for!(A);
-        let schema_value = serde_json::to_value(&schema).unwrap_or_default();
+        // Get schema from the handler trait
+        let schema_value = H::schema();
 
-        // Extract properties - schemars 1.x puts them directly in the root object
+        // Extract properties and required fields
         let properties = schema_value
             .get("properties")
             .and_then(|p| p.as_object())
@@ -195,16 +232,8 @@ impl McpServerBuilder {
             annotations: None,
         };
 
-        // Wrap the typed handler
-        let handler = Arc::new(handler);
-        let wrapped_handler: ToolHandler = Arc::new(move |params: serde_json::Value| {
-            let handler = handler.clone();
-            Box::pin(async move {
-                let args: A = serde_json::from_value(params)
-                    .map_err(|e| format!("Failed to parse arguments: {e}"))?;
-                handler(args).await
-            })
-        });
+        let boxed_handler = handler.into_handler();
+        let wrapped_handler: ToolHandler = Arc::from(boxed_handler);
 
         self.tools.insert(
             name.clone(),
@@ -217,62 +246,84 @@ impl McpServerBuilder {
         self
     }
 
-    /// Register a tool with raw JSON arguments (no schema validation)
-    pub fn with_raw_tool<F, Fut>(
-        mut self,
+    /// Register a tool that takes no arguments.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// async fn get_time() -> String {
+    ///     chrono::Utc::now().to_string()
+    /// }
+    ///
+    /// server.tool_no_args("time", "Get current time", get_time)
+    /// ```
+    pub fn tool_no_args<H, Fut, Res>(
+        self,
         name: impl Into<String>,
         description: impl Into<String>,
-        handler: F,
+        handler: H,
     ) -> Self
     where
-        F: Fn(serde_json::Value) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<ToolResult, String>> + Send + 'static,
+        H: Fn() -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = Res> + Send + 'static,
+        Res: IntoToolResponse + 'static,
     {
-        let name = name.into();
-        let description = description.into();
-
-        let tool = Tool {
-            name: name.clone(),
-            description: Some(description),
-            title: None,
-            icon: None,
-            input_schema: ToolInputSchema {
-                schema_type: "object".to_string(),
-                properties: None,
-                required: None,
-                additional_properties: Some(true),
-            },
-            annotations: None,
-        };
-
-        let handler = Arc::new(handler);
-        let wrapped_handler: ToolHandler = Arc::new(move |params: serde_json::Value| {
-            let handler = handler.clone();
-            Box::pin(async move { handler(params).await })
-        });
-
-        self.tools.insert(
-            name.clone(),
-            RegisteredTool {
-                tool,
-                handler: wrapped_handler,
-            },
-        );
-
-        self
+        self.tool::<(), NoArgs, _>(name, description, handler)
     }
 
-    /// Register a static resource
-    pub fn with_resource<F, Fut>(
+    /// Register a tool with raw JSON arguments (no schema validation).
+    ///
+    /// Use this when you need to handle arbitrary JSON or when the schema
+    /// can't be expressed with schemars.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// async fn dynamic_tool(args: serde_json::Value) -> String {
+    ///     format!("Received: {}", args)
+    /// }
+    ///
+    /// server.tool_raw("dynamic", "Handle any JSON", dynamic_tool)
+    /// ```
+    pub fn tool_raw<H, Fut, Res>(
+        self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        handler: H,
+    ) -> Self
+    where
+        H: Fn(serde_json::Value) -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = Res> + Send + 'static,
+        Res: IntoToolResponse + 'static,
+    {
+        self.tool::<serde_json::Value, RawArgs, _>(name, description, handler)
+    }
+
+    // ========================================================================
+    // Resource Registration
+    // ========================================================================
+
+    /// Register a static resource.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// async fn read_config(uri: String) -> Result<ResourceResult, ToolError> {
+    ///     let content = fetch_config().await?;
+    ///     Ok(ResourceResult::text(uri, content))
+    /// }
+    ///
+    /// server.resource("config://app", "Config", "Application config", read_config)
+    /// ```
+    pub fn resource<H, M>(
         mut self,
         uri: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        handler: F,
+        handler: H,
     ) -> Self
     where
-        F: Fn(String) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<ResourceResult, String>> + Send + 'static,
+        H: IntoResourceHandler<M>,
     {
         let uri = uri.into();
         let name = name.into();
@@ -289,11 +340,8 @@ impl McpServerBuilder {
             annotations: None,
         };
 
-        let handler = Arc::new(handler);
-        let wrapped_handler: ResourceHandler = Arc::new(move |uri: String| {
-            let handler = handler.clone();
-            Box::pin(async move { handler(uri).await })
-        });
+        let boxed_handler = handler.into_handler();
+        let wrapped_handler: ResourceHandlerFn = Arc::from(boxed_handler);
 
         self.resources.insert(
             uri.clone(),
@@ -306,17 +354,28 @@ impl McpServerBuilder {
         self
     }
 
-    /// Register a resource template (for dynamic resources)
-    pub fn with_resource_template<F, Fut>(
+    /// Register a resource template (for dynamic resources).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// async fn read_user(uri: String) -> Result<ResourceResult, ToolError> {
+    ///     let id = extract_id_from_uri(&uri)?;
+    ///     let user = fetch_user(id).await?;
+    ///     Ok(ResourceResult::json(uri, &user)?)
+    /// }
+    ///
+    /// server.resource_template("user://{id}", "User", "User data", read_user)
+    /// ```
+    pub fn resource_template<H, M>(
         mut self,
         uri_template: impl Into<String>,
         name: impl Into<String>,
         description: impl Into<String>,
-        handler: F,
+        handler: H,
     ) -> Self
     where
-        F: Fn(String) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<ResourceResult, String>> + Send + 'static,
+        H: IntoResourceHandler<M>,
     {
         let uri_template = uri_template.into();
         let name = name.into();
@@ -332,11 +391,8 @@ impl McpServerBuilder {
             annotations: None,
         };
 
-        let handler = Arc::new(handler);
-        let wrapped_handler: ResourceHandler = Arc::new(move |uri: String| {
-            let handler = handler.clone();
-            Box::pin(async move { handler(uri).await })
-        });
+        let boxed_handler = handler.into_handler();
+        let wrapped_handler: ResourceHandlerFn = Arc::from(boxed_handler);
 
         self.resource_templates.insert(
             uri_template.clone(),
@@ -349,20 +405,40 @@ impl McpServerBuilder {
         self
     }
 
-    /// Register a prompt
-    pub fn with_prompt<F, Fut>(
+    // ========================================================================
+    // Prompt Registration
+    // ========================================================================
+
+    /// Register a prompt with typed arguments.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// #[derive(Deserialize, JsonSchema)]
+    /// struct GreetingArgs {
+    ///     name: String,
+    /// }
+    ///
+    /// async fn greeting_prompt(args: Option<GreetingArgs>) -> PromptResult {
+    ///     let name = args.map(|a| a.name).unwrap_or_else(|| "World".into());
+    ///     PromptResult::user(format!("Hello, {}!", name))
+    /// }
+    ///
+    /// server.prompt("greeting", "Generate greeting", greeting_prompt)
+    /// ```
+    pub fn prompt<A, M, H>(
         mut self,
         name: impl Into<String>,
         description: impl Into<String>,
-        arguments: Vec<PromptArgument>,
-        handler: F,
+        handler: H,
     ) -> Self
     where
-        F: Fn(Option<serde_json::Value>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<PromptResult, String>> + Send + 'static,
+        H: IntoPromptHandler<A, M>,
     {
         let name = name.into();
         let description = description.into();
+
+        let arguments = H::arguments();
 
         let prompt = Prompt {
             name: name.clone(),
@@ -376,11 +452,8 @@ impl McpServerBuilder {
             },
         };
 
-        let handler = Arc::new(handler);
-        let wrapped_handler: PromptHandler = Arc::new(move |args: Option<serde_json::Value>| {
-            let handler = handler.clone();
-            Box::pin(async move { handler(args).await })
-        });
+        let boxed_handler = handler.into_handler();
+        let wrapped_handler: PromptHandlerFn = Arc::from(boxed_handler);
 
         self.prompts.insert(
             name.clone(),
@@ -392,6 +465,35 @@ impl McpServerBuilder {
 
         self
     }
+
+    /// Register a prompt with no arguments.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// async fn default_greeting() -> PromptResult {
+    ///     PromptResult::user("Hello! How can I help you?")
+    /// }
+    ///
+    /// server.prompt_no_args("greeting", "Default greeting", default_greeting)
+    /// ```
+    pub fn prompt_no_args<H, Fut, Res>(
+        self,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        handler: H,
+    ) -> Self
+    where
+        H: Fn() -> Fut + Clone + Send + Sync + 'static,
+        Fut: Future<Output = Res> + Send + 'static,
+        Res: IntoPromptResponse + 'static,
+    {
+        self.prompt::<(), PromptNoArgs, _>(name, description, handler)
+    }
+
+    // ========================================================================
+    // Build
+    // ========================================================================
 
     /// Build the MCP server
     pub fn build(self) -> McpServer {
@@ -443,7 +545,7 @@ impl McpServerBuilder {
     }
 }
 
-/// MCP Server for Cloudflare Workers
+/// MCP Server for WASM environments
 ///
 /// Handles incoming HTTP requests and routes them to registered handlers.
 pub struct McpServer {
@@ -463,7 +565,7 @@ impl McpServer {
     ///
     /// ```ignore
     /// let server = McpServer::builder("my-server", "1.0.0")
-    ///     .with_tool("hello", "Say hello", handler)
+    ///     .tool("hello", "Say hello", handler)
     ///     .build();
     /// ```
     pub fn builder(name: impl Into<String>, version: impl Into<String>) -> McpServerBuilder {

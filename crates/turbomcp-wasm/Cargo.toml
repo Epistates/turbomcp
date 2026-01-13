@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-wasm"
-version = "3.0.0-exp.1"
+version = "3.0.0-exp.2"
 edition = "2024"
 rust-version = "1.89.0"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -26,6 +26,8 @@ wasi = ["dep:wasi", "dep:wit-bindgen", "dep:url"]
 console-log = ["browser", "console_error_panic_hook"]
 # WASM server support - MCP servers running in WASM environments (Cloudflare Workers, etc.)
 wasm-server = ["dep:worker", "dep:schemars", "dep:hashbrown", "wasm-bindgen", "wasm-bindgen-futures", "serde-wasm-bindgen", "js-sys"]
+# Procedural macros for zero-boilerplate WASM MCP server development
+macros = ["wasm-server", "dep:turbomcp-wasm-macros"]
 
 [dependencies]
 # Core MCP types - no_std compatible with WASM optimizations
@@ -61,6 +63,9 @@ schemars = { version = "1.0", optional = true }
 # HashMap for compatibility with turbomcp-core types (uses hashbrown for no_std)
 hashbrown = { version = "0.15", optional = true }
 
+# Procedural macros for zero-boilerplate WASM MCP server development
+turbomcp-wasm-macros = { workspace = true, optional = true }
+
 [dependencies.web-sys]
 version = "0.3.83"
 optional = true
@@ -94,3 +99,9 @@ wasm-bindgen-test = "0.3"
 [package.metadata.docs.rs]
 targets = ["wasm32-unknown-unknown"]
 all-features = true
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false  # Disable wasm-opt to avoid bulk memory errors with older toolchains
+
+[package.metadata.wasm-pack.profile.dev]
+wasm-opt = false
