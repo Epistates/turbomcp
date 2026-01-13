@@ -1,15 +1,24 @@
 # WASM & Edge Computing
 
-TurboMCP v3 introduces full WebAssembly support, enabling MCP clients to run in browsers and edge computing environments.
+TurboMCP v3 introduces full WebAssembly support, enabling both MCP clients and servers to run in browsers and edge computing environments.
 
 ## Overview
 
 The `turbomcp-wasm` crate provides:
 
+### Client Features (browser, wasi)
+
 - **Browser Support** - Full MCP client using Fetch API and WebSocket
 - **Type-Safe** - All MCP types available in JavaScript/TypeScript
 - **Async/Await** - Modern Promise-based API
 - **Small Binary** - Optimized for minimal bundle size (~50-200KB)
+
+### Server Features (wasm-server)
+
+- **Edge MCP Servers** - Build full MCP servers running on Cloudflare Workers
+- **Type-Safe Handlers** - Automatic JSON schema generation from Rust types
+- **Zero Tokio** - Uses wasm-bindgen-futures, no tokio runtime needed
+- **Full Protocol** - Tools, resources, prompts, and all standard MCP methods
 
 ## Installation
 
@@ -352,6 +361,131 @@ try {
     console.error("Network error:", error);
   }
 }
+```
+
+## Building MCP Servers (wasm-server)
+
+The `wasm-server` feature enables building full MCP servers that run on edge platforms like Cloudflare Workers.
+
+### Installation
+
+```toml
+[dependencies]
+turbomcp-wasm = { version = "3.0", default-features = false, features = ["wasm-server"] }
+worker = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+schemars = "1.0"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+```
+
+### Basic Server
+
+```rust
+use turbomcp_wasm::wasm_server::{McpServer, ToolResult};
+use worker::*;
+use serde::Deserialize;
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct HelloArgs {
+    name: String,
+}
+
+#[event(fetch)]
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+    let server = McpServer::builder("my-mcp-server", "1.0.0")
+        .description("My MCP server on the edge")
+        .with_tool("hello", "Say hello", |args: HelloArgs| async move {
+            Ok(ToolResult::text(format!("Hello, {}!", args.name)))
+        })
+        .build();
+
+    server.handle(req).await
+}
+```
+
+### Tool Results
+
+```rust
+// Text result
+ToolResult::text("Hello, World!")
+
+// JSON result
+ToolResult::json(&my_struct)?
+
+// Error result
+ToolResult::error("Something went wrong")
+
+// Image result (base64)
+ToolResult::image(base64_data, "image/png")
+
+// Multiple content items
+ToolResult::contents(vec![
+    Content::Text { text: "Text".into(), annotations: None },
+    Content::Image { data: b64, mime_type: "image/png".into(), annotations: None },
+])
+```
+
+### Resources
+
+```rust
+// Static resource
+.with_resource(
+    "config://settings",
+    "Settings",
+    "Application settings",
+    |_uri| async move {
+        Ok(ResourceResult::json("config://settings", &settings)?)
+    },
+)
+
+// Dynamic resource template
+.with_resource_template(
+    "user://{id}",
+    "User Profile",
+    "Get user by ID",
+    |uri| async move {
+        let id = uri.split('/').last().unwrap_or("0");
+        Ok(ResourceResult::text(&uri, format!("User {}", id)))
+    },
+)
+```
+
+### Prompts
+
+```rust
+use turbomcp_core::types::prompts::PromptArgument;
+
+// Prompt with arguments
+.with_prompt(
+    "greeting",
+    "Generate a greeting",
+    vec![PromptArgument {
+        name: "name".into(),
+        description: Some("Name to greet".into()),
+        required: Some(true),
+    }],
+    |args| async move {
+        let name = args
+            .and_then(|a| a.get("name")?.as_str().map(String::from))
+            .unwrap_or_else(|| "World".into());
+        Ok(PromptResult::user(format!("Hello, {}!", name)))
+    },
+)
+
+// Simple prompt (no arguments)
+.with_simple_prompt("help", "Get help", || async move {
+    Ok(PromptResult::user("How can I help you today?"))
+})
+```
+
+### Building and Deploying
+
+```bash
+# Build for Cloudflare Workers
+wrangler dev
+
+# Or build manually
+cargo build --target wasm32-unknown-unknown --release
 ```
 
 ## React Integration

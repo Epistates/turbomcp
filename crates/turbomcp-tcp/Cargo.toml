@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-tcp"
-version = "3.0.0-exp"
+version = "3.0.0-exp.1"
 edition = "2024"
 rust-version = "1.89.0"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -15,8 +15,8 @@ readme = "README.md"
 
 [dependencies]
 # Core dependencies
-turbomcp-transport-traits = { version = "3.0.0-exp", path = "../turbomcp-transport-traits" }
-turbomcp-protocol = { version = "3.0.0-exp", path = "../turbomcp-protocol" }
+turbomcp-transport-traits = { version = "3.0.0-exp.1", path = "../turbomcp-transport-traits" }
+turbomcp-protocol = { version = "3.0.0-exp.1", path = "../turbomcp-protocol" }
 
 # Async runtime
 tokio = { workspace = true }

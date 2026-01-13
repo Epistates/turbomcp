@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-stdio"
-version = "3.0.0-exp"
+version = "3.0.0-exp.1"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Standard I/O transport implementation for TurboMCP - newline-delimited JSON over stdin/stdout"

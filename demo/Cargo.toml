@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-demo"
-version = "3.0.0-exp"
+version = "3.0.0-exp.1"
 edition = "2021"
 license = "MIT"
 description = "Demo project showcasing TurboMCP in action"

@@ -105,15 +105,114 @@ module.exports = {
 
 ## Cloudflare Workers
 
-### Setup
+TurboMCP supports two approaches for Cloudflare Workers:
+
+1. **MCP Client** - JavaScript/WASM client that connects to external MCP servers
+2. **MCP Server** - Native Rust server running on Workers edge network
+
+### Native MCP Server (Rust)
+
+Build full MCP servers in Rust that run on Cloudflare Workers using the `wasm-server` feature.
+
+**Cargo.toml:**
+
+```toml
+[package]
+name = "my-mcp-server"
+version = "1.0.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+turbomcp-wasm = { version = "3.0", default-features = false, features = ["wasm-server"] }
+worker = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+schemars = "1.0"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+```
+
+**src/lib.rs:**
+
+```rust
+use turbomcp_wasm::wasm_server::{McpServer, ToolResult, ResourceResult, PromptResult};
+use worker::*;
+use serde::Deserialize;
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct HelloArgs {
+    name: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AddArgs {
+    a: i64,
+    b: i64,
+}
+
+#[event(fetch)]
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+    let server = McpServer::builder("my-edge-mcp-server", "1.0.0")
+        .description("MCP server running on Cloudflare Workers")
+        .instructions("Use the hello and add tools to get started")
+
+        // Register tools with automatic schema generation
+        .with_tool("hello", "Say hello to someone", |args: HelloArgs| async move {
+            Ok(ToolResult::text(format!("Hello, {}!", args.name)))
+        })
+        .with_tool("add", "Add two numbers", |args: AddArgs| async move {
+            Ok(ToolResult::text(format!("{}", args.a + args.b)))
+        })
+
+        // Static resource
+        .with_resource(
+            "config://settings",
+            "Server Settings",
+            "Current server configuration",
+            |_uri| async move {
+                Ok(ResourceResult::json("config://settings", &serde_json::json!({
+                    "version": "1.0.0",
+                    "environment": "edge"
+                }))?)
+            },
+        )
+
+        .build();
+
+    server.handle(req).await
+}
+```
+
+**wrangler.toml:**
+
+```toml
+name = "my-mcp-server"
+main = "build/worker/shim.mjs"
+compatibility_date = "2024-01-01"
+
+[build]
+command = "cargo install -q worker-build && worker-build --release"
+```
+
+**Deploy:**
+
+```bash
+wrangler dev     # Local development
+wrangler deploy  # Production deployment
+```
+
+### MCP Client (JavaScript/WASM)
+
+Use the WASM client to connect to external MCP servers from Workers.
+
+**Setup:**
 
 ```bash
 npm create cloudflare@latest my-mcp-worker
 cd my-mcp-worker
 npm install turbomcp-wasm
 ```
-
-### Worker Code
 
 **src/index.js:**
 
@@ -157,7 +256,7 @@ export default {
 };
 ```
 
-### wrangler.toml
+**wrangler.toml:**
 
 ```toml
 name = "mcp-proxy"
@@ -173,7 +272,7 @@ binding = "CACHE"
 id = "your-kv-namespace-id"
 ```
 
-### Deploy
+**Deploy:**
 
 ```bash
 npx wrangler deploy

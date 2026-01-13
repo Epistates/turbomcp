@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-wasm"
-version = "3.0.0-exp"
+version = "3.0.0-exp.1"
 edition = "2024"
 rust-version = "1.89.0"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -24,6 +24,8 @@ browser = ["wasm-bindgen", "wasm-bindgen-futures", "web-sys", "js-sys", "serde-w
 wasi = ["dep:wasi", "dep:wit-bindgen", "dep:url"]
 # Console logging for debugging
 console-log = ["browser", "console_error_panic_hook"]
+# WASM server support - MCP servers running in WASM environments (Cloudflare Workers, etc.)
+wasm-server = ["dep:worker", "dep:schemars", "dep:hashbrown", "wasm-bindgen", "wasm-bindgen-futures", "serde-wasm-bindgen", "js-sys"]
 
 [dependencies]
 # Core MCP types - no_std compatible with WASM optimizations
@@ -49,6 +51,15 @@ console_error_panic_hook = { version = "0.1", optional = true }
 wasi = { version = "0.14", optional = true }
 wit-bindgen = { version = "0.39", optional = true }
 url = { version = "2.5", optional = true }
+
+# Cloudflare Workers SDK (optional - for cloudflare feature)
+worker = { version = "0.7", optional = true }
+
+# JSON Schema generation (optional - for cloudflare feature typed tools)
+schemars = { version = "1.0", optional = true }
+
+# HashMap for compatibility with turbomcp-core types (uses hashbrown for no_std)
+hashbrown = { version = "0.15", optional = true }
 
 [dependencies.web-sys]
 version = "0.3.83"

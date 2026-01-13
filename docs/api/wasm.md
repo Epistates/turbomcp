@@ -1,15 +1,24 @@
 # WASM Bindings API Reference
 
-The `turbomcp-wasm` crate provides WebAssembly bindings for TurboMCP, enabling MCP clients in browsers and edge environments.
+The `turbomcp-wasm` crate provides WebAssembly bindings for TurboMCP, enabling MCP clients and servers in browsers and edge environments.
 
 ## Overview
 
 WASM bindings provide:
 
+### Client Features
+
 - **Browser Support** - Full MCP client using Fetch API
 - **TypeScript Types** - Complete type definitions
 - **Async/Await** - Promise-based API
 - **Small Binary** - Optimized for bundle size (~50-200KB)
+
+### Server Features (wasm-server)
+
+- **Edge MCP Servers** - Build servers on Cloudflare Workers
+- **Type-Safe Handlers** - Automatic JSON schema from Rust types
+- **Zero Tokio** - Uses wasm-bindgen-futures for async
+- **Full Protocol** - Tools, resources, prompts support
 
 ## Installation
 
@@ -572,6 +581,227 @@ wasm-opt -Os -o optimized.wasm pkg/turbomcp_wasm_bg.wasm
 | Firefox | 89+ |
 | Safari | 15+ |
 | Edge | 89+ |
+
+## Server API (wasm-server feature)
+
+The `wasm-server` feature provides server-side MCP implementation for edge platforms.
+
+### Installation
+
+```toml
+[dependencies]
+turbomcp-wasm = { version = "3.0", default-features = false, features = ["wasm-server"] }
+worker = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+schemars = "1.0"
+```
+
+### McpServer
+
+The main server struct that handles incoming MCP requests.
+
+#### builder
+
+```rust
+McpServer::builder(name: impl Into<String>, version: impl Into<String>) -> McpServerBuilder
+```
+
+Create a new server builder.
+
+```rust
+let server = McpServer::builder("my-server", "1.0.0")
+    .build();
+```
+
+#### handle
+
+```rust
+async fn handle(&self, req: worker::Request) -> worker::Result<worker::Response>
+```
+
+Handle an incoming Cloudflare Worker request.
+
+```rust
+server.handle(req).await
+```
+
+### McpServerBuilder
+
+Builder for configuring and creating an MCP server.
+
+#### description
+
+```rust
+fn description(self, description: impl Into<String>) -> Self
+```
+
+Set the server description shown to clients.
+
+#### instructions
+
+```rust
+fn instructions(self, instructions: impl Into<String>) -> Self
+```
+
+Set server instructions shown to clients.
+
+#### with_tool
+
+```rust
+fn with_tool<A, F, Fut>(
+    self,
+    name: impl Into<String>,
+    description: impl Into<String>,
+    handler: F,
+) -> Self
+where
+    A: DeserializeOwned + JsonSchema + 'static,
+    F: Fn(A) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<ToolResult, String>> + Send + 'static,
+```
+
+Register a tool with typed arguments. The argument type must implement `JsonSchema` for automatic schema generation.
+
+```rust
+#[derive(Deserialize, JsonSchema)]
+struct AddArgs { a: i64, b: i64 }
+
+.with_tool("add", "Add two numbers", |args: AddArgs| async move {
+    Ok(ToolResult::text(format!("{}", args.a + args.b)))
+})
+```
+
+#### with_raw_tool
+
+```rust
+fn with_raw_tool<F, Fut>(
+    self,
+    name: impl Into<String>,
+    description: impl Into<String>,
+    handler: F,
+) -> Self
+```
+
+Register a tool with raw JSON arguments (no schema validation).
+
+#### with_resource
+
+```rust
+fn with_resource<F, Fut>(
+    self,
+    uri: impl Into<String>,
+    name: impl Into<String>,
+    description: impl Into<String>,
+    handler: F,
+) -> Self
+```
+
+Register a static resource.
+
+```rust
+.with_resource(
+    "config://settings",
+    "Settings",
+    "App settings",
+    |uri| async move {
+        Ok(ResourceResult::text(&uri, "config data"))
+    },
+)
+```
+
+#### with_resource_template
+
+```rust
+fn with_resource_template<F, Fut>(
+    self,
+    uri_template: impl Into<String>,
+    name: impl Into<String>,
+    description: impl Into<String>,
+    handler: F,
+) -> Self
+```
+
+Register a dynamic resource template.
+
+```rust
+.with_resource_template(
+    "user://{id}",
+    "User",
+    "User by ID",
+    |uri| async move {
+        let id = uri.split('/').last().unwrap_or("0");
+        Ok(ResourceResult::text(&uri, format!("User {}", id)))
+    },
+)
+```
+
+#### with_prompt
+
+```rust
+fn with_prompt<F, Fut>(
+    self,
+    name: impl Into<String>,
+    description: impl Into<String>,
+    arguments: Vec<PromptArgument>,
+    handler: F,
+) -> Self
+```
+
+Register a prompt with arguments.
+
+#### with_simple_prompt
+
+```rust
+fn with_simple_prompt<F, Fut>(
+    self,
+    name: impl Into<String>,
+    description: impl Into<String>,
+    handler: F,
+) -> Self
+```
+
+Register a prompt without arguments.
+
+```rust
+.with_simple_prompt("help", "Get help", || async move {
+    Ok(PromptResult::user("How can I help?"))
+})
+```
+
+### ToolResult
+
+Result type for tool handlers.
+
+| Method | Description |
+|--------|-------------|
+| `text(text)` | Create text result |
+| `json(value)` | Create JSON result |
+| `error(message)` | Create error result |
+| `image(data, mime_type)` | Create image result |
+| `contents(vec)` | Create multi-content result |
+
+### ResourceResult
+
+Result type for resource handlers.
+
+| Method | Description |
+|--------|-------------|
+| `text(uri, content)` | Create text resource |
+| `json(uri, value)` | Create JSON resource |
+| `binary(uri, data, mime_type)` | Create binary resource |
+
+### PromptResult
+
+Result type for prompt handlers.
+
+| Method | Description |
+|--------|-------------|
+| `user(text)` | Create user message |
+| `assistant(text)` | Create assistant message |
+| `messages(vec)` | Create multi-message prompt |
+| `with_description(text)` | Add description |
+| `add_user(text)` | Append user message |
+| `add_assistant(text)` | Append assistant message |
 
 ## Next Steps
 

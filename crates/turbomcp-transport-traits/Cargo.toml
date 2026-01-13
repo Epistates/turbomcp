@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-transport-traits"
-version = "3.0.0-exp"
+version = "3.0.0-exp.1"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Core transport traits and types for TurboMCP - foundation for all transport implementations"

@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-wire"
-version = "3.0.0-exp"
+version = "3.0.0-exp.1"
 edition = "2024"
 rust-version = "1.89.0"
 description = "Wire format codec abstraction for TurboMCP - JSON-RPC encoding/decoding"
@@ -12,7 +12,7 @@ readme = "README.md"
 
 [dependencies]
 # Core types
-turbomcp-core = { version = "3.0.0-exp", path = "../turbomcp-core", default-features = false }
+turbomcp-core = { version = "3.0.0-exp.1", path = "../turbomcp-core", default-features = false }
 
 # Serialization
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-exp.1] - 2026-01-13
+
+### Added
+
+#### WASM Server Support (wasm-server feature)
+- **Native MCP Servers on Cloudflare Workers** - Build full MCP servers in Rust that run on edge platforms
+- **Type-Safe Tool Registration** - Automatic JSON schema generation from Rust types via `schemars`
+- **McpServer Builder API** - Fluent API for registering tools, resources, and prompts
+  - `with_tool()` - Register typed tool handlers with automatic schema generation
+  - `with_raw_tool()` - Register tools with raw JSON arguments
+  - `with_resource()` - Register static resources
+  - `with_resource_template()` - Register dynamic resource templates with URI patterns
+  - `with_prompt()` - Register prompts with arguments
+  - `with_simple_prompt()` - Register prompts without arguments
+- **JSON-RPC 2.0 Compliant Handler** - Full protocol compliance with proper error codes
+- **CORS Support** - Built-in CORS preflight handling for edge deployment
+- **Security Features** - Content-Type validation, body size limits (1MB max)
+
 ## [3.0.0-exp] - 2026-01-10
 
 ### 🚀 Major Architectural Redesign

@@ -1,14 +1,15 @@
 //! `TurboMCP` WebAssembly Bindings
 //!
-//! This crate provides WebAssembly bindings for TurboMCP, enabling MCP clients
-//! to run in browsers and WASI environments.
+//! This crate provides WebAssembly bindings for TurboMCP, enabling MCP clients and servers
+//! to run in browsers, WASI environments, and Cloudflare Workers.
 //!
 //! # Features
 //!
-//! - **browser** (default): Browser bindings using wasm-bindgen and web-sys
-//! - **wasi**: WASI Preview 2 support for server-side WASM runtimes (Wasmtime, WasmEdge, Wasmer)
+//! - **browser** (default): Browser MCP client using wasm-bindgen and web-sys
+//! - **wasi**: WASI Preview 2 MCP client for server-side WASM runtimes
+//! - **wasm-server**: Full MCP server support for WASM environments (Cloudflare Workers, etc.)
 //!
-//! # Browser Usage
+//! # Browser Usage (Client)
 //!
 //! ```javascript
 //! import init, { McpClient, Tool, Content } from 'turbomcp-wasm';
@@ -25,7 +26,63 @@
 //! console.log("Result:", result);
 //! ```
 //!
-//! # WASI Usage
+//! # Cloudflare Workers Usage (Server)
+//!
+//! Build MCP servers that run on Cloudflare's edge network:
+//!
+//! ```ignore
+//! use turbomcp_wasm::wasm_server::{McpServer, ToolResult};
+//! use worker::*;
+//! use serde::Deserialize;
+//!
+//! #[derive(Deserialize, schemars::JsonSchema)]
+//! struct HelloArgs {
+//!     name: String,
+//! }
+//!
+//! #[derive(Deserialize, schemars::JsonSchema)]
+//! struct AddArgs {
+//!     a: i64,
+//!     b: i64,
+//! }
+//!
+//! #[event(fetch)]
+//! async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+//!     let server = McpServer::builder("my-mcp-server", "1.0.0")
+//!         .description("My MCP server running on Cloudflare Workers")
+//!         .with_tool("hello", "Say hello to someone", |args: HelloArgs| async move {
+//!             Ok(ToolResult::text(format!("Hello, {}!", args.name)))
+//!         })
+//!         .with_tool("add", "Add two numbers", |args: AddArgs| async move {
+//!             Ok(ToolResult::text(format!("{}", args.a + args.b)))
+//!         })
+//!         .build();
+//!
+//!     server.handle(req).await
+//! }
+//! ```
+//!
+//! ## Cloudflare Worker Setup
+//!
+//! ```toml
+//! # Cargo.toml
+//! [dependencies]
+//! turbomcp-wasm = { version = "3.0", default-features = false, features = ["wasm-server"] }
+//! worker = "0.7"
+//! serde = { version = "1.0", features = ["derive"] }
+//! schemars = "1.0"  # For automatic JSON schema generation
+//! getrandom = { version = "0.3", features = ["wasm_js"] }
+//! ```
+//!
+//! ```bash
+//! # Build for Cloudflare Workers
+//! wrangler dev
+//!
+//! # Or build manually
+//! cargo build --target wasm32-unknown-unknown --release
+//! ```
+//!
+//! # WASI Usage (Client)
 //!
 //! For WASI environments (Wasmtime, WasmEdge, Wasmer, etc.):
 //!
@@ -106,6 +163,10 @@ pub mod browser;
 #[cfg(feature = "wasi")]
 #[cfg_attr(docsrs, doc(cfg(feature = "wasi")))]
 pub mod wasi;
+
+#[cfg(feature = "wasm-server")]
+#[cfg_attr(docsrs, doc(cfg(feature = "wasm-server")))]
+pub mod wasm_server;
 
 /// Version of the TurboMCP WASM bindings
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
