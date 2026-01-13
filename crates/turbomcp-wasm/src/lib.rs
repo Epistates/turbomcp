@@ -234,7 +234,7 @@ pub mod prelude;
 // Re-export proc macros when the macros feature is enabled
 #[cfg(feature = "macros")]
 #[cfg_attr(docsrs, doc(cfg(feature = "macros")))]
-pub use turbomcp_wasm_macros::{prompt, resource, tool, wasm_server as server};
+pub use turbomcp_wasm_macros::{prompt, resource, server, tool};
 
 /// Version of the TurboMCP WASM bindings
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

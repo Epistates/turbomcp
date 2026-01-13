@@ -67,6 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Old: `.with_tool()`, `.with_resource()`, `.with_prompt()`
   - New: `.tool()`, `.resource()`, `.prompt()` (old methods deprecated)
 
+- **API Consistency with Native Macros** - WASM macros now use identical attribute names
+  - `#[server]` - Same as native `turbomcp-macros`
+  - `#[tool]`, `#[resource]`, `#[prompt]` - Identical syntax
+  - Import via `use turbomcp_wasm::prelude::*` for all macros
+
 ### Example
 
 ```rust

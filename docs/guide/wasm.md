@@ -378,7 +378,7 @@ schemars = "1.0"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 ```
 
-### Basic Server
+### Basic Server (Builder API)
 
 ```rust
 use turbomcp_wasm::wasm_server::{McpServer, ToolResult};
@@ -394,13 +394,157 @@ struct HelloArgs {
 async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
     let server = McpServer::builder("my-mcp-server", "1.0.0")
         .description("My MCP server on the edge")
-        .with_tool("hello", "Say hello", |args: HelloArgs| async move {
-            Ok(ToolResult::text(format!("Hello, {}!", args.name)))
+        .tool("hello", "Say hello", |args: HelloArgs| async move {
+            format!("Hello, {}!", args.name)  // IntoToolResponse - returns any type!
         })
         .build();
 
     server.handle(req).await
 }
+```
+
+### Zero-Boilerplate Server (Macros)
+
+With the `macros` feature, you can define MCP servers with minimal code using procedural macros:
+
+```toml
+[dependencies]
+turbomcp-wasm = { version = "3.0", default-features = false, features = ["macros"] }
+worker = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+schemars = "1.0"
+```
+
+```rust
+use turbomcp_wasm::prelude::*;
+use serde::Deserialize;
+
+#[derive(Clone)]
+struct MyServer {
+    greeting: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct GreetArgs {
+    name: String,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AddArgs {
+    a: i64,
+    b: i64,
+}
+
+#[server(name = "my-server", version = "1.0.0", description = "My MCP server")]
+impl MyServer {
+    #[tool("Greet someone by name")]
+    async fn greet(&self, args: GreetArgs) -> String {
+        format!("{}, {}!", self.greeting, args.name)
+    }
+
+    #[tool("Add two numbers")]
+    async fn add(&self, args: AddArgs) -> i64 {
+        args.a + args.b
+    }
+
+    #[tool("Get server status")]
+    async fn status(&self) -> String {
+        "Server is running".to_string()
+    }
+
+    #[resource("config://app")]
+    async fn config(&self, uri: String) -> ResourceResult {
+        ResourceResult::text(&uri, r#"{"theme": "dark"}"#)
+    }
+
+    #[prompt("Default greeting")]
+    async fn greeting_prompt(&self) -> PromptResult {
+        PromptResult::user("Hello! How can I help?")
+    }
+}
+
+#[event(fetch)]
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+    let server = MyServer { greeting: "Hello".into() };
+    server.into_mcp_server().handle(req).await
+}
+```
+
+The macros generate the same efficient code as the builder API, but with cleaner syntax.
+
+### Prelude Module
+
+For convenience, import everything you need with the prelude:
+
+```rust
+use turbomcp_wasm::prelude::*;
+
+// This imports:
+// - McpServer, McpServerBuilder
+// - ToolResult, ToolError, ResourceResult, PromptResult
+// - IntoToolResponse, Text, Json, Image
+// - #[server], #[tool], #[resource], #[prompt] macros (with "macros" feature)
+```
+
+### Ergonomic Handler System (IntoToolResponse)
+
+The new `IntoToolResponse` trait provides axum-inspired ergonomics for tool handlers. Return any type that implements the trait:
+
+```rust
+// String - automatically converted to text content
+.tool("greet", "Say hello", |args: GreetArgs| async move {
+    format!("Hello, {}!", args.name)
+})
+
+// Numbers - converted to text
+.tool("add", "Add numbers", |args: AddArgs| async move {
+    args.a + args.b
+})
+
+// Explicit text wrapper
+.tool("text_example", "Return text", |_: NoArgs| async move {
+    Text("Explicit text content".to_string())
+})
+
+// JSON serialization
+.tool("json_example", "Return JSON", |_: NoArgs| async move {
+    Json(serde_json::json!({"key": "value"}))
+})
+
+// Image response
+.tool("image", "Return image", |_: NoArgs| async move {
+    Image {
+        data: base64_data,
+        mime_type: "image/png".to_string(),
+    }
+})
+
+// Result types for error handling
+.tool("fallible", "Might fail", |args: Args| async move {
+    if args.value < 0 {
+        Err(ToolError::new("Value must be positive"))
+    } else {
+        Ok(format!("Value: {}", args.value))
+    }
+})
+
+// ToolResult for full control
+.tool("full_control", "Multiple content items", |_: NoArgs| async move {
+    ToolResult::contents(vec![
+        Content::text("First item"),
+        Content::text("Second item"),
+    ])
+})
+```
+
+### Tools Without Arguments
+
+Use `tool_no_args` for tools that don't need input:
+
+```rust
+.tool_no_args("status", "Get server status", || async move {
+    "Server is running"
+})
 ```
 
 ### Tool Results
@@ -429,23 +573,23 @@ ToolResult::contents(vec![
 
 ```rust
 // Static resource
-.with_resource(
+.resource(
     "config://settings",
     "Settings",
     "Application settings",
-    |_uri| async move {
-        Ok(ResourceResult::json("config://settings", &settings)?)
+    |uri: String| async move {
+        ResourceResult::json(&uri, &settings)
     },
 )
 
 // Dynamic resource template
-.with_resource_template(
+.resource_template(
     "user://{id}",
     "User Profile",
     "Get user by ID",
-    |uri| async move {
+    |uri: String| async move {
         let id = uri.split('/').last().unwrap_or("0");
-        Ok(ResourceResult::text(&uri, format!("User {}", id)))
+        ResourceResult::text(&uri, format!("User {}", id))
     },
 )
 ```
@@ -456,25 +600,18 @@ ToolResult::contents(vec![
 use turbomcp_core::types::prompts::PromptArgument;
 
 // Prompt with arguments
-.with_prompt(
+.prompt(
     "greeting",
     "Generate a greeting",
-    vec![PromptArgument {
-        name: "name".into(),
-        description: Some("Name to greet".into()),
-        required: Some(true),
-    }],
-    |args| async move {
-        let name = args
-            .and_then(|a| a.get("name")?.as_str().map(String::from))
-            .unwrap_or_else(|| "World".into());
-        Ok(PromptResult::user(format!("Hello, {}!", name)))
+    |args: Option<GreetingArgs>| async move {
+        let name = args.map(|a| a.name).unwrap_or_else(|| "World".into());
+        PromptResult::user(format!("Hello, {}!", name))
     },
 )
 
 // Simple prompt (no arguments)
-.with_simple_prompt("help", "Get help", || async move {
-    Ok(PromptResult::user("How can I help you today?"))
+.prompt_no_args("help", "Get help", || async move {
+    PromptResult::user("How can I help you today?")
 })
 ```
 

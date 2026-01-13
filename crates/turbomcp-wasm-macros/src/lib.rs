@@ -5,7 +5,7 @@
 //!
 //! ## Features
 //!
-//! - **`#[wasm_server]`** - Transform impl blocks into MCP servers
+//! - **`#[server]`** - Transform impl blocks into MCP servers
 //! - **`#[tool]`** - Mark methods as MCP tool handlers
 //! - **`#[resource]`** - Mark methods as MCP resource handlers
 //! - **`#[prompt]`** - Mark methods as MCP prompt handlers
@@ -26,7 +26,7 @@
 //!     name: String,
 //! }
 //!
-//! #[wasm_server(name = "my-server", version = "1.0.0")]
+//! #[server(name = "my-server", version = "1.0.0")]
 //! impl MyServer {
 //!     #[tool("Greet someone by name")]
 //!     async fn greet(&self, args: GreetArgs) -> String {
@@ -77,7 +77,7 @@ mod server;
 /// #[derive(Clone)]
 /// struct Calculator;
 ///
-/// #[wasm_server(name = "calculator", version = "2.0.0")]
+/// #[server(name = "calculator", version = "2.0.0")]
 /// impl Calculator {
 ///     #[tool("Add two numbers")]
 ///     async fn add(&self, args: AddArgs) -> i64 {
@@ -89,18 +89,18 @@ mod server;
 /// let server = Calculator.into_mcp_server();
 /// ```
 #[proc_macro_attribute]
-pub fn wasm_server(args: TokenStream, input: TokenStream) -> TokenStream {
+pub fn server(args: TokenStream, input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(args as server::ServerArgs);
     let input = parse_macro_input!(input as ItemImpl);
 
-    server::generate_wasm_server(args, input)
+    server::generate_server(args, input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
 
 /// Marks a method as an MCP tool handler.
 ///
-/// This attribute is used inside a `#[wasm_server]` impl block to register
+/// This attribute is used inside a `#[server]` impl block to register
 /// tool handlers. The macro extracts the description and generates appropriate
 /// builder registration code.
 ///
@@ -130,14 +130,14 @@ pub fn wasm_server(args: TokenStream, input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn tool(_args: TokenStream, input: TokenStream) -> TokenStream {
-    // This is a marker attribute - the actual processing happens in #[wasm_server]
+    // This is a marker attribute - the actual processing happens in #[server]
     // We just pass through the input unchanged
     input
 }
 
 /// Marks a method as an MCP resource handler.
 ///
-/// This attribute is used inside a `#[wasm_server]` impl block to register
+/// This attribute is used inside a `#[server]` impl block to register
 /// resource handlers with URI templates.
 ///
 /// # Arguments
@@ -166,13 +166,13 @@ pub fn tool(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn resource(_args: TokenStream, input: TokenStream) -> TokenStream {
-    // Marker attribute - processing happens in #[wasm_server]
+    // Marker attribute - processing happens in #[server]
     input
 }
 
 /// Marks a method as an MCP prompt handler.
 ///
-/// This attribute is used inside a `#[wasm_server]` impl block to register
+/// This attribute is used inside a `#[server]` impl block to register
 /// prompt handlers.
 ///
 /// # Arguments
@@ -201,6 +201,6 @@ pub fn resource(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn prompt(_args: TokenStream, input: TokenStream) -> TokenStream {
-    // Marker attribute - processing happens in #[wasm_server]
+    // Marker attribute - processing happens in #[server]
     input
 }

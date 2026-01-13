@@ -72,7 +72,7 @@ struct PromptMethod {
 }
 
 /// Generate the WASM server implementation
-pub fn generate_wasm_server(args: ServerArgs, mut impl_block: ItemImpl) -> Result<TokenStream2> {
+pub fn generate_server(args: ServerArgs, mut impl_block: ItemImpl) -> Result<TokenStream2> {
     // Extract struct name
     let struct_name = extract_struct_name(&impl_block)?;
 

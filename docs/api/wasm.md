@@ -588,12 +588,36 @@ The `wasm-server` feature provides server-side MCP implementation for edge platf
 
 ### Installation
 
-```toml
-[dependencies]
-turbomcp-wasm = { version = "3.0", default-features = false, features = ["wasm-server"] }
-worker = "0.7"
-serde = { version = "1.0", features = ["derive"] }
-schemars = "1.0"
+=== "Builder API"
+    ```toml
+    [dependencies]
+    turbomcp-wasm = { version = "3.0", default-features = false, features = ["wasm-server"] }
+    worker = "0.7"
+    serde = { version = "1.0", features = ["derive"] }
+    schemars = "1.0"
+    ```
+
+=== "Macros (Zero-Boilerplate)"
+    ```toml
+    [dependencies]
+    turbomcp-wasm = { version = "3.0", default-features = false, features = ["macros"] }
+    worker = "0.7"
+    serde = { version = "1.0", features = ["derive"] }
+    schemars = "1.0"
+    ```
+
+### Prelude Module
+
+The prelude provides convenient imports:
+
+```rust
+use turbomcp_wasm::prelude::*;
+
+// Imports:
+// - McpServer, McpServerBuilder
+// - ToolResult, ToolError, ResourceResult, PromptResult
+// - IntoToolResponse, Text, Json, Image
+// - #[server], #[tool], #[resource], #[prompt] macros (with "macros" feature)
 ```
 
 ### McpServer
@@ -645,10 +669,10 @@ fn instructions(self, instructions: impl Into<String>) -> Self
 
 Set server instructions shown to clients.
 
-#### with_tool
+#### tool
 
 ```rust
-fn with_tool<A, F, Fut>(
+fn tool<A, F, Fut, R>(
     self,
     name: impl Into<String>,
     description: impl Into<String>,
@@ -657,37 +681,69 @@ fn with_tool<A, F, Fut>(
 where
     A: DeserializeOwned + JsonSchema + 'static,
     F: Fn(A) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<ToolResult, String>> + Send + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoToolResponse + 'static,
 ```
 
-Register a tool with typed arguments. The argument type must implement `JsonSchema` for automatic schema generation.
+Register a tool with typed arguments. The argument type must implement `JsonSchema` for automatic schema generation. The return type can be any type implementing `IntoToolResponse`.
 
 ```rust
 #[derive(Deserialize, JsonSchema)]
 struct AddArgs { a: i64, b: i64 }
 
-.with_tool("add", "Add two numbers", |args: AddArgs| async move {
-    Ok(ToolResult::text(format!("{}", args.a + args.b)))
+// Simple return - uses IntoToolResponse
+.tool("add", "Add two numbers", |args: AddArgs| async move {
+    args.a + args.b
+})
+
+// Or with explicit ToolResult
+.tool("add", "Add two numbers", |args: AddArgs| async move {
+    ToolResult::text(format!("{}", args.a + args.b))
 })
 ```
 
-#### with_raw_tool
+#### tool_no_args
 
 ```rust
-fn with_raw_tool<F, Fut>(
+fn tool_no_args<F, Fut, R>(
     self,
     name: impl Into<String>,
     description: impl Into<String>,
     handler: F,
 ) -> Self
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: IntoToolResponse + 'static,
+```
+
+Register a tool without arguments.
+
+```rust
+.tool_no_args("status", "Get server status", || async move {
+    "Server is running"
+})
+```
+
+#### raw_tool
+
+```rust
+fn raw_tool<F, Fut, R>(
+    self,
+    name: impl Into<String>,
+    description: impl Into<String>,
+    handler: F,
+) -> Self
+where
+    R: IntoToolResponse + 'static,
 ```
 
 Register a tool with raw JSON arguments (no schema validation).
 
-#### with_resource
+#### resource
 
 ```rust
-fn with_resource<F, Fut>(
+fn resource<F, Fut>(
     self,
     uri: impl Into<String>,
     name: impl Into<String>,
@@ -699,20 +755,20 @@ fn with_resource<F, Fut>(
 Register a static resource.
 
 ```rust
-.with_resource(
+.resource(
     "config://settings",
     "Settings",
     "App settings",
-    |uri| async move {
-        Ok(ResourceResult::text(&uri, "config data"))
+    |uri: String| async move {
+        ResourceResult::text(&uri, "config data")
     },
 )
 ```
 
-#### with_resource_template
+#### resource_template
 
 ```rust
-fn with_resource_template<F, Fut>(
+fn resource_template<F, Fut>(
     self,
     uri_template: impl Into<String>,
     name: impl Into<String>,
@@ -724,35 +780,44 @@ fn with_resource_template<F, Fut>(
 Register a dynamic resource template.
 
 ```rust
-.with_resource_template(
+.resource_template(
     "user://{id}",
     "User",
     "User by ID",
-    |uri| async move {
+    |uri: String| async move {
         let id = uri.split('/').last().unwrap_or("0");
-        Ok(ResourceResult::text(&uri, format!("User {}", id)))
+        ResourceResult::text(&uri, format!("User {}", id))
     },
 )
 ```
 
-#### with_prompt
+#### prompt
 
 ```rust
-fn with_prompt<F, Fut>(
+fn prompt<A, F, Fut>(
     self,
     name: impl Into<String>,
     description: impl Into<String>,
-    arguments: Vec<PromptArgument>,
     handler: F,
 ) -> Self
+where
+    A: DeserializeOwned + JsonSchema + 'static,
+    F: Fn(Option<A>) -> Fut + Send + Sync + 'static,
 ```
 
-Register a prompt with arguments.
-
-#### with_simple_prompt
+Register a prompt with typed arguments.
 
 ```rust
-fn with_simple_prompt<F, Fut>(
+.prompt("greeting", "Generate greeting", |args: Option<GreetArgs>| async move {
+    let name = args.map(|a| a.name).unwrap_or("World".into());
+    PromptResult::user(format!("Hello, {}!", name))
+})
+```
+
+#### prompt_no_args
+
+```rust
+fn prompt_no_args<F, Fut>(
     self,
     name: impl Into<String>,
     description: impl Into<String>,
@@ -763,8 +828,8 @@ fn with_simple_prompt<F, Fut>(
 Register a prompt without arguments.
 
 ```rust
-.with_simple_prompt("help", "Get help", || async move {
-    Ok(PromptResult::user("How can I help?"))
+.prompt_no_args("help", "Get help", || async move {
+    PromptResult::user("How can I help?")
 })
 ```
 
@@ -802,6 +867,188 @@ Result type for prompt handlers.
 | `with_description(text)` | Add description |
 | `add_user(text)` | Append user message |
 | `add_assistant(text)` | Append assistant message |
+
+### IntoToolResponse Trait
+
+The `IntoToolResponse` trait enables ergonomic handler returns (axum-inspired). Any type implementing this trait can be returned from tool handlers:
+
+| Type | Behavior |
+|------|----------|
+| `String` | Converted to text content |
+| `&str` | Converted to text content |
+| `i32`, `i64`, `u32`, `u64`, `f32`, `f64` | Converted to text (string representation) |
+| `bool` | Converted to text (`"true"` or `"false"`) |
+| `Text(String)` | Explicit text content wrapper |
+| `Json<T>` | JSON serialization of value |
+| `Image { data, mime_type }` | Base64-encoded image |
+| `ToolResult` | Direct tool result (full control) |
+| `Result<T, E>` | Ok → response, Err → error result |
+| `Option<T>` | Some → response, None → empty result |
+
+**Example:**
+
+```rust
+// Return any IntoToolResponse type
+.tool("greet", "Greet", |args: Args| async move { format!("Hello, {}!", args.name) })
+.tool("count", "Count", |args: Args| async move { args.items.len() as i64 })
+.tool("data", "Get data", |_: Args| async move { Json(my_struct) })
+.tool("fallible", "Might fail", |args: Args| async move {
+    if args.valid { Ok("Success") } else { Err(ToolError::new("Invalid")) }
+})
+```
+
+### ToolError
+
+Error type for tool handlers.
+
+```rust
+// Create error
+ToolError::new("Something went wrong")
+
+// With code
+ToolError::with_code(-32000, "Custom error")
+
+// From other errors
+let err: ToolError = my_error.into();  // via IntoToolError trait
+```
+
+## Procedural Macros (macros feature)
+
+The `macros` feature provides zero-boilerplate server definition.
+
+### #[server]
+
+Transforms an impl block into an MCP server.
+
+```rust
+#[server(name = "my-server", version = "1.0.0", description = "Optional description")]
+impl MyServer {
+    // ... methods
+}
+```
+
+**Attributes:**
+
+| Attribute | Required | Description |
+|-----------|----------|-------------|
+| `name` | Yes | Server name |
+| `version` | No | Server version (default: `"1.0.0"`) |
+| `description` | No | Server description |
+
+**Generated Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `into_mcp_server(self) -> McpServer` | Create MCP server from instance |
+| `get_tools_metadata() -> Vec<(&str, &str)>` | Get (name, description) for all tools |
+| `get_resources_metadata() -> Vec<(&str, &str)>` | Get (uri, name) for all resources |
+| `get_prompts_metadata() -> Vec<(&str, &str)>` | Get (name, description) for all prompts |
+| `server_info() -> (&str, &str)` | Get (name, version) |
+
+### #[tool]
+
+Mark a method as an MCP tool handler.
+
+```rust
+#[tool("Description of what this tool does")]
+async fn my_tool(&self, args: MyArgs) -> ReturnType {
+    // implementation
+}
+
+// Without arguments
+#[tool("Get server status")]
+async fn status(&self) -> String {
+    "OK".to_string()
+}
+```
+
+**Return types:** Any type implementing `IntoToolResponse` (see table above).
+
+### #[resource]
+
+Mark a method as an MCP resource handler.
+
+```rust
+#[resource("config://app")]
+async fn config(&self, uri: String) -> ResourceResult {
+    ResourceResult::text(&uri, "config data")
+}
+
+// Template URIs
+#[resource("user://{id}")]
+async fn user(&self, uri: String) -> ResourceResult {
+    let id = uri.split('/').last().unwrap_or("0");
+    ResourceResult::json(&uri, &User { id: id.parse().unwrap_or(0) })
+}
+```
+
+### #[prompt]
+
+Mark a method as an MCP prompt handler.
+
+```rust
+// Without arguments
+#[prompt("Help prompt")]
+async fn help(&self) -> PromptResult {
+    PromptResult::user("How can I help?")
+}
+
+// With optional arguments
+#[prompt("Greeting prompt")]
+async fn greeting(&self, args: Option<GreetArgs>) -> PromptResult {
+    let name = args.map(|a| a.name).unwrap_or("World".into());
+    PromptResult::user(format!("Hello, {}!", name))
+}
+```
+
+### Complete Macro Example
+
+```rust
+use turbomcp_wasm::prelude::*;
+use serde::Deserialize;
+
+#[derive(Clone)]
+struct Calculator;
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct AddArgs { a: i64, b: i64 }
+
+#[derive(Deserialize, schemars::JsonSchema)]
+struct MulArgs { a: i64, b: i64 }
+
+#[server(name = "calculator", version = "2.0.0", description = "Math operations")]
+impl Calculator {
+    #[tool("Add two numbers")]
+    async fn add(&self, args: AddArgs) -> i64 {
+        args.a + args.b
+    }
+
+    #[tool("Multiply two numbers")]
+    async fn multiply(&self, args: MulArgs) -> i64 {
+        args.a * args.b
+    }
+
+    #[tool("Get calculator info")]
+    async fn info(&self) -> String {
+        "Calculator v2.0".to_string()
+    }
+
+    #[resource("config://calculator")]
+    async fn config(&self, uri: String) -> ResourceResult {
+        ResourceResult::json(&uri, &serde_json::json!({"precision": 10}))
+    }
+
+    #[prompt("Math help")]
+    async fn help(&self) -> PromptResult {
+        PromptResult::user("I can add and multiply numbers. Try: add 2 3")
+    }
+}
+
+#[event(fetch)]
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+    Calculator.into_mcp_server().handle(req).await
+}
+```
 
 ## Next Steps
 

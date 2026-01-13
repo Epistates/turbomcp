@@ -129,18 +129,40 @@ async fn my_handler(
 
 ### WASM & Edge Support (v3)
 
-Run MCP clients in browsers and edge environments:
+Run MCP clients in browsers and build servers on edge platforms:
 
-```javascript
-import init, { McpClient } from 'turbomcp-wasm';
+=== "Browser Client (JavaScript)"
+    ```javascript
+    import init, { McpClient } from 'turbomcp-wasm';
 
-await init();
-const client = new McpClient("https://api.example.com/mcp");
-await client.initialize();
+    await init();
+    const client = new McpClient("https://api.example.com/mcp");
+    await client.initialize();
 
-const tools = await client.listTools();
-const result = await client.callTool("my_tool", { arg: "value" });
-```
+    const tools = await client.listTools();
+    const result = await client.callTool("my_tool", { arg: "value" });
+    ```
+
+=== "Edge Server (Cloudflare Workers)"
+    ```rust
+    use turbomcp_wasm::prelude::*;
+
+    #[derive(Clone)]
+    struct MyServer;
+
+    #[server(name = "edge-mcp", version = "1.0.0")]
+    impl MyServer {
+        #[tool("Say hello")]
+        async fn hello(&self, args: HelloArgs) -> String {
+            format!("Hello, {}!", args.name)
+        }
+    }
+
+    #[event(fetch)]
+    async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+        MyServer.into_mcp_server().handle(req).await
+    }
+    ```
 
 ## Core Crates
 
@@ -169,6 +191,7 @@ const result = await client.callTool("my_tool", { arg: "value" });
 - **turbomcp-macros** - Zero-overhead procedural macros
 - **turbomcp-cli** - CLI tools for testing and debugging
 - **turbomcp-wasm** - WebAssembly bindings (v3)
+- **turbomcp-wasm-macros** - WASM server procedural macros (v3)
 
 ## Getting Started
 
