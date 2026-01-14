@@ -172,6 +172,7 @@ pub mod task_storage; // Tasks API storage and lifecycle (SEP-1686)
 #[cfg(feature = "multi-tenancy")]
 pub mod tenant_context; // Sprint 3.2: Multi-tenant context extension trait
 pub mod timeout;
+pub mod v3; // v3 pristine architecture
 // #[cfg(feature = "http")]
 // pub mod simple_http;
 
