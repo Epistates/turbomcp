@@ -727,3 +727,222 @@ impl CallToolResult {
         parts.join("\n")
     }
 }
+
+// =============================================================================
+// Conversions from turbomcp-core types (for unified handler support)
+// =============================================================================
+//
+// These conversions enable the unified IntoToolResponse pattern, allowing
+// handlers to return core types that are automatically converted to protocol types.
+//
+// IMPORTANT NOTES:
+// - HashMap conversion: O(n) overhead due to hashbrown→std HashMap conversion
+// - Lossy conversion: Protocol's `structured_content` and `task_id` fields are
+//   NOT present in core types, so round-trip (protocol→core→protocol) loses them
+// - Resource fallback: Empty text is used if ResourceContent has neither text nor blob
+
+/// Convert core Annotations to protocol Annotations.
+///
+/// Note: Incurs O(n) conversion overhead from `hashbrown::HashMap` to `std::collections::HashMap`.
+impl From<turbomcp_core::types::core::Annotations> for super::Annotations {
+    fn from(core_ann: turbomcp_core::types::core::Annotations) -> Self {
+        // Convert hashbrown::HashMap to std::collections::HashMap
+        // Both implementations guarantee unique keys, so no data loss occurs
+        let custom: std::collections::HashMap<String, serde_json::Value> =
+            core_ann.custom.into_iter().collect();
+        Self {
+            audience: core_ann.audience,
+            priority: core_ann.priority,
+            last_modified: core_ann.last_modified,
+            custom,
+        }
+    }
+}
+
+/// Convert core Content to protocol ContentBlock
+impl From<turbomcp_core::types::content::Content> for super::ContentBlock {
+    fn from(content: turbomcp_core::types::content::Content) -> Self {
+        use turbomcp_core::types::content::Content as CoreContent;
+        match content {
+            CoreContent::Text { text, annotations } => {
+                super::ContentBlock::Text(super::TextContent {
+                    text,
+                    annotations: annotations.map(Into::into),
+                    meta: None,
+                })
+            }
+            CoreContent::Image {
+                data,
+                mime_type,
+                annotations,
+            } => super::ContentBlock::Image(super::ImageContent {
+                data,
+                mime_type,
+                annotations: annotations.map(Into::into),
+                meta: None,
+            }),
+            CoreContent::Audio {
+                data,
+                mime_type,
+                annotations,
+            } => super::ContentBlock::Audio(super::AudioContent {
+                data,
+                mime_type,
+                annotations: annotations.map(Into::into),
+                meta: None,
+            }),
+            CoreContent::Resource {
+                resource,
+                annotations,
+            } => {
+                // Convert core ResourceContent to protocol EmbeddedResource
+                // Core uses a flat struct with optional text/blob, protocol uses an enum
+                let protocol_resource = if let Some(text) = resource.text {
+                    super::ResourceContent::Text(super::TextResourceContents {
+                        uri: resource.uri,
+                        mime_type: resource.mime_type,
+                        text,
+                        meta: None,
+                    })
+                } else if let Some(blob) = resource.blob {
+                    super::ResourceContent::Blob(super::BlobResourceContents {
+                        uri: resource.uri,
+                        mime_type: resource.mime_type,
+                        blob,
+                        meta: None,
+                    })
+                } else {
+                    // Default to empty text if neither is set.
+                    // NOTE: This is a fallback for malformed core resources - callers should
+                    // ensure ResourceContent has either text or blob set.
+                    #[cfg(feature = "std")]
+                    eprintln!(
+                        "[turbomcp-protocol] WARNING: Resource '{}' has neither text nor blob content",
+                        resource.uri
+                    );
+                    super::ResourceContent::Text(super::TextResourceContents {
+                        uri: resource.uri,
+                        mime_type: resource.mime_type,
+                        text: String::new(),
+                        meta: None,
+                    })
+                };
+                super::ContentBlock::Resource(super::EmbeddedResource {
+                    resource: protocol_resource,
+                    annotations: annotations.map(Into::into),
+                    meta: None,
+                })
+            }
+        }
+    }
+}
+
+/// Convert core CallToolResult to protocol CallToolResult
+///
+/// This enables the unified IntoToolResponse pattern for native handlers.
+///
+/// **Note**: `structured_content` and `task_id` fields are set to `None` since
+/// core types don't have these fields. Round-trip conversion (protocol→core→protocol)
+/// will lose these values.
+impl From<turbomcp_core::types::tools::CallToolResult> for CallToolResult {
+    fn from(core_result: turbomcp_core::types::tools::CallToolResult) -> Self {
+        Self {
+            content: core_result.content.into_iter().map(Into::into).collect(),
+            is_error: core_result.is_error,
+            structured_content: None,
+            _meta: core_result._meta,
+            task_id: None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod conversion_tests {
+    use super::*;
+    use turbomcp_core::types::content::Content as CoreContent;
+    use turbomcp_core::types::tools::CallToolResult as CoreCallToolResult;
+
+    #[test]
+    fn test_core_content_to_protocol_text() {
+        let core = CoreContent::text("hello world");
+        let protocol: ContentBlock = core.into();
+
+        match protocol {
+            ContentBlock::Text(text) => {
+                assert_eq!(text.text, "hello world");
+                assert!(text.annotations.is_none());
+            }
+            _ => panic!("Expected Text variant"),
+        }
+    }
+
+    #[test]
+    fn test_core_content_to_protocol_image() {
+        let core = CoreContent::image("base64data", "image/png");
+        let protocol: ContentBlock = core.into();
+
+        match protocol {
+            ContentBlock::Image(img) => {
+                assert_eq!(img.data, "base64data");
+                assert_eq!(img.mime_type, "image/png");
+            }
+            _ => panic!("Expected Image variant"),
+        }
+    }
+
+    #[test]
+    fn test_core_call_tool_result_to_protocol() {
+        let core = CoreCallToolResult::text("success");
+        let protocol: CallToolResult = core.into();
+
+        assert_eq!(protocol.content.len(), 1);
+        assert!(protocol.is_error.is_none());
+        assert!(protocol.structured_content.is_none());
+        assert!(protocol.task_id.is_none());
+
+        match &protocol.content[0] {
+            ContentBlock::Text(text) => assert_eq!(text.text, "success"),
+            _ => panic!("Expected Text content"),
+        }
+    }
+
+    #[test]
+    fn test_core_call_tool_result_error_preserved() {
+        let core = CoreCallToolResult::error("something failed");
+        let protocol: CallToolResult = core.into();
+
+        assert_eq!(protocol.is_error, Some(true));
+        match &protocol.content[0] {
+            ContentBlock::Text(text) => assert_eq!(text.text, "something failed"),
+            _ => panic!("Expected Text content"),
+        }
+    }
+
+    #[test]
+    fn test_annotations_conversion() {
+        use crate::types::Annotations;
+        use turbomcp_core::types::core::Annotations as CoreAnnotations;
+
+        // Create core annotations (custom field uses Default for simplicity)
+        let core = CoreAnnotations {
+            audience: Some(vec!["user".to_string(), "assistant".to_string()]),
+            priority: Some(0.75),
+            last_modified: Some("2025-01-13T12:00:00Z".to_string()),
+            custom: Default::default(),
+        };
+
+        let protocol: Annotations = core.into();
+
+        // Verify all fields are correctly converted
+        assert_eq!(
+            protocol.audience,
+            Some(vec!["user".to_string(), "assistant".to_string()])
+        );
+        assert_eq!(protocol.priority, Some(0.75));
+        assert_eq!(
+            protocol.last_modified,
+            Some("2025-01-13T12:00:00Z".to_string())
+        );
+        assert!(protocol.custom.is_empty());
+    }
+}

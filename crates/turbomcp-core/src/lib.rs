@@ -53,6 +53,7 @@ extern crate alloc;
 
 pub mod error;
 pub mod jsonrpc;
+pub mod response;
 pub mod types;
 
 /// Zero-copy message types using rkyv serialization.
@@ -69,6 +70,7 @@ pub use jsonrpc::{
     JSONRPC_VERSION, JsonRpcError, JsonRpcErrorCode, JsonRpcNotification, JsonRpcRequest,
     JsonRpcResponse, JsonRpcVersion,
 };
+pub use response::{Image, IntoToolError, IntoToolResponse, Json, Text, ToolError};
 
 /// MCP Protocol version supported by this SDK (latest official spec)
 pub const PROTOCOL_VERSION: &str = "2025-11-25";

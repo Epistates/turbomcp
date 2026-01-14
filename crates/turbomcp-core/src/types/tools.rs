@@ -190,12 +190,40 @@ impl CallToolResult {
         }
     }
 
+    /// Create a successful JSON result
+    ///
+    /// Serializes the value to pretty-printed JSON text.
+    pub fn json<T: serde::Serialize>(value: &T) -> Result<Self, serde_json::Error> {
+        let text = serde_json::to_string_pretty(value)?;
+        Ok(Self::text(text))
+    }
+
     /// Create an error result
     #[must_use]
     pub fn error(message: impl Into<String>) -> Self {
         Self {
             content: alloc::vec![Content::text(message)],
             is_error: Some(true),
+            _meta: None,
+        }
+    }
+
+    /// Create a result with multiple content items
+    #[must_use]
+    pub fn contents(contents: Vec<Content>) -> Self {
+        Self {
+            content: contents,
+            is_error: None,
+            _meta: None,
+        }
+    }
+
+    /// Create an image result (base64 encoded)
+    #[must_use]
+    pub fn image(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        Self {
+            content: alloc::vec![Content::image(data, mime_type)],
+            is_error: None,
             _meta: None,
         }
     }
