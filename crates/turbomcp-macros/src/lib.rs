@@ -122,42 +122,47 @@ mod template;
 mod tool;
 mod tower_service;
 mod uri_template;
+mod v3; // v3 pristine architecture macros
 
-/// Marks an impl block as a TurboMCP server (idiomatic Rust)
+/// Marks an impl block as an MCP server with automatic McpHandler implementation.
+///
+/// This macro generates a complete `McpHandler` trait implementation by:
+/// - Discovering `#[tool]`, `#[resource]`, and `#[prompt]` methods
+/// - Parsing function signatures to extract parameters (no arg structs needed)
+/// - Extracting doc comments for descriptions
+/// - Generating JSON Schema from Rust types
 ///
 /// # Example
 ///
-/// ```text
-/// use turbomcp_macros::server;
+/// ```ignore
+/// use turbomcp::prelude::*;
 ///
-/// struct MyServer {
-///     state: String,
+/// #[derive(Clone)]
+/// struct Calculator;
+///
+/// #[server(name = "calculator", version = "1.0.0")]
+/// impl Calculator {
+///     /// Add two numbers together
+///     #[tool]
+///     async fn add(&self, a: i64, b: i64) -> i64 {
+///         a + b
+///     }
+///
+///     /// Greet someone by name
+///     #[tool]
+///     async fn greet(&self, name: String) -> String {
+///         format!("Hello, {}!", name)
+///     }
 /// }
 ///
-/// #[server(name = "MyServer", version = "1.0.0")]
-/// impl MyServer {
-///     fn new(state: String) -> Self {
-///         Self { state }
-///     }
-///
-///     fn get_state(&self) -> &str {
-///         &self.state
-///     }
+/// #[tokio::main]
+/// async fn main() {
+///     Calculator.run_stdio().await.unwrap();
 /// }
 /// ```
 #[proc_macro_attribute]
 pub fn server(args: TokenStream, input: TokenStream) -> TokenStream {
-    // Implementation - only supports impl blocks (the correct pattern)
-    match syn::parse::<syn::ItemImpl>(input) {
-        Ok(item_impl) => server::generate_server_impl(args, item_impl),
-        Err(_) => syn::Error::new(
-            proc_macro2::Span::call_site(),
-            "The #[server] attribute can only be applied to impl blocks. \
-                 This is the idiomatic Rust pattern that separates data from behavior.",
-        )
-        .to_compile_error()
-        .into(),
-    }
+    v3::server::generate_v3_server(args, input)
 }
 
 /// Marks a method as a tool handler
