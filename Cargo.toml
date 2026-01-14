@@ -2,6 +2,7 @@
 
 [workspace]
 members = [
+    "crates/turbomcp-types",             # v3.0: Unified types (THE source of truth)
     "crates/turbomcp-core",              # v3.0: no_std core types (foundation layer)
     "crates/turbomcp-transport-traits",  # v3.0: lean transport traits (foundation layer)
     "crates/turbomcp-stdio",             # v3.0: STDIO transport (extracted)

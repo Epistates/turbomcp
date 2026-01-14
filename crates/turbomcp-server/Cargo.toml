@@ -16,6 +16,7 @@ rust-version = "1.89.0"
 
 [dependencies]
 
+turbomcp-types = { version = "3.0.0-exp.2", path = "../turbomcp-types" }
 turbomcp-protocol = { version = "3.0.0-exp.2", path = "../turbomcp-protocol" }
 turbomcp-transport = { version = "3.0.0-exp.2", path = "../turbomcp-transport", optional = true }
 turbomcp-macros = { version = "3.0.0-exp.2", path = "../turbomcp-macros" }

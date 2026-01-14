@@ -237,6 +237,10 @@ pub type Result<T> = McpResult<T>;
 /// v3.0 Error alias for migration (prefer McpError directly)
 pub type Error = McpError;
 
+// v3.0: Unified handler response types from core
+// These enable the IntoToolResponse pattern for ergonomic tool handlers
+pub use turbomcp_core::response::{Image, IntoToolError, IntoToolResponse, Json, Text, ToolError};
+
 // Core abstractions (merged from turbomcp-core in v2.0.0)
 /// Configuration for protocol components.
 pub mod config;

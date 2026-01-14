@@ -515,8 +515,13 @@ pub use turbomcp_protocol::{
     CallToolRequest,
     CallToolResult,
     ClientCapabilities,
+    // v3.0: Unified handler response types (for macro-generated code)
+    Image,
     InitializeRequest,
     InitializeResult,
+    IntoToolError,
+    IntoToolResponse,
+    Json,
     // JSON-RPC types
     JsonRpcError,
     JsonRpcNotification,
@@ -526,6 +531,8 @@ pub use turbomcp_protocol::{
     MessageId,
     RequestContext,
     ServerCapabilities,
+    Text,
+    ToolError,
 };
 
 // Re-export protocol error types for advanced error handling
@@ -579,7 +586,12 @@ pub mod __macro_support {
     pub use turbomcp_protocol;
     pub use turbomcp_server;
     pub use turbomcp_transport;
+    pub use turbomcp_types;
 }
+
+// v3 pristine architecture re-exports
+// Users can access v3 types via turbomcp::v3::*
+pub use turbomcp_types;
 
 // v3.0: Legacy re-exports removed. Use __macro_support for macro-generated code.
 
@@ -761,6 +773,14 @@ pub mod prelude {
     pub use turbomcp_protocol::types::{
         Content, GetPromptResult, Prompt, ReadResourceResult, Resource, TextContent, Tool,
     };
+
+    // v3.0: Unified handler response types for ergonomic tool handlers
+    // These enable the IntoToolResponse pattern (like axum's IntoResponse)
+    pub use turbomcp_protocol::{Image, IntoToolError, IntoToolResponse, Json, Text, ToolError};
+
+    // v3 pristine architecture types
+    // These provide the McpHandler trait and transport runners
+    pub use turbomcp_server::v3::{McpHandler, McpHandlerExt};
 
     // Re-export commonly needed external types
     pub use async_trait::async_trait;

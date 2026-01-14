@@ -69,6 +69,7 @@ async-stream = { version = "0.3", optional = true }
 # Internal dependencies (always required)
 # CRITICAL: Use default-features = false to prevent feature leakage
 
+turbomcp-types = { version = "3.0.0-exp.2", path = "../turbomcp-types" }  # v3 types for macro support
 turbomcp-protocol = { version = "3.0.0-exp.2", path = "../turbomcp-protocol", default-features = false }
 turbomcp-transport = { version = "3.0.0-exp.2", path = "../turbomcp-transport", default-features = false }
 turbomcp-server = { version = "3.0.0-exp.2", path = "../turbomcp-server", default-features = false }
@@ -103,6 +104,10 @@ required-features = ["stdio"]
 
 [[example]]
 name = "macro_server"
+required-features = ["stdio"]
+
+[[example]]
+name = "v3_calculator"
 required-features = ["stdio"]
 
 [[example]]
