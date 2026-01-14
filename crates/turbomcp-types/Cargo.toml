@@ -1,0 +1,39 @@
+[package]
+name = "turbomcp-types"
+version = "3.0.0-exp.2"
+edition = "2024"
+rust-version = "1.89.0"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "Core types for TurboMCP - the foundation of the MCP SDK"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+documentation = "https://docs.rs/turbomcp-types"
+keywords = ["mcp", "types", "protocol", "ai", "llm"]
+categories = ["data-structures", "encoding"]
+readme = "README.md"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = ["std"]
+# Standard library support (enables HashMap, better error handling)
+std = ["serde/std", "serde_json/std"]
+# Allocator support without full std (for no_std + alloc environments)
+alloc = ["serde/alloc"]
+# JSON Schema generation for tool input schemas
+schema = ["dep:schemars"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Optional: JSON Schema generation
+schemars = { version = "1.0", optional = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
