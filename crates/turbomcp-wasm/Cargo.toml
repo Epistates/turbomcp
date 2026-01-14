@@ -28,6 +28,9 @@ console-log = ["browser", "console_error_panic_hook"]
 wasm-server = ["dep:worker", "dep:schemars", "dep:hashbrown", "wasm-bindgen", "wasm-bindgen-futures", "serde-wasm-bindgen", "js-sys"]
 # Procedural macros for zero-boilerplate WASM MCP server development
 macros = ["wasm-server", "dep:turbomcp-wasm-macros"]
+# Native backend support - enables into_native_server() generation
+# When enabled, servers can run on both WASM and native (stdio/http/tcp/etc)
+native = ["macros", "turbomcp-wasm-macros/native", "dep:turbomcp"]
 
 [dependencies]
 # Core MCP types - no_std compatible with WASM optimizations
@@ -66,6 +69,9 @@ hashbrown = { version = "0.15", optional = true }
 # Procedural macros for zero-boilerplate WASM MCP server development
 turbomcp-wasm-macros = { workspace = true, optional = true }
 
+# Native MCP server (optional - for portable servers)
+turbomcp = { workspace = true, optional = true }
+
 [dependencies.web-sys]
 version = "0.3.83"
 optional = true
@@ -95,6 +101,7 @@ features = [
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+tokio = { workspace = true, features = ["full"] }
 
 [package.metadata.docs.rs]
 targets = ["wasm32-unknown-unknown"]

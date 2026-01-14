@@ -16,6 +16,12 @@ readme = "README.md"
 [lib]
 proc-macro = true
 
+[features]
+default = []
+# Generate native server backend (into_native_server) in addition to WASM backend
+# When enabled, the macro generates code that depends on the `turbomcp` crate
+native = []
+
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0"

@@ -4,65 +4,10 @@ use serde::{Deserialize, Serialize};
 use turbomcp_core::types::content::{Content, PromptMessage};
 use turbomcp_core::types::core::Role;
 
-/// Result from a tool execution
-#[derive(Debug, Clone, Serialize)]
-pub struct ToolResult {
-    /// Content returned by the tool
-    pub content: Vec<Content>,
-    /// Whether the tool execution resulted in an error
-    #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
-    pub is_error: Option<bool>,
-}
-
-impl ToolResult {
-    /// Create a successful text result
-    pub fn text(text: impl Into<String>) -> Self {
-        Self {
-            content: vec![Content::Text {
-                text: text.into(),
-                annotations: None,
-            }],
-            is_error: None,
-        }
-    }
-
-    /// Create a successful JSON result
-    pub fn json<T: Serialize>(value: &T) -> Result<Self, serde_json::Error> {
-        let text = serde_json::to_string_pretty(value)?;
-        Ok(Self::text(text))
-    }
-
-    /// Create an error result
-    pub fn error(message: impl Into<String>) -> Self {
-        Self {
-            content: vec![Content::Text {
-                text: message.into(),
-                annotations: None,
-            }],
-            is_error: Some(true),
-        }
-    }
-
-    /// Create a result with multiple content items
-    pub fn contents(contents: Vec<Content>) -> Self {
-        Self {
-            content: contents,
-            is_error: None,
-        }
-    }
-
-    /// Create an image result (base64 encoded)
-    pub fn image(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
-        Self {
-            content: vec![Content::Image {
-                data: data.into(),
-                mime_type: mime_type.into(),
-                annotations: None,
-            }],
-            is_error: None,
-        }
-    }
-}
+// Re-export CallToolResult from core as ToolResult for backwards compatibility
+// This allows existing WASM code to continue using `ToolResult` while
+// new code can use either `ToolResult` or `CallToolResult` interchangeably.
+pub use turbomcp_core::types::tools::CallToolResult as ToolResult;
 
 /// Result from reading a resource
 #[derive(Debug, Clone, Serialize)]

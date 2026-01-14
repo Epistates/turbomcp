@@ -246,7 +246,7 @@ mod tests {
         async fn read_user(uri: String) -> Result<ResourceResult, ToolError> {
             let id = uri
                 .split('/')
-                .last()
+                .next_back()
                 .ok_or_else(|| ToolError::new("Invalid URI"))?;
             Ok(ResourceResult::text(&uri, format!("User {}", id)))
         }
