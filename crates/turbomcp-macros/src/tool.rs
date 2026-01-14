@@ -103,6 +103,12 @@ pub fn generate_tool_impl(args: TokenStream, input: TokenStream) -> TokenStream 
 
                 #param_extraction
 
+                // Execute the handler and serialize result to JSON
+                // This maintains backwards compatibility with existing handlers that return
+                // any Serialize type (e.g., custom structs, Vec<T>, etc.)
+                //
+                // For ergonomic returns (String, i32, Json<T>, etc.), users can import
+                // IntoToolResponse from turbomcp::prelude and use those types directly.
                 let result = self.#fn_name(#call_args).await?;
 
                 let text = match ::serde_json::to_value(&result) {
