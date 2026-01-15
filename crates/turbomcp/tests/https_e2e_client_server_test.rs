@@ -149,7 +149,9 @@ impl HttpsTestServer {
     #[tool("Always returns an error")]
     async fn always_fails(&self) -> McpResult<String> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
-        Err(turbomcp::McpError::internal("Intentional HTTPS error for testing"))
+        Err(turbomcp::McpError::internal(
+            "Intentional HTTPS error for testing",
+        ))
     }
 }
 
@@ -249,7 +251,6 @@ fn enable_insecure_tls_for_testing() {
 async fn create_insecure_https_client(
     port: u16,
 ) -> Result<Client<StreamableHttpClientTransport>, Box<dyn std::error::Error + Send + Sync>> {
-
     let url = format!("https://127.0.0.1:{}", port);
 
     let config = StreamableHttpClientConfig {
@@ -354,7 +355,10 @@ async fn test_e2e_https_list_tools() {
         .expect("Failed to create HTTPS client");
 
     // List tools
-    let tools = client.list_tools().await.expect("Failed to list tools over HTTPS");
+    let tools = client
+        .list_tools()
+        .await
+        .expect("Failed to list tools over HTTPS");
 
     // Validate tools are returned
     assert!(tools.len() >= 4, "Should have at least 4 tools");
@@ -363,7 +367,10 @@ async fn test_e2e_https_list_tools() {
     assert!(tool_names.contains(&"echo"), "Should have echo tool");
     assert!(tool_names.contains(&"add"), "Should have add tool");
     assert!(tool_names.contains(&"info"), "Should have info tool");
-    assert!(tool_names.contains(&"get_call_count"), "Should have get_call_count tool");
+    assert!(
+        tool_names.contains(&"get_call_count"),
+        "Should have get_call_count tool"
+    );
 
     server_task.abort();
 }
@@ -520,7 +527,10 @@ async fn test_e2e_https_error_handling() {
     let result = client.call_tool("always_fails", None).await;
 
     // Should receive error
-    assert!(result.is_err(), "Should receive error from failing tool over HTTPS");
+    assert!(
+        result.is_err(),
+        "Should receive error from failing tool over HTTPS"
+    );
 
     // A successful call should still work after error
     let success_result = client

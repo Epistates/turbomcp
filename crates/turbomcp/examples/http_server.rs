@@ -146,7 +146,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if enable_tls {
         println!("🔐 TLS/HTTPS enabled");
         println!("   Using cert.pem and key.pem from current directory");
-        println!("   Generate with: openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes -subj \"/CN=localhost\"\n");
+        println!(
+            "   Generate with: openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes -subj \"/CN=localhost\"\n"
+        );
     } else {
         println!("📝 TLS disabled (HTTP mode)");
         println!(
@@ -157,9 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(not(feature = "tls"))]
     {
         println!("📝 TLS feature not compiled");
-        println!(
-            "   To enable HTTPS: cargo run --example http_server --features \"http,tls\"\n"
-        );
+        println!("   To enable HTTPS: cargo run --example http_server --features \"http,tls\"\n");
     }
 
     println!("Test with curl (see docs in example source code)\n");

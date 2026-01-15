@@ -175,10 +175,11 @@ impl ServerTlsConfig {
         use std::io::BufReader;
 
         // Read certificate file
-        let cert_file = File::open(&self.cert_file).map_err(|e| TlsError::CertificateReadError {
-            path: self.cert_file.clone(),
-            source: e,
-        })?;
+        let cert_file =
+            File::open(&self.cert_file).map_err(|e| TlsError::CertificateReadError {
+                path: self.cert_file.clone(),
+                source: e,
+            })?;
 
         // Read private key file
         let key_file = File::open(&self.key_file).map_err(|e| TlsError::KeyReadError {
