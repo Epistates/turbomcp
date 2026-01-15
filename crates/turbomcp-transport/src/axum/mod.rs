@@ -25,8 +25,13 @@ pub mod tests;
 // Re-export main public types (avoiding glob conflicts)
 pub use config::{
     AuthConfig, CorsConfig, Environment, McpServerConfig, RateLimitConfig, SecurityConfig,
-    TlsConfig,
+    ServerTlsConfig, TlsVersion,
 };
+
+// Backward compatibility re-export
+#[doc(hidden)]
+#[allow(deprecated)]
+pub use config::TlsConfig;
 pub use handlers::{
     SessionInfo, capabilities_handler, health_handler, json_rpc_handler, metrics_handler,
     sse_handler, websocket_handler,

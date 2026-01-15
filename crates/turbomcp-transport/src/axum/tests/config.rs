@@ -7,6 +7,7 @@
 mod tests {
     use crate::axum::config::*;
     use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     #[test]
@@ -177,14 +178,14 @@ mod tests {
         // Instead of testing environment variable loading, test the parsing functions
 
         // Test TLS version parsing
-        let tls_config = TlsConfig {
-            cert_file: "/etc/ssl/certs/server.pem".to_string(),
-            key_file: "/etc/ssl/private/server.key".to_string(),
-            min_version: TlsVersion::TlsV1_3,
-            enable_http2: true,
-        };
-        assert_eq!(tls_config.cert_file, "/etc/ssl/certs/server.pem");
-        assert_eq!(tls_config.key_file, "/etc/ssl/private/server.key");
+        let tls_config = TlsConfig::new(
+            "/etc/ssl/certs/server.pem",
+            "/etc/ssl/private/server.key",
+        )
+        .with_min_version(TlsVersion::TlsV1_3)
+        .with_http2(true);
+        assert_eq!(tls_config.cert_file, PathBuf::from("/etc/ssl/certs/server.pem"));
+        assert_eq!(tls_config.key_file, PathBuf::from("/etc/ssl/private/server.key"));
         assert!(matches!(tls_config.min_version, TlsVersion::TlsV1_3));
         assert!(tls_config.enable_http2);
 
@@ -237,12 +238,12 @@ mod tests {
 
     #[test]
     fn test_tls_config_builder() {
-        let config = TlsConfig::new("cert.pem".to_string(), "key.pem".to_string())
+        let config = TlsConfig::new("cert.pem", "key.pem")
             .with_min_version(TlsVersion::TlsV1_3)
             .with_http2(true);
 
-        assert_eq!(config.cert_file, "cert.pem");
-        assert_eq!(config.key_file, "key.pem");
+        assert_eq!(config.cert_file, PathBuf::from("cert.pem"));
+        assert_eq!(config.key_file, PathBuf::from("key.pem"));
         assert!(matches!(config.min_version, TlsVersion::TlsV1_3));
         assert!(config.enable_http2);
     }

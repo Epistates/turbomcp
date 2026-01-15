@@ -27,6 +27,10 @@ use crate::security::{
     SecurityConfigBuilder, SecurityValidator, SessionSecurityConfig, SessionSecurityManager,
 };
 
+// TLS configuration (feature-gated)
+#[cfg(feature = "tls")]
+use crate::axum::config::tls::ServerTlsConfig;
+
 // Bidirectional MCP support
 use turbomcp_protocol::jsonrpc::JsonRpcResponse;
 
@@ -48,9 +52,10 @@ pub struct StreamableHttpConfig {
     /// Bind address (default: 127.0.0.1:8080 for security)
     pub bind_addr: String,
 
-    /// Base URL including scheme (e.g., "http://127.0.0.1:8080")
+    /// Base URL including scheme (e.g., "http://127.0.0.1:8080" or "https://...")
     ///
     /// Constructed by builder from bind_addr and TLS config.
+    /// Uses "https://" when TLS is enabled, "http://" otherwise.
     /// Used for MCP endpoint discovery to ensure protocol compliance.
     pub base_url: String,
 
@@ -68,6 +73,13 @@ pub struct StreamableHttpConfig {
 
     /// Session manager
     pub session_manager: Arc<SessionSecurityManager>,
+
+    /// TLS configuration for HTTPS support (optional)
+    ///
+    /// When set, the server will use HTTPS instead of HTTP.
+    /// Requires the `tls` feature to be enabled.
+    #[cfg(feature = "tls")]
+    pub tls_config: Option<ServerTlsConfig>,
 }
 
 impl Default for StreamableHttpConfig {
@@ -116,6 +128,10 @@ pub struct StreamableHttpConfigBuilder {
     allow_any_origin: bool,
     require_authentication: bool,
     rate_limit: Option<(u32, Duration)>,
+
+    // TLS configuration (feature-gated)
+    #[cfg(feature = "tls")]
+    tls_config: Option<ServerTlsConfig>,
 }
 
 impl Default for StreamableHttpConfigBuilder {
@@ -136,6 +152,8 @@ impl StreamableHttpConfigBuilder {
             allow_any_origin: false,
             require_authentication: false,
             rate_limit: Some((100, Duration::from_secs(60))), // Default: 100 req/min
+            #[cfg(feature = "tls")]
+            tls_config: None,
         }
     }
 
@@ -215,6 +233,80 @@ impl StreamableHttpConfigBuilder {
         self
     }
 
+    /// Enable TLS/HTTPS with certificate and key files
+    ///
+    /// This enables HTTPS mode for the server. The server will listen for
+    /// TLS connections and the base URL will use `https://` scheme.
+    ///
+    /// # Arguments
+    ///
+    /// * `cert_file` - Path to PEM-encoded certificate file
+    /// * `key_file` - Path to PEM-encoded private key file
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
+    ///
+    /// let config = StreamableHttpConfigBuilder::new()
+    ///     .with_bind_address("0.0.0.0:3000")
+    ///     .with_tls("cert.pem", "key.pem")
+    ///     .build();
+    /// ```
+    ///
+    /// # Certificate Generation
+    ///
+    /// For development, generate a self-signed certificate:
+    /// ```bash
+    /// openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem \
+    ///     -days 365 -nodes -subj "/CN=localhost"
+    /// ```
+    ///
+    /// For production, use certificates from a trusted CA (e.g., Let's Encrypt).
+    #[cfg(feature = "tls")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
+    pub fn with_tls(
+        mut self,
+        cert_file: impl Into<std::path::PathBuf>,
+        key_file: impl Into<std::path::PathBuf>,
+    ) -> Self {
+        self.tls_config = Some(ServerTlsConfig::new(cert_file, key_file));
+        self
+    }
+
+    /// Enable TLS/HTTPS with advanced configuration
+    ///
+    /// Use this method for fine-grained control over TLS settings like
+    /// minimum TLS version and HTTP/2 support.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use turbomcp_transport::streamable_http::StreamableHttpConfigBuilder;
+    /// use turbomcp_transport::axum::config::tls::{ServerTlsConfig, TlsVersion};
+    ///
+    /// let tls = ServerTlsConfig::new("cert.pem", "key.pem")
+    ///     .with_min_version(TlsVersion::TlsV1_3)
+    ///     .with_http2(true);
+    ///
+    /// let config = StreamableHttpConfigBuilder::new()
+    ///     .with_bind_address("0.0.0.0:3000")
+    ///     .with_tls_config(tls)
+    ///     .build();
+    /// ```
+    #[cfg(feature = "tls")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
+    pub fn with_tls_config(mut self, tls_config: ServerTlsConfig) -> Self {
+        self.tls_config = Some(tls_config);
+        self
+    }
+
+    /// Check if TLS is enabled
+    #[cfg(feature = "tls")]
+    pub fn is_tls_enabled(&self) -> bool {
+        self.tls_config.is_some()
+    }
+
     /// Build the configuration
     pub fn build(self) -> StreamableHttpConfig {
         let mut security_builder = SecurityConfigBuilder::new()
@@ -231,9 +323,17 @@ impl StreamableHttpConfigBuilder {
         let session_manager =
             Arc::new(SessionSecurityManager::new(SessionSecurityConfig::default()));
 
-        // Construct base URL with scheme
-        // Future: Support https:// based on TLS configuration
-        let base_url = format!("http://{}", self.bind_addr);
+        // Construct base URL with appropriate scheme based on TLS config
+        #[cfg(feature = "tls")]
+        let scheme = if self.tls_config.is_some() {
+            "https"
+        } else {
+            "http"
+        };
+        #[cfg(not(feature = "tls"))]
+        let scheme = "http";
+
+        let base_url = format!("{}://{}", scheme, self.bind_addr);
 
         StreamableHttpConfig {
             bind_addr: self.bind_addr,
@@ -243,6 +343,8 @@ impl StreamableHttpConfigBuilder {
             replay_buffer_size: self.replay_buffer_size,
             security_validator,
             session_manager,
+            #[cfg(feature = "tls")]
+            tls_config: self.tls_config,
         }
     }
 }

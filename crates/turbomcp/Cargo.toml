@@ -213,6 +213,7 @@ full = [
     "websocket",
     "tcp",
     "unix",
+    "tls",
 ]
 
 # For full-stack development (server + client in single binary)
@@ -225,6 +226,7 @@ full-stack = [
     "websocket",
     "tcp",
     "unix",
+    "tls",
     "client-integration",
 ]
 
@@ -273,6 +275,7 @@ http = [
 websocket = ["turbomcp-transport/websocket", "turbomcp-server/websocket"] # WebSocket bidirectional
 tcp = ["turbomcp-transport/tcp", "turbomcp-server/tcp", "turbomcp-macros/tcp"]  # Raw TCP sockets
 unix = ["turbomcp-transport/unix", "turbomcp-server/unix", "turbomcp-macros/unix"]  # Unix domain sockets
+tls = ["http", "turbomcp-transport/tls", "turbomcp-server/tls"]  # TLS/HTTPS support for HTTP
 
 # Performance
 simd = ["turbomcp-protocol/simd", "simd-json", "sonic-rs"]  # SIMD JSON acceleration

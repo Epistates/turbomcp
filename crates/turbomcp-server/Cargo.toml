@@ -51,6 +51,9 @@ secrecy = { version = "0.8", features = ["serde"], optional = true }
 http = { version = "1.0" }  # Core HTTP types for Service abstraction (lightweight)
 axum = { version = "0.8.4", optional = true, features = ["ws", "json"] }
 async-stream = { version = "0.3", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+hyper = { version = "1.0", optional = true, features = ["server", "http1"] }
+hyper-util = { version = "0.1", optional = true, features = ["tokio"] }
 
 # Security (Sprint 2)
 syn = { version = "2", features = ["parsing", "full"], optional = true }  # Handler name validation
@@ -88,8 +91,9 @@ http = ["dep:turbomcp-transport", "turbomcp-transport/http", "middleware", "dep:
 websocket = ["dep:turbomcp-transport", "turbomcp-transport/websocket", "http"]
 tcp = ["dep:turbomcp-transport", "turbomcp-transport/tcp"]
 unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
+tls = ["http", "turbomcp-transport/tls", "dep:tokio-rustls", "dep:hyper", "dep:hyper-util"]
 # MCP specification features
 mcp-tasks = ["turbomcp-protocol/mcp-tasks"]  # Tasks API (MCP 2025-11-25 draft, SEP-1686)
 # Convenience feature bundles
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]
-full = ["all-transports", "auth", "dpop", "sessions", "security", "input-validation", "multi-tenancy", "health-checks", "metrics", "middleware", "rate-limiting", "mcp-tasks"]
+full = ["all-transports", "auth", "dpop", "sessions", "security", "input-validation", "multi-tenancy", "health-checks", "metrics", "middleware", "rate-limiting", "mcp-tasks", "tls"]

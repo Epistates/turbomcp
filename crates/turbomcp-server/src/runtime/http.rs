@@ -587,14 +587,31 @@ where
     // Bind to address
     let listener = tokio::net::TcpListener::bind(&addr).await?;
 
+    // Check if TLS is configured
+    #[cfg(feature = "tls")]
+    let tls_enabled = config.tls_config.is_some();
+    #[cfg(not(feature = "tls"))]
+    let tls_enabled = false;
+
+    let scheme = if tls_enabled { "https" } else { "http" };
+
     tracing::info!("🚀 MCP 2025-11-25 Compliant HTTP Transport Ready");
     tracing::info!("   Server: {} v{}", server_info.name, server_info.version);
-    tracing::info!("   Listening: {}", addr);
+    tracing::info!("   Listening: {}://{}", scheme, addr);
     tracing::info!("   Endpoint: {} (GET/POST/DELETE)", path);
     tracing::info!("   Security: Origin validation, rate limiting, localhost binding");
     tracing::info!("   Features: Full bidirectional support, SSE streaming, session management");
+    if tls_enabled {
+        tracing::info!("   TLS: Enabled (HTTPS mode)");
+    }
 
-    // Run server
+    // Run server with or without TLS
+    #[cfg(feature = "tls")]
+    if let Some(ref tls_config) = config.tls_config {
+        return run_with_tls(listener, app, tls_config).await;
+    }
+
+    // Run plain HTTP server (default path)
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
@@ -602,6 +619,85 @@ where
     .await?;
 
     Ok(())
+}
+
+/// Run HTTP server with TLS encryption
+///
+/// This function handles the TLS handshake for each incoming connection
+/// and serves the application over HTTPS.
+#[cfg(feature = "tls")]
+async fn run_with_tls(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    tls_config: &turbomcp_transport::axum::config::tls::ServerTlsConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use hyper::server::conn::http1;
+    use hyper_util::rt::TokioIo;
+    use hyper_util::service::TowerToHyperService;
+    use tokio_rustls::TlsAcceptor;
+    use tower::Service;
+
+    // Load TLS configuration and create acceptor
+    let rustls_config = tls_config.load_rustls_config().map_err(|e| {
+        tracing::error!("Failed to load TLS configuration: {}", e);
+        e
+    })?;
+    let acceptor = TlsAcceptor::from(rustls_config);
+
+    tracing::info!("   TLS: Certificate loaded successfully");
+
+    // Accept connections in a loop
+    loop {
+        let (stream, remote_addr) = match listener.accept().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                tracing::warn!("Failed to accept TCP connection: {}", e);
+                continue;
+            }
+        };
+
+        let acceptor = acceptor.clone();
+        let app = app.clone();
+
+        // Spawn a task to handle this connection
+        tokio::spawn(async move {
+            // Perform TLS handshake
+            let tls_stream = match acceptor.accept(stream).await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    tracing::debug!("TLS handshake failed from {}: {}", remote_addr, e);
+                    return;
+                }
+            };
+
+            // Create service with connect info
+            let mut make_service = app
+                .clone()
+                .into_make_service_with_connect_info::<SocketAddr>();
+
+            let tower_service = match make_service.call(remote_addr).await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("Failed to create service: {:?}", e);
+                    return;
+                }
+            };
+
+            // Wrap Tower service for Hyper compatibility
+            let hyper_service = TowerToHyperService::new(tower_service);
+
+            // Serve the connection using HTTP/1.1
+            // Note: HTTP/2 over TLS requires additional configuration with hyper
+            let io = TokioIo::new(tls_stream);
+            if let Err(e) = http1::Builder::new()
+                .serve_connection(io, hyper_service)
+                .await
+            {
+                // Connection errors are common (client disconnect, etc.)
+                tracing::debug!("Connection error from {}: {}", remote_addr, e);
+            }
+        });
+    }
 }
 
 /// POST handler - Receives client messages and returns SSE stream or JSON response

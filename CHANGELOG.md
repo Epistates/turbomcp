@@ -7,14 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.3.7] - 2026-01-05
+## [2.3.7] - 2026-01-15
 
 ### Added
+- **TLS/HTTPS Server Support** (`turbomcp-transport`, `turbomcp-server`) - HTTP servers can now run with TLS/HTTPS encryption. Addresses [#12](https://github.com/anthropics/turbomcp/issues/12) where users connecting with MCP Inspector via `https://` received SSL errors.
+  - New `ServerTlsConfig` for configuring TLS certificates and version requirements
+  - `StreamableHttpConfigBuilder::with_tls(cert_path, key_path)` for simple HTTPS setup
+  - `StreamableHttpConfigBuilder::with_tls_config(config)` for advanced TLS configuration
+  - Environment variable support: `TLS_CERT_FILE`, `TLS_KEY_FILE`, `ENABLE_TLS`
+  - Defaults to TLS 1.3 with HTTP/1.1 (HTTP/2 support planned)
+- **HTTPS End-to-End Tests** (`turbomcp`) - Comprehensive integration tests validating client-server TLS communication including concurrent connections, error handling, and correlation routing over encrypted channels.
 - **Protocol Compliance Tests** (`turbomcp-protocol`) - Added comprehensive MCP basic protocol compliance tests to ensure strict adherence to the specification.
 
 ### Fixed
 - **WebSocket Stability** (`turbomcp-transport`) - Fixed a test hang issue by checking connection state before receiving messages, improving overall WebSocket transport reliability.
 - **Protocol Capabilities** - Updated server middleware and protocol capabilities to better align with compliance requirements.
+- **Rustls Crypto Provider** (`turbomcp-transport`) - Fixed panic when loading TLS certificates by explicitly installing the AWS-LC-RS crypto provider before rustls configuration.
 
 ## [2.3.6] - 2026-01-03
 

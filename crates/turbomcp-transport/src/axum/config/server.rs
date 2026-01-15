@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use super::{
-    AuthConfig, CorsConfig, Environment, RateLimitConfig, SecurityConfig, TlsConfig, TlsVersion,
+    AuthConfig, CorsConfig, Environment, RateLimitConfig, SecurityConfig, ServerTlsConfig, TlsVersion,
 };
 
 /// Production-grade configuration for MCP server with comprehensive production settings
@@ -34,7 +34,7 @@ pub struct McpServerConfig {
     pub rate_limiting: RateLimitConfig,
 
     /// TLS configuration
-    pub tls: Option<TlsConfig>,
+    pub tls: Option<ServerTlsConfig>,
 
     /// Authentication configuration
     pub auth: Option<AuthConfig>,
@@ -132,9 +132,9 @@ impl McpServerConfig {
 
     /// Builder method: Configure TLS
     pub fn with_tls(mut self, cert_file: String, key_file: String) -> Self {
-        self.tls = Some(TlsConfig {
-            cert_file,
-            key_file,
+        self.tls = Some(ServerTlsConfig {
+            cert_file: cert_file.into(),
+            key_file: key_file.into(),
             min_version: TlsVersion::TlsV1_3,
             enable_http2: true,
         });
@@ -154,13 +154,13 @@ impl McpServerConfig {
     }
 
     /// Load TLS configuration from environment variables
-    fn load_tls_from_env() -> Option<TlsConfig> {
+    fn load_tls_from_env() -> Option<ServerTlsConfig> {
         let cert_file = std::env::var("TURBOMCP_TLS_CERT").ok()?;
         let key_file = std::env::var("TURBOMCP_TLS_KEY").ok()?;
 
-        Some(TlsConfig {
-            cert_file,
-            key_file,
+        Some(ServerTlsConfig {
+            cert_file: cert_file.into(),
+            key_file: key_file.into(),
             min_version: std::env::var("TURBOMCP_TLS_MIN_VERSION")
                 .ok()
                 .and_then(|v| match v.as_str() {

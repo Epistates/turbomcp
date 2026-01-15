@@ -47,8 +47,9 @@ brotli = { version = "8.0.2", optional = true }
 lz4_flex = { version = "0.11", optional = true }
 
 # TLS support (optional)
-rustls = { version = "0.23", optional = true }
+rustls = { version = "0.23", optional = true, default-features = false, features = ["aws-lc-rs", "tls12"] }
 tokio-rustls = { version = "0.26", optional = true }
+rustls-pemfile = { version = "2.2", optional = true }
 
 # Observability
 tracing = { workspace = true }
@@ -100,7 +101,7 @@ quic = []
 compression = ["flate2", "brotli", "lz4_flex"]
 
 # TLS support
-tls = ["rustls", "tokio-rustls"]
+tls = ["rustls", "tokio-rustls", "rustls-pemfile"]
 
 # Authentication
 auth = ["dep:turbomcp-auth", "http"]
