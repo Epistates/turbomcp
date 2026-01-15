@@ -42,59 +42,20 @@ use turbomcp_transport::streamable_http_client::{
 };
 
 // ============================================================================
-// Test Certificates
+// Dynamic Certificate Generation
 // ============================================================================
 
-// Self-signed test certificate (DO NOT USE IN PRODUCTION)
-// Generated with: openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=localhost"
-const TEST_CERT: &str = r#"-----BEGIN CERTIFICATE-----
-MIIDCTCCAfGgAwIBAgIUKAN5U2KL+G9rFdZZ10t88qju/YswDQYJKoZIhvcNAQEL
-BQAwFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MDExNTE1MDkyNloXDTI3MDEx
-NTE1MDkyNlowFDESMBAGA1UEAwwJbG9jYWxob3N0MIIBIjANBgkqhkiG9w0BAQEF
-AAOCAQ8AMIIBCgKCAQEA2TjlszqLHJ6WPPFp+mDrJd50hZeT4mo9z9qWwvFZfKBz
-PRIMMtpMWnLoJHVJHj4nhTIpDEZbtQD6tGwg24IRWMoGCqm5F+S7FjNtDaZ9PXtz
-b1xjj2Pdx2DDV5ZgEgJWuYVbZHgPy2XRXI05gNcQZMvH2UB6IraGq3Ug07VFBlno
-XdEW4EkzqmZvz/8+KFYebLt8ZGmXwuBsbI9dMTBlXqVtvVFOVpmgT/YOnXJ3OJgT
-ywjI3DyVhIbMogmhFUyWdaJXuKWMyEf7/m1gky3DKPwjEHySsCoXfgoiWfyeTG5m
-8/GMSx9ShdE7lwBXn8+aff398UQ4LHEwDKncfVs7mQIDAQABo1MwUTAdBgNVHQ4E
-FgQUozteL5+cW0bdTFQ+sPWDQ1qd4qAwHwYDVR0jBBgwFoAUozteL5+cW0bdTFQ+
-sPWDQ1qd4qAwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAX3PL
-0vikt5hSPtaJFVC9OiqcDsGRNBgeuW4HIyCndEZOyf9z4YomyhUbIh+HFCwsC1w7
-t7t8/KyhDW3uuCymWDN4JMvxF0wRFks5UVlaxIaFhmPNlKG2v3CiWJTzBX/X/MX1
-VU+9yXMUEEsKU+z+gahvyOonVfswWA9je5Aqr7ITmXiuFmIKNiAy6XTZaqxBhufI
-WF6PqkaVcjaihs7UVsI0Uohku25iHG9DM+G+3p3DHbtWlJeCOegcXj4FB3EjUvWC
-uWOjFHypnNK66HP08Vpr/LLgrZY7fBRS0AWBq3Vij8wdZ/8q2rH133BbxEKBIvi1
-46DRdH2OrlxTfwS3TA==
------END CERTIFICATE-----"#;
-
-const TEST_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDZOOWzOoscnpY8
-8Wn6YOsl3nSFl5Piaj3P2pbC8Vl8oHM9Egwy2kxacugkdUkePieFMikMRlu1APq0
-bCDbghFYygYKqbkX5LsWM20Npn09e3NvXGOPY93HYMNXlmASAla5hVtkeA/LZdFc
-jTmA1xBky8fZQHoitoardSDTtUUGWehd0RbgSTOqZm/P/z4oVh5su3xkaZfC4Gxs
-j10xMGVepW29UU5WmaBP9g6dcnc4mBPLCMjcPJWEhsyiCaEVTJZ1ole4pYzIR/v+
-bWCTLcMo/CMQfJKwKhd+CiJZ/J5Mbmbz8YxLH1KF0TuXAFefz5p9/f3xRDgscTAM
-qdx9WzuZAgMBAAECggEAFm/kdwm7JIjDdTZM93AjHdlfYQyt+W82pQV7uNVf5En4
-+UQH10lZ5WZU0O498BYktCMBHyvVzWmVW8VG9BF4a/rLGrca/6swQWvsreImcc8y
-dlxdSsp6lh1qM/37/KQ588YA8YzeuchRsq0CNWsRfg3X/dplezguCyAJNOD2iSAX
-rru0nruTGpyAVE8KDNHI1TusKheJFdkO7s/aPdx8mtq1eJ3RTQ8rXKyGt6slbLwM
-Pgx0hMW8MP51yxhKcTiNMuDjdDVu+VVBIOqaK00jq+3YvSd/YADXQdt5AdgsX0T3
-pguDgY9gF9wGIzUjwjhROUHxZksqG3C+zX7QBZg6AQKBgQD+nhN1/IFHpojry9/p
-tdpD9XcEknlmKl2h8l8c4n1gg056oz9ntHIpNc6uUbiahy30ZhA9GhfvYZufPoDH
-Tm2QbDDJeFjX3Zzn6rALozK7t7E3KgeyoK0shkXSpDi/SG3pkovBxDGtuvMyLo7F
-aa1l19uXrVZAQXH8dcRzFsRxmQKBgQDaZtdOquyzZnJNCqL8qNVom0diRLJtMN3w
-aIbEEITV9bXK8RCh5ne3eSfA8xxjEnbkP8ZWCiW1j9wtM85NB5J9La76OIhMy5yQ
-D0S1xIpWy4T+QEX4m9Hwu3LqIn4h6EOjOv9VHFvS1e8WeEiKYkN8sWXMW8yi26TV
-GmM0sj9aAQKBgQDdK7L76jriYmbNbGs0OCNApRidgB60AFkVM9Qq4xLFo0mofeW1
-z6ja40KFabdRg9sHUSEJ8oCYD9F+omx6tEW4DkLSvxdta7PAQLxrX3fSV944bOoC
-4E+NPZWpQ72HawMOwZ1k02fT4XEfRhH+qa1Vqgu11Xv2lOLOyf27eytpAQKBgEDj
-Ew7lS2PViRoIkfn880Kb965jeJtmTFoTxA5WVhD3amZ8DpP7VBAnp770u7dXkgko
-RXXkl+WEc0bewGk0WbplKzpeN2iRiddnIePbG7rDxqR/VgqRyOL73h1f2Bec2ROT
-AK85uLJAK0OCwxKSNTjDv9niYD72gNdrepP6bUYBAoGAVZICJNxNs4M2WNPIoZnI
-WA7iuNB1iOVoUykEi8iemeRVaoxf3sV/jV+pFhPXWTdWCMYQ5OIDGqvNSM+y9VIs
-qH5Z6W/8+zayLFahVNgeM0wjft3FvZS3sGLDCu1/7w274S8nqgyk9uKw0/oW0zPd
-LrjbKu2ct5m+6jC1xP0YbL4=
------END PRIVATE KEY-----"#;
+/// Generate a self-signed certificate and private key for testing
+///
+/// Uses rcgen to dynamically create certificates at test runtime,
+/// avoiding embedded secrets in source code (security best practice).
+fn generate_test_cert() -> (String, String) {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+        .expect("Failed to generate test certificate");
+    let cert_pem = cert.cert.pem();
+    let key_pem = cert.key_pair.serialize_pem();
+    (cert_pem, key_pem)
+}
 
 // ============================================================================
 // Test Server Implementation
@@ -160,15 +121,19 @@ impl HttpsTestServer {
 // ============================================================================
 
 /// Create temporary certificate files for testing
+///
+/// Generates fresh certificates using rcgen at runtime.
 fn create_temp_cert_files() -> (NamedTempFile, NamedTempFile) {
+    let (cert_pem, key_pem) = generate_test_cert();
+
     let mut cert_file = NamedTempFile::new().expect("Failed to create temp cert file");
     let mut key_file = NamedTempFile::new().expect("Failed to create temp key file");
 
     cert_file
-        .write_all(TEST_CERT.as_bytes())
+        .write_all(cert_pem.as_bytes())
         .expect("Failed to write cert");
     key_file
-        .write_all(TEST_KEY.as_bytes())
+        .write_all(key_pem.as_bytes())
         .expect("Failed to write key");
 
     (cert_file, key_file)

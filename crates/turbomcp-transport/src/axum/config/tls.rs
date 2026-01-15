@@ -235,28 +235,14 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    // Self-signed test certificate (DO NOT USE IN PRODUCTION)
-    const TEST_CERT: &str = r#"-----BEGIN CERTIFICATE-----
-MIIBkTCB+wIJAKHBfpegPjMCMA0GCSqGSIb3DQEBCwUAMBExDzANBgNVBAMMBnVu
-dXNlZDAeFw0yNDAxMDEwMDAwMDBaFw0yNTAxMDEwMDAwMDBaMBExDzANBgNVBAMM
-BnVudXNlZDBcMA0GCSqGSIb3DQEBAQUAA0sAMEgCQQC6GoJCWTYzQAn/AxN0JDPK
-T4b8TLChN36HYvpNqP7Y3Y6uPr7AqKfNGwOjPOjE7IqN7CWHzL0b0lP7TzZ7Yr7P
-AgMBAAGjUzBRMB0GA1UdDgQWBBQwZTDLLmJYWvP7L2qmPKPnPJNvgTAfBgNVHSME
-GDAWgBQwZTDLLmJYWvP7L2qmPKPnPJNvgTAPBgNVHRMBAf8EBTADAQH/MA0GCSqG
-SIb3DQEBCwUAA0EAOvPQi1jHGnKGrwanPJrkl5JUbzCM7IaF7JJN7IJQNLK0VnOP
-E4Y3BPBH2mlCFEzqcQ3x0P8yrPKIqGIFvAzEQQ==
------END CERTIFICATE-----"#;
-
-    const TEST_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
-MIIBVQIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEAuhqCQlk2M0AJ/wMT
-dCQzyk+G/EywoTd+h2L6Taj+2N2Orj6+wKinzRsDozzoxOyKjewlh8y9G9JT+082
-e2K+zwIDAQABAkA1v8j6x3a7NHmZvP7h8+y7dE4+4C6hN7EWj5E8DTZ2CtGxPJZN
-qm6qPJNZYvPKKGF7R7qwI3X0L6m7k4m5N1GBAiEA5vT3VPxEF6Wk7fP0g6E7m7A8
-7e9EF7FPFxJZsZ7L7gECIQDO0mV7j7OJj3HnX7Y7c3F7d2J7F7pJ7B7M7n7C7L7v
-bwIgBmKO7X7pL7d7D7X7d7k7z7d7B7J7H7F7G7c7N7f7EAECIQCFqE7J7k7X7j7R
-7P7J7W7h7f7n7x7Y7L7D7p7P7c7TpwIhAIZ7T7G7H7p7l7r7m7K7n7q7B7X7z7s7
-N7f7c7k7x7IA
------END PRIVATE KEY-----"#;
+    /// Generate a self-signed certificate and private key for testing
+    fn generate_test_cert() -> (String, String) {
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])
+            .expect("Failed to generate test certificate");
+        let cert_pem = cert.cert.pem();
+        let key_pem = cert.key_pair.serialize_pem();
+        (cert_pem, key_pem)
+    }
 
     #[test]
     fn test_default_config() {
@@ -288,12 +274,28 @@ N7f7c7k7x7IA
 
     #[test]
     fn test_missing_key_file() {
-        // Create a temporary cert file
+        // Generate and write a temporary cert file
+        let (cert_pem, _) = generate_test_cert();
         let mut cert_file = NamedTempFile::new().unwrap();
-        cert_file.write_all(TEST_CERT.as_bytes()).unwrap();
+        cert_file.write_all(cert_pem.as_bytes()).unwrap();
 
         let config = ServerTlsConfig::new(cert_file.path(), "/nonexistent/key.pem");
         let result = config.load_rustls_config();
         assert!(matches!(result, Err(TlsError::KeyReadError { .. })));
+    }
+
+    #[test]
+    fn test_load_valid_certificate() {
+        // Generate valid test certificate and key
+        let (cert_pem, key_pem) = generate_test_cert();
+
+        let mut cert_file = NamedTempFile::new().unwrap();
+        let mut key_file = NamedTempFile::new().unwrap();
+        cert_file.write_all(cert_pem.as_bytes()).unwrap();
+        key_file.write_all(key_pem.as_bytes()).unwrap();
+
+        let config = ServerTlsConfig::new(cert_file.path(), key_file.path());
+        let result = config.load_rustls_config();
+        assert!(result.is_ok(), "Should successfully load valid certificate");
     }
 }

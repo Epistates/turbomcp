@@ -178,9 +178,10 @@ mod tests {
         // Instead of testing environment variable loading, test the parsing functions
 
         // Test TLS version parsing
-        let tls_config = TlsConfig::new("/etc/ssl/certs/server.pem", "/etc/ssl/private/server.key")
-            .with_min_version(TlsVersion::TlsV1_3)
-            .with_http2(true);
+        let tls_config =
+            ServerTlsConfig::new("/etc/ssl/certs/server.pem", "/etc/ssl/private/server.key")
+                .with_min_version(TlsVersion::TlsV1_3)
+                .with_http2(true);
         assert_eq!(
             tls_config.cert_file,
             PathBuf::from("/etc/ssl/certs/server.pem")
@@ -241,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_tls_config_builder() {
-        let config = TlsConfig::new("cert.pem", "key.pem")
+        let config = ServerTlsConfig::new("cert.pem", "key.pem")
             .with_min_version(TlsVersion::TlsV1_3)
             .with_http2(true);
 

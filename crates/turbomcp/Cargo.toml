@@ -90,6 +90,7 @@ serial_test = "3.2"  # Required for integration tests that spawn cargo processes
 
 tokio-tungstenite = "0.28.0"
 proptest = "1.5"
+rcgen = "0.13"  # Dynamic certificate generation for TLS tests
 oauth2 = { version = "5.0", default-features = false, features = ["reqwest"] }  # Required for oauth_integration_tests.rs
 tower = { workspace = true }  # Required for multi_tenant_saas.rs example
 turbomcp-client = { version = "2.3.7", path = "../turbomcp-client" }  # Required for resource subscription tests
