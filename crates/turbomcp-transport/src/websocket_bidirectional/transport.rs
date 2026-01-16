@@ -424,14 +424,12 @@ mod tests {
         let config = WebSocketBidirectionalConfig::default();
         let transport = WebSocketBidirectionalTransport::new(config).await.unwrap();
 
-        // Note: With the new architecture, receive() reads from the incoming channel.
-        // Since no background task is running (not connected), the channel will be empty.
-        // The test needs a timeout since recv() will wait indefinitely.
-        let result =
-            tokio::time::timeout(std::time::Duration::from_millis(100), transport.receive()).await;
+        // With the current implementation, receive() checks connection state first
+        // and returns an error immediately when not connected.
+        let result = transport.receive().await;
 
-        // Should timeout since no messages arrive when not connected
-        assert!(result.is_err(), "Should timeout when not connected");
+        // Should return error since not connected
+        assert!(result.is_err(), "Should error when not connected");
     }
 
     #[tokio::test]
