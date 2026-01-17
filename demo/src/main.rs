@@ -1,84 +1,37 @@
-//! Clean TurboMCP Demo - JSON-RPC ONLY output
+//! TurboMCP Demo - v3 Architecture
 //!
-//! This demo outputs ONLY JSON-RPC messages for MCP STDIO transport compliance.
-//! No logging, no banners, no extra output - pure protocol communication.
+//! This demo showcases the v3 zero-boilerplate MCP server API.
 
-use std::collections::HashMap;
-use turbomcp_protocol::types::{
-    CallToolRequest, CallToolResult, Content, TextContent, Tool, ToolInputSchema,
-};
-use turbomcp_server::{handlers::FunctionToolHandler, ServerBuilder};
+use turbomcp::prelude::*;
 
-/// Simple hello function for MCP testing
-async fn hello(
-    req: CallToolRequest,
-    _ctx: turbomcp_protocol::RequestContext,
-) -> Result<CallToolResult, turbomcp_server::McpError> {
-    let name = req
-        .arguments
-        .as_ref()
-        .and_then(|args| args.get("name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("World");
+#[derive(Clone)]
+struct DemoServer;
 
-    let greeting = format!("Hello, {name}! Welcome to TurboMCP! 🦀⚡");
+#[server(name = "turbomcp-demo", version = "3.0.0")]
+impl DemoServer {
+    /// Say hello to someone
+    #[tool]
+    async fn hello(&self, name: Option<String>) -> String {
+        let name = name.unwrap_or_else(|| "World".to_string());
+        format!("Hello, {name}! Welcome to TurboMCP!")
+    }
 
-    Ok(CallToolResult {
-        content: vec![Content::Text(TextContent {
-            text: greeting,
-            annotations: None,
-            meta: None,
-        })],
-        is_error: None,
-        structured_content: None,
-        _meta: None,
-        ..Default::default()
-    })
+    /// Add two numbers together
+    #[tool]
+    async fn add(&self, a: i64, b: i64) -> i64 {
+        a + b
+    }
+
+    /// Get the current time
+    #[tool]
+    async fn current_time(&self) -> String {
+        chrono::Utc::now().to_rfc3339()
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // CRITICAL: NO LOGGING - stdout reserved for JSON-RPC only
-    // TEST COMMENT TO FORCE REBUILD
-
-    // Create minimal tool schema
-    let tool = Tool {
-        name: "hello".to_string(),
-        title: Some("Hello".to_string()),
-        description: Some("Say hello to someone".to_string()),
-        input_schema: ToolInputSchema {
-            schema_type: "object".to_string(),
-            properties: Some({
-                let mut props = HashMap::new();
-                props.insert(
-                    "name".to_string(),
-                    serde_json::json!({
-                        "type": "string",
-                        "description": "The name to greet"
-                    }),
-                );
-                props
-            }),
-            required: None,
-            additional_properties: Some(false),
-        },
-        output_schema: None,
-        execution: None,
-        annotations: None,
-        meta: None,
-        ..Tool::default()
-    };
-
-    // Build minimal server - STDIO compliant
-    let server = ServerBuilder::new()
-        .name("TurboMCP-Demo")
-        .version("2.0.0")
-        .description("Clean MCP demo - JSON only")
-        .tool("hello", FunctionToolHandler::new(tool, hello))?
-        .build();
-
-    // Run with STDIO - NO logging output
-    server.run_stdio().await?;
-
+    // Run with STDIO - the simplest possible MCP server
+    DemoServer.run().await?;
     Ok(())
 }

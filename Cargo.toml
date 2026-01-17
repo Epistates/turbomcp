@@ -200,6 +200,8 @@ doc-comment = "0.3"
 # All other crates either have empty defaults (removed vestigial `default-features = false`)
 # or useful defaults that should be enabled by default.
 turbomcp = { version = "3.0.0-exp.2", path = "crates/turbomcp" }
+# v3.0: turbomcp-types is THE source of truth for all MCP types
+turbomcp-types = { version = "3.0.0-exp.2", path = "crates/turbomcp-types" }
 # v3.0: turbomcp-core re-extracted as no_std foundation layer
 turbomcp-core = { version = "3.0.0-exp.2", path = "crates/turbomcp-core", default-features = false }
 # v3.0: turbomcp-transport-traits lean transport traits crate

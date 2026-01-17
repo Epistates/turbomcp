@@ -108,8 +108,7 @@ impl PortableServer {
     }
 }
 
-// Native entry point (when `native` feature is enabled)
-#[cfg(feature = "native")]
+// Native entry point
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the portable server
@@ -128,11 +127,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     server.into_native_server()?.run_stdio().await?;
 
     Ok(())
-}
-
-// Stub main for when native feature is not enabled
-#[cfg(not(feature = "native"))]
-fn main() {
-    eprintln!("This example requires the 'native' feature.");
-    eprintln!("Run with: cargo run --example portable_server -p turbomcp-wasm --features native");
 }

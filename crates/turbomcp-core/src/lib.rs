@@ -12,6 +12,32 @@
 //! - `wasm`: Enable WASM-specific optimizations
 //! - `zero-copy`: Enable rkyv zero-copy serialization for internal message passing
 //!
+//! ## Unified Handler Trait
+//!
+//! The [`McpHandler`] trait is the core abstraction for MCP servers. It works on
+//! both native and WASM targets through platform-adaptive bounds:
+//!
+//! ```rust,ignore
+//! use turbomcp_core::{McpHandler, RequestContext};
+//! use turbomcp_types::*;
+//!
+//! #[derive(Clone)]
+//! struct MyServer;
+//!
+//! impl McpHandler for MyServer {
+//!     fn server_info(&self) -> ServerInfo {
+//!         ServerInfo::new("my-server", "1.0.0")
+//!     }
+//!     // ... other methods
+//! }
+//! ```
+//!
+//! ## Platform-Adaptive Bounds
+//!
+//! The [`MaybeSend`] and [`MaybeSync`] marker traits enable unified code:
+//! - **Native**: Requires `Send + Sync` for multi-threaded executors
+//! - **WASM**: No thread safety requirements (single-threaded)
+//!
 //! ## no_std Usage
 //!
 //! ```toml
@@ -21,6 +47,9 @@
 //!
 //! ## Module Organization
 //!
+//! - [`handler`]: Unified MCP handler trait
+//! - [`context`]: Request context types
+//! - [`marker`]: Platform-adaptive marker traits
 //! - [`types`]: Core MCP protocol types (tools, resources, prompts, etc.)
 //! - [`error`]: Error types and handling
 //! - [`jsonrpc`]: JSON-RPC 2.0 types
@@ -51,9 +80,14 @@
 
 extern crate alloc;
 
+// Core modules - unified v3 architecture
+pub mod context;
 pub mod error;
+pub mod handler;
 pub mod jsonrpc;
+pub mod marker;
 pub mod response;
+pub mod router;
 pub mod types;
 
 /// Zero-copy message types using rkyv serialization.
@@ -67,10 +101,59 @@ pub mod rkyv_types;
 // Re-export commonly used types at crate root
 pub use error::{ErrorKind, McpError, McpResult};
 pub use jsonrpc::{
-    JSONRPC_VERSION, JsonRpcError, JsonRpcErrorCode, JsonRpcNotification, JsonRpcRequest,
-    JsonRpcResponse, JsonRpcVersion,
+    // Strict typed API
+    JSONRPC_VERSION,
+    JsonRpcError,
+    JsonRpcErrorCode,
+    // Wire format types for routers/transports
+    JsonRpcIncoming,
+    JsonRpcNotification,
+    JsonRpcOutgoing,
+    JsonRpcRequest,
+    JsonRpcResponse,
+    JsonRpcVersion,
+    RequestId,
+    ResponseId,
 };
 pub use response::{Image, IntoToolError, IntoToolResponse, Json, Text, ToolError};
+
+// Re-export unified v3 architecture types
+pub use context::{RequestContext, TransportType};
+pub use handler::McpHandler;
+pub use marker::{MaybeSend, MaybeSync};
+
+// Re-export types from turbomcp-types for convenience
+pub use turbomcp_types::{
+    // Content types
+    Annotations,
+    AudioContent,
+    Content,
+    EmbeddedResource,
+    // Definition types
+    Icon,
+    ImageContent,
+    // Traits
+    IntoPromptResult,
+    IntoResourceResult,
+    IntoToolResult,
+    Message,
+    Prompt,
+    PromptArgument,
+    // Result types
+    PromptResult,
+    Resource,
+    ResourceAnnotations,
+    ResourceContent,
+    ResourceResult,
+    ResourceTemplate,
+    Role,
+    ServerInfo,
+    TextContent,
+    Tool,
+    ToolAnnotations,
+    ToolInputSchema,
+    ToolResult,
+};
 
 /// MCP Protocol version supported by this SDK (latest official spec)
 pub const PROTOCOL_VERSION: &str = "2025-11-25";

@@ -68,6 +68,7 @@
 //! wrangler dev
 //! ```
 
+mod ext;
 mod handler;
 mod handler_traits;
 #[cfg(test)]
@@ -76,6 +77,9 @@ mod response;
 mod server;
 mod traits;
 mod types;
+
+// Re-export the extension trait for unified McpHandler support
+pub use ext::WasmHandlerExt;
 
 // Re-export the main server types
 pub use server::{McpServer, McpServerBuilder};

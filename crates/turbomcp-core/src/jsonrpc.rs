@@ -435,6 +435,170 @@ impl From<JsonRpcErrorCode> for JsonRpcError {
     }
 }
 
+// ============================================================================
+// Wire Format Types - for router/transport use
+// ============================================================================
+// These types handle the practical case of deserializing incoming JSON-RPC
+// messages where we don't know upfront if it's a request or notification.
+// They use Option<Value> for ID to handle both cases uniformly.
+
+/// Incoming JSON-RPC message - can be request or notification.
+///
+/// This is the "wire format" type used by routers to parse incoming messages.
+/// Unlike [`JsonRpcRequest`] which requires an ID, this type can deserialize
+/// both requests (with id) and notifications (without id).
+///
+/// # Example
+///
+/// ```rust
+/// use turbomcp_core::jsonrpc::JsonRpcIncoming;
+///
+/// // Parse a request
+/// let request: JsonRpcIncoming = serde_json::from_str(
+///     r#"{"jsonrpc": "2.0", "id": 1, "method": "ping"}"#
+/// ).unwrap();
+/// assert!(request.is_request());
+///
+/// // Parse a notification
+/// let notification: JsonRpcIncoming = serde_json::from_str(
+///     r#"{"jsonrpc": "2.0", "method": "notifications/initialized"}"#
+/// ).unwrap();
+/// assert!(notification.is_notification());
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+pub struct JsonRpcIncoming {
+    /// JSON-RPC version (always "2.0")
+    #[allow(dead_code)]
+    pub jsonrpc: String,
+    /// Request ID (None for notifications)
+    #[serde(default)]
+    pub id: Option<Value>,
+    /// Method name
+    pub method: String,
+    /// Method parameters
+    #[serde(default)]
+    pub params: Option<Value>,
+}
+
+impl JsonRpcIncoming {
+    /// Check if this is a request (has an ID)
+    #[must_use]
+    pub fn is_request(&self) -> bool {
+        self.id.is_some()
+    }
+
+    /// Check if this is a notification (no ID)
+    #[must_use]
+    pub fn is_notification(&self) -> bool {
+        self.id.is_none()
+    }
+
+    /// Parse from JSON string
+    pub fn parse(input: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(input)
+    }
+}
+
+/// Outgoing JSON-RPC response - wire format for transport.
+///
+/// This is the "wire format" type used by routers to create responses.
+/// It handles the case where notifications should not receive responses
+/// (represented by having no id, result, or error).
+///
+/// # Example
+///
+/// ```rust
+/// use turbomcp_core::jsonrpc::JsonRpcOutgoing;
+///
+/// // Create a success response
+/// let response = JsonRpcOutgoing::success(
+///     Some(serde_json::json!(1)),
+///     serde_json::json!({"ok": true})
+/// );
+/// assert!(response.should_send());
+///
+/// // Create a notification response (should not be sent)
+/// let no_response = JsonRpcOutgoing::notification_ack();
+/// assert!(!no_response.should_send());
+/// ```
+#[derive(Debug, Clone, Serialize)]
+pub struct JsonRpcOutgoing {
+    /// JSON-RPC version (always "2.0")
+    pub jsonrpc: String,
+    /// Request ID (echoed from request, None for notifications/parse errors)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<Value>,
+    /// Result (mutually exclusive with error)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    /// Error (mutually exclusive with result)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<JsonRpcError>,
+}
+
+impl JsonRpcOutgoing {
+    /// Create a success response
+    #[must_use]
+    pub fn success(id: Option<Value>, result: Value) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    /// Create an error response
+    #[must_use]
+    pub fn error(id: Option<Value>, error: impl Into<JsonRpcError>) -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result: None,
+            error: Some(error.into()),
+        }
+    }
+
+    /// Create a notification acknowledgment (should not be sent over wire)
+    #[must_use]
+    pub fn notification_ack() -> Self {
+        Self {
+            jsonrpc: "2.0".to_string(),
+            id: None,
+            result: None,
+            error: None,
+        }
+    }
+
+    /// Check if this response should be sent over the wire.
+    ///
+    /// Per JSON-RPC 2.0, notifications (requests without id) should not
+    /// receive responses. This method returns false for such cases.
+    #[must_use]
+    pub fn should_send(&self) -> bool {
+        // A response should be sent if:
+        // 1. It has an id (normal request-response)
+        // 2. It has a result or error (explicit response content)
+        self.id.is_some() || self.result.is_some() || self.error.is_some()
+    }
+
+    /// Serialize to JSON string
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+}
+
+/// Conversion from McpError to JsonRpcError
+impl From<crate::error::McpError> for JsonRpcError {
+    fn from(err: crate::error::McpError) -> Self {
+        Self {
+            code: err.jsonrpc_code(),
+            message: err.message.clone(),
+            data: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -469,5 +633,36 @@ mod tests {
 
         let id2: RequestId = 42i32.into();
         assert!(matches!(id2, RequestId::Number(42)));
+    }
+
+    #[test]
+    fn test_incoming_request() {
+        let input = r#"{"jsonrpc": "2.0", "id": 1, "method": "ping"}"#;
+        let incoming = JsonRpcIncoming::parse(input).unwrap();
+        assert!(incoming.is_request());
+        assert!(!incoming.is_notification());
+        assert_eq!(incoming.method, "ping");
+    }
+
+    #[test]
+    fn test_incoming_notification() {
+        let input = r#"{"jsonrpc": "2.0", "method": "notifications/initialized"}"#;
+        let incoming = JsonRpcIncoming::parse(input).unwrap();
+        assert!(!incoming.is_request());
+        assert!(incoming.is_notification());
+    }
+
+    #[test]
+    fn test_outgoing_success() {
+        let response = JsonRpcOutgoing::success(Some(serde_json::json!(1)), serde_json::json!({}));
+        assert!(response.should_send());
+        assert!(response.result.is_some());
+        assert!(response.error.is_none());
+    }
+
+    #[test]
+    fn test_outgoing_notification_ack() {
+        let response = JsonRpcOutgoing::notification_ack();
+        assert!(!response.should_send());
     }
 }

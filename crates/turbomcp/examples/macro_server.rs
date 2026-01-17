@@ -45,8 +45,8 @@ impl CleanServer {
             "subtract" => Ok(a - b),
             "multiply" => Ok(a * b),
             "divide" if b != 0.0 => Ok(a / b),
-            "divide" => Err(McpError::tool("Division by zero")),
-            _ => Err(McpError::tool(format!("Unknown operation: {}", operation))),
+            "divide" => Err(McpError::invalid_params("Division by zero")),
+            _ => Err(McpError::invalid_params(format!("Unknown operation: {}", operation))),
         }
     }
 }

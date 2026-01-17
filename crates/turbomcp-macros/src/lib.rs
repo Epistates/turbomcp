@@ -1,136 +1,86 @@
 //! # TurboMCP Macros
 //!
-//! Zero-overhead procedural macros for ergonomic MCP server development, providing
-//! compile-time code generation for MCP protocol handlers with graceful shutdown support.
-//!
-//! ## Features
-//!
-//! ### Core Macros
-//! - **`#[server]`** - Convert structs into MCP servers with transport methods and graceful shutdown
-//! - **`#[tool]`** - Mark methods as MCP tool handlers with automatic schema generation
-//! - **`#[prompt]`** - Mark methods as MCP prompt handlers with template support
-//! - **`#[resource]`** - Mark methods as MCP resource handlers with URI templates
-//!
-//! ### Advanced Features
-//! - **Roots Configuration** - Declarative filesystem roots in `#[server]` macro: `root = "file:///path:Name"`
-//! - **Compile-Time Routing** - Zero-cost compile-time router generation (experimental)
-//! - **Enhanced Context System** - Improved async handling and error propagation
-//! - **Server Attributes** - Support for name, version, description, and roots in server macro
-//!
-//! ### Helper Macros
-//! - **`mcp_error!`** - Ergonomic error creation with formatting
-//! - **`mcp_text!`** - Text content creation helpers
-//! - **`tool_result!`** - Tool result formatting
-//! - **`elicit!`** - High-level elicitation macro for interactive user input
+//! Zero-overhead procedural macros for ergonomic MCP server development.
 //!
 //! ## Usage
 //!
-//! ### Basic Server with Tools
+//! The `#[server]` macro transforms a struct impl block into a complete MCP server
+//! with automatic `McpHandler` trait implementation.
 //!
 //! ```ignore
 //! use turbomcp::prelude::*;
 //!
 //! #[derive(Clone)]
-//! struct Calculator {
-//!     operations: std::sync::Arc<std::sync::atomic::AtomicU64>,
-//! }
+//! struct Calculator;
 //!
-//! #[server(
-//!     name = "calculator-server",
-//!     version = "1.0.0",
-//!     description = "A mathematical calculator service",
-//!     root = "file:///workspace:Project Workspace",
-//!     root = "file:///tmp:Temporary Files"
-//! )]
+//! #[server(name = "calculator", version = "1.0.0")]
 //! impl Calculator {
-//!     #[tool("Add two numbers")]
-//!     async fn add(&self, ctx: Context, a: i32, b: i32) -> McpResult<i32> {
-//!         ctx.info(&format!("Adding {} + {}", a, b)).await?;
-//!         self.operations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-//!         Ok(a + b)
-//!     }
-//!     
-//!     #[tool("Divide two numbers")]
-//!     async fn divide(&self, a: f64, b: f64) -> McpResult<f64> {
-//!         if b == 0.0 {
-//!             return Err(mcp_error!("Cannot divide by zero"));
-//!         }
-//!         Ok(a / b)
+//!     /// Add two numbers together
+//!     #[tool]
+//!     async fn add(
+//!         &self,
+//!         #[description("First operand")] a: i64,
+//!         #[description("Second operand")] b: i64,
+//!     ) -> i64 {
+//!         a + b
 //!     }
 //!
-//!     #[resource("calc://history/{operation}")]
-//!     async fn history(&self, operation: String) -> McpResult<String> {
-//!         Ok(format!("History for {} operations", operation))
+//!     /// Greet someone by name
+//!     #[tool]
+//!     async fn greet(
+//!         &self,
+//!         #[description("The name of the person to greet")] name: String,
+//!     ) -> String {
+//!         format!("Hello, {}!", name)
 //!     }
 //!
-//!     #[prompt("Generate report for {operation} with {count} operations")]
-//!     async fn report(&self, operation: String, count: i32) -> McpResult<String> {
-//!         Ok(format!("Generated report for {} ({} operations)", operation, count))
+//!     /// Get application configuration
+//!     #[resource("config://app")]
+//!     async fn config(&self, uri: String, ctx: &RequestContext) -> String {
+//!         r#"{"debug": true}"#.to_string()
 //!     }
+//!
+//!     /// Generate a greeting prompt
+//!     #[prompt]
+//!     async fn greeting(&self, name: String, ctx: &RequestContext) -> String {
+//!         format!("Hello {}! How can I help you today?", name)
+//!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     Calculator.run().await.unwrap();
 //! }
 //! ```
 //!
-//! ### Elicitation Support
+//! ## Features
 //!
-//! ```ignore
-//! use turbomcp::prelude::*;
-//! use turbomcp::elicitation_api::{string, boolean, ElicitationResult};
-//!
-//! #[derive(Clone)]
-//! struct InteractiveServer;
-//!
-//! #[server]
-//! impl InteractiveServer {
-//!     #[tool("Configure with user input")]
-//!     async fn configure(&self, ctx: Context) -> McpResult<String> {
-//!         let result = elicit!("Configure your preferences")
-//!             .field("theme", string()
-//!                 .enum_values(vec!["light", "dark"])
-//!                 .build())
-//!             .field("auto_save", boolean()
-//!                 .description("Enable auto-save")
-//!                 .build())
-//!             .send(&ctx.request)
-//!             .await?;
-//!
-//!         match result {
-//!             ElicitationResult::Accept(data) => {
-//!                 let theme = data.get::<String>("theme")?;
-//!                 Ok(format!("Configured with {} theme", theme))
-//!             }
-//!             _ => Err(mcp_error!("Configuration cancelled"))
-//!         }
-//!     }
-//! }
-//! ```
+//! - **Zero Boilerplate**: Just add `#[server]`, `#[tool]`, `#[resource]`, `#[prompt]` attributes
+//! - **Automatic Schema Generation**: JSON schemas generated from Rust types
+//! - **Per-Parameter Documentation**: Use `#[description("...")]` for rich JSON Schema docs
+//! - **Type-Safe Parameters**: Function parameters become tool arguments
+//! - **Doc Comments**: `///` comments become tool/resource/prompt descriptions
+//! - **Complex Type Support**: Use `schemars::JsonSchema` for nested object schemas
+//! - **Multiple Transports**: Run on STDIO, HTTP, WebSocket, TCP with `.run_*()` methods
+//! - **Portable Code**: Same server works on native and WASM with platform-specific entry points
 
 use proc_macro::TokenStream;
 
-mod attrs;
-mod bidirectional_wrapper;
-mod compile_time_router;
-mod completion;
-mod context_aware_dispatch;
-mod elicitation;
-mod helpers;
-mod ping;
-mod prompt;
-mod resource;
-mod schema;
-mod server;
-mod template;
-mod tool;
-mod tower_service;
-mod uri_template;
-mod v3; // v3 pristine architecture macros
+pub(crate) mod v3;
 
 /// Marks an impl block as an MCP server with automatic McpHandler implementation.
 ///
 /// This macro generates a complete `McpHandler` trait implementation by:
 /// - Discovering `#[tool]`, `#[resource]`, and `#[prompt]` methods
-/// - Parsing function signatures to extract parameters (no arg structs needed)
+/// - Parsing function signatures to extract parameters
 /// - Extracting doc comments for descriptions
 /// - Generating JSON Schema from Rust types
+///
+/// # Attributes
+///
+/// - `name = "server-name"` - Server name (defaults to struct name)
+/// - `version = "1.0.0"` - Server version (defaults to "1.0.0")
+/// - `description = "..."` - Server description
 ///
 /// # Example
 ///
@@ -138,26 +88,20 @@ mod v3; // v3 pristine architecture macros
 /// use turbomcp::prelude::*;
 ///
 /// #[derive(Clone)]
-/// struct Calculator;
+/// struct MyServer;
 ///
-/// #[server(name = "calculator", version = "1.0.0")]
-/// impl Calculator {
-///     /// Add two numbers together
+/// #[server(name = "my-server", version = "1.0.0", description = "A demo server")]
+/// impl MyServer {
+///     /// Add two numbers
 ///     #[tool]
 ///     async fn add(&self, a: i64, b: i64) -> i64 {
 ///         a + b
-///     }
-///
-///     /// Greet someone by name
-///     #[tool]
-///     async fn greet(&self, name: String) -> String {
-///         format!("Hello, {}!", name)
 ///     }
 /// }
 ///
 /// #[tokio::main]
 /// async fn main() {
-///     Calculator.run_stdio().await.unwrap();
+///     MyServer.run_stdio().await.unwrap();
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -165,272 +109,193 @@ pub fn server(args: TokenStream, input: TokenStream) -> TokenStream {
     v3::server::generate_v3_server(args, input)
 }
 
-/// Marks a method as a tool handler
+/// Marks a method as a tool handler within a `#[server]` block.
+///
+/// Tool methods are automatically discovered by the `#[server]` macro.
+/// The function signature determines the tool's input schema:
+/// - Parameter names become JSON property names
+/// - Parameter types determine JSON schema types
+/// - Doc comments become the tool description
+///
+/// # Supported Types
+///
+/// - `String`, `&str` -> JSON string
+/// - `i32`, `i64`, `u32`, `u64`, `f32`, `f64` -> JSON number
+/// - `bool` -> JSON boolean
+/// - `Vec<T>` -> JSON array
+/// - `Option<T>` -> Optional property
+/// - Custom structs with serde -> JSON object
 ///
 /// # Example
 ///
 /// ```ignore
-/// use turbomcp_macros::tool;
-///
-/// struct MyServer;
-///
+/// #[server]
 /// impl MyServer {
-///     #[tool("Add two numbers")]
-///     async fn add(&self, a: i32, b: i32) -> turbomcp::McpResult<i32> {
-///         Ok(a + b)
+///     /// Greet someone by name
+///     #[tool]
+///     async fn greet(&self, name: String, formal: Option<bool>) -> String {
+///         let greeting = if formal.unwrap_or(false) { "Good day" } else { "Hello" };
+///         format!("{}, {}!", greeting, name)
 ///     }
 /// }
+/// ```
+///
+/// # With Description
+///
+/// ```ignore
+/// #[tool("Custom description for the tool")]
+/// async fn my_tool(&self, arg: String) -> String {
+///     // ...
+/// }
+/// ```
 #[proc_macro_attribute]
-pub fn tool(args: TokenStream, input: TokenStream) -> TokenStream {
-    tool::generate_tool_impl(args, input)
+pub fn tool(_args: TokenStream, input: TokenStream) -> TokenStream {
+    // Tool attribute is processed by the #[server] macro
+    // When used standalone, just pass through
+    input
 }
 
-/// Marks a method as a prompt handler
+/// Marks a method as a resource handler within a `#[server]` block.
+///
+/// Resource methods provide access to data via URIs. The URI template
+/// determines how the resource is accessed.
+///
+/// # URI Templates
+///
+/// - Static: `"config://app"` - Exact match
+/// - Dynamic: `"file://{path}"` - Matches any path
 ///
 /// # Example
 ///
 /// ```ignore
-/// # use turbomcp_macros::prompt;
-/// # struct MyServer;
-/// # impl MyServer {
-/// #[prompt("Generate code")]
-/// async fn code_prompt(&self, language: String) -> turbomcp::McpResult<String> {
-///     Ok(format!("Generated {} code", language))
+/// #[server]
+/// impl MyServer {
+///     /// Get application configuration
+///     #[resource("config://app")]
+///     async fn config(&self, uri: String, ctx: &RequestContext) -> String {
+///         r#"{"debug": true}"#.to_string()
+///     }
+///
+///     /// Read a file by path
+///     #[resource("file://{path}")]
+///     async fn file(&self, uri: String, ctx: &RequestContext) -> String {
+///         // uri contains the full matched URI
+///         format!("Content of {}", uri)
+///     }
 /// }
-/// # }
+/// ```
+///
+/// # With MIME Type (HIGH-001)
+///
+/// ```ignore
+/// #[resource("config://app", mime_type = "application/json")]
+/// async fn config(&self, uri: String, ctx: &RequestContext) -> String {
+///     // ...
+/// }
+/// ```
 #[proc_macro_attribute]
-pub fn prompt(args: TokenStream, input: TokenStream) -> TokenStream {
-    prompt::generate_prompt_impl(args, input)
+pub fn resource(_args: TokenStream, input: TokenStream) -> TokenStream {
+    // Resource attribute is processed by the #[server] macro
+    // When used standalone, just pass through
+    input
 }
 
-/// Marks a method as a resource handler
+/// Marks a method as a prompt handler within a `#[server]` block.
+///
+/// Prompt methods generate message templates for LLM interactions.
+/// Function parameters become prompt arguments (HIGH-002).
 ///
 /// # Example
 ///
 /// ```ignore
-/// # use turbomcp_macros::resource;
-/// # struct MyServer;
-/// # impl MyServer {
-/// #[resource("config://settings/{section}")]
-/// async fn get_config(&self, section: String) -> turbomcp::McpResult<String> {
-///     Ok(format!("Config for section: {}", section))
+/// #[server]
+/// impl MyServer {
+///     /// Generate a greeting prompt
+///     #[prompt]
+///     async fn greeting(&self, name: String, ctx: &RequestContext) -> String {
+///         format!("Hello {}! How can I help you today?", name)
+///     }
+///
+///     /// Generate a code review prompt
+///     #[prompt]
+///     async fn code_review(
+///         &self,
+///         language: String,
+///         style: Option<String>,
+///         ctx: &RequestContext,
+///     ) -> String {
+///         let style = style.unwrap_or_else(|| "concise".to_string());
+///         format!("Review this {} code in a {} style", language, style)
+///     }
 /// }
-/// # }
+/// ```
 #[proc_macro_attribute]
-pub fn resource(args: TokenStream, input: TokenStream) -> TokenStream {
-    resource::generate_resource_impl(args, input)
+pub fn prompt(_args: TokenStream, input: TokenStream) -> TokenStream {
+    // Prompt attribute is processed by the #[server] macro
+    // When used standalone, just pass through
+    input
 }
 
-/// Helper macro for creating MCP ContentBlock structures (advanced usage)
+/// Provides a description for a tool parameter.
 ///
-/// **Note:** Most tool functions should simply return `String` using `format!()`.
-/// Only use `mcp_text!()` when manually building CallToolResult structures.
-///
-/// # Common Usage (90% of cases) ✅
-/// ```ignore
-/// use turbomcp::prelude::*;
-///
-/// #[tool("Say hello")]
-/// async fn hello(&self, name: String) -> turbomcp::McpResult<String> {
-///     Ok(format!("Hello, {}!", name))  // ✅ Use format! for #[tool] returns
-/// }
-/// ```
-///
-/// # Advanced Usage (rare) ⚠️
-/// ```ignore
-/// # use turbomcp_macros::mcp_text;
-/// let name = "world";
-/// let content_block = mcp_text!("Hello, {}!", name);
-/// // Use in manual CallToolResult construction
-/// ```
-#[proc_macro]
-pub fn mcp_text(input: TokenStream) -> TokenStream {
-    helpers::generate_text_content(input)
-}
-
-/// Helper macro for creating MCP errors
+/// This attribute adds a description to the JSON Schema for the parameter,
+/// improving discoverability and documentation for LLM clients.
 ///
 /// # Example
 ///
 /// ```ignore
-/// # use turbomcp_macros::mcp_error;
-/// let error = "connection failed";
-/// let result = mcp_error!("Something went wrong: {}", error);
-/// ```
-#[proc_macro]
-pub fn mcp_error(input: TokenStream) -> TokenStream {
-    helpers::generate_error(input)
-}
-
-/// Ergonomic elicitation macro for server-initiated user input
-///
-/// This macro provides a simple way to request structured input from the client
-/// with automatic error handling and context integration.
-///
-/// # Usage Patterns
-///
-/// ## Simple Prompt (No Schema)
-/// ```ignore
-/// use turbomcp::prelude::*;
-///
-/// // Simple yes/no or text prompt
-/// let result = elicit!(ctx, "Continue with deployment?").await?;
-/// ```
-///
-/// ## With Schema Validation
-/// ```ignore
-/// use turbomcp::prelude::*;
-/// use ::turbomcp::turbomcp_protocol::types::ElicitationSchema;
-///
-/// let schema = ElicitationSchema::new()
-///     .add_string_property("theme", Some("Color theme"))
-///     .add_boolean_property("notifications", Some("Enable notifications"));
-///
-/// let result = elicit!(ctx, "Configure your preferences", schema).await?;
-/// ```
-///
-/// # Arguments
-///
-/// * `ctx` - The context object (RequestContext with server capabilities)
-/// * `message` - The message to display to the user
-/// * `schema` - (Optional) The elicitation schema defining expected input
-///
-/// # Returns
-///
-/// Returns `Result<ElicitationResult>` which can be:
-/// - `ElicitationResult::Accept(data)` - User provided input
-/// - `ElicitationResult::Decline(reason)` - User declined
-/// - `ElicitationResult::Cancel` - User cancelled
-///
-/// # When to Use
-///
-/// Use the macro for:
-/// - Simple prompts without complex schemas
-/// - Quick confirmation dialogs
-/// - Reduced boilerplate in tool handlers
-///
-/// Use the function API for:
-/// - Complex schemas with multiple fields
-/// - Reusable elicitation builders
-/// - Maximum control over schema construction
-///
-#[proc_macro]
-pub fn elicit(input: TokenStream) -> TokenStream {
-    helpers::generate_elicitation(input)
-}
-
-/// Helper macro for creating CallToolResult structures (advanced usage)
-///
-/// **Note:** The `#[tool]` attribute automatically creates CallToolResult for you.
-/// Only use `tool_result!()` when manually building responses outside of `#[tool]` functions.
-///
-/// # Common Usage (automatic) ✅  
-/// ```ignore
-/// use turbomcp::prelude::*;
-///
-/// #[tool("Process data")]
-/// async fn process(&self, data: String) -> turbomcp::McpResult<String> {
-///     Ok(format!("Processed: {}", data))  // ✅ Automatic CallToolResult creation
+/// #[server]
+/// impl MyServer {
+///     /// Search for documents
+///     #[tool]
+///     async fn search(
+///         &self,
+///         #[description("The search query string")] query: String,
+///         #[description("Maximum number of results to return")] limit: Option<i32>,
+///         #[description("Filter by file type (e.g., 'pdf', 'md')")] file_type: Option<String>,
+///     ) -> Vec<SearchResult> {
+///         // ...
+///     }
 /// }
 /// ```
 ///
-/// # Advanced Usage (manual) ⚠️
-/// ```ignore
-/// # use turbomcp_macros::{tool_result, mcp_text};
-/// let value = 42;
-/// let text_content = mcp_text!("Result: {}", value);
-/// let result = tool_result!(text_content);  // Manual CallToolResult creation
-/// ```
-#[proc_macro]
-pub fn tool_result(input: TokenStream) -> TokenStream {
-    helpers::generate_tool_result(input)
-}
-
-/// Marks a method as an elicitation handler for gathering user input
+/// This generates JSON Schema with descriptions:
 ///
-/// Elicitation allows servers to request structured input from clients
-/// with JSON schema validation and optional default values.
-///
-/// # Example
-///
-/// ```ignore
-/// # use turbomcp_macros::elicitation;
-/// # struct MyServer;
-/// # impl MyServer {
-/// #[elicitation("Collect user preferences")]
-/// async fn get_preferences(&self, schema: serde_json::Value) -> turbomcp::McpResult<serde_json::Value> {
-///     // Implementation would send elicitation request to client
-///     // and return the structured user input
-///     Ok(serde_json::json!({"theme": "dark", "language": "en"}))
+/// ```json
+/// {
+///   "type": "object",
+///   "properties": {
+///     "query": {
+///       "type": "string",
+///       "description": "The search query string"
+///     },
+///     "limit": {
+///       "type": "integer",
+///       "description": "Maximum number of results to return"
+///     },
+///     "file_type": {
+///       "type": "string",
+///       "description": "Filter by file type (e.g., 'pdf', 'md')"
+///     }
+///   },
+///   "required": ["query"]
 /// }
-/// # }
+/// ```
+///
+/// # Alternative: Doc Comments
+///
+/// You can also use doc comments on parameters (if your Rust version supports it):
+///
+/// ```ignore
+/// async fn search(
+///     &self,
+///     /// The search query string
+///     query: String,
+/// ) -> Vec<SearchResult>
+/// ```
 #[proc_macro_attribute]
-pub fn elicitation(args: TokenStream, input: TokenStream) -> TokenStream {
-    elicitation::generate_elicitation_impl(args, input)
-}
-
-/// Marks a method as a completion handler for argument autocompletion
-///
-/// Completion provides intelligent suggestions for tool parameters
-/// based on current context and partial input.
-///
-/// # Example
-///
-/// ```ignore
-/// # use turbomcp_macros::completion;
-/// # struct MyServer;
-/// # impl MyServer {
-/// #[completion("Complete file paths")]
-/// async fn complete_file_path(&self, partial: String) -> turbomcp::McpResult<Vec<String>> {
-///     // Return completion suggestions based on partial input
-///     Ok(vec!["config.json".to_string(), "data.txt".to_string()])
-/// }
-/// # }
-#[proc_macro_attribute]
-pub fn completion(args: TokenStream, input: TokenStream) -> TokenStream {
-    completion::generate_completion_impl(args, input)
-}
-
-/// Marks a method as a resource template handler
-///
-/// Resource templates use RFC 6570 URI templates for parameterized
-/// resource access, enabling dynamic resource URIs.
-///
-/// # Example
-///
-/// ```ignore
-/// # use turbomcp_macros::template;
-/// # struct MyServer;
-/// # impl MyServer {
-/// #[template("users/{user_id}/profile")]
-/// async fn get_user_profile(&self, user_id: String) -> turbomcp::McpResult<String> {
-///     // Return resource content for the templated URI
-///     Ok(format!("Profile for user: {}", user_id))
-/// }
-/// # }
-#[proc_macro_attribute]
-pub fn template(args: TokenStream, input: TokenStream) -> TokenStream {
-    template::generate_template_impl(args, input)
-}
-
-/// Marks a method as a ping handler for connection health monitoring
-///
-/// Ping handlers enable bidirectional health checks between
-/// clients and servers for connection monitoring.
-///
-/// # Example
-///
-/// ```ignore
-/// # use turbomcp_macros::ping;
-/// # struct MyServer;
-/// # impl MyServer {
-/// #[ping("Health check")]
-/// async fn health_check(&self) -> turbomcp::McpResult<String> {
-///     // Return health status information
-///     Ok("Server is healthy".to_string())
-/// }
-/// # }
-#[proc_macro_attribute]
-pub fn ping(args: TokenStream, input: TokenStream) -> TokenStream {
-    ping::generate_ping_impl(args, input)
+pub fn description(_args: TokenStream, input: TokenStream) -> TokenStream {
+    // Description attribute is processed by the #[server] macro's parameter analysis
+    // When used standalone, just pass through
+    input
 }

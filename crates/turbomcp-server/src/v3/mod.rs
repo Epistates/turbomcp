@@ -5,8 +5,9 @@
 //! - Unified `McpHandler` trait for all MCP operations
 //! - Zero boilerplate through macro-generated implementations
 //! - Transport-agnostic design (works on WASM and native)
+//! - Fluent builder API for runtime configuration
 //!
-//! # Example
+//! # Quick Start
 //!
 //! ```rust,ignore
 //! use turbomcp::prelude::*;
@@ -25,26 +26,78 @@
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     Calculator.run_stdio().await.unwrap();
+//!     // Simplest: uses STDIO by default
+//!     Calculator.serve().await.unwrap();
+//! }
+//! ```
+//!
+//! # Runtime Transport Selection
+//!
+//! ```rust,ignore
+//! use turbomcp::prelude::*;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let transport = std::env::var("MCP_TRANSPORT").unwrap_or_default();
+//!
+//!     Calculator.builder()
+//!         .transport(match transport.as_str() {
+//!             "http" => Transport::http("0.0.0.0:8080"),
+//!             "ws" => Transport::websocket("0.0.0.0:8080"),
+//!             _ => Transport::stdio(),
+//!         })
+//!         .serve()
+//!         .await
+//!         .unwrap();
+//! }
+//! ```
+//!
+//! # Bring Your Own Server (Axum Integration)
+//!
+//! ```rust,ignore
+//! use axum::Router;
+//! use turbomcp::prelude::*;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     // Get MCP as an Axum router
+//!     let mcp = Calculator.builder().into_axum_router();
+//!
+//!     // Merge with your app
+//!     let app = Router::new()
+//!         .route("/health", get(|| async { "OK" }))
+//!         .merge(mcp);
+//!
+//!     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await?;
+//!     axum::serve(listener, app).await?;
 //! }
 //! ```
 
+mod builder;
 mod config;
 mod context;
 mod handler;
 mod router;
+pub mod transport;
 
+pub use builder::{McpServerExt, ServerBuilder, Transport};
 pub use config::{
     CapabilityValidation, ClientCapabilities, ConnectionCounter, ConnectionGuard, ConnectionLimits,
     ProtocolConfig, RateLimitConfig, RateLimiter, RequiredCapabilities,
     SUPPORTED_PROTOCOL_VERSIONS, ServerConfig, ServerConfigBuilder,
 };
 pub use context::{RequestContext, TransportType};
-pub use handler::{McpHandler, McpHandlerExt};
+pub use handler::McpHandlerExt;
+// Re-export McpHandler from core for unified architecture
 pub use router::{
-    JsonRpcRequest, JsonRpcResponse, parse_request, route_request, route_request_with_config,
+    JsonRpcIncoming, JsonRpcOutgoing, parse_request, route_request, route_request_with_config,
     serialize_response,
 };
+pub use turbomcp_core::handler::McpHandler;
+/// Type alias for backward compatibility (use `JsonRpcIncoming` for new code).
+pub type JsonRpcRequest = JsonRpcIncoming;
+/// Type alias for backward compatibility (use `JsonRpcOutgoing` for new code).
+pub type JsonRpcResponse = JsonRpcOutgoing;
 
 /// v3 prelude for easy imports.
 ///
@@ -58,16 +111,25 @@ pub use router::{
 /// #[derive(Clone)]
 /// struct MyServer;
 ///
-/// impl McpHandler for MyServer {
-///     fn server_info(&self) -> ServerInfo {
-///         ServerInfo::new("my-server", "1.0.0")
+/// #[server(name = "my-server", version = "1.0.0")]
+/// impl MyServer {
+///     #[tool]
+///     async fn greet(&self, name: String) -> String {
+///         format!("Hello, {}!", name)
 ///     }
-///     // ... other trait methods
+/// }
+///
+/// #[tokio::main]
+/// async fn main() {
+///     MyServer.serve().await.unwrap();
 /// }
 /// ```
 pub mod prelude {
     // Core traits
-    pub use super::{McpHandler, McpHandlerExt};
+    pub use super::{McpHandler, McpHandlerExt, McpServerExt};
+
+    // Builder and transport
+    pub use super::{ServerBuilder, Transport};
 
     // Context types
     pub use super::{RequestContext, TransportType};
@@ -78,14 +140,15 @@ pub mod prelude {
         ServerConfig, ServerConfigBuilder,
     };
 
+    // Re-export error types from turbomcp-core (unified v3 error handling)
+    pub use turbomcp_core::error::{McpError, McpResult};
+
     // Re-export types from turbomcp-types
     pub use turbomcp_types::{
-        // Result types
+        // Result conversion traits
         IntoPromptResult,
         IntoResourceResult,
         IntoToolResult,
-        McpError,
-        McpResult,
         // Core types
         Message,
         Prompt,

@@ -4,10 +4,11 @@
 
 use serde_json::json;
 use std::future::Future;
+use turbomcp_core::context::RequestContext as CoreRequestContext;
+use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_server::v3::{McpHandler, McpHandlerExt, RequestContext};
 use turbomcp_types::{
-    McpError, McpResult, Prompt, PromptResult, Resource, ResourceResult, ServerInfo, Tool,
-    ToolResult,
+    Prompt, PromptResult, Resource, ResourceResult, ServerInfo, Tool, ToolResult,
 };
 
 /// A simple calculator server for testing.
@@ -45,7 +46,7 @@ impl McpHandler for Calculator {
         &self,
         name: &str,
         args: serde_json::Value,
-        _ctx: &RequestContext,
+        _ctx: &CoreRequestContext,
     ) -> impl Future<Output = McpResult<ToolResult>> + Send {
         let name = name.to_string();
         async move {
@@ -72,7 +73,7 @@ impl McpHandler for Calculator {
     fn read_resource(
         &self,
         uri: &str,
-        _ctx: &RequestContext,
+        _ctx: &CoreRequestContext,
     ) -> impl Future<Output = McpResult<ResourceResult>> + Send {
         let uri = uri.to_string();
         async move {
@@ -94,7 +95,7 @@ impl McpHandler for Calculator {
         &self,
         name: &str,
         _args: Option<serde_json::Value>,
-        _ctx: &RequestContext,
+        _ctx: &CoreRequestContext,
     ) -> impl Future<Output = McpResult<PromptResult>> + Send {
         let name = name.to_string();
         async move {
@@ -128,7 +129,7 @@ async fn test_calculator_list_tools() {
 #[tokio::test]
 async fn test_calculator_add() {
     let calc = Calculator::new();
-    let ctx = RequestContext::new();
+    let ctx = CoreRequestContext::stdio();
     let result = calc
         .call_tool("add", json!({"a": 5, "b": 3}), &ctx)
         .await
@@ -139,7 +140,7 @@ async fn test_calculator_add() {
 #[tokio::test]
 async fn test_calculator_multiply() {
     let calc = Calculator::new();
-    let ctx = RequestContext::new();
+    let ctx = CoreRequestContext::stdio();
     let result = calc
         .call_tool("multiply", json!({"a": 4, "b": 7}), &ctx)
         .await
@@ -150,7 +151,7 @@ async fn test_calculator_multiply() {
 #[tokio::test]
 async fn test_calculator_greet() {
     let calc = Calculator::new();
-    let ctx = RequestContext::new();
+    let ctx = CoreRequestContext::stdio();
     let result = calc
         .call_tool("greet", json!({"name": "Alice"}), &ctx)
         .await
@@ -166,7 +167,14 @@ async fn test_handle_request_initialize() {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "initialize",
-        "params": {}
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "clientInfo": {
+                "name": "test-client",
+                "version": "1.0.0"
+            },
+            "capabilities": {}
+        }
     });
 
     let response = calc.handle_request(request, ctx).await.unwrap();
@@ -258,5 +266,5 @@ async fn test_handle_request_error_unknown_method() {
 
     let response = calc.handle_request(request, ctx).await.unwrap();
     assert!(response.get("error").is_some());
-    assert_eq!(response["error"]["code"], McpError::METHOD_NOT_FOUND);
+    assert_eq!(response["error"]["code"], -32601); // METHOD_NOT_FOUND
 }

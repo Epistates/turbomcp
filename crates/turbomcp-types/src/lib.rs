@@ -8,7 +8,8 @@
 //! - **Result types**: `ToolResult`, `ResourceResult`, `PromptResult`
 //! - **Definition types**: `Tool`, `Resource`, `Prompt`, `ServerInfo`
 //! - **Conversion traits**: `IntoToolResult`, `IntoResourceResult`, `IntoPromptResult`
-//! - **Error handling**: `McpError`
+//!
+//! For error handling, use `turbomcp_core::error::{McpError, McpResult}`.
 //!
 //! ## Design Principles
 //!
@@ -45,14 +46,12 @@
 
 pub mod content;
 pub mod definitions;
-pub mod error;
 pub mod results;
 pub mod traits;
 
 // Re-export everything at the crate root for convenience
 pub use content::*;
 pub use definitions::*;
-pub use error::*;
 pub use results::*;
 pub use traits::*;
 

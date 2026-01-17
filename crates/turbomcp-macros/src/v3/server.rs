@@ -98,6 +98,15 @@ impl ServerAttrs {
             } else if meta.path.is_ident("description") {
                 let value: syn::LitStr = meta.value()?.parse()?;
                 description = Some(value.value());
+            } else if meta.path.is_ident("transports") {
+                // v3: Ignore `transports` attribute for backward compatibility.
+                // Transport selection is now done at runtime via McpHandlerExt methods.
+                meta.value()?;
+                let _: syn::ExprArray = meta.input.parse()?;
+            } else if meta.path.is_ident("root") {
+                // v3: Ignore `root` attribute for backward compatibility.
+                // Roots configuration should be done via builder API.
+                let _value: syn::LitStr = meta.value()?.parse()?;
             }
             Ok(())
         });
@@ -202,10 +211,10 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
 
 /// Extract description from attribute.
 fn extract_attr_description(attr: &syn::Attribute) -> Option<String> {
-    if let syn::Meta::List(meta_list) = &attr.meta {
-        if let Ok(lit) = syn::parse2::<syn::LitStr>(meta_list.tokens.clone()) {
-            return Some(lit.value());
-        }
+    if let syn::Meta::List(meta_list) = &attr.meta
+        && let Ok(lit) = syn::parse2::<syn::LitStr>(meta_list.tokens.clone())
+    {
+        return Some(lit.value());
     }
     None
 }
@@ -246,11 +255,11 @@ fn extract_resource_attrs(attr: &syn::Attribute) -> Result<ResourceAttrInfo, syn
                 // Second part might be mime_type = "..."
                 if parts.len() > 1 {
                     let rest = parts[1].trim();
-                    if rest.starts_with("mime_type") {
-                        if let Some(eq_pos) = rest.find('=') {
-                            let value = rest[eq_pos + 1..].trim().trim_matches('"');
-                            mime_type = Some(value.to_string());
-                        }
+                    if rest.starts_with("mime_type")
+                        && let Some(eq_pos) = rest.find('=')
+                    {
+                        let value = rest[eq_pos + 1..].trim().trim_matches('"');
+                        mime_type = Some(value.to_string());
                     }
                 }
 
@@ -272,33 +281,33 @@ fn extract_prompt_arguments(sig: &syn::Signature) -> Vec<PromptArgumentInfo> {
     let mut args = Vec::new();
 
     for input in &sig.inputs {
-        if let syn::FnArg::Typed(pat_type) = input {
-            if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
-                let name = pat_ident.ident.to_string();
+        if let syn::FnArg::Typed(pat_type) = input
+            && let syn::Pat::Ident(pat_ident) = &*pat_type.pat
+        {
+            let name = pat_ident.ident.to_string();
 
-                // Skip self and ctx parameters
-                if name == "self" || name == "ctx" {
-                    continue;
-                }
-
-                // Check if type is Option<T> to determine if required
-                let is_option = if let syn::Type::Path(type_path) = &*pat_type.ty {
-                    type_path
-                        .path
-                        .segments
-                        .first()
-                        .map(|s| s.ident == "Option")
-                        .unwrap_or(false)
-                } else {
-                    false
-                };
-
-                args.push(PromptArgumentInfo {
-                    name,
-                    description: None, // Could extract from doc comments if needed
-                    required: !is_option,
-                });
+            // Skip self and ctx parameters
+            if name == "self" || name == "ctx" {
+                continue;
             }
+
+            // Check if type is Option<T> to determine if required
+            let is_option = if let syn::Type::Path(type_path) = &*pat_type.ty {
+                type_path
+                    .path
+                    .segments
+                    .first()
+                    .map(|s| s.ident == "Option")
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            args.push(PromptArgumentInfo {
+                name,
+                description: None, // Could extract from doc comments if needed
+                required: !is_option,
+            });
         }
     }
 
@@ -310,16 +319,14 @@ fn extract_doc_comments(attrs: &[syn::Attribute]) -> Option<String> {
     let doc_lines: Vec<String> = attrs
         .iter()
         .filter_map(|attr| {
-            if attr.path().is_ident("doc") {
-                if let syn::Meta::NameValue(meta) = &attr.meta {
-                    if let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(lit_str),
-                        ..
-                    }) = &meta.value
-                    {
-                        return Some(lit_str.value().trim().to_string());
-                    }
-                }
+            if attr.path().is_ident("doc")
+                && let syn::Meta::NameValue(meta) = &attr.meta
+                && let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(lit_str),
+                    ..
+                }) = &meta.value
+            {
+                return Some(lit_str.value().trim().to_string());
             }
             None
         })
@@ -492,7 +499,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                         .and_then(|a| a.get(#arg_name))
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
-                        .ok_or_else(|| ::turbomcp_types::McpError::invalid_params(
+                        .ok_or_else(|| ::turbomcp_core::error::McpError::invalid_params(
                             format!("Missing required argument: {}", #arg_name)
                         ))?;
                 }
@@ -535,8 +542,8 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         // Keep the original impl block with handler attributes stripped
         #stripped_impl_block
 
-        // Generate McpHandler implementation
-        impl ::turbomcp_server::v3::McpHandler for #struct_name {
+        // Generate McpHandler implementation (unified v3 architecture)
+        impl ::turbomcp_core::handler::McpHandler for #struct_name {
             fn server_info(&self) -> ::turbomcp_types::ServerInfo {
                 ::turbomcp_types::ServerInfo::new(#name, #version)
                     #description_code
@@ -554,50 +561,47 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 vec![#(#prompt_list_code),*]
             }
 
-            fn call_tool(
-                &self,
-                name: &str,
+            fn call_tool<'a>(
+                &'a self,
+                name: &'a str,
                 args: ::serde_json::Value,
-                ctx: &::turbomcp_server::v3::RequestContext,
-            ) -> impl ::std::future::Future<Output = ::turbomcp_types::McpResult<::turbomcp_types::ToolResult>> + Send {
+                ctx: &'a ::turbomcp_core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = ::turbomcp_core::error::McpResult<::turbomcp_types::ToolResult>> + ::turbomcp_core::marker::MaybeSend + 'a {
                 let name = name.to_string();
-                let ctx = ctx.clone();
                 async move {
                     let args = args.as_object().cloned().unwrap_or_default();
                     match name.as_str() {
                         #(#tool_dispatch_code)*
-                        _ => Err(::turbomcp_types::McpError::tool_not_found(&name))
+                        _ => Err(::turbomcp_core::error::McpError::tool_not_found(&name))
                     }
                 }
             }
 
-            fn read_resource(
-                &self,
-                uri: &str,
-                ctx: &::turbomcp_server::v3::RequestContext,
-            ) -> impl ::std::future::Future<Output = ::turbomcp_types::McpResult<::turbomcp_types::ResourceResult>> + Send {
+            fn read_resource<'a>(
+                &'a self,
+                uri: &'a str,
+                ctx: &'a ::turbomcp_core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = ::turbomcp_core::error::McpResult<::turbomcp_types::ResourceResult>> + ::turbomcp_core::marker::MaybeSend + 'a {
                 let uri = uri.to_string();
-                let ctx = ctx.clone();
                 async move {
                     #(#resource_dispatch_code)*
-                    Err(::turbomcp_types::McpError::resource_not_found(&uri))
+                    Err(::turbomcp_core::error::McpError::resource_not_found(&uri))
                 }
             }
 
-            fn get_prompt(
-                &self,
-                name: &str,
+            fn get_prompt<'a>(
+                &'a self,
+                name: &'a str,
                 args: Option<::serde_json::Value>,
-                ctx: &::turbomcp_server::v3::RequestContext,
-            ) -> impl ::std::future::Future<Output = ::turbomcp_types::McpResult<::turbomcp_types::PromptResult>> + Send {
+                ctx: &'a ::turbomcp_core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = ::turbomcp_core::error::McpResult<::turbomcp_types::PromptResult>> + ::turbomcp_core::marker::MaybeSend + 'a {
                 let name = name.to_string();
-                let ctx = ctx.clone();
                 // HIGH-002: Convert args to Map for argument extraction
                 let prompt_args = args.and_then(|v| v.as_object().cloned());
                 async move {
                     match name.as_str() {
                         #(#prompt_dispatch_code)*
-                        _ => Err(::turbomcp_types::McpError::prompt_not_found(&name))
+                        _ => Err(::turbomcp_core::error::McpError::prompt_not_found(&name))
                     }
                 }
             }
@@ -615,6 +619,11 @@ pub fn generate_v3_server(
         Err(e) => return e.to_compile_error().into(),
     };
 
+    // Validate the impl block structure
+    if let Err(e) = validate_impl_block(&impl_block) {
+        return e.to_compile_error().into();
+    }
+
     let attrs = match ServerAttrs::parse(args) {
         Ok(attrs) => attrs,
         Err(e) => return e.to_compile_error().into(),
@@ -625,5 +634,122 @@ pub fn generate_v3_server(
         Err(e) => return e.to_compile_error().into(),
     };
 
+    // Validate handlers
+    if let Err(e) = validate_handlers(&info) {
+        return e.to_compile_error().into();
+    }
+
     generate_mcp_handler(&info, &impl_block).into()
+}
+
+/// Validate the impl block structure and provide helpful error messages.
+fn validate_impl_block(impl_block: &ItemImpl) -> Result<(), syn::Error> {
+    // Check for trait impl (not supported)
+    if impl_block.trait_.is_some() {
+        return Err(syn::Error::new_spanned(
+            impl_block,
+            "#[server] cannot be used on trait implementations\n\n\
+            Hint: Apply #[server] to an inherent impl block:\n\
+            \n\
+            #[derive(Clone)]\n\
+            struct MyServer;\n\
+            \n\
+            #[server(name = \"my-server\", version = \"1.0.0\")]\n\
+            impl MyServer {\n\
+                #[tool]\n\
+                async fn my_tool(&self, arg: String) -> String { ... }\n\
+            }",
+        ));
+    }
+
+    // Check for methods with potentially misspelled handler attributes
+    for item in &impl_block.items {
+        if let syn::ImplItem::Fn(method) = item {
+            for attr in &method.attrs {
+                let path = attr.path();
+                if let Some(ident) = path.get_ident() {
+                    let ident_str = ident.to_string();
+
+                    // Check for common typos
+                    let typo_suggestions = [
+                        ("tools", "tool"),
+                        ("resources", "resource"),
+                        ("prompts", "prompt"),
+                        ("Tool", "tool"),
+                        ("Resource", "resource"),
+                        ("Prompt", "prompt"),
+                        ("mcp_tool", "tool"),
+                        ("mcp_resource", "resource"),
+                        ("mcp_prompt", "prompt"),
+                        ("handler", "tool"),
+                    ];
+
+                    for (typo, correct) in typo_suggestions {
+                        if ident_str == typo {
+                            return Err(syn::Error::new_spanned(
+                                attr,
+                                format!(
+                                    "Unknown attribute `#[{}]` - did you mean `#[{}]`?\n\n\
+                                    Valid handler attributes: #[tool], #[resource], #[prompt]",
+                                    typo, correct
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate handler definitions and provide helpful error messages.
+fn validate_handlers(info: &ServerInfo) -> Result<(), syn::Error> {
+    // Check for empty server (no handlers)
+    if info.tools.is_empty() && info.resources.is_empty() && info.prompts.is_empty() {
+        // This is actually valid - just a server with metadata
+        // But we could warn in the future
+    }
+
+    // Validate tool signatures
+    for tool in &info.tools {
+        // Check for async
+        if tool.sig.asyncness.is_none() {
+            return Err(syn::Error::new_spanned(
+                &tool.sig,
+                format!(
+                    "Tool `{}` must be async\n\n\
+                    Hint: Add `async` to the function:\n\
+                    \n\
+                    #[tool]\n\
+                    async fn {}(&self, ...) -> ... {{ ... }}",
+                    tool.name, tool.name
+                ),
+            ));
+        }
+
+        // Check for &self receiver
+        let has_self = tool
+            .sig
+            .inputs
+            .iter()
+            .any(|arg| matches!(arg, syn::FnArg::Receiver(_)));
+
+        if !has_self {
+            return Err(syn::Error::new_spanned(
+                &tool.sig,
+                format!(
+                    "Tool `{}` must take &self as the first parameter\n\n\
+                    Hint: Add &self to the function:\n\
+                    \n\
+                    #[tool]\n\
+                    async fn {}(&self, arg: String) -> String {{ ... }}",
+                    tool.name, tool.name
+                ),
+            ));
+        }
+    }
+
+    Ok(())
 }

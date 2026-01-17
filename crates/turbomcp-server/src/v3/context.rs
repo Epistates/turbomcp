@@ -1,55 +1,17 @@
 //! Request context for v3 handlers.
 //!
-//! This module provides a simplified request context for the v3 architecture,
-//! containing essential information about the incoming request.
+//! This module provides a server-specific request context extending the core
+//! context with runtime features like cancellation, timing, and structured headers.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-/// Type of transport used for the request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum TransportType {
-    /// Standard input/output transport
-    #[default]
-    Stdio,
-    /// HTTP with Server-Sent Events
-    Http,
-    /// WebSocket transport
-    WebSocket,
-    /// TCP socket transport
-    Tcp,
-    /// Unix domain socket transport
-    Unix,
-    /// WebAssembly (Cloudflare Workers, etc.)
-    Wasm,
-}
-
-impl TransportType {
-    /// Returns the transport type as a string.
-    #[must_use]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Stdio => "stdio",
-            Self::Http => "http",
-            Self::WebSocket => "websocket",
-            Self::Tcp => "tcp",
-            Self::Unix => "unix",
-            Self::Wasm => "wasm",
-        }
-    }
-}
-
-impl std::fmt::Display for TransportType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
+// Re-export TransportType from core for unified type system (DRY)
+pub use turbomcp_core::context::TransportType;
 
 /// Context information for a v3 MCP request.
 ///
@@ -282,6 +244,38 @@ impl RequestContext {
     #[must_use]
     pub fn is_authenticated(&self) -> bool {
         self.user_id.is_some()
+    }
+
+    /// Convert to the core RequestContext type.
+    ///
+    /// This method creates a minimal context compatible with the unified
+    /// `turbomcp_core::McpHandler` trait. Headers and auth fields are
+    /// encoded as metadata with standard prefixes.
+    #[must_use]
+    pub fn to_core_context(&self) -> turbomcp_core::context::RequestContext {
+        // TransportType is re-exported from core, so no conversion needed
+        let mut core_ctx =
+            turbomcp_core::context::RequestContext::new(&self.request_id, self.transport);
+
+        // Copy headers as metadata with "header:" prefix
+        if let Some(ref headers) = self.headers {
+            for (key, value) in headers {
+                core_ctx.insert_metadata(format!("header:{key}"), value.clone());
+            }
+        }
+
+        // Copy auth/session fields as metadata
+        if let Some(ref user_id) = self.user_id {
+            core_ctx.insert_metadata("user_id", user_id.clone());
+        }
+        if let Some(ref session_id) = self.session_id {
+            core_ctx.insert_metadata("session_id", session_id.clone());
+        }
+        if let Some(ref client_id) = self.client_id {
+            core_ctx.insert_metadata("client_id", client_id.clone());
+        }
+
+        core_ctx
     }
 }
 

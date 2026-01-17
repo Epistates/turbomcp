@@ -1,4 +1,56 @@
 //! v3 tool macro - generates tool metadata with parameter parsing from function signature.
+//!
+//! # Per-Parameter Documentation
+//!
+//! The v3 macro system supports per-parameter documentation via the `#[description]` attribute:
+//!
+//! ```rust,ignore
+//! #[tool]
+//! async fn greet(
+//!     #[description("The name of the person to greet")]
+//!     name: String,
+//!     #[description("Optional greeting prefix")]
+//!     prefix: Option<String>,
+//! ) -> String {
+//!     // ...
+//! }
+//! ```
+//!
+//! This generates JSON Schema with parameter descriptions:
+//!
+//! ```json
+//! {
+//!   "type": "object",
+//!   "properties": {
+//!     "name": { "type": "string", "description": "The name of the person to greet" },
+//!     "prefix": { "type": "string", "description": "Optional greeting prefix" }
+//!   },
+//!   "required": ["name"]
+//! }
+//! ```
+//!
+//! # Complex Type Support
+//!
+//! For complex types that implement `schemars::JsonSchema`, the macro automatically
+//! uses the schemars-generated schema. This enables rich nested object schemas:
+//!
+//! ```rust,ignore
+//! use schemars::JsonSchema;
+//! use serde::Deserialize;
+//!
+//! #[derive(Deserialize, JsonSchema)]
+//! struct SearchParams {
+//!     /// The search query
+//!     query: String,
+//!     /// Maximum results to return
+//!     limit: Option<i32>,
+//! }
+//!
+//! #[tool]
+//! async fn search(params: SearchParams) -> Vec<Result> {
+//!     // schemars generates the full schema with nested documentation
+//! }
+//! ```
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -24,7 +76,7 @@ pub struct ParameterInfo {
     pub name: String,
     /// Parameter type
     pub ty: Type,
-    /// Parameter description (from doc comments)
+    /// Parameter description (from doc comments or #[description] attribute)
     pub description: Option<String>,
     /// Whether this is an optional parameter
     pub is_optional: bool,
@@ -56,16 +108,14 @@ fn extract_doc_comments(attrs: &[syn::Attribute]) -> Option<String> {
     let doc_lines: Vec<String> = attrs
         .iter()
         .filter_map(|attr| {
-            if attr.path().is_ident("doc") {
-                if let syn::Meta::NameValue(meta) = &attr.meta {
-                    if let syn::Expr::Lit(syn::ExprLit {
-                        lit: syn::Lit::Str(lit_str),
-                        ..
-                    }) = &meta.value
-                    {
-                        return Some(lit_str.value().trim().to_string());
-                    }
-                }
+            if attr.path().is_ident("doc")
+                && let syn::Meta::NameValue(meta) = &attr.meta
+                && let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(lit_str),
+                    ..
+                }) = &meta.value
+            {
+                return Some(lit_str.value().trim().to_string());
             }
             None
         })
@@ -97,7 +147,9 @@ fn analyze_parameters(sig: &Signature) -> Result<Vec<ParameterInfo>, syn::Error>
                         continue;
                     }
 
-                    let description = extract_doc_comments(attrs);
+                    // Check for #[description("...")] attribute first, then fall back to doc comments
+                    let description =
+                        extract_description_attr(attrs).or_else(|| extract_doc_comments(attrs));
                     let is_optional = is_option_type(ty);
 
                     parameters.push(ParameterInfo {
@@ -112,6 +164,30 @@ fn analyze_parameters(sig: &Signature) -> Result<Vec<ParameterInfo>, syn::Error>
     }
 
     Ok(parameters)
+}
+
+/// Extract description from #[description("...")] attribute.
+fn extract_description_attr(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("description") {
+            // Handle #[description("text")]
+            if let syn::Meta::List(meta_list) = &attr.meta
+                && let Ok(lit) = syn::parse2::<syn::LitStr>(meta_list.tokens.clone())
+            {
+                return Some(lit.value());
+            }
+            // Handle #[description = "text"]
+            if let syn::Meta::NameValue(meta_nv) = &attr.meta
+                && let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(lit_str),
+                    ..
+                }) = &meta_nv.value
+            {
+                return Some(lit_str.value());
+            }
+        }
+    }
+    None
 }
 
 /// Check if a type is a context type.
@@ -141,6 +217,9 @@ fn is_option_type(ty: &Type) -> bool {
 }
 
 /// Generate JSON schema code for tool parameters.
+///
+/// This function generates code that produces a `ToolInputSchema` at runtime.
+/// All types use schemars for consistent, accurate schema generation.
 pub fn generate_schema_code(parameters: &[ParameterInfo]) -> TokenStream {
     if parameters.is_empty() {
         return quote! {
@@ -153,7 +232,29 @@ pub fn generate_schema_code(parameters: &[ParameterInfo]) -> TokenStream {
 
     for param in parameters {
         let name = &param.name;
-        let schema = generate_type_schema(&param.ty);
+        let ty = &param.ty;
+
+        // Always use schemars for consistent schema generation
+        // schemars 1.0: schema_for! returns Schema directly (not RootSchema with .schema field)
+        let schema_code = quote! {
+            {
+                let schema = ::schemars::schema_for!(#ty);
+                match ::serde_json::to_value(&schema) {
+                    Ok(schema_value) => schema_value.as_object().cloned().unwrap_or_else(|| {
+                        // Fallback: create minimal object schema if conversion fails
+                        let mut m = ::serde_json::Map::new();
+                        m.insert("type".to_string(), ::serde_json::Value::String("object".to_string()));
+                        m
+                    }),
+                    Err(_) => {
+                        // Error fallback: create minimal object schema
+                        let mut m = ::serde_json::Map::new();
+                        m.insert("type".to_string(), ::serde_json::Value::String("object".to_string()));
+                        m
+                    }
+                }
+            }
+        };
 
         let description_code = if let Some(desc) = &param.description {
             quote! {
@@ -165,7 +266,7 @@ pub fn generate_schema_code(parameters: &[ParameterInfo]) -> TokenStream {
 
         prop_code.push(quote! {
             {
-                let mut prop = #schema;
+                let mut prop = #schema_code;
                 #description_code
                 properties.insert(#name.to_string(), ::serde_json::Value::Object(prop));
             }
@@ -193,92 +294,6 @@ pub fn generate_schema_code(parameters: &[ParameterInfo]) -> TokenStream {
     }
 }
 
-/// Generate JSON schema for a Rust type.
-fn generate_type_schema(ty: &Type) -> TokenStream {
-    let type_name = type_to_json_schema_type(ty);
-
-    match type_name.as_str() {
-        "string" => quote! {
-            {
-                let mut m = ::serde_json::Map::new();
-                m.insert("type".to_string(), ::serde_json::Value::String("string".to_string()));
-                m
-            }
-        },
-        "integer" => quote! {
-            {
-                let mut m = ::serde_json::Map::new();
-                m.insert("type".to_string(), ::serde_json::Value::String("integer".to_string()));
-                m
-            }
-        },
-        "number" => quote! {
-            {
-                let mut m = ::serde_json::Map::new();
-                m.insert("type".to_string(), ::serde_json::Value::String("number".to_string()));
-                m
-            }
-        },
-        "boolean" => quote! {
-            {
-                let mut m = ::serde_json::Map::new();
-                m.insert("type".to_string(), ::serde_json::Value::String("boolean".to_string()));
-                m
-            }
-        },
-        "array" => quote! {
-            {
-                let mut m = ::serde_json::Map::new();
-                m.insert("type".to_string(), ::serde_json::Value::String("array".to_string()));
-                m
-            }
-        },
-        "object" => quote! {
-            {
-                let mut m = ::serde_json::Map::new();
-                m.insert("type".to_string(), ::serde_json::Value::String("object".to_string()));
-                m
-            }
-        },
-        _ => quote! {
-            {
-                let mut m = ::serde_json::Map::new();
-                m.insert("type".to_string(), ::serde_json::Value::String("string".to_string()));
-                m
-            }
-        },
-    }
-}
-
-/// Convert a Rust type to JSON Schema type.
-fn type_to_json_schema_type(ty: &Type) -> String {
-    if let Type::Path(type_path) = ty {
-        if let Some(segment) = type_path.path.segments.last() {
-            let ident = segment.ident.to_string();
-            return match ident.as_str() {
-                "String" | "str" => "string".to_string(),
-                "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
-                | "u128" | "usize" => "integer".to_string(),
-                "f32" | "f64" => "number".to_string(),
-                "bool" => "boolean".to_string(),
-                "Vec" => "array".to_string(),
-                "HashMap" | "BTreeMap" | "Map" => "object".to_string(),
-                "Option" => {
-                    // Extract inner type for Option
-                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                        if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
-                            return type_to_json_schema_type(inner);
-                        }
-                    }
-                    "string".to_string()
-                }
-                _ => "object".to_string(), // Default to object for complex types
-            };
-        }
-    }
-    "string".to_string()
-}
-
 /// Generate parameter extraction code.
 pub fn generate_extraction_code(parameters: &[ParameterInfo]) -> TokenStream {
     if parameters.is_empty() {
@@ -298,7 +313,7 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo]) -> TokenStream {
                     .get(#name_str)
                     .map(|v| ::serde_json::from_value(v.clone()))
                     .transpose()
-                    .map_err(|e| ::turbomcp_types::McpError::invalid_params(
+                    .map_err(|e| ::turbomcp_core::error::McpError::invalid_params(
                         format!("Invalid parameter '{}': {}", #name_str, e)
                     ))?
                     .flatten();
@@ -307,11 +322,11 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo]) -> TokenStream {
             extraction.extend(quote! {
                 let #name_ident: #ty = args
                     .get(#name_str)
-                    .ok_or_else(|| ::turbomcp_types::McpError::invalid_params(
+                    .ok_or_else(|| ::turbomcp_core::error::McpError::invalid_params(
                         format!("Missing required parameter: {}", #name_str)
                     ))
                     .and_then(|v| ::serde_json::from_value(v.clone())
-                        .map_err(|e| ::turbomcp_types::McpError::invalid_params(
+                        .map_err(|e| ::turbomcp_core::error::McpError::invalid_params(
                             format!("Invalid parameter '{}': {}", #name_str, e)
                         )))?;
             });
@@ -361,6 +376,22 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_description_attr_list_style() {
+        // Test #[description("text")]
+        let attrs: Vec<syn::Attribute> = vec![parse_quote!(#[description("The name to greet")])];
+        let desc = extract_description_attr(&attrs);
+        assert_eq!(desc, Some("The name to greet".to_string()));
+    }
+
+    #[test]
+    fn test_extract_description_attr_name_value_style() {
+        // Test #[description = "text"]
+        let attrs: Vec<syn::Attribute> = vec![parse_quote!(#[description = "A value"])];
+        let desc = extract_description_attr(&attrs);
+        assert_eq!(desc, Some("A value".to_string()));
+    }
+
+    #[test]
     fn test_is_option_type() {
         let ty: Type = parse_quote!(Option<String>);
         assert!(is_option_type(&ty));
@@ -379,17 +410,5 @@ mod tests {
 
         let ty: Type = parse_quote!(String);
         assert!(!is_context_type(&ty));
-    }
-
-    #[test]
-    fn test_type_to_json_schema_type() {
-        assert_eq!(type_to_json_schema_type(&parse_quote!(String)), "string");
-        assert_eq!(type_to_json_schema_type(&parse_quote!(i64)), "integer");
-        assert_eq!(type_to_json_schema_type(&parse_quote!(f64)), "number");
-        assert_eq!(type_to_json_schema_type(&parse_quote!(bool)), "boolean");
-        assert_eq!(
-            type_to_json_schema_type(&parse_quote!(Vec<String>)),
-            "array"
-        );
     }
 }

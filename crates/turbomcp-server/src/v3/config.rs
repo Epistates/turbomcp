@@ -23,6 +23,9 @@ pub const DEFAULT_RATE_LIMIT: u32 = 100;
 /// Default rate limit window.
 pub const DEFAULT_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(1);
 
+/// Default maximum message size (10MB).
+pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
+
 /// Supported MCP protocol versions (in preference order).
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     "2025-11-25", // Latest
@@ -38,12 +41,12 @@ pub struct ServerConfig {
     pub protocol: ProtocolConfig,
     /// Rate limiting configuration.
     pub rate_limit: Option<RateLimitConfig>,
-    /// Timeout configuration (MEDIUM-004).
-    pub timeouts: TimeoutConfig,
     /// Connection limits.
     pub connection_limits: ConnectionLimits,
     /// Required client capabilities.
     pub required_capabilities: RequiredCapabilities,
+    /// Maximum message size in bytes (default: 10MB).
+    pub max_message_size: usize,
 }
 
 impl Default for ServerConfig {
@@ -51,9 +54,9 @@ impl Default for ServerConfig {
         Self {
             protocol: ProtocolConfig::default(),
             rate_limit: None,
-            timeouts: TimeoutConfig::default(),
             connection_limits: ConnectionLimits::default(),
             required_capabilities: RequiredCapabilities::default(),
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 }
@@ -77,9 +80,9 @@ impl ServerConfig {
 pub struct ServerConfigBuilder {
     protocol: Option<ProtocolConfig>,
     rate_limit: Option<RateLimitConfig>,
-    timeouts: Option<TimeoutConfig>,
     connection_limits: Option<ConnectionLimits>,
     required_capabilities: Option<RequiredCapabilities>,
+    max_message_size: Option<usize>,
 }
 
 impl ServerConfigBuilder {
@@ -97,13 +100,6 @@ impl ServerConfigBuilder {
         self
     }
 
-    /// Set timeout configuration (MEDIUM-004).
-    #[must_use]
-    pub fn timeouts(mut self, config: TimeoutConfig) -> Self {
-        self.timeouts = Some(config);
-        self
-    }
-
     /// Set connection limits.
     #[must_use]
     pub fn connection_limits(mut self, limits: ConnectionLimits) -> Self {
@@ -118,15 +114,25 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Set maximum message size in bytes.
+    ///
+    /// Messages exceeding this size will be rejected.
+    /// Default: 10MB.
+    #[must_use]
+    pub fn max_message_size(mut self, size: usize) -> Self {
+        self.max_message_size = Some(size);
+        self
+    }
+
     /// Build the server configuration.
     #[must_use]
     pub fn build(self) -> ServerConfig {
         ServerConfig {
             protocol: self.protocol.unwrap_or_default(),
             rate_limit: self.rate_limit,
-            timeouts: self.timeouts.unwrap_or_default(),
             connection_limits: self.connection_limits.unwrap_or_default(),
             required_capabilities: self.required_capabilities.unwrap_or_default(),
+            max_message_size: self.max_message_size.unwrap_or(DEFAULT_MAX_MESSAGE_SIZE),
         }
     }
 }
@@ -226,79 +232,6 @@ impl RateLimitConfig {
     }
 }
 
-/// Default timeout for tool calls (30 seconds).
-pub const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Default timeout for resource reads (10 seconds).
-pub const DEFAULT_RESOURCE_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Default timeout for prompt gets (5 seconds).
-pub const DEFAULT_PROMPT_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Timeout configuration for MCP operations (MEDIUM-004).
-#[derive(Debug, Clone)]
-pub struct TimeoutConfig {
-    /// Timeout for tool calls.
-    pub tool_timeout: Duration,
-    /// Timeout for resource reads.
-    pub resource_timeout: Duration,
-    /// Timeout for prompt gets.
-    pub prompt_timeout: Duration,
-}
-
-impl Default for TimeoutConfig {
-    fn default() -> Self {
-        Self {
-            tool_timeout: DEFAULT_TOOL_TIMEOUT,
-            resource_timeout: DEFAULT_RESOURCE_TIMEOUT,
-            prompt_timeout: DEFAULT_PROMPT_TIMEOUT,
-        }
-    }
-}
-
-impl TimeoutConfig {
-    /// Create a new timeout configuration with custom values.
-    #[must_use]
-    pub fn new(tool: Duration, resource: Duration, prompt: Duration) -> Self {
-        Self {
-            tool_timeout: tool,
-            resource_timeout: resource,
-            prompt_timeout: prompt,
-        }
-    }
-
-    /// Create configuration with a uniform timeout for all operations.
-    #[must_use]
-    pub fn uniform(timeout: Duration) -> Self {
-        Self {
-            tool_timeout: timeout,
-            resource_timeout: timeout,
-            prompt_timeout: timeout,
-        }
-    }
-
-    /// Set tool timeout.
-    #[must_use]
-    pub fn with_tool_timeout(mut self, timeout: Duration) -> Self {
-        self.tool_timeout = timeout;
-        self
-    }
-
-    /// Set resource timeout.
-    #[must_use]
-    pub fn with_resource_timeout(mut self, timeout: Duration) -> Self {
-        self.resource_timeout = timeout;
-        self
-    }
-
-    /// Set prompt timeout.
-    #[must_use]
-    pub fn with_prompt_timeout(mut self, timeout: Duration) -> Self {
-        self.prompt_timeout = timeout;
-        self
-    }
-}
-
 /// Connection limits.
 #[derive(Debug, Clone)]
 pub struct ConnectionLimits {
@@ -308,6 +241,8 @@ pub struct ConnectionLimits {
     pub max_websocket_connections: usize,
     /// Maximum concurrent HTTP requests.
     pub max_http_concurrent: usize,
+    /// Maximum concurrent Unix socket connections.
+    pub max_unix_connections: usize,
 }
 
 impl Default for ConnectionLimits {
@@ -316,6 +251,7 @@ impl Default for ConnectionLimits {
             max_tcp_connections: DEFAULT_MAX_CONNECTIONS,
             max_websocket_connections: DEFAULT_MAX_CONNECTIONS,
             max_http_concurrent: DEFAULT_MAX_CONNECTIONS,
+            max_unix_connections: DEFAULT_MAX_CONNECTIONS,
         }
     }
 }
@@ -328,6 +264,7 @@ impl ConnectionLimits {
             max_tcp_connections: max_connections,
             max_websocket_connections: max_connections,
             max_http_concurrent: max_connections,
+            max_unix_connections: max_connections,
         }
     }
 }
@@ -517,9 +454,11 @@ impl RateLimiter {
 }
 
 /// Default cleanup interval for rate limiter (5 minutes).
+#[allow(dead_code)]
 pub const DEFAULT_CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Default max age for client buckets (1 hour).
+#[allow(dead_code)]
 pub const DEFAULT_CLIENT_BUCKET_MAX_AGE: Duration = Duration::from_secs(3600);
 
 /// Spawn a background task to periodically clean up the rate limiter (LOW-004).
@@ -540,6 +479,7 @@ pub const DEFAULT_CLIENT_BUCKET_MAX_AGE: Duration = Duration::from_secs(3600);
 /// let limiter = Arc::new(RateLimiter::new(RateLimitConfig::default()));
 /// spawn_rate_limiter_cleanup(limiter.clone(), None, None);
 /// ```
+#[allow(dead_code)]
 pub fn spawn_rate_limiter_cleanup(
     limiter: Arc<RateLimiter>,
     interval: Option<Duration>,

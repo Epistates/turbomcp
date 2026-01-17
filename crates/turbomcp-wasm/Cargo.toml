@@ -36,6 +36,9 @@ native = ["macros", "turbomcp-wasm-macros/native", "dep:turbomcp"]
 # Core MCP types - no_std compatible with WASM optimizations
 turbomcp-core = { workspace = true, default-features = false, features = ["wasm"] }
 
+# MCP types for macro support (enables #[server] macro to work)
+turbomcp-types = { workspace = true }
+
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -102,6 +105,10 @@ features = [
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 tokio = { workspace = true, features = ["full"] }
+
+[[example]]
+name = "portable_server"
+required-features = ["native"]
 
 [package.metadata.docs.rs]
 targets = ["wasm32-unknown-unknown"]

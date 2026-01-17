@@ -1,27 +1,24 @@
 [package]
 name = "turbomcp-demo"
 version = "3.0.0-exp.2"
-edition = "2021"
+edition = "2024"
 license = "MIT"
-description = "Demo project showcasing TurboMCP in action"
+description = "Demo project showcasing TurboMCP v3 architecture"
 publish = false
 
 [dependencies]
-# Using the TurboMCP SDK for zero boilerplate
+# TurboMCP SDK with v3 macros
 turbomcp = { path = "../crates/turbomcp" }
 
-# Internal dependencies needed by the macro
-turbomcp-protocol = { path = "../crates/turbomcp-protocol" }
-turbomcp-transport = { path = "../crates/turbomcp-transport" }
-turbomcp-server = { path = "../crates/turbomcp-server" }
-
-# Basic dependencies for a real project
-tokio = { workspace = true }
-tracing = "0.1"
-tracing-subscriber = "0.3"
-serde = { version = "1.0", features = ["derive"] }
+# Dependencies required by macro-generated code
+# TODO: These should be re-exported through turbomcp in a future version
+turbomcp-core = { path = "../crates/turbomcp-core" }
+turbomcp-types = { path = "../crates/turbomcp-types" }
+schemars = "1.0"
 serde_json = "1.0"
-anyhow = "1.0"
+
+# Async runtime
+tokio = { workspace = true }
+
+# Date/time for demo
 chrono = { version = "0.4", features = ["serde"] }
-fastrand = "2.0"
-axum = { version = "0.8.4", features = ["ws"] }
