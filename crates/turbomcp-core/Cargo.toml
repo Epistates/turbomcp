@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-core"
-version = "3.0.0-exp.2"
+version = "3.0.0-beta.1"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Core MCP types and primitives - no_std compatible for WASM targets"
@@ -14,7 +14,7 @@ rust-version = "1.89.0"
 
 [dependencies]
 # Types (single source of truth)
-turbomcp-types = { version = "3.0.0-exp.2", path = "../turbomcp-types" }
+turbomcp-types = { version = "3.0.0-beta.1", path = "../turbomcp-types" }
 
 # Serialization (no_std compatible with alloc)
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }

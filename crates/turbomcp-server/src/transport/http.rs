@@ -22,7 +22,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::{get, post};
 use futures::stream::Stream;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
 use uuid::Uuid;
@@ -63,10 +63,7 @@ impl SessionManager {
         let session_id = Uuid::new_v4().to_string();
         let (tx, rx) = broadcast::channel(100);
 
-        self.sessions
-            .write()
-            .await
-            .insert(session_id.clone(), tx);
+        self.sessions.write().await.insert(session_id.clone(), tx);
 
         tracing::debug!("Created SSE session: {}", session_id);
         (session_id, rx)
@@ -245,7 +242,6 @@ struct SseState<H: McpHandler> {
     session_manager: SessionManager,
     rate_limiter: Option<Arc<RateLimiter>>,
 }
-
 
 /// Axum handler for JSON-RPC requests (simple mode).
 async fn handle_json_rpc<H: McpHandler>(

@@ -1,5 +1,5 @@
-use turbomcp_types::{Tool, ToolInputSchema, ServerInfo, ToolResult};
 use serde_json::json;
+use turbomcp_types::{ServerInfo, Tool, ToolInputSchema, ToolResult};
 
 #[test]
 fn test_tool_serialization() {
@@ -12,8 +12,7 @@ fn test_tool_serialization() {
         additional_properties: None,
     };
 
-    let tool = Tool::new("test-tool", "A test tool")
-        .with_schema(schema);
+    let tool = Tool::new("test-tool", "A test tool").with_schema(schema);
 
     let json = serde_json::to_value(&tool).unwrap();
     assert_eq!(json["name"], "test-tool");
@@ -25,7 +24,7 @@ fn test_tool_serialization() {
 fn test_result_builders() {
     let text_result = ToolResult::text("Hello world");
     assert!(!text_result.is_error());
-    
+
     let error_result = ToolResult::error("Failure");
     assert!(error_result.is_error());
 }

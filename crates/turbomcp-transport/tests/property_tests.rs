@@ -26,7 +26,13 @@ fn circuit_breaker_config_strategy() -> impl Strategy<Value = CircuitBreakerConf
         1u32..=50,    // minimum_requests
     )
         .prop_map(
-            |(failure_threshold, success_threshold, timeout_ms, rolling_window_size, minimum_requests)| {
+            |(
+                failure_threshold,
+                success_threshold,
+                timeout_ms,
+                rolling_window_size,
+                minimum_requests,
+            )| {
                 CircuitBreakerConfig {
                     failure_threshold,
                     success_threshold,
@@ -125,11 +131,11 @@ proptest! {
 /// Strategy for generating valid retry configurations
 fn retry_config_strategy() -> impl Strategy<Value = RetryConfig> {
     (
-        1u32..=10,      // max_attempts
-        10u64..=500,    // base_delay_ms
+        1u32..=10,       // max_attempts
+        10u64..=500,     // base_delay_ms
         1000u64..=60000, // max_delay_ms
-        1.1f64..=5.0,   // backoff_multiplier
-        0.0f64..=0.5,   // jitter_factor
+        1.1f64..=5.0,    // backoff_multiplier
+        0.0f64..=0.5,    // jitter_factor
     )
         .prop_map(
             |(max_attempts, base_delay_ms, max_delay_ms, backoff_multiplier, jitter_factor)| {

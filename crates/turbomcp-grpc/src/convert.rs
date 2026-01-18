@@ -308,9 +308,7 @@ impl TryFrom<proto::Tool> for Tool {
             serde_json::from_slice(&tool.input_schema)?
         };
 
-        let icon = tool
-            .icon
-            .and_then(|i| Icon::try_from(i).ok());
+        let icon = tool.icon.and_then(|i| Icon::try_from(i).ok());
 
         // Note: proto::Annotations has audience/priority which are base Annotations fields,
         // not ToolAnnotations fields. The MCP Tool type expects ToolAnnotations, so we
@@ -345,9 +343,7 @@ impl From<Resource> for proto::Resource {
 
 impl From<proto::Resource> for Resource {
     fn from(resource: proto::Resource) -> Self {
-        let icon = resource
-            .icon
-            .and_then(|i| Icon::try_from(i).ok());
+        let icon = resource.icon.and_then(|i| Icon::try_from(i).ok());
 
         Self {
             uri: resource.uri,
@@ -377,9 +373,7 @@ impl From<ResourceTemplate> for proto::ResourceTemplate {
 
 impl From<proto::ResourceTemplate> for ResourceTemplate {
     fn from(template: proto::ResourceTemplate) -> Self {
-        let icon = template
-            .icon
-            .and_then(|i| Icon::try_from(i).ok());
+        let icon = template.icon.and_then(|i| Icon::try_from(i).ok());
 
         Self {
             uri_template: template.uri_template,
@@ -458,9 +452,7 @@ impl From<Prompt> for proto::Prompt {
 
 impl From<proto::Prompt> for Prompt {
     fn from(prompt: proto::Prompt) -> Self {
-        let icon = prompt
-            .icon
-            .and_then(|i| Icon::try_from(i).ok());
+        let icon = prompt.icon.and_then(|i| Icon::try_from(i).ok());
 
         Self {
             name: prompt.name,

@@ -133,6 +133,7 @@ pub const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 pub use turbomcp_macros::{description, prompt, resource, server, tool};
 
 // Re-export core types
+pub use turbomcp_core::context::RequestContext;
 pub use turbomcp_core::error::{McpError, McpResult};
 pub use turbomcp_core::handler::McpHandler;
 
@@ -152,8 +153,7 @@ pub use turbomcp_server::{
 pub use turbomcp_protocol::{
     CallToolRequest, CallToolResult, ClientCapabilities, Image, InitializeRequest,
     InitializeResult, IntoToolError, IntoToolResponse, Json, JsonRpcError, JsonRpcNotification,
-    JsonRpcRequest, JsonRpcResponse, MessageId, RequestContext, ServerCapabilities, Text,
-    ToolError,
+    JsonRpcRequest, JsonRpcResponse, MessageId, ServerCapabilities, Text, ToolError,
 };
 
 // ============================================================================

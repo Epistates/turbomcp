@@ -8,12 +8,10 @@ use worker::{Headers, Request, Response};
 
 use super::server::McpServer;
 use super::types::{JsonRpcRequest, JsonRpcResponse, error_codes};
+use turbomcp_core::PROTOCOL_VERSION;
 use turbomcp_core::types::capabilities::ClientCapabilities;
 use turbomcp_core::types::core::Implementation;
 use turbomcp_core::types::initialization::InitializeResult;
-
-/// Protocol version supported by this server
-const PROTOCOL_VERSION: &str = "2025-11-25";
 
 /// Maximum request body size (1MB) to prevent DoS
 const MAX_BODY_SIZE: usize = 1024 * 1024;

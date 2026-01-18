@@ -460,7 +460,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 if uri.starts_with(#prefix) && uri.ends_with(#suffix) && uri.len() >= #prefix.len() + #suffix.len() {
                     let result = self.#fn_name(uri.to_string(), ctx).await;
                     return match result {
-                        Ok(r) => Ok(::turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, uri)),
+                        Ok(r) => Ok(::turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)),
                         Err(e) => Err(e),
                     };
                 }
@@ -471,7 +471,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 if uri == #uri_template {
                     let result = self.#fn_name(uri.to_string(), ctx).await;
                     return match result {
-                        Ok(r) => Ok(::turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, uri)),
+                        Ok(r) => Ok(::turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)),
                         Err(e) => Err(e),
                     };
                 }

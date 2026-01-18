@@ -3,13 +3,12 @@
 //! This example demonstrates how to build an MCP server without macros,
 //! useful for understanding the internal machinery or for dynamic server construction.
 
+use serde_json::{Value, json};
 use std::future::Future;
-use serde_json::{json, Value};
+use turbomcp_core::{McpError, McpResult, RequestContext};
 use turbomcp_server::{McpHandler, McpHandlerExt};
-use turbomcp_core::{McpResult, McpError, RequestContext};
 use turbomcp_types::{
-    Tool, ToolResult, Resource, Prompt, ServerInfo,
-    ResourceResult, PromptResult, ToolInputSchema
+    Prompt, PromptResult, Resource, ResourceResult, ServerInfo, Tool, ToolInputSchema, ToolResult,
 };
 
 #[derive(Clone)]
@@ -31,10 +30,7 @@ impl McpHandler for ManualServer {
             additional_properties: Some(false),
         };
 
-        vec![
-            Tool::new("echo", "Echo back the input")
-                .with_schema(schema)
-        ]
+        vec![Tool::new("echo", "Echo back the input").with_schema(schema)]
     }
 
     fn list_resources(&self) -> Vec<Resource> {
@@ -55,12 +51,13 @@ impl McpHandler for ManualServer {
         async move {
             match name.as_str() {
                 "echo" => {
-                    let msg = args.get("message")
+                    let msg = args
+                        .get("message")
                         .and_then(|v| v.as_str())
                         .ok_or_else(|| McpError::invalid_params("Missing 'message'"))?;
                     Ok(ToolResult::text(msg))
                 }
-                _ => Err(McpError::tool_not_found(&name))
+                _ => Err(McpError::tool_not_found(&name)),
             }
         }
     }

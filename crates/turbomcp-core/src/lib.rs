@@ -196,20 +196,27 @@ pub mod features {
     pub const ROOTS: &str = "roots";
 }
 
-/// Protocol method names
+/// Protocol method names (single source of truth)
 pub mod methods {
+    // Initialization
     /// Initialize handshake method
     pub const INITIALIZE: &str = "initialize";
     /// Initialized notification method
     pub const INITIALIZED: &str = "notifications/initialized";
+
+    // Tools
     /// List available tools method
     pub const LIST_TOOLS: &str = "tools/list";
     /// Call a specific tool method
     pub const CALL_TOOL: &str = "tools/call";
+
+    // Prompts
     /// List available prompts method
     pub const LIST_PROMPTS: &str = "prompts/list";
     /// Get a specific prompt method
     pub const GET_PROMPT: &str = "prompts/get";
+
+    // Resources
     /// List available resources method
     pub const LIST_RESOURCES: &str = "resources/list";
     /// Read a specific resource method
@@ -218,12 +225,30 @@ pub mod methods {
     pub const SUBSCRIBE: &str = "resources/subscribe";
     /// Unsubscribe from resource updates method
     pub const UNSUBSCRIBE: &str = "resources/unsubscribe";
+    /// Resource updated notification
+    pub const RESOURCE_UPDATED: &str = "notifications/resources/updated";
+    /// Resource list changed notification
+    pub const RESOURCE_LIST_CHANGED: &str = "notifications/resources/list_changed";
+
+    // Logging
     /// Set logging level method
     pub const SET_LEVEL: &str = "logging/setLevel";
+    /// Log message notification
+    pub const LOG_MESSAGE: &str = "notifications/message";
+
+    // Progress
+    /// Progress update notification
+    pub const PROGRESS: &str = "notifications/progress";
+
+    // Sampling
     /// Create sampling message method
     pub const CREATE_MESSAGE: &str = "sampling/createMessage";
+
+    // Roots
     /// List directory roots method
     pub const LIST_ROOTS: &str = "roots/list";
+    /// Roots list changed notification
+    pub const ROOTS_LIST_CHANGED: &str = "notifications/roots/list_changed";
 }
 
 /// Protocol error codes (JSON-RPC standard + MCP extensions)

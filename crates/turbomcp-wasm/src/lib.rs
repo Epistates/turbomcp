@@ -239,8 +239,8 @@ pub use turbomcp_wasm_macros::{prompt, resource, server, tool};
 /// Version of the TurboMCP WASM bindings
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// MCP protocol version supported
-pub const PROTOCOL_VERSION: &str = "2025-11-25";
+/// MCP protocol version supported (re-exported from core - single source of truth)
+pub use turbomcp_core::PROTOCOL_VERSION;
 
 #[cfg(test)]
 mod tests {

@@ -2,10 +2,12 @@
 // RPITIT (Return Position Impl Trait In Trait) signatures for trait object safety.
 #![allow(clippy::manual_async_fn)]
 
-use turbomcp_core::{McpHandler, RequestContext, McpResult, McpError};
-use turbomcp_types::{ServerInfo, Tool, ToolResult, Resource, ResourceResult, Prompt, PromptResult};
 use serde_json::Value;
 use std::future::Future;
+use turbomcp_core::{McpError, McpHandler, McpResult, RequestContext};
+use turbomcp_types::{
+    Prompt, PromptResult, Resource, ResourceResult, ServerInfo, Tool, ToolResult,
+};
 
 // Mock Handler to verify trait object safety and basic dispatch
 #[derive(Clone)]
@@ -78,8 +80,11 @@ async fn test_handler_dispatch() {
     // Test tool call (success)
     let result = handler.call_tool("ping", Value::Null, &ctx).await.unwrap();
     assert!(!result.is_error());
-    
+
     // Test tool call (failure)
-    let err = handler.call_tool("unknown", Value::Null, &ctx).await.unwrap_err();
+    let err = handler
+        .call_tool("unknown", Value::Null, &ctx)
+        .await
+        .unwrap_err();
     assert_eq!(err.jsonrpc_code(), -32001); // Tool not found code
 }

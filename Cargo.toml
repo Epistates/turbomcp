@@ -189,7 +189,7 @@ testcontainers = "0.25.0"
 doc-comment = "0.3"
 
 # Workspace dependencies are defined below
-# Internal crate dependencies - v3.0.0-exp.2
+# Internal crate dependencies - v3.0.0-beta.1
 #
 # NOTE on `default-features = false`:
 # - turbomcp-core: Has `default = ["std"]` - needed for no_std/WASM builds
@@ -199,32 +199,32 @@ doc-comment = "0.3"
 #
 # All other crates either have empty defaults (removed vestigial `default-features = false`)
 # or useful defaults that should be enabled by default.
-turbomcp = { version = "3.0.0-exp.2", path = "crates/turbomcp" }
+turbomcp = { version = "3.0.0-beta.1", path = "crates/turbomcp" }
 # v3.0: turbomcp-types is THE source of truth for all MCP types
-turbomcp-types = { version = "3.0.0-exp.2", path = "crates/turbomcp-types" }
+turbomcp-types = { version = "3.0.0-beta.1", path = "crates/turbomcp-types" }
 # v3.0: turbomcp-core re-extracted as no_std foundation layer
-turbomcp-core = { version = "3.0.0-exp.2", path = "crates/turbomcp-core", default-features = false }
+turbomcp-core = { version = "3.0.0-beta.1", path = "crates/turbomcp-core", default-features = false }
 # v3.0: turbomcp-transport-traits lean transport traits crate
-turbomcp-transport-traits = { version = "3.0.0-exp.2", path = "crates/turbomcp-transport-traits" }
+turbomcp-transport-traits = { version = "3.0.0-beta.1", path = "crates/turbomcp-transport-traits" }
 # v3.0: Individual transport crates (extracted from monolithic turbomcp-transport)
-turbomcp-stdio = { version = "3.0.0-exp.2", path = "crates/turbomcp-stdio" }
-turbomcp-http = { version = "3.0.0-exp.2", path = "crates/turbomcp-http" }
-turbomcp-websocket = { version = "3.0.0-exp.2", path = "crates/turbomcp-websocket" }
-turbomcp-tcp = { version = "3.0.0-exp.2", path = "crates/turbomcp-tcp" }
-turbomcp-unix = { version = "3.0.0-exp.2", path = "crates/turbomcp-unix" }
-turbomcp-protocol = { version = "3.0.0-exp.2", path = "crates/turbomcp-protocol" }
-turbomcp-transport = { version = "3.0.0-exp.2", path = "crates/turbomcp-transport", default-features = false }
-turbomcp-client = { version = "3.0.0-exp.2", path = "crates/turbomcp-client" }
-turbomcp-server = { version = "3.0.0-exp.2", path = "crates/turbomcp-server" }
-turbomcp-macros = { version = "3.0.0-exp.2", path = "crates/turbomcp-macros" }
-turbomcp-cli = { version = "3.0.0-exp.2", path = "crates/turbomcp-cli" }
+turbomcp-stdio = { version = "3.0.0-beta.1", path = "crates/turbomcp-stdio" }
+turbomcp-http = { version = "3.0.0-beta.1", path = "crates/turbomcp-http" }
+turbomcp-websocket = { version = "3.0.0-beta.1", path = "crates/turbomcp-websocket" }
+turbomcp-tcp = { version = "3.0.0-beta.1", path = "crates/turbomcp-tcp" }
+turbomcp-unix = { version = "3.0.0-beta.1", path = "crates/turbomcp-unix" }
+turbomcp-protocol = { version = "3.0.0-beta.1", path = "crates/turbomcp-protocol" }
+turbomcp-transport = { version = "3.0.0-beta.1", path = "crates/turbomcp-transport", default-features = false }
+turbomcp-client = { version = "3.0.0-beta.1", path = "crates/turbomcp-client" }
+turbomcp-server = { version = "3.0.0-beta.1", path = "crates/turbomcp-server" }
+turbomcp-macros = { version = "3.0.0-beta.1", path = "crates/turbomcp-macros" }
+turbomcp-cli = { version = "3.0.0-beta.1", path = "crates/turbomcp-cli" }
 # v3.0: OpenTelemetry integration and observability
-turbomcp-telemetry = { version = "3.0.0-exp.2", path = "crates/turbomcp-telemetry" }
-turbomcp-dpop = { version = "3.0.0-exp.2", path = "crates/turbomcp-dpop" }
+turbomcp-telemetry = { version = "3.0.0-beta.1", path = "crates/turbomcp-telemetry" }
+turbomcp-dpop = { version = "3.0.0-beta.1", path = "crates/turbomcp-dpop" }
 # v3.0: Wire format codec abstraction (no_std compatible)
-turbomcp-wire = { version = "3.0.0-exp.2", path = "crates/turbomcp-wire", default-features = false }
+turbomcp-wire = { version = "3.0.0-beta.1", path = "crates/turbomcp-wire", default-features = false }
 # v3.0: WASM server proc macros
-turbomcp-wasm-macros = { version = "3.0.0-exp.2", path = "crates/turbomcp-wasm-macros" }
+turbomcp-wasm-macros = { version = "3.0.0-beta.1", path = "crates/turbomcp-wasm-macros" }
 
 [profile.dev]
 opt-level = 1

@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-beta.1] - 2026-01-18
+
+### 🎉 Beta Release
+
+TurboMCP v3.0 enters beta! This release marks feature completeness for the v3 architecture
+with comprehensive audit verification across all 23 crates.
+
+### Fixed
+
+#### DRY Compliance Audit
+- **turbomcp-types**: Removed duplicate `MCP_PROTOCOL_VERSION` constant (use `turbomcp_core::PROTOCOL_VERSION`)
+- **turbomcp-types**: Deleted vestigial `error.rs` file (dead code)
+- **turbomcp-protocol**: Deleted empty `capabilities.rs.tmp` temp file
+- **turbomcp-server**: Removed local `SUPPORTED_PROTOCOL_VERSIONS` constant, now re-exports from `turbomcp_core::SUPPORTED_VERSIONS`
+
+### Changed
+
+- **Constants Single Source of Truth**: All protocol constants (`PROTOCOL_VERSION`, `SUPPORTED_VERSIONS`, `error_codes`, `methods`) are now exclusively defined in `turbomcp-core` and re-exported by dependent crates
+
+### Internal
+
+- Comprehensive crate-by-crate audit completed across all 23 crates
+- Verified consistent versioning, lint settings, and documentation
+- Confirmed no vestigial or partially implemented code remains
+- All workspace tests passing
+
 ## [3.0.0-exp.2] - 2026-01-13
 
 ### Added

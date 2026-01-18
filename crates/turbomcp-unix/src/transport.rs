@@ -171,8 +171,13 @@ impl UnixTransport {
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
 
         tokio::spawn(async move {
-            if let Err(e) =
-                handle_unix_connection_framed_with_signal(stream, incoming_sender, connections, ready_tx).await
+            if let Err(e) = handle_unix_connection_framed_with_signal(
+                stream,
+                incoming_sender,
+                connections,
+                ready_tx,
+            )
+            .await
             {
                 error!("Unix client connection handler failed: {}", e);
             }

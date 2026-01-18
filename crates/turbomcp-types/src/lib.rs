@@ -57,6 +57,3 @@ pub use traits::*;
 
 /// Version of the TurboMCP types crate
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// MCP protocol version this crate targets
-pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";

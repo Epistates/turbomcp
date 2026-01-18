@@ -14,6 +14,9 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
+// Re-export from core (single source of truth - DRY)
+pub use turbomcp_core::SUPPORTED_VERSIONS as SUPPORTED_PROTOCOL_VERSIONS;
+
 /// Default maximum connections for TCP transport.
 pub const DEFAULT_MAX_CONNECTIONS: usize = 1000;
 
@@ -25,14 +28,6 @@ pub const DEFAULT_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(1);
 
 /// Default maximum message size (10MB).
 pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
-
-/// Supported MCP protocol versions (in preference order).
-pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
-    "2025-11-25", // Latest
-    "2025-06-18",
-    "2025-03-26",
-    "2024-11-05", // Legacy
-];
 
 /// Server configuration.
 #[derive(Debug, Clone)]

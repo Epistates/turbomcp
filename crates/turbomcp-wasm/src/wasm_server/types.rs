@@ -83,14 +83,8 @@ pub(crate) struct JsonRpcError {
     pub data: Option<serde_json::Value>,
 }
 
-/// Standard JSON-RPC error codes
-pub(crate) mod error_codes {
-    pub const PARSE_ERROR: i32 = -32700;
-    pub const INVALID_REQUEST: i32 = -32600;
-    pub const METHOD_NOT_FOUND: i32 = -32601;
-    pub const INVALID_PARAMS: i32 = -32602;
-    pub const INTERNAL_ERROR: i32 = -32603;
-}
+/// Standard JSON-RPC error codes (re-exported from core - single source of truth)
+pub(crate) use turbomcp_core::error_codes;
 
 #[cfg(test)]
 mod tests {
