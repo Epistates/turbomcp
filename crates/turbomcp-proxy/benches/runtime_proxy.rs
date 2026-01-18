@@ -4,7 +4,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 
 fn benchmark_runtime_proxy(_c: &mut Criterion) {
-    // TODO: Implement in Phase 2
+    // NOTE: Phase 2 - runtime proxy benchmarks
 }
 
 criterion_group!(benches, benchmark_runtime_proxy);

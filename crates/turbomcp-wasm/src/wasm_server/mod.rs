@@ -79,6 +79,8 @@ mod traits;
 mod types;
 
 // Re-export the extension trait for unified McpHandler support
+// This enables "write once, run everywhere" - any McpHandler can be used
+// directly in WASM via .handle_worker_request()
 pub use ext::WasmHandlerExt;
 
 // Re-export the main server types

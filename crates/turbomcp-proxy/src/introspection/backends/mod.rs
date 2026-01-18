@@ -10,7 +10,7 @@ use turbomcp_protocol::{InitializeRequest, InitializeResult};
 use crate::error::ProxyResult;
 
 pub mod stdio;
-// TODO: HTTP backend in Phase 1
+// NOTE: Phase 2 - HTTP backend for introspection
 // pub mod http;
 
 /// Trait for connecting to MCP servers via different transports

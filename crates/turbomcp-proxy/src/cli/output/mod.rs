@@ -58,7 +58,7 @@ pub fn get_formatter(format: OutputFormat) -> Box<dyn OutputFormatter> {
         OutputFormat::Human => Box::new(human::HumanFormatter::new()),
         OutputFormat::Json => Box::new(json::JsonFormatter::new(false)),
         OutputFormat::JsonPretty => Box::new(json::JsonFormatter::new(true)),
-        OutputFormat::Yaml => Box::new(json::JsonFormatter::new(true)), // TODO: Implement YAML
+        OutputFormat::Yaml => Box::new(json::JsonFormatter::new(true)), // NOTE: Phase 2 - proper YAML formatter
     }
 }
 

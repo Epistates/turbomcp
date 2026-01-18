@@ -2,6 +2,45 @@
 
 WebAssembly bindings for TurboMCP - MCP client and server for browsers, edge environments, and WASI runtimes.
 
+## Write Once, Run Everywhere
+
+TurboMCP v3 supports **portable MCP handlers** that can run on both native platforms (Linux, macOS, Windows) and WASM/edge environments with zero code changes. Write your `McpHandler` implementation once, then deploy to any target:
+
+```rust
+use turbomcp::prelude::*;
+
+#[derive(Clone)]
+struct MyHandler;
+
+#[turbomcp::server(name = "my-server", version = "1.0.0")]
+impl MyHandler {
+    #[tool(description = "Say hello")]
+    async fn hello(&self, name: String) -> String {
+        format!("Hello, {}!", name)
+    }
+}
+
+// Native: Use run_tcp(), run_http(), run_websocket(), or serve() (stdio)
+// WASM: Use WasmHandlerExt trait for Cloudflare Workers
+```
+
+### WASM Deployment with WasmHandlerExt
+
+Any `McpHandler` can be used directly in Cloudflare Workers via the `WasmHandlerExt` extension trait:
+
+```rust
+use turbomcp_wasm::wasm_server::WasmHandlerExt;
+use worker::*;
+
+#[event(fetch)]
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+    let handler = MyHandler;
+    handler.handle_worker_request(req).await
+}
+```
+
+This enables sharing business logic between native servers and edge deployments without code duplication.
+
 ## Features
 
 ### Client (Browser & WASI)

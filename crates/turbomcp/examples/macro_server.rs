@@ -46,7 +46,10 @@ impl CleanServer {
             "multiply" => Ok(a * b),
             "divide" if b != 0.0 => Ok(a / b),
             "divide" => Err(McpError::invalid_params("Division by zero")),
-            _ => Err(McpError::invalid_params(format!("Unknown operation: {}", operation))),
+            _ => Err(McpError::invalid_params(format!(
+                "Unknown operation: {}",
+                operation
+            ))),
         }
     }
 }

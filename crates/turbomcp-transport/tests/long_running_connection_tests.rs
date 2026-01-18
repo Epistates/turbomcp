@@ -352,7 +352,8 @@ async fn test_websocket_long_running_connection_with_keepalive() {
     println!("⚠️  Skipping test until WebSocket initialize timeout is fixed");
     println!("   (See REMAINING_CONNECTION_ISSUES.md)");
 
-    // TODO: Implement once WebSocket is working
+    // NOTE: Test skeleton for Phase 2 - WebSocket keep-alive validation
+    // Implementation steps once WebSocket initialize is stable:
     // 1. Start real turbomcp WebSocket server
     // 2. Connect client
     // 3. Send initialize (currently times out - needs fix)
@@ -375,7 +376,8 @@ async fn test_reconnection_after_server_restart() {
     println!("\n🧪 Starting reconnection test...");
     println!("⏭️  Test not implemented yet");
 
-    // TODO: Implement
+    // NOTE: Test skeleton for Phase 2 - reconnection resilience
+    // Implementation steps:
     // 1. Start server
     // 2. Connect client
     // 3. Exchange messages
@@ -398,7 +400,8 @@ async fn test_multiple_concurrent_connections() {
     println!("\n🧪 Starting concurrent connections test...");
     println!("⏭️  Test not implemented yet");
 
-    // TODO: Implement
+    // NOTE: Test skeleton for Phase 2 - concurrent connection handling
+    // Implementation steps:
     // 1. Start server
     // 2. Connect 10 clients simultaneously
     // 3. Each client sends periodic messages

@@ -8,7 +8,7 @@ use crate::proto;
 use turbomcp_core::types::{
     capabilities::{ClientCapabilities, ServerCapabilities},
     content::{Content, PromptMessage, ResourceContent},
-    core::{Implementation, Role},
+    core::{Annotations, Icon, Implementation, Role},
     initialization::{InitializeRequest, InitializeResult},
     prompts::{GetPromptResult, Prompt, PromptArgument},
     resources::{Resource, ResourceTemplate},
@@ -204,20 +204,95 @@ impl From<proto::ServerCapabilities> for ServerCapabilities {
 }
 
 // =============================================================================
+// Annotations (base type - for Resource, ResourceTemplate, Content)
+// =============================================================================
+//
+// Note: proto::Annotations only has audience and priority. The MCP Annotations
+// type also has last_modified and custom fields which are lost in conversion.
+// ToolAnnotations (destructive_hint, read_only_hint, etc.) is a separate type
+// that doesn't have a direct proto representation - tool hints are not preserved
+// in gRPC transport.
+
+impl From<Annotations> for proto::Annotations {
+    fn from(annotations: Annotations) -> Self {
+        Self {
+            audience: annotations.audience.unwrap_or_default(),
+            priority: annotations.priority.unwrap_or(0.0),
+        }
+    }
+}
+
+impl From<proto::Annotations> for Annotations {
+    fn from(annotations: proto::Annotations) -> Self {
+        Self {
+            audience: if annotations.audience.is_empty() {
+                None
+            } else {
+                Some(annotations.audience)
+            },
+            priority: if annotations.priority == 0.0 {
+                None
+            } else {
+                Some(annotations.priority)
+            },
+            last_modified: None,
+            custom: Default::default(),
+        }
+    }
+}
+
+// =============================================================================
+// Icon
+// =============================================================================
+
+impl From<Icon> for proto::Icon {
+    fn from(icon: Icon) -> Self {
+        match icon {
+            Icon::DataUri(data_uri) => Self {
+                icon: Some(proto::icon::Icon::DataUri(data_uri)),
+            },
+            Icon::Url(url) => Self {
+                icon: Some(proto::icon::Icon::Uri(url)),
+            },
+        }
+    }
+}
+
+impl TryFrom<proto::Icon> for Icon {
+    type Error = GrpcError;
+
+    fn try_from(icon: proto::Icon) -> GrpcResult<Self> {
+        match icon.icon {
+            Some(proto::icon::Icon::Uri(uri)) => Ok(Icon::Url(uri)),
+            Some(proto::icon::Icon::DataUri(data_uri)) => Ok(Icon::DataUri(data_uri)),
+            None => Err(GrpcError::invalid_request("Icon missing URI")),
+        }
+    }
+}
+
+// =============================================================================
 // Tool
 // =============================================================================
+//
+// Note: ToolAnnotations (destructive_hint, read_only_hint, etc.) doesn't map to
+// proto::Annotations (which only has audience, priority). Tool hints are not
+// preserved in gRPC transport - they would need a dedicated proto message to
+// support them properly.
 
 impl TryFrom<Tool> for proto::Tool {
     type Error = GrpcError;
 
     fn try_from(tool: Tool) -> GrpcResult<Self> {
         let input_schema = serde_json::to_vec(&tool.input_schema)?;
+        // Note: tool.annotations is ToolAnnotations which doesn't have audience/priority
+        // proto::Annotations has audience/priority, so we can't directly convert.
+        // Tool hints (destructive_hint, etc.) are lost in gRPC transport.
         Ok(Self {
             name: tool.name,
             description: tool.description,
             input_schema,
-            annotations: None, // TODO: Convert annotations
-            icon: None,        // TODO: Convert icon
+            annotations: None, // ToolAnnotations doesn't map to proto::Annotations
+            icon: tool.icon.map(Into::into),
         })
     }
 }
@@ -232,13 +307,20 @@ impl TryFrom<proto::Tool> for Tool {
             serde_json::from_slice(&tool.input_schema)?
         };
 
+        let icon = tool
+            .icon
+            .and_then(|i| Icon::try_from(i).ok());
+
+        // Note: proto::Annotations has audience/priority which are base Annotations fields,
+        // not ToolAnnotations fields. The MCP Tool type expects ToolAnnotations, so we
+        // would need a separate proto message to properly support tool hints.
         Ok(Self {
             name: tool.name,
             description: tool.description,
             input_schema,
             title: None,
-            icon: None,
-            annotations: None,
+            icon,
+            annotations: None, // proto::Annotations doesn't map to ToolAnnotations
         })
     }
 }
@@ -254,23 +336,27 @@ impl From<Resource> for proto::Resource {
             name: resource.name,
             description: resource.description,
             mime_type: resource.mime_type,
-            annotations: None,
-            icon: None,
+            annotations: resource.annotations.map(Into::into),
+            icon: resource.icon.map(Into::into),
         }
     }
 }
 
 impl From<proto::Resource> for Resource {
     fn from(resource: proto::Resource) -> Self {
+        let icon = resource
+            .icon
+            .and_then(|i| Icon::try_from(i).ok());
+
         Self {
             uri: resource.uri,
             name: resource.name,
             description: resource.description,
             title: None,
-            icon: None,
+            icon,
             mime_type: resource.mime_type,
             size: None,
-            annotations: None,
+            annotations: resource.annotations.map(Into::into),
         }
     }
 }
@@ -282,22 +368,26 @@ impl From<ResourceTemplate> for proto::ResourceTemplate {
             name: template.name,
             description: template.description,
             mime_type: template.mime_type,
-            annotations: None,
-            icon: None,
+            annotations: template.annotations.map(Into::into),
+            icon: template.icon.map(Into::into),
         }
     }
 }
 
 impl From<proto::ResourceTemplate> for ResourceTemplate {
     fn from(template: proto::ResourceTemplate) -> Self {
+        let icon = template
+            .icon
+            .and_then(|i| Icon::try_from(i).ok());
+
         Self {
             uri_template: template.uri_template,
             name: template.name,
             description: template.description,
             title: None,
-            icon: None,
+            icon,
             mime_type: template.mime_type,
-            annotations: None,
+            annotations: template.annotations.map(Into::into),
         }
     }
 }
@@ -360,18 +450,22 @@ impl From<Prompt> for proto::Prompt {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
-            icon: None,
+            icon: prompt.icon.map(Into::into),
         }
     }
 }
 
 impl From<proto::Prompt> for Prompt {
     fn from(prompt: proto::Prompt) -> Self {
+        let icon = prompt
+            .icon
+            .and_then(|i| Icon::try_from(i).ok());
+
         Self {
             name: prompt.name,
             description: prompt.description,
             title: None,
-            icon: None,
+            icon,
             arguments: if prompt.arguments.is_empty() {
                 None
             } else {
@@ -465,24 +559,39 @@ impl TryFrom<Content> for proto::Content {
     type Error = GrpcError;
 
     fn try_from(content: Content) -> GrpcResult<Self> {
-        let content_type = match content {
-            Content::Text { text, .. } => {
-                proto::content::Content::Text(proto::TextContent { text })
-            }
+        let (content_type, annotations) = match content {
+            Content::Text { text, annotations } => (
+                proto::content::Content::Text(proto::TextContent { text }),
+                annotations,
+            ),
             Content::Image {
-                data, mime_type, ..
-            } => proto::content::Content::Image(proto::ImageContent { data, mime_type }),
+                data,
+                mime_type,
+                annotations,
+            } => (
+                proto::content::Content::Image(proto::ImageContent { data, mime_type }),
+                annotations,
+            ),
             Content::Audio {
-                data, mime_type, ..
-            } => proto::content::Content::Audio(proto::AudioContent { data, mime_type }),
-            Content::Resource { resource, .. } => {
-                proto::content::Content::Resource(resource.try_into()?)
-            }
+                data,
+                mime_type,
+                annotations,
+            } => (
+                proto::content::Content::Audio(proto::AudioContent { data, mime_type }),
+                annotations,
+            ),
+            Content::Resource {
+                resource,
+                annotations,
+            } => (
+                proto::content::Content::Resource(resource.try_into()?),
+                annotations,
+            ),
         };
 
         Ok(Self {
             content: Some(content_type),
-            annotations: None,
+            annotations: annotations.map(Into::into),
         })
     }
 }
@@ -491,24 +600,26 @@ impl TryFrom<proto::Content> for Content {
     type Error = GrpcError;
 
     fn try_from(content: proto::Content) -> GrpcResult<Self> {
+        let annotations = content.annotations.map(Into::into);
+
         match content.content {
             Some(proto::content::Content::Text(t)) => Ok(Content::Text {
                 text: t.text,
-                annotations: None,
+                annotations,
             }),
             Some(proto::content::Content::Image(i)) => Ok(Content::Image {
                 data: i.data,
                 mime_type: i.mime_type,
-                annotations: None,
+                annotations,
             }),
             Some(proto::content::Content::Audio(a)) => Ok(Content::Audio {
                 data: a.data,
                 mime_type: a.mime_type,
-                annotations: None,
+                annotations,
             }),
             Some(proto::content::Content::Resource(r)) => Ok(Content::Resource {
                 resource: r.into(),
-                annotations: None,
+                annotations,
             }),
             None => Err(GrpcError::invalid_request("Missing content")),
         }

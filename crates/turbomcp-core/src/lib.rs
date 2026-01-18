@@ -88,6 +88,7 @@ pub mod jsonrpc;
 pub mod marker;
 pub mod response;
 pub mod router;
+pub mod security;
 pub mod types;
 
 /// Zero-copy message types using rkyv serialization.
@@ -116,6 +117,10 @@ pub use jsonrpc::{
     ResponseId,
 };
 pub use response::{Image, IntoToolError, IntoToolResponse, Json, Text, ToolError};
+pub use security::{
+    ALLOWED_URI_SCHEMES, DEFAULT_MAX_STRING_LENGTH, DEFAULT_MAX_URI_LENGTH, InputLimits,
+    InputValidationError, sanitize_error_message, validate_uri_scheme,
+};
 
 // Re-export unified v3 architecture types
 pub use context::{RequestContext, TransportType};

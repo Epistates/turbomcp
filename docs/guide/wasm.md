@@ -20,6 +20,245 @@ The `turbomcp-wasm` crate provides:
 - **Zero Tokio** - Uses wasm-bindgen-futures, no tokio runtime needed
 - **Full Protocol** - Tools, resources, prompts, and all standard MCP methods
 
+## Write Once, Run Everywhere
+
+TurboMCP v3 enables true cross-platform MCP servers through the unified `McpHandler` trait. Write your business logic once and deploy it to both native servers (TCP, HTTP, WebSocket) and WASM environments (Cloudflare Workers, Deno Deploy).
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Your McpHandler Implementation               │
+│                     (Shared Business Logic)                     │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┴───────────────┐
+              ▼                               ▼
+┌─────────────────────────┐     ┌─────────────────────────┐
+│     Native Runtime      │     │     WASM Runtime        │
+│  ───────────────────    │     │  ───────────────────    │
+│  • .run_tcp()           │     │  • WasmHandlerExt       │
+│  • .run_http()          │     │  • .handle_worker_      │
+│  • .run_websocket()     │     │      request()          │
+│  • .serve() (stdio)     │     │  • Cloudflare Workers   │
+└─────────────────────────┘     └─────────────────────────┘
+```
+
+### The McpHandler Trait
+
+The `McpHandler` trait from `turbomcp-core` defines the unified interface:
+
+```rust
+use turbomcp_core::handler::McpHandler;
+use turbomcp_core::context::RequestContext;
+use turbomcp_core::error::{McpError, McpResult};
+use turbomcp_types::*;
+use core::future::Future;
+use serde_json::Value;
+
+#[derive(Clone)]
+struct MyServer {
+    greeting: String,
+}
+
+impl McpHandler for MyServer {
+    fn server_info(&self) -> ServerInfo {
+        ServerInfo::new("my-server", "1.0.0")
+            .with_description("A portable MCP server")
+    }
+
+    fn list_tools(&self) -> Vec<Tool> {
+        vec![
+            Tool::new("greet", "Say hello to someone"),
+            Tool::new("add", "Add two numbers"),
+        ]
+    }
+
+    fn list_resources(&self) -> Vec<Resource> {
+        vec![Resource::new("config://app", "App Config")]
+    }
+
+    fn list_prompts(&self) -> Vec<Prompt> {
+        vec![Prompt::new("greeting", "A friendly greeting")]
+    }
+
+    fn call_tool<'a>(
+        &'a self,
+        name: &'a str,
+        args: Value,
+        _ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<ToolResult>> + 'a {
+        let name = name.to_string();
+        let greeting = self.greeting.clone();
+        async move {
+            match name.as_str() {
+                "greet" => {
+                    let who = args.get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("World");
+                    Ok(ToolResult::text(format!("{}, {}!", greeting, who)))
+                }
+                "add" => {
+                    let a = args.get("a").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let b = args.get("b").and_then(|v| v.as_i64()).unwrap_or(0);
+                    Ok(ToolResult::text(format!("{}", a + b)))
+                }
+                _ => Err(McpError::tool_not_found(&name)),
+            }
+        }
+    }
+
+    fn read_resource<'a>(
+        &'a self,
+        uri: &'a str,
+        _ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<ResourceResult>> + 'a {
+        let uri = uri.to_string();
+        async move {
+            match uri.as_str() {
+                "config://app" => Ok(ResourceResult::text(&uri, r#"{"debug": true}"#)),
+                _ => Err(McpError::resource_not_found(&uri)),
+            }
+        }
+    }
+
+    fn get_prompt<'a>(
+        &'a self,
+        name: &'a str,
+        _args: Option<Value>,
+        _ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<PromptResult>> + 'a {
+        let name = name.to_string();
+        async move {
+            match name.as_str() {
+                "greeting" => Ok(PromptResult::user("Hello! How can I help you today?")),
+                _ => Err(McpError::prompt_not_found(&name)),
+            }
+        }
+    }
+}
+```
+
+### Native Deployment
+
+Use standard TurboMCP transport methods:
+
+```rust
+// main.rs (native binary)
+use turbomcp::prelude::*;
+
+mod handler; // Your McpHandler implementation
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server = handler::MyServer {
+        greeting: "Hello".into()
+    };
+
+    // Choose your transport
+    server.run_tcp("0.0.0.0:3000").await?;
+    // Or: server.run_http("0.0.0.0:8080").await?;
+    // Or: server.run_websocket("0.0.0.0:9000").await?;
+    // Or: server.serve().await?; // stdio
+
+    Ok(())
+}
+```
+
+### WASM Deployment
+
+Use `WasmHandlerExt` to run the same handler in WASM:
+
+```rust
+// worker.rs (Cloudflare Worker)
+use turbomcp_wasm::wasm_server::WasmHandlerExt;
+use worker::*;
+
+mod handler; // Same McpHandler implementation!
+
+#[event(fetch)]
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+    let server = handler::MyServer {
+        greeting: "Hello".into()
+    };
+
+    // WasmHandlerExt provides handle_worker_request()
+    server.handle_worker_request(req).await
+}
+```
+
+### Project Structure
+
+A typical portable MCP server project:
+
+```
+my-mcp-server/
+├── Cargo.toml
+├── src/
+│   ├── lib.rs          # Shared McpHandler implementation
+│   └── handler.rs      # Handler logic
+├── native/
+│   ├── Cargo.toml      # Native binary dependencies
+│   └── src/
+│       └── main.rs     # Native entry point
+└── worker/
+    ├── Cargo.toml      # WASM/Worker dependencies
+    ├── wrangler.toml   # Cloudflare config
+    └── src/
+        └── lib.rs      # Worker entry point
+```
+
+**Shared library (`src/lib.rs`):**
+
+```rust
+pub mod handler;
+pub use handler::MyServer;
+```
+
+**Native entry (`native/src/main.rs`):**
+
+```rust
+use my_mcp_server::MyServer;
+use turbomcp::prelude::*;
+
+#[tokio::main]
+async fn main() {
+    MyServer::default().run_tcp("0.0.0.0:3000").await.unwrap();
+}
+```
+
+**Worker entry (`worker/src/lib.rs`):**
+
+```rust
+use my_mcp_server::MyServer;
+use turbomcp_wasm::wasm_server::WasmHandlerExt;
+use worker::*;
+
+#[event(fetch)]
+async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
+    MyServer::default().handle_worker_request(req).await
+}
+```
+
+### Benefits
+
+| Aspect | Benefit |
+|--------|---------|
+| **Single Source of Truth** | Business logic written once, tested once |
+| **Type Safety** | Same Rust types across all platforms |
+| **Consistent Behavior** | Shared router ensures identical MCP protocol handling |
+| **Easy Testing** | Test handler logic in native Rust, deploy everywhere |
+| **Gradual Migration** | Start native, add WASM deployment without code changes |
+
+### When to Use Each Approach
+
+| Approach | Best For |
+|----------|----------|
+| **McpHandler + WasmHandlerExt** | Portable servers, shared business logic |
+| **McpServer Builder** | WASM-only servers, quick prototypes |
+| **#[server] macro** | Native-focused with macro convenience |
+| **#[wasm_server] macro** | WASM-focused with macro convenience |
+
 ## Installation
 
 ### From NPM

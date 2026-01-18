@@ -29,6 +29,12 @@ use crate::core::{
 /// While Transport implements Send + Sync, this only means it's safe to move/share
 /// between threads, not that multiple tasks can mutate it concurrently.
 ///
+/// # Immutable Data Caching
+///
+/// The wrapper caches immutable transport metadata (type, capabilities, endpoint)
+/// at construction time. This allows sync trait methods to return without needing
+/// async mutex access, eliminating panics in the `Transport` trait implementation.
+///
 /// # Examples
 ///
 /// ```rust,no_run
@@ -60,6 +66,12 @@ use crate::core::{
 /// ```
 pub struct SharedTransport<T: Transport> {
     inner: Arc<Mutex<T>>,
+    /// Cached transport type (immutable after construction)
+    transport_type: TransportType,
+    /// Cached capabilities (immutable after construction)
+    capabilities: TransportCapabilities,
+    /// Cached endpoint (immutable after construction)
+    endpoint: Option<String>,
 }
 
 impl<T: Transport> SharedTransport<T> {
@@ -67,25 +79,45 @@ impl<T: Transport> SharedTransport<T> {
     ///
     /// Takes ownership of a Transport and wraps it for thread-safe sharing.
     /// The original transport can no longer be accessed directly after this call.
+    ///
+    /// Immutable transport metadata (type, capabilities, endpoint) is cached
+    /// at construction time for efficient sync access.
     pub fn new(transport: T) -> Self {
+        // Cache immutable data before moving transport into mutex
+        let transport_type = transport.transport_type();
+        let capabilities = transport.capabilities().clone();
+        let endpoint = transport.endpoint();
+
         Self {
             inner: Arc::new(Mutex::new(transport)),
+            transport_type,
+            capabilities,
+            endpoint,
         }
     }
 
-    /// Get transport type
+    /// Get transport type (sync access to cached value)
     ///
     /// Returns the type of the underlying transport.
-    pub async fn transport_type(&self) -> TransportType {
-        self.inner.lock().await.transport_type()
+    /// This value is cached at construction and does not require async access.
+    pub fn transport_type(&self) -> TransportType {
+        self.transport_type
     }
 
-    /// Get transport capabilities
+    /// Get transport capabilities (sync access to cached value)
     ///
-    /// Returns the capabilities of the underlying transport.
-    /// Note: This returns a clone since capabilities are typically small and immutable.
-    pub async fn capabilities(&self) -> TransportCapabilities {
-        self.inner.lock().await.capabilities().clone()
+    /// Returns a reference to the capabilities of the underlying transport.
+    /// This value is cached at construction and does not require async access.
+    pub fn capabilities(&self) -> &TransportCapabilities {
+        &self.capabilities
+    }
+
+    /// Get endpoint information (sync access to cached value)
+    ///
+    /// Returns the endpoint information of the underlying transport.
+    /// This value is cached at construction and does not require async access.
+    pub fn cached_endpoint(&self) -> Option<&str> {
+        self.endpoint.as_deref()
     }
 
     /// Get current transport state
@@ -143,13 +175,6 @@ impl<T: Transport> SharedTransport<T> {
         self.inner.lock().await.is_connected().await
     }
 
-    /// Get endpoint information
-    ///
-    /// Returns information about the transport's endpoint configuration.
-    pub async fn endpoint(&self) -> Option<String> {
-        self.inner.lock().await.endpoint()
-    }
-
     /// Configure the transport
     ///
     /// Sets the configuration for the transport.
@@ -162,10 +187,14 @@ impl<T: Transport> Clone for SharedTransport<T> {
     /// Clone the shared transport for use in multiple async tasks
     ///
     /// This creates a new reference to the same underlying transport,
-    /// allowing multiple tasks to share access safely.
+    /// allowing multiple tasks to share access safely. The cached metadata
+    /// is also cloned efficiently (Arc for inner, Copy/Clone for metadata).
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
+            transport_type: self.transport_type,
+            capabilities: self.capabilities.clone(),
+            endpoint: self.endpoint.clone(),
         }
     }
 }
@@ -179,65 +208,56 @@ impl<T: Transport> std::fmt::Debug for SharedTransport<T> {
 }
 
 // Implement Transport trait for SharedTransport to enable drop-in replacement
+//
+// All sync methods use cached values captured at construction time.
+// This eliminates the need for async mutex access and prevents panics.
 #[async_trait]
 impl<T: Transport> Transport for SharedTransport<T> {
     fn transport_type(&self) -> TransportType {
-        // Cannot implement: requires async mutex access
-        // Use SharedTransport::transport_type_async() instead
-        unimplemented!(
-            "SharedTransport::transport_type() cannot be called directly. \
-             Use the async version: transport_type_async()"
-        )
+        // Return cached value (captured at construction)
+        self.transport_type
     }
 
     fn capabilities(&self) -> &TransportCapabilities {
-        // Cannot implement: cannot return reference from async mutex
-        // Use SharedTransport::capabilities_async() instead
-        unimplemented!(
-            "SharedTransport::capabilities() cannot be called directly. \
-             Use the async version: capabilities_async()"
-        )
+        // Return reference to cached value (captured at construction)
+        &self.capabilities
     }
 
     async fn state(&self) -> TransportState {
-        self.state().await
+        self.inner.lock().await.state().await
     }
 
     async fn connect(&self) -> TransportResult<()> {
-        self.connect().await
+        self.inner.lock().await.connect().await
     }
 
     async fn disconnect(&self) -> TransportResult<()> {
-        self.disconnect().await
+        self.inner.lock().await.disconnect().await
     }
 
     async fn send(&self, message: TransportMessage) -> TransportResult<()> {
-        self.send(message).await
+        self.inner.lock().await.send(message).await
     }
 
     async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-        self.receive().await
+        self.inner.lock().await.receive().await
     }
 
     async fn metrics(&self) -> TransportMetrics {
-        self.metrics().await
+        self.inner.lock().await.metrics().await
     }
 
     async fn is_connected(&self) -> bool {
-        self.is_connected().await
+        self.inner.lock().await.is_connected().await
     }
 
     fn endpoint(&self) -> Option<String> {
-        // Cannot implement: requires async mutex access
-        // Use SharedTransport::endpoint_async() instead
-        unimplemented!(
-            "SharedTransport::endpoint() cannot be called directly. \
-             Use the async version: endpoint_async()"
-        )
+        // Return cached value (captured at construction)
+        self.endpoint.clone()
     }
 
     async fn configure(&self, config: TransportConfig) -> TransportResult<()> {
-        self.configure(config).await
+        self.inner.lock().await.configure(config).await
     }
 }
 
@@ -276,13 +296,15 @@ mod tests {
         // Test that SharedTransport provides the expected API surface
         // These calls should compile, verifying the API is properly wrapped
 
-        // Core operations (will fail due to no server, but should compile)
-        let _transport_type = shared.transport_type().await;
-        let _capabilities = shared.capabilities().await;
+        // Sync operations (cached at construction, no async needed)
+        let _transport_type = shared.transport_type();
+        let _capabilities = shared.capabilities();
+        let _endpoint_info = shared.cached_endpoint();
+
+        // Async operations (require mutex lock)
         let _state = shared.state().await;
         let _metrics = shared.metrics().await;
         let _is_connected = shared.is_connected().await;
-        let _endpoint_info = shared.endpoint().await;
     }
 
     #[tokio::test]
@@ -324,9 +346,10 @@ mod tests {
         let shared2 = shared.clone();
 
         // Verify that concurrent access doesn't corrupt state
-        let handle1 = tokio::spawn(async move { shared1.transport_type().await });
+        // transport_type() is now sync (cached), but we can still test cross-task access
+        let handle1 = tokio::spawn(async move { shared1.transport_type() });
 
-        let handle2 = tokio::spawn(async move { shared2.transport_type().await });
+        let handle2 = tokio::spawn(async move { shared2.transport_type() });
 
         let (type1, type2) = tokio::join!(handle1, handle2);
         let type1 = type1.unwrap();
@@ -334,5 +357,24 @@ mod tests {
 
         // Both should see identical transport types (proving state consistency)
         assert_eq!(type1, type2);
+    }
+
+    #[tokio::test]
+    async fn test_shared_transport_trait_impl() {
+        use crate::core::Transport;
+
+        let transport = StdioTransport::new();
+        let shared = SharedTransport::new(transport);
+
+        // Verify Transport trait methods work correctly via cached values
+        // These should NOT panic (the original issue)
+        let transport_type = Transport::transport_type(&shared);
+        assert_eq!(transport_type, TransportType::Stdio);
+
+        let capabilities = Transport::capabilities(&shared);
+        assert!(capabilities.supports_bidirectional);
+
+        let endpoint = Transport::endpoint(&shared);
+        assert_eq!(endpoint, Some("stdio://".to_string()));
     }
 }

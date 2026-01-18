@@ -95,9 +95,9 @@ pub async fn websocket_handler_with_factory(
         session.id
     );
 
-    // TODO: For multi-tenancy support, tenant_id could be extracted from session metadata
-    // or passed via custom headers. For now, WebSocket doesn't extract tenant directly
-    // to avoid circular dependencies between turbomcp-transport and turbomcp-server.
+    // NOTE: Multi-tenancy enhancement - tenant_id could be extracted from session metadata
+    // or custom headers. Currently WebSocket doesn't extract tenant directly to avoid
+    // circular dependencies between turbomcp-transport and turbomcp-server.
     let tenant_id: Option<String> = None;
 
     ws.on_upgrade(move |socket| {

@@ -166,13 +166,24 @@ impl UnixTransport {
         // This ensures the client gets registered in the connections HashMap
         let incoming_sender = tx.clone();
         let connections = self.connections.clone();
+
+        // Use oneshot channel to wait for connection registration
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
+
         tokio::spawn(async move {
             if let Err(e) =
-                handle_unix_connection_framed(stream, incoming_sender, connections).await
+                handle_unix_connection_framed_with_signal(stream, incoming_sender, connections, ready_tx).await
             {
                 error!("Unix client connection handler failed: {}", e);
             }
         });
+
+        // Wait for the connection to be registered before returning
+        // This prevents race conditions where send() is called before
+        // the connection is added to the HashMap
+        ready_rx.await.map_err(|_| {
+            TransportError::ConnectionFailed("Connection registration failed".into())
+        })?;
 
         info!("Successfully connected to Unix socket server");
         Ok(())
@@ -186,6 +197,18 @@ async fn handle_unix_connection_framed(
     incoming_sender: mpsc::Sender<TransportMessage>,
     connections: Arc<StdMutex<HashMap<String, mpsc::Sender<String>>>>,
 ) -> TransportResult<()> {
+    handle_unix_connection_framed_with_signal(stream, incoming_sender, connections, None).await
+}
+
+/// Handle a Unix socket connection with optional ready signal
+/// The ready_tx channel is sent when the connection is registered, allowing callers to wait
+async fn handle_unix_connection_framed_with_signal(
+    stream: UnixStream,
+    incoming_sender: mpsc::Sender<TransportMessage>,
+    connections: Arc<StdMutex<HashMap<String, mpsc::Sender<String>>>>,
+    ready_tx: impl Into<Option<tokio::sync::oneshot::Sender<()>>>,
+) -> TransportResult<()> {
+    let ready_tx = ready_tx.into();
     debug!("Handling Unix socket connection using Framed<UnixStream, LinesCodec>");
 
     // Create framed transport using LinesCodec for newline-delimited messages
@@ -213,6 +236,11 @@ async fn handle_unix_connection_framed(
             .expect("connections mutex poisoned")
             .len()
     );
+
+    // Signal that the connection is ready (for client mode)
+    if let Some(tx) = ready_tx {
+        let _ = tx.send(());
+    }
 
     // Clone for cleanup
     let connections_cleanup = connections.clone();

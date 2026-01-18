@@ -104,7 +104,8 @@ async fn test_sampling_with_user_rejection_immediate_response() {
     // - Rejection response has nowhere to go
     // - Code waits full 60s timeout
 
-    // TODO: Implement this test once correlation tracking is added
+    // NOTE: Future enhancement - implement once correlation tracking is added
+    // See Phase 2 roadmap for bidirectional messaging improvements
 }
 
 #[tokio::test]

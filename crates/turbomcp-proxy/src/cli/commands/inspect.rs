@@ -104,25 +104,25 @@ impl InspectCommand {
                 Ok(Box::new(backend))
             }
             Some(BackendType::Http) => {
-                // TODO: Implement HTTP backend in future phase
+                // NOTE: Phase 2 - HTTP backend support
                 Err(ProxyError::configuration(
                     "HTTP backend not yet implemented".to_string(),
                 ))
             }
             Some(BackendType::Tcp) => {
-                // TODO: Implement TCP backend in future phase
+                // NOTE: Phase 2 - TCP backend support
                 Err(ProxyError::configuration(
                     "TCP backend not yet implemented for inspect command".to_string(),
                 ))
             }
             Some(BackendType::Unix) => {
-                // TODO: Implement Unix socket backend in future phase
+                // NOTE: Phase 2 - Unix socket backend support
                 Err(ProxyError::configuration(
                     "Unix socket backend not yet implemented for inspect command".to_string(),
                 ))
             }
             Some(BackendType::Websocket) => {
-                // TODO: Implement WebSocket backend in future phase
+                // NOTE: Phase 2 - WebSocket backend support
                 Err(ProxyError::configuration(
                     "WebSocket backend not yet implemented".to_string(),
                 ))

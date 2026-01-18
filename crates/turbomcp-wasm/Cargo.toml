@@ -28,9 +28,11 @@ console-log = ["browser", "console_error_panic_hook"]
 wasm-server = ["dep:worker", "dep:schemars", "dep:hashbrown", "wasm-bindgen", "wasm-bindgen-futures", "serde-wasm-bindgen", "js-sys"]
 # Procedural macros for zero-boilerplate WASM MCP server development
 macros = ["wasm-server", "dep:turbomcp-wasm-macros"]
-# Native backend support - enables into_native_server() generation
-# When enabled, servers can run on both WASM and native (stdio/http/tcp/etc)
-native = ["macros", "turbomcp-wasm-macros/native", "dep:turbomcp"]
+# NOTE: The `native` feature has been removed.
+# For portable servers that run on both WASM and native, use two separate
+# implementations:
+# - WASM: Use `#[turbomcp_wasm::wasm_server]` macro for WASM targets
+# - Native: Use `#[turbomcp::server]` macro from turbomcp for native targets
 
 [dependencies]
 # Core MCP types - no_std compatible with WASM optimizations
@@ -106,9 +108,8 @@ features = [
 wasm-bindgen-test = "0.3"
 tokio = { workspace = true, features = ["full"] }
 
-[[example]]
-name = "portable_server"
-required-features = ["native"]
+# NOTE: The portable_server example has been removed since the native feature is gone.
+# For portable servers, use conditional compilation with separate macro invocations.
 
 [package.metadata.docs.rs]
 targets = ["wasm32-unknown-unknown"]

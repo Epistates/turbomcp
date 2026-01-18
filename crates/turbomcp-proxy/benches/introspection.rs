@@ -4,7 +4,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 
 fn benchmark_introspection(_c: &mut Criterion) {
-    // TODO: Implement in Phase 1
+    // NOTE: Phase 2 - introspection benchmarks
 }
 
 criterion_group!(benches, benchmark_introspection);

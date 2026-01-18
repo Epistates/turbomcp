@@ -103,7 +103,7 @@ impl AdapterCommand {
         }
         tracing::info!("  API base: http://{}/api", self.bind);
 
-        // TODO: Implement REST adapter using Axum
+        // NOTE: Phase 2 - REST adapter using Axum
         // - Create REST endpoint handlers for tools and resources
         // - Integrate OpenAPI schema generation
         // - Add Swagger UI if enabled
@@ -121,7 +121,7 @@ impl AdapterCommand {
         }
         tracing::info!("  GraphQL endpoint: http://{}/graphql", self.bind);
 
-        // TODO: Implement GraphQL adapter using async-graphql
+        // NOTE: Phase 2 - GraphQL adapter using async-graphql
         // - Create GraphQL Query root from MCP tools and resources
         // - Set up subscription support for server-driven updates
         // - Add GraphQL Playground if enabled

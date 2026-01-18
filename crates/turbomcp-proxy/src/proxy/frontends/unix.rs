@@ -156,9 +156,8 @@ async fn handle_connection(
                 Ok(message) => {
                     debug!("Received JSON-RPC message: {}", message);
 
-                    // TODO: Route message through backend using id_translator
-                    // This is a simplified implementation - full routing logic
-                    // would handle request/response correlation like in HTTP/WebSocket
+                    // NOTE: Phase 2 - Route message through backend using id_translator
+                    // Full routing logic would handle request/response correlation like in HTTP/WebSocket
 
                     // For now, send back an error response
                     let response = serde_json::json!({

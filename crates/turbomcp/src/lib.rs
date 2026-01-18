@@ -188,6 +188,7 @@ pub mod __macro_support {
     #[cfg(feature = "http")]
     pub use axum;
 
+    pub use schemars;
     pub use serde_json;
     pub use tokio;
     pub use tower;
@@ -232,8 +233,8 @@ pub mod prelude {
 
     // Core traits and types
     pub use super::{
-        McpError, McpHandler, McpHandlerExt, McpResult, McpServerExt, ServerBuilder,
-        ServerConfig, ServerConfigBuilder, Transport,
+        McpError, McpHandler, McpHandlerExt, McpResult, McpServerExt, ServerBuilder, ServerConfig,
+        ServerConfigBuilder, Transport,
     };
 
     // Result types for handlers
@@ -244,8 +245,8 @@ pub mod prelude {
 
     // Common protocol types
     pub use super::{
-        CallToolRequest, CallToolResult, Message, Prompt, PromptArgument, RequestContext,
-        Resource, ResourceContent, ServerInfo, Tool, ToolInputSchema,
+        CallToolRequest, CallToolResult, Message, Prompt, PromptArgument, RequestContext, Resource,
+        ResourceContent, ServerInfo, Tool, ToolInputSchema,
     };
 
     // Unified response types

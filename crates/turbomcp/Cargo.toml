@@ -113,7 +113,7 @@ default = ["stdio"]
 # Feature bundles
 minimal = ["stdio"]
 full = ["stdio", "http", "websocket", "tcp", "unix"]
-full-stack = ["full", "client-integration"]
+full-stack = ["full", "full-client"]
 
 # Transport features
 stdio = ["turbomcp-transport/stdio", "turbomcp-server/stdio"]
@@ -130,7 +130,16 @@ unix = ["turbomcp-transport/unix", "turbomcp-server/unix", "turbomcp-macros/unix
 # Optional features
 auth = ["dep:turbomcp-auth"]
 dpop = ["dep:turbomcp-dpop", "auth", "turbomcp-auth/dpop"]
+# Client integration - minimal client with stdio only
 client-integration = ["dep:turbomcp-client", "turbomcp-client/stdio"]
+# Full client - enables all transport features for the client (includes client-integration)
+full-client = [
+    "client-integration",
+    "turbomcp-client/http",
+    "turbomcp-client/websocket",
+    "turbomcp-client/tcp",
+    "turbomcp-client/unix",
+]
 
 # Convenience aliases
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]

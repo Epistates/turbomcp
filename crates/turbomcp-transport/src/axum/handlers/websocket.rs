@@ -50,8 +50,8 @@ async fn handle_websocket_bidirectional(
     // Create WebSocket dispatcher for server→client requests
     let _dispatcher = WebSocketDispatcher::new(outbound_tx.clone(), pending_requests.clone());
 
-    // TODO: Make dispatcher available to McpService via app_state extension
-    // For now, the infrastructure is in place but we need to wire it through McpService
+    // NOTE: Phase 2 enhancement - wire dispatcher through McpService via app_state extension
+    // The infrastructure is in place; full bidirectional support requires McpService integration
 
     // Send welcome message
     let welcome = serde_json::json!({

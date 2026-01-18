@@ -1,148 +1,31 @@
 //! Types for Cloudflare Workers MCP handlers
+//!
+//! This module re-exports canonical types from `turbomcp-types` to ensure
+//! a single source of truth across the TurboMCP ecosystem.
+//!
+//! ## DRY Architecture
+//!
+//! Result types (`ResourceResult`, `PromptResult`) are re-exported from
+//! `turbomcp-types` rather than duplicated. This ensures:
+//! - Consistent behavior across native and WASM targets
+//! - Single point of maintenance for type definitions
+//! - Type compatibility between crates
+//!
+//! ## Note on ToolResult
+//!
+//! `ToolResult` is aliased from `turbomcp_core::types::tools::CallToolResult`
+//! because the WASM handler machinery uses `IntoToolResponse` which returns
+//! `CallToolResult`. This is the internal wire format type. Users can treat
+//! it identically to `turbomcp_types::ToolResult` for common operations.
 
 use serde::{Deserialize, Serialize};
-use turbomcp_core::types::content::{Content, PromptMessage};
-use turbomcp_core::types::core::Role;
 
-// Re-export CallToolResult from core as ToolResult for backwards compatibility
-// This allows existing WASM code to continue using `ToolResult` while
-// new code can use either `ToolResult` or `CallToolResult` interchangeably.
+// Re-export result types from turbomcp-types (single source of truth)
+pub use turbomcp_types::{PromptResult, ResourceResult};
+
+// ToolResult is aliased from CallToolResult for IntoToolResponse compatibility
+// This is required because the handler traits return CallToolResult
 pub use turbomcp_core::types::tools::CallToolResult as ToolResult;
-
-/// Result from reading a resource
-#[derive(Debug, Clone, Serialize)]
-pub struct ResourceResult {
-    /// Contents of the resource
-    pub contents: Vec<ResourceContent>,
-}
-
-/// Content of a resource
-#[derive(Debug, Clone, Serialize)]
-pub struct ResourceContent {
-    /// URI of the resource
-    pub uri: String,
-    /// MIME type of the content
-    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    /// Text content (mutually exclusive with blob)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    /// Binary content as base64 (mutually exclusive with text)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blob: Option<String>,
-}
-
-impl ResourceResult {
-    /// Create a text resource result
-    pub fn text(uri: impl Into<String>, content: impl Into<String>) -> Self {
-        Self {
-            contents: vec![ResourceContent {
-                uri: uri.into(),
-                mime_type: Some("text/plain".to_string()),
-                text: Some(content.into()),
-                blob: None,
-            }],
-        }
-    }
-
-    /// Create a JSON resource result
-    pub fn json<T: Serialize>(
-        uri: impl Into<String>,
-        value: &T,
-    ) -> Result<Self, serde_json::Error> {
-        let text = serde_json::to_string_pretty(value)?;
-        Ok(Self {
-            contents: vec![ResourceContent {
-                uri: uri.into(),
-                mime_type: Some("application/json".to_string()),
-                text: Some(text),
-                blob: None,
-            }],
-        })
-    }
-
-    /// Create a binary resource result
-    pub fn binary(
-        uri: impl Into<String>,
-        data: impl Into<String>,
-        mime_type: impl Into<String>,
-    ) -> Self {
-        Self {
-            contents: vec![ResourceContent {
-                uri: uri.into(),
-                mime_type: Some(mime_type.into()),
-                text: None,
-                blob: Some(data.into()),
-            }],
-        }
-    }
-}
-
-/// Result from getting a prompt
-#[derive(Debug, Clone, Serialize)]
-pub struct PromptResult {
-    /// Description of the prompt result
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Messages in the prompt
-    pub messages: Vec<PromptMessage>,
-}
-
-impl PromptResult {
-    /// Create a simple user prompt
-    pub fn user(text: impl Into<String>) -> Self {
-        Self {
-            description: None,
-            messages: vec![PromptMessage {
-                role: Role::User,
-                content: Content::text(text),
-            }],
-        }
-    }
-
-    /// Create a simple assistant prompt
-    pub fn assistant(text: impl Into<String>) -> Self {
-        Self {
-            description: None,
-            messages: vec![PromptMessage {
-                role: Role::Assistant,
-                content: Content::text(text),
-            }],
-        }
-    }
-
-    /// Create a prompt with description
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
-    }
-
-    /// Create a prompt with multiple messages
-    pub fn messages(messages: Vec<PromptMessage>) -> Self {
-        Self {
-            description: None,
-            messages,
-        }
-    }
-
-    /// Add a user message to the prompt
-    pub fn add_user(mut self, text: impl Into<String>) -> Self {
-        self.messages.push(PromptMessage {
-            role: Role::User,
-            content: Content::text(text),
-        });
-        self
-    }
-
-    /// Add an assistant message to the prompt
-    pub fn add_assistant(mut self, text: impl Into<String>) -> Self {
-        self.messages.push(PromptMessage {
-            role: Role::Assistant,
-            content: Content::text(text),
-        });
-        self
-    }
-}
 
 /// JSON-RPC request structure
 #[derive(Debug, Clone, Deserialize)]
@@ -212,6 +95,7 @@ pub(crate) mod error_codes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use turbomcp_types::Role;
 
     #[test]
     fn test_tool_result_text() {

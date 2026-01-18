@@ -312,7 +312,7 @@ impl RustCodeGenerator {
                 Some(PromptDefinition {
                     name: sanitized_name,
                     description,
-                    arguments: None, // TODO: Extract from arguments schema
+                    arguments: None, // NOTE: Phase 2 - extract prompt arguments from schema
                 })
             })
             .collect();

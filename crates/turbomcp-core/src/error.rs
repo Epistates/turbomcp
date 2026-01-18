@@ -51,6 +51,8 @@ pub struct McpError {
     /// Human-readable error message
     pub message: String,
     /// Source location (file:line for debugging)
+    /// Note: Only serialized in debug builds to prevent information leakage
+    #[cfg_attr(not(debug_assertions), serde(skip_serializing))]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_location: Option<String>,
     /// Additional context (boxed to keep McpError small)
@@ -176,6 +178,54 @@ impl McpError {
     #[must_use]
     pub fn internal(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Internal, message)
+    }
+
+    /// Create a safe internal error with sanitized message.
+    ///
+    /// Use this for errors that may contain sensitive information (file paths,
+    /// IP addresses, connection strings, etc.). The message is automatically
+    /// sanitized to prevent information leakage per OWASP guidelines.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_core::error::McpError;
+    ///
+    /// let err = McpError::safe_internal("Failed: postgres://admin:secret@192.168.1.1/db");
+    /// assert!(!err.message.contains("secret"));
+    /// assert!(!err.message.contains("192.168.1.1"));
+    /// ```
+    #[must_use]
+    pub fn safe_internal(message: impl Into<String>) -> Self {
+        let sanitized = crate::security::sanitize_error_message(&message.into());
+        Self::new(ErrorKind::Internal, sanitized)
+    }
+
+    /// Create a safe tool execution error with sanitized message.
+    ///
+    /// Like [`safe_internal`](Self::safe_internal), but specifically for tool execution failures.
+    #[must_use]
+    pub fn safe_tool_execution_failed(
+        tool_name: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        let name = tool_name.into();
+        let sanitized_reason = crate::security::sanitize_error_message(&reason.into());
+        Self::new(
+            ErrorKind::ToolExecutionFailed,
+            alloc::format!("Tool '{}' failed: {}", name, sanitized_reason),
+        )
+        .with_operation("tool_execution")
+    }
+
+    /// Sanitize this error's message in-place.
+    ///
+    /// Call this before returning errors to clients in production to ensure
+    /// no sensitive information is leaked.
+    #[must_use]
+    pub fn sanitized(mut self) -> Self {
+        self.message = crate::security::sanitize_error_message(&self.message);
+        self
     }
 
     /// Create a parse error
