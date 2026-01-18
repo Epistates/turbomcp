@@ -1,6 +1,6 @@
-//! v3 Pristine Architecture Example - Calculator Server
+//! Pristine Architecture Example - Calculator Server
 //!
-//! This example demonstrates the v3 architecture with zero-boilerplate macros.
+//! This example demonstrates the pristine architecture with zero-boilerplate macros.
 //!
 //! Features demonstrated:
 //! - `#[server]` macro generates `McpHandler` trait implementation
@@ -10,28 +10,28 @@
 //! # Running
 //!
 //! ```bash
-//! cargo run --example v3_calculator --features stdio
+//! cargo run --example calculator --features stdio
 //! ```
 //!
 //! # Testing with CLI
 //!
 //! ```bash
 //! # Initialize (MCP spec requires clientInfo)
-//! echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"cli","version":"1.0"},"capabilities":{}}}' | cargo run --example v3_calculator --features stdio
-//! echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | cargo run --example v3_calculator --features stdio
-//! echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add","arguments":{"a":5,"b":3}}}' | cargo run --example v3_calculator --features stdio
+//! echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"cli","version":"1.0"},"capabilities":{}}}' | cargo run --example calculator --features stdio
+//! echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | cargo run --example calculator --features stdio
+//! echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add","arguments":{"a":5,"b":3}}}' | cargo run --example calculator --features stdio
 //! ```
 
 use turbomcp::prelude::*;
 
-/// A simple calculator server demonstrating v3 pristine architecture.
+/// A simple calculator server demonstrating pristine architecture.
 #[derive(Clone)]
 struct Calculator;
 
 #[server(
-    name = "v3-calculator",
+    name = "calculator",
     version = "1.0.0",
-    description = "A pristine v3 calculator"
+    description = "A pristine calculator"
 )]
 impl Calculator {
     /// Add two numbers together.
@@ -64,7 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing for logging
     tracing_subscriber::fmt::init();
 
-    tracing::info!("Starting v3 Calculator Server...");
+    tracing::info!("Starting Calculator Server...");
 
     // Run the server on STDIO transport
     // The #[server] macro generates the McpHandler implementation
@@ -77,13 +77,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use turbomcp_server::v3::RequestContext;
+    use turbomcp_server::RequestContext;
 
     #[test]
     fn test_server_info() {
         let calc = Calculator;
         let info = calc.server_info();
-        assert_eq!(info.name, "v3-calculator");
+        assert_eq!(info.name, "calculator");
         assert_eq!(info.version, "1.0.0");
     }
 
@@ -128,7 +128,7 @@ mod tests {
             }
         });
         let response = calc.handle_request(request, ctx.clone()).await.unwrap();
-        assert_eq!(response["result"]["serverInfo"]["name"], "v3-calculator");
+        assert_eq!(response["result"]["serverInfo"]["name"], "calculator");
         // Verify MCP-compliant capability structure
         assert!(
             response["result"]["capabilities"]["tools"]["listChanged"]

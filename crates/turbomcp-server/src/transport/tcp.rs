@@ -1,4 +1,4 @@
-//! TCP transport implementation for v3.
+//! TCP transport implementation.
 //!
 //! Provides line-based JSON-RPC over TCP sockets with connection limiting
 //! and graceful shutdown support.
@@ -11,9 +11,9 @@ use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
 
 use super::line::LineTransportRunner;
-use crate::v3::config::{ConnectionCounter, ServerConfig};
-use crate::v3::context::RequestContext;
-use crate::v3::router;
+use crate::config::{ConnectionCounter, ServerConfig};
+use crate::context::RequestContext;
+use crate::router;
 
 /// Run a handler on TCP transport.
 ///
@@ -25,7 +25,7 @@ use crate::v3::router;
 /// # Example
 ///
 /// ```rust,ignore
-/// use turbomcp_server::v3::transport::tcp;
+/// use turbomcp_server::transport::tcp;
 ///
 /// tcp::run(&handler, "0.0.0.0:9000").await?;
 /// ```
@@ -104,7 +104,7 @@ pub async fn run_with_shutdown<H: McpHandler>(
         .map_err(|e| McpError::internal(format!("Failed to bind to {}: {}", addr, e)))?;
 
     tracing::info!(
-        "v3 MCP server listening on tcp://{} (max {} connections)",
+        "MCP server listening on tcp://{} (max {} connections)",
         addr,
         max_connections
     );

@@ -1,4 +1,4 @@
-//! Request context for v3 handlers.
+//! Request context for MCP handlers.
 //!
 //! This module provides a server-specific request context extending the core
 //! context with runtime features like cancellation, timing, and structured headers.
@@ -13,7 +13,7 @@ use uuid::Uuid;
 // Re-export TransportType from core for unified type system (DRY)
 pub use turbomcp_core::context::TransportType;
 
-/// Context information for a v3 MCP request.
+/// Context information for an MCP request.
 ///
 /// This is a simplified context compared to the full protocol RequestContext,
 /// focusing on essential information for handler execution.
@@ -21,7 +21,7 @@ pub use turbomcp_core::context::TransportType;
 /// # Example
 ///
 /// ```
-/// use turbomcp_server::v3::{RequestContext, TransportType};
+/// use turbomcp_server::{RequestContext, TransportType};
 ///
 /// let ctx = RequestContext::new()
 ///     .with_transport(TransportType::Http)

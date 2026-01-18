@@ -8,8 +8,8 @@ use turbomcp_core::error::McpError;
 use turbomcp_core::handler::McpHandler;
 
 use super::MAX_MESSAGE_SIZE;
-use crate::v3::context::RequestContext;
-use crate::v3::router;
+use crate::context::RequestContext;
+use crate::router;
 
 /// Trait for types that can read lines.
 pub trait LineReader: AsyncBufRead + Unpin + Send {}
@@ -31,7 +31,7 @@ impl<T: AsyncWrite + Unpin + Send> LineWriter for T {}
 ///
 /// ```rust,ignore
 /// use tokio::io::{stdin, stdout, BufReader};
-/// use turbomcp_server::v3::transport::LineTransportRunner;
+/// use turbomcp_server::transport::LineTransportRunner;
 ///
 /// let runner = LineTransportRunner::new(handler);
 /// let reader = BufReader::new(stdin());

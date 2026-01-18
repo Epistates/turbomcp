@@ -1,4 +1,4 @@
-//! Core handler trait for v3 MCP servers.
+//! Core handler trait for MCP servers.
 //!
 //! This module re-exports the unified `McpHandler` trait from `turbomcp-core`
 //! and provides the `McpHandlerExt` extension trait for native transport runners.
@@ -10,7 +10,7 @@
 //!
 //! # Portable Code Pattern
 //!
-//! The v3 architecture enables writing portable servers that work on both native
+//! The TurboMCP architecture enables writing portable servers that work on both native
 //! and WASM without platform-specific code in your business logic:
 //!
 //! ```rust,ignore

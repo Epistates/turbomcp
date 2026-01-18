@@ -1,6 +1,6 @@
 # Quick Start
 
-Create your first MCP server in 5 minutes.
+Create your first MCP server in 5 minutes using the TurboMCP v3 "Zero Boilerplate" API.
 
 ## Minimal Example
 
@@ -9,19 +9,22 @@ Create `src/main.rs`:
 ```rust
 use turbomcp::prelude::*;
 
-#[tokio::main]
-async fn main() -> McpResult<()> {
-    let server = McpServer::new()
-        .stdio()
-        .run()
-        .await?;
+#[derive(Clone)]
+struct HelloServer;
 
-    Ok(())
+#[server(name = "hello-server", version = "1.0.0")]
+impl HelloServer {
+    #[tool("Say hello")]
+    async fn hello(&self, name: String) -> McpResult<String> {
+        Ok(format!("Hello, {}!", name))
+    }
 }
 
-#[tool]
-async fn hello(name: String) -> McpResult<String> {
-    Ok(format!("Hello, {}!", name))
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Run via STDIO transport (default for MCP servers)
+    HelloServer.run_stdio().await?;
+    Ok(())
 }
 ```
 
@@ -35,40 +38,46 @@ That's all you need! Let's break it down:
 use turbomcp::prelude::*;
 ```
 
-This imports everything you need: macros, types, traits.
+This imports everything you need: macros (`#[server]`, `#[tool]`), types (`McpResult`), and extension traits (`McpHandlerExt`).
 
-### 2. Async Main Function
+### 2. Define Your Server Struct
 
 ```rust
-#[tokio::main]
-async fn main() -> McpResult<()> {
+#[derive(Clone)]
+struct HelloServer;
 ```
 
-- `#[tokio::main]` sets up the Tokio async runtime
-- `McpResult<()>` is the standard error type in TurboMCP
+Your server state goes here. It must derive `Clone` because it's shared across async tasks.
 
-### 3. Create and Run Server
-
-```rust
-let server = McpServer::new()
-    .stdio()                    // Enable STDIO transport
-    .run()                      // Start the server
-    .await?;                    // Wait (indefinitely)
-```
-
-### 4. Define a Handler
+### 3. Implement the Handler
 
 ```rust
-#[tool]
-async fn hello(name: String) -> McpResult<String> {
-    Ok(format!("Hello, {}!", name))
+#[server(name = "hello-server", version = "1.0.0")]
+impl HelloServer {
+    #[tool("Say hello")]
+    async fn hello(&self, name: String) -> McpResult<String> {
+        Ok(format!("Hello, {}!", name))
+    }
 }
 ```
 
+The `#[server]` macro:
+- Implements the `McpHandler` trait for you.
+- Generates `server_info`, `list_tools`, etc.
+- Routes incoming JSON-RPC requests to your methods.
+
 The `#[tool]` macro:
-- Registers the function as a tool
-- Generates JSON schema from the signature
-- Handles request parsing and response serialization
+- Registers the function as a tool.
+- Generates JSON schema automatically from the function signature.
+- Handles argument parsing and validation.
+
+### 4. Run the Server
+
+```rust
+HelloServer.run_stdio().await?;
+```
+
+The `run_stdio()` method comes from the `McpHandlerExt` trait. It starts the server using standard input/output, which is the standard transport for local MCP servers.
 
 ## Run It
 
@@ -83,16 +92,15 @@ Your server is now running! It will accept requests via stdin/stdout.
 In another terminal, test with the TurboMCP CLI:
 
 ```bash
-turbomcp-cli tools list --command "path/to/your/binary"
+# Install CLI if you haven't
+cargo install turbomcp-cli
+
+# List tools
+turbomcp-cli tools list --command "./target/debug/your-server"
+
+# Call the tool
 turbomcp-cli tools call hello --arguments '{"name": "World"}' \
-  --command "path/to/your/binary"
-```
-
-Or test with raw JSON-RPC:
-
-```bash
-echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"hello","arguments":{"name":"Alice"}},"id":1}' \
-  | ./target/debug/my-mcp-server
+  --command "./target/debug/your-server"
 ```
 
 ## Add More Handlers
@@ -100,151 +108,47 @@ echo '{"jsonrpc":"2.0","method":"tools/call","params":{"name":"hello","arguments
 Add as many handlers as you want:
 
 ```rust
-#[tool]
-async fn add(a: i32, b: i32) -> McpResult<i32> {
-    Ok(a + b)
-}
+#[server(name = "math-server", version = "1.0.0")]
+impl MathServer {
+    #[tool("Add two numbers")]
+    async fn add(&self, a: i32, b: i32) -> i32 {
+        a + b
+    }
 
-#[tool]
-async fn echo(text: String) -> McpResult<String> {
-    Ok(text)
-}
+    #[resource("config://app")]
+    async fn get_config(&self) -> String {
+        r#"{"debug": true}"#.to_string()
+    }
 
-#[resource]
-async fn status() -> McpResult<String> {
-    Ok("Server is running".to_string())
-}
-
-#[prompt]
-async fn instructions() -> McpResult<String> {
-    Ok("Use the tools to...".to_string())
-}
-```
-
-Each function becomes:
-- A registered tool, resource, or prompt
-- Accessible to Claude with auto-generated schema
-- Type-safe with validation
-
-## Add Documentation
-
-Enhance your handlers with descriptions:
-
-```rust
-#[tool(description = "Add two numbers")]
-async fn add(
-    #[description = "First number"]
-    a: i32,
-    #[description = "Second number"]
-    b: i32,
-) -> McpResult<i32> {
-    Ok(a + b)
-}
-```
-
-The descriptions appear in the generated schema.
-
-## Add Dependency Injection
-
-Request dependencies automatically:
-
-```rust
-#[tool]
-async fn process(
-    logger: Logger,
-    cache: Cache,
-) -> McpResult<String> {
-    logger.info("Processing...").await?;
-    cache.set("key", "value").await?;
-    Ok("Done".to_string())
-}
-```
-
-Available injectables:
-- `InjectContext` - Full request context
-- `RequestInfo` - Request metadata (ID, handler name)
-- `Logger` - Structured logging
-- `Config` - Application configuration
-- `Cache` - In-memory caching
-- `Database` - Database access
-- `HttpClient` - HTTP requests
-
-## Next Steps
-
-- **[Your First Server](first-server.md)** - More complete example
-- **[Handlers Guide](../guide/handlers.md)** - All handler types
-- **[Context & DI](../guide/context-injection.md)** - Dependency injection
-- **[Examples](../examples/basic.md)** - Real-world patterns
-
-## Common Patterns
-
-### Error Handling
-
-```rust
-#[tool]
-async fn process(file: String) -> McpResult<String> {
-    std::fs::read_to_string(&file)
-        .map_err(|e| McpError::InvalidInput(e.to_string()))
-}
-```
-
-### Logging
-
-```rust
-#[tool]
-async fn work(logger: Logger) -> McpResult<String> {
-    logger.info("Starting work").await?;
-    logger.warn("Got unexpected value").await?;
-    Ok("Done".to_string())
-}
-```
-
-### Conditional Responses
-
-```rust
-#[tool]
-async fn fetch(url: String) -> McpResult<String> {
-    if url.starts_with("https://") {
-        fetch_secure(&url).await
-    } else {
-        Err(McpError::InvalidInput("Only HTTPS supported".into()))
+    #[prompt("code-review")]
+    async fn review_prompt(&self, code: String) -> String {
+        format!("Review this code:\n\n{}", code)
     }
 }
 ```
 
-## Troubleshooting
+Note: You can return simple types like `i32` or `String` directly! The macros handle the conversion to `McpResult`.
 
-### `error: cannot find attribute macro 'tool'`
+## Add Documentation
 
-Make sure you imported the prelude:
+Enhance your handlers with descriptions for the LLM:
 
 ```rust
-use turbomcp::prelude::*;
-```
-
-### No response when testing
-
-The STDIO transport reads JSON-RPC requests from stdin. Make sure you're sending:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/call",
-  "params": { "name": "hello", "arguments": {"name": "World"} },
-  "id": 1
+#[tool]
+async fn add(
+    #[description("The first number")]
+    a: i32,
+    #[description("The second number")]
+    b: i32,
+) -> i32 {
+    a + b
 }
 ```
 
-### Timeout waiting for response
+The `#[description]` attribute adds documentation to the generated JSON schema, helping the LLM understand how to use your tool.
 
-The server might be waiting for more input. Send a complete JSON-RPC request with a newline at the end.
+## Next Steps
 
----
-
-Done! You have a working MCP server. Now:
-
-- **[Add More Features](../guide/handlers.md)** - Tools, resources, prompts
-- **[Add Transports](../guide/transports.md)** - HTTP, WebSocket, TCP
-- **[Deploy It](../deployment/docker.md)** - Docker, Kubernetes, production
-
-Happy coding! 🚀
+- **[Your First Server](first-server.md)** - More complete example with state
+- **[Handlers Guide](../guide/handlers.md)** - All handler types detailed
+- **[Examples](../examples/basic.md)** - Real-world patterns

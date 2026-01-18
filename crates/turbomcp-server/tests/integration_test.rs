@@ -1,12 +1,12 @@
-//! v3 Integration Tests
+//! Integration Tests
 //!
-//! Tests the v3 pristine architecture end-to-end.
+//! Tests the pristine architecture end-to-end.
 
 use serde_json::json;
 use std::future::Future;
 use turbomcp_core::context::RequestContext as CoreRequestContext;
 use turbomcp_core::error::{McpError, McpResult};
-use turbomcp_server::v3::{McpHandler, McpHandlerExt, RequestContext};
+use turbomcp_server::{McpHandler, McpHandlerExt, RequestContext};
 use turbomcp_types::{
     Prompt, PromptResult, Resource, ResourceResult, ServerInfo, Tool, ToolResult,
 };

@@ -36,7 +36,7 @@ pub mod websocket;
 pub use line::{LineReader, LineTransportRunner, LineWriter};
 
 // Re-export the configurable default from config
-pub use crate::v3::config::DEFAULT_MAX_MESSAGE_SIZE;
+pub use crate::config::DEFAULT_MAX_MESSAGE_SIZE;
 
 /// Maximum message size for line-based transports.
 /// This prevents memory exhaustion from maliciously large messages.

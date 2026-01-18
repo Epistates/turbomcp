@@ -1,6 +1,6 @@
 # Your First Server
 
-Build a complete, production-ready MCP server with multiple handlers, context injection, and error handling.
+Build a complete, production-ready MCP server with state, multiple handlers, and error handling.
 
 ## Project Setup
 
@@ -23,114 +23,91 @@ edition = "2021"
 turbomcp = { version = "3.0.0-exp", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
 ```
 
 ## Build a Weather Server
 
-Create `src/main.rs`:
+Create `src/main.rs`. We'll use a shared state to simulate a database or cache.
 
 ```rust
+use std::sync::{Arc, Mutex};
 use turbomcp::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[tokio::main]
-async fn main() -> McpResult<()> {
-    let server = McpServer::new()
-        .with_name("weather-server")
-        .stdio()
-        .run()
-        .await?;
-
-    Ok(())
+// 1. Define your server state
+#[derive(Clone)]
+struct WeatherServer {
+    // Shared state must be thread-safe (Arc<Mutex> or similar)
+    cache: Arc<Mutex<std::collections::HashMap<String, WeatherData>>>
 }
 
-// Tool: Get weather for a city
-#[tool(description = "Get current weather for a city")]
-async fn get_weather(
-    #[description = "City name"]
-    city: String,
-) -> McpResult<WeatherData> {
-    // Simulate fetching weather data
-    let weather = WeatherData {
-        city,
-        temperature: 72.0,
-        condition: "Sunny".to_string(),
-        humidity: 65,
-    };
-
-    Ok(weather)
-}
-
-// Tool: Get forecast
-#[tool(description = "Get 7-day weather forecast")]
-async fn get_forecast(
-    #[description = "City name"]
-    city: String,
-    logger: Logger,
-) -> McpResult<String> {
-    logger.info(&format!("Fetching forecast for {}", city)).await?;
-
-    // Simulate API call
-    let forecast = vec![
-        "Day 1: Sunny, 75°F",
-        "Day 2: Cloudy, 70°F",
-        "Day 3: Rainy, 65°F",
-        "Day 4: Sunny, 75°F",
-        "Day 5: Sunny, 78°F",
-        "Day 6: Cloudy, 72°F",
-        "Day 7: Rainy, 68°F",
-    ];
-
-    Ok(forecast.join("\n"))
-}
-
-// Resource: List supported cities
-#[resource(uri = "cities://list", description = "List all supported cities")]
-async fn list_cities(
-    cache: Cache,
-) -> McpResult<String> {
-    // Check cache first
-    if let Some(cached) = cache.get::<String>("cities")? {
-        return Ok(cached);
-    }
-
-    let cities = vec!["New York", "Los Angeles", "Chicago", "Houston"];
-    let result = cities.join(", ");
-
-    // Cache the result
-    cache.set("cities", &result).await?;
-
-    Ok(result)
-}
-
-// Prompt: Weather analysis template
-#[prompt(description = "Analyze weather patterns")]
-async fn analyze_weather(
-    logger: Logger,
-) -> McpResult<String> {
-    logger.info("Providing weather analysis template").await?;
-
-    Ok(r#"
-Analyze the weather data provided:
-1. Identify patterns
-2. Predict trends
-3. Suggest recommendations
-
-Format your response as:
-- Pattern: [description]
-- Prediction: [forecast]
-- Recommendation: [suggestion]
-"#.to_string())
-}
-
-// Response type (must be serializable)
-#[derive(Serialize, Deserialize, Debug)]
+// 2. Define data types
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 struct WeatherData {
     city: String,
     temperature: f64,
     condition: String,
-    humidity: u32,
+}
+
+// 3. Implement the server
+#[server(name = "weather-server", version = "1.0.0")]
+impl WeatherServer {
+    /// Get current weather for a city
+    #[tool]
+    async fn get_weather(
+        &self,
+        #[description("City name (e.g. 'New York')")]
+        city: String,
+    ) -> McpResult<WeatherData> {
+        // Check cache
+        {
+            let cache = self.cache.lock().unwrap();
+            if let Some(data) = cache.get(&city) {
+                return Ok(data.clone());
+            }
+        }
+
+        // Simulate fetching data
+        let weather = WeatherData {
+            city: city.clone(),
+            temperature: 72.0,
+            condition: "Sunny".to_string(),
+        };
+
+        // Update cache
+        {
+            let mut cache = self.cache.lock().unwrap();
+            cache.insert(city, weather.clone());
+        }
+
+        Ok(weather)
+    }
+
+    /// List all cities we have data for
+    #[resource("weather://cities")]
+    async fn list_cities(&self) -> String {
+        let cache = self.cache.lock().unwrap();
+        let cities: Vec<String> = cache.keys().cloned().collect();
+        cities.join(", ")
+    }
+
+    /// Get a weather analysis prompt
+    #[prompt("analyze-weather")]
+    async fn analyze_prompt(&self, city: String) -> String {
+        format!("Analyze the weather patterns for {}, focusing on temperature trends.", city)
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize state
+    let server = WeatherServer {
+        cache: Arc::new(Mutex::new(std::collections::HashMap::new()))
+    };
+
+    // Run via STDIO
+    server.run_stdio().await?;
+    Ok(())
 }
 ```
 
@@ -164,128 +141,32 @@ turbomcp-cli tools call get_weather \
   --command "./target/release/weather-mcp-server"
 ```
 
-### Using Raw JSON-RPC
-
-In one terminal, run the server:
-
-```bash
-cargo run
-```
-
-In another, send a request:
-
-```bash
-cat <<'EOF' | ./target/debug/weather-mcp-server
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test-client"}}}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_weather","arguments":{"city":"New York"}}}
-EOF
-```
-
-## Add Configuration
-
-Update `src/main.rs` to add configuration:
-
-```rust
-#[tokio::main]
-async fn main() -> McpResult<()> {
-    let mut config = Config::new();
-    config.set("api_key", "your-api-key")?;
-    config.set("cache_ttl", 3600)?;
-
-    let server = McpServer::new()
-        .with_name("weather-server")
-        .with_config(config)
-        .stdio()
-        .run()
-        .await?;
-
-    Ok(())
-}
-```
-
-Then use it in handlers:
-
-```rust
-#[tool]
-async fn get_weather(
-    city: String,
-    config: Config,
-) -> McpResult<WeatherData> {
-    let api_key: Option<String> = config.get("api_key")?;
-    let cache_ttl: Option<u32> = config.get("cache_ttl")?;
-
-    // Use API key and cache TTL...
-    Ok(weather)
-}
-```
-
 ## Add HTTP Transport
 
-Add HTTP support:
+Want to expose your server over HTTP instead of STDIO? Just change the run command:
 
 ```rust
 #[tokio::main]
-async fn main() -> McpResult<()> {
-    let server = McpServer::new()
-        .with_name("weather-server")
-        .stdio()
-        .http(8080)           // HTTP on port 8080
-        .websocket(8081)      // WebSocket on port 8081
-        .run()
-        .await?;
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let server = WeatherServer { /* ... */ };
 
+    // Run via HTTP
+    server.run_http("0.0.0.0:8080".parse()?)
+        .await?;
+    
     Ok(())
 }
 ```
-
-Now you can make HTTP requests:
-
-```bash
-curl -X POST http://localhost:8080/tools/call \
-  -H "Content-Type: application/json" \
-  -d '{"name": "get_weather", "arguments": {"city": "New York"}}'
-```
-
-## Add Graceful Shutdown
-
-Handle signals properly:
-
-```rust
-#[tokio::main]
-async fn main() -> McpResult<()> {
-    let server = McpServer::new()
-        .with_name("weather-server")
-        .stdio()
-        .with_graceful_shutdown(std::time::Duration::from_secs(30))
-        .run()
-        .await?;
-
-    Ok(())
-}
-```
-
-## Complete Example
-
-See the full example in the [examples/weather.rs](https://github.com/turbomcp/turbomcp/blob/main/crates/turbomcp/examples/weather.rs) file in the repository.
-
-## Next Steps
-
-- **[Handlers Guide](../guide/handlers.md)** - All handler types
-- **[Context & DI](../guide/context-injection.md)** - Dependency injection
-- **[Authentication](../guide/authentication.md)** - Add OAuth
-- **[Deployment](../deployment/docker.md)** - Deploy to production
-- **[Examples](../examples/basic.md)** - More real-world patterns
 
 ## Key Concepts Applied
 
-✅ **Multiple handler types** - Tools, resources, prompts
-✅ **Dependency injection** - Logger, cache, config
-✅ **Error handling** - Proper error types
-✅ **Documentation** - Descriptions for schema
-✅ **Caching** - In-memory caching pattern
-✅ **Configuration** - Runtime configuration
-✅ **Multiple transports** - STDIO, HTTP, WebSocket
+✅ **State Management** - Using `Arc<Mutex<...>>` for shared state.
+✅ **Zero Boilerplate** - No manual JSON schema definitions.
+✅ **Type Safety** - Arguments and return types are strongly typed.
+✅ **Documentation** - `#[description]` attributes and doc comments are used by the LLM.
+✅ **Multiple Transports** - Switch between STDIO and HTTP easily.
 
----
+## Next Steps
 
-Great job! You've built a complete MCP server. Ready to deploy? → [Deployment Guide](../deployment/docker.md)
+- **[Handlers Guide](../guide/handlers.md)** - Learn about all handler types.
+- **[Deployment](../deployment/docker.md)** - Deploy your server with Docker.

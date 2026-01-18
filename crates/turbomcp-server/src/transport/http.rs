@@ -1,4 +1,4 @@
-//! HTTP transport implementation for v3.
+//! HTTP transport implementation.
 //!
 //! Provides MCP 2025-06-18 Streamable HTTP transport with:
 //! - POST for JSON-RPC requests
@@ -27,9 +27,9 @@ use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
 use uuid::Uuid;
 
-use crate::v3::config::{RateLimiter, ServerConfig};
-use crate::v3::context::RequestContext;
-use crate::v3::router::{self, JsonRpcIncoming, JsonRpcOutgoing};
+use crate::config::{RateLimiter, ServerConfig};
+use crate::context::RequestContext;
+use crate::router::{self, JsonRpcIncoming, JsonRpcOutgoing};
 
 /// Maximum request body size (10MB).
 const MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
@@ -120,7 +120,7 @@ impl SessionManager {
 /// # Example
 ///
 /// ```rust,ignore
-/// use turbomcp_server::v3::transport::http;
+/// use turbomcp_server::transport::http;
 ///
 /// http::run(&handler, "0.0.0.0:8080").await?;
 /// ```
@@ -152,7 +152,7 @@ pub async fn run<H: McpHandler>(handler: &H, addr: &str) -> McpResult<()> {
         .map_err(|e| McpError::internal(format!("Failed to bind to {}: {}", addr, e)))?;
 
     tracing::info!(
-        "v3 MCP server listening on http://{} (POST /, /mcp; GET /sse)",
+        "MCP server listening on http://{} (POST /, /mcp; GET /sse)",
         socket_addr
     );
 
@@ -221,7 +221,7 @@ pub async fn run_with_config<H: McpHandler>(
         .unwrap_or_default();
 
     tracing::info!(
-        "v3 MCP server listening on http://{}{} (POST /, /mcp; GET /sse)",
+        "MCP server listening on http://{}{} (POST /, /mcp; GET /sse)",
         socket_addr,
         rate_limit_info
     );

@@ -222,6 +222,7 @@ impl From<Annotations> for proto::Annotations {
     }
 }
 
+#[allow(clippy::default_trait_access)]
 impl From<proto::Annotations> for Annotations {
     fn from(annotations: proto::Annotations) -> Self {
         Self {

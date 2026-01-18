@@ -15,7 +15,7 @@
 //! ## Quick Start
 //!
 //! ```rust,ignore
-//! use turbomcp_server::v3::prelude::*;
+//! use turbomcp_server::prelude::*;
 //!
 //! #[derive(Clone)]
 //! struct Calculator;
@@ -39,7 +39,7 @@
 //! ## Runtime Transport Selection
 //!
 //! ```rust,ignore
-//! use turbomcp_server::v3::prelude::*;
+//! use turbomcp_server::prelude::*;
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -61,7 +61,7 @@
 //!
 //! ```rust,ignore
 //! use axum::Router;
-//! use turbomcp_server::v3::prelude::*;
+//! use turbomcp_server::prelude::*;
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -91,19 +91,46 @@
     clippy::default_trait_access
 )]
 
-/// v3 server architecture - the recommended API.
+// Core modules
+mod builder;
+mod config;
+mod context;
+mod handler;
+mod router;
+
+/// Transport implementations for different protocols.
+pub mod transport;
+
+// Public exports
+pub use builder::{McpServerExt, ServerBuilder, Transport};
+pub use config::{
+    CapabilityValidation, ClientCapabilities, ConnectionCounter, ConnectionGuard, ConnectionLimits,
+    ProtocolConfig, RateLimitConfig, RateLimiter, RequiredCapabilities,
+    SUPPORTED_PROTOCOL_VERSIONS, ServerConfig, ServerConfigBuilder,
+};
+pub use context::{RequestContext, TransportType};
+pub use handler::McpHandlerExt;
+pub use router::{
+    JsonRpcIncoming, JsonRpcOutgoing, parse_request, route_request, route_request_with_config,
+    serialize_response,
+};
+
+// Re-export McpHandler from core for unified architecture
+pub use turbomcp_core::handler::McpHandler;
+
+/// Type alias for backward compatibility (use `JsonRpcIncoming` for new code).
+pub type JsonRpcRequest = JsonRpcIncoming;
+/// Type alias for backward compatibility (use `JsonRpcOutgoing` for new code).
+pub type JsonRpcResponse = JsonRpcOutgoing;
+
+/// Prelude for easy imports.
 ///
-/// This module provides a clean, modern architecture with:
-/// - Unified `McpHandler` trait for all MCP operations
-/// - Zero-boilerplate through macro-generated implementations
-/// - Transport-agnostic design (works on WASM and native)
-/// - no_std compatible core (`turbomcp-core`)
-/// - Single unified error type (`McpError`)
+/// This prelude provides everything needed to build MCP servers:
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use turbomcp_server::v3::prelude::*;
+/// use turbomcp_server::prelude::*;
 ///
 /// #[derive(Clone)]
 /// struct MyServer;
@@ -121,18 +148,42 @@
 ///     MyServer.serve().await.unwrap();
 /// }
 /// ```
-pub mod v3;
-
-// Re-export v3 as the primary API
-pub use v3::*;
-
-/// Prelude for common server functionality.
-///
-/// Import everything you need with a single use statement:
-///
-/// ```rust,ignore
-/// use turbomcp_server::prelude::*;
-/// ```
 pub mod prelude {
-    pub use crate::v3::prelude::*;
+    // Core traits
+    pub use super::{McpHandler, McpHandlerExt, McpServerExt};
+
+    // Builder and transport
+    pub use super::{ServerBuilder, Transport};
+
+    // Context types
+    pub use super::{RequestContext, TransportType};
+
+    // Configuration types
+    pub use super::{
+        ConnectionLimits, ProtocolConfig, RateLimitConfig, RateLimiter, RequiredCapabilities,
+        ServerConfig, ServerConfigBuilder,
+    };
+
+    // Re-export error types from turbomcp-core (unified error handling)
+    pub use turbomcp_core::error::{McpError, McpResult};
+
+    // Re-export types from turbomcp-types
+    pub use turbomcp_types::{
+        // Result conversion traits
+        IntoPromptResult,
+        IntoResourceResult,
+        IntoToolResult,
+        // Core types
+        Message,
+        Prompt,
+        PromptArgument,
+        PromptResult,
+        Resource,
+        ResourceContent,
+        ResourceResult,
+        ServerInfo,
+        Tool,
+        ToolInputSchema,
+        ToolResult,
+    };
 }

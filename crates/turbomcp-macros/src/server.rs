@@ -1,4 +1,4 @@
-//! v3 server macro - generates McpHandler trait implementation.
+//! Server macro - generates McpHandler trait implementation.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -625,8 +625,8 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
     }
 }
 
-/// Main entry point for v3 server macro.
-pub fn generate_v3_server(
+/// Main entry point for server macro.
+pub fn generate_server(
     args: proc_macro::TokenStream,
     input: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {

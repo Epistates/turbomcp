@@ -1,4 +1,4 @@
-//! Unix domain socket transport implementation for v3.
+//! Unix domain socket transport implementation.
 //!
 //! Provides line-based JSON-RPC over Unix sockets with connection limiting
 //! and graceful shutdown support.
@@ -11,9 +11,9 @@ use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
 
 use super::line::LineTransportRunner;
-use crate::v3::config::{ConnectionCounter, ServerConfig};
-use crate::v3::context::RequestContext;
-use crate::v3::router;
+use crate::config::{ConnectionCounter, ServerConfig};
+use crate::context::RequestContext;
+use crate::router;
 
 /// Run a handler on Unix domain socket transport.
 ///
@@ -25,7 +25,7 @@ use crate::v3::router;
 /// # Example
 ///
 /// ```rust,ignore
-/// use turbomcp_server::v3::transport::unix;
+/// use turbomcp_server::transport::unix;
 ///
 /// unix::run(&handler, "/tmp/mcp.sock").await?;
 /// ```
@@ -113,7 +113,7 @@ pub async fn run_with_shutdown<H: McpHandler>(
     let socket_path = path.to_string();
 
     tracing::info!(
-        "v3 MCP server listening on unix://{} (max {} connections)",
+        "MCP server listening on unix://{} (max {} connections)",
         path,
         max_connections
     );

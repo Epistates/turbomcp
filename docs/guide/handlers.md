@@ -4,54 +4,61 @@ Learn how to define tools, resources, prompts, and handle requests in TurboMCP.
 
 ## Handler Types
 
-TurboMCP supports four types of handlers:
+TurboMCP supports three primary types of handlers via procedural macros:
 
 ### Tools
 
-Tools are functions the model can call to perform actions:
+Tools are functions the model can call to perform actions. The `#[tool]` macro automatically generates the JSON schema from your function signature.
 
 ```rust
-#[tool(description = "Add two numbers")]
+#[tool("Add two numbers")]
 async fn add(
-    #[description = "First number"]
+    &self,
+    #[description("First number")]
     a: i32,
-    #[description = "Second number"]
+    #[description("Second number")]
     b: i32,
-) -> McpResult<i32> {
-    Ok(a + b)
+) -> i32 {
+    a + b
 }
 ```
 
 ### Resources
 
-Resources provide static or dynamic information:
+Resources provide static or dynamic information. The `#[resource]` macro maps a URI template to your function.
 
 ```rust
-#[resource(uri = "data://users", description = "List all users")]
-async fn list_users() -> McpResult<String> {
-    Ok("User list".to_string())
+// Matches exactly "data://users"
+#[resource("data://users")]
+async fn list_users(&self) -> String {
+    "User list...".to_string()
+}
+
+// Matches templates like "file://path/to/file.txt"
+#[resource("file://{path}")]
+async fn read_file(&self, path: String) -> String {
+    format!("Reading {}", path)
+}
+```
+
+You can also specify the MIME type:
+
+```rust
+#[resource("data://image", mime_type = "image/png")]
+async fn get_image(&self) -> Vec<u8> {
+    // Return raw bytes
+    vec![0x89, 0x50, 0x4E, 0x47, ...]
 }
 ```
 
 ### Prompts
 
-Prompts return instruction templates:
+Prompts return instruction templates for the LLM.
 
 ```rust
-#[prompt(description = "Generate code")]
-async fn code_generation_prompt() -> McpResult<String> {
-    Ok("Write Rust code to...".to_string())
-}
-```
-
-### Samplings
-
-Samplings enable bidirectional model interaction:
-
-```rust
-#[sampling(description = "Ask the model for advice")]
-async fn ask_model() -> McpResult<String> {
-    Ok("Please suggest...".to_string())
+#[prompt("code-review")]
+async fn code_review(&self, code: String) -> String {
+    format!("Please review this code:\n\n{}", code)
 }
 ```
 
@@ -59,61 +66,86 @@ async fn ask_model() -> McpResult<String> {
 
 ### Basic Types
 
-Handlers support all standard Rust types:
+Handlers support all standard Rust types that implement `serde::Deserialize`:
 
 ```rust
 #[tool]
 async fn process(
+    &self,
     text: String,
     count: i32,
     ratio: f64,
     enabled: bool,
-) -> McpResult<String> {
-    Ok(format!("{} x {}", text, count))
+) -> String {
+    format!("{} x {}", text, count)
 }
 ```
 
 ### Structured Types
 
-Use `serde` to support complex types:
+Use structs to organize complex arguments:
 
 ```rust
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct UserInput {
     name: String,
     age: u32,
 }
 
 #[tool]
-async fn process_user(user: UserInput) -> McpResult<String> {
-    Ok(format!("Processed {}", user.name))
+async fn process_user(&self, user: UserInput) -> String {
+    format!("Processed {}", user.name)
 }
 ```
 
 ### Optional Parameters
 
+Use `Option<T>` for optional arguments. The generated schema will mark them as not required.
+
 ```rust
 #[tool]
 async fn search(
+    &self,
     query: String,
     limit: Option<usize>,
-) -> McpResult<String> {
+) -> String {
     let limit = limit.unwrap_or(10);
-    Ok(format!("Found {} results", limit))
+    format!("Found {} results", limit)
 }
 ```
 
-### Injected Dependencies
+### Request Context
+
+If you need access to the request context (e.g., to check the request ID or user info), add a parameter named `ctx` of type `RequestContext`. This is a special parameter injected by the macro; it is **not** exposed in the tool's JSON schema.
 
 ```rust
+use turbomcp::prelude::*;
+
 #[tool]
-async fn handler(
-    param: String,
-    logger: Logger,
-    cache: Cache,
-    config: Config,
-) -> McpResult<String> {
-    Ok("Done".into())
+async fn handler(&self, ctx: RequestContext, param: String) -> String {
+    let request_id = ctx.request_id;
+    format!("Request ID: {}", request_id)
+}
+```
+
+### Server State (Dependency Injection)
+
+For other dependencies like databases, caches, or configuration, store them in your server struct. Since your server struct is `Clone`, consider using `Arc` for shared state.
+
+```rust
+#[derive(Clone)]
+struct MyServer {
+    db: Arc<Database>,
+    config: Arc<Config>,
+}
+
+#[server(name = "my-server")]
+impl MyServer {
+    #[tool]
+    async fn query_db(&self, id: String) -> String {
+        // Access state via self
+        self.db.get(id).await
+    }
 }
 ```
 
@@ -121,63 +153,58 @@ async fn handler(
 
 ### Simple Types
 
+Handlers can return any type that implements `IntoToolResult`, `IntoResourceResult`, or `IntoPromptResult`. This includes most primitives:
+
 ```rust
 #[tool]
-async fn simple() -> McpResult<String> {
-    Ok("result".into())
+async fn simple(&self) -> String {
+    "result".into()
 }
 
 #[tool]
-async fn number() -> McpResult<i32> {
-    Ok(42)
+async fn number(&self) -> i32 {
+    42
 }
 ```
 
-### Structured Responses
+### Result Type
 
-```rust
-#[derive(serde::Serialize)]
-struct Response {
-    status: String,
-    data: Vec<String>,
-}
-
-#[tool]
-async fn complex() -> McpResult<Response> {
-    Ok(Response {
-        status: "ok".into(),
-        data: vec!["a", "b"].iter().map(|s| s.to_string()).collect(),
-    })
-}
-```
-
-### Error Handling
+Use `McpResult<T>` (alias for `Result<T, McpError>`) to handle errors gracefully:
 
 ```rust
 #[tool]
-async fn operation(value: i32) -> McpResult<String> {
+async fn operation(&self, value: i32) -> McpResult<String> {
     if value < 0 {
-        return Err(McpError::InvalidInput("Must be positive".into()));
+        return Err(McpError::invalid_params("Must be positive"));
     }
     Ok("Success".into())
 }
 ```
 
-## Error Types
+### Binary Data
 
-TurboMCP provides standard error types:
+For resources, you can return `Vec<u8>` or `bytes::Bytes` to send binary data (automatically base64 encoded for JSON transport):
 
 ```rust
-Err(McpError::InvalidInput("description"))
-Err(McpError::InvalidRequest("description"))
-Err(McpError::InternalError("description"))
-Err(McpError::NotFound("description"))
-Err(McpError::MethodNotAllowed("description"))
-Err(McpError::Unauthorized("description"))
+#[resource("file://{path}")]
+async fn read_binary(&self, path: String) -> McpResult<Vec<u8>> {
+    let data = std::fs::read(path).map_err(|e| McpError::internal(e.to_string()))?;
+    Ok(data)
+}
+```
+
+## Error Handling
+
+TurboMCP provides standard error constructors on `McpError`:
+
+```rust
+Err(McpError::invalid_params("Invalid input"))
+Err(McpError::internal("Database failed"))
+Err(McpError::tool_not_found("Tool missing"))
+Err(McpError::resource_not_found("File not found"))
 ```
 
 ## Next Steps
 
-- **[Context & DI](context-injection.md)** - Dependency injection
-- **[Transports](transports.md)** - Transport configuration
 - **[Examples](../examples/basic.md)** - Real-world handlers
+- **[Transports](transports.md)** - Configuring HTTP/TCP transports

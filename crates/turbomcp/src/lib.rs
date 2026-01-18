@@ -144,7 +144,7 @@ pub use turbomcp_types::{
 };
 
 // Re-export server builder and transport
-pub use turbomcp_server::v3::{
+pub use turbomcp_server::{
     McpHandlerExt, McpServerExt, ServerBuilder, ServerConfig, ServerConfigBuilder, Transport,
 };
 

@@ -4,216 +4,11 @@ Complete guide for migrating from TurboMCP v2.x to v3.0.
 
 ## Overview
 
-TurboMCP 3.0 represents a major modular architecture redesign with:
-
-- **Unified error types** - `McpError` replaces `ServerError`, `ClientError`
-- **Modular transports** - Individual crates for each transport
-- **`no_std` core** - Foundation layer works in WASM and embedded
-- **Tower middleware** - Native Tower integration replaces plugin system
-- **MCP 2025-11-25** - Full compliance with latest specification
+TurboMCP 3.0 introduces a **Zero Boilerplate** architecture using procedural macros. It simplifies server creation by generating `McpHandler` implementations and JSON schemas automatically.
 
 ## Quick Migration
 
-### Using Compatibility Crate
-
-For gradual migration, use the compatibility crate:
-
-```toml
-[dependencies]
-turbomcp = "3.0"
-turbomcp-compat = "3.0"  # Provides deprecated v2 aliases
-```
-
-```rust
-// Deprecation warnings will guide migration
-use turbomcp_compat::v2::{ServerError, ServerResult};
-```
-
-### Direct Migration
-
-```toml
-# Before (v2.x)
-[dependencies]
-turbomcp = "2.x"
-
-# After (v3.x)
-[dependencies]
-turbomcp = "3.0"
-```
-
-## Breaking Changes
-
-### 1. Error Type Unification
-
-**Before (v2.x):**
-
-```rust
-use turbomcp_server::{ServerError, ServerResult};
-use turbomcp_client::{ClientError, ClientResult};
-
-fn server_handler() -> ServerResult<Value> {
-    Err(ServerError::internal("failed"))
-}
-
-fn client_call() -> ClientResult<Value> {
-    Err(ClientError::connection("failed"))
-}
-```
-
-**After (v3.x):**
-
-```rust
-use turbomcp::{McpError, McpResult};
-
-fn server_handler() -> McpResult<Value> {
-    Err(McpError::internal("failed"))
-}
-
-fn client_call() -> McpResult<Value> {
-    Err(McpError::internal("connection failed"))
-}
-```
-
-**Type Mapping:**
-
-| v2.x Type | v3.x Type |
-|-----------|-----------|
-| `ServerError` | `McpError` |
-| `ServerResult<T>` | `McpResult<T>` |
-| `ClientError` | `McpError` |
-| `ClientResult<T>` | `McpResult<T>` |
-| `Error` (protocol) | `McpError` |
-| `Claims` | `AuthContext` |
-
-### 2. Modular Transport Architecture
-
-**Before (v2.x):**
-
-```toml
-# Monolithic transport
-turbomcp = { version = "2.x", features = ["http", "websocket"] }
-```
-
-**After (v3.x):**
-
-```toml
-# Same feature flags work (for compatibility)
-turbomcp = { version = "3.0", features = ["http", "websocket"] }
-
-# Or use individual crates directly
-turbomcp-http = "3.0"
-turbomcp-websocket = "3.0"
-```
-
-**New Transport Crates:**
-
-| Crate | Feature | Description |
-|-------|---------|-------------|
-| `turbomcp-stdio` | `stdio` | Standard I/O (default) |
-| `turbomcp-http` | `http` | HTTP/SSE |
-| `turbomcp-websocket` | `websocket` | WebSocket |
-| `turbomcp-tcp` | `tcp` | TCP sockets |
-| `turbomcp-unix` | `unix` | Unix sockets |
-| `turbomcp-grpc` | `grpc` | gRPC (new) |
-
-### 3. Feature Flag Simplification
-
-**Removed Features (now always enabled):**
-
-| Old Feature | Now Always Available |
-|-------------|---------------------|
-| `mcp-icons` | `Icons`, `IconTheme` |
-| `mcp-url-elicitation` | `URLElicitRequestParams` |
-| `mcp-sampling-tools` | `tools`/`tool_choice` |
-| `mcp-enum-improvements` | `EnumSchema`, `EnumOption` |
-| `mcp-draft` | `description` on `Implementation` |
-
-**Before (v2.x):**
-
-```toml
-turbomcp-protocol = { version = "2.x", features = ["mcp-icons", "mcp-url-elicitation"] }
-```
-
-**After (v3.x):**
-
-```toml
-# No feature flags needed - all MCP 2025-11-25 features are always on
-turbomcp-protocol = "3.0"
-```
-
-**Renamed Features:**
-
-| Old Name | New Name |
-|----------|----------|
-| `mcp-tasks` | `experimental-tasks` |
-
-### 4. Tower Middleware Replaces Plugin System
-
-**Before (v2.x):**
-
-```rust
-use turbomcp_client::plugins::{Plugin, PluginContext};
-
-struct MyPlugin;
-
-impl Plugin for MyPlugin {
-    fn on_request(&self, ctx: &mut PluginContext) {
-        // Plugin logic
-    }
-}
-
-client.register_plugin(MyPlugin);
-```
-
-**After (v3.x):**
-
-```rust
-use tower::{Layer, Service, ServiceBuilder};
-
-struct MyLayer;
-
-impl<S> Layer<S> for MyLayer {
-    type Service = MyService<S>;
-
-    fn layer(&self, inner: S) -> Self::Service {
-        MyService { inner }
-    }
-}
-
-let service = ServiceBuilder::new()
-    .layer(MyLayer)
-    .service(client);
-```
-
-### 5. Authentication Changes
-
-**Before (v2.x):**
-
-```rust
-use turbomcp_server::middleware::Claims;
-```
-
-**After (v3.x):**
-
-```rust
-use turbomcp_auth::AuthContext;
-```
-
-### 6. `no_std` Core Layer
-
-The `turbomcp-core` crate is now `no_std` compatible:
-
-```toml
-# For no_std environments (WASM, embedded)
-turbomcp-core = { version = "3.0", default-features = false }
-
-# For standard environments (default)
-turbomcp-core = "3.0"
-```
-
-## Step-by-Step Migration
-
-### Step 1: Update Dependencies
+### 1. Update Dependencies
 
 ```toml
 [dependencies]
@@ -221,181 +16,121 @@ turbomcp = "3.0"
 tokio = { version = "1", features = ["full"] }
 ```
 
-### Step 2: Update Imports
+### 2. Update Server Definition
+
+**Before (v2.x):**
 
 ```rust
-// Before
-use turbomcp_server::{ServerError, ServerResult};
-use turbomcp_client::{ClientError, ClientResult};
+// v2 required manual handler registration and schema definition
+struct MyServer;
 
-// After
-use turbomcp::{McpError, McpResult};
-```
-
-### Step 3: Update Error Handling
-
-```rust
-// Before
-fn handler() -> ServerResult<String> {
-    Err(ServerError::internal("error"))
-}
-
-// After
-fn handler() -> McpResult<String> {
-    Err(McpError::internal("error"))
-}
-```
-
-### Step 4: Update Middleware (if using plugins)
-
-```rust
-// Before
-client.register_plugin(MyPlugin);
-
-// After
-use tower::ServiceBuilder;
-
-let client = ServiceBuilder::new()
-    .layer(MyLayer)
-    .service(base_client);
-```
-
-### Step 5: Remove Deprecated Feature Flags
-
-```toml
-# Before
-turbomcp = { version = "2.x", features = ["mcp-icons", "mcp-url-elicitation"] }
-
-# After
-turbomcp = "3.0"  # These are always enabled now
-```
-
-### Step 6: Update Tests
-
-```rust
-// Before
-#[test]
-fn test_error() {
-    let err = ServerError::internal("test");
-    assert!(matches!(err, ServerError::Internal(_)));
-}
-
-// After
-#[test]
-fn test_error() {
-    let err = McpError::internal("test");
-    assert_eq!(err.kind(), ErrorKind::InternalError);
+#[async_trait]
+impl McpServer for MyServer {
+    async fn handle_tool(&self, name: &str, args: Value) -> Result<Value, Error> {
+        match name {
+            "add" => {
+                // Manual argument parsing
+                let a = args["a"].as_i64().unwrap();
+                let b = args["b"].as_i64().unwrap();
+                Ok(json!(a + b))
+            }
+            _ => Err(Error::MethodNotFound),
+        }
+    }
+    // ... manual list_tools implementation ...
 }
 ```
 
-## New Features to Adopt
-
-### Wire Codecs
+**After (v3.x):**
 
 ```rust
-use turbomcp_wire::{Codec, SimdJsonCodec};
+use turbomcp::prelude::*;
 
-let codec = SimdJsonCodec::new();  // 2-4x faster JSON
+#[derive(Clone)]
+struct MyServer;
+
+#[server(name = "my-server", version = "1.0.0")]
+impl MyServer {
+    #[tool("Add two numbers")]
+    async fn add(&self, a: i64, b: i64) -> i64 {
+        a + b
+    }
+}
 ```
 
-### gRPC Transport
+### 3. Update Run Command
 
-```toml
-turbomcp = { version = "3.0", features = ["grpc"] }
-```
+**Before (v2.x):**
 
 ```rust
-use turbomcp_grpc::server::McpGrpcServer;
-
-let server = McpGrpcServer::builder()
-    .server_info("my-server", "1.0.0")
-    .build();
+let server = MyServer;
+let transport = StdioTransport::new(server);
+transport.run().await?;
 ```
 
-### OpenTelemetry
+**After (v3.x):**
 
 ```rust
-use turbomcp_telemetry::{TelemetryConfig, TelemetryLayer};
-
-let config = TelemetryConfig::builder()
-    .service_name("my-server")
-    .otlp_endpoint("http://jaeger:4317")
-    .build();
+MyServer.run_stdio().await?;
 ```
 
-### WASM Support
+## Key Changes
 
-```javascript
-import init, { McpClient } from 'turbomcp-wasm';
+### 1. `McpHandler` Trait
 
-await init();
-const client = new McpClient("https://api.example.com/mcp");
-```
+The core trait is now `McpHandler`, defined in `turbomcp-core`. You typically don't implement this manually anymore; the `#[server]` macro does it for you.
 
-## Common Migration Issues
+### 2. Procedural Macros
 
-### Issue: `ServerError` not found
+- `#[server]`: Annotates the `impl` block of your server struct.
+- `#[tool]`: Marks a method as a tool. Schema is generated from function signature.
+- `#[resource]`: Marks a method as a resource handler.
+- `#[prompt]`: Marks a method as a prompt handler.
 
+### 3. Return Types
+
+Handlers can now return any type that implements `Serialize` (via `IntoToolResult`, etc.), or `McpResult<T>`. You don't need to wrap everything in `Result` or `Value` manually.
+
+### 4. Transports
+
+Transports are now accessed via extension traits (`McpHandlerExt`):
+- `run_stdio()`
+- `run_http(addr)`
+- `run_websocket(addr)`
+- `run_tcp(addr)`
+
+### 5. `no_std` Support
+
+The core types are now `no_std` compatible, enabling usage in WASM environments (like Cloudflare Workers).
+
+## Migrating specific features
+
+### Error Handling
+
+**v2:**
 ```rust
-// Error: cannot find value `ServerError` in module `turbomcp_server`
-
-// Solution: Use McpError
-use turbomcp::McpError;
-Err(McpError::internal("error"))
+return Err(ServerError::internal("error"));
 ```
 
-### Issue: Feature flag not found
-
-```toml
-# Error: feature `mcp-icons` not found
-
-# Solution: Remove the feature flag (now always enabled)
-turbomcp = "3.0"
-```
-
-### Issue: Plugin trait not found
-
+**v3:**
 ```rust
-// Error: cannot find trait `Plugin`
-
-// Solution: Use Tower middleware instead
-use tower::{Layer, Service};
+return Err(McpError::internal("error"));
 ```
+(Or just return `Result<T, McpError>` and use `?`)
 
-### Issue: Claims type moved
+### Context
 
+**v2:**
 ```rust
-// Error: cannot find type `Claims`
-
-// Solution: Use AuthContext from turbomcp-auth
-use turbomcp_auth::AuthContext;
+async fn my_tool(&self, ctx: Context, ...)
 ```
 
-## Deprecation Timeline
+**v3:**
+```rust
+// RequestContext is injected if you add it as an argument named `ctx`
+async fn my_tool(&self, ctx: RequestContext, ...)
+```
 
-| Version | Status |
-|---------|--------|
-| v3.0.0 | Compat crate provides deprecated aliases |
-| v3.1.0 | Deprecation warnings become errors |
-| v4.0.0 | Compat crate removed |
+## Need Help?
 
-## Version Compatibility
-
-| TurboMCP | Rust | MCP Spec | Status |
-|----------|------|----------|--------|
-| 3.0.x | 1.89.0+ | 2025-11-25 | Current |
-| 2.3.x | 1.89.0+ | 2025-06-18 | Maintenance |
-| 2.0.x | 1.89.0+ | 2024-11-05 | EOL |
-
-## Resources
-
-- **[MIGRATION.md](https://github.com/turbomcp/turbomcp/blob/main/MIGRATION.md)** - Full migration guide
-- **[CHANGELOG.md](https://github.com/turbomcp/turbomcp/blob/main/CHANGELOG.md)** - Version history
-- **[Error Handling Guide](../guide/error-handling.md)** - McpError details
-- **[Tower Middleware Guide](../guide/tower-middleware.md)** - Middleware patterns
-
-## Getting Help
-
-- **GitHub Issues** - Report migration problems
-- **GitHub Discussions** - Ask questions
-- **API Documentation** - https://docs.rs/turbomcp
+Check the [examples](../examples/) for the latest patterns, or ask in the GitHub discussions.

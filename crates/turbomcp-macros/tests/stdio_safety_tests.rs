@@ -5,11 +5,11 @@
 //!
 //! Uses trybuild to test compile-fail scenarios.
 //!
-//! NOTE: These tests are skipped for v3 pristine architecture which is
+//! NOTE: These tests are skipped for pristine architecture which is
 //! transport-agnostic. STDIO safety should be handled at the transport layer.
 
 #[test]
-#[ignore = "Legacy test - v3 macro is transport-agnostic"]
+#[ignore = "Legacy test - macro is transport-agnostic"]
 fn stdio_safety_compile_tests() {
     let t = trybuild::TestCases::new();
 

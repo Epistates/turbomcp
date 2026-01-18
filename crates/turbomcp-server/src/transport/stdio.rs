@@ -1,4 +1,4 @@
-//! STDIO transport implementation for v3.
+//! STDIO transport implementation.
 //!
 //! Provides line-based JSON-RPC over stdin/stdout.
 
@@ -7,7 +7,7 @@ use turbomcp_core::error::McpResult;
 use turbomcp_core::handler::McpHandler;
 
 use super::line::LineTransportRunner;
-use crate::v3::context::RequestContext;
+use crate::context::RequestContext;
 
 /// Run a handler on STDIO transport.
 ///
@@ -17,7 +17,7 @@ use crate::v3::context::RequestContext;
 /// # Example
 ///
 /// ```rust,ignore
-/// use turbomcp_server::v3::transport::stdio;
+/// use turbomcp_server::transport::stdio;
 ///
 /// stdio::run(&handler).await?;
 /// ```
@@ -41,5 +41,5 @@ pub async fn run<H: McpHandler>(handler: &H) -> McpResult<()> {
 #[cfg(test)]
 mod tests {
     // STDIO tests require actual stdin/stdout, so they're integration tests
-    // See /tests/v3_integration_test.rs for STDIO tests
+    // See /tests/integration_test.rs for STDIO tests
 }

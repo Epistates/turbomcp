@@ -10,13 +10,6 @@ publish = false
 # TurboMCP SDK with v3 macros
 turbomcp = { path = "../crates/turbomcp" }
 
-# Dependencies required by macro-generated code
-# TODO: These should be re-exported through turbomcp in a future version
-turbomcp-core = { path = "../crates/turbomcp-core" }
-turbomcp-types = { path = "../crates/turbomcp-types" }
-schemars = "1.0"
-serde_json = "1.0"
-
 # Async runtime
 tokio = { workspace = true }
 

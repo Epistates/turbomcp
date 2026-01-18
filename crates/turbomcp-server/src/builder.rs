@@ -1,4 +1,4 @@
-//! v3 Server Builder - SOTA fluent API for MCP server configuration.
+//! Server Builder - SOTA fluent API for MCP server configuration.
 //!
 //! This module provides a builder pattern for configuring and running MCP servers
 //! with full control over transport selection and server integration.
@@ -450,7 +450,7 @@ impl<H: McpHandler> ServerBuilder<H> {
         let handler = Arc::new(self.handler);
         let rate_limiter = config
             .rate_limit
-            .map(|cfg| Arc::new(crate::v3::config::RateLimiter::new(cfg)));
+            .map(|cfg| Arc::new(crate::config::RateLimiter::new(cfg)));
 
         Router::new()
             .route("/", post(handle_json_rpc::<H>))
@@ -509,7 +509,7 @@ impl<H: McpHandler> ServerBuilder<H> {
 #[derive(Clone)]
 struct AppState<H: McpHandler> {
     handler: std::sync::Arc<H>,
-    rate_limiter: Option<std::sync::Arc<crate::v3::config::RateLimiter>>,
+    rate_limiter: Option<std::sync::Arc<crate::config::RateLimiter>>,
 }
 
 /// JSON-RPC request handler for Axum.

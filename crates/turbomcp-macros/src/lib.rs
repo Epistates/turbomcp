@@ -66,7 +66,9 @@
 
 use proc_macro::TokenStream;
 
-pub(crate) mod v3;
+mod schema;
+mod server;
+mod tool;
 
 /// Marks an impl block as an MCP server with automatic McpHandler implementation.
 ///
@@ -106,7 +108,7 @@ pub(crate) mod v3;
 /// ```
 #[proc_macro_attribute]
 pub fn server(args: TokenStream, input: TokenStream) -> TokenStream {
-    v3::server::generate_v3_server(args, input)
+    server::generate_server(args, input)
 }
 
 /// Marks a method as a tool handler within a `#[server]` block.

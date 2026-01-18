@@ -1,6 +1,6 @@
-//! v3 Server Configuration
+//! Server Configuration
 //!
-//! This module provides configuration options for v3 MCP servers including:
+//! This module provides configuration options for MCP servers including:
 //! - Protocol version negotiation
 //! - Rate limiting
 //! - Connection limits
@@ -34,7 +34,7 @@ pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     "2024-11-05", // Legacy
 ];
 
-/// Server configuration for v3.
+/// Server configuration.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     /// Protocol version configuration.
@@ -474,7 +474,7 @@ pub const DEFAULT_CLIENT_BUCKET_MAX_AGE: Duration = Duration::from_secs(3600);
 ///
 /// ```ignore
 /// use std::sync::Arc;
-/// use turbomcp_server::v3::config::{RateLimiter, RateLimitConfig, spawn_rate_limiter_cleanup};
+/// use turbomcp_server::config::{RateLimiter, RateLimitConfig, spawn_rate_limiter_cleanup};
 ///
 /// let limiter = Arc::new(RateLimiter::new(RateLimitConfig::default()));
 /// spawn_rate_limiter_cleanup(limiter.clone(), None, None);

@@ -1,4 +1,4 @@
-//! WebSocket transport implementation for v3.
+//! WebSocket transport implementation.
 //!
 //! Provides bidirectional JSON-RPC over WebSocket using Axum.
 
@@ -12,9 +12,9 @@ use futures::{SinkExt, StreamExt};
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
 
-use crate::v3::config::{ConnectionCounter, RateLimiter, ServerConfig};
-use crate::v3::context::RequestContext;
-use crate::v3::router::{self, JsonRpcOutgoing};
+use crate::config::{ConnectionCounter, RateLimiter, ServerConfig};
+use crate::context::RequestContext;
+use crate::router::{self, JsonRpcOutgoing};
 
 /// Maximum WebSocket message size (10MB).
 const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
@@ -29,7 +29,7 @@ const MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 /// # Example
 ///
 /// ```rust,ignore
-/// use turbomcp_server::v3::transport::websocket;
+/// use turbomcp_server::transport::websocket;
 ///
 /// websocket::run(&handler, "0.0.0.0:8080").await?;
 /// ```
@@ -92,7 +92,7 @@ pub async fn run_with_config<H: McpHandler>(
         .unwrap_or_default();
 
     tracing::info!(
-        "v3 MCP WebSocket server listening on ws://{} (max {} connections{})",
+        "MCP WebSocket server listening on ws://{} (max {} connections{})",
         socket_addr,
         max_connections,
         rate_limit_info
@@ -169,7 +169,7 @@ async fn handle_websocket<H: McpHandler>(
     handler: H,
     rate_limiter: Option<Arc<RateLimiter>>,
     client_addr: SocketAddr,
-    _connection_guard: crate::v3::config::ConnectionGuard,
+    _connection_guard: crate::config::ConnectionGuard,
 ) {
     let client_id = client_addr.ip().to_string();
     let (mut sender, mut receiver) = socket.split();

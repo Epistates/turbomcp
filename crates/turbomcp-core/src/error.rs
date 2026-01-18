@@ -436,7 +436,7 @@ impl McpError {
         Self::invalid_request(message)
     }
 
-    /// Create a handler error (maps to internal for v3)
+    /// Create a handler error (maps to internal)
     #[must_use]
     pub fn handler(message: impl Into<String>) -> Self {
         Self::internal(message)
