@@ -81,7 +81,7 @@ const_is_empty = "allow"
 # Core async runtime and utilities
 # Tokio: Production optimization - use only needed features instead of "full"
 # Includes: runtime, networking, sync, timers, signal handling, process, macros, io
-tokio = { version = "1.47", features = [
+tokio = { version = "1.49", features = [
     "rt", "rt-multi-thread",  # Multi-threaded async runtime
     "net",                     # TCP/UDP networking
     "sync",                    # Channels, mutexes, RwLock
@@ -104,7 +104,7 @@ tempfile = "3.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["raw_value", "preserve_order"] }
 msgpacker = { version = "0.4", features = ["derive", "alloc"] }  # MessagePack for binary efficiency
-sonic-rs = "0.3"   # High-performance JSON
+sonic-rs = "0.5"   # High-performance JSON
 simd-json = "0.13" # SIMD-accelerated JSON parsing
 ciborium = "0.2"
 
@@ -113,16 +113,16 @@ schemars = { version = "1.0", features = ["chrono04", "uuid1"] }
 jsonschema = { version = "0.17.1", default-features = false, features = ["resolve-file"] }
 
 # HTTP/WebSocket/Network
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2", "brotli", "gzip"] }
-axum = { version = "0.8.4", features = ["ws", "headers", "tracing", "macros"] }
-tower = { version = "0.5.2", features = ["full"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
+axum = { version = "0.8.8", features = ["ws", "tracing", "macros"] }
+tower = { version = "0.5.3", features = ["full"] }
 tower-http = { version = "0.6.8", features = ["full"] }
 hyper = { version = "1.0", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-native-roots"] }
 
 # Error handling and diagnostics
-thiserror = "2.0.16"
+thiserror = "2.0.18"
 anyhow = "1.0"
 miette = { version = "7.0", features = ["fancy"] }
 color-eyre = "0.6"
@@ -130,13 +130,13 @@ color-eyre = "0.6"
 # Observability and monitoring
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json", "tracing-log"] }
-tracing-opentelemetry = "0.28"
+tracing-opentelemetry = "0.32"
 tracing-appender = "0.2"  # File-based logging with non-blocking I/O
-opentelemetry = "0.28"
-opentelemetry-otlp = { version = "0.28", features = ["tonic", "metrics", "logs"] }
-opentelemetry_sdk = { version = "0.28", features = ["rt-tokio"] }
-metrics = "0.22"
-metrics-exporter-prometheus = "0.13"
+opentelemetry = "0.31"
+opentelemetry-otlp = { version = "0.31", features = ["tonic", "metrics", "logs"] }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.18"
 
 # Concurrency and synchronization
 parking_lot = "0.12"
@@ -165,13 +165,13 @@ time = { version = "0.3", features = ["serde", "macros"] }
 # Memory and performance optimizations
 bytes = "1.5"
 smallvec = { version = "1.11", features = ["serde"] }
-compact_str = { version = "0.7", features = ["serde"] }
+compact_str = { version = "0.9", features = ["serde"] }
 ahash = "0.8"
 once_cell = "1.19"
 arc-swap = "1.6"
 
 # Development and testing
-criterion = { version = "0.7.0", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.4"
 tokio-test = "0.4"
 wiremock = "0.6"

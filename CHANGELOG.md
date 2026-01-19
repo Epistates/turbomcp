@@ -11,25 +11,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🎉 Beta Release
 
-TurboMCP v3.0 enters beta! This release marks feature completeness for the v3 architecture
-with comprehensive audit verification across all 23 crates.
+TurboMCP v3.0 enters beta! This release represents a **complete architectural rewrite** with
+a net reduction of 47,000+ lines of code while adding powerful new capabilities. The codebase
+is now leaner, faster, and more maintainable.
 
-### Fixed
+**Highlights:**
+- Zero-boilerplate proc macros for native AND WASM MCP servers
+- Unified `McpHandler` trait works across all deployment targets
+- All dependencies updated to latest versions (reqwest 0.13, tokio 1.49, axum 0.8.8)
+- Comprehensive security hardening with error message sanitization
 
-#### DRY Compliance Audit
-- **turbomcp-types**: Removed duplicate `MCP_PROTOCOL_VERSION` constant (use `turbomcp_core::PROTOCOL_VERSION`)
-- **turbomcp-types**: Deleted vestigial `error.rs` file (dead code)
-- **turbomcp-protocol**: Deleted empty `capabilities.rs.tmp` temp file
-- **turbomcp-server**: Removed local `SUPPORTED_PROTOCOL_VERSIONS` constant, now re-exports from `turbomcp_core::SUPPORTED_VERSIONS`
+### Added
+
+#### Zero-Boilerplate Architecture (`turbomcp-macros`)
+- **Pristine V3 Macro System** - Complete rewrite of procedural macros
+  ```rust
+  use turbomcp::prelude::*;
+
+  #[derive(Clone)]
+  struct Calculator;
+
+  #[mcp_server(name = "calculator", version = "1.0.0")]
+  impl Calculator {
+      #[tool(description = "Add two numbers")]
+      async fn add(&self, a: i64, b: i64) -> i64 {
+          a + b
+      }
+  }
+
+  #[tokio::main]
+  async fn main() {
+      Calculator.run_stdio().await.unwrap();
+  }
+  ```
+- **Automatic JSON Schema Generation** - Tool parameters derive schemas from Rust types
+- **Multi-Transport Support** - Generated methods for `run_stdio()`, `run_tcp()`, `run_http()`, `run_unix()`
+- **Type-Safe Tool Registration** - Compile-time validation of tool signatures
+
+#### Core Architecture (`turbomcp-core`)
+- **`McpHandler` Trait** - Unified handler interface for all deployment targets
+- **`RequestContext`** - Rich context with correlation IDs, headers, transport info
+- **`Router`** - JSON-RPC routing with compile-time method registration
+- **`McpResult<T>` / `ToolResult`** - Ergonomic response types
+- **Security Module** - Path traversal prevention, input sanitization, error message filtering
+
+#### Server Framework (`turbomcp-server`)
+- **`ServerBuilder`** - Fluent API for server construction
+  ```rust
+  ServerBuilder::new("my-server", "1.0.0")
+      .tool("greet", "Greet someone", greet_handler)
+      .resource("config://app", config_handler)
+      .build()
+  ```
+- **Transport Modules** - New `transport::stdio`, `transport::tcp`, `transport::http` modules
+- **Automatic Capability Detection** - Server capabilities derived from registered handlers
+
+#### WASM Enhancements (`turbomcp-wasm`)
+- **Portable Server Example** - Same handler code runs natively and on Cloudflare Workers
+- **Updated for V3 Architecture** - Full compatibility with unified `McpHandler` trait
+
+#### Security
+- **Error Message Sanitization** - Sensitive information (paths, IPs, internal errors) filtered from client responses
+- **Production-Safe Defaults** - Sanitization enabled by default, can disable for development
 
 ### Changed
 
-- **Constants Single Source of Truth**: All protocol constants (`PROTOCOL_VERSION`, `SUPPORTED_VERSIONS`, `error_codes`, `methods`) are now exclusively defined in `turbomcp-core` and re-exported by dependent crates
+#### Dependencies (Latest Versions)
+- **reqwest**: 0.12 → 0.13 (with new `OAuth2HttpClient` adapter for oauth2 compatibility)
+- **tokio**: 1.47 → 1.49
+- **axum**: 0.8.4 → 0.8.8
+- **tower**: 0.5.2 → 0.5.3
+- **thiserror**: 2.0.16 → 2.0.18
+- **sonic-rs**: 0.3 → 0.5
+- **compact_str**: 0.8 → 0.9
+- **criterion**: 0.7 → 0.8
+- **opentelemetry**: 0.28 → 0.31
+- **opentelemetry_sdk**: 0.28 → 0.31
+- **tracing-opentelemetry**: 0.29 → 0.32
+- **metrics**: 0.23 → 0.24
+- **metrics-exporter-prometheus**: 0.17 → 0.18
+
+#### OAuth2 Compatibility (`turbomcp-auth`)
+- **New `OAuth2HttpClient` Adapter** - Bridges reqwest 0.13 with oauth2 5.0's `AsyncHttpClient` trait
+- oauth2 5.0 internally depends on reqwest 0.12, this adapter enables the latest reqwest
+
+#### Constants Consolidation (DRY Compliance)
+- **Single Source of Truth** - All protocol constants now in `turbomcp-core`:
+  - `PROTOCOL_VERSION`, `SUPPORTED_VERSIONS`
+  - `error_codes::*`, `methods::*`
+- **Re-exports** - Dependent crates re-export from `turbomcp-core`
+
+### Removed
+
+#### Legacy Code (-47,000 lines net)
+- **`turbomcp-macros`**: Removed legacy V2 macro modules (attrs, helpers, template, uri_template, etc.)
+- **`turbomcp-server`**: Removed old handler system, elicitation module, multi-tenant config
+- **`turbomcp`**: Removed injection, lifespan, registry, session, simd, sse_server modules
+- **Test Suites**: Removed 20+ legacy integration test files (replaced by V3 tests)
+
+#### Dead Code Cleanup
+- **turbomcp-types**: Removed duplicate `MCP_PROTOCOL_VERSION` constant
+- **turbomcp-types**: Deleted vestigial `error.rs` file
+- **turbomcp-protocol**: Deleted empty `capabilities.rs.tmp` temp file
+- **turbomcp-server**: Removed local `SUPPORTED_PROTOCOL_VERSIONS` constant
+
+### Fixed
+
+- **reqwest 0.13 TLS Configuration** - Removed deprecated `tls_built_in_root_certs()` call (reqwest 0.13 uses rustls-platform-verifier by default)
+
+### Documentation
+
+- **New**: `docs/V3_ARCHITECTURE.md` - Comprehensive architecture guide
+- **New**: `docs/V3_UNIFIED_ARCHITECTURE.md` - Unified design principles
+- **New**: `docs/guide/wasm.md` - WASM deployment guide
+- **Updated**: `docs/getting-started/quick-start.md` - V3 examples
+- **Updated**: `docs/getting-started/first-server.md` - Zero-boilerplate walkthrough
+- **Updated**: `docs/guide/handlers.md` - New handler patterns
+- **Updated**: `docs/architecture/v3-migration.md` - Migration guide
 
 ### Internal
 
 - Comprehensive crate-by-crate audit completed across all 23 crates
-- Verified consistent versioning, lint settings, and documentation
+- Verified consistent versioning (3.0.0-beta.1), lint settings, and documentation
 - Confirmed no vestigial or partially implemented code remains
 - All workspace tests passing
 

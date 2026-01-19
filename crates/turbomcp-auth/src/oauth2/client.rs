@@ -22,6 +22,7 @@ use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 use super::super::config::{OAuth2Config, ProviderConfig, ProviderType, RefreshBehavior};
 use super::super::types::TokenInfo;
+use super::http_client::OAuth2HttpClient;
 
 /// OAuth 2.1 client wrapper supporting all modern flows
 #[derive(Clone)]
@@ -42,7 +43,8 @@ pub struct OAuth2Client {
     /// Provider-specific configuration
     pub provider_config: ProviderConfig,
     /// Stateful HTTP client for oauth2 5.0 (reuses connections)
-    http_client: reqwest::Client,
+    /// Uses custom adapter to bridge reqwest 0.13+ with oauth2's AsyncHttpClient trait
+    http_client: OAuth2HttpClient,
 }
 
 // Manual Debug implementation because reqwest::Client doesn't implement Debug
@@ -134,10 +136,9 @@ impl OAuth2Client {
         let provider_config = Self::build_provider_config(provider_type);
 
         // oauth2 5.0: Create stateful HTTP client (reuses connections, improves performance)
-        // Configure to NOT follow redirects to prevent SSRF attacks (per oauth2 security guidance)
-        let http_client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
+        // Uses custom adapter to bridge reqwest 0.13+ with oauth2's AsyncHttpClient trait
+        // Configured to NOT follow redirects to prevent SSRF attacks (per oauth2 security guidance)
+        let http_client = OAuth2HttpClient::new()
             .map_err(|e| McpError::internal(format!("Failed to create HTTP client: {e}")))?;
 
         Ok(Self {

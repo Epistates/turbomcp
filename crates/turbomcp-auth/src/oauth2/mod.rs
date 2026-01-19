@@ -23,11 +23,15 @@
 
 pub mod client;
 pub mod dcr;
+pub mod http_client;
 pub mod resource;
 pub mod validation;
 
 // Re-export client types
 pub use client::OAuth2Client;
+
+// Re-export HTTP client adapter
+pub use http_client::OAuth2HttpClient;
 
 // Re-export DCR types (RFC 7591)
 pub use dcr::{DcrBuilder, DcrClient, RegistrationRequest, RegistrationResponse};

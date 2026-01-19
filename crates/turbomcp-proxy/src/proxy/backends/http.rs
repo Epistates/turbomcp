@@ -100,10 +100,9 @@ impl HttpBackend {
             .timeout(timeout)
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(Some(std::time::Duration::from_secs(90)))
-            // Explicit TLS configuration for security
+            // TLS configuration - reqwest 0.13 uses rustls-platform-verifier by default
+            // which provides secure certificate verification out of the box
             .danger_accept_invalid_certs(false) // Never accept invalid certificates
-            .tls_built_in_root_certs(true) // Use system root certificates
-            .min_tls_version(reqwest::tls::Version::TLS_1_3) // TLS 1.3 required (v3.0+)
             .https_only(false) // Allow HTTP for localhost (validated by RuntimeProxyBuilder)
             .build()
             .map_err(|e| ProxyError::backend(format!("Failed to create HTTP client: {e}")))?;

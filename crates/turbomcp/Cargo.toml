@@ -31,7 +31,7 @@ async-trait = "0.1"
 tracing = "0.1"
 
 # HTTP framework (optional)
-axum = { version = "0.8.4", features = ["ws"], optional = true }
+axum = { workspace = true, optional = true }
 tower = { workspace = true }
 
 # Schema generation (always required by macros)
@@ -53,7 +53,7 @@ turbomcp-dpop = { version = "3.0.0-beta.1", path = "../turbomcp-dpop", optional 
 
 [dev-dependencies]
 tokio-test = "0.4"
-criterion = { version = "0.7.0", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 tempfile = "3.0"
 proptest = "1.5"
 serial_test = "3.2"

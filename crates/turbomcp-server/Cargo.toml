@@ -40,7 +40,7 @@ parking_lot = "0.12"
 uuid = { workspace = true }
 
 # HTTP dependencies (optional - for http/websocket features)
-axum = { version = "0.8.4", optional = true, features = ["ws", "json"] }
+axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 http = { version = "1.0", optional = true }

@@ -39,13 +39,13 @@ thiserror = { workspace = true }
 anyhow = { workspace = true }
 
 # HTTP/WebSocket (optional)
-axum = { version = "0.8.4", optional = true, features = ["ws", "json"] }
+axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 hyper = { version = "1.0", optional = true }
 hyper-util = { version = "0.1", optional = true }
 tokio-tungstenite = { version = "0.28.0", optional = true, features = ["rustls-tls-native-roots"] }
-reqwest = { version = "0.12", optional = true, default-features = false, features = ["json", "stream", "rustls-tls"] }
+reqwest = { workspace = true, optional = true }
 async-stream = { version = "0.3", optional = true }
 
 # Compression (optional)

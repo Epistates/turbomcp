@@ -29,7 +29,7 @@ schemars = { version = "1.0" }
 
 # CRITICAL FIX: Add dependencies for macro-generated code
 # These are required because the #[server] macro generates code that uses these crates
-axum = { version = "0.8.4", optional = true, features = ["ws", "tracing", "macros"] }
+axum = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
 turbomcp-protocol = { version = "3.0.0-beta.1", path = "../turbomcp-protocol" }
@@ -38,7 +38,7 @@ turbomcp-transport = { version = "3.0.0-beta.1", path = "../turbomcp-transport",
 [dev-dependencies]
 async-trait = "0.1"
 trybuild = "1.0"
-tokio = { version = "1.47", features = ["macros", "rt-multi-thread"] }
+tokio = { workspace = true }
 
 [features]
 default = []
