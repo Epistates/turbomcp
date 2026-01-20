@@ -25,6 +25,7 @@
 //! assert_eq!(ctx.get_metadata("user-agent"), Some("Mozilla/5.0"));
 //! ```
 
+use crate::auth::Principal;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use serde::{Deserialize, Serialize};
@@ -114,6 +115,11 @@ pub struct RequestContext {
     ///
     /// Uses `BTreeMap` for `no_std` compatibility and deterministic iteration.
     pub metadata: BTreeMap<String, String>,
+    /// Authenticated principal (set after successful authentication)
+    ///
+    /// This field is `None` for unauthenticated requests or when
+    /// authentication is not configured.
+    pub principal: Option<Principal>,
 }
 
 impl RequestContext {
@@ -132,6 +138,7 @@ impl RequestContext {
             request_id: request_id.into(),
             transport,
             metadata: BTreeMap::new(),
+            principal: None,
         }
     }
 
@@ -219,6 +226,55 @@ impl RequestContext {
     /// Returns true if this context has a valid (non-empty) request ID.
     pub fn has_request_id(&self) -> bool {
         !self.request_id.is_empty()
+    }
+
+    /// Set the authenticated principal.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_core::context::{RequestContext, TransportType};
+    /// use turbomcp_core::auth::Principal;
+    ///
+    /// let ctx = RequestContext::new("1", TransportType::Http)
+    ///     .with_principal(Principal::new("user-123"));
+    ///
+    /// assert!(ctx.principal().is_some());
+    /// assert_eq!(ctx.principal().unwrap().subject, "user-123");
+    /// ```
+    pub fn with_principal(mut self, principal: Principal) -> Self {
+        self.principal = Some(principal);
+        self
+    }
+
+    /// Set the authenticated principal (mutable version).
+    pub fn set_principal(&mut self, principal: Principal) {
+        self.principal = Some(principal);
+    }
+
+    /// Get the authenticated principal, if any.
+    ///
+    /// Returns `None` if the request was not authenticated or if
+    /// authentication is not configured.
+    pub fn principal(&self) -> Option<&Principal> {
+        self.principal.as_ref()
+    }
+
+    /// Returns true if this context has an authenticated principal.
+    pub fn is_authenticated(&self) -> bool {
+        self.principal.is_some()
+    }
+
+    /// Get the subject of the authenticated principal.
+    ///
+    /// Convenience method that returns `None` if not authenticated.
+    pub fn subject(&self) -> Option<&str> {
+        self.principal.as_ref().map(|p| p.subject.as_str())
+    }
+
+    /// Clear the authenticated principal.
+    pub fn clear_principal(&mut self) {
+        self.principal = None;
     }
 }
 
@@ -316,5 +372,37 @@ mod tests {
         assert_eq!(ctx1.request_id, ctx2.request_id);
         assert_eq!(ctx1.transport, ctx2.transport);
         assert_eq!(ctx1.get_metadata("key"), ctx2.get_metadata("key"));
+    }
+
+    #[test]
+    fn test_request_context_principal() {
+        let ctx = RequestContext::new("1", TransportType::Http);
+        assert!(!ctx.is_authenticated());
+        assert!(ctx.principal().is_none());
+        assert!(ctx.subject().is_none());
+
+        let principal = Principal::new("user-123")
+            .with_email("user@example.com")
+            .with_role("admin");
+
+        let ctx = ctx.with_principal(principal);
+        assert!(ctx.is_authenticated());
+        assert!(ctx.principal().is_some());
+        assert_eq!(ctx.subject(), Some("user-123"));
+        assert_eq!(ctx.principal().unwrap().email, Some("user@example.com".to_string()));
+        assert!(ctx.principal().unwrap().has_role("admin"));
+    }
+
+    #[test]
+    fn test_request_context_principal_mutable() {
+        let mut ctx = RequestContext::new("1", TransportType::Http);
+        assert!(!ctx.is_authenticated());
+
+        ctx.set_principal(Principal::new("user-456"));
+        assert!(ctx.is_authenticated());
+        assert_eq!(ctx.subject(), Some("user-456"));
+
+        ctx.clear_principal();
+        assert!(!ctx.is_authenticated());
     }
 }

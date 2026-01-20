@@ -231,6 +231,10 @@ pub mod wasm_server;
 #[cfg_attr(docsrs, doc(cfg(feature = "wasm-server")))]
 pub mod prelude;
 
+#[cfg(feature = "auth")]
+#[cfg_attr(docsrs, doc(cfg(feature = "auth")))]
+pub mod auth;
+
 // Re-export proc macros when the macros feature is enabled
 #[cfg(feature = "macros")]
 #[cfg_attr(docsrs, doc(cfg(feature = "macros")))]

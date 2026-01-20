@@ -78,6 +78,9 @@ mod server;
 mod traits;
 mod types;
 
+#[cfg(feature = "auth")]
+mod auth_middleware;
+
 // Re-export the extension trait for unified McpHandler support
 // This enables "write once, run everywhere" - any McpHandler can be used
 // directly in WASM via .handle_worker_request()
@@ -101,6 +104,10 @@ pub use traits::{
 
 // Re-export handler trait bounds for advanced use cases
 pub use handler_traits::{IntoPromptHandler, IntoResourceHandler, IntoToolHandler};
+
+// Re-export authentication middleware when auth feature is enabled
+#[cfg(feature = "auth")]
+pub use auth_middleware::{AuthExt, WithAuth};
 
 /// Re-export worker types for convenience
 pub use worker::{Context, Env, Request, Response};

@@ -47,6 +47,7 @@
 //!
 //! ## Module Organization
 //!
+//! - [`auth`]: Authentication traits and types (portable across native/WASM)
 //! - [`handler`]: Unified MCP handler trait
 //! - [`context`]: Request context types
 //! - [`marker`]: Platform-adaptive marker traits
@@ -81,6 +82,7 @@
 extern crate alloc;
 
 // Core modules - unified v3 architecture
+pub mod auth;
 pub mod context;
 pub mod error;
 pub mod handler;
@@ -123,6 +125,10 @@ pub use security::{
 };
 
 // Re-export unified v3 architecture types
+pub use auth::{
+    AuthError, Authenticator, Credential, CredentialExtractor, HeaderExtractor, JwtAlgorithm,
+    JwtConfig, Principal, StandardClaims,
+};
 pub use context::{RequestContext, TransportType};
 pub use handler::McpHandler;
 pub use marker::{MaybeSend, MaybeSync};

@@ -26,6 +26,10 @@ wasi = ["dep:wasi", "dep:wit-bindgen", "dep:url"]
 console-log = ["browser", "console_error_panic_hook"]
 # WASM server support - MCP servers running in WASM environments (Cloudflare Workers, etc.)
 wasm-server = ["dep:worker", "dep:schemars", "dep:hashbrown", "wasm-bindgen", "wasm-bindgen-futures", "serde-wasm-bindgen", "js-sys"]
+# Cloudflare Workers feature alias (same as wasm-server, for clarity)
+cloudflare = ["wasm-server"]
+# Authentication support for WASM servers (JWT validation via Web Crypto API)
+auth = ["wasm-server", "web-sys"]
 # Procedural macros for zero-boilerplate WASM MCP server development
 macros = ["wasm-server", "dep:turbomcp-wasm-macros"]
 # NOTE: The `native` feature has been removed.
@@ -102,6 +106,16 @@ features = [
     "MessageEvent",
     "CloseEvent",
     "ErrorEvent",
+    # Crypto features for JWT validation
+    "Crypto",
+    "CryptoKey",
+    "CryptoKeyPair",
+    "SubtleCrypto",
+    "Algorithm",
+    "RsaHashedImportParams",
+    "EcKeyImportParams",
+    "HmacImportParams",
+    "JsonWebKey",
 ]
 
 [dev-dependencies]

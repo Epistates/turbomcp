@@ -28,6 +28,6 @@ pub use crate::wasm_server::{
 #[cfg(feature = "macros")]
 pub use crate::{prompt, resource, server, tool};
 
-// Re-export worker types for convenience
+// Re-export worker types for convenience (excluding Result to avoid conflicts with ToolResult)
 #[cfg(feature = "wasm-server")]
-pub use worker::{Context, Env, Request, Response, Result};
+pub use worker::{Context, Env, Request, Response};
