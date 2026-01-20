@@ -25,7 +25,6 @@ members = [
     "crates/turbomcp-wasm",      # v3.0: WebAssembly bindings for browsers and WASI
     "crates/turbomcp-wasm-macros", # v3.0: WASM server proc macros
     "crates/turbomcp-wire",      # v3.0: Wire format codec abstraction
-    # "crates/turbomcp-security", # DISSOLVED: Security functionality moved to individual crates per ephemeral strategy
     "demo",
 ]
 resolver = "2"
@@ -34,17 +33,13 @@ resolver = "2"
 # Declare expected cfgs from feature-gated code in the #[server] macro
 # (transport, authentication, etc.)
 #
-# NOTE: This is a backward-compatibility accommodation. When the #[server] macro
-# generates code without explicit transport specification, it conditionally generates
-# methods for all transports. This workspace-level declaration tells the compiler
-# "yes, these cfg conditions are expected and valid".
+# When the #[server] macro generates code without explicit transport specification,
+# it conditionally generates methods for all transports. This workspace-level
+# declaration tells the compiler "yes, these cfg conditions are expected and valid".
 #
-# BETTER PATTERN (v2.0.4+): Users who explicitly specify transports via the macro:
+# Users who explicitly specify transports via the macro:
 #   #[server(name = "my-server", transports = ["stdio", "http"])]
-# will only generate cfg guards for their specified transports, requiring no
-# workspace-level declarations and avoiding this code smell entirely.
-#
-# See .strategy/DILIGENCE_PASS_2.0.4_DX_IMPROVEMENTS.md for design rationale.
+# will only generate cfg guards for their specified transports.
 unexpected_cfgs = { level = "warn", check-cfg = [
     'cfg(http)',
     'cfg(websocket)',
