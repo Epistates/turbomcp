@@ -389,7 +389,10 @@ mod tests {
         assert!(ctx.is_authenticated());
         assert!(ctx.principal().is_some());
         assert_eq!(ctx.subject(), Some("user-123"));
-        assert_eq!(ctx.principal().unwrap().email, Some("user@example.com".to_string()));
+        assert_eq!(
+            ctx.principal().unwrap().email,
+            Some("user@example.com".to_string())
+        );
         assert!(ctx.principal().unwrap().has_role("admin"));
     }
 

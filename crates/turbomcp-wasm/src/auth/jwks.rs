@@ -277,9 +277,8 @@ impl JwksCache {
 
     /// Single JWKS fetch attempt (no retry)
     async fn fetch_jwks_once(&self) -> Result<JwkSet, AuthError> {
-        let window = web_sys::window().ok_or_else(|| {
-            AuthError::Internal("No window object available".to_string())
-        })?;
+        let window = web_sys::window()
+            .ok_or_else(|| AuthError::Internal("No window object available".to_string()))?;
 
         // Create fetch request
         let request = web_sys::Request::new_with_str(&self.url)
@@ -305,9 +304,9 @@ impl JwksCache {
         }
 
         // Parse JSON body
-        let json_promise = response.json().map_err(|e| {
-            AuthError::KeyFetchError(format!("Failed to get JSON: {:?}", e))
-        })?;
+        let json_promise = response
+            .json()
+            .map_err(|e| AuthError::KeyFetchError(format!("Failed to get JSON: {:?}", e)))?;
 
         let json_value = JsFuture::from(json_promise)
             .await
@@ -335,10 +334,8 @@ impl JwksCache {
     async fn sleep_ms(ms: f64) {
         let promise = js_sys::Promise::new(&mut |resolve, _| {
             let window = web_sys::window().expect("no window");
-            let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
-                &resolve,
-                ms as i32,
-            );
+            let _ =
+                window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms as i32);
         });
         let _ = JsFuture::from(promise).await;
     }

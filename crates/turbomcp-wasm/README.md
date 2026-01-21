@@ -237,6 +237,75 @@ async fn optional(args: Args) -> Option<String> {
 }
 ```
 
+### With Authentication (Cloudflare Access)
+
+```rust
+use turbomcp_wasm::wasm_server::*;
+use turbomcp_wasm::auth::CloudflareAccessAuthenticator;
+use worker::*;
+
+#[event(fetch)]
+async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+    // Get secrets from Cloudflare environment (never hardcode!)
+    let team_name = env.var("CLOUDFLARE_ACCESS_TEAM")?.to_string();
+    let audience = env.var("CLOUDFLARE_ACCESS_AUDIENCE")?.to_string();
+
+    let server = McpServer::builder("protected-server", "1.0.0")
+        .tool("hello", "Say hello", hello_handler)
+        .build();
+
+    // Wrap with Cloudflare Access authentication
+    let auth = CloudflareAccessAuthenticator::new(&team_name, &audience);
+    let protected = server.with_auth(auth);
+
+    protected.handle(req).await
+}
+```
+
+**Important**: Always use `worker::Env` to retrieve secrets at runtime. Never hardcode credentials in your code.
+
+### Secret Management Best Practices
+
+```rust
+use turbomcp_wasm::wasm_server::*;
+use worker::*;
+
+#[event(fetch)]
+async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+    // ✅ GOOD: Retrieve secrets from environment
+    let api_key = env.secret("API_KEY")?.to_string();
+    let db_url = env.var("DATABASE_URL")?.to_string();
+
+    // ❌ BAD: Never do this
+    // let api_key = "sk-secret-key-123";  // NEVER hardcode secrets!
+
+    // Capture secrets in closure for use in handlers
+    let server = McpServer::builder("my-server", "1.0.0")
+        .tool("query", "Query data", move |args: QueryArgs| {
+            let key = api_key.clone();
+            async move {
+                // Use the captured secret
+                fetch_with_auth(&key, &args.query).await
+            }
+        })
+        .build();
+
+    server.handle(req).await
+}
+```
+
+Configure secrets in `wrangler.toml`:
+
+```toml
+[vars]
+DATABASE_URL = "https://db.example.com"
+CLOUDFLARE_ACCESS_TEAM = "your-team"
+CLOUDFLARE_ACCESS_AUDIENCE = "your-aud-tag"
+
+# Secrets should be set via wrangler CLI, not in config:
+# wrangler secret put API_KEY
+```
+
 ### With Resources and Prompts
 
 ```rust

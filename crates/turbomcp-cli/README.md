@@ -256,6 +256,41 @@ turbomcp-cli tools list \
   --json
 ```
 
+## Roadmap
+
+### Planned: Secure Credential Storage
+
+**Status:** Not yet implemented
+
+Modern CLI best practices mandate using OS-native credential stores for storing long-lived tokens:
+
+| Platform | Credential Store |
+|:---------|:-----------------|
+| macOS | Keychain |
+| Windows | DPAPI / Credential Manager |
+| Linux | libsecret / Secret Service |
+
+**Planned commands:**
+```bash
+# Future: Secure login flow
+turbomcp-cli auth login --provider github
+turbomcp-cli auth login --url https://mcp.example.com
+
+# Future: Use stored credentials automatically
+turbomcp-cli tools list --url https://mcp.example.com  # Uses keychain
+
+# Future: Logout / clear credentials
+turbomcp-cli auth logout --url https://mcp.example.com
+```
+
+**Current workaround:** Pass tokens via `--auth` flag or environment variables:
+```bash
+export MCP_AUTH_TOKEN="your-token"
+turbomcp-cli tools list --url https://mcp.example.com --auth "$MCP_AUTH_TOKEN"
+```
+
+This feature will be implemented using the [`keyring`](https://crates.io/crates/keyring) crate for cross-platform credential storage.
+
 ## Related Tools
 
 - **[turbomcp](../turbomcp/)** - Main TurboMCP framework

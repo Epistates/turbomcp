@@ -50,11 +50,11 @@
 //! let principal = auth.authenticate_request(&request).await?;
 //! ```
 
-mod jwt;
 mod jwks;
+mod jwt;
 
+pub use jwks::{Jwk, JwkSet, JwksCache, fetch_jwks};
 pub use jwt::{CloudflareAccessAuthenticator, CloudflareAccessExtractor, WasmJwtAuthenticator};
-pub use jwks::{fetch_jwks, Jwk, JwkSet, JwksCache};
 
 // Re-export core auth types for convenience
 pub use turbomcp_core::auth::{

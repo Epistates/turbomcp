@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-beta.2] - 2026-01-20
+
+### Documentation
+
+#### Security & Authentication
+- **DPoP ES256-Only Rationale** (`turbomcp-dpop`) - Comprehensive documentation explaining:
+  - Why ES256 (ECDSA P-256) is the only supported algorithm
+  - Security comparison table (ES256 vs RSA)
+  - RUSTSEC-2023-0071 timing attack vulnerability reference
+  - Migration guide for users transitioning from RSA-based DPoP
+  - NIST SP 800-186 compliance notes
+
+- **WASM Secret Management** (`turbomcp-wasm`) - Added best practices documentation:
+  - `worker::Env` pattern for Cloudflare Workers secrets
+  - Cloudflare Access authentication example with `CloudflareAccessAuthenticator`
+  - Anti-patterns to avoid (hardcoded secrets)
+  - `wrangler.toml` configuration examples
+
+- **CLI Secure Credential Roadmap** (`turbomcp-cli`) - Documented planned features:
+  - OS-native keychain integration (macOS Keychain, Windows DPAPI, Linux libsecret)
+  - Planned `turbomcp-cli auth login/logout` commands
+  - Current workarounds using `--auth` flag and environment variables
+
+### Internal
+
+- Security audit recommendations validated and addressed (WASM and Native Auth)
+- Architecture decision records updated (ADR-001: Transport Architecture)
+- Removed completed audit report files
+
 ## [3.0.0-beta.1] - 2026-01-18
 
 ### 🎉 Beta Release

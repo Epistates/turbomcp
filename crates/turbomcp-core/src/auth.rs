@@ -334,7 +334,11 @@ impl fmt::Display for AuthError {
             Self::InvalidSignature => write!(f, "Invalid token signature"),
             Self::InvalidClaims(msg) => write!(f, "Invalid claims: {}", msg),
             Self::InvalidIssuer { expected, actual } => {
-                write!(f, "Invalid issuer: expected '{}', got '{}'", expected, actual)
+                write!(
+                    f,
+                    "Invalid issuer: expected '{}', got '{}'",
+                    expected, actual
+                )
             }
             Self::InvalidAudience { expected, actual } => {
                 write!(
@@ -452,28 +456,37 @@ impl CredentialExtractor for HeaderExtractor {
             let auth = auth.trim();
 
             // Bearer token
-            if let Some(token) = auth.strip_prefix("Bearer ").or_else(|| auth.strip_prefix("bearer ")) {
+            if let Some(token) = auth
+                .strip_prefix("Bearer ")
+                .or_else(|| auth.strip_prefix("bearer "))
+            {
                 return Some(Credential::Bearer(token.trim().to_string()));
             }
 
             // Basic auth - requires std feature for base64 decoding
             #[cfg(feature = "std")]
-            if let Some(encoded) = auth.strip_prefix("Basic ").or_else(|| auth.strip_prefix("basic ")) {
+            if let Some(encoded) = auth
+                .strip_prefix("Basic ")
+                .or_else(|| auth.strip_prefix("basic "))
+            {
                 use base64::Engine;
-                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded.trim()) {
-                    if let Ok(decoded_str) = String::from_utf8(decoded) {
-                        if let Some((username, password)) = decoded_str.split_once(':') {
-                            return Some(Credential::Basic {
-                                username: username.to_string(),
-                                password: password.to_string(),
-                            });
-                        }
-                    }
+                if let Ok(decoded) =
+                    base64::engine::general_purpose::STANDARD.decode(encoded.trim())
+                    && let Ok(decoded_str) = String::from_utf8(decoded)
+                    && let Some((username, password)) = decoded_str.split_once(':')
+                {
+                    return Some(Credential::Basic {
+                        username: username.to_string(),
+                        password: password.to_string(),
+                    });
                 }
             }
 
             // ApiKey scheme
-            if let Some(key) = auth.strip_prefix("ApiKey ").or_else(|| auth.strip_prefix("apikey ")) {
+            if let Some(key) = auth
+                .strip_prefix("ApiKey ")
+                .or_else(|| auth.strip_prefix("apikey "))
+            {
                 return Some(Credential::ApiKey(key.trim().to_string()));
             }
         }
@@ -612,11 +625,7 @@ impl JwtAlgorithm {
     pub fn is_asymmetric(&self) -> bool {
         matches!(
             self,
-            Self::RS256
-                | Self::RS384
-                | Self::RS512
-                | Self::ES256
-                | Self::ES384
+            Self::RS256 | Self::RS384 | Self::RS512 | Self::ES256 | Self::ES384
         )
     }
 
@@ -740,7 +749,10 @@ mod tests {
             .with_role("user");
 
         assert_eq!(principal.subject, "user123");
-        assert_eq!(principal.issuer, Some("https://auth.example.com".to_string()));
+        assert_eq!(
+            principal.issuer,
+            Some("https://auth.example.com".to_string())
+        );
         assert!(principal.has_role("admin"));
         assert!(principal.has_role("user"));
         assert!(!principal.has_role("guest"));

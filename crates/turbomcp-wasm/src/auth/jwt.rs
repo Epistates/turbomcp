@@ -115,12 +115,7 @@ impl WasmJwtAuthenticator {
         let sig = js_sys::Uint8Array::from(signature);
 
         let promise = subtle
-            .verify_with_object_and_buffer_source_and_buffer_source(
-                &algo,
-                &crypto_key,
-                &sig,
-                &data,
-            )
+            .verify_with_object_and_buffer_source_and_buffer_source(&algo, &crypto_key, &sig, &data)
             .map_err(|e| AuthError::Internal(format!("Verify call failed: {:?}", e)))?;
 
         let result = JsFuture::from(promise)
@@ -150,9 +145,9 @@ impl WasmJwtAuthenticator {
             .await
             .map_err(|e| AuthError::Internal(format!("Key import failed: {:?}", e)))?;
 
-        result.dyn_into::<web_sys::CryptoKey>().map_err(|_| {
-            AuthError::Internal("Failed to convert to CryptoKey".to_string())
-        })
+        result
+            .dyn_into::<web_sys::CryptoKey>()
+            .map_err(|_| AuthError::Internal("Failed to convert to CryptoKey".to_string()))
     }
 
     /// Create algorithm object for key import
@@ -316,10 +311,7 @@ impl WasmJwtAuthenticator {
 
     /// Convert validated payload to Principal
     fn payload_to_principal(&self, payload: JwtPayload) -> Principal {
-        let subject = payload
-            .sub
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string());
+        let subject = payload.sub.clone().unwrap_or_else(|| "unknown".to_string());
 
         let mut principal = Principal::new(subject);
 
@@ -585,7 +577,9 @@ impl CredentialExtractor for CloudflareAccessExtractor {
 
         // Fall back to Authorization header
         if let Some(auth) = get_header("authorization")
-            && let Some(token) = auth.strip_prefix("Bearer ").or_else(|| auth.strip_prefix("bearer "))
+            && let Some(token) = auth
+                .strip_prefix("Bearer ")
+                .or_else(|| auth.strip_prefix("bearer "))
         {
             return Some(Credential::bearer(token.trim()));
         }
@@ -687,8 +681,8 @@ fn base64_url_decode(input: &str) -> Result<Vec<u8>, AuthError> {
         .collect();
 
     // Decode using browser's atob
-    let window = web_sys::window()
-        .ok_or_else(|| AuthError::Internal("No window object".to_string()))?;
+    let window =
+        web_sys::window().ok_or_else(|| AuthError::Internal("No window object".to_string()))?;
 
     let decoded = window
         .atob(&standard)

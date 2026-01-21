@@ -22,7 +22,9 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use turbomcp_core::auth::{AuthError, Authenticator, CredentialExtractor, HeaderExtractor, Principal};
+use turbomcp_core::auth::{
+    AuthError, Authenticator, CredentialExtractor, HeaderExtractor, Principal,
+};
 use worker::{Request, Response};
 
 use super::server::McpServer;
@@ -93,11 +95,7 @@ where
     E: CredentialExtractor + 'static,
 {
     /// Create with a custom credential extractor.
-    pub fn with_extractor(
-        server: McpServer,
-        authenticator: A,
-        extractor: E,
-    ) -> Self {
+    pub fn with_extractor(server: McpServer, authenticator: A, extractor: E) -> Self {
         Self {
             server,
             authenticator,
@@ -147,9 +145,8 @@ where
         // Extract credentials from request
         let credential = {
             let headers = req.headers();
-            self.extractor.extract(|name| {
-                headers.get(name).ok().flatten()
-            })
+            self.extractor
+                .extract(|name| headers.get(name).ok().flatten())
         };
 
         // Authenticate if we have credentials
@@ -247,8 +244,15 @@ mod tests {
 
     use super::*;
 
+    #[allow(clippy::extra_unused_type_parameters)]
     fn _assert_with_auth_compiles<A: Authenticator<Error = AuthError> + Clone + 'static>() {
         // Verify the type can be constructed
-        fn _needs_with_auth<A: Authenticator<Error = AuthError> + Clone + 'static, E: CredentialExtractor>(_: WithAuth<A, E>) {}
+        fn _needs_with_auth<
+            A: Authenticator<Error = AuthError> + Clone + 'static,
+            E: CredentialExtractor,
+        >(
+            _: WithAuth<A, E>,
+        ) {
+        }
     }
 }

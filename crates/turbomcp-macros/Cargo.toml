@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-macros"
-version = "3.0.0-beta.1"
+version = "3.0.0-beta.2"
 edition = "2024"
 description = "Procedural macros for ergonomic MCP tool and resource registration"
 license = "MIT"
@@ -32,8 +32,8 @@ schemars = { version = "1.0" }
 axum = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
-turbomcp-protocol = { version = "3.0.0-beta.1", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "3.0.0-beta.1", path = "../turbomcp-transport", optional = true }
+turbomcp-protocol = { version = "3.0.0-beta.2", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "3.0.0-beta.2", path = "../turbomcp-transport", optional = true }
 
 [dev-dependencies]
 async-trait = "0.1"

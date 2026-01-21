@@ -231,7 +231,7 @@ pub mod wasm_server;
 #[cfg_attr(docsrs, doc(cfg(feature = "wasm-server")))]
 pub mod prelude;
 
-#[cfg(feature = "auth")]
+#[cfg(all(feature = "auth", target_arch = "wasm32"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "auth")))]
 pub mod auth;
 
