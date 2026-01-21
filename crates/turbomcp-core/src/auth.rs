@@ -503,7 +503,26 @@ impl CredentialExtractor for HeaderExtractor {
 /// JWT validation configuration.
 ///
 /// Platform-agnostic configuration for JWT validation.
-#[derive(Debug, Clone, Default)]
+///
+/// # Security
+///
+/// **IMPORTANT**: Always use [`JwtConfig::new()`] to create a configuration with
+/// secure defaults. The `Default` trait is intentionally NOT implemented to prevent
+/// accidental creation of insecure configurations with empty algorithm whitelists.
+///
+/// ```rust
+/// use turbomcp_core::auth::{JwtConfig, JwtAlgorithm};
+///
+/// // ✅ CORRECT: Use new() for secure defaults (RS256, ES256)
+/// let config = JwtConfig::new()
+///     .issuer("https://auth.example.com")
+///     .audience("my-api");
+///
+/// // ✅ CORRECT: Explicitly specify algorithms
+/// let config = JwtConfig::new()
+///     .algorithms(vec![JwtAlgorithm::RS256]);
+/// ```
+#[derive(Debug, Clone)]
 pub struct JwtConfig {
     /// Expected issuer (`iss` claim)
     pub issuer: Option<String>,
@@ -511,7 +530,11 @@ pub struct JwtConfig {
     /// Expected audience (`aud` claim)
     pub audience: Option<String>,
 
-    /// Allowed signing algorithms
+    /// Allowed signing algorithms.
+    ///
+    /// **Security**: This list MUST NOT be empty. An empty list will cause
+    /// token validation to fail with an error. Always specify at least one
+    /// algorithm explicitly.
     pub algorithms: Vec<JwtAlgorithm>,
 
     /// Clock skew tolerance in seconds (default: 60)
@@ -525,7 +548,21 @@ pub struct JwtConfig {
 }
 
 impl JwtConfig {
-    /// Create a new JWT config with sensible defaults
+    /// Create a new JWT config with sensible defaults.
+    ///
+    /// # Security
+    ///
+    /// This method provides secure defaults:
+    /// - `algorithms`: `[RS256, ES256]` (asymmetric algorithms only)
+    /// - `validate_exp`: `true`
+    /// - `validate_nbf`: `true`
+    /// - `leeway_seconds`: `60`
+    ///
+    /// The `Default` trait is intentionally NOT implemented to prevent
+    /// accidental creation of configurations with an empty algorithm list,
+    /// which would bypass algorithm validation and enable algorithm
+    /// confusion attacks.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             issuer: None,

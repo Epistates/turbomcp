@@ -95,6 +95,11 @@ impl WasmJwtAuthenticator {
         signing_input: &str,
         signature: &[u8],
     ) -> Result<bool, AuthError> {
+        // SECURITY: Validate key type matches algorithm to prevent algorithm confusion attacks.
+        // This is critical for preventing attacks where an attacker changes the algorithm
+        // in the JWT header (e.g., RS256 → HS256) and uses the RSA public key as the HMAC secret.
+        jwk.validate_algorithm_compatibility(algorithm)?;
+
         let window = web_sys::window()
             .ok_or_else(|| AuthError::Internal("No window object available".to_string()))?;
 
@@ -369,7 +374,7 @@ impl Authenticator for WasmJwtAuthenticator {
         // Parse the JWT
         let (header, payload, signature, signing_input) = Self::parse_jwt(token)?;
 
-        // Get the algorithm
+        // Get the algorithm from header
         let algorithm = header
             .alg
             .as_ref()
@@ -378,11 +383,23 @@ impl Authenticator for WasmJwtAuthenticator {
                 AuthError::InvalidCredentialFormat("Missing or invalid algorithm".to_string())
             })?;
 
-        // Check if algorithm is allowed
-        if !self.config.algorithms.is_empty() && !self.config.algorithms.contains(&algorithm) {
+        // SECURITY: Fail-closed algorithm validation
+        // An empty algorithms list is a misconfiguration that could allow algorithm confusion attacks.
+        // We reject all tokens when no algorithms are configured rather than allowing all algorithms.
+        if self.config.algorithms.is_empty() {
+            return Err(AuthError::InvalidCredentialFormat(
+                "No algorithms configured - token validation disabled for security. \
+                 Use JwtConfig::new() for secure defaults or explicitly configure algorithms."
+                    .to_string(),
+            ));
+        }
+
+        // Check if algorithm is in the allowed whitelist
+        if !self.config.algorithms.contains(&algorithm) {
             return Err(AuthError::InvalidCredentialFormat(format!(
-                "Algorithm {} not allowed",
-                algorithm
+                "Algorithm {} not in allowed list: {:?}",
+                algorithm,
+                self.config.algorithms.iter().map(|a| a.as_str()).collect::<Vec<_>>()
             )));
         }
 

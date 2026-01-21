@@ -306,6 +306,93 @@ CLOUDFLARE_ACCESS_AUDIENCE = "your-aud-tag"
 # wrangler secret put API_KEY
 ```
 
+## Security
+
+TurboMCP WASM implements defense-in-depth security measures to protect against common JWT and authentication vulnerabilities.
+
+### JWT Security Features
+
+**Algorithm Confusion Attack Prevention:**
+- Algorithm whitelist is mandatory - tokens are rejected if no algorithms are configured
+- Key-type validation ensures RSA keys can only be used with RS* algorithms, EC keys with ES* algorithms
+- The `"none"` algorithm is always rejected
+
+```rust
+use turbomcp_wasm::auth::{JwtConfig, JwtAlgorithm};
+
+// ✅ CORRECT: Always use JwtConfig::new() for secure defaults
+let config = JwtConfig::new()  // Defaults to [RS256, ES256]
+    .issuer("https://auth.example.com")
+    .audience("my-api");
+
+// ✅ CORRECT: Or explicitly specify algorithms
+let config = JwtConfig::new()
+    .algorithms(vec![JwtAlgorithm::RS256]);
+
+// ❌ WRONG: Never create config with empty algorithms
+// The Default trait is NOT implemented to prevent this mistake
+```
+
+**JWKS Security:**
+- JWKS URLs must use HTTPS (HTTP is rejected to prevent MITM attacks)
+- Localhost URLs are allowed for development
+- Use `allow_insecure_http()` only for testing (never in production)
+
+```rust
+use turbomcp_wasm::auth::JwksCache;
+
+// ✅ CORRECT: HTTPS URL
+let cache = JwksCache::new("https://auth.example.com/.well-known/jwks.json");
+
+// ✅ OK: Localhost for development
+let cache = JwksCache::new("http://localhost:8080/.well-known/jwks.json");
+
+// ⚠️ DANGER: Only for testing!
+let cache = JwksCache::new("http://test-server/.well-known/jwks.json")
+    .allow_insecure_http();
+```
+
+**Claim Validation:**
+- Expiration (`exp`) validation is enabled by default
+- Not-before (`nbf`) validation is enabled by default
+- Issuer (`iss`) and audience (`aud`) validation when configured
+- 60-second clock skew leeway (configurable)
+
+### Request Security
+
+- Maximum request body size: 1MB (DoS protection)
+- POST-only enforcement for JSON-RPC
+- Content-Type validation
+- Strict JSON-RPC 2.0 compliance
+
+### Cloudflare Access Integration
+
+When using Cloudflare Access, the `CloudflareAccessAuthenticator` enforces additional security:
+
+- Only RS256 algorithm is allowed
+- JWKS fetched from Cloudflare's official endpoint
+- Validates `Cf-Access-Jwt-Assertion` header (or falls back to `Authorization: Bearer`)
+
+```rust
+use turbomcp_wasm::auth::CloudflareAccessAuthenticator;
+
+// CloudflareAccessAuthenticator automatically:
+// - Uses HTTPS JWKS endpoint
+// - Restricts to RS256 only
+// - Validates issuer and audience
+let auth = CloudflareAccessAuthenticator::new("your-team", "your-audience-tag");
+```
+
+### Security Checklist
+
+- [ ] Use `JwtConfig::new()` instead of manual construction
+- [ ] Always configure `issuer` and `audience` in JwtConfig
+- [ ] Use HTTPS for all JWKS endpoints
+- [ ] Store secrets using `env.secret()`, never hardcode
+- [ ] Use Cloudflare Access for production deployments
+- [ ] Configure rate limiting at the Cloudflare level
+- [ ] Review CORS settings for your use case (`Access-Control-Allow-Origin: *` is the default)
+
 ### With Resources and Prompts
 
 ```rust

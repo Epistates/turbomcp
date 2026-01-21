@@ -71,9 +71,72 @@ impl Jwk {
         self.kty == "EC" && self.crv.is_some() && self.x.is_some() && self.y.is_some()
     }
 
+    /// Check if this is a symmetric (HMAC) key
+    pub fn is_symmetric(&self) -> bool {
+        self.kty == "oct" && self.k.is_some()
+    }
+
     /// Check if this key can be used for signing/verification
     pub fn is_signing_key(&self) -> bool {
         self.use_.as_ref().is_none_or(|u| u == "sig")
+    }
+
+    /// Validate that the key type is compatible with the given algorithm.
+    ///
+    /// # Security
+    ///
+    /// This prevents algorithm confusion attacks where an attacker might try
+    /// to use an RSA public key as an HMAC secret, or vice versa.
+    ///
+    /// - RSA keys (`kty: "RSA"`) can only be used with RS256, RS384, RS512
+    /// - EC keys (`kty: "EC"`) can only be used with ES256, ES384
+    /// - Symmetric keys (`kty: "oct"`) can only be used with HS256, HS384, HS512
+    pub fn is_compatible_with_algorithm(&self, algorithm: JwtAlgorithm) -> bool {
+        match algorithm {
+            // RSA algorithms require RSA keys
+            JwtAlgorithm::RS256 | JwtAlgorithm::RS384 | JwtAlgorithm::RS512 => self.is_rsa(),
+
+            // ECDSA algorithms require EC keys with matching curves
+            JwtAlgorithm::ES256 => {
+                self.is_ec() && self.crv.as_deref() == Some("P-256")
+            }
+            JwtAlgorithm::ES384 => {
+                self.is_ec() && self.crv.as_deref() == Some("P-384")
+            }
+
+            // HMAC algorithms require symmetric keys
+            JwtAlgorithm::HS256 | JwtAlgorithm::HS384 | JwtAlgorithm::HS512 => self.is_symmetric(),
+        }
+    }
+
+    /// Validate key-algorithm compatibility and return a descriptive error.
+    ///
+    /// # Security
+    ///
+    /// Always call this before using a key for signature verification to
+    /// prevent algorithm confusion attacks.
+    pub fn validate_algorithm_compatibility(
+        &self,
+        algorithm: JwtAlgorithm,
+    ) -> Result<(), AuthError> {
+        if !self.is_compatible_with_algorithm(algorithm) {
+            let key_type = if self.is_rsa() {
+                "RSA".to_string()
+            } else if self.is_ec() {
+                format!("EC ({})", self.crv.as_deref().unwrap_or("unknown curve"))
+            } else if self.is_symmetric() {
+                "symmetric (oct)".to_string()
+            } else {
+                "unknown".to_string()
+            };
+
+            return Err(AuthError::InvalidCredentialFormat(format!(
+                "Key type '{}' is not compatible with algorithm {}. \
+                 This may indicate an algorithm confusion attack.",
+                key_type, algorithm
+            )));
+        }
+        Ok(())
     }
 
     /// Convert to a web-sys JsonWebKey for importing
@@ -155,6 +218,13 @@ struct CacheEntry {
 ///
 /// Caches fetched JWKS and automatically refreshes when expired.
 /// Includes retry logic with exponential backoff for transient failures.
+///
+/// # Security
+///
+/// The JWKS URL **must** use HTTPS to prevent man-in-the-middle attacks
+/// on cryptographic key material. HTTP URLs will be rejected unless
+/// explicitly allowed via [`JwksCache::allow_insecure_http`] (NOT recommended
+/// for production use).
 #[derive(Clone)]
 pub struct JwksCache {
     /// JWKS endpoint URL
@@ -171,10 +241,23 @@ pub struct JwksCache {
 
     /// Base delay in milliseconds for exponential backoff
     retry_base_delay_ms: f64,
+
+    /// Allow insecure HTTP URLs (NOT recommended for production)
+    allow_insecure: bool,
 }
 
 impl JwksCache {
-    /// Create a new JWKS cache for the given URL
+    /// Create a new JWKS cache for the given URL.
+    ///
+    /// # Security
+    ///
+    /// The URL **must** use HTTPS. HTTP URLs will cause an error when
+    /// fetching keys to prevent man-in-the-middle attacks on key material.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic, but will return an error on first fetch if the URL
+    /// is not HTTPS.
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -182,7 +265,54 @@ impl JwksCache {
             cache: Rc::new(RefCell::new(None)),
             max_retries: 3,
             retry_base_delay_ms: 100.0,
+            allow_insecure: false,
         }
+    }
+
+    /// Allow insecure HTTP URLs for JWKS fetching.
+    ///
+    /// # Security Warning
+    ///
+    /// **DO NOT USE IN PRODUCTION.** This allows man-in-the-middle attacks
+    /// where an attacker could substitute their own keys, completely
+    /// bypassing JWT signature validation.
+    ///
+    /// This should ONLY be used for:
+    /// - Local development with localhost URLs
+    /// - Testing environments
+    ///
+    /// ```rust,ignore
+    /// // ⚠️ DANGER: Only for development!
+    /// let cache = JwksCache::new("http://localhost:8080/.well-known/jwks.json")
+    ///     .allow_insecure_http();
+    /// ```
+    pub fn allow_insecure_http(mut self) -> Self {
+        self.allow_insecure = true;
+        self
+    }
+
+    /// Validate that the URL uses HTTPS (unless insecure mode is enabled).
+    fn validate_url(&self) -> Result<(), AuthError> {
+        let url_lower = self.url.to_lowercase();
+
+        // Allow localhost for development even without explicit insecure flag
+        let is_localhost = url_lower.contains("://localhost")
+            || url_lower.contains("://127.0.0.1")
+            || url_lower.contains("://[::1]");
+
+        if self.allow_insecure || is_localhost {
+            return Ok(());
+        }
+
+        if !url_lower.starts_with("https://") {
+            return Err(AuthError::KeyFetchError(
+                "JWKS URL must use HTTPS to prevent man-in-the-middle attacks. \
+                 Use allow_insecure_http() only for local development."
+                    .to_string(),
+            ));
+        }
+
+        Ok(())
     }
 
     /// Set the cache TTL in seconds
@@ -277,6 +407,9 @@ impl JwksCache {
 
     /// Single JWKS fetch attempt (no retry)
     async fn fetch_jwks_once(&self) -> Result<JwkSet, AuthError> {
+        // SECURITY: Validate URL uses HTTPS before fetching key material
+        self.validate_url()?;
+
         let window = web_sys::window()
             .ok_or_else(|| AuthError::Internal("No window object available".to_string()))?;
 
@@ -441,5 +574,201 @@ mod tests {
         assert!(jwks.find_by_kid("key1").is_some());
         assert!(jwks.find_by_kid("key2").is_some());
         assert!(jwks.find_by_kid("key3").is_none());
+    }
+
+    // ==========================================================================
+    // Security Tests: Algorithm Confusion Attack Prevention
+    // ==========================================================================
+
+    #[test]
+    fn test_jwk_is_symmetric() {
+        let jwk = Jwk {
+            kty: "oct".to_string(),
+            kid: Some("hmac-key".to_string()),
+            alg: Some("HS256".to_string()),
+            use_: Some("sig".to_string()),
+            n: None,
+            e: None,
+            crv: None,
+            x: None,
+            y: None,
+            k: Some("c2VjcmV0".to_string()), // base64url encoded "secret"
+        };
+
+        assert!(jwk.is_symmetric());
+        assert!(!jwk.is_rsa());
+        assert!(!jwk.is_ec());
+    }
+
+    #[test]
+    fn test_rsa_key_compatible_with_rs_algorithms() {
+        let rsa_jwk = Jwk {
+            kty: "RSA".to_string(),
+            kid: None,
+            alg: None,
+            use_: None,
+            n: Some("modulus".to_string()),
+            e: Some("AQAB".to_string()),
+            crv: None,
+            x: None,
+            y: None,
+            k: None,
+        };
+
+        // RSA key should be compatible with RS* algorithms
+        assert!(rsa_jwk.is_compatible_with_algorithm(JwtAlgorithm::RS256));
+        assert!(rsa_jwk.is_compatible_with_algorithm(JwtAlgorithm::RS384));
+        assert!(rsa_jwk.is_compatible_with_algorithm(JwtAlgorithm::RS512));
+
+        // RSA key should NOT be compatible with other algorithms
+        assert!(!rsa_jwk.is_compatible_with_algorithm(JwtAlgorithm::ES256));
+        assert!(!rsa_jwk.is_compatible_with_algorithm(JwtAlgorithm::ES384));
+        assert!(!rsa_jwk.is_compatible_with_algorithm(JwtAlgorithm::HS256));
+        assert!(!rsa_jwk.is_compatible_with_algorithm(JwtAlgorithm::HS384));
+        assert!(!rsa_jwk.is_compatible_with_algorithm(JwtAlgorithm::HS512));
+    }
+
+    #[test]
+    fn test_ec_key_compatible_with_es_algorithms() {
+        let ec_p256_jwk = Jwk {
+            kty: "EC".to_string(),
+            kid: None,
+            alg: None,
+            use_: None,
+            n: None,
+            e: None,
+            crv: Some("P-256".to_string()),
+            x: Some("x-coord".to_string()),
+            y: Some("y-coord".to_string()),
+            k: None,
+        };
+
+        // P-256 key should only be compatible with ES256
+        assert!(ec_p256_jwk.is_compatible_with_algorithm(JwtAlgorithm::ES256));
+        assert!(!ec_p256_jwk.is_compatible_with_algorithm(JwtAlgorithm::ES384));
+
+        // EC key should NOT be compatible with RS* or HS* algorithms
+        assert!(!ec_p256_jwk.is_compatible_with_algorithm(JwtAlgorithm::RS256));
+        assert!(!ec_p256_jwk.is_compatible_with_algorithm(JwtAlgorithm::HS256));
+
+        // P-384 key should only be compatible with ES384
+        let ec_p384_jwk = Jwk {
+            kty: "EC".to_string(),
+            kid: None,
+            alg: None,
+            use_: None,
+            n: None,
+            e: None,
+            crv: Some("P-384".to_string()),
+            x: Some("x-coord".to_string()),
+            y: Some("y-coord".to_string()),
+            k: None,
+        };
+
+        assert!(!ec_p384_jwk.is_compatible_with_algorithm(JwtAlgorithm::ES256));
+        assert!(ec_p384_jwk.is_compatible_with_algorithm(JwtAlgorithm::ES384));
+    }
+
+    #[test]
+    fn test_symmetric_key_compatible_with_hs_algorithms() {
+        let hmac_jwk = Jwk {
+            kty: "oct".to_string(),
+            kid: None,
+            alg: None,
+            use_: None,
+            n: None,
+            e: None,
+            crv: None,
+            x: None,
+            y: None,
+            k: Some("c2VjcmV0".to_string()),
+        };
+
+        // Symmetric key should be compatible with HS* algorithms
+        assert!(hmac_jwk.is_compatible_with_algorithm(JwtAlgorithm::HS256));
+        assert!(hmac_jwk.is_compatible_with_algorithm(JwtAlgorithm::HS384));
+        assert!(hmac_jwk.is_compatible_with_algorithm(JwtAlgorithm::HS512));
+
+        // Symmetric key should NOT be compatible with asymmetric algorithms
+        assert!(!hmac_jwk.is_compatible_with_algorithm(JwtAlgorithm::RS256));
+        assert!(!hmac_jwk.is_compatible_with_algorithm(JwtAlgorithm::ES256));
+    }
+
+    #[test]
+    fn test_algorithm_confusion_attack_prevention() {
+        // This test verifies that the classic RS256 -> HS256 attack is prevented.
+        // In this attack, the attacker changes the algorithm to HS256 and uses
+        // the RSA public key as the HMAC secret.
+        let rsa_public_key = Jwk {
+            kty: "RSA".to_string(),
+            kid: None,
+            alg: Some("RS256".to_string()), // Key advertises RS256
+            use_: Some("sig".to_string()),
+            n: Some("modulus".to_string()),
+            e: Some("AQAB".to_string()),
+            crv: None,
+            x: None,
+            y: None,
+            k: None,
+        };
+
+        // Attacker tries to use RSA public key with HS256 algorithm
+        let result = rsa_public_key.validate_algorithm_compatibility(JwtAlgorithm::HS256);
+        assert!(result.is_err(), "RSA key should not be usable with HS256");
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("not compatible") && err_msg.contains("algorithm confusion"),
+            "Error should mention algorithm confusion attack: {}",
+            err_msg
+        );
+    }
+
+    // ==========================================================================
+    // Security Tests: JWKS URL Validation
+    // ==========================================================================
+
+    #[test]
+    fn test_jwks_url_https_required() {
+        // HTTPS URL should be allowed
+        let https_cache = JwksCache::new("https://auth.example.com/.well-known/jwks.json");
+        assert!(https_cache.validate_url().is_ok());
+    }
+
+    #[test]
+    fn test_jwks_url_http_rejected() {
+        // HTTP URL should be rejected
+        let http_cache = JwksCache::new("http://auth.example.com/.well-known/jwks.json");
+        let result = http_cache.validate_url();
+        assert!(result.is_err());
+
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("HTTPS"),
+            "Error should mention HTTPS requirement: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_jwks_url_localhost_allowed() {
+        // Localhost URLs should be allowed for development
+        let localhost_cache = JwksCache::new("http://localhost:8080/.well-known/jwks.json");
+        assert!(localhost_cache.validate_url().is_ok());
+
+        let localhost_127 = JwksCache::new("http://127.0.0.1:8080/.well-known/jwks.json");
+        assert!(localhost_127.validate_url().is_ok());
+
+        let localhost_ipv6 = JwksCache::new("http://[::1]:8080/.well-known/jwks.json");
+        assert!(localhost_ipv6.validate_url().is_ok());
+    }
+
+    #[test]
+    fn test_jwks_url_insecure_mode() {
+        // With allow_insecure_http(), HTTP should be allowed
+        let cache = JwksCache::new("http://test-server/.well-known/jwks.json")
+            .allow_insecure_http();
+        assert!(cache.validate_url().is_ok());
     }
 }
