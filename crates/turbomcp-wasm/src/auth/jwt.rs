@@ -399,7 +399,11 @@ impl Authenticator for WasmJwtAuthenticator {
             return Err(AuthError::InvalidCredentialFormat(format!(
                 "Algorithm {} not in allowed list: {:?}",
                 algorithm,
-                self.config.algorithms.iter().map(|a| a.as_str()).collect::<Vec<_>>()
+                self.config
+                    .algorithms
+                    .iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<_>>()
             )));
         }
 

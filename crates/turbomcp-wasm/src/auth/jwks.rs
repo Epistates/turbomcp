@@ -97,12 +97,8 @@ impl Jwk {
             JwtAlgorithm::RS256 | JwtAlgorithm::RS384 | JwtAlgorithm::RS512 => self.is_rsa(),
 
             // ECDSA algorithms require EC keys with matching curves
-            JwtAlgorithm::ES256 => {
-                self.is_ec() && self.crv.as_deref() == Some("P-256")
-            }
-            JwtAlgorithm::ES384 => {
-                self.is_ec() && self.crv.as_deref() == Some("P-384")
-            }
+            JwtAlgorithm::ES256 => self.is_ec() && self.crv.as_deref() == Some("P-256"),
+            JwtAlgorithm::ES384 => self.is_ec() && self.crv.as_deref() == Some("P-384"),
 
             // HMAC algorithms require symmetric keys
             JwtAlgorithm::HS256 | JwtAlgorithm::HS384 | JwtAlgorithm::HS512 => self.is_symmetric(),
@@ -767,8 +763,8 @@ mod tests {
     #[test]
     fn test_jwks_url_insecure_mode() {
         // With allow_insecure_http(), HTTP should be allowed
-        let cache = JwksCache::new("http://test-server/.well-known/jwks.json")
-            .allow_insecure_http();
+        let cache =
+            JwksCache::new("http://test-server/.well-known/jwks.json").allow_insecure_http();
         assert!(cache.validate_url().is_ok());
     }
 }
