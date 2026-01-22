@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-beta.3] - 2026-01-22
+
+### Security
+
+#### JWT Algorithm Confusion Attack Prevention (`turbomcp-wasm`)
+- **Fail-Closed Algorithm Validation** - Empty algorithm lists now return an error instead of bypassing validation
+- **Key-Type/Algorithm Compatibility** - RSA keys can only be used with RS* algorithms, EC keys with ES* algorithms
+- **Removed `Default` for `JwtConfig`** - Prevents accidental creation of insecure configurations
+- **HTTPS Enforcement for JWKS** - JWKS URLs must use HTTPS (localhost exempt for development)
+- Added `allow_insecure_http()` for development/testing only
+- Added comprehensive security tests for algorithm confusion and HTTPS validation
+
+### Added
+
+#### Worker Error Integration (`turbomcp-wasm`)
+- **`WorkerError` newtype wrapper** - Enables `worker::Error` to `ToolError` conversion via `.map_err(WorkerError)`
+- **`WorkerResultExt` trait** - Ergonomic `.into_tool_result()` method for `worker::Result<T>`
+- Both approaches enable full `?` operator support with Cloudflare Workers APIs (KV, Durable Objects, R2, D1, etc.)
+
+### Documentation
+
+#### OAuth and Authentication (`turbomcp-wasm`)
+- **Comprehensive OAuth Protection Guide** - Three authentication patterns documented:
+  1. Cloudflare Access (recommended for production)
+  2. Custom JWT Validation (for self-hosted OAuth/OIDC)
+  3. Bearer Token (development only, with security warnings)
+- **Worker Error Integration Examples** - Usage examples for `WorkerError` and `WorkerResultExt`
+- **Security Checklist** - Production deployment checklist for authentication
+
 ## [3.0.0-beta.2] - 2026-01-20
 
 ### Documentation

@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-telemetry"
-version = "3.0.0-beta.2"
+version = "3.0.0-beta.3"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT"
@@ -14,7 +14,7 @@ readme = "README.md"
 
 [dependencies]
 # Core dependencies
-turbomcp-protocol = { version = "3.0.0-beta.2", path = "../turbomcp-protocol" }
+turbomcp-protocol = { version = "3.0.0-beta.3", path = "../turbomcp-protocol" }
 
 # Tracing foundation (always required)
 tracing = "0.1"

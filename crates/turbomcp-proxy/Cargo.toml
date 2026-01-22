@@ -1,7 +1,7 @@
 [package]
 name = "turbomcp-proxy"
 
-version = "3.0.0-beta.2"
+version = "3.0.0-beta.3"
 
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -21,11 +21,11 @@ workspace = true
 [dependencies]
 # TurboMCP (consumer-only - we only depend ON these, nothing depends on us)
 
-turbomcp-protocol = { path = "../turbomcp-protocol", version = "3.0.0-beta.2" }
-turbomcp-transport = { path = "../turbomcp-transport", version = "3.0.0-beta.2", features = ["http", "tcp", "unix", "websocket"] }
-turbomcp-client = { path = "../turbomcp-client", version = "3.0.0-beta.2" }
-turbomcp-server = { path = "../turbomcp-server", version = "3.0.0-beta.2", optional = true }
-turbomcp-auth = { path = "../turbomcp-auth", version = "3.0.0-beta.2", optional = true }
+turbomcp-protocol = { path = "../turbomcp-protocol", version = "3.0.0-beta.3" }
+turbomcp-transport = { path = "../turbomcp-transport", version = "3.0.0-beta.3", features = ["http", "tcp", "unix", "websocket"] }
+turbomcp-client = { path = "../turbomcp-client", version = "3.0.0-beta.3" }
+turbomcp-server = { path = "../turbomcp-server", version = "3.0.0-beta.3", optional = true }
+turbomcp-auth = { path = "../turbomcp-auth", version = "3.0.0-beta.3", optional = true }
 
 # Async runtime
 tokio = { workspace = true }
