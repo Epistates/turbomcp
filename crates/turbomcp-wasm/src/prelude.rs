@@ -21,7 +21,7 @@ pub use turbomcp_core::types::{prompts::Prompt, resources::Resource, tools::Tool
 #[cfg(feature = "wasm-server")]
 pub use crate::wasm_server::{
     Image, IntoToolResponse, Json, McpServer, McpServerBuilder, PromptResult, ResourceResult, Text,
-    ToolError, ToolResult, WasmHandlerExt,
+    ToolError, ToolResult, WasmHandlerExt, WorkerError, WorkerResultExt,
 };
 
 // Re-export proc macros when available

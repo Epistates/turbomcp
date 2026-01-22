@@ -49,10 +49,104 @@
 //! | Numeric types | Stringified number |
 //! | `bool` | "true" or "false" |
 //! | `(A, B)` | Combined content from both |
+//!
+//! # Worker Error Integration
+//!
+//! For Cloudflare Workers, use [`WorkerError`] to convert `worker::Error` for use with `?`:
+//!
+//! ```ignore
+//! use turbomcp_wasm::wasm_server::{ToolError, WorkerError};
+//!
+//! async fn kv_handler(args: Args, env: &Env) -> Result<String, ToolError> {
+//!     let kv = env.kv("MY_KV").map_err(WorkerError)?;
+//!     let value = kv.get(&args.key).text().await.map_err(WorkerError)?;
+//!     Ok(value.unwrap_or_default())
+//! }
+//! ```
+//!
+//! Or use the [`WorkerResultExt`] trait for more ergonomic conversion:
+//!
+//! ```ignore
+//! use turbomcp_wasm::wasm_server::{ToolError, WorkerResultExt};
+//!
+//! async fn kv_handler(args: Args, env: &Env) -> Result<String, ToolError> {
+//!     let kv = env.kv("MY_KV").into_tool_result()?;
+//!     let value = kv.get(&args.key).text().await.into_tool_result()?;
+//!     Ok(value.unwrap_or_default())
+//! }
+//! ```
 
 // Re-export all response types from turbomcp-core
 // This provides a unified API across WASM and native targets
 pub use turbomcp_core::response::{Image, IntoToolError, IntoToolResponse, Json, Text, ToolError};
+
+// =============================================================================
+// Worker Error Integration
+// =============================================================================
+
+/// Wrapper type for `worker::Error` that implements `Into<ToolError>`.
+///
+/// Rust's orphan rules prevent implementing `From<worker::Error> for ToolError`
+/// directly since both types are defined in external crates. This newtype wrapper
+/// provides seamless conversion for use with the `?` operator.
+///
+/// # Example
+///
+/// ```ignore
+/// use turbomcp_wasm::wasm_server::{ToolError, WorkerError};
+///
+/// async fn my_handler(args: Args, env: &Env) -> Result<String, ToolError> {
+///     // Convert worker::Error using WorkerError wrapper
+///     let kv = env.kv("MY_KV").map_err(WorkerError)?;
+///
+///     // Works with any worker::Result
+///     let value = kv.get("key").text().await.map_err(WorkerError)?;
+///
+///     Ok(value.unwrap_or_default())
+/// }
+/// ```
+#[derive(Debug)]
+pub struct WorkerError(pub worker::Error);
+
+impl From<WorkerError> for ToolError {
+    fn from(e: WorkerError) -> Self {
+        ToolError::new(e.0.to_string())
+    }
+}
+
+impl std::fmt::Display for WorkerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// Extension trait for converting `worker::Result<T>` to `Result<T, ToolError>`.
+///
+/// This provides a more ergonomic API than using `.map_err(WorkerError)` manually.
+///
+/// # Example
+///
+/// ```ignore
+/// use turbomcp_wasm::wasm_server::{ToolError, WorkerResultExt};
+///
+/// async fn my_handler(args: Args, env: &Env) -> Result<String, ToolError> {
+///     // Convert worker results directly with .into_tool_result()
+///     let kv = env.kv("MY_KV").into_tool_result()?;
+///     let value = kv.get("key").text().await.into_tool_result()?;
+///
+///     Ok(value.unwrap_or_default())
+/// }
+/// ```
+pub trait WorkerResultExt<T> {
+    /// Convert a `worker::Result<T>` to `Result<T, ToolError>`.
+    fn into_tool_result(self) -> Result<T, ToolError>;
+}
+
+impl<T> WorkerResultExt<T> for worker::Result<T> {
+    fn into_tool_result(self) -> Result<T, ToolError> {
+        self.map_err(|e| ToolError::new(e.to_string()))
+    }
+}
 
 #[cfg(test)]
 mod tests {

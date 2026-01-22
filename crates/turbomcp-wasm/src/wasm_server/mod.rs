@@ -93,7 +93,7 @@ pub use server::{McpServer, McpServerBuilder};
 pub use types::{PromptResult, ResourceResult, ToolResult};
 
 // Re-export the response trait and types for ergonomic handlers
-pub use response::{Image, IntoToolResponse, Json, Text, ToolError};
+pub use response::{Image, IntoToolResponse, Json, Text, ToolError, WorkerError, WorkerResultExt};
 
 // Re-export handler traits for advanced use cases
 pub use response::IntoToolError;

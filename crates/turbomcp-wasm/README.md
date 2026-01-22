@@ -365,6 +365,63 @@ let cache = JwksCache::new("http://test-server/.well-known/jwks.json")
 - Content-Type validation
 - Strict JSON-RPC 2.0 compliance
 
+### OAuth and Token Protection
+
+TurboMCP supports multiple authentication patterns for protecting MCP servers:
+
+**1. Cloudflare Access (Recommended for Production)**
+
+Cloudflare Access provides enterprise-grade zero-trust authentication with automatic key rotation:
+
+```rust
+use turbomcp_wasm::auth::CloudflareAccessAuthenticator;
+
+let auth = CloudflareAccessAuthenticator::new("your-team", "your-audience-tag");
+let protected = server.with_auth(auth);
+```
+
+**2. Custom JWT Validation**
+
+For self-hosted OAuth/OIDC providers:
+
+```rust
+use turbomcp_wasm::auth::{JwtValidator, JwksCache, JwtConfig, JwtAlgorithm};
+
+// Configure JWT validation
+let config = JwtConfig::new()
+    .algorithms(vec![JwtAlgorithm::RS256, JwtAlgorithm::ES256])
+    .issuer("https://auth.example.com")
+    .audience("your-api");
+
+// Set up JWKS caching for signature verification
+let jwks = JwksCache::new("https://auth.example.com/.well-known/jwks.json");
+
+// Create validator
+let validator = JwtValidator::new(config, jwks);
+```
+
+**3. Bearer Token (Development Only)**
+
+For simple API key authentication during development:
+
+```rust
+#[event(fetch)]
+async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+    // Extract Bearer token
+    let auth_header = req.headers().get("Authorization")?;
+    let expected_key = env.secret("API_KEY")?.to_string();
+
+    if auth_header != Some(format!("Bearer {}", expected_key)) {
+        return Response::error("Unauthorized", 401);
+    }
+
+    // Process authenticated request
+    server.handle(req).await
+}
+```
+
+**⚠️ Warning**: Simple Bearer tokens lack rotation and are vulnerable to theft. Use OAuth/OIDC for production.
+
 ### Cloudflare Access Integration
 
 When using Cloudflare Access, the `CloudflareAccessAuthenticator` enforces additional security:
@@ -502,6 +559,37 @@ async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
 | `serde_json::Error` | Auto-converts to ToolError |
 | `String`, `&str` | Direct message |
 | `Box<dyn Error>` | Auto-converts to ToolError |
+| `worker::Error` | Via `WorkerError` wrapper or `WorkerResultExt` trait |
+
+### Worker Error Integration
+
+Due to Rust's orphan rules, `worker::Error` cannot directly convert to `ToolError`. TurboMCP provides two ergonomic solutions:
+
+**Option 1: WorkerError wrapper**
+
+```rust
+use turbomcp_wasm::wasm_server::{ToolError, WorkerError};
+
+async fn kv_handler(args: Args, env: &Env) -> Result<String, ToolError> {
+    let kv = env.kv("MY_KV").map_err(WorkerError)?;
+    let value = kv.get(&args.key).text().await.map_err(WorkerError)?;
+    Ok(value.unwrap_or_default())
+}
+```
+
+**Option 2: WorkerResultExt trait (more ergonomic)**
+
+```rust
+use turbomcp_wasm::wasm_server::{ToolError, WorkerResultExt};
+
+async fn kv_handler(args: Args, env: &Env) -> Result<String, ToolError> {
+    let kv = env.kv("MY_KV").into_tool_result()?;
+    let value = kv.get(&args.key).text().await.into_tool_result()?;
+    Ok(value.unwrap_or_default())
+}
+```
+
+Both approaches enable full `?` operator support when working with Cloudflare Workers APIs (KV, Durable Objects, R2, D1, etc.).
 
 ## Binary Size
 
