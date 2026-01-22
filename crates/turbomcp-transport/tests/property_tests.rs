@@ -329,8 +329,11 @@ proptest! {
         // Cache should be empty
         prop_assert!(cache.is_empty(), "Cache should be empty after clear");
 
-        // Previous IDs should no longer be duplicates
-        for id in message_ids.iter().take(5) {
+        // Previous IDs should no longer be duplicates after clear
+        // Note: We must check unique IDs only, because is_duplicate() adds entries to the cache.
+        // Checking the same ID twice would make the second check return true (correctly).
+        let unique_ids: std::collections::HashSet<_> = message_ids.iter().collect();
+        for id in unique_ids.iter().take(5) {
             let is_dup = cache.is_duplicate(id);
             prop_assert!(!is_dup, "Entry should not be duplicate after clear");
         }
