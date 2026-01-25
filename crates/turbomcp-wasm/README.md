@@ -139,12 +139,15 @@ use serde::Deserialize;
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct HelloArgs {
+    /// The name of the person to greet
     name: String,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct AddArgs {
+    /// The first number
     a: i64,
+    /// The second number
     b: i64,
 }
 
@@ -195,6 +198,35 @@ async fn fetch_data(args: FetchArgs) -> Result<Json<Data>, ToolError> {
     Ok(Json(data))
 }
 ```
+
+### Parameter Descriptions
+
+Add descriptions to tool parameters using doc comments or schemars attributes:
+
+```rust
+use serde::Deserialize;
+use schemars::JsonSchema;
+
+// Option 1: Doc comments (preferred)
+#[derive(Deserialize, JsonSchema)]
+struct SearchArgs {
+    /// The search query to execute
+    query: String,
+    /// Maximum number of results to return (default: 10)
+    limit: Option<u32>,
+}
+
+// Option 2: schemars attribute
+#[derive(Deserialize, JsonSchema)]
+struct FilterArgs {
+    #[schemars(description = "Field to filter on")]
+    field: String,
+    #[schemars(description = "Filter operator (eq, gt, lt, contains)")]
+    operator: String,
+}
+```
+
+These descriptions appear in the JSON schema and help LLMs understand how to use your tools correctly.
 
 ### Return Type Flexibility
 

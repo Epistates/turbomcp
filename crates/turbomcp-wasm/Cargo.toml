@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-wasm"
-version = "3.0.0-beta.3"
+version = "3.0.0-beta.4"
 edition = "2024"
 rust-version = "1.89.0"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -48,6 +48,9 @@ turbomcp-types = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+# Base64 decoding for JWT parsing (pure Rust, works on WASM)
+base64 = "0.22"
 
 # Browser dependencies (optional)
 wasm-bindgen = { version = "0.2.106", optional = true }

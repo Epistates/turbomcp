@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-server"
-version = "3.0.0-beta.3"
+version = "3.0.0-beta.4"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Production-ready MCP server with zero-boilerplate macros and transport-agnostic design"
@@ -14,11 +14,11 @@ rust-version = "1.89.0"
 
 [dependencies]
 # Core v3 dependencies
-turbomcp-core = { version = "3.0.0-beta.3", path = "../turbomcp-core" }
-turbomcp-types = { version = "3.0.0-beta.3", path = "../turbomcp-types" }
-turbomcp-protocol = { version = "3.0.0-beta.3", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "3.0.0-beta.3", path = "../turbomcp-transport", optional = true }
-turbomcp-macros = { version = "3.0.0-beta.3", path = "../turbomcp-macros" }
+turbomcp-core = { version = "3.0.0-beta.4", path = "../turbomcp-core" }
+turbomcp-types = { version = "3.0.0-beta.4", path = "../turbomcp-types" }
+turbomcp-protocol = { version = "3.0.0-beta.4", path = "../turbomcp-protocol" }
+turbomcp-transport = { version = "3.0.0-beta.4", path = "../turbomcp-transport", optional = true }
+turbomcp-macros = { version = "3.0.0-beta.4", path = "../turbomcp-macros" }
 
 # Async runtime
 tokio = { workspace = true }

@@ -682,35 +682,17 @@ struct JwtPayload {
 // Base64 URL Decoding
 // ============================================================================
 
-/// Decode base64url-encoded data
+/// Decode base64url-encoded data using the standard base64 crate.
+///
+/// Uses `URL_SAFE_NO_PAD` engine which handles the URL-safe alphabet (-_ instead of +/)
+/// and missing padding automatically. This is pure Rust and works on all WASM targets
+/// including Cloudflare Workers (which don't have a `window` object).
 fn base64_url_decode(input: &str) -> Result<Vec<u8>, AuthError> {
-    // Add padding if needed
-    let padded = match input.len() % 4 {
-        2 => format!("{}==", input),
-        3 => format!("{}=", input),
-        _ => input.to_string(),
-    };
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 
-    // Convert from base64url to standard base64
-    let standard: String = padded
-        .chars()
-        .map(|c| match c {
-            '-' => '+',
-            '_' => '/',
-            c => c,
-        })
-        .collect();
-
-    // Decode using browser's atob
-    let window =
-        web_sys::window().ok_or_else(|| AuthError::Internal("No window object".to_string()))?;
-
-    let decoded = window
-        .atob(&standard)
-        .map_err(|_| AuthError::InvalidCredentialFormat("Invalid base64".to_string()))?;
-
-    // Convert to bytes
-    Ok(decoded.bytes().collect())
+    URL_SAFE_NO_PAD
+        .decode(input)
+        .map_err(|e| AuthError::InvalidCredentialFormat(format!("Invalid base64: {}", e)))
 }
 
 #[cfg(test)]
@@ -719,8 +701,21 @@ mod tests {
 
     #[test]
     fn test_base64_url_decode() {
-        // This test would need to run in a browser/wasm environment
-        // since it uses window.atob
+        // Now works in any environment since we use the pure-Rust base64 crate
+        let decoded = base64_url_decode("SGVsbG8gV29ybGQ").unwrap();
+        assert_eq!(decoded, b"Hello World");
+
+        // Test URL-safe characters (- instead of +, _ instead of /)
+        let decoded2 = base64_url_decode("PDw_Pz4-").unwrap();
+        assert_eq!(decoded2, b"<<??>>"); // Contains + and / in standard base64
+
+        // Test without padding
+        let decoded3 = base64_url_decode("YQ").unwrap(); // "a"
+        assert_eq!(decoded3, b"a");
+
+        // Test empty input
+        let decoded4 = base64_url_decode("").unwrap();
+        assert!(decoded4.is_empty());
     }
 
     #[test]

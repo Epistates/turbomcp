@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp"
-version = "3.0.0-beta.3"
+version = "3.0.0-beta.4"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Rust SDK for Model Context Protocol (MCP) with zero-boilerplate macros and WASM support"
@@ -39,17 +39,17 @@ schemars = { version = "1.0", features = ["chrono04", "uuid1"] }
 uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
 
 # Internal dependencies
-turbomcp-core = { version = "3.0.0-beta.3", path = "../turbomcp-core" }
-turbomcp-types = { version = "3.0.0-beta.3", path = "../turbomcp-types" }
-turbomcp-protocol = { version = "3.0.0-beta.3", path = "../turbomcp-protocol", default-features = false }
-turbomcp-transport = { version = "3.0.0-beta.3", path = "../turbomcp-transport", default-features = false }
-turbomcp-server = { version = "3.0.0-beta.3", path = "../turbomcp-server", default-features = false }
-turbomcp-macros = { version = "3.0.0-beta.3", path = "../turbomcp-macros", default-features = false }
+turbomcp-core = { version = "3.0.0-beta.4", path = "../turbomcp-core" }
+turbomcp-types = { version = "3.0.0-beta.4", path = "../turbomcp-types" }
+turbomcp-protocol = { version = "3.0.0-beta.4", path = "../turbomcp-protocol", default-features = false }
+turbomcp-transport = { version = "3.0.0-beta.4", path = "../turbomcp-transport", default-features = false }
+turbomcp-server = { version = "3.0.0-beta.4", path = "../turbomcp-server", default-features = false }
+turbomcp-macros = { version = "3.0.0-beta.4", path = "../turbomcp-macros", default-features = false }
 
 # Optional dependencies
-turbomcp-client = { version = "3.0.0-beta.3", path = "../turbomcp-client", optional = true, default-features = false }
-turbomcp-auth = { version = "3.0.0-beta.3", path = "../turbomcp-auth", optional = true }
-turbomcp-dpop = { version = "3.0.0-beta.3", path = "../turbomcp-dpop", optional = true }
+turbomcp-client = { version = "3.0.0-beta.4", path = "../turbomcp-client", optional = true, default-features = false }
+turbomcp-auth = { version = "3.0.0-beta.4", path = "../turbomcp-auth", optional = true }
+turbomcp-dpop = { version = "3.0.0-beta.4", path = "../turbomcp-dpop", optional = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

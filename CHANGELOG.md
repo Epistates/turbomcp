@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-beta.4] - 2026-01-25
+
+### Fixed
+
+#### JWT Base64 Decoding (`turbomcp-wasm`)
+- **Replaced hand-rolled base64 with `base64` crate** - JWT token parsing now uses the standard `base64` crate with `URL_SAFE_NO_PAD` engine instead of hand-rolled `window.atob()` implementation
+- **Cloudflare Workers compatibility** - The previous implementation used `window.atob()` which doesn't exist on Workers (they use `ServiceWorkerGlobalScope`). Now works on all WASM targets.
+- Added unit tests for base64 URL decoding
+
+#### Property Tests (`turbomcp-transport`)
+- **Fixed `prop_cache_clear_works` test** - Test now correctly deduplicates message IDs before checking post-clear state, preventing false failures with duplicate inputs like `["t", "t"]`
+
 ## [3.0.0-beta.3] - 2026-01-22
 
 ### Security

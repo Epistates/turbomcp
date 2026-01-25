@@ -34,6 +34,7 @@ struct MyServer {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 struct GreetArgs {
+    /// The name of the person to greet
     name: String,
 }
 
@@ -119,6 +120,32 @@ async fn my_prompt(&self) -> PromptResult { ... }
 #[prompt("Prompt with args")]
 async fn prompt_with_args(&self, args: Option<MyArgs>) -> PromptResult { ... }
 ```
+
+## Parameter Descriptions
+
+Add descriptions to tool parameters using doc comments on your args struct fields:
+
+```rust
+#[derive(Deserialize, schemars::JsonSchema)]
+struct SearchArgs {
+    /// The search query to execute
+    query: String,
+    /// Maximum number of results (default: 10)
+    limit: Option<u32>,
+}
+```
+
+Alternatively, use the `#[schemars(description = "...")]` attribute:
+
+```rust
+#[derive(Deserialize, schemars::JsonSchema)]
+struct SearchArgs {
+    #[schemars(description = "The search query to execute")]
+    query: String,
+}
+```
+
+These descriptions appear in the JSON schema and help LLMs understand how to use your tools.
 
 ## Requirements
 
