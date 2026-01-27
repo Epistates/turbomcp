@@ -68,6 +68,12 @@ pub enum Commands {
 
     /// Connection status
     Status(Connection),
+
+    /// Development server with hot reload
+    Dev(DevArgs),
+
+    /// Install MCP server to Claude Desktop or Cursor
+    Install(InstallArgs),
 }
 
 /// Tool-related commands
@@ -347,4 +353,67 @@ impl From<LogLevel> for turbomcp_protocol::types::LogLevel {
             LogLevel::Error => turbomcp_protocol::types::LogLevel::Error,
         }
     }
+}
+
+/// Development server arguments
+#[derive(Args, Debug, Clone)]
+pub struct DevArgs {
+    /// Path to the server binary or cargo project
+    pub path: PathBuf,
+
+    /// Enable hot reload with cargo-watch
+    #[arg(long, short = 'w')]
+    pub watch: bool,
+
+    /// Additional arguments to pass to the server
+    #[arg(last = true)]
+    pub server_args: Vec<String>,
+
+    /// Build in release mode
+    #[arg(long, short = 'r')]
+    pub release: bool,
+
+    /// Enable MCP Inspector integration
+    #[arg(long)]
+    pub inspector: bool,
+
+    /// Port for the inspector (default: 5173)
+    #[arg(long, default_value = "5173")]
+    pub inspector_port: u16,
+}
+
+/// Install target applications
+#[derive(Debug, Clone, ValueEnum, PartialEq, Eq)]
+pub enum InstallTarget {
+    /// Claude Desktop application
+    ClaudeDesktop,
+    /// Cursor IDE
+    Cursor,
+}
+
+/// Install command arguments
+#[derive(Args, Debug, Clone)]
+pub struct InstallArgs {
+    /// Target application to install to
+    #[arg(value_enum)]
+    pub target: InstallTarget,
+
+    /// Path to the MCP server binary
+    pub server_path: PathBuf,
+
+    /// Name for the MCP server (defaults to binary name)
+    #[arg(long, short = 'n')]
+    pub name: Option<String>,
+
+    /// Additional environment variables (KEY=VALUE)
+    #[arg(long, short = 'e')]
+    pub env: Vec<String>,
+
+    /// Additional arguments to pass to the server
+    #[arg(long, short = 'a')]
+    pub args: Vec<String>,
+
+    /// Force overwrite if server already exists
+    #[arg(long, short = 'f')]
+    pub force: bool,
 }

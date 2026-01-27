@@ -1,7 +1,7 @@
 //! Server-to-client communication capabilities for bidirectional MCP communication.
 //!
 //! This module defines the trait that enables servers to make requests to clients,
-//! supporting sampling, elicitation, and roots listing operations.
+//! supporting sampling, elicitation, roots listing, and server-initiated notifications.
 
 use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,7 @@ use crate::McpError;
 use crate::context::RequestContext;
 use crate::types::{
     CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsResult,
+    ServerNotification,
 };
 
 /// Trait for server-to-client requests (sampling, elicitation, roots)
@@ -136,6 +137,44 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     /// - The transport layer fails
     /// - The client returns an error response
     fn list_roots(&self, ctx: RequestContext) -> BoxFuture<'_, Result<ListRootsResult, McpError>>;
+
+    /// Send a notification to the client.
+    ///
+    /// This method allows servers to send notifications to clients for logging,
+    /// progress updates, resource changes, and other events. Unlike requests,
+    /// notifications do not expect a response from the client.
+    ///
+    /// # Arguments
+    ///
+    /// * `notification` - The notification to send (logging, progress, etc.)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The transport layer fails to send the notification
+    /// - The connection is closed
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use turbomcp_protocol::context::capabilities::ServerToClientRequests;
+    /// use turbomcp_protocol::types::{ServerNotification, LoggingNotification, LogLevel};
+    /// use serde_json::json;
+    ///
+    /// async fn example(capabilities: &dyn ServerToClientRequests) {
+    ///     let notification = ServerNotification::Message(LoggingNotification {
+    ///         level: LogLevel::Info,
+    ///         data: json!("Processing request..."),
+    ///         logger: Some("my_tool".to_string()),
+    ///     });
+    ///
+    ///     let _ = capabilities.send_notification(notification).await;
+    /// }
+    /// ```
+    fn send_notification(
+        &self,
+        notification: ServerNotification,
+    ) -> BoxFuture<'_, Result<(), McpError>>;
 }
 
 /// Communication direction for bidirectional requests

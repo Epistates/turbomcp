@@ -9,7 +9,7 @@ use super::{
     completion::CompleteRequestParams,
     elicitation::ElicitRequestParams,
     initialization::{InitializeRequest, InitializedNotification},
-    logging::{LoggingNotification, SetLevelRequest},
+    logging::{LoggingNotification, ProgressNotification, SetLevelRequest},
     ping::PingParams,
     prompts::{GetPromptRequest, ListPromptsRequest},
     resources::{
@@ -119,6 +119,10 @@ pub enum ServerNotification {
     /// Log message
     #[serde(rename = "notifications/message")]
     Message(LoggingNotification),
+
+    /// Progress update for a request
+    #[serde(rename = "notifications/progress")]
+    Progress(ProgressNotification),
 
     /// Resource updated
     #[serde(rename = "notifications/resources/updated")]

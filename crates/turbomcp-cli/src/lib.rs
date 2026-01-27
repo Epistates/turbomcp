@@ -44,9 +44,11 @@
 
 // Core modules
 pub mod cli;
+pub mod dev;
 pub mod error;
 pub mod executor;
 pub mod formatter;
+pub mod install;
 pub mod path_security;
 pub mod prelude;
 pub mod transport;
@@ -55,8 +57,9 @@ use clap::Parser;
 
 // Clean re-exports (no more "New" suffixes!)
 pub use cli::{
-    Cli, Commands, CompletionCommands, Connection, LogLevel, OutputFormat, PromptCommands, RefType,
-    ResourceCommands, SamplingCommands, ServerCommands, ToolCommands, TransportKind,
+    Cli, Commands, CompletionCommands, Connection, DevArgs, InstallArgs, InstallTarget, LogLevel,
+    OutputFormat, PromptCommands, RefType, ResourceCommands, SamplingCommands, ServerCommands,
+    ToolCommands, TransportKind,
 };
 pub use error::{CliError, CliResult, ErrorCategory};
 pub use executor::CommandExecutor;

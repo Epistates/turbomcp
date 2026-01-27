@@ -12,6 +12,7 @@
 //! - **AtomicMetrics** for lock-free counter updates (10-100x faster than Mutex)
 //! - **tokio::sync::Mutex** for I/O streams (only when necessary, cross .await points)
 
+use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -19,7 +20,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
-use tokio::io::{BufReader, Stdin, Stdout};
+use tokio::io::{AsyncRead, AsyncWrite, BufReader};
+use tokio::process::Child;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 use tokio_util::codec::{FramedRead, FramedWrite, LinesCodec};
 use tracing::{debug, error, trace, warn};
@@ -32,11 +34,42 @@ use turbomcp_transport_traits::{
 };
 use uuid::Uuid;
 
-// Type alias to reduce complexity for clippy
-type StdinReader = FramedRead<BufReader<Stdin>, LinesCodec>;
-type StdoutWriter = FramedWrite<Stdout, LinesCodec>;
+// Type aliases for boxed async I/O to support both process stdio and child stdio
+type BoxedAsyncRead = Pin<Box<dyn AsyncRead + Send + Sync + 'static>>;
+type BoxedAsyncBufRead = BufReader<BoxedAsyncRead>;
+type BoxedAsyncWrite = Pin<Box<dyn AsyncWrite + Send + Sync + 'static>>;
+type StdinReader = FramedRead<BoxedAsyncBufRead, LinesCodec>;
+type StdoutWriter = FramedWrite<BoxedAsyncWrite, LinesCodec>;
+
+/// Source of stdio streams for the transport
+enum StreamSource {
+    /// Use the current process's stdin/stdout
+    ProcessStdio,
+    /// Use raw streams (already boxed)
+    Raw {
+        reader: Option<BoxedAsyncRead>,
+        writer: Option<BoxedAsyncWrite>,
+    },
+}
+
+impl std::fmt::Debug for StreamSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ProcessStdio => write!(f, "ProcessStdio"),
+            Self::Raw { reader, writer } => f
+                .debug_struct("Raw")
+                .field("reader", &reader.as_ref().map(|_| "<async reader>"))
+                .field("writer", &writer.as_ref().map(|_| "<async writer>"))
+                .finish(),
+        }
+    }
+}
 
 /// Standard I/O transport implementation
+///
+/// Supports communication over:
+/// - Current process stdin/stdout (default)
+/// - Child process stdin/stdout (via `from_child` or `from_raw`)
 ///
 /// # Interior Mutability Architecture
 ///
@@ -46,7 +79,30 @@ type StdoutWriter = FramedWrite<Stdout, LinesCodec>;
 /// - `config`: std::sync::Mutex (infrequent updates, short-lived locks)
 /// - `metrics`: AtomicMetrics (lock-free counters, 10-100x faster than Mutex)
 /// - I/O streams: tokio::sync::Mutex (held across .await, necessary for async I/O)
-#[derive(Debug)]
+///
+/// # Examples
+///
+/// ## Using current process stdio
+///
+/// ```rust,ignore
+/// use turbomcp_stdio::StdioTransport;
+///
+/// let transport = StdioTransport::new();
+/// ```
+///
+/// ## Using a spawned child process
+///
+/// ```rust,ignore
+/// use tokio::process::Command;
+/// use turbomcp_stdio::StdioTransport;
+///
+/// let child = Command::new("my-mcp-server")
+///     .stdin(std::process::Stdio::piped())
+///     .stdout(std::process::Stdio::piped())
+///     .spawn()?;
+///
+/// let transport = StdioTransport::from_child(child)?;
+/// ```
 pub struct StdioTransport {
     /// Transport state (std::sync::Mutex - never crosses await)
     state: Arc<StdMutex<TransportState>>,
@@ -63,6 +119,9 @@ pub struct StdioTransport {
     /// Event emitter
     event_emitter: TransportEventEmitter,
 
+    /// Source of streams (process stdio or child process)
+    stream_source: Arc<TokioMutex<StreamSource>>,
+
     /// Stdin reader (tokio::sync::Mutex - crosses await boundaries)
     stdin_reader: Arc<TokioMutex<Option<StdinReader>>>,
 
@@ -76,8 +135,24 @@ pub struct StdioTransport {
     _task_handle: Arc<TokioMutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
+impl std::fmt::Debug for StdioTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StdioTransport")
+            .field("state", &self.state)
+            .field("capabilities", &self.capabilities)
+            .field("config", &self.config)
+            .field("metrics", &self.metrics)
+            .field("stream_source", &"<StreamSource>")
+            .field("stdin_reader", &"<StdinReader>")
+            .field("stdout_writer", &"<StdoutWriter>")
+            .field("receive_channel", &"<mpsc::Receiver>")
+            .field("_task_handle", &"<JoinHandle>")
+            .finish()
+    }
+}
+
 impl StdioTransport {
-    /// Create a new stdio transport
+    /// Create a new stdio transport using the current process's stdin/stdout
     #[must_use]
     pub fn new() -> Self {
         let (event_emitter, _) = TransportEventEmitter::new();
@@ -99,11 +174,129 @@ impl StdioTransport {
             })),
             metrics: Arc::new(AtomicMetrics::default()),
             event_emitter,
+            stream_source: Arc::new(TokioMutex::new(StreamSource::ProcessStdio)),
             stdin_reader: Arc::new(TokioMutex::new(None)),
             stdout_writer: Arc::new(TokioMutex::new(None)),
             receive_channel: Arc::new(TokioMutex::new(None)),
             _task_handle: Arc::new(TokioMutex::new(None)),
         }
+    }
+
+    /// Create a stdio transport from a spawned child process.
+    ///
+    /// This is useful for MCP clients that spawn server processes and need
+    /// to communicate with them over their stdin/stdout.
+    ///
+    /// The child process must have been spawned with:
+    /// - `stdin(Stdio::piped())`
+    /// - `stdout(Stdio::piped())`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the child's stdin or stdout was not piped.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use tokio::process::Command;
+    /// use turbomcp_stdio::StdioTransport;
+    ///
+    /// let mut child = Command::new("my-mcp-server")
+    ///     .stdin(std::process::Stdio::piped())
+    ///     .stdout(std::process::Stdio::piped())
+    ///     .stderr(std::process::Stdio::inherit())
+    ///     .spawn()?;
+    ///
+    /// let transport = StdioTransport::from_child(&mut child)?;
+    /// transport.connect().await?;
+    ///
+    /// // Communicate with the server...
+    /// ```
+    pub fn from_child(child: &mut Child) -> TransportResult<Self> {
+        let stdin = child.stdin.take().ok_or_else(|| {
+            TransportError::ConfigurationError(
+                "Child process stdin was not piped. Use Stdio::piped() when spawning.".to_string(),
+            )
+        })?;
+
+        let stdout = child.stdout.take().ok_or_else(|| {
+            TransportError::ConfigurationError(
+                "Child process stdout was not piped. Use Stdio::piped() when spawning.".to_string(),
+            )
+        })?;
+
+        Self::from_raw(stdout, stdin)
+    }
+
+    /// Create a stdio transport from raw async read/write streams.
+    ///
+    /// This is a lower-level constructor that allows using any async I/O streams.
+    /// For child processes, prefer using `from_child` which handles the extraction
+    /// of stdin/stdout from the child process.
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - The stream to read messages from (e.g., child's stdout)
+    /// * `writer` - The stream to write messages to (e.g., child's stdin)
+    ///
+    /// # Note on Stream Direction
+    ///
+    /// When communicating with a child process:
+    /// - `reader` should be the child's **stdout** (what we read from)
+    /// - `writer` should be the child's **stdin** (what we write to)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use tokio::process::Command;
+    /// use turbomcp_stdio::StdioTransport;
+    ///
+    /// let mut child = Command::new("my-mcp-server")
+    ///     .stdin(std::process::Stdio::piped())
+    ///     .stdout(std::process::Stdio::piped())
+    ///     .spawn()?;
+    ///
+    /// let child_stdout = child.stdout.take().unwrap();
+    /// let child_stdin = child.stdin.take().unwrap();
+    ///
+    /// let transport = StdioTransport::from_raw(child_stdout, child_stdin)?;
+    /// ```
+    pub fn from_raw<R, W>(reader: R, writer: W) -> TransportResult<Self>
+    where
+        R: AsyncRead + Send + Sync + 'static,
+        W: AsyncWrite + Send + Sync + 'static,
+    {
+        let (event_emitter, _) = TransportEventEmitter::new();
+
+        let boxed_reader: BoxedAsyncRead = Box::pin(reader);
+        let boxed_writer: BoxedAsyncWrite = Box::pin(writer);
+
+        Ok(Self {
+            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            capabilities: TransportCapabilities {
+                max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE),
+                supports_compression: false,
+                supports_streaming: true,
+                supports_bidirectional: true,
+                supports_multiplexing: false,
+                compression_algorithms: Vec::new(),
+                custom: std::collections::HashMap::new(),
+            },
+            config: Arc::new(StdMutex::new(TransportConfig {
+                transport_type: TransportType::Stdio,
+                ..Default::default()
+            })),
+            metrics: Arc::new(AtomicMetrics::default()),
+            event_emitter,
+            stream_source: Arc::new(TokioMutex::new(StreamSource::Raw {
+                reader: Some(boxed_reader),
+                writer: Some(boxed_writer),
+            })),
+            stdin_reader: Arc::new(TokioMutex::new(None)),
+            stdout_writer: Arc::new(TokioMutex::new(None)),
+            receive_channel: Arc::new(TokioMutex::new(None)),
+            _task_handle: Arc::new(TokioMutex::new(None)),
+        })
     }
 
     /// Create a stdio transport with custom configuration
@@ -137,6 +330,7 @@ impl StdioTransport {
             })),
             metrics: Arc::new(AtomicMetrics::default()),
             event_emitter,
+            stream_source: Arc::new(TokioMutex::new(StreamSource::ProcessStdio)),
             stdin_reader: Arc::new(TokioMutex::new(None)),
             stdout_writer: Arc::new(TokioMutex::new(None)),
             receive_channel: Arc::new(TokioMutex::new(None)),
@@ -183,14 +377,40 @@ impl StdioTransport {
     }
 
     async fn setup_stdio_streams(&self) -> TransportResult<()> {
-        // Setup stdin reader
-        let stdin = tokio::io::stdin();
-        let reader = BufReader::new(stdin);
-        let mut stdin_reader = FramedRead::new(reader, LinesCodec::new());
+        // Get the stream source and set up reader/writer accordingly
+        let mut stream_source = self.stream_source.lock().await;
 
-        // Setup stdout writer
-        let stdout = tokio::io::stdout();
-        *self.stdout_writer.lock().await = Some(FramedWrite::new(stdout, LinesCodec::new()));
+        let mut stdin_reader: StdinReader = match &mut *stream_source {
+            StreamSource::ProcessStdio => {
+                // Use current process stdio
+                let stdin = tokio::io::stdin();
+                let boxed_stdin: BoxedAsyncRead = Box::pin(stdin);
+                let buffered_reader: BoxedAsyncBufRead = BufReader::new(boxed_stdin);
+                let stdout: BoxedAsyncWrite = Box::pin(tokio::io::stdout());
+                *self.stdout_writer.lock().await =
+                    Some(FramedWrite::new(stdout, LinesCodec::new()));
+                FramedRead::new(buffered_reader, LinesCodec::new())
+            }
+            StreamSource::Raw { reader, writer } => {
+                // Use provided raw streams
+                let raw_reader = reader.take().ok_or_else(|| {
+                    TransportError::ConfigurationError(
+                        "Raw reader stream already consumed".to_string(),
+                    )
+                })?;
+                let raw_writer = writer.take().ok_or_else(|| {
+                    TransportError::ConfigurationError(
+                        "Raw writer stream already consumed".to_string(),
+                    )
+                })?;
+
+                // Wrap the reader in a BufReader for line-based reading
+                let buffered_reader: BoxedAsyncBufRead = BufReader::new(raw_reader);
+                *self.stdout_writer.lock().await =
+                    Some(FramedWrite::new(raw_writer, LinesCodec::new()));
+                FramedRead::new(buffered_reader, LinesCodec::new())
+            }
+        };
 
         // Setup message receive channel (bounded for backpressure)
         let (tx, rx) = mpsc::channel(1000);
@@ -838,5 +1058,60 @@ line2"}}"#;
 
         let result = transport.configure(invalid_timeout_config).await;
         assert!(matches!(result, Err(TransportError::ConfigurationError(_))));
+    }
+
+    #[test]
+    fn test_from_raw_creation() {
+        // Create mock streams using tokio's duplex
+        let (client_tx, server_rx) = tokio::io::duplex(1024);
+        let (server_tx, client_rx) = tokio::io::duplex(1024);
+
+        // from_raw takes (reader, writer) - what we read from, what we write to
+        let transport = StdioTransport::from_raw(server_rx, server_tx).unwrap();
+        assert_eq!(transport.transport_type(), TransportType::Stdio);
+        assert!(transport.capabilities().supports_streaming);
+        assert!(transport.capabilities().supports_bidirectional);
+
+        // Verify the other side can also be used
+        let _client_transport = StdioTransport::from_raw(client_rx, client_tx).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_from_raw_connect_and_communicate() {
+        // Create mock streams using tokio's duplex for bidirectional communication
+        let (client_tx, server_rx) = tokio::io::duplex(4096);
+        let (server_tx, client_rx) = tokio::io::duplex(4096);
+
+        // Server transport
+        let server_transport = StdioTransport::from_raw(server_rx, server_tx).unwrap();
+
+        // Client transport
+        let client_transport = StdioTransport::from_raw(client_rx, client_tx).unwrap();
+
+        // Both should start disconnected
+        assert_eq!(server_transport.state().await, TransportState::Disconnected);
+        assert_eq!(client_transport.state().await, TransportState::Disconnected);
+
+        // Connect both
+        server_transport.connect().await.unwrap();
+        client_transport.connect().await.unwrap();
+
+        assert_eq!(server_transport.state().await, TransportState::Connected);
+        assert_eq!(client_transport.state().await, TransportState::Connected);
+
+        // Disconnect both
+        server_transport.disconnect().await.unwrap();
+        client_transport.disconnect().await.unwrap();
+
+        assert_eq!(server_transport.state().await, TransportState::Disconnected);
+        assert_eq!(client_transport.state().await, TransportState::Disconnected);
+    }
+
+    #[test]
+    fn test_stream_source_debug() {
+        // Test Debug impl for StreamSource
+        let process_source = StreamSource::ProcessStdio;
+        let debug_str = format!("{:?}", process_source);
+        assert_eq!(debug_str, "ProcessStdio");
     }
 }

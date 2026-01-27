@@ -93,13 +93,25 @@
 
 // Core modules
 mod builder;
+mod composite;
 mod config;
 mod context;
 mod handler;
+pub mod middleware;
 mod router;
+mod visibility;
 
 /// Transport implementations for different protocols.
 pub mod transport;
+
+/// Progressive disclosure through component visibility control.
+pub use visibility::{VisibilityLayer, VisibilitySessionGuard};
+
+/// Server composition through handler mounting.
+pub use composite::CompositeHandler;
+
+/// Typed middleware for MCP request processing.
+pub use middleware::{McpMiddleware, MiddlewareStack, Next};
 
 // Public exports
 pub use builder::{McpServerExt, ServerBuilder, Transport};
@@ -150,7 +162,10 @@ pub type JsonRpcResponse = JsonRpcOutgoing;
 /// ```
 pub mod prelude {
     // Core traits
-    pub use super::{McpHandler, McpHandlerExt, McpServerExt};
+    pub use super::{
+        CompositeHandler, McpHandler, McpHandlerExt, McpMiddleware, McpServerExt, MiddlewareStack,
+        VisibilityLayer, VisibilitySessionGuard,
+    };
 
     // Builder and transport
     pub use super::{ServerBuilder, Transport};

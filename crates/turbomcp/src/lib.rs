@@ -119,6 +119,9 @@
     clippy::uninlined_format_args
 )]
 
+/// In-memory test client for ergonomic MCP server testing.
+pub mod testing;
+
 /// TurboMCP version from Cargo.toml
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -140,8 +143,8 @@ pub use turbomcp_core::handler::McpHandler;
 // Re-export types
 pub use turbomcp_types::{
     IntoPromptResult, IntoResourceResult, IntoToolResult, Message, Prompt, PromptArgument,
-    PromptResult, Resource, ResourceContent, ResourceResult, ServerInfo, Tool, ToolInputSchema,
-    ToolResult,
+    PromptResult, Resource, ResourceContent, ResourceResult, Role, ServerInfo, Tool,
+    ToolInputSchema, ToolResult,
 };
 
 // Re-export server builder and transport
@@ -246,7 +249,7 @@ pub mod prelude {
     // Common protocol types
     pub use super::{
         CallToolRequest, CallToolResult, Message, Prompt, PromptArgument, RequestContext, Resource,
-        ResourceContent, ServerInfo, Tool, ToolInputSchema,
+        ResourceContent, Role, ServerInfo, Tool, ToolInputSchema,
     };
 
     // Unified response types
@@ -296,4 +299,7 @@ pub mod prelude {
     #[cfg(feature = "client-integration")]
     #[cfg_attr(docsrs, doc(cfg(feature = "client-integration")))]
     pub use turbomcp_client::{Client, ClientBuilder, ClientCapabilities};
+
+    // Testing utilities
+    pub use crate::testing::{McpTestClient, McpToolResultAssertions, ToolResultAssertions};
 }

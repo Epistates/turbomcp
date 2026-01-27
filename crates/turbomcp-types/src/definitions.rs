@@ -95,6 +95,14 @@ pub struct Tool {
     /// Output schema for structured results
     #[serde(rename = "outputSchema", skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Value>,
+    /// Extension metadata (tags, version, etc.)
+    ///
+    /// This field can contain arbitrary key-value pairs for extensibility.
+    /// Common keys:
+    /// - `tags`: Array of strings for categorization
+    /// - `version`: Semantic version string
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<std::collections::HashMap<String, Value>>,
 }
 
 impl Tool {
@@ -267,6 +275,9 @@ pub struct Resource {
     /// Size in bytes (if known)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
+    /// Extension metadata (tags, version, etc.)
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<std::collections::HashMap<String, Value>>,
 }
 
 impl Resource {
@@ -378,6 +389,9 @@ pub struct Prompt {
     /// Prompt arguments
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Vec<PromptArgument>>,
+    /// Extension metadata (tags, version, etc.)
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<std::collections::HashMap<String, Value>>,
 }
 
 impl Prompt {

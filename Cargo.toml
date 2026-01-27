@@ -25,6 +25,7 @@ members = [
     "crates/turbomcp-wasm",      # v3.0: WebAssembly bindings for browsers and WASI
     "crates/turbomcp-wasm-macros", # v3.0: WASM server proc macros
     "crates/turbomcp-wire",      # v3.0: Wire format codec abstraction
+    "crates/turbomcp-openapi",   # v3.0: OpenAPI to MCP conversion
     "demo",
 ]
 resolver = "2"

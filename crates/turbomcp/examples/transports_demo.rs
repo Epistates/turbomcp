@@ -1,9 +1,8 @@
-//! Demonstration of explicit transport selection with the transports attribute.
+//! Demonstration of transport selection in TurboMCP v3.
 //!
-//! This example shows:
-//! 1. Backward compatibility: No transports specified → generates all enabled transports
-//! 2. Explicit transports: Specify which transports to include in the server
-//! 3. Multiple discrete servers with different transports in one binary
+//! In TurboMCP v3, transport methods are provided by the `McpHandlerExt` trait
+//! and are enabled via Cargo features. This is a cleaner approach than the
+//! deprecated `transports` attribute.
 //!
 //! Run with:
 //! ```bash
@@ -12,143 +11,93 @@
 
 use turbomcp::prelude::*;
 
-/// Backward-compatible server - generates all enabled transports by default
-/// When no transports are specified, the macro behaves exactly as before,
-/// creating methods for all enabled features (http, websocket, tcp, unix)
-#[allow(dead_code)]
+/// A server that supports all transports enabled via Cargo features.
+///
+/// In v3, transport methods are available on any `McpHandler` via the
+/// `McpHandlerExt` trait when the corresponding feature is enabled:
+/// - `run_stdio()` - always available with 'stdio' feature (default)
+/// - `run_http(addr)` - requires 'http' feature
+/// - `run_tcp(addr)` - requires 'tcp' feature
+/// - `run_websocket(addr)` - requires 'websocket' feature
+/// - `run_unix(path)` - requires 'unix' feature
 #[derive(Clone)]
-struct AllTransportsServer;
+struct TransportsServer;
 
 #[turbomcp::server(
-    name = "all-transports",
+    name = "transports-demo",
     version = "1.0",
-    description = "Default server supporting all enabled transports"
+    description = "Demonstrates transport selection in TurboMCP v3"
 )]
-impl AllTransportsServer {
+impl TransportsServer {
+    /// A simple tool to demonstrate the server works
     #[tool(description = "Greet someone")]
-    async fn greet_all(&self, name: String) -> McpResult<String> {
-        Ok(format!("Hello {} from all-transports!", name))
+    async fn greet(&self, name: String) -> McpResult<String> {
+        Ok(format!("Hello {} from transports-demo!", name))
+    }
+
+    /// Get available transports at runtime
+    #[tool(description = "List available transports")]
+    async fn list_transports(&self) -> McpResult<Vec<String>> {
+        let mut transports = vec!["stdio".to_string()];
+
+        #[cfg(feature = "http")]
+        transports.push("http".to_string());
+
+        #[cfg(feature = "tcp")]
+        transports.push("tcp".to_string());
+
+        #[cfg(feature = "websocket")]
+        transports.push("websocket".to_string());
+
+        #[cfg(feature = "unix")]
+        transports.push("unix".to_string());
+
+        Ok(transports)
     }
 }
 
-/// HTTP-only server - explicitly restricted to HTTP transport
-/// This server will only have the run_http() method available,
-/// even if other transports are enabled in Cargo.toml
-#[allow(dead_code)]
-#[derive(Clone)]
-struct HttpOnlyServer;
-
-#[turbomcp::server(
-    name = "http-only",
-    version = "1.0",
-    description = "Server that only supports HTTP transport",
-    transports = ["http"]
-)]
-impl HttpOnlyServer {
-    #[tool(description = "Make an API call")]
-    async fn api_call(&self, query: String) -> McpResult<String> {
-        Ok(format!("API result for: {}", query))
-    }
-}
-
-/// TCP-only server - explicitly restricted to TCP transport
-/// This server will only have the run_tcp() method available
-#[allow(dead_code)]
-#[derive(Clone)]
-struct TcpOnlyServer;
-
-#[turbomcp::server(
-    name = "tcp-only",
-    version = "1.0",
-    description = "Server that only supports TCP transport",
-    transports = ["tcp"]
-)]
-impl TcpOnlyServer {
-    #[tool(description = "Execute a network command")]
-    async fn network_cmd(&self, cmd: String) -> McpResult<String> {
-        Ok(format!("TCP command executed: {}", cmd))
-    }
-}
-
-/// Multi-transport server - explicitly includes HTTP and TCP
-/// This server will have run_http() and run_tcp() methods,
-/// but not run_websocket() or run_unix() even if enabled
-#[allow(dead_code)]
-#[derive(Clone)]
-struct HttpTcpServer;
-
-#[turbomcp::server(
-    name = "http-tcp",
-    version = "1.0",
-    description = "Server supporting HTTP and TCP transports",
-    transports = ["http", "tcp"]
-)]
-impl HttpTcpServer {
-    #[tool(description = "Process data via HTTP or TCP")]
-    async fn multi_transport(&self, data: String) -> McpResult<String> {
-        Ok(format!("Processed via HTTP/TCP: {}", data))
-    }
-}
-
-/// Demonstrates the use case of multiple discrete servers in one binary
-/// Each server has a specific purpose and only the transports it needs.
-/// This reduces:
-/// - Compilation time (fewer methods generated)
-/// - API surface (users only see methods they can use)
-/// - Confusion (clear intent about which transports are supported)
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== TurboMCP Transports Demonstration ===\n");
+    println!("=== TurboMCP v3 Transports Demonstration ===\n");
 
-    // Example 1: Backward compatibility (no transports specified)
-    println!("1. Backward-compatible server (all transports):");
-    println!("   - AllTransportsServer has: run_stdio(), run_http(), run_tcp(), etc.");
-    println!("   - No transports attribute = uses all enabled features\n");
+    println!("In TurboMCP v3, transports are enabled via Cargo features:\n");
+    println!("  [dependencies]");
+    println!("  turbomcp = {{ version = \"3.0\", features = [\"http\", \"tcp\"] }}\n");
 
-    // Example 2: Explicit single transport
-    println!("2. HTTP-only server (transports = [\"http\"]):");
-    println!("   - HttpOnlyServer has: run_http() ONLY");
-    println!("   - No run_tcp(), run_websocket(), run_unix() methods\n");
+    println!("Transport methods available with this build:\n");
+    println!("  - run_stdio() (always available)");
 
-    // Example 3: Explicit single transport
-    println!("3. TCP-only server (transports = [\"tcp\"]):");
-    println!("   - TcpOnlyServer has: run_tcp() ONLY");
-    println!("   - No run_http(), run_websocket(), run_unix() methods\n");
+    #[cfg(feature = "http")]
+    println!("  - run_http(\"0.0.0.0:8080\")");
 
-    // Example 4: Multiple explicit transports
-    println!("4. HTTP+TCP server (transports = [\"http\", \"tcp\"]):");
-    println!("   - HttpTcpServer has: run_http(), run_tcp()");
-    println!("   - No run_websocket(), run_unix() methods\n");
+    #[cfg(feature = "tcp")]
+    println!("  - run_tcp(\"0.0.0.0:9000\")");
 
-    println!("=== Use Cases ===\n");
+    #[cfg(feature = "websocket")]
+    println!("  - run_websocket(\"0.0.0.0:8080\")");
 
-    println!("Case 1: Public API server");
-    println!("  #[server(name = \"api\", transports = [\"http\"])]");
-    println!("  - Only expose HTTP interface to clients");
-    println!("  - Smaller API surface\n");
+    #[cfg(feature = "unix")]
+    println!("  - run_unix(\"/tmp/mcp.sock\")");
 
-    println!("Case 2: Internal service (same machine)");
-    println!("  #[server(name = \"internal\", transports = [\"unix\"])]");
-    println!("  - Use Unix sockets for local IPC");
-    println!("  - Lower overhead than TCP\n");
+    println!("\n=== Usage Examples ===\n");
 
-    println!("Case 3: Hybrid deployment");
-    println!("  #[server(name = \"hybrid\", transports = [\"http\", \"tcp\"])]");
-    println!("  - Public HTTP API for web clients");
-    println!("  - TCP for internal services\n");
+    println!("// STDIO (default, no extra features needed)");
+    println!("TransportsServer.run_stdio().await?;\n");
 
-    println!("Case 4: Backward compatibility (existing code)");
-    println!("  #[server(name = \"legacy\")] // no transports specified");
-    println!("  - Works exactly like previous versions");
-    println!("  - Generates all enabled transports automatically\n");
+    #[cfg(feature = "http")]
+    {
+        println!("// HTTP (requires 'http' feature)");
+        println!("TransportsServer.run_http(\"0.0.0.0:8080\").await?;\n");
+    }
 
-    println!("=== Validation ===\n");
-    println!("Valid transports: http, websocket, tcp, unix");
-    println!("Invalid transports will cause compile-time error:\n");
-    println!("  #[server(transports = [\"invalid\"])]");
-    println!(
-        "  → error: Invalid transport 'invalid'. Valid transports are: http, websocket, tcp, unix\n"
-    );
+    #[cfg(feature = "tcp")]
+    {
+        println!("// TCP (requires 'tcp' feature)");
+        println!("TransportsServer.run_tcp(\"0.0.0.0:9000\").await?;\n");
+    }
+
+    println!("=== Running STDIO server... ===\n");
+    TransportsServer.run_stdio().await?;
 
     Ok(())
 }

@@ -20,7 +20,7 @@ turbomcp-transport-traits = { workspace = true }
 turbomcp-protocol = { workspace = true }
 
 # Async runtime
-tokio = { workspace = true, features = ["io-std", "io-util", "sync", "time"] }
+tokio = { workspace = true, features = ["io-std", "io-util", "sync", "time", "process"] }
 tokio-util = { workspace = true, features = ["codec"] }
 futures = { workspace = true }
 async-trait = { workspace = true }

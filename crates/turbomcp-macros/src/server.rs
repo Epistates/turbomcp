@@ -2,9 +2,13 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
+use syn::spanned::Spanned;
 use syn::{Ident, ItemImpl};
 
-use super::tool::{ToolInfo, generate_call_args, generate_extraction_code, generate_schema_code};
+use super::tool::{
+    ToolAttrs, ToolInfo, generate_call_args, generate_extraction_code, generate_schema_code,
+    parse_quoted_value, parse_tags_array,
+};
 
 /// Information collected from analyzing the impl block.
 pub struct ServerInfo {
@@ -37,6 +41,10 @@ pub struct ResourceInfo {
     pub mime_type: Option<String>,
     /// Function name
     pub fn_name: Ident,
+    /// Tags for categorization
+    pub tags: Vec<String>,
+    /// Version string
+    pub version: Option<String>,
 }
 
 /// Prompt handler info.
@@ -50,6 +58,10 @@ pub struct PromptInfo {
     pub arguments: Vec<PromptArgumentInfo>,
     /// Function name
     pub fn_name: Ident,
+    /// Tags for categorization
+    pub tags: Vec<String>,
+    /// Version string
+    pub version: Option<String>,
 }
 
 /// Prompt argument info (HIGH-002).
@@ -99,10 +111,28 @@ impl ServerAttrs {
                 let value: syn::LitStr = meta.value()?.parse()?;
                 description = Some(value.value());
             } else if meta.path.is_ident("transports") {
-                // v3: Ignore `transports` attribute for backward compatibility.
-                // Transport selection is now done at runtime via McpHandlerExt methods.
+                // v3: The `transports` attribute is deprecated.
+                // Transport methods (run_http, run_tcp, etc.) are provided via the McpHandlerExt trait.
+                // Users must enable transport features in Cargo.toml instead.
                 meta.value()?;
                 let _: syn::ExprArray = meta.input.parse()?;
+                return Err(syn::Error::new(
+                    meta.path.span(),
+                    "The `transports` attribute is deprecated in TurboMCP v3.\n\n\
+                    Transport methods are now available via the McpHandlerExt trait when features are enabled.\n\n\
+                    To enable transports, add features in Cargo.toml:\n\
+                    ```toml\n\
+                    [dependencies]\n\
+                    turbomcp = { version = \"3.0\", features = [\"http\", \"tcp\", \"websocket\", \"unix\"] }\n\
+                    ```\n\n\
+                    Then use the transport methods directly:\n\
+                    - `server.run_stdio().await` (default, always available with 'stdio' feature)\n\
+                    - `server.run_http(\"0.0.0.0:8080\").await` (requires 'http' feature)\n\
+                    - `server.run_tcp(\"0.0.0.0:9000\").await` (requires 'tcp' feature)\n\
+                    - `server.run_websocket(\"0.0.0.0:8080\").await` (requires 'websocket' feature)\n\
+                    - `server.run_unix(\"/tmp/mcp.sock\").await` (requires 'unix' feature)\n\n\
+                    Remove the `transports = [...]` attribute from your #[server] macro.",
+                ));
             } else if meta.path.is_ident("root") {
                 // v3: Ignore `root` attribute for backward compatibility.
                 // Roots configuration should be done via builder API.
@@ -158,15 +188,15 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
         if let syn::ImplItem::Fn(method) = item {
             for attr in &method.attrs {
                 if attr.path().is_ident("tool") {
-                    // Extract description from attribute or doc comments
-                    let attr_desc = extract_attr_description(attr);
+                    // Parse tool attributes (description, tags, version)
+                    let tool_attrs = ToolAttrs::parse(attr)?;
                     let item_fn = syn::ItemFn {
                         attrs: method.attrs.clone(),
                         vis: method.vis.clone(),
                         sig: method.sig.clone(),
                         block: Box::new(syn::parse_quote!({})),
                     };
-                    let tool_info = ToolInfo::from_fn(&item_fn, attr_desc)?;
+                    let tool_info = ToolInfo::from_fn(&item_fn, tool_attrs)?;
                     tools.push(tool_info);
                     break;
                 } else if attr.path().is_ident("resource") {
@@ -179,18 +209,23 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
                         description,
                         mime_type: resource_attrs.mime_type,
                         fn_name,
+                        tags: resource_attrs.tags,
+                        version: resource_attrs.version,
                     });
                     break;
                 } else if attr.path().is_ident("prompt") {
                     let fn_name = method.sig.ident.clone();
-                    let description = extract_doc_comments(&method.attrs)
-                        .or_else(|| extract_attr_description(attr));
+                    let prompt_attrs = extract_prompt_attrs(attr);
+                    let description =
+                        extract_doc_comments(&method.attrs).or(prompt_attrs.description);
                     let arguments = extract_prompt_arguments(&method.sig);
                     prompts.push(PromptInfo {
                         name: fn_name.to_string(),
                         description,
                         arguments,
                         fn_name,
+                        tags: prompt_attrs.tags,
+                        version: prompt_attrs.version,
                     });
                     break;
                 }
@@ -209,27 +244,22 @@ pub fn analyze_impl(impl_block: &ItemImpl, attrs: &ServerAttrs) -> Result<Server
     })
 }
 
-/// Extract description from attribute.
-fn extract_attr_description(attr: &syn::Attribute) -> Option<String> {
-    if let syn::Meta::List(meta_list) = &attr.meta
-        && let Ok(lit) = syn::parse2::<syn::LitStr>(meta_list.tokens.clone())
-    {
-        return Some(lit.value());
-    }
-    None
-}
-
 /// Resource attribute parsed info (HIGH-001).
 pub struct ResourceAttrInfo {
     pub uri_template: String,
     pub mime_type: Option<String>,
+    /// Tags for categorization
+    pub tags: Vec<String>,
+    /// Version string
+    pub version: Option<String>,
 }
 
-/// Extract resource URI and optional mime_type from attribute.
+/// Extract resource URI and optional mime_type, tags, version from attribute.
 ///
 /// Supports:
 /// - `#[resource("uri://template")]` - URI only
 /// - `#[resource("uri://template", mime_type = "text/plain")]` - URI with MIME type
+/// - `#[resource("uri://template", tags = ["admin"], version = "1.0")]` - Full syntax
 fn extract_resource_attrs(attr: &syn::Attribute) -> Result<ResourceAttrInfo, syn::Error> {
     if let syn::Meta::List(meta_list) = &attr.meta {
         let tokens = meta_list.tokens.clone();
@@ -239,41 +269,92 @@ fn extract_resource_attrs(attr: &syn::Attribute) -> Result<ResourceAttrInfo, syn
             return Ok(ResourceAttrInfo {
                 uri_template: lit.value(),
                 mime_type: None,
+                tags: Vec::new(),
+                version: None,
             });
         }
 
-        // Parse comma-separated format: "uri", mime_type = "text/plain"
-        // Use token string parsing for simplicity
+        // Parse comma-separated format
         let token_str = tokens.to_string();
-        if token_str.contains(',') {
-            let parts: Vec<&str> = token_str.splitn(2, ',').collect();
-            if !parts.is_empty() {
-                // First part is the URI (with quotes)
-                let uri_str = parts[0].trim().trim_matches('"');
-                let mut mime_type = None;
+        if token_str.contains(',') || token_str.contains('[') {
+            // First part is the URI (with quotes)
+            let uri_end = token_str.find(',').unwrap_or(token_str.len());
+            let uri_str = token_str[..uri_end].trim().trim_matches('"');
 
-                // Second part might be mime_type = "..."
-                if parts.len() > 1 {
-                    let rest = parts[1].trim();
-                    if rest.starts_with("mime_type")
-                        && let Some(eq_pos) = rest.find('=')
-                    {
-                        let value = rest[eq_pos + 1..].trim().trim_matches('"');
-                        mime_type = Some(value.to_string());
-                    }
-                }
+            let mime_type = parse_quoted_value(&token_str, "mime_type");
+            let version = parse_quoted_value(&token_str, "version");
+            let tags = parse_tags_array(&token_str);
 
-                return Ok(ResourceAttrInfo {
-                    uri_template: uri_str.to_string(),
-                    mime_type,
-                });
-            }
+            return Ok(ResourceAttrInfo {
+                uri_template: uri_str.to_string(),
+                mime_type,
+                tags,
+                version,
+            });
         }
     }
     Err(syn::Error::new_spanned(
         attr,
         "Expected #[resource(\"uri://template\")] or #[resource(\"uri://template\", mime_type = \"text/plain\")]",
     ))
+}
+
+/// Check if a type is a reference to RequestContext.
+fn is_request_context_type(ty: &syn::Type) -> bool {
+    // Handle &RequestContext
+    if let syn::Type::Reference(type_ref) = ty {
+        return is_request_context_type(&type_ref.elem);
+    }
+
+    // Handle RequestContext path
+    if let syn::Type::Path(type_path) = ty {
+        let path_str = type_path
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect::<Vec<_>>()
+            .join("::");
+
+        // Match various ways RequestContext might be referenced
+        return path_str == "RequestContext"
+            || path_str.ends_with("::RequestContext")
+            || path_str.contains("RequestContext");
+    }
+
+    false
+}
+
+/// Parsed prompt attributes.
+#[derive(Default)]
+struct PromptAttrs {
+    description: Option<String>,
+    tags: Vec<String>,
+    version: Option<String>,
+}
+
+/// Extract prompt attributes from #[prompt(...)] attribute.
+fn extract_prompt_attrs(attr: &syn::Attribute) -> PromptAttrs {
+    let mut attrs = PromptAttrs::default();
+
+    // Handle empty #[prompt]
+    let syn::Meta::List(meta_list) = &attr.meta else {
+        return attrs;
+    };
+
+    // Handle #[prompt("description")] shorthand
+    if let Ok(lit) = syn::parse2::<syn::LitStr>(meta_list.tokens.clone()) {
+        attrs.description = Some(lit.value());
+        return attrs;
+    }
+
+    // Parse full syntax from token string
+    let token_str = meta_list.tokens.to_string();
+    attrs.description = parse_quoted_value(&token_str, "description");
+    attrs.version = parse_quoted_value(&token_str, "version");
+    attrs.tags = parse_tags_array(&token_str);
+
+    attrs
 }
 
 /// Extract prompt arguments from function signature (HIGH-002).
@@ -286,8 +367,13 @@ fn extract_prompt_arguments(sig: &syn::Signature) -> Vec<PromptArgumentInfo> {
         {
             let name = pat_ident.ident.to_string();
 
-            // Skip self and ctx parameters
-            if name == "self" || name == "ctx" {
+            // Skip self parameter
+            if name == "self" {
+                continue;
+            }
+
+            // Skip RequestContext parameters (regardless of name: ctx, _ctx, context, etc.)
+            if is_request_context_type(&pat_type.ty) {
                 continue;
             }
 
@@ -354,6 +440,47 @@ fn strip_handler_attributes(impl_block: &ItemImpl) -> ItemImpl {
     stripped
 }
 
+/// Generate code for the meta field (tags and version).
+fn generate_meta_code(tags: &[String], version: &Option<String>) -> TokenStream {
+    if tags.is_empty() && version.is_none() {
+        return quote! { None };
+    }
+
+    let tags_code = if tags.is_empty() {
+        quote! {}
+    } else {
+        let tag_strings = tags.iter().map(|t| quote! { #t.to_string() });
+        quote! {
+            meta.insert(
+                "tags".to_string(),
+                ::turbomcp::__macro_support::serde_json::Value::Array(
+                    vec![#(::turbomcp::__macro_support::serde_json::Value::String(#tag_strings)),*]
+                )
+            );
+        }
+    };
+
+    let version_code = if let Some(ver) = version {
+        quote! {
+            meta.insert(
+                "version".to_string(),
+                ::turbomcp::__macro_support::serde_json::Value::String(#ver.to_string())
+            );
+        }
+    } else {
+        quote! {}
+    };
+
+    quote! {
+        {
+            let mut meta = ::std::collections::HashMap::new();
+            #tags_code
+            #version_code
+            Some(meta)
+        }
+    }
+}
+
 /// Generate McpHandler implementation.
 pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenStream {
     let struct_name = &info.struct_name;
@@ -374,6 +501,10 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         let tool_name = &tool.name;
         let tool_desc = &tool.description;
         let schema_code = generate_schema_code(&tool.parameters);
+
+        // Generate meta field if tags or version present
+        let meta_code = generate_meta_code(&tool.tags, &tool.version);
+
         quote! {
             ::turbomcp::__macro_support::turbomcp_types::Tool {
                 name: #tool_name.to_string(),
@@ -383,6 +514,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 icon: None,
                 annotations: None,
                 output_schema: None,
+                meta: #meta_code,
             }
         }
     });
@@ -392,15 +524,24 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         let uri = &resource.uri_template;
         let name = &resource.name;
         let desc = resource.description.as_deref().unwrap_or("");
+        let meta_code = generate_meta_code(&resource.tags, &resource.version);
         let mime_type_code = if let Some(mime) = &resource.mime_type {
-            quote! { .with_mime_type(#mime) }
+            quote! { Some(#mime.to_string()) }
         } else {
-            quote! {}
+            quote! { None }
         };
         quote! {
-            ::turbomcp::__macro_support::turbomcp_types::Resource::new(#uri, #name)
-                .with_description(#desc)
-                #mime_type_code
+            ::turbomcp::__macro_support::turbomcp_types::Resource {
+                uri: #uri.to_string(),
+                name: #name.to_string(),
+                description: Some(#desc.to_string()),
+                title: None,
+                icon: None,
+                mime_type: #mime_type_code,
+                annotations: None,
+                size: None,
+                meta: #meta_code,
+            }
         }
     });
 
@@ -408,21 +549,36 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
     let prompt_list_code = info.prompts.iter().map(|prompt| {
         let name = &prompt.name;
         let desc = prompt.description.as_deref().unwrap_or("");
+        let meta_code = generate_meta_code(&prompt.tags, &prompt.version);
 
-        // Generate argument builder calls
-        let arg_code = prompt.arguments.iter().map(|arg| {
-            let arg_name = &arg.name;
-            let arg_desc = arg.description.as_deref().unwrap_or("");
-            if arg.required {
-                quote! { .with_required_arg(#arg_name, #arg_desc) }
-            } else {
-                quote! { .with_optional_arg(#arg_name, #arg_desc) }
-            }
-        });
+        // Generate arguments
+        let args_code = if prompt.arguments.is_empty() {
+            quote! { None }
+        } else {
+            let arg_structs = prompt.arguments.iter().map(|arg| {
+                let arg_name = &arg.name;
+                let arg_desc = arg.description.as_deref().unwrap_or("");
+                let required = arg.required;
+                quote! {
+                    ::turbomcp::__macro_support::turbomcp_types::PromptArgument {
+                        name: #arg_name.to_string(),
+                        description: Some(#arg_desc.to_string()),
+                        required: Some(#required),
+                    }
+                }
+            });
+            quote! { Some(vec![#(#arg_structs),*]) }
+        };
 
         quote! {
-            ::turbomcp::__macro_support::turbomcp_types::Prompt::new(#name, #desc)
-                #(#arg_code)*
+            ::turbomcp::__macro_support::turbomcp_types::Prompt {
+                name: #name.to_string(),
+                description: Some(#desc.to_string()),
+                title: None,
+                icon: None,
+                arguments: #args_code,
+                meta: #meta_code,
+            }
         }
     });
 

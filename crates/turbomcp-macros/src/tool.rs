@@ -67,6 +67,10 @@ pub struct ToolInfo {
     pub sig: Signature,
     /// Parameters extracted from signature
     pub parameters: Vec<ParameterInfo>,
+    /// Tags for categorization (e.g., ["admin", "dangerous"])
+    pub tags: Vec<String>,
+    /// Version string (e.g., "2.0.0")
+    pub version: Option<String>,
 }
 
 /// Information about a function parameter.
@@ -82,14 +86,135 @@ pub struct ParameterInfo {
     pub is_optional: bool,
 }
 
+/// Parsed attributes from the #[tool(...)] macro.
+#[derive(Default)]
+pub struct ToolAttrs {
+    /// Tool description
+    pub description: Option<String>,
+    /// Tags for categorization
+    pub tags: Vec<String>,
+    /// Version string
+    pub version: Option<String>,
+}
+
+impl ToolAttrs {
+    /// Parse tool attributes from a syn::Attribute.
+    ///
+    /// Supports multiple formats:
+    /// - `#[tool]` - no attributes
+    /// - `#[tool("description")]` - just description
+    /// - `#[tool(description = "desc", tags = ["a", "b"], version = "1.0")]` - full syntax
+    pub fn parse(attr: &syn::Attribute) -> Result<Self, syn::Error> {
+        let mut attrs = Self::default();
+
+        // Handle empty #[tool]
+        let syn::Meta::List(meta_list) = &attr.meta else {
+            return Ok(attrs);
+        };
+
+        // Handle #[tool("description")] shorthand
+        if let Ok(lit) = syn::parse2::<syn::LitStr>(meta_list.tokens.clone()) {
+            attrs.description = Some(lit.value());
+            return Ok(attrs);
+        }
+
+        // Parse #[tool(description = "...", tags = [...], version = "...")]
+        let parser = syn::meta::parser(|meta| {
+            if meta.path.is_ident("description") {
+                let value: syn::LitStr = meta.value()?.parse()?;
+                attrs.description = Some(value.value());
+            } else if meta.path.is_ident("tags") {
+                // Parse tags = ["a", "b", "c"]
+                meta.parse_nested_meta(|nested| {
+                    if let Ok(lit) = nested.value() {
+                        if let Ok(s) = lit.parse::<syn::LitStr>() {
+                            attrs.tags.push(s.value());
+                        }
+                    } else {
+                        // Handle tags = ["a", "b"] format (array)
+                        let content: syn::LitStr = nested.input.parse()?;
+                        attrs.tags.push(content.value());
+                    }
+                    Ok(())
+                })?;
+            } else if meta.path.is_ident("version") {
+                let value: syn::LitStr = meta.value()?.parse()?;
+                attrs.version = Some(value.value());
+            } else {
+                // Unknown attribute - skip it
+                let _ = meta.value();
+            }
+            Ok(())
+        });
+
+        // Try to parse, but if it fails with the nested parser, try an alternative
+        if syn::parse::Parser::parse2(parser, meta_list.tokens.clone()).is_err() {
+            // Alternative: parse comma-separated items including array literals
+            attrs = Self::parse_alternative(&meta_list.tokens)?;
+        }
+
+        Ok(attrs)
+    }
+
+    /// Alternative parser for complex attribute syntax.
+    fn parse_alternative(tokens: &proc_macro2::TokenStream) -> Result<Self, syn::Error> {
+        let mut attrs = Self::default();
+        let token_str = tokens.to_string();
+
+        attrs.description = parse_quoted_value(&token_str, "description");
+        attrs.version = parse_quoted_value(&token_str, "version");
+        attrs.tags = parse_tags_array(&token_str);
+
+        Ok(attrs)
+    }
+}
+
+/// Parse a `key = "value"` pattern from token string.
+pub fn parse_quoted_value(token_str: &str, key: &str) -> Option<String> {
+    let key_start = token_str.find(key)?;
+    let eq_pos = token_str[key_start..].find('=')?;
+    let after_eq = &token_str[key_start + eq_pos + 1..];
+    let quote_start = after_eq.find('"')?;
+    let after_quote = &after_eq[quote_start + 1..];
+    let quote_end = after_quote.find('"')?;
+    Some(after_quote[..quote_end].to_string())
+}
+
+/// Parse `tags = ["a", "b", "c"]` pattern from token string.
+pub fn parse_tags_array(token_str: &str) -> Vec<String> {
+    let Some(tags_start) = token_str.find("tags") else {
+        return Vec::new();
+    };
+    let Some(bracket_start) = token_str[tags_start..].find('[') else {
+        return Vec::new();
+    };
+    let after_bracket = &token_str[tags_start + bracket_start + 1..];
+    let Some(bracket_end) = after_bracket.find(']') else {
+        return Vec::new();
+    };
+
+    let tags_content = &after_bracket[..bracket_end];
+    tags_content
+        .split(',')
+        .filter_map(|part| {
+            let part = part.trim();
+            if part.starts_with('"') && part.ends_with('"') && part.len() >= 2 {
+                Some(part[1..part.len() - 1].to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 impl ToolInfo {
     /// Extract tool info from a function.
-    pub fn from_fn(item: &ItemFn, attr_description: Option<String>) -> Result<Self, syn::Error> {
+    pub fn from_fn(item: &ItemFn, attrs: ToolAttrs) -> Result<Self, syn::Error> {
         let name = item.sig.ident.to_string();
 
         // Get description from doc comments or attribute
         let doc_description = extract_doc_comments(&item.attrs);
-        let description = attr_description.or(doc_description).unwrap_or_default();
+        let description = attrs.description.or(doc_description).unwrap_or_default();
 
         // Analyze parameters
         let parameters = analyze_parameters(&item.sig)?;
@@ -99,6 +224,8 @@ impl ToolInfo {
             description,
             sig: item.sig.clone(),
             parameters,
+            tags: attrs.tags,
+            version: attrs.version,
         })
     }
 }

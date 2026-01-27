@@ -103,6 +103,22 @@ required-features = ["stdio", "http", "tcp"]
 [[example]]
 name = "type_state_builders_demo"
 
+[[example]]
+name = "tags_versioning"
+required-features = ["stdio"]
+
+[[example]]
+name = "visibility"
+
+[[example]]
+name = "composition"
+
+[[example]]
+name = "middleware"
+
+[[example]]
+name = "test_client"
+
 # ============================================================================
 # Features
 # ============================================================================

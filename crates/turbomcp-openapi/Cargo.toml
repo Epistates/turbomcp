@@ -1,0 +1,55 @@
+[package]
+name = "turbomcp-openapi"
+version = "3.0.0-beta.4"
+edition = "2024"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "OpenAPI to MCP conversion - expose REST APIs as MCP tools and resources"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+keywords = ["mcp", "openapi", "rest", "api", "conversion"]
+categories = ["web-programming", "development-tools"]
+readme = "README.md"
+rust-version = "1.89.0"
+
+[dependencies]
+# Core TurboMCP
+turbomcp-core = { path = "../turbomcp-core", version = "3.0.0-beta.4" }
+turbomcp-types = { path = "../turbomcp-types", version = "3.0.0-beta.4" }
+
+# OpenAPI parsing
+openapiv3 = "2.2"
+
+# HTTP client for making API calls
+reqwest = { workspace = true, features = ["json"] }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+serde_yaml = "0.9"
+
+# Error handling
+thiserror = { workspace = true }
+
+# URL handling
+url = "2.5"
+
+# Regex for route pattern matching
+regex = "1.11"
+
+# IP address validation for SSRF protection
+ipnetwork = "0.20"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.14"
+wiremock = "0.6"
+
+[[example]]
+name = "petstore"
+
+[features]
+default = []

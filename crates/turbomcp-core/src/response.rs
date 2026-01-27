@@ -231,6 +231,25 @@ impl<T: Serialize> IntoToolResponse for Json<T> {
     }
 }
 
+impl<T: Serialize> turbomcp_types::IntoToolResult for Json<T> {
+    fn into_tool_result(self) -> turbomcp_types::ToolResult {
+        match serde_json::to_string_pretty(&self.0) {
+            Ok(json) => {
+                // Enforce size limit to prevent DoS from oversized responses
+                if json.len() > crate::MAX_MESSAGE_SIZE {
+                    return turbomcp_types::ToolResult::error(format!(
+                        "JSON output too large: {} bytes exceeds {} byte limit",
+                        json.len(),
+                        crate::MAX_MESSAGE_SIZE
+                    ));
+                }
+                turbomcp_types::ToolResult::text(json)
+            }
+            Err(e) => turbomcp_types::ToolResult::error(format!("JSON serialization failed: {e}")),
+        }
+    }
+}
+
 /// Wrapper for explicitly returning text content.
 ///
 /// This is semantically equivalent to returning a `String`, but makes intent clearer.

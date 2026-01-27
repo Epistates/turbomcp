@@ -10,6 +10,7 @@ pub mod completion;
 pub mod elicitation;
 pub mod ping;
 pub mod request;
+pub mod rich;
 pub mod server_initiated;
 pub mod templates;
 
@@ -20,6 +21,7 @@ pub use completion::*;
 pub use elicitation::*;
 pub use ping::*;
 pub use request::*;
+pub use rich::*;
 pub use server_initiated::*;
 pub use templates::*;
 

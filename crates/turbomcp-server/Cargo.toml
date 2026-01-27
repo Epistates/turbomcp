@@ -38,6 +38,7 @@ thiserror = { workspace = true }
 bytes = { workspace = true }
 parking_lot = "0.12"
 uuid = { workspace = true }
+dashmap = "6.1"
 
 # HTTP dependencies (optional - for http/websocket features)
 axum = { workspace = true, optional = true }

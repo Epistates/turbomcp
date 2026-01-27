@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.0.0-beta.4] - 2026-01-25
 
+### Added
+
+#### Child Process Support (`turbomcp-stdio`)
+- **`StdioTransport::from_child(&mut Child)`** - Create transport from spawned child process for MCP clients that communicate with server processes
+- **`StdioTransport::from_raw<R, W>(reader, writer)`** - Lower-level constructor accepting any `AsyncRead`/`AsyncWrite` streams
+- Uses boxed trait objects internally to support both process stdio and child stdio with zero code duplication
+- Comprehensive tests for duplex communication
+
+#### Custom Struct Tool Returns (`turbomcp-core`)
+- **`IntoToolResult` for `Json<T>`** - Tool handlers can now return custom structs wrapped in `Json<T>`:
+  ```rust
+  #[derive(Serialize)]
+  struct UserData { name: String, age: u32 }
+
+  #[tool(description = "Get user")]
+  async fn get_user(&self) -> McpResult<Json<UserData>> {
+      Ok(Json(UserData { name: "Alice".into(), age: 30 }))
+  }
+  ```
+
 ### Fixed
 
 #### JWT Base64 Decoding (`turbomcp-wasm`)
@@ -18,6 +38,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Property Tests (`turbomcp-transport`)
 - **Fixed `prop_cache_clear_works` test** - Test now correctly deduplicates message IDs before checking post-clear state, preventing false failures with duplicate inputs like `["t", "t"]`
+
+#### Prompt Handler Context Detection (`turbomcp-macros`)
+- **Type-based `RequestContext` detection** - Prompt handlers now detect `&RequestContext` parameter by type instead of requiring exact name "ctx"
+- All naming variants now work: `ctx`, `_ctx`, `context`, or any other name
+- Previously, using `_ctx: &RequestContext` would incorrectly treat it as a prompt argument
+
+#### Deprecated `transports` Attribute (`turbomcp-macros`)
+- **Helpful compile error for deprecated syntax** - Using `transports = [...]` in `#[server]` macro now produces a clear error message explaining:
+  - The attribute is deprecated in v3
+  - How to enable transports via Cargo.toml features
+  - Available transport methods (`run_stdio`, `run_http`, `run_tcp`, `run_websocket`, `run_unix`)
+
+### Changed
+
+#### Prelude Exports (`turbomcp`)
+- **Added `Role` to prelude** - `Role::User` and `Role::Assistant` now available without explicit import
+- Documentation updated to use ergonomic `PromptResult` builder API:
+  ```rust
+  // Single message
+  Ok(PromptResult::user("Hello!"))
+
+  // Multi-message conversation
+  Ok(PromptResult::user("Question")
+      .add_assistant("Answer")
+      .with_description("A conversation"))
+  ```
+
+### Documentation
+
+#### Macro Syntax Corrections (`docs/api/macros.md`)
+- **Resource macro syntax** - Clarified that `#[resource("uri://template")]` requires URI template as first argument (not `description = "..."`)
+- **Parameter descriptions** - Documented `#[description("...")]` attribute for tool/prompt parameters
+- Updated all examples to use correct `Message`, `Role`, and `PromptResult` types
 
 ## [3.0.0-beta.3] - 2026-01-22
 

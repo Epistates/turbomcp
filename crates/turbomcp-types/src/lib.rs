@@ -44,12 +44,16 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+extern crate alloc;
+
+pub mod component;
 pub mod content;
 pub mod definitions;
 pub mod results;
 pub mod traits;
 
 // Re-export everything at the crate root for convenience
+pub use component::*;
 pub use content::*;
 pub use definitions::*;
 pub use results::*;

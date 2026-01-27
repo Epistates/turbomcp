@@ -20,7 +20,7 @@ use turbomcp::prelude::*;
 struct TcpServer;
 
 #[cfg(feature = "tcp")]
-#[turbomcp::server(name = "tcp-demo", version = "1.0.0", transports = ["tcp"])]
+#[turbomcp::server(name = "tcp-demo", version = "1.0.0")]
 impl TcpServer {
     #[tool("Echo a message")]
     async fn echo(&self, message: String) -> McpResult<String> {

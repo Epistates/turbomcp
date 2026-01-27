@@ -21,8 +21,7 @@ struct CleanServer;
 #[turbomcp::server(
     name = "clean-server",
     version = "1.0.0",
-    description = "Minimal MCP server demonstrating clean architecture",
-    transports = ["stdio"]
+    description = "Minimal MCP server demonstrating clean architecture"
 )]
 impl CleanServer {
     /// Get current server time

@@ -38,6 +38,8 @@ impl CommandExecutor {
             Commands::Sample(cmd) => self.execute_sampling_command(cmd).await,
             Commands::Connect(conn) => self.execute_connect(conn).await,
             Commands::Status(conn) => self.execute_status(conn).await,
+            Commands::Dev(args) => self.execute_dev(args),
+            Commands::Install(args) => self.execute_install(args),
         }
     }
 
@@ -349,5 +351,15 @@ impl CommandExecutor {
 
         println!("Status: Connected");
         self.formatter.display_server_info(&result.server_info)
+    }
+
+    // Development commands
+
+    fn execute_dev(&self, args: DevArgs) -> CliResult<()> {
+        crate::dev::execute(&args).map_err(|e| CliError::Other(e.to_string()))
+    }
+
+    fn execute_install(&self, args: InstallArgs) -> CliResult<()> {
+        crate::install::execute(&args).map_err(|e| CliError::Other(e.to_string()))
     }
 }

@@ -9,7 +9,7 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct HelloServer;
 
-#[turbomcp::server(name = "hello", version = "1.0.0", transports = ["stdio"])]
+#[turbomcp::server(name = "hello", version = "1.0.0")]
 impl HelloServer {
     /// Say hello to someone
     #[tool(description = "Say hello to someone")]

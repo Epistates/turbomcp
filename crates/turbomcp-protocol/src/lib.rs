@@ -318,8 +318,9 @@ pub use context::{
     CompletionCapabilities, CompletionContext, CompletionOption,
     CompletionReference as ContextCompletionReference, ConnectionMetrics, ElicitationContext,
     ElicitationState, PingContext, PingOrigin, RequestContext, RequestContextExt, RequestInfo,
-    ResourceTemplateContext, ResponseContext, ServerInitiatedContext, ServerInitiatedType,
-    ServerToClientRequests, TemplateParameter,
+    ResourceTemplateContext, ResponseContext, RichContextExt, ServerInitiatedContext,
+    ServerInitiatedType, ServerToClientRequests, SessionStateGuard, StateError, TemplateParameter,
+    active_sessions_count, cleanup_session_state,
 };
 // Timestamp and ContentType are now in types module
 pub use enhanced_registry::{EnhancedRegistry, HandlerStats};

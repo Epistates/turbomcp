@@ -1,6 +1,6 @@
 # TurboMCP Examples
 
-**18 focused examples demonstrating TurboMCP 2.0 - from Hello World to production apps.**
+**20+ focused examples demonstrating TurboMCP 3.0 - from Hello World to production apps.**
 
 ## 🚀 Quick Start
 
@@ -11,8 +11,17 @@ cargo run --example hello_world
 # Clean macro-based server (58 lines)
 cargo run --example macro_server
 
-# NEW: Rich tool descriptions with metadata (127 lines)
-cargo run --example rich_tool_descriptions
+# NEW in v3: Progressive disclosure with visibility
+cargo run --example visibility
+
+# NEW in v3: Server composition with namespacing
+cargo run --example composition
+
+# NEW in v3: Typed middleware
+cargo run --example middleware
+
+# NEW in v3: In-memory test client
+cargo run --example test_client
 
 # Complete STDIO app
 cargo run --example stdio_app
@@ -39,17 +48,17 @@ Learn server creation patterns:
 |---------|-------|----------------|
 | **hello_world.rs** | 24 | Absolute simplest MCP server - one tool |
 | **macro_server.rs** | 58 | Clean `#[server]` macro API, multiple tools |
-| **rich_tool_descriptions.rs** | 127 | NEW: Rich tool metadata (usage, performance, related, examples) |
-| **tools.rs** | 77 | Parameter types, validation, error handling |
-| **resources.rs** | 59 | Resource handlers with URIs |
+| **tags_versioning.rs** | 130 | Tags and versioning for component organization |
 | **stateful.rs** | 59 | Arc<RwLock<T>> shared state pattern |
-| **http_server.rs** | 38 | HTTP/SSE transport (web-compatible) |
+| **visibility.rs** | 140 | Progressive disclosure with VisibilityLayer |
+| **composition.rs** | 195 | Mounting multiple servers with CompositeHandler |
+| **middleware.rs** | 250 | Typed middleware for logging, metrics, access control |
 
-**Total:** 7 examples averaging 63 lines
+**Total:** 7 examples
 
 ---
 
-### 2️⃣ Client Examples
+### 2️⃣ Client & Testing Examples
 
 Learn client usage patterns:
 
@@ -59,8 +68,19 @@ Learn client usage patterns:
 | **comprehensive.rs** | 76 | All MCP features (tools, resources, prompts) |
 | **elicitation_interactive_client.rs** | 237 | Interactive user input handling |
 | **sampling_client.rs** | 277 | LLM sampling protocol |
+| **test_client.rs** | 190 | In-memory testing with McpTestClient (NEW in v3) |
 
-**Total:** 4 examples averaging 159 lines
+**Total:** 5 examples
+
+**In-Memory Testing (NEW in v3):**
+```bash
+cargo run --example test_client
+```
+
+The `McpTestClient` enables fast unit testing without network transport overhead:
+- Direct handler invocation (no TCP/HTTP setup)
+- Fluent assertion API (`result.assert_text("expected")`)
+- Session simulation for stateful tests
 
 ---
 
@@ -211,17 +231,33 @@ impl MyServer { ... }
 **Need shared state?**
 → See `stateful.rs` for Arc<RwLock<T>> pattern
 
+**NEW in v3: Want progressive disclosure (hide admin tools)?**
+→ See `visibility.rs` for VisibilityLayer with tag-based filtering
+
+**NEW in v3: Want to compose multiple servers?**
+→ See `composition.rs` for CompositeHandler with prefix namespacing
+
+**NEW in v3: Want typed middleware (logging, metrics)?**
+→ See `middleware.rs` for McpMiddleware trait
+
+**NEW in v3: Want in-memory testing?**
+→ See `test_client.rs` for McpTestClient without network overhead
+
+**NEW in v3: Want to expose REST APIs as MCP?**
+→ See `turbomcp-openapi` crate with `petstore` example
+
 ---
 
 ## ✨ Example Standards
 
-All examples follow TurboMCP 2.0 principles:
+All examples follow TurboMCP 3.0 principles:
 
-✅ **Minimal & Focused** - One concept per example (avg 95 lines)
+✅ **Minimal & Focused** - One concept per example (avg 100 lines)
 ✅ **Production-Ready** - Real code, no placeholders
-✅ **MCP 2025-06-18 Compliant** - Latest specification
+✅ **MCP 2025-11-25 Compliant** - Latest specification
 ✅ **Type-Safe** - Full compile-time validation
 ✅ **Well-Documented** - Clear purpose and usage
+✅ **Security-Hardened** - SSRF protection, timeouts (OpenAPI)
 
 ---
 
@@ -255,11 +291,11 @@ cargo build --examples --all-features
 
 ## 📊 Summary
 
-- **Total Examples:** 16 (was 48)
-- **Average Length:** 95 lines (was 250)
+- **Total Examples:** 20+ (was 48 in v1)
+- **Average Length:** ~100 lines (was 250)
 - **All Runnable:** 100% configured
 - **Zero Bloat:** Every example teaches one thing
-- **New in 2.0:** Transport demos (TCP, Unix)
+- **New in v3:** Progressive disclosure, composition, middleware, test client, OpenAPI
 
 ---
 
@@ -269,7 +305,11 @@ cargo build --examples --all-features
 - [MCP Specification](https://modelcontextprotocol.io)
 - [Migration Guide](../../../MIGRATION.md)
 - [Main README](../../../README.md)
+- [OpenAPI Integration](../../turbomcp-openapi/README.md) - REST-to-MCP conversion
+- [Feature Gap Analysis](../../../docs/FEATURE_GAP_ANALYSIS.md) - v3 feature comparison
 
 ---
 
 **New to MCP?** Start with `hello_world.rs` and work through the server examples!
+
+**Upgrading from v2?** Check the new v3 examples: `visibility.rs`, `composition.rs`, `middleware.rs`, `test_client.rs`
