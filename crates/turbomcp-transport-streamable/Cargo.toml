@@ -1,0 +1,36 @@
+[package]
+name = "turbomcp-transport-streamable"
+version = "3.0.0-beta.4"
+edition = "2024"
+authors = ["Nicholas Paterno <nick@epistates.com>"]
+description = "Streamable HTTP transport types for TurboMCP - SSE encoding, session management, MCP 2025-11-25 spec"
+license = "MIT"
+repository = "https://github.com/Epistates/turbomcp"
+homepage = "https://turbomcp.org"
+keywords = ["mcp", "transport", "streamable-http", "sse", "session"]
+categories = ["network-programming", "wasm", "no-std"]
+readme = "README.md"
+rust-version = "1.89.0"
+
+[features]
+default = ["std"]
+std = ["serde/std", "serde_json/std"]
+# WASM-specific optimizations
+wasm = []
+# Enable alloc for no_std environments
+alloc = []
+
+[dependencies]
+# Serialization (no_std compatible with alloc)
+# Note: Using local deps instead of workspace to enable default-features = false for no_std support
+serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+# Base64 for event ID encoding (pure Rust, no_std)
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+
+# Cryptographically secure random number generation (works on WASM via js feature)
+getrandom = { version = "0.2", default-features = false, features = ["js"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

@@ -210,6 +210,29 @@ struct CacheEntry {
     fetched_at: f64, // js_sys::Date timestamp
 }
 
+/// Internal fetch error type that tracks retryability without exposing it to clients.
+///
+/// This allows the retry logic to distinguish transient from permanent failures
+/// while returning generic error messages to prevent information leakage.
+enum FetchError {
+    /// Transient error that should be retried (network failures, 5xx server errors)
+    Transient(AuthError),
+    /// Permanent error that should not be retried (4xx, validation failures)
+    Permanent(AuthError),
+}
+
+impl FetchError {
+    fn into_auth_error(self) -> AuthError {
+        match self {
+            Self::Transient(e) | Self::Permanent(e) => e,
+        }
+    }
+
+    fn is_transient(&self) -> bool {
+        matches!(self, Self::Transient(_))
+    }
+}
+
 /// JWKS cache for efficient key lookups.
 ///
 /// Caches fetched JWKS and automatically refreshes when expired.
@@ -377,15 +400,15 @@ impl JwksCache {
         let mut last_error = None;
 
         for attempt in 0..=self.max_retries {
-            match self.fetch_jwks_once().await {
+            match self.fetch_jwks_internal().await {
                 Ok(jwks) => return Ok(jwks),
-                Err(e) => {
+                Err(fetch_err) => {
                     // Only retry on transient errors (network failures, 5xx)
-                    if !Self::is_retryable_error(&e) {
-                        return Err(e);
+                    if !fetch_err.is_transient() {
+                        return Err(fetch_err.into_auth_error());
                     }
 
-                    last_error = Some(e);
+                    last_error = Some(fetch_err.into_auth_error());
 
                     // Don't sleep after last attempt
                     if attempt < self.max_retries {
@@ -397,74 +420,112 @@ impl JwksCache {
         }
 
         Err(last_error.unwrap_or_else(|| {
-            AuthError::KeyFetchError("JWKS fetch failed after retries".to_string())
+            AuthError::KeyFetchError("Failed to fetch JWKS from authorization server".to_string())
         }))
     }
 
-    /// Single JWKS fetch attempt (no retry)
-    async fn fetch_jwks_once(&self) -> Result<JwkSet, AuthError> {
+    /// Internal JWKS fetch with error classification (no retry).
+    ///
+    /// Returns `FetchError` to classify transient vs permanent failures
+    /// without exposing this information in error messages.
+    async fn fetch_jwks_internal(&self) -> Result<JwkSet, FetchError> {
         // SECURITY: Validate URL uses HTTPS before fetching key material
-        self.validate_url()?;
+        self.validate_url().map_err(FetchError::Permanent)?;
 
-        let window = web_sys::window()
-            .ok_or_else(|| AuthError::Internal("No window object available".to_string()))?;
+        let window = web_sys::window().ok_or_else(|| {
+            FetchError::Permanent(AuthError::Internal(
+                "No window object available".to_string(),
+            ))
+        })?;
 
         // Create fetch request
-        let request = web_sys::Request::new_with_str(&self.url)
-            .map_err(|e| AuthError::KeyFetchError(format!("Failed to create request: {:?}", e)))?;
+        let request = web_sys::Request::new_with_str(&self.url).map_err(|_| {
+            // Request creation failure is permanent (bad URL, etc.)
+            FetchError::Permanent(AuthError::KeyFetchError(
+                "Failed to fetch JWKS from authorization server".to_string(),
+            ))
+        })?;
 
-        // Execute fetch
+        // Execute fetch - network errors are transient
         let promise = window.fetch_with_request(&request);
-        let response = JsFuture::from(promise)
-            .await
-            .map_err(|e| AuthError::KeyFetchError(format!("Fetch failed: {:?}", e)))?;
+        let response = JsFuture::from(promise).await.map_err(|e| {
+            // Log network error details for operators
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::warn_1(&format!("JWKS network fetch failed: {:?}", e).into());
+            FetchError::Transient(AuthError::KeyFetchError(
+                "Failed to fetch JWKS from authorization server".to_string(),
+            ))
+        })?;
 
         let response: web_sys::Response = response.dyn_into().map_err(|_| {
-            AuthError::KeyFetchError("Response is not a Response object".to_string())
+            FetchError::Permanent(AuthError::KeyFetchError(
+                "Failed to fetch JWKS from authorization server".to_string(),
+            ))
         })?;
 
         if !response.ok() {
             let status = response.status();
-            return Err(AuthError::KeyFetchError(format!(
-                "HTTP error: {} (retryable: {})",
-                status,
-                status >= 500
-            )));
+            // Log details for operators only
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::warn_1(
+                &format!("JWKS fetch failed with HTTP status {}", status).into(),
+            );
+
+            // 5xx errors are transient (server issues), 4xx are permanent (client/config issues)
+            let error = AuthError::KeyFetchError(
+                "Failed to fetch JWKS from authorization server".to_string(),
+            );
+            return if status >= 500 {
+                Err(FetchError::Transient(error))
+            } else {
+                Err(FetchError::Permanent(error))
+            };
         }
 
-        // Parse JSON body
-        let json_promise = response
-            .json()
-            .map_err(|e| AuthError::KeyFetchError(format!("Failed to get JSON: {:?}", e)))?;
+        // Parse JSON body - parse errors are permanent
+        let json_promise = response.json().map_err(|_| {
+            FetchError::Permanent(AuthError::KeyFetchError(
+                "Failed to fetch JWKS from authorization server".to_string(),
+            ))
+        })?;
 
-        let json_value = JsFuture::from(json_promise)
-            .await
-            .map_err(|e| AuthError::KeyFetchError(format!("JSON parse failed: {:?}", e)))?;
+        let json_value = JsFuture::from(json_promise).await.map_err(|_| {
+            FetchError::Permanent(AuthError::KeyFetchError(
+                "Failed to fetch JWKS from authorization server".to_string(),
+            ))
+        })?;
 
-        // Convert to our JwkSet type
-        let jwks: JwkSet = serde_wasm_bindgen::from_value(json_value)
-            .map_err(|e| AuthError::KeyFetchError(format!("Invalid JWKS format: {:?}", e)))?;
+        // Convert to our JwkSet type - format errors are permanent
+        let jwks: JwkSet = serde_wasm_bindgen::from_value(json_value).map_err(|e| {
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::warn_1(&format!("JWKS format invalid: {:?}", e).into());
+            FetchError::Permanent(AuthError::KeyFetchError(
+                "Failed to fetch JWKS from authorization server".to_string(),
+            ))
+        })?;
 
         Ok(jwks)
     }
 
-    /// Check if an error is retryable (transient)
-    fn is_retryable_error(error: &AuthError) -> bool {
-        match error {
-            AuthError::KeyFetchError(msg) => {
-                // Retry on network errors and 5xx server errors
-                msg.contains("Fetch failed") || msg.contains("HTTP error: 5")
-            }
-            _ => false,
-        }
-    }
-
-    /// Sleep for the specified milliseconds using setTimeout
+    /// Sleep for the specified milliseconds.
+    ///
+    /// Uses `setTimeout` via the global object, which works in both browsers
+    /// and Cloudflare Workers (which don't have a `window` object).
     async fn sleep_ms(ms: f64) {
         let promise = js_sys::Promise::new(&mut |resolve, _| {
-            let window = web_sys::window().expect("no window");
-            let _ =
-                window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms as i32);
+            // Use global() instead of window() for Workers compatibility.
+            // Both browsers and Workers support setTimeout on the global object.
+            let global = js_sys::global();
+            let set_timeout = js_sys::Reflect::get(&global, &"setTimeout".into())
+                .ok()
+                .and_then(|v| v.dyn_into::<js_sys::Function>().ok());
+
+            if let Some(timeout_fn) = set_timeout {
+                let _ = timeout_fn.call2(&global, &resolve, &(ms as i32).into());
+            } else {
+                // Fallback: resolve immediately if setTimeout not available
+                let _ = resolve.call0(&JsValue::undefined());
+            }
         });
         let _ = JsFuture::from(promise).await;
     }

@@ -74,6 +74,15 @@ pub enum Commands {
 
     /// Install MCP server to Claude Desktop or Cursor
     Install(InstallArgs),
+
+    /// Build an MCP server (supports WASM targets)
+    Build(BuildArgs),
+
+    /// Deploy an MCP server to cloud platforms
+    Deploy(DeployArgs),
+
+    /// Create a new MCP server project from a template
+    New(NewArgs),
 }
 
 /// Tool-related commands
@@ -416,4 +425,157 @@ pub struct InstallArgs {
     /// Force overwrite if server already exists
     #[arg(long, short = 'f')]
     pub force: bool,
+}
+
+// ============================================================================
+// WASM Build, Deploy, and New Commands
+// ============================================================================
+
+/// Target platform for WASM builds
+#[derive(Debug, Clone, ValueEnum, PartialEq, Eq)]
+pub enum WasmPlatform {
+    /// Cloudflare Workers
+    CloudflareWorkers,
+    /// Deno Deploy
+    DenoWorkers,
+    /// Generic WASM32
+    Wasm32,
+}
+
+impl std::fmt::Display for WasmPlatform {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CloudflareWorkers => write!(f, "cloudflare-workers"),
+            Self::DenoWorkers => write!(f, "deno-workers"),
+            Self::Wasm32 => write!(f, "wasm32"),
+        }
+    }
+}
+
+/// Project template for new MCP server
+#[derive(Debug, Clone, ValueEnum, PartialEq, Eq)]
+pub enum ProjectTemplate {
+    /// Minimal MCP server (tools only)
+    Minimal,
+    /// Full-featured MCP server (tools, resources, prompts)
+    Full,
+    /// MCP server for Cloudflare Workers
+    CloudflareWorkers,
+    /// Cloudflare Workers with OAuth 2.1
+    CloudflareWorkersOauth,
+    /// Cloudflare Workers with Durable Objects
+    CloudflareWorkersDurableObjects,
+}
+
+impl std::fmt::Display for ProjectTemplate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Minimal => write!(f, "minimal"),
+            Self::Full => write!(f, "full"),
+            Self::CloudflareWorkers => write!(f, "cloudflare-workers"),
+            Self::CloudflareWorkersOauth => write!(f, "cloudflare-workers-oauth"),
+            Self::CloudflareWorkersDurableObjects => {
+                write!(f, "cloudflare-workers-durable-objects")
+            }
+        }
+    }
+}
+
+/// Build command arguments
+#[derive(Args, Debug, Clone)]
+pub struct BuildArgs {
+    /// Path to the Cargo project (default: current directory)
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+
+    /// Target platform for WASM builds
+    #[arg(long, value_enum)]
+    pub platform: Option<WasmPlatform>,
+
+    /// Rust target triple (e.g., wasm32-unknown-unknown)
+    #[arg(long)]
+    pub target: Option<String>,
+
+    /// Build in release mode
+    #[arg(long, short = 'r')]
+    pub release: bool,
+
+    /// Optimize WASM binary with wasm-opt
+    #[arg(long)]
+    pub optimize: bool,
+
+    /// Additional features to enable
+    #[arg(long, short = 'F')]
+    pub features: Vec<String>,
+
+    /// Disable default features
+    #[arg(long)]
+    pub no_default_features: bool,
+
+    /// Output directory for the built artifacts
+    #[arg(long, short = 'o')]
+    pub output: Option<PathBuf>,
+}
+
+/// Deploy command arguments
+#[derive(Args, Debug, Clone)]
+pub struct DeployArgs {
+    /// Path to the Cargo project (default: current directory)
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+
+    /// Target platform for deployment
+    #[arg(long, value_enum, default_value = "cloudflare-workers")]
+    pub platform: WasmPlatform,
+
+    /// Deployment environment (e.g., staging, production)
+    #[arg(long, short = 'e')]
+    pub env: Option<String>,
+
+    /// Path to wrangler.toml config (for Cloudflare Workers)
+    #[arg(long)]
+    pub wrangler_config: Option<PathBuf>,
+
+    /// Build in release mode before deploying
+    #[arg(long, short = 'r', default_value = "true")]
+    pub release: bool,
+
+    /// Optimize WASM binary with wasm-opt before deploying
+    #[arg(long, default_value = "true")]
+    pub optimize: bool,
+
+    /// Skip the build step (deploy existing artifacts)
+    #[arg(long)]
+    pub skip_build: bool,
+
+    /// Dry run (show what would be deployed without actually deploying)
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+/// New project command arguments
+#[derive(Args, Debug, Clone)]
+pub struct NewArgs {
+    /// Name of the new project
+    pub name: String,
+
+    /// Project template to use
+    #[arg(long, short = 't', value_enum, default_value = "minimal")]
+    pub template: ProjectTemplate,
+
+    /// Output directory (default: ./<name>)
+    #[arg(long, short = 'o')]
+    pub output: Option<PathBuf>,
+
+    /// Initialize git repository
+    #[arg(long, default_value = "true")]
+    pub git: bool,
+
+    /// MCP server description
+    #[arg(long, short = 'd')]
+    pub description: Option<String>,
+
+    /// Package author
+    #[arg(long)]
+    pub author: Option<String>,
 }

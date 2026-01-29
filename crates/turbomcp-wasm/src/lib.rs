@@ -231,6 +231,24 @@ pub mod wasm_server;
 #[cfg_attr(docsrs, doc(cfg(feature = "wasm-server")))]
 pub mod prelude;
 
+/// Testing utilities for WASM MCP servers.
+///
+/// This module provides `McpTestClient` for in-memory testing of MCP servers
+/// without any network transport, making tests fast and reliable.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use turbomcp_wasm::testing::McpTestClient;
+///
+/// let client = McpTestClient::new(my_server);
+/// let result = client.call_tool("greet", json!({"name": "World"})).await?;
+/// result.assert_text("Hello, World!");
+/// ```
+#[cfg(feature = "wasm-server")]
+#[cfg_attr(docsrs, doc(cfg(feature = "wasm-server")))]
+pub mod testing;
+
 #[cfg(all(feature = "auth", target_arch = "wasm32"))]
 #[cfg_attr(docsrs, doc(cfg(feature = "auth")))]
 pub mod auth;

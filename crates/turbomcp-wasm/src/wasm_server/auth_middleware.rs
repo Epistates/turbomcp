@@ -137,6 +137,11 @@ where
     /// Extracts credentials, validates them, and then delegates to the
     /// underlying server. Returns HTTP 401 if authentication fails.
     pub async fn handle(&self, req: Request) -> worker::Result<Response> {
+        // SECURITY: Extract Origin header early for CORS responses.
+        // We echo this back instead of using wildcard "*".
+        let request_origin = req.headers().get("origin").ok().flatten();
+        let origin_ref = request_origin.as_deref();
+
         // Handle CORS preflight (no auth needed)
         if req.method() == worker::Method::Options {
             return self.server.handle(req).await;
@@ -158,7 +163,7 @@ where
                 Err(e) => {
                     // Clear any previous principal
                     *self.current_principal.borrow_mut() = None;
-                    return self.auth_error_response(&e);
+                    return self.auth_error_response(&e, origin_ref);
                 }
             }
         }
@@ -175,9 +180,20 @@ where
     }
 
     /// Create an authentication error response.
-    fn auth_error_response(&self, error: &AuthError) -> worker::Result<Response> {
+    ///
+    /// SECURITY: Echoes the request Origin header instead of using wildcard `*`.
+    fn auth_error_response(
+        &self,
+        error: &AuthError,
+        request_origin: Option<&str>,
+    ) -> worker::Result<Response> {
         let headers = worker::Headers::new();
-        let _ = headers.set("Access-Control-Allow-Origin", "*");
+        // SECURITY: Echo the request origin instead of using wildcard.
+        let origin = request_origin.unwrap_or("*");
+        let _ = headers.set("Access-Control-Allow-Origin", origin);
+        if request_origin.is_some() {
+            let _ = headers.set("Vary", "Origin");
+        }
         let _ = headers.set("Content-Type", "application/json");
         let _ = headers.set("WWW-Authenticate", "Bearer");
 

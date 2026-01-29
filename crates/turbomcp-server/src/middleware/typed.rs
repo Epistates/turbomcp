@@ -105,6 +105,21 @@ pub trait McpMiddleware: Send + Sync + 'static {
     ) -> McpResult<PromptResult> {
         next.get_prompt(name, args, ctx).await
     }
+
+    /// Hook called when the server is initialized.
+    ///
+    /// Can perform setup tasks, validate configuration, or short-circuit
+    /// initialization by returning an error.
+    async fn on_initialize<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
+        next.initialize().await
+    }
+
+    /// Hook called when the server is shutting down.
+    ///
+    /// Can perform cleanup tasks like flushing buffers or closing connections.
+    async fn on_shutdown<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
+        next.shutdown().await
+    }
 }
 
 /// Continuation for calling the next middleware or handler.
@@ -205,6 +220,28 @@ impl<'a> Next<'a> {
             self.handler.dyn_get_prompt(name, args, ctx).await
         }
     }
+
+    /// Run initialization through the next middleware or handler.
+    pub async fn initialize(self) -> McpResult<()> {
+        if self.index < self.middlewares.len() {
+            let middleware = &self.middlewares[self.index];
+            let next = Next::new(self.handler, self.middlewares, self.index + 1);
+            middleware.on_initialize(next).await
+        } else {
+            self.handler.dyn_on_initialize().await
+        }
+    }
+
+    /// Run shutdown through the next middleware or handler.
+    pub async fn shutdown(self) -> McpResult<()> {
+        if self.index < self.middlewares.len() {
+            let middleware = &self.middlewares[self.index];
+            let next = Next::new(self.handler, self.middlewares, self.index + 1);
+            middleware.on_shutdown(next).await
+        } else {
+            self.handler.dyn_on_shutdown().await
+        }
+    }
 }
 
 /// Internal trait for type-erased handler access.
@@ -231,6 +268,12 @@ trait DynHandler: Send + Sync {
         args: Option<Value>,
         ctx: &'a RequestContext,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<PromptResult>> + Send + 'a>>;
+    fn dyn_on_initialize<'a>(
+        &'a self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>>;
+    fn dyn_on_shutdown<'a>(
+        &'a self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>>;
 }
 
 /// Wrapper for type-erased handler access.
@@ -282,6 +325,18 @@ impl<H: McpHandler> DynHandler for HandlerWrapper<H> {
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<PromptResult>> + Send + 'a>>
     {
         Box::pin(self.handler.get_prompt(name, args, ctx))
+    }
+
+    fn dyn_on_initialize<'a>(
+        &'a self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>> {
+        Box::pin(self.handler.on_initialize())
+    }
+
+    fn dyn_on_shutdown<'a>(
+        &'a self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = McpResult<()>> + Send + 'a>> {
+        Box::pin(self.handler.on_shutdown())
     }
 }
 
@@ -386,6 +441,18 @@ impl<H: McpHandler> McpHandler for MiddlewareStack<H> {
     {
         async move { self.next().get_prompt(name, args, ctx).await }
     }
+
+    fn on_initialize(
+        &self,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend {
+        async move { self.next().initialize().await }
+    }
+
+    fn on_shutdown(
+        &self,
+    ) -> impl std::future::Future<Output = McpResult<()>> + turbomcp_core::marker::MaybeSend {
+        async move { self.next().shutdown().await }
+    }
 }
 
 #[cfg(test)]
@@ -467,6 +534,8 @@ mod tests {
         tool_calls: AtomicU32,
         resource_reads: AtomicU32,
         prompt_gets: AtomicU32,
+        initializes: AtomicU32,
+        shutdowns: AtomicU32,
     }
 
     impl CountingMiddleware {
@@ -475,6 +544,8 @@ mod tests {
                 tool_calls: AtomicU32::new(0),
                 resource_reads: AtomicU32::new(0),
                 prompt_gets: AtomicU32::new(0),
+                initializes: AtomicU32::new(0),
+                shutdowns: AtomicU32::new(0),
             }
         }
 
@@ -488,6 +559,14 @@ mod tests {
 
         fn prompt_gets(&self) -> u32 {
             self.prompt_gets.load(Ordering::Relaxed)
+        }
+
+        fn initializes(&self) -> u32 {
+            self.initializes.load(Ordering::Relaxed)
+        }
+
+        fn shutdowns(&self) -> u32 {
+            self.shutdowns.load(Ordering::Relaxed)
         }
     }
 
@@ -523,6 +602,16 @@ mod tests {
         ) -> McpResult<PromptResult> {
             self.prompt_gets.fetch_add(1, Ordering::Relaxed);
             next.get_prompt(name, args, ctx).await
+        }
+
+        async fn on_initialize<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
+            self.initializes.fetch_add(1, Ordering::Relaxed);
+            next.initialize().await
+        }
+
+        async fn on_shutdown<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
+            self.shutdowns.fetch_add(1, Ordering::Relaxed);
+            next.shutdown().await
         }
     }
 
@@ -689,5 +778,72 @@ mod tests {
         ) -> McpResult<PromptResult> {
             self.0.on_get_prompt(name, args, ctx, next).await
         }
+
+        async fn on_initialize<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
+            self.0.on_initialize(next).await
+        }
+
+        async fn on_shutdown<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
+            self.0.on_shutdown(next).await
+        }
+    }
+
+    #[tokio::test]
+    async fn test_on_initialize_through_middleware() {
+        let counting = Arc::new(CountingMiddleware::new());
+        let stack =
+            MiddlewareStack::new(TestHandler).with_middleware(CountingClone(counting.clone()));
+
+        stack.on_initialize().await.unwrap();
+
+        assert_eq!(counting.initializes(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_on_shutdown_through_middleware() {
+        let counting = Arc::new(CountingMiddleware::new());
+        let stack =
+            MiddlewareStack::new(TestHandler).with_middleware(CountingClone(counting.clone()));
+
+        stack.on_shutdown().await.unwrap();
+
+        assert_eq!(counting.shutdowns(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_lifecycle_hooks_chain_through_multiple_middlewares() {
+        let counting1 = Arc::new(CountingMiddleware::new());
+        let counting2 = Arc::new(CountingMiddleware::new());
+
+        let stack = MiddlewareStack::new(TestHandler)
+            .with_middleware(CountingClone(counting1.clone()))
+            .with_middleware(CountingClone(counting2.clone()));
+
+        stack.on_initialize().await.unwrap();
+        stack.on_shutdown().await.unwrap();
+
+        assert_eq!(counting1.initializes(), 1);
+        assert_eq!(counting2.initializes(), 1);
+        assert_eq!(counting1.shutdowns(), 1);
+        assert_eq!(counting2.shutdowns(), 1);
+    }
+
+    /// A middleware that blocks initialization.
+    struct BlockInitMiddleware;
+
+    #[async_trait]
+    impl McpMiddleware for BlockInitMiddleware {
+        async fn on_initialize<'a>(&'a self, _next: Next<'a>) -> McpResult<()> {
+            Err(McpError::internal("initialization blocked by middleware"))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_on_initialize_short_circuit() {
+        let stack = MiddlewareStack::new(TestHandler).with_middleware(BlockInitMiddleware);
+
+        let result = stack.on_initialize().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("blocked"));
     }
 }

@@ -275,13 +275,20 @@ impl WasmJwtAuthenticator {
         }
 
         // Validate issuer
+        // SECURITY: Error messages are generic to avoid leaking expected issuer to attackers
         if let Some(ref expected_iss) = self.config.issuer {
             if let Some(ref actual_iss) = payload.iss {
                 if actual_iss != expected_iss {
-                    return Err(AuthError::InvalidIssuer {
-                        expected: expected_iss.clone(),
-                        actual: actual_iss.clone(),
-                    });
+                    #[cfg(target_arch = "wasm32")]
+                    web_sys::console::warn_1(
+                        &format!(
+                            "JWT issuer mismatch: got '{}', expected '{}'",
+                            actual_iss, expected_iss
+                        )
+                        .into(),
+                    );
+
+                    return Err(AuthError::InvalidClaims("Invalid token issuer".to_string()));
                 }
             } else {
                 return Err(AuthError::InvalidClaims("Missing issuer claim".to_string()));
@@ -289,6 +296,7 @@ impl WasmJwtAuthenticator {
         }
 
         // Validate audience
+        // SECURITY: Error messages are generic to avoid leaking expected audience to attackers
         if let Some(ref expected_aud) = self.config.audience {
             let valid = match &payload.aud {
                 Some(Audience::Single(aud)) => aud == expected_aud,
@@ -296,18 +304,28 @@ impl WasmJwtAuthenticator {
                 None => false,
             };
             if !valid {
-                let actual = payload
-                    .aud
-                    .as_ref()
-                    .map(|a| match a {
-                        Audience::Single(s) => s.clone(),
-                        Audience::Multiple(v) => v.join(", "),
-                    })
-                    .unwrap_or_default();
-                return Err(AuthError::InvalidAudience {
-                    expected: expected_aud.clone(),
-                    actual,
-                });
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let actual = payload
+                        .aud
+                        .as_ref()
+                        .map(|a| match a {
+                            Audience::Single(s) => s.clone(),
+                            Audience::Multiple(v) => v.join(", "),
+                        })
+                        .unwrap_or_else(|| "<none>".to_string());
+                    web_sys::console::warn_1(
+                        &format!(
+                            "JWT audience mismatch: got '{}', expected '{}'",
+                            actual, expected_aud
+                        )
+                        .into(),
+                    );
+                }
+
+                return Err(AuthError::InvalidClaims(
+                    "Invalid token audience".to_string(),
+                ));
             }
         }
 
@@ -386,25 +404,30 @@ impl Authenticator for WasmJwtAuthenticator {
         // SECURITY: Fail-closed algorithm validation
         // An empty algorithms list is a misconfiguration that could allow algorithm confusion attacks.
         // We reject all tokens when no algorithms are configured rather than allowing all algorithms.
+        // Note: Error message intentionally generic to avoid leaking configuration details to attackers.
         if self.config.algorithms.is_empty() {
+            // Log detailed error for operators (in WASM, this goes to console)
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::error_1(&"JWT validation disabled: no algorithms configured".into());
+
             return Err(AuthError::InvalidCredentialFormat(
-                "No algorithms configured - token validation disabled for security. \
-                 Use JwtConfig::new() for secure defaults or explicitly configure algorithms."
-                    .to_string(),
+                "Token validation failed".to_string(),
             ));
         }
 
         // Check if algorithm is in the allowed whitelist
+        // SECURITY: Error message intentionally generic to avoid leaking allowed algorithms to attackers.
+        // This prevents attackers from enumerating valid algorithms for algorithm confusion attacks.
         if !self.config.algorithms.contains(&algorithm) {
-            return Err(AuthError::InvalidCredentialFormat(format!(
-                "Algorithm {} not in allowed list: {:?}",
-                algorithm,
-                self.config
-                    .algorithms
-                    .iter()
-                    .map(|a| a.as_str())
-                    .collect::<Vec<_>>()
-            )));
+            // Log detailed error for operators
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::warn_1(
+                &format!("JWT algorithm '{}' not in allowed list", algorithm.as_str()).into(),
+            );
+
+            return Err(AuthError::InvalidCredentialFormat(
+                "Token validation failed".to_string(),
+            ));
         }
 
         // Try to verify signature, with automatic key rotation handling

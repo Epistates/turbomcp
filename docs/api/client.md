@@ -350,24 +350,39 @@ for message in prompt_result.messages {
 }
 ```
 
-#### GetPromptResult
+#### PromptResult
 
 ```rust
-pub struct GetPromptResult {
+pub struct PromptResult {
     pub description: Option<String>,
-    pub messages: Vec<PromptMessage>,
+    pub messages: Vec<Message>,
 }
 
-pub struct PromptMessage {
-    pub role: MessageRole,
-    pub content: String,
+pub struct Message {
+    pub role: Role,
+    pub content: Content,
 }
 
-pub enum MessageRole {
+pub enum Role {
     User,
     Assistant,
-    System,
 }
+```
+
+Use the ergonomic constructors:
+
+```rust
+// Single message
+let result = PromptResult::user("Hello!");
+
+// Multi-message with builder
+let result = PromptResult::user("Question")
+    .add_assistant("Answer")
+    .with_description("A conversation");
+
+// Direct message construction
+let msg = Message::user("Hello!");
+let msg = Message::assistant("Hi there!");
 ```
 
 ## Error Handling

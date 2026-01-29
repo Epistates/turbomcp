@@ -40,6 +40,9 @@ impl CommandExecutor {
             Commands::Status(conn) => self.execute_status(conn).await,
             Commands::Dev(args) => self.execute_dev(args),
             Commands::Install(args) => self.execute_install(args),
+            Commands::Build(args) => self.execute_build(args),
+            Commands::Deploy(args) => self.execute_deploy(args),
+            Commands::New(args) => self.execute_new(args),
         }
     }
 
@@ -361,5 +364,19 @@ impl CommandExecutor {
 
     fn execute_install(&self, args: InstallArgs) -> CliResult<()> {
         crate::install::execute(&args).map_err(|e| CliError::Other(e.to_string()))
+    }
+
+    // WASM build and deploy commands
+
+    fn execute_build(&self, args: crate::cli::BuildArgs) -> CliResult<()> {
+        crate::build::execute(&args)
+    }
+
+    fn execute_deploy(&self, args: crate::cli::DeployArgs) -> CliResult<()> {
+        crate::deploy::execute(&args)
+    }
+
+    fn execute_new(&self, args: crate::cli::NewArgs) -> CliResult<()> {
+        crate::new::execute(&args)
     }
 }

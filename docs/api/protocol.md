@@ -267,11 +267,11 @@ pub struct CreateMessageRequest {
 }
 
 pub struct Message {
-    pub role: MessageRole,
-    pub content: String,
+    pub role: Role,
+    pub content: Content,
 }
 
-pub enum MessageRole {
+pub enum Role {
     User,
     Assistant,
 }

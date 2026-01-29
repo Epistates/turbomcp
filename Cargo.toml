@@ -26,6 +26,7 @@ members = [
     "crates/turbomcp-wasm-macros", # v3.0: WASM server proc macros
     "crates/turbomcp-wire",      # v3.0: Wire format codec abstraction
     "crates/turbomcp-openapi",   # v3.0: OpenAPI to MCP conversion
+    "crates/turbomcp-transport-streamable", # v3.0: Streamable HTTP transport types
     "demo",
 ]
 resolver = "2"
@@ -221,6 +222,8 @@ turbomcp-dpop = { version = "3.0.0-beta.4", path = "crates/turbomcp-dpop" }
 turbomcp-wire = { version = "3.0.0-beta.4", path = "crates/turbomcp-wire", default-features = false }
 # v3.0: WASM server proc macros
 turbomcp-wasm-macros = { version = "3.0.0-beta.4", path = "crates/turbomcp-wasm-macros" }
+# v3.0: Streamable HTTP transport types (SSE, sessions, MCP 2025-11-25)
+turbomcp-transport-streamable = { version = "3.0.0-beta.4", path = "crates/turbomcp-transport-streamable", default-features = false }
 
 [profile.dev]
 opt-level = 1

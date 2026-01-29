@@ -397,6 +397,37 @@ let cache = JwksCache::new("http://test-server/.well-known/jwks.json")
 - Content-Type validation
 - Strict JSON-RPC 2.0 compliance
 
+### CORS Security
+
+TurboMCP implements secure CORS handling to prevent credentials from being exposed to arbitrary origins:
+
+- **Origin Echo**: The request `Origin` header is echoed back in `Access-Control-Allow-Origin` instead of using `*`
+- **Vary Header**: `Vary: Origin` is automatically added when origin-specific responses are returned (required for proper caching)
+- **Non-Browser Fallback**: Only falls back to `*` when no Origin header is present (e.g., curl, Postman)
+
+This approach:
+- Prevents credentials leakage to malicious sites
+- Enables proper CORS preflight validation
+- Works correctly with CDN caching
+
+```http
+# Browser request with Origin header
+Request:
+Origin: https://app.example.com
+
+Response:
+Access-Control-Allow-Origin: https://app.example.com
+Vary: Origin
+Access-Control-Allow-Methods: POST, OPTIONS
+Access-Control-Allow-Headers: Content-Type, Authorization, X-Request-ID
+Access-Control-Max-Age: 86400
+
+# Non-browser request (no Origin header)
+Response:
+Access-Control-Allow-Origin: *
+# (No Vary header when using wildcard)
+```
+
 ### OAuth and Token Protection
 
 TurboMCP supports multiple authentication patterns for protecting MCP servers:
@@ -472,6 +503,65 @@ use turbomcp_wasm::auth::CloudflareAccessAuthenticator;
 let auth = CloudflareAccessAuthenticator::new("your-team", "your-audience-tag");
 ```
 
+### Path and URI Security
+
+TurboMCP WASM runs in edge environments (Cloudflare Workers, Deno Deploy) where there is typically no filesystem access. Resources are URIs pointing to:
+- KV stores (`kv://namespace/key`)
+- Durable Objects (`do://object/path`)
+- External APIs (`https://api.example.com/resource`)
+- D1 databases (`d1://database/table`)
+
+**Path Traversal Protection**: When implementing resource handlers that map URIs to storage backends, you are responsible for validating and sanitizing URIs to prevent unauthorized access:
+
+```rust
+use turbomcp_wasm::wasm_server::*;
+
+async fn read_user_data(uri: String) -> Result<ResourceResult, ToolError> {
+    // Extract the user ID from the URI
+    let id = uri
+        .strip_prefix("user://")
+        .ok_or_else(|| ToolError::new("Invalid URI scheme"))?;
+
+    // SECURITY: Validate the ID to prevent directory traversal
+    // Only allow alphanumeric characters and hyphens
+    if !id.chars().all(|c| c.is_alphanumeric() || c == '-') {
+        return Err(ToolError::new("Invalid user ID format"));
+    }
+
+    // Now safe to use in KV key
+    let kv_key = format!("users/{}", id);
+    // ... fetch from KV
+    Ok(ResourceResult::text(&uri, "user data"))
+}
+```
+
+**Best Practices:**
+- Validate URI schemes (reject unexpected prefixes)
+- Sanitize path segments (reject `..`, absolute paths, special characters)
+- Use allowlists for valid characters when possible
+- Log suspicious URI patterns for security monitoring
+
+### WASM Architecture Considerations
+
+TurboMCP uses `MaybeSend`/`MaybeSync` marker traits to support both native and WASM environments:
+
+- **Native**: Requires `Send + Sync` for multi-threaded executors (tokio, etc.)
+- **WASM**: No thread-safety requirements (single-threaded execution model)
+
+This architecture allows you to use `Rc<RefCell<T>>` for shared state in WASM handlers:
+
+```rust
+use std::rc::Rc;
+use std::cell::RefCell;
+
+// This works in WASM but would NOT compile for native targets
+struct WasmOnlyHandler {
+    state: Rc<RefCell<Vec<String>>>,
+}
+```
+
+For portable code that works on both native and WASM, use `Arc<RwLock<T>>` instead.
+
 ### Security Checklist
 
 - [ ] Use `JwtConfig::new()` instead of manual construction
@@ -480,7 +570,9 @@ let auth = CloudflareAccessAuthenticator::new("your-team", "your-audience-tag");
 - [ ] Store secrets using `env.secret()`, never hardcode
 - [ ] Use Cloudflare Access for production deployments
 - [ ] Configure rate limiting at the Cloudflare level
-- [ ] Review CORS settings for your use case (`Access-Control-Allow-Origin: *` is the default)
+- [ ] CORS: Origin is echoed by default for security; `*` is only used for non-browser clients
+- [ ] Validate and sanitize URIs in resource handlers
+- [ ] Use allowlists for URI path components where possible
 
 ### With Resources and Prompts
 

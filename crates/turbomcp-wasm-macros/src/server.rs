@@ -1,9 +1,30 @@
 //! WASM server macro implementation
 //!
 //! Generates code that uses the `turbomcp_wasm::wasm_server::McpServer` builder.
+//!
+//! # Attribute Syntax
+//!
+//! The macro supports rich attribute syntax for tools, resources, and prompts:
+//!
+//! ```rust,ignore
+//! #[server(name = "my-server", version = "1.0.0")]
+//! impl MyServer {
+//!     // Simple description
+//!     #[tool("Say hello")]
+//!     async fn hello(&self, args: HelloArgs) -> String { ... }
+//!
+//!     // Full syntax with tags and version
+//!     #[tool(description = "Admin tool", tags = ["admin", "dangerous"], version = "2.0")]
+//!     async fn admin_op(&self, ctx: Arc<RequestContext>, args: AdminArgs) -> Result<String, ToolError> { ... }
+//!
+//!     // Context injection (automatically uses _with_ctx variant)
+//!     #[tool("Auth required")]
+//!     async fn auth_tool(&self, ctx: Arc<RequestContext>, args: AuthArgs) -> Result<String, ToolError> { ... }
+//! }
+//! ```
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{
     Attribute, Expr, ExprLit, FnArg, Ident, ImplItem, ItemImpl, Lit, LitStr, Meta, Pat, PatType,
     Result, Token, Type,
@@ -50,17 +71,108 @@ impl Parse for ServerArgs {
     }
 }
 
+/// Parsed component attributes (shared by tool, resource, prompt)
+#[derive(Default, Clone)]
+struct ComponentAttrs {
+    /// Description
+    description: Option<String>,
+    /// Tags for categorization
+    tags: Vec<String>,
+    /// Version string
+    version: Option<String>,
+}
+
+impl ComponentAttrs {
+    /// Parse component attributes from an attribute.
+    ///
+    /// Supports multiple formats:
+    /// - `#[tool("description")]` - just description
+    /// - `#[tool(description = "desc", tags = ["a", "b"], version = "1.0")]` - full syntax
+    fn parse(attr: &Attribute) -> Self {
+        let mut attrs = Self::default();
+
+        // Try parsing as #[attr("value")]
+        if let Ok(lit) = attr.parse_args::<LitStr>() {
+            attrs.description = Some(lit.value());
+            return attrs;
+        }
+
+        // Try parsing as #[attr(description = "value", tags = [...], version = "...")]
+        if let Ok(args) = attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated) {
+            for meta in args {
+                if let Meta::NameValue(nv) = &meta
+                    && let Some(key) = nv.path.get_ident().map(|i| i.to_string())
+                    && let Expr::Lit(ExprLit {
+                        lit: Lit::Str(s), ..
+                    }) = &nv.value
+                {
+                    match key.as_str() {
+                        "description" => attrs.description = Some(s.value()),
+                        "version" => attrs.version = Some(s.value()),
+                        _ => {}
+                    }
+                }
+            }
+
+            // Parse tags using alternative method (handles array syntax)
+            let token_str = attr.meta.to_token_stream().to_string();
+            attrs.tags = parse_tags_array(&token_str);
+        }
+
+        attrs
+    }
+}
+
+/// Parse `tags = ["a", "b", "c"]` pattern from token string.
+fn parse_tags_array(token_str: &str) -> Vec<String> {
+    let Some(tags_start) = token_str.find("tags") else {
+        return Vec::new();
+    };
+    let Some(bracket_start) = token_str[tags_start..].find('[') else {
+        return Vec::new();
+    };
+    let after_bracket = &token_str[tags_start + bracket_start + 1..];
+    let Some(bracket_end) = after_bracket.find(']') else {
+        return Vec::new();
+    };
+
+    let tags_content = &after_bracket[..bracket_end];
+    tags_content
+        .split(',')
+        .filter_map(|part| {
+            let part = part.trim();
+            if part.starts_with('"') && part.ends_with('"') && part.len() >= 2 {
+                Some(part[1..part.len() - 1].to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Information about a tool method
 struct ToolMethod {
     name: Ident,
     description: String,
     arg_type: Option<Type>,
+    /// Whether handler takes context as first param
+    has_context: bool,
+    /// Tags for visibility filtering
+    tags: Vec<String>,
+    /// Version string
+    version: Option<String>,
 }
 
 /// Information about a resource method
 struct ResourceMethod {
     name: Ident,
     uri_template: String,
+    /// Whether handler takes context as first param
+    has_context: bool,
+    /// Tags for visibility filtering
+    tags: Vec<String>,
+    /// Version string
+    version: Option<String>,
 }
 
 /// Information about a prompt method
@@ -69,6 +181,12 @@ struct PromptMethod {
     description: String,
     has_args: bool,
     arg_type: Option<Type>,
+    /// Whether handler takes context as first param
+    has_context: bool,
+    /// Tags for visibility filtering
+    tags: Vec<String>,
+    /// Version string
+    version: Option<String>,
 }
 
 /// Generate the WASM server implementation
@@ -95,7 +213,9 @@ pub fn generate_server(args: ServerArgs, mut impl_block: ItemImpl) -> Result<Tok
         .map(|t| {
             let name = t.name.to_string();
             let desc = &t.description;
-            quote! { (#name, #desc) }
+            let tags = &t.tags;
+            let version = t.version.as_deref().unwrap_or("");
+            quote! { (#name, #desc, &[#(#tags),*], #version) }
         })
         .collect();
 
@@ -104,7 +224,9 @@ pub fn generate_server(args: ServerArgs, mut impl_block: ItemImpl) -> Result<Tok
         .map(|r| {
             let uri = &r.uri_template;
             let name = r.name.to_string();
-            quote! { (#uri, #name) }
+            let tags = &r.tags;
+            let version = r.version.as_deref().unwrap_or("");
+            quote! { (#uri, #name, &[#(#tags),*], #version) }
         })
         .collect();
 
@@ -113,7 +235,40 @@ pub fn generate_server(args: ServerArgs, mut impl_block: ItemImpl) -> Result<Tok
         .map(|p| {
             let name = p.name.to_string();
             let desc = &p.description;
-            quote! { (#name, #desc) }
+            let tags = &p.tags;
+            let version = p.version.as_deref().unwrap_or("");
+            quote! { (#name, #desc, &[#(#tags),*], #version) }
+        })
+        .collect();
+
+    // Generate tool tags for VisibilityLayer integration
+    let tool_tags: Vec<_> = tools
+        .iter()
+        .filter(|t| !t.tags.is_empty())
+        .map(|t| {
+            let name = t.name.to_string();
+            let tags = &t.tags;
+            quote! { (#name, vec![#(#tags.to_string()),*]) }
+        })
+        .collect();
+
+    let resource_tags: Vec<_> = resources
+        .iter()
+        .filter(|r| !r.tags.is_empty())
+        .map(|r| {
+            let uri = &r.uri_template;
+            let tags = &r.tags;
+            quote! { (#uri, vec![#(#tags.to_string()),*]) }
+        })
+        .collect();
+
+    let prompt_tags: Vec<_> = prompts
+        .iter()
+        .filter(|p| !p.tags.is_empty())
+        .map(|p| {
+            let name = p.name.to_string();
+            let tags = &p.tags;
+            quote! { (#name, vec![#(#tags.to_string()),*]) }
         })
         .collect();
 
@@ -153,23 +308,44 @@ pub fn generate_server(args: ServerArgs, mut impl_block: ItemImpl) -> Result<Tok
 
             /// Get metadata for all registered tools.
             ///
-            /// Returns a vector of (name, description) tuples.
-            pub fn get_tools_metadata() -> Vec<(&'static str, &'static str)> {
+            /// Returns a vector of (name, description, tags, version) tuples.
+            pub fn get_tools_metadata() -> Vec<(&'static str, &'static str, &'static [&'static str], &'static str)> {
                 vec![#(#tool_metadata),*]
             }
 
             /// Get metadata for all registered resources.
             ///
-            /// Returns a vector of (uri_template, name) tuples.
-            pub fn get_resources_metadata() -> Vec<(&'static str, &'static str)> {
+            /// Returns a vector of (uri_template, name, tags, version) tuples.
+            pub fn get_resources_metadata() -> Vec<(&'static str, &'static str, &'static [&'static str], &'static str)> {
                 vec![#(#resource_metadata),*]
             }
 
             /// Get metadata for all registered prompts.
             ///
-            /// Returns a vector of (name, description) tuples.
-            pub fn get_prompts_metadata() -> Vec<(&'static str, &'static str)> {
+            /// Returns a vector of (name, description, tags, version) tuples.
+            pub fn get_prompts_metadata() -> Vec<(&'static str, &'static str, &'static [&'static str], &'static str)> {
                 vec![#(#prompt_metadata),*]
+            }
+
+            /// Get tool tags mapping for VisibilityLayer integration.
+            ///
+            /// Returns a vector of (tool_name, tags) tuples for tools that have tags.
+            pub fn get_tool_tags() -> Vec<(&'static str, Vec<String>)> {
+                vec![#(#tool_tags),*]
+            }
+
+            /// Get resource tags mapping for VisibilityLayer integration.
+            ///
+            /// Returns a vector of (uri_template, tags) tuples for resources that have tags.
+            pub fn get_resource_tags() -> Vec<(&'static str, Vec<String>)> {
+                vec![#(#resource_tags),*]
+            }
+
+            /// Get prompt tags mapping for VisibilityLayer integration.
+            ///
+            /// Returns a vector of (prompt_name, tags) tuples for prompts that have tags.
+            pub fn get_prompt_tags() -> Vec<(&'static str, Vec<String>)> {
+                vec![#(#prompt_tags),*]
             }
 
             /// Get server info.
@@ -212,13 +388,17 @@ fn extract_tool_methods(impl_block: &ItemImpl) -> Vec<ToolMethod> {
         if let ImplItem::Fn(method) = item {
             for attr in &method.attrs {
                 if attr.path().is_ident("tool") {
-                    let description = parse_string_attr(attr).unwrap_or_else(|| "Tool".to_string());
-                    let arg_type = extract_tool_arg_type(&method.sig);
+                    let attrs = ComponentAttrs::parse(attr);
+                    let description = attrs.description.unwrap_or_else(|| "Tool".to_string());
+                    let (has_context, arg_type) = extract_tool_arg_type_with_ctx(&method.sig);
 
                     tools.push(ToolMethod {
                         name: method.sig.ident.clone(),
                         description,
                         arg_type,
+                        has_context,
+                        tags: attrs.tags,
+                        version: attrs.version,
                     });
                     break;
                 }
@@ -237,12 +417,18 @@ fn extract_resource_methods(impl_block: &ItemImpl) -> Vec<ResourceMethod> {
         if let ImplItem::Fn(method) = item {
             for attr in &method.attrs {
                 if attr.path().is_ident("resource") {
-                    let uri_template =
-                        parse_string_attr(attr).unwrap_or_else(|| "resource://".to_string());
+                    let attrs = ComponentAttrs::parse(attr);
+                    let uri_template = attrs
+                        .description
+                        .unwrap_or_else(|| "resource://".to_string());
+                    let has_context = method_has_context(&method.sig);
 
                     resources.push(ResourceMethod {
                         name: method.sig.ident.clone(),
                         uri_template,
+                        has_context,
+                        tags: attrs.tags,
+                        version: attrs.version,
                     });
                     break;
                 }
@@ -261,15 +447,19 @@ fn extract_prompt_methods(impl_block: &ItemImpl) -> Vec<PromptMethod> {
         if let ImplItem::Fn(method) = item {
             for attr in &method.attrs {
                 if attr.path().is_ident("prompt") {
-                    let description =
-                        parse_string_attr(attr).unwrap_or_else(|| "Prompt".to_string());
-                    let (has_args, arg_type) = extract_prompt_arg_info(&method.sig);
+                    let attrs = ComponentAttrs::parse(attr);
+                    let description = attrs.description.unwrap_or_else(|| "Prompt".to_string());
+                    let (has_context, has_args, arg_type) =
+                        extract_prompt_arg_info_with_ctx(&method.sig);
 
                     prompts.push(PromptMethod {
                         name: method.sig.ident.clone(),
                         description,
                         has_args,
                         arg_type,
+                        has_context,
+                        tags: attrs.tags,
+                        version: attrs.version,
                     });
                     break;
                 }
@@ -280,65 +470,97 @@ fn extract_prompt_methods(impl_block: &ItemImpl) -> Vec<PromptMethod> {
     prompts
 }
 
-/// Parse a string attribute value like #[tool("description")]
-fn parse_string_attr(attr: &Attribute) -> Option<String> {
-    // Try parsing as #[attr("value")]
-    if let Ok(lit) = attr.parse_args::<LitStr>() {
-        return Some(lit.value());
-    }
+/// Extract the argument type from a tool method signature, along with context detection.
+/// Returns (has_context, arg_type).
+fn extract_tool_arg_type_with_ctx(sig: &syn::Signature) -> (bool, Option<Type>) {
+    let mut has_context = false;
+    let mut arg_type = None;
 
-    // Try parsing as #[attr(description = "value")]
-    if let Ok(args) = attr.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated) {
-        for meta in args {
-            if let Meta::NameValue(nv) = meta
-                && nv.path.is_ident("description")
-                && let Expr::Lit(ExprLit {
-                    lit: Lit::Str(s), ..
-                }) = &nv.value
-            {
-                return Some(s.value());
-            }
-        }
-    }
-
-    None
-}
-
-/// Extract the argument type from a tool method signature
-fn extract_tool_arg_type(sig: &syn::Signature) -> Option<Type> {
     for input in &sig.inputs {
         if let FnArg::Typed(PatType { ty, .. }) = input {
-            // Skip &self and Context types
-            if !is_self_or_context(ty) {
-                return Some((**ty).clone());
+            if is_context_type(ty) {
+                has_context = true;
+            } else if !is_self_type(ty) && arg_type.is_none() {
+                arg_type = Some((**ty).clone());
             }
         }
     }
-    None
+
+    (has_context, arg_type)
 }
 
-/// Extract argument info from a prompt method signature
-fn extract_prompt_arg_info(sig: &syn::Signature) -> (bool, Option<Type>) {
+/// Check if method has a context parameter
+fn method_has_context(sig: &syn::Signature) -> bool {
     for input in &sig.inputs {
-        if let FnArg::Typed(PatType { ty, pat, .. }) = input
-            && !is_self_or_context(ty)
-            && let Pat::Ident(pat_ident) = pat.as_ref()
-            && pat_ident.ident != "self"
+        if let FnArg::Typed(PatType { ty, .. }) = input
+            && is_context_type(ty)
         {
-            return (true, Some((**ty).clone()));
+            return true;
         }
     }
-    (false, None)
+    false
 }
 
-/// Check if type is self or Context
-fn is_self_or_context(ty: &Type) -> bool {
+/// Extract argument info from a prompt method signature, including context detection.
+/// Returns (has_context, has_args, arg_type).
+fn extract_prompt_arg_info_with_ctx(sig: &syn::Signature) -> (bool, bool, Option<Type>) {
+    let mut has_context = false;
+    let mut arg_type = None;
+
+    for input in &sig.inputs {
+        if let FnArg::Typed(PatType { ty, pat, .. }) = input {
+            if is_context_type(ty) {
+                has_context = true;
+            } else if !is_self_type(ty)
+                && let Pat::Ident(pat_ident) = pat.as_ref()
+                && pat_ident.ident != "self"
+            {
+                arg_type = Some((**ty).clone());
+            }
+        }
+    }
+
+    let has_args = arg_type.is_some();
+    (has_context, has_args, arg_type)
+}
+
+/// Check if type is a context type (Context, RequestContext, or Arc<RequestContext>)
+fn is_context_type(ty: &Type) -> bool {
+    // Check for direct Context or RequestContext
     if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+    {
+        let name = segment.ident.to_string();
+        if name == "Context" || name == "RequestContext" {
+            return true;
+        }
+        // Check for Arc<RequestContext>
+        if name == "Arc"
+            && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+        {
+            for arg in &args.args {
+                if let syn::GenericArgument::Type(Type::Path(inner_path)) = arg
+                    && let Some(inner_seg) = inner_path.path.segments.last()
+                    && inner_seg.ident == "RequestContext"
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    // Check for references to Context/RequestContext
+    if let Type::Reference(type_ref) = ty
+        && let Type::Path(type_path) = &*type_ref.elem
         && let Some(segment) = type_path.path.segments.last()
     {
         let name = segment.ident.to_string();
         return name == "Context" || name == "RequestContext";
     }
+    false
+}
+
+/// Check if type is self
+fn is_self_type(ty: &Type) -> bool {
     if let Type::Reference(type_ref) = ty
         && let Type::Path(type_path) = &*type_ref.elem
         && let Some(segment) = type_path.path.segments.last()
@@ -370,31 +592,62 @@ fn generate_tool_registrations(tools: &[ToolMethod]) -> TokenStream2 {
             let tool_name = method_name.to_string();
             let description = &tool.description;
 
-            if let Some(arg_type) = &tool.arg_type {
-                // Tool with typed arguments
-                quote! {
-                    .tool(#tool_name, #description, {
-                        let server = self.clone();
-                        move |args: #arg_type| {
-                            let server = server.clone();
-                            async move {
-                                server.#method_name(args).await
+            match (tool.has_context, &tool.arg_type) {
+                // With context and arguments
+                (true, Some(arg_type)) => {
+                    quote! {
+                        .tool_with_ctx(#tool_name, #description, {
+                            let server = self.clone();
+                            move |ctx: ::std::sync::Arc<::turbomcp_wasm::wasm_server::RequestContext>, args: #arg_type| {
+                                let server = server.clone();
+                                async move {
+                                    server.#method_name(ctx, args).await
+                                }
                             }
-                        }
-                    })
+                        })
+                    }
                 }
-            } else {
-                // Tool with no arguments
-                quote! {
-                    .tool_no_args(#tool_name, #description, {
-                        let server = self.clone();
-                        move || {
-                            let server = server.clone();
-                            async move {
-                                server.#method_name().await
+                // With context, no arguments
+                (true, None) => {
+                    quote! {
+                        .tool_with_ctx_no_args(#tool_name, #description, {
+                            let server = self.clone();
+                            move |ctx: ::std::sync::Arc<::turbomcp_wasm::wasm_server::RequestContext>| {
+                                let server = server.clone();
+                                async move {
+                                    server.#method_name(ctx).await
+                                }
                             }
-                        }
-                    })
+                        })
+                    }
+                }
+                // No context, with arguments
+                (false, Some(arg_type)) => {
+                    quote! {
+                        .tool(#tool_name, #description, {
+                            let server = self.clone();
+                            move |args: #arg_type| {
+                                let server = server.clone();
+                                async move {
+                                    server.#method_name(args).await
+                                }
+                            }
+                        })
+                    }
+                }
+                // No context, no arguments
+                (false, None) => {
+                    quote! {
+                        .tool_no_args(#tool_name, #description, {
+                            let server = self.clone();
+                            move || {
+                                let server = server.clone();
+                                async move {
+                                    server.#method_name().await
+                                }
+                            }
+                        })
+                    }
                 }
             }
         })
@@ -413,16 +666,30 @@ fn generate_resource_registrations(resources: &[ResourceMethod]) -> TokenStream2
             let name = method_name.to_string();
             let description = format!("Resource at {}", uri_template);
 
-            quote! {
-                .resource(#uri_template, #name, #description, {
-                    let server = self.clone();
-                    move |uri: String| {
-                        let server = server.clone();
-                        async move {
-                            server.#method_name(uri).await
+            if resource.has_context {
+                quote! {
+                    .resource_with_ctx(#uri_template, #name, #description, {
+                        let server = self.clone();
+                        move |ctx: ::std::sync::Arc<::turbomcp_wasm::wasm_server::RequestContext>, uri: String| {
+                            let server = server.clone();
+                            async move {
+                                server.#method_name(ctx, uri).await
+                            }
                         }
-                    }
-                })
+                    })
+                }
+            } else {
+                quote! {
+                    .resource(#uri_template, #name, #description, {
+                        let server = self.clone();
+                        move |uri: String| {
+                            let server = server.clone();
+                            async move {
+                                server.#method_name(uri).await
+                            }
+                        }
+                    })
+                }
             }
         })
         .collect();
@@ -439,9 +706,37 @@ fn generate_prompt_registrations(prompts: &[PromptMethod]) -> TokenStream2 {
             let prompt_name = method_name.to_string();
             let description = &prompt.description;
 
-            if prompt.has_args {
-                if let Some(arg_type) = &prompt.arg_type {
-                    // Prompt with typed arguments
+            match (prompt.has_context, prompt.has_args, &prompt.arg_type) {
+                // With context and arguments
+                (true, true, Some(arg_type)) => {
+                    quote! {
+                        .prompt_with_ctx(#prompt_name, #description, {
+                            let server = self.clone();
+                            move |ctx: ::std::sync::Arc<::turbomcp_wasm::wasm_server::RequestContext>, args: Option<#arg_type>| {
+                                let server = server.clone();
+                                async move {
+                                    server.#method_name(ctx, args).await
+                                }
+                            }
+                        })
+                    }
+                }
+                // With context, no arguments
+                (true, false, _) => {
+                    quote! {
+                        .prompt_with_ctx_no_args(#prompt_name, #description, {
+                            let server = self.clone();
+                            move |ctx: ::std::sync::Arc<::turbomcp_wasm::wasm_server::RequestContext>| {
+                                let server = server.clone();
+                                async move {
+                                    server.#method_name(ctx).await
+                                }
+                            }
+                        })
+                    }
+                }
+                // No context, with arguments
+                (false, true, Some(arg_type)) => {
                     quote! {
                         .prompt(#prompt_name, #description, {
                             let server = self.clone();
@@ -453,21 +748,24 @@ fn generate_prompt_registrations(prompts: &[PromptMethod]) -> TokenStream2 {
                             }
                         })
                     }
-                } else {
-                    quote! {}
                 }
-            } else {
-                // Prompt with no arguments
-                quote! {
-                    .prompt_no_args(#prompt_name, #description, {
-                        let server = self.clone();
-                        move || {
-                            let server = server.clone();
-                            async move {
-                                server.#method_name().await
+                // No context, no arguments
+                (false, false, _) => {
+                    quote! {
+                        .prompt_no_args(#prompt_name, #description, {
+                            let server = self.clone();
+                            move || {
+                                let server = server.clone();
+                                async move {
+                                    server.#method_name().await
+                                }
                             }
-                        }
-                    })
+                        })
+                    }
+                }
+                // has_args but no arg_type - shouldn't happen, return empty
+                (_, true, None) => {
+                    quote! {}
                 }
             }
         })
@@ -490,5 +788,48 @@ mod tests {
         };
         assert_eq!(args.name, "test");
         assert_eq!(args.version, "1.0.0");
+    }
+
+    #[test]
+    fn test_parse_tags_array() {
+        // Test parsing tags from attribute string
+        let token_str =
+            r#"tool(description = "test", tags = ["admin", "dangerous"], version = "1.0")"#;
+        let tags = parse_tags_array(token_str);
+        assert_eq!(tags, vec!["admin", "dangerous"]);
+    }
+
+    #[test]
+    fn test_parse_tags_array_empty() {
+        let token_str = r#"tool(description = "test")"#;
+        let tags = parse_tags_array(token_str);
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn test_component_attrs_default() {
+        let attrs = ComponentAttrs::default();
+        assert!(attrs.description.is_none());
+        assert!(attrs.tags.is_empty());
+        assert!(attrs.version.is_none());
+    }
+
+    #[test]
+    fn test_is_context_type_arc_request_context() {
+        // Test Arc<RequestContext> detection
+        let ty: Type = syn::parse_quote!(Arc<RequestContext>);
+        assert!(is_context_type(&ty));
+    }
+
+    #[test]
+    fn test_is_context_type_request_context() {
+        let ty: Type = syn::parse_quote!(RequestContext);
+        assert!(is_context_type(&ty));
+    }
+
+    #[test]
+    fn test_is_context_type_other() {
+        let ty: Type = syn::parse_quote!(String);
+        assert!(!is_context_type(&ty));
     }
 }

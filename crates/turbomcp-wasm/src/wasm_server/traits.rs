@@ -39,6 +39,7 @@
 use std::future::Future;
 
 use serde::de::DeserializeOwned;
+use turbomcp_core::{MaybeSend, MaybeSync};
 
 use super::response::{IntoToolResponse, ToolError};
 use super::types::{PromptResult, ResourceResult};
@@ -69,7 +70,7 @@ use super::types::{PromptResult, ResourceResult};
 ///     }
 /// }
 /// ```
-pub trait ToolHandlerFn: Send + Sync + 'static {
+pub trait ToolHandlerFn: MaybeSend + MaybeSync + 'static {
     /// The argument type for this tool (must implement Deserialize and JsonSchema)
     type Args: DeserializeOwned + schemars::JsonSchema + 'static;
 
@@ -77,7 +78,7 @@ pub trait ToolHandlerFn: Send + Sync + 'static {
     type Output: IntoToolResponse;
 
     /// The future type returned by call
-    type Future: Future<Output = Self::Output> + Send + 'static;
+    type Future: Future<Output = Self::Output> + MaybeSend + 'static;
 
     /// Returns the name of the tool
     fn name(&self) -> &str;
@@ -111,12 +112,12 @@ pub trait ToolHandlerFn: Send + Sync + 'static {
 ///     }
 /// }
 /// ```
-pub trait ResourceHandlerFn: Send + Sync + 'static {
+pub trait ResourceHandlerFn: MaybeSend + MaybeSync + 'static {
     /// The output type (typically Result<ResourceResult, ToolError>)
     type Output: IntoResourceResponse;
 
     /// The future type returned by read
-    type Future: Future<Output = Self::Output> + Send + 'static;
+    type Future: Future<Output = Self::Output> + MaybeSend + 'static;
 
     /// Returns the URI of the resource
     fn uri(&self) -> &str;
@@ -151,7 +152,7 @@ pub trait ResourceHandlerFn: Send + Sync + 'static {
 ///     }
 /// }
 /// ```
-pub trait PromptHandlerFn: Send + Sync + 'static {
+pub trait PromptHandlerFn: MaybeSend + MaybeSync + 'static {
     /// The argument type for this prompt (must implement Deserialize and JsonSchema)
     type Args: DeserializeOwned + schemars::JsonSchema + 'static;
 
@@ -159,7 +160,7 @@ pub trait PromptHandlerFn: Send + Sync + 'static {
     type Output: IntoPromptResponse;
 
     /// The future type returned by get
-    type Future: Future<Output = Self::Output> + Send + 'static;
+    type Future: Future<Output = Self::Output> + MaybeSend + 'static;
 
     /// Returns the name of the prompt
     fn name(&self) -> &str;

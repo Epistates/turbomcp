@@ -71,14 +71,17 @@ fn test_tools_metadata() {
     let tools = TestServer::get_tools_metadata();
     assert_eq!(tools.len(), 3);
 
-    // Check tool names and descriptions
-    let tool_names: Vec<_> = tools.iter().map(|(name, _)| *name).collect();
+    // Check tool names and descriptions (tuple format: name, description, tags, version)
+    let tool_names: Vec<_> = tools.iter().map(|(name, _, _, _)| *name).collect();
     assert!(tool_names.contains(&"greet"));
     assert!(tool_names.contains(&"add"));
     assert!(tool_names.contains(&"status"));
 
     // Check descriptions
-    let greet_tool = tools.iter().find(|(name, _)| *name == "greet").unwrap();
+    let greet_tool = tools
+        .iter()
+        .find(|(name, _, _, _)| *name == "greet")
+        .unwrap();
     assert_eq!(greet_tool.1, "Greet someone by name");
 }
 
@@ -87,7 +90,8 @@ fn test_resources_metadata() {
     let resources = TestServer::get_resources_metadata();
     assert_eq!(resources.len(), 1);
 
-    let (uri, name) = resources[0];
+    // Tuple format: uri, name, tags, version
+    let (uri, name, _tags, _version) = resources[0];
     assert_eq!(uri, "config://app");
     assert_eq!(name, "config");
 }
@@ -97,7 +101,8 @@ fn test_prompts_metadata() {
     let prompts = TestServer::get_prompts_metadata();
     assert_eq!(prompts.len(), 1);
 
-    let (name, desc) = prompts[0];
+    // Tuple format: name, description, tags, version
+    let (name, desc, _tags, _version) = prompts[0];
     assert_eq!(name, "greeting");
     assert_eq!(desc, "Default greeting prompt");
 }
@@ -186,7 +191,8 @@ fn test_multi_resource_server() {
     let resources = MultiResourceServer::get_resources_metadata();
     assert_eq!(resources.len(), 3);
 
-    let uris: Vec<_> = resources.iter().map(|(uri, _)| *uri).collect();
+    // Tuple format: uri, name, tags, version
+    let uris: Vec<_> = resources.iter().map(|(uri, _, _, _)| *uri).collect();
     assert!(uris.contains(&"file://{path}"));
     assert!(uris.contains(&"config://app"));
     assert!(uris.contains(&"data://metrics"));

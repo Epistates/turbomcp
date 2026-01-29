@@ -214,67 +214,78 @@ The macro automatically generates JSON Schema:
 
 The `#[resource]` macro marks a method as a resource handler.
 
+**Syntax:**
+- `#[resource("uri://template")]` - URI template (required)
+- `#[resource("uri://template", mime_type = "application/json")]` - With MIME type
+
+**Note:** Unlike `#[tool]` and `#[prompt]`, the resource macro takes a URI template as
+its first argument (not a description). Use doc comments for the description.
+
 #### Basic Usage
 
 ```rust
-#[resource]
-async fn get_config(&self) -> McpResult<ResourceContent> {
-    Ok(ResourceContent::Text {
-        uri: "config://app".to_string(),
-        mime_type: Some("application/json".to_string()),
-        text: r#"{"setting": "value"}"#.to_string(),
-    })
+/// Application configuration
+#[resource("config://app")]
+async fn get_config(&self, uri: String, ctx: &RequestContext) -> McpResult<ResourceResult> {
+    Ok(ResourceResult::text(&uri, r#"{"setting": "value"}"#))
 }
 ```
 
-#### With Description
+#### With MIME Type
 
 ```rust
-#[resource(description = "Application configuration file")]
-async fn get_config(&self) -> McpResult<ResourceContent> {
-    // Implementation
+/// Application configuration file
+#[resource("config://app", mime_type = "application/json")]
+async fn get_config(&self, uri: String, ctx: &RequestContext) -> McpResult<ResourceResult> {
+    Ok(ResourceResult::text(&uri, r#"{"setting": "value"}"#))
 }
 ```
 
-#### Resource Types
+#### URI Templates
+
+Resources use URI templates for dynamic content:
+
+```rust
+/// Read a file by path
+#[resource("file://{path}")]
+async fn read_file(&self, uri: String, ctx: &RequestContext) -> McpResult<ResourceResult> {
+    // Extract path from uri: "file:///home/user/file.txt" -> "/home/user/file.txt"
+    let path = uri.strip_prefix("file://").unwrap_or(&uri);
+    let content = tokio::fs::read_to_string(path).await?;
+    Ok(ResourceResult::text(&uri, content))
+}
+```
+
+#### Resource Result Types
 
 **Text Content:**
 ```rust
-#[resource]
-async fn text_file(&self, path: String) -> McpResult<ResourceContent> {
-    let content = std::fs::read_to_string(&path)?;
-    Ok(ResourceContent::Text {
-        uri: format!("file://{}", path),
-        mime_type: Some("text/plain".to_string()),
-        text: content,
-    })
+#[resource("file://{path}")]
+async fn text_file(&self, uri: String, ctx: &RequestContext) -> McpResult<ResourceResult> {
+    let path = uri.strip_prefix("file://").unwrap_or(&uri);
+    let content = std::fs::read_to_string(path)?;
+    Ok(ResourceResult::text(&uri, content))
 }
 ```
 
 **Binary Content:**
 ```rust
-#[resource]
-async fn binary_file(&self, path: String) -> McpResult<ResourceContent> {
-    let content = std::fs::read(&path)?;
-    Ok(ResourceContent::Blob {
-        uri: format!("file://{}", path),
-        mime_type: Some("application/octet-stream".to_string()),
-        blob: content,
-    })
+#[resource("file://{path}")]
+async fn binary_file(&self, uri: String, ctx: &RequestContext) -> McpResult<ResourceResult> {
+    let path = uri.strip_prefix("file://").unwrap_or(&uri);
+    let content = std::fs::read(path)?;
+    Ok(ResourceResult::blob(&uri, content, "application/octet-stream"))
 }
 ```
 
 **Dynamic Resources:**
 ```rust
-#[resource]
-async fn current_time(&self) -> McpResult<ResourceContent> {
+/// Current server time
+#[resource("time://now")]
+async fn current_time(&self, uri: String, ctx: &RequestContext) -> McpResult<ResourceResult> {
     use chrono::Utc;
     let now = Utc::now().to_rfc3339();
-    Ok(ResourceContent::Text {
-        uri: "time://current".to_string(),
-        mime_type: Some("text/plain".to_string()),
-        text: now,
-    })
+    Ok(ResourceResult::text(&uri, now))
 }
 ```
 
@@ -286,11 +297,8 @@ The `#[prompt]` macro marks a method as a prompt handler.
 
 ```rust
 #[prompt]
-async fn greeting(&self, name: String) -> McpResult<PromptMessage> {
-    Ok(PromptMessage {
-        role: MessageRole::User,
-        content: format!("Hello, {}!", name),
-    })
+async fn greeting(&self, name: String) -> McpResult<PromptResult> {
+    Ok(PromptResult::user(format!("Hello, {}!", name)))
 }
 ```
 
@@ -304,32 +312,39 @@ async fn code_review(
     language: String,
     #[description("Code to review")]
     code: String
-) -> McpResult<PromptMessage> {
-    Ok(PromptMessage {
-        role: MessageRole::User,
-        content: format!(
-            "Please review this {} code:\n\n```{}\n{}\n```",
-            language, language, code
-        ),
-    })
+) -> McpResult<PromptResult> {
+    Ok(PromptResult::user(format!(
+        "Please review this {} code:\n\n```{}\n{}\n```",
+        language, language, code
+    )))
 }
 ```
 
 #### Multi-Message Prompts
 
+Use the builder pattern for multi-turn conversations:
+
 ```rust
 #[prompt]
-async fn conversation(&self) -> McpResult<Vec<PromptMessage>> {
-    Ok(vec![
-        PromptMessage {
-            role: MessageRole::System,
-            content: "You are a helpful assistant.".to_string(),
-        },
-        PromptMessage {
-            role: MessageRole::User,
-            content: "How do I use TurboMCP?".to_string(),
-        },
-    ])
+async fn conversation(&self) -> McpResult<PromptResult> {
+    Ok(PromptResult::user("How do I use TurboMCP?")
+        .add_assistant("TurboMCP is a Rust SDK for MCP. Here's how to get started...")
+        .with_description("A helpful conversation about TurboMCP"))
+}
+```
+
+For more control, construct messages directly:
+
+```rust
+use turbomcp::prelude::*;
+
+#[prompt]
+async fn custom_messages(&self) -> McpResult<PromptResult> {
+    let messages = vec![
+        Message::user("What is the weather?"),
+        Message::assistant("I'll check the weather for you."),
+    ];
+    Ok(PromptResult::new(messages))
 }
 ```
 
@@ -597,8 +612,11 @@ async fn validate_and_send(&self, email: String, subject: String, body: String) 
 
 ```rust
 // Good - Using correct handler type
-#[resource(description = "Get configuration")]
-async fn get_config(&self) -> McpResult<ResourceContent> { }
+/// Get application configuration
+#[resource("config://app")]
+async fn get_config(&self, uri: String, ctx: &RequestContext) -> McpResult<ResourceResult> {
+    Ok(ResourceResult::text(&uri, r#"{"setting": "value"}"#))
+}
 
 #[tool(description = "Update configuration")]
 async fn update_config(&self, config: String) -> McpResult<String> { }
@@ -705,15 +723,12 @@ impl FullServer {
         Ok(cache.get(&key).cloned())
     }
 
-    #[resource(description = "List all cached keys")]
-    async fn list_keys(&self) -> McpResult<ResourceContent> {
+    /// List all cached keys
+    #[resource("cache://keys")]
+    async fn list_keys(&self, uri: String, ctx: &RequestContext) -> McpResult<ResourceResult> {
         let cache = self.cache.read().await;
         let keys: Vec<String> = cache.keys().cloned().collect();
-        Ok(ResourceContent::Text {
-            uri: "cache://keys".to_string(),
-            mime_type: Some("application/json".to_string()),
-            text: serde_json::to_string(&keys)?,
-        })
+        Ok(ResourceResult::json(&uri, &keys)?)
     }
 
     #[prompt(description = "Generate cache query prompt")]
@@ -721,11 +736,8 @@ impl FullServer {
         &self,
         #[description("Key to query")]
         key: String
-    ) -> McpResult<PromptMessage> {
-        Ok(PromptMessage {
-            role: MessageRole::User,
-            content: format!("What is the value of cache key '{}'?", key),
-        })
+    ) -> McpResult<PromptResult> {
+        Ok(PromptResult::user(format!("What is the value of cache key '{}'?", key)))
     }
 }
 

@@ -43,12 +43,15 @@
 //! All MCP operations are delegated to `turbomcp-client` for reliability.
 
 // Core modules
+pub mod build;
 pub mod cli;
+pub mod deploy;
 pub mod dev;
 pub mod error;
 pub mod executor;
 pub mod formatter;
 pub mod install;
+pub mod new;
 pub mod path_security;
 pub mod prelude;
 pub mod transport;
@@ -57,9 +60,9 @@ use clap::Parser;
 
 // Clean re-exports (no more "New" suffixes!)
 pub use cli::{
-    Cli, Commands, CompletionCommands, Connection, DevArgs, InstallArgs, InstallTarget, LogLevel,
-    OutputFormat, PromptCommands, RefType, ResourceCommands, SamplingCommands, ServerCommands,
-    ToolCommands, TransportKind,
+    BuildArgs, Cli, Commands, CompletionCommands, Connection, DeployArgs, DevArgs, InstallArgs,
+    InstallTarget, LogLevel, NewArgs, OutputFormat, ProjectTemplate, PromptCommands, RefType,
+    ResourceCommands, SamplingCommands, ServerCommands, ToolCommands, TransportKind, WasmPlatform,
 };
 pub use error::{CliError, CliResult, ErrorCategory};
 pub use executor::CommandExecutor;

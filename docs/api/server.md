@@ -171,7 +171,7 @@ Prompts provide templated text for LLM interactions.
 
 ```rust
 #[prompt]
-async fn prompt_name(&self, param: Type) -> McpResult<PromptMessage> {
+async fn prompt_name(&self, param: Type) -> McpResult<PromptResult> {
     // Implementation
 }
 ```
@@ -179,7 +179,7 @@ async fn prompt_name(&self, param: Type) -> McpResult<PromptMessage> {
 #### Example: Prompt Handler
 
 ```rust
-use turbomcp::{PromptMessage, MessageRole};
+use turbomcp::prelude::*;
 
 #[prompt(description = "Generate code review prompt")]
 async fn code_review(
@@ -188,15 +188,22 @@ async fn code_review(
     language: String,
     #[description("Code to review")]
     code: String
-) -> McpResult<PromptMessage> {
-    Ok(PromptMessage {
-        role: MessageRole::User,
-        content: format!(
-            "Please review this {} code:\n\n```{}\n{}\n```",
-            language, language, code
-        ),
-    })
+) -> McpResult<PromptResult> {
+    // Use the ergonomic builder API
+    Ok(PromptResult::user(format!(
+        "Please review this {} code:\n\n```{}\n{}\n```",
+        language, language, code
+    )))
 }
+```
+
+For multi-message prompts, use the builder pattern:
+
+```rust
+Ok(PromptResult::user("Initial context")
+    .add_assistant("I understand. What would you like me to do?")
+    .add_user("Please analyze this data")
+    .with_description("A multi-turn conversation prompt"))
 ```
 
 ## Parameter Types

@@ -77,6 +77,23 @@ impl McpMiddleware for LoggingMiddleware {
         );
         result
     }
+
+    async fn on_initialize<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
+        println!("[LOG] Server initializing...");
+        let result = next.initialize().await;
+        println!(
+            "[LOG] Server initialized: {}",
+            if result.is_ok() { "OK" } else { "ERROR" }
+        );
+        result
+    }
+
+    async fn on_shutdown<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
+        println!("[LOG] Server shutting down...");
+        let result = next.shutdown().await;
+        println!("[LOG] Server shutdown complete");
+        result
+    }
 }
 
 // ============================================================================
@@ -229,6 +246,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Make some calls
     tokio::runtime::Runtime::new()?.block_on(async {
+        // Lifecycle: initialize through middleware chain
+        println!("Lifecycle hooks:");
+        println!("----------------");
+        stack.on_initialize().await?;
+        println!();
+
         let ctx = RequestContext::default();
 
         println!("Making tool calls:\n");
@@ -256,6 +279,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Read resource
         let _ = stack.read_resource("data://config", &ctx).await;
 
+        // Lifecycle: shutdown through middleware chain
+        println!();
+        stack.on_shutdown().await?;
+
         Ok::<_, McpError>(())
     })?;
 
@@ -269,6 +296,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - Logging sees all requests (even blocked ones)");
     println!("  - Metrics counts all attempts");
     println!("  - Access control filters tools and blocks calls");
+    println!("  - Lifecycle hooks (on_initialize/on_shutdown) chain through middlewares");
 
     Ok(())
 }
