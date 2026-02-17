@@ -228,7 +228,7 @@
 
 // v3.0: Re-export turbomcp-core foundation types
 /// Re-export of turbomcp-core, the no_std foundation layer
-pub use turbomcp_core as core;
+pub use turbomcp_core as mcp_core;
 
 // v3.0: McpError is THE error type - re-export at crate root
 pub use turbomcp_core::error::{ErrorContext as McpErrorContext, ErrorKind, McpError, McpResult};
