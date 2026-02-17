@@ -41,7 +41,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// ```
     pub async fn ping(&self) -> Result<PingResult> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         // Send ping request (no parameters needed)
@@ -87,7 +87,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// ```
     pub async fn set_log_level(&self, level: LogLevel) -> Result<SetLevelResult> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         // Send logging/setLevel request

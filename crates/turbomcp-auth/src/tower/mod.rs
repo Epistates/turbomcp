@@ -1,7 +1,8 @@
 //! # Tower Middleware Integration for TurboMCP Auth
 //!
-//! This module provides Tower Layer and Service implementations for authentication,
-//! enabling composable middleware stacks that integrate with the Tower ecosystem.
+//! This module provides Tower Layer and Service implementations for authentication
+//! and rate limiting, enabling composable middleware stacks that integrate with the
+//! Tower ecosystem.
 //!
 //! ## Overview
 //!
@@ -9,8 +10,12 @@
 //!
 //! - [`AuthLayer`] - A Tower Layer that wraps services with authentication
 //! - [`AuthService`] - A Tower Service that performs token extraction and validation
+//! - [`RateLimitLayer`] - A Tower Layer that adds rate limiting
+//! - [`RateLimitService`] - A Tower Service that enforces rate limits
 //!
 //! ## Usage
+//!
+//! ### Authentication Only
 //!
 //! ```rust,ignore
 //! use tower::ServiceBuilder;
@@ -21,6 +26,19 @@
 //!
 //! let service = ServiceBuilder::new()
 //!     .layer(auth_layer)
+//!     .service(my_inner_service);
+//! ```
+//!
+//! ### Rate Limiting + Authentication
+//!
+//! ```rust,ignore
+//! use tower::ServiceBuilder;
+//! use turbomcp_auth::tower::{AuthLayer, RateLimitLayer};
+//! use turbomcp_auth::rate_limit::RateLimiter;
+//!
+//! let service = ServiceBuilder::new()
+//!     .layer(RateLimitLayer::new(RateLimiter::for_auth()))
+//!     .layer(AuthLayer::new(auth_provider))
 //!     .service(my_inner_service);
 //! ```
 //!
@@ -37,9 +55,13 @@
 //! ```
 
 mod layer;
+pub mod rate_limit;
 mod service;
 
 pub use layer::AuthLayer;
+pub use rate_limit::{
+    IpKeyExtractor, KeyExtractor, RateLimitLayer, RateLimitRejection, RateLimitService,
+};
 pub use service::{AuthService, AuthServiceFuture};
 
 /// Configuration for the auth layer

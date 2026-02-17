@@ -65,10 +65,10 @@ impl OAuth2Client {
     pub fn new(config: &OAuth2Config, provider_type: ProviderType) -> McpResult<Self> {
         // Validate URLs
         let auth_url = AuthUrl::new(config.auth_url.clone())
-            .map_err(|_| McpError::validation("Invalid authorization URL".to_string()))?;
+            .map_err(|_| McpError::invalid_params("Invalid authorization URL".to_string()))?;
 
         let token_url = TokenUrl::new(config.token_url.clone())
-            .map_err(|_| McpError::validation("Invalid token URL".to_string()))?;
+            .map_err(|_| McpError::invalid_params("Invalid token URL".to_string()))?;
 
         // Redirect URI validation with security checks
         let redirect_url = Self::validate_redirect_uri(&config.redirect_uri)?;
@@ -79,7 +79,7 @@ impl OAuth2Client {
             None
         } else {
             Some(ClientSecret::new(
-                config.client_secret.expose_secret().clone(),
+                config.client_secret.expose_secret().to_string(),
             ))
         };
 
@@ -89,7 +89,7 @@ impl OAuth2Client {
         let revocation_url = if let Some(ref revocation_url_str) = config.revocation_url {
             Some(
                 RevocationUrl::new(revocation_url_str.clone())
-                    .map_err(|_| McpError::validation("Invalid revocation URL".to_string()))?,
+                    .map_err(|_| McpError::invalid_params("Invalid revocation URL".to_string()))?,
             )
         } else {
             None
@@ -264,7 +264,7 @@ impl OAuth2Client {
 
         // Parse and validate URL structure
         let parsed = Url::parse(uri)
-            .map_err(|e| McpError::validation(format!("Invalid redirect URI format: {e}")))?;
+            .map_err(|e| McpError::invalid_params(format!("Invalid redirect URI format: {e}")))?;
 
         // Security: Validate scheme
         match parsed.scheme() {
@@ -280,13 +280,13 @@ impl OAuth2Client {
                         || host.starts_with("0.0.0.0:");
 
                     if !is_localhost {
-                        return Err(McpError::validation(
+                        return Err(McpError::invalid_params(
                             "HTTP redirect URIs only allowed for localhost in development"
                                 .to_string(),
                         ));
                     }
                 } else {
-                    return Err(McpError::validation(
+                    return Err(McpError::invalid_params(
                         "Redirect URI must have a valid host".to_string(),
                     ));
                 }
@@ -301,7 +301,7 @@ impl OAuth2Client {
                 // Allow app-specific custom schemes
             }
             _ => {
-                return Err(McpError::validation(format!(
+                return Err(McpError::invalid_params(format!(
                     "Unsupported redirect URI scheme: {}. Use https, http (localhost only), or app-specific schemes",
                     parsed.scheme()
                 )));
@@ -310,7 +310,7 @@ impl OAuth2Client {
 
         // Security: Prevent fragment in redirect URI (per OAuth 2.0 spec)
         if parsed.fragment().is_some() {
-            return Err(McpError::validation(
+            return Err(McpError::invalid_params(
                 "Redirect URI must not contain URL fragment".to_string(),
             ));
         }
@@ -321,7 +321,7 @@ impl OAuth2Client {
         if let Some(path) = parsed.path_segments() {
             for segment in path {
                 if segment == ".." {
-                    return Err(McpError::validation(
+                    return Err(McpError::invalid_params(
                         "Redirect URI path must not contain traversal sequences".to_string(),
                     ));
                 }
@@ -332,7 +332,7 @@ impl OAuth2Client {
         // This provides URL validation per OAuth 2.1 specifications
         // For production security, implement exact whitelist matching of allowed URIs
         RedirectUrl::new(uri.to_string())
-            .map_err(|_| McpError::validation("Failed to create redirect URL".to_string()))
+            .map_err(|_| McpError::invalid_params("Failed to create redirect URL".to_string()))
     }
 
     /// Get access to the authorization code client

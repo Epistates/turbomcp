@@ -114,6 +114,22 @@ pub type CodecResult<T> = Result<T, CodecError>;
 /// This trait abstracts over different serialization formats, allowing
 /// pluggable encoding/decoding while maintaining type safety.
 ///
+/// # Send + Sync Bounds
+///
+/// The `Send + Sync` bounds are required because codecs are typically shared across
+/// multiple threads/tasks in multi-threaded runtimes (tokio, async-std). This enables:
+///
+/// - **Concurrent encoding/decoding**: Multiple tasks can use the codec simultaneously
+/// - **Zero-copy sharing**: Codec instances can be wrapped in Arc and shared cheaply
+/// - **Thread-safe initialization**: Codec configuration is immutable after creation
+///
+/// ## WASM Implications
+///
+/// On WASM targets (single-threaded), these bounds are automatically satisfied since
+/// all types are `Send + Sync` by default in single-threaded environments. The trait
+/// bounds don't add overhead on WASM - they're purely compile-time constraints that
+/// prevent accidental use of non-thread-safe types on native platforms.
+///
 /// # Implementors
 ///
 /// - [`JsonCodec`] - Standard JSON encoding (default)
@@ -234,6 +250,35 @@ impl Codec for SimdJsonCodec {
 ///
 /// **Note**: MessagePack is not MCP-compliant for external communication
 /// but can be used for internal message passing.
+///
+/// # Security Considerations
+///
+/// When using MessagePack for untrusted input, be aware of:
+///
+/// ## Nesting Depth
+///
+/// Deeply nested structures can cause stack overflow. The underlying `rmp-serde`
+/// library has default recursion limits, but extremely nested payloads may still
+/// cause issues. Consider validating message structure before decoding.
+///
+/// ## Binary Field Size
+///
+/// MessagePack can encode arbitrarily large binary/string fields. Applications should:
+/// - Enforce maximum message size limits at the transport layer
+/// - Use streaming decoders for large payloads when possible
+/// - Set appropriate memory limits in production environments
+///
+/// ## Type Confusion
+///
+/// MessagePack's dynamic typing can lead to type confusion attacks. Always:
+/// - Validate deserialized data matches expected schema
+/// - Use strongly-typed Rust structs rather than `serde_json::Value`
+/// - Check for unexpected field types after deserialization
+///
+/// ## Recommended Usage
+///
+/// For production systems handling untrusted input, prefer JSON (with schema validation)
+/// or use MessagePack only within trusted boundaries (internal microservices, etc.).
 #[cfg(feature = "msgpack")]
 #[cfg_attr(docsrs, doc(cfg(feature = "msgpack")))]
 #[derive(Debug, Clone, Default)]
@@ -271,13 +316,24 @@ impl Codec for MsgPackCodec {
     }
 }
 
+/// Maximum streaming buffer size (1MB) - prevents DoS via unbounded memory growth
+const MAX_STREAMING_BUFFER_SIZE: usize = 1024 * 1024;
+
 /// Streaming JSON decoder for Server-Sent Events (SSE)
 ///
 /// This decoder handles newline-delimited JSON streams commonly
 /// used in HTTP/SSE transports.
+///
+/// # Security
+///
+/// The decoder enforces a maximum buffer size of 1MB to prevent
+/// denial-of-service attacks via unbounded memory consumption.
+/// If an attacker sends continuous data without newlines, the
+/// buffer will be cleared after exceeding the limit.
 #[derive(Debug)]
 pub struct StreamingJsonDecoder {
     buffer: Vec<u8>,
+    max_buffer_size: usize,
 }
 
 impl Default for StreamingJsonDecoder {
@@ -287,21 +343,57 @@ impl Default for StreamingJsonDecoder {
 }
 
 impl StreamingJsonDecoder {
-    /// Create a new streaming decoder
+    /// Create a new streaming decoder with default 1MB buffer limit
     pub fn new() -> Self {
-        Self { buffer: Vec::new() }
+        Self {
+            buffer: Vec::new(),
+            max_buffer_size: MAX_STREAMING_BUFFER_SIZE,
+        }
     }
 
-    /// Create with pre-allocated buffer capacity
+    /// Create with pre-allocated buffer capacity and default limit
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             buffer: Vec::with_capacity(capacity),
+            max_buffer_size: MAX_STREAMING_BUFFER_SIZE,
+        }
+    }
+
+    /// Create with custom maximum buffer size
+    ///
+    /// # Arguments
+    ///
+    /// * `max_size` - Maximum buffer size in bytes (capped at 10MB for safety)
+    ///
+    /// # Security
+    ///
+    /// Setting this too high may allow DoS attacks via memory exhaustion.
+    /// The value is capped at 10MB regardless of input.
+    pub fn with_max_size(max_size: usize) -> Self {
+        Self {
+            buffer: Vec::new(),
+            max_buffer_size: max_size.min(10 * 1024 * 1024), // Cap at 10MB
         }
     }
 
     /// Feed data into the decoder
+    ///
+    /// # Security
+    ///
+    /// If the buffer exceeds the maximum size, it will be cleared and
+    /// an error will be returned on the next `try_decode` call.
     pub fn feed(&mut self, data: &[u8]) {
         self.buffer.extend_from_slice(data);
+
+        // Enforce buffer size limit to prevent DoS
+        if self.buffer.len() > self.max_buffer_size {
+            tracing::warn!(
+                buffer_size = self.buffer.len(),
+                max_size = self.max_buffer_size,
+                "Streaming buffer exceeded maximum size, clearing buffer"
+            );
+            self.buffer.clear();
+        }
     }
 
     /// Try to decode the next complete message
@@ -347,6 +439,11 @@ impl StreamingJsonDecoder {
     /// Get current buffer length
     pub fn len(&self) -> usize {
         self.buffer.len()
+    }
+
+    /// Get maximum buffer size
+    pub fn max_buffer_size(&self) -> usize {
+        self.max_buffer_size
     }
 }
 
@@ -526,6 +623,36 @@ mod tests {
 
         // No more messages
         assert!(decoder.try_decode::<TestMessage>().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_streaming_decoder_buffer_limit() {
+        let mut decoder = StreamingJsonDecoder::with_max_size(100);
+
+        // Feed data that exceeds buffer limit (no newline)
+        let large_data = vec![b'x'; 150];
+        decoder.feed(&large_data);
+
+        // Buffer should be cleared after exceeding limit
+        assert!(
+            decoder.is_empty(),
+            "Buffer should be cleared after exceeding limit"
+        );
+    }
+
+    #[test]
+    fn test_streaming_decoder_max_size_cap() {
+        // Try to create decoder with absurdly large limit
+        let decoder = StreamingJsonDecoder::with_max_size(100 * 1024 * 1024); // 100MB
+
+        // Should be capped at 10MB
+        assert_eq!(decoder.max_buffer_size(), 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_streaming_decoder_default_limit() {
+        let decoder = StreamingJsonDecoder::new();
+        assert_eq!(decoder.max_buffer_size(), 1024 * 1024); // 1MB default
     }
 
     #[test]

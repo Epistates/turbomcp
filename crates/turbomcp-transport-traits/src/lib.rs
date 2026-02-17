@@ -18,11 +18,9 @@
 //!
 //! ```rust,ignore
 //! use turbomcp_transport_traits::{Transport, TransportResult, TransportMessage};
-//! use async_trait::async_trait;
 //!
 //! struct MyTransport { /* ... */ }
 //!
-//! #[async_trait]
 //! impl Transport for MyTransport {
 //!     fn transport_type(&self) -> TransportType { /* ... */ }
 //!     // ... other trait methods
@@ -38,11 +36,8 @@
 )]
 #![deny(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![allow(
-    clippy::module_name_repetitions,
-    clippy::missing_errors_doc,
-    clippy::must_use_candidate
-)]
+#![allow(clippy::module_name_repetitions, clippy::must_use_candidate)]
+// Note: missing_errors_doc is now a workspace-level warning for enterprise quality
 
 mod bidirectional;
 mod config;

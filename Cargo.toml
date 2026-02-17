@@ -53,9 +53,11 @@ unexpected_cfgs = { level = "warn", check-cfg = [
 ] }
 
 [workspace.lints.clippy]
-# Allow pedantic lints that are too strict for this codebase
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
+# Quality enforcement - warn on missing documentation for error conditions
+# This helps users understand what can go wrong when calling fallible functions
+# TODO(v4.0.0): Consider changing to "deny" after comprehensive doc coverage
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
 module_name_repetitions = "allow"
 return_self_not_must_use = "allow"
 cast_possible_truncation = "allow"
@@ -89,8 +91,7 @@ tokio = { version = "1.49", features = [
     "io-util",                 # Async I/O utilities
 ] }
 tokio-util = { version = "0.7", features = ["full"] }
-futures = "0.3"
-async-trait = "0.1"
+futures = "0.3.31"
 pin-project-lite = "0.2"
 
 # Test utilities
@@ -106,7 +107,7 @@ simd-json = "0.13" # SIMD-accelerated JSON parsing
 ciborium = "0.2"
 
 # Schema validation and generation
-schemars = { version = "1.0", features = ["chrono04", "uuid1"] }
+schemars = { version = "1.2", features = ["chrono04", "uuid1"] }
 jsonschema = { version = "0.17.1", default-features = false, features = ["resolve-file"] }
 
 # HTTP/WebSocket/Network
@@ -136,40 +137,43 @@ metrics = "0.24"
 metrics-exporter-prometheus = "0.18"
 
 # Concurrency and synchronization
-parking_lot = "0.12"
+parking_lot = "0.12.5"
 dashmap = "6.1.0"
 crossbeam = "0.8"
 crossbeam-channel = "0.5"
 flume = "0.11"
 tokio-stream = "0.1"
 
+# URL and random utilities
+url = "2.5"
+fastrand = "2.3"
+
 # Configuration and CLI
 config = "0.14"
-clap = { version = "4.4", features = ["derive", "env", "color"] }
-clap_complete = "4.4"
+clap = { version = "4.5", features = ["derive", "env", "color"] }
+clap_complete = "4.5"
 
 # Security and authentication
 ring = "0.17"
 base64 = "0.22"
 percent-encoding = "2.3"  # URL percent encoding/decoding (RFC 3986)
-uuid = { version = "1.6", features = ["v4", "serde"] }
+uuid = { version = "1.19", features = ["v4", "serde"] }
 jsonwebtoken = { version = "10.2", features = ["aws_lc_rs", "use_pem"] }
 
 # Time and date handling
-chrono = { version = "0.4", features = ["serde"] }
-time = { version = "0.3", features = ["serde", "macros"] }
+chrono = { version = "0.4.43", features = ["serde"] }
+time = { version = "0.3.47", features = ["serde", "macros"] }
 
 # Memory and performance optimizations
-bytes = "1.5"
+bytes = "1.11.1"
 smallvec = { version = "1.11", features = ["serde"] }
 compact_str = { version = "0.9", features = ["serde"] }
 ahash = "0.8"
-once_cell = "1.19"
 arc-swap = "1.6"
 
 # Development and testing
-criterion = { version = "0.8", features = ["html_reports"] }
-proptest = "1.4"
+criterion = { version = "0.8.1", features = ["html_reports"] }
+proptest = "1.9"
 tokio-test = "0.4"
 wiremock = "0.6"
 pretty_assertions = "1.4"
@@ -215,14 +219,15 @@ turbomcp-client = { version = "3.0.0-beta.4", path = "crates/turbomcp-client" }
 turbomcp-server = { version = "3.0.0-beta.4", path = "crates/turbomcp-server" }
 turbomcp-macros = { version = "3.0.0-beta.4", path = "crates/turbomcp-macros" }
 turbomcp-cli = { version = "3.0.0-beta.4", path = "crates/turbomcp-cli" }
-# v3.0: OpenTelemetry integration and observability
 turbomcp-telemetry = { version = "3.0.0-beta.4", path = "crates/turbomcp-telemetry" }
+turbomcp-auth = { version = "3.0.0-beta.4", path = "crates/turbomcp-auth" }
 turbomcp-dpop = { version = "3.0.0-beta.4", path = "crates/turbomcp-dpop" }
-# v3.0: Wire format codec abstraction (no_std compatible)
+turbomcp-proxy = { version = "3.0.0-beta.4", path = "crates/turbomcp-proxy" }
+turbomcp-grpc = { version = "3.0.0-beta.4", path = "crates/turbomcp-grpc" }
+turbomcp-openapi = { version = "3.0.0-beta.4", path = "crates/turbomcp-openapi" }
 turbomcp-wire = { version = "3.0.0-beta.4", path = "crates/turbomcp-wire", default-features = false }
-# v3.0: WASM server proc macros
+turbomcp-wasm = { version = "3.0.0-beta.4", path = "crates/turbomcp-wasm" }
 turbomcp-wasm-macros = { version = "3.0.0-beta.4", path = "crates/turbomcp-wasm-macros" }
-# v3.0: Streamable HTTP transport types (SSE, sessions, MCP 2025-11-25)
 turbomcp-transport-streamable = { version = "3.0.0-beta.4", path = "crates/turbomcp-transport-streamable", default-features = false }
 
 [profile.dev]
@@ -284,5 +289,3 @@ debug = 2
 #   - unmaintained but compile-time only (zero runtime risk)
 #   - Cannot patch to pastey due to package name mismatch in Cargo's patch mechanism
 #   - Tracked upstream: https://github.com/parallaxsecond/rust-cryptoki/issues/279
-
-

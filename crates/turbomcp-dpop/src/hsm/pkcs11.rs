@@ -21,7 +21,6 @@ use super::super::{
     DpopAlgorithm, DpopError, DpopKeyMetadata, DpopKeyPair, DpopPrivateKey, DpopPublicKey, Result,
 };
 use super::{HsmHealthStatus, HsmInfo, HsmOperations, HsmStats, Pkcs11Config, TokenInfo, common};
-use async_trait::async_trait;
 use cryptoki::context::{CInitializeArgs, Pkcs11};
 use cryptoki::mechanism::Mechanism;
 use cryptoki::object::{Attribute, AttributeType, KeyType, ObjectClass, ObjectHandle};
@@ -32,9 +31,12 @@ use parking_lot::RwLock;
 use r2d2::{Pool, PooledConnection};
 use secrecy::ExposeSecret;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, info, trace};
+use zeroize::Zeroizing;
 
 // Production-grade ASN.1 parsing for PKCS#11 key data
 #[cfg(feature = "hsm-pkcs11")]
@@ -116,8 +118,9 @@ impl r2d2::ManageConnection for SessionManager {
                     reason: format!("Failed to open PKCS#11 session: {}", e),
                 })?;
 
-        // Login with user PIN
-        let auth_pin = AuthPin::new(self.config.user_pin.expose_secret().clone());
+        // Login with user PIN - zeroized after use for security
+        let pin_str = Zeroizing::new(self.config.user_pin.expose_secret().to_string());
+        let auth_pin = AuthPin::new(pin_str.to_string());
         session
             .login(UserType::User, Some(&auth_pin))
             .map_err(|e| DpopError::KeyManagementError {
@@ -524,252 +527,274 @@ impl Pkcs11HsmManager {
     }
 }
 
-#[async_trait]
 impl HsmOperations for Pkcs11HsmManager {
-    async fn generate_key_pair(&self, algorithm: DpopAlgorithm) -> Result<DpopKeyPair> {
-        let start_time = Instant::now();
-        debug!("Generating {:?} key pair in PKCS#11 HSM", algorithm);
+    fn generate_key_pair(
+        &self,
+        algorithm: DpopAlgorithm,
+    ) -> Pin<Box<dyn Future<Output = Result<DpopKeyPair>> + Send + '_>> {
+        Box::pin(async move {
+            let start_time = Instant::now();
+            debug!("Generating {:?} key pair in PKCS#11 HSM", algorithm);
 
-        // Clone session pool for moving into blocking task
-        let session_pool = self.session_pool.clone();
-        let algorithm_clone = algorithm;
+            // Clone session pool for moving into blocking task
+            let session_pool = self.session_pool.clone();
+            let algorithm_clone = algorithm;
 
-        // Execute all PKCS#11 operations in blocking thread
-        let (key_id, public_key_bytes) =
-            tokio::task::spawn_blocking(move || -> Result<(String, Vec<u8>)> {
+            // Execute all PKCS#11 operations in blocking thread
+            let (key_id, public_key_bytes) =
+                tokio::task::spawn_blocking(move || -> Result<(String, Vec<u8>)> {
+                    // Get session from pool (owned, not borrowed)
+                    let session = session_pool.get()?;
+
+                    // Generate key pair synchronously
+                    let (public_handle, _private_handle, key_id) =
+                        Self::generate_ecdsa_key_pair_sync(&session, algorithm_clone)?;
+
+                    // Extract public key bytes
+                    let public_key_bytes = Self::extract_public_key_bytes_sync(
+                        &session,
+                        public_handle,
+                        algorithm_clone,
+                    )?;
+
+                    Ok((key_id, public_key_bytes))
+                })
+                .await
+                .map_err(|e| DpopError::KeyManagementError {
+                    reason: format!("Blocking task failed: {}", e),
+                })??;
+
+            // Update statistics
+            {
+                let mut stats = self.stats.write();
+                stats.keys_generated += 1;
+                stats.session_stats.active_sessions = self.session_pool.state().connections;
+            }
+
+            let elapsed = start_time.elapsed();
+            self.track_operation_time(elapsed);
+
+            info!(
+                "Generated {:?} key pair '{}' in {:?}",
+                algorithm, key_id, elapsed
+            );
+
+            // For HSM keys, create reference structures - private key material never leaves HSM
+            // Store key handle/reference information instead of actual key material
+            let private_key = DpopPrivateKey::EcdsaP256 {
+                key_bytes: [0u8; 32], // HSM reference - actual key material secured in hardware
+            };
+
+            // Parse public key using proven ASN.1 parsing
+            let (x, y) = self.parse_ec_public_key_asn1(&public_key_bytes)?;
+            let public_key = DpopPublicKey::EcdsaP256 { x, y };
+
+            // Compute RFC 7638 compliant JWK thumbprint
+            let thumbprint = self.compute_jwk_thumbprint(&public_key, algorithm)?;
+
+            Ok(DpopKeyPair {
+                id: key_id.clone(),
+                private_key,
+                public_key,
+                thumbprint,
+                algorithm,
+                created_at: SystemTime::now(),
+                expires_at: None, // HSM keys typically don't expire
+                metadata: DpopKeyMetadata {
+                    description: Some(format!("HSM-generated {} key", algorithm.as_str())),
+                    client_id: None,
+                    session_id: None,
+                    usage_count: 0,
+                    last_used: None,
+                    rotation_generation: 0,
+                    custom: std::collections::HashMap::new(),
+                },
+            })
+        })
+    }
+
+    fn sign_data(
+        &self,
+        key_id: &str,
+        data: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + '_>> {
+        let key_id = key_id.to_string();
+        let data = data.to_vec();
+        Box::pin(async move {
+            let start_time = Instant::now();
+            trace!("Signing data with PKCS#11 key: {}", key_id);
+
+            // Clone data for moving into blocking task
+            let session_pool = self.session_pool.clone();
+            let key_id_owned = key_id;
+            let data_owned = data;
+
+            // Execute all PKCS#11 operations in blocking thread
+            let signature = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
                 // Get session from pool (owned, not borrowed)
                 let session = session_pool.get()?;
 
-                // Generate key pair synchronously
-                let (public_handle, _private_handle, key_id) =
-                    Self::generate_ecdsa_key_pair_sync(&session, algorithm_clone)?;
+                // Find the private key
+                let private_handle = Self::find_private_key_by_label_sync(&session, &key_id_owned)?;
 
-                // Extract public key bytes
-                let public_key_bytes =
-                    Self::extract_public_key_bytes_sync(&session, public_handle, algorithm_clone)?;
+                // Determine algorithm from key (simplified - would need proper detection)
+                let algorithm = DpopAlgorithm::ES256;
 
-                Ok((key_id, public_key_bytes))
+                // Sign the data
+                let signature =
+                    Self::sign_data_pkcs11_sync(&session, private_handle, &data_owned, algorithm)?;
+
+                Ok(signature)
             })
             .await
             .map_err(|e| DpopError::KeyManagementError {
                 reason: format!("Blocking task failed: {}", e),
             })??;
 
-        // Update statistics
-        {
-            let mut stats = self.stats.write();
-            stats.keys_generated += 1;
-            stats.session_stats.active_sessions = self.session_pool.state().connections;
-        }
+            // Update statistics
+            {
+                let mut stats = self.stats.write();
+                stats.signatures_created += 1;
+            }
 
-        let elapsed = start_time.elapsed();
-        self.track_operation_time(elapsed);
+            let elapsed = start_time.elapsed();
+            self.track_operation_time(elapsed);
 
-        info!(
-            "Generated {:?} key pair '{}' in {:?}",
-            algorithm, key_id, elapsed
-        );
-
-        // For HSM keys, create reference structures - private key material never leaves HSM
-        // Store key handle/reference information instead of actual key material
-        let private_key = DpopPrivateKey::EcdsaP256 {
-            key_bytes: [0u8; 32], // HSM reference - actual key material secured in hardware
-        };
-
-        // Parse public key using proven ASN.1 parsing
-        let (x, y) = self.parse_ec_public_key_asn1(&public_key_bytes)?;
-        let public_key = DpopPublicKey::EcdsaP256 { x, y };
-
-        // Compute RFC 7638 compliant JWK thumbprint
-        let thumbprint = self.compute_jwk_thumbprint(&public_key, algorithm)?;
-
-        Ok(DpopKeyPair {
-            id: key_id.clone(),
-            private_key,
-            public_key,
-            thumbprint,
-            algorithm,
-            created_at: SystemTime::now(),
-            expires_at: None, // HSM keys typically don't expire
-            metadata: DpopKeyMetadata {
-                description: Some(format!("HSM-generated {} key", algorithm.as_str())),
-                client_id: None,
-                session_id: None,
-                usage_count: 0,
-                last_used: None,
-                rotation_generation: 0,
-                custom: std::collections::HashMap::new(),
-            },
-        })
-    }
-
-    async fn sign_data(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>> {
-        let start_time = Instant::now();
-        trace!("Signing data with PKCS#11 key: {}", key_id);
-
-        // Clone data for moving into blocking task
-        let session_pool = self.session_pool.clone();
-        let key_id_owned = key_id.to_string();
-        let data_owned = data.to_vec();
-
-        // Execute all PKCS#11 operations in blocking thread
-        let signature = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-            // Get session from pool (owned, not borrowed)
-            let session = session_pool.get()?;
-
-            // Find the private key
-            let private_handle = Self::find_private_key_by_label_sync(&session, &key_id_owned)?;
-
-            // Determine algorithm from key (simplified - would need proper detection)
-            let algorithm = DpopAlgorithm::ES256;
-
-            // Sign the data
-            let signature =
-                Self::sign_data_pkcs11_sync(&session, private_handle, &data_owned, algorithm)?;
-
+            trace!("Signed data in {:?}", elapsed);
             Ok(signature)
         })
-        .await
-        .map_err(|e| DpopError::KeyManagementError {
-            reason: format!("Blocking task failed: {}", e),
-        })??;
-
-        // Update statistics
-        {
-            let mut stats = self.stats.write();
-            stats.signatures_created += 1;
-        }
-
-        let elapsed = start_time.elapsed();
-        self.track_operation_time(elapsed);
-
-        trace!("Signed data in {:?}", elapsed);
-        Ok(signature)
     }
 
-    async fn list_keys(&self) -> Result<Vec<String>> {
-        debug!("Listing DPoP keys in PKCS#11 HSM");
+    fn list_keys(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+        Box::pin(async move {
+            debug!("Listing DPoP keys in PKCS#11 HSM");
 
-        let session = self.get_session()?;
+            let session = self.get_session()?;
 
-        // Find all private keys with DPoP labels
-        let template = vec![Attribute::Class(ObjectClass::PRIVATE_KEY)];
+            // Find all private keys with DPoP labels
+            let template = vec![Attribute::Class(ObjectClass::PRIVATE_KEY)];
 
-        let objects =
-            session
-                .find_objects(&template)
-                .map_err(|e| DpopError::KeyManagementError {
-                    reason: format!("Failed to find objects: {}", e),
-                })?;
+            let objects =
+                session
+                    .find_objects(&template)
+                    .map_err(|e| DpopError::KeyManagementError {
+                        reason: format!("Failed to find objects: {}", e),
+                    })?;
 
-        let mut key_ids = Vec::new();
+            let mut key_ids = Vec::new();
 
-        for handle in objects {
-            if let Ok(attrs) = session.get_attributes(handle, &[AttributeType::Label])
-                && let Some(Attribute::Label(label_bytes)) = attrs.first()
-                && let Ok(label) = String::from_utf8(label_bytes.clone())
-                && label.starts_with("dpop_")
-            {
-                key_ids.push(label);
-            }
-        }
-
-        debug!("Found {} DPoP keys", key_ids.len());
-        Ok(key_ids)
-    }
-
-    async fn delete_key(&self, key_id: &str) -> Result<()> {
-        debug!("Deleting key: {}", key_id);
-
-        let session_pool = self.session_pool.clone();
-        let key_id_owned = key_id.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            let session = session_pool.get()?;
-
-            // Find and delete private key
-            let private_handle = Self::find_private_key_by_label_sync(&session, &key_id_owned)?;
-            session
-                .destroy_object(private_handle)
-                .map_err(|e| DpopError::KeyManagementError {
-                    reason: format!("Failed to delete private key: {}", e),
-                })?;
-
-            // Find and delete corresponding public key
-            let public_template = vec![
-                Attribute::Class(ObjectClass::PUBLIC_KEY),
-                Attribute::Label(key_id_owned.as_bytes().to_vec()),
-            ];
-
-            if let Ok(objects) = session.find_objects(&public_template)
-                && let Some(public_handle) = objects.first()
-            {
-                let _ = session.destroy_object(*public_handle);
+            for handle in objects {
+                if let Ok(attrs) = session.get_attributes(handle, &[AttributeType::Label])
+                    && let Some(Attribute::Label(label_bytes)) = attrs.first()
+                    && let Ok(label) = String::from_utf8(label_bytes.clone())
+                    && label.starts_with("dpop_")
+                {
+                    key_ids.push(label);
+                }
             }
 
-            Ok::<(), DpopError>(())
+            debug!("Found {} DPoP keys", key_ids.len());
+            Ok(key_ids)
         })
-        .await
-        .map_err(|e| DpopError::InternalError {
-            reason: format!("Task join error: {}", e),
-        })??;
-
-        info!("Deleted key: {}", key_id);
-        Ok(())
     }
 
-    async fn health_check(&self) -> Result<HsmHealthStatus> {
-        let start_time = Instant::now();
+    fn delete_key(&self, key_id: &str) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let key_id = key_id.to_string();
+        Box::pin(async move {
+            let key_id_for_log = key_id.clone();
+            debug!("Deleting key: {}", key_id_for_log);
 
-        // Get a session to test connectivity
-        let session = match self.get_session() {
-            Ok(s) => s,
-            Err(e) => {
-                return Ok(HsmHealthStatus {
-                    healthy: false,
-                    active_sessions: 0,
-                    last_operation: SystemTime::now(),
-                    error_count: 1,
-                    message: format!("Failed to get session: {}", e),
-                    token_info: None,
-                });
-            }
-        };
+            let session_pool = self.session_pool.clone();
+            let key_id_owned = key_id;
 
-        // Get session info to verify connection
-        let _session_info =
-            session
-                .get_session_info()
-                .map_err(|e| DpopError::KeyManagementError {
-                    reason: format!("Health check failed: {}", e),
+            tokio::task::spawn_blocking(move || {
+                let session = session_pool.get()?;
+
+                // Find and delete private key
+                let private_handle = Self::find_private_key_by_label_sync(&session, &key_id_owned)?;
+                session.destroy_object(private_handle).map_err(|e| {
+                    DpopError::KeyManagementError {
+                        reason: format!("Failed to delete private key: {}", e),
+                    }
                 })?;
 
-        // Get token info
-        let token_info =
-            self.context
-                .get_token_info(self.slot)
-                .map_err(|e| DpopError::KeyManagementError {
+                // Find and delete corresponding public key
+                let public_template = vec![
+                    Attribute::Class(ObjectClass::PUBLIC_KEY),
+                    Attribute::Label(key_id_owned.as_bytes().to_vec()),
+                ];
+
+                if let Ok(objects) = session.find_objects(&public_template)
+                    && let Some(public_handle) = objects.first()
+                {
+                    let _ = session.destroy_object(*public_handle);
+                }
+
+                Ok::<(), DpopError>(())
+            })
+            .await
+            .map_err(|e| DpopError::InternalError {
+                reason: format!("Task join error: {}", e),
+            })??;
+
+            info!("Deleted key: {}", key_id_for_log);
+            Ok(())
+        })
+    }
+
+    fn health_check(&self) -> Pin<Box<dyn Future<Output = Result<HsmHealthStatus>> + Send + '_>> {
+        Box::pin(async move {
+            let start_time = Instant::now();
+
+            // Get a session to test connectivity
+            let session = match self.get_session() {
+                Ok(s) => s,
+                Err(e) => {
+                    return Ok(HsmHealthStatus {
+                        healthy: false,
+                        active_sessions: 0,
+                        last_operation: SystemTime::now(),
+                        error_count: 1,
+                        message: format!("Failed to get session: {}", e),
+                        token_info: None,
+                    });
+                }
+            };
+
+            // Get session info to verify connection
+            let _session_info =
+                session
+                    .get_session_info()
+                    .map_err(|e| DpopError::KeyManagementError {
+                        reason: format!("Health check failed: {}", e),
+                    })?;
+
+            // Get token info
+            let token_info = self.context.get_token_info(self.slot).map_err(|e| {
+                DpopError::KeyManagementError {
                     reason: format!("Failed to get token info: {}", e),
-                })?;
+                }
+            })?;
 
-        let health_status = HsmHealthStatus {
-            healthy: true,
-            active_sessions: self.session_pool.state().connections,
-            last_operation: SystemTime::now(),
-            error_count: 0,
-            message: "HSM is healthy".to_string(),
-            token_info: Some(TokenInfo {
-                label: token_info.label().trim_end().to_string(),
-                manufacturer: token_info.manufacturer_id().trim_end().to_string(),
-                model: token_info.model().trim_end().to_string(),
-                serial_number: token_info.serial_number().trim_end().to_string(),
-                free_memory: token_info.free_private_memory().map(|m| m as u64),
-                total_memory: token_info.total_private_memory().map(|m| m as u64),
-            }),
-        };
+            let health_status = HsmHealthStatus {
+                healthy: true,
+                active_sessions: self.session_pool.state().connections,
+                last_operation: SystemTime::now(),
+                error_count: 0,
+                message: "HSM is healthy".to_string(),
+                token_info: Some(TokenInfo {
+                    label: token_info.label().trim_end().to_string(),
+                    manufacturer: token_info.manufacturer_id().trim_end().to_string(),
+                    model: token_info.model().trim_end().to_string(),
+                    serial_number: token_info.serial_number().trim_end().to_string(),
+                    free_memory: token_info.free_private_memory().map(|m| m as u64),
+                    total_memory: token_info.total_private_memory().map(|m| m as u64),
+                }),
+            };
 
-        trace!("Health check completed in {:?}", start_time.elapsed());
-        Ok(health_status)
+            trace!("Health check completed in {:?}", start_time.elapsed());
+            Ok(health_status)
+        })
     }
 
     fn get_stats(&self) -> HsmStats {
@@ -800,45 +825,46 @@ impl HsmOperations for Pkcs11HsmManager {
         updated_stats
     }
 
-    async fn get_info(&self) -> Result<HsmInfo> {
-        let _token_info =
-            self.context
-                .get_token_info(self.slot)
-                .map_err(|e| DpopError::KeyManagementError {
+    fn get_info(&self) -> Pin<Box<dyn Future<Output = Result<HsmInfo>> + Send + '_>> {
+        Box::pin(async move {
+            let _token_info = self.context.get_token_info(self.slot).map_err(|e| {
+                DpopError::KeyManagementError {
                     reason: format!("Failed to get token info: {}", e),
-                })?;
+                }
+            })?;
 
-        let library_info =
-            self.context
-                .get_library_info()
-                .map_err(|e| DpopError::KeyManagementError {
-                    reason: format!("Failed to get library info: {}", e),
-                })?;
+            let library_info =
+                self.context
+                    .get_library_info()
+                    .map_err(|e| DpopError::KeyManagementError {
+                        reason: format!("Failed to get library info: {}", e),
+                    })?;
 
-        let mut capabilities = HashMap::new();
-        capabilities.insert("key_generation".to_string(), true);
-        capabilities.insert("signing".to_string(), true);
-        capabilities.insert("verification".to_string(), true);
-        capabilities.insert("session_pooling".to_string(), true);
+            let mut capabilities = HashMap::new();
+            capabilities.insert("key_generation".to_string(), true);
+            capabilities.insert("signing".to_string(), true);
+            capabilities.insert("verification".to_string(), true);
+            capabilities.insert("session_pooling".to_string(), true);
 
-        let mut max_key_lengths = HashMap::new();
-        max_key_lengths.insert(DpopAlgorithm::ES256, 256);
+            let mut max_key_lengths = HashMap::new();
+            max_key_lengths.insert(DpopAlgorithm::ES256, 256);
 
-        Ok(HsmInfo {
-            hsm_type: "PKCS#11".to_string(),
-            version: format!(
-                "{}.{}",
-                library_info.cryptoki_version().major(),
-                library_info.cryptoki_version().minor()
-            ),
-            supported_algorithms: vec![DpopAlgorithm::ES256],
-            max_key_lengths,
-            capabilities,
-            hardware_features: vec![
-                "Hardware key generation".to_string(),
-                "Secure key storage".to_string(),
-                "Hardware-based signing".to_string(),
-            ],
+            Ok(HsmInfo {
+                hsm_type: "PKCS#11".to_string(),
+                version: format!(
+                    "{}.{}",
+                    library_info.cryptoki_version().major(),
+                    library_info.cryptoki_version().minor()
+                ),
+                supported_algorithms: vec![DpopAlgorithm::ES256],
+                max_key_lengths,
+                capabilities,
+                hardware_features: vec![
+                    "Hardware key generation".to_string(),
+                    "Secure key storage".to_string(),
+                    "Hardware-based signing".to_string(),
+                ],
+            })
         })
     }
 }

@@ -24,7 +24,6 @@ turbomcp-macros = { version = "3.0.0-beta.4", path = "../turbomcp-macros" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 futures = "0.3"
-async-trait = { workspace = true }
 
 # Serialization
 serde = { workspace = true }
@@ -36,7 +35,7 @@ tracing = { workspace = true }
 # Utilities
 thiserror = { workspace = true }
 bytes = { workspace = true }
-parking_lot = "0.12"
+parking_lot = { workspace = true }
 uuid = { workspace = true }
 dashmap = "6.1"
 

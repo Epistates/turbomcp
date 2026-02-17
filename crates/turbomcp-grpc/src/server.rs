@@ -8,6 +8,7 @@ use crate::proto::{
     self,
     mcp_service_server::{McpService, McpServiceServer},
 };
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
@@ -55,75 +56,84 @@ pub struct McpGrpcServer {
 }
 
 /// Trait for handling tool calls
-#[async_trait::async_trait]
 pub trait ToolHandler: Send + Sync {
     /// Call a tool with the given name and arguments
-    async fn call_tool(
+    fn call_tool(
         &self,
         name: &str,
         arguments: Option<serde_json::Value>,
-    ) -> GrpcResult<CallToolResult>;
+    ) -> Pin<Box<dyn Future<Output = GrpcResult<CallToolResult>> + Send + '_>>;
 }
 
 /// Trait for handling resource reads
-#[async_trait::async_trait]
 pub trait ResourceHandler: Send + Sync {
     /// Read a resource by URI
-    async fn read_resource(&self, uri: &str) -> GrpcResult<Vec<ResourceContent>>;
+    fn read_resource(
+        &self,
+        uri: &str,
+    ) -> Pin<Box<dyn Future<Output = GrpcResult<Vec<ResourceContent>>> + Send + '_>>;
 }
 
 /// Trait for handling prompt renders
-#[async_trait::async_trait]
 pub trait PromptHandler: Send + Sync {
     /// Get a prompt by name with arguments
-    async fn get_prompt(
+    fn get_prompt(
         &self,
         name: &str,
         arguments: Option<serde_json::Value>,
-    ) -> GrpcResult<GetPromptResult>;
+    ) -> Pin<Box<dyn Future<Output = GrpcResult<GetPromptResult>> + Send + '_>>;
 }
 
 /// Default no-op tool handler
 struct NoOpToolHandler;
 
-#[async_trait::async_trait]
 impl ToolHandler for NoOpToolHandler {
-    async fn call_tool(
+    fn call_tool(
         &self,
         name: &str,
         _arguments: Option<serde_json::Value>,
-    ) -> GrpcResult<CallToolResult> {
-        Err(GrpcError::invalid_request(format!(
-            "No handler for tool: {name}"
-        )))
+    ) -> Pin<Box<dyn Future<Output = GrpcResult<CallToolResult>> + Send + '_>> {
+        let name = name.to_string();
+        Box::pin(async move {
+            Err(GrpcError::invalid_request(format!(
+                "No handler for tool: {name}"
+            )))
+        })
     }
 }
 
 /// Default no-op resource handler
 struct NoOpResourceHandler;
 
-#[async_trait::async_trait]
 impl ResourceHandler for NoOpResourceHandler {
-    async fn read_resource(&self, uri: &str) -> GrpcResult<Vec<ResourceContent>> {
-        Err(GrpcError::invalid_request(format!(
-            "No handler for resource: {uri}"
-        )))
+    fn read_resource(
+        &self,
+        uri: &str,
+    ) -> Pin<Box<dyn Future<Output = GrpcResult<Vec<ResourceContent>>> + Send + '_>> {
+        let uri = uri.to_string();
+        Box::pin(async move {
+            Err(GrpcError::invalid_request(format!(
+                "No handler for resource: {uri}"
+            )))
+        })
     }
 }
 
 /// Default no-op prompt handler
 struct NoOpPromptHandler;
 
-#[async_trait::async_trait]
 impl PromptHandler for NoOpPromptHandler {
-    async fn get_prompt(
+    fn get_prompt(
         &self,
         name: &str,
         _arguments: Option<serde_json::Value>,
-    ) -> GrpcResult<GetPromptResult> {
-        Err(GrpcError::invalid_request(format!(
-            "No handler for prompt: {name}"
-        )))
+    ) -> Pin<Box<dyn Future<Output = GrpcResult<GetPromptResult>> + Send + '_>> {
+        let name = name.to_string();
+        Box::pin(async move {
+            Err(GrpcError::invalid_request(format!(
+                "No handler for prompt: {name}"
+            )))
+        })
     }
 }
 
@@ -300,6 +310,9 @@ impl McpGrpcServerBuilder {
     pub fn build(self) -> McpGrpcServer {
         let (notification_tx, _) = broadcast::channel(256);
 
+        // Validate capabilities against registered handlers
+        self.validate_capabilities();
+
         McpGrpcServer {
             server_info: self.server_info,
             capabilities: self.capabilities,
@@ -319,6 +332,60 @@ impl McpGrpcServerBuilder {
             prompt_handler: self
                 .prompt_handler
                 .unwrap_or_else(|| Arc::new(NoOpPromptHandler)),
+        }
+    }
+
+    /// Validate that registered capabilities have matching handlers
+    fn validate_capabilities(&self) {
+        use tracing::warn;
+
+        // Check tools capability vs handler
+        if let Some(ref tools_cap) = self.capabilities.tools {
+            if !self.tools.is_empty() && self.tool_handler.is_none() {
+                warn!(
+                    "Tools capability enabled with {} registered tools but no tool handler set",
+                    self.tools.len()
+                );
+            }
+            if self.tools.is_empty() && tools_cap.list_changed.unwrap_or(false) {
+                warn!("Tools capability enabled with list_changed=true but no tools registered");
+            }
+        }
+
+        // Check resources capability vs handler
+        if let Some(ref resources_cap) = self.capabilities.resources {
+            if (!self.resources.is_empty() || !self.resource_templates.is_empty())
+                && self.resource_handler.is_none()
+            {
+                warn!(
+                    "Resources capability enabled with {} resources and {} templates but no resource handler set",
+                    self.resources.len(),
+                    self.resource_templates.len()
+                );
+            }
+            if self.resources.is_empty()
+                && self.resource_templates.is_empty()
+                && resources_cap.list_changed.unwrap_or(false)
+            {
+                warn!(
+                    "Resources capability enabled with list_changed=true but no resources registered"
+                );
+            }
+        }
+
+        // Check prompts capability vs handler
+        if let Some(ref prompts_cap) = self.capabilities.prompts {
+            if !self.prompts.is_empty() && self.prompt_handler.is_none() {
+                warn!(
+                    "Prompts capability enabled with {} registered prompts but no prompt handler set",
+                    self.prompts.len()
+                );
+            }
+            if self.prompts.is_empty() && prompts_cap.list_changed.unwrap_or(false) {
+                warn!(
+                    "Prompts capability enabled with list_changed=true but no prompts registered"
+                );
+            }
         }
     }
 }

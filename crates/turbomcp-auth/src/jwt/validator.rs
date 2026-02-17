@@ -17,10 +17,26 @@
 
 use super::{JwksCache, JwksClient, StandardClaims};
 use jsonwebtoken::{Algorithm, DecodingKey, TokenData, Validation, decode, decode_header};
+use serde::Deserialize;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, warn};
+use tokio::sync::OnceCell;
+use tracing::{debug, error, info, warn};
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
+
+/// OpenID Connect Discovery Document (RFC 8414)
+///
+/// This is a minimal representation containing only the fields we need.
+/// The full discovery document contains many more optional fields.
+#[derive(Debug, Clone, Deserialize)]
+struct OidcDiscoveryDocument {
+    /// JWKS URI - the only field we actually need
+    jwks_uri: String,
+
+    /// All other fields are optional and ignored
+    #[serde(flatten)]
+    _additional: serde_json::Value,
+}
 
 /// JWT validation result containing validated claims
 #[derive(Debug, Clone)]
@@ -47,7 +63,7 @@ pub struct JwtValidationResult {
 /// let validator = JwtValidator::new(
 ///     "https://accounts.google.com".to_string(),  // issuer
 ///     "https://mcp.example.com".to_string(),      // expected audience
-/// );
+/// ).await?;
 ///
 /// let token = "eyJ0eXAiOiJKV1QiLCJhbGc...";
 /// let result = validator.validate(token).await?;
@@ -56,7 +72,6 @@ pub struct JwtValidationResult {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// # });
 /// ```
-#[derive(Debug)]
 pub struct JwtValidator {
     /// Expected issuer (iss claim)
     expected_issuer: String,
@@ -68,10 +83,97 @@ pub struct JwtValidator {
     clock_skew_leeway: Duration,
     /// Supported algorithms (default: ES256, RS256, PS256)
     allowed_algorithms: Vec<Algorithm>,
+    /// Discovered JWKS URI (cached after first discovery)
+    discovered_jwks_uri: OnceCell<String>,
+}
+
+// Manual Debug impl to prevent discovered_jwks_uri from exposing internal state
+impl std::fmt::Debug for JwtValidator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JwtValidator")
+            .field("expected_issuer", &self.expected_issuer)
+            .field("expected_audience", &self.expected_audience)
+            .field("jwks_client", &self.jwks_client)
+            .field("clock_skew_leeway", &self.clock_skew_leeway)
+            .field("allowed_algorithms", &self.allowed_algorithms)
+            .field(
+                "discovered_jwks_uri",
+                &self.discovered_jwks_uri.get().map(|_| "<cached>"),
+            )
+            .finish()
+    }
 }
 
 impl JwtValidator {
-    /// Create a new JWT validator
+    /// Discover JWKS URI via RFC 8414 OpenID Connect Discovery
+    ///
+    /// # Discovery Process
+    ///
+    /// 1. Fetch `{issuer}/.well-known/openid-configuration`
+    /// 2. Parse the discovery document
+    /// 3. Extract `jwks_uri` field
+    /// 4. If discovery fails, fall back to hardcoded pattern
+    ///
+    /// # Errors
+    ///
+    /// Returns error if both discovery and fallback fail
+    async fn discover_jwks_uri(issuer: &str) -> McpResult<String> {
+        let discovery_url = format!("{}/.well-known/openid-configuration", issuer);
+
+        debug!(
+            issuer = issuer,
+            discovery_url = %discovery_url,
+            "Attempting RFC 8414 OIDC discovery"
+        );
+
+        // Try RFC 8414 discovery first
+        match reqwest::get(&discovery_url).await {
+            Ok(response) if response.status().is_success() => {
+                match response.json::<OidcDiscoveryDocument>().await {
+                    Ok(doc) => {
+                        info!(
+                            issuer = issuer,
+                            jwks_uri = %doc.jwks_uri,
+                            "Successfully discovered JWKS URI via RFC 8414"
+                        );
+                        return Ok(doc.jwks_uri);
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            issuer = issuer,
+                            "Failed to parse OIDC discovery document, trying fallback"
+                        );
+                    }
+                }
+            }
+            Ok(response) => {
+                warn!(
+                    status = %response.status(),
+                    issuer = issuer,
+                    "OIDC discovery endpoint returned non-success status, trying fallback"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    issuer = issuer,
+                    "Failed to fetch OIDC discovery document, trying fallback"
+                );
+            }
+        }
+
+        // Fallback: Use hardcoded pattern for non-OIDC providers
+        let fallback_uri = format!("{}/.well-known/openid-configuration/jwks", issuer);
+        info!(
+            issuer = issuer,
+            jwks_uri = %fallback_uri,
+            "Using fallback JWKS URI pattern (RFC 8414 discovery failed)"
+        );
+        Ok(fallback_uri)
+    }
+
+    /// Create a new JWT validator with RFC 8414 discovery
     ///
     /// # Arguments
     ///
@@ -83,22 +185,32 @@ impl JwtValidator {
     /// - Clock skew: 60 seconds (MCP specification)
     /// - Algorithms: ES256, RS256, PS256 (industry standard)
     ///
+    /// # RFC 8414 Discovery
+    ///
+    /// This method performs OpenID Connect Discovery to find the JWKS endpoint:
+    /// 1. Fetches `{issuer}/.well-known/openid-configuration`
+    /// 2. Extracts `jwks_uri` from the discovery document
+    /// 3. Falls back to `{issuer}/.well-known/openid-configuration/jwks` if discovery fails
+    ///
     /// # Example
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use turbomcp_auth::jwt::JwtValidator;
     ///
+    /// # tokio_test::block_on(async {
     /// let validator = JwtValidator::new(
     ///     "https://auth.example.com".to_string(),
     ///     "https://mcp.example.com".to_string(),
-    /// );
+    /// ).await?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # });
     /// ```
-    pub fn new(expected_issuer: String, expected_audience: String) -> Self {
-        // Perform OIDC discovery to get JWKS URI
-        let jwks_uri = format!("{expected_issuer}/.well-known/openid-configuration/jwks");
-        let jwks_client = Arc::new(JwksClient::new(jwks_uri));
+    pub async fn new(expected_issuer: String, expected_audience: String) -> McpResult<Self> {
+        // Perform RFC 8414 discovery to get JWKS URI
+        let jwks_uri = Self::discover_jwks_uri(&expected_issuer).await?;
+        let jwks_client = Arc::new(JwksClient::new(jwks_uri.clone()));
 
-        Self {
+        Ok(Self {
             expected_issuer,
             expected_audience,
             jwks_client,
@@ -108,6 +220,39 @@ impl JwtValidator {
                 Algorithm::RS256, // RSA-SHA256 (widely supported)
                 Algorithm::PS256, // RSA-PSS (modern RSA)
             ],
+            discovered_jwks_uri: OnceCell::new_with(Some(jwks_uri)),
+        })
+    }
+
+    /// Create a new JWT validator without discovery (for testing or custom JWKS URIs)
+    ///
+    /// Use this when you already know the JWKS URI or want to avoid the discovery roundtrip.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_auth::jwt::JwtValidator;
+    ///
+    /// let validator = JwtValidator::with_jwks_uri(
+    ///     "https://auth.example.com".to_string(),
+    ///     "https://mcp.example.com".to_string(),
+    ///     "https://auth.example.com/jwks".to_string(),
+    /// );
+    /// ```
+    pub fn with_jwks_uri(
+        expected_issuer: String,
+        expected_audience: String,
+        jwks_uri: String,
+    ) -> Self {
+        let jwks_client = Arc::new(JwksClient::new(jwks_uri.clone()));
+
+        Self {
+            expected_issuer,
+            expected_audience,
+            jwks_client,
+            clock_skew_leeway: Duration::from_secs(60),
+            allowed_algorithms: vec![Algorithm::ES256, Algorithm::RS256, Algorithm::PS256],
+            discovered_jwks_uri: OnceCell::new_with(Some(jwks_uri)),
         }
     }
 
@@ -126,6 +271,7 @@ impl JwtValidator {
             jwks_client,
             clock_skew_leeway: Duration::from_secs(60),
             allowed_algorithms: vec![Algorithm::ES256, Algorithm::RS256, Algorithm::PS256],
+            discovered_jwks_uri: OnceCell::new(), // No discovery performed in this constructor
         }
     }
 
@@ -181,7 +327,7 @@ impl JwtValidator {
     /// let validator = JwtValidator::new(
     ///     "https://auth.example.com".to_string(),
     ///     "https://mcp.example.com".to_string(),
-    /// );
+    /// ).await?;
     ///
     /// match validator.validate("eyJ0eXAi...").await {
     ///     Ok(result) => println!("Valid token for: {}", result.claims.sub.unwrap()),
@@ -194,7 +340,7 @@ impl JwtValidator {
         // Decode header to get algorithm and key ID
         let header = decode_header(token).map_err(|e| {
             debug!(error = %e, "Failed to decode JWT header");
-            McpError::validation(format!("Invalid JWT format: {e}"))
+            McpError::invalid_params(format!("Invalid JWT format: {e}"))
         })?;
 
         // Validate algorithm is allowed
@@ -204,7 +350,7 @@ impl JwtValidator {
                 allowed = ?self.allowed_algorithms,
                 "JWT algorithm not allowed"
             );
-            return Err(McpError::validation(format!(
+            return Err(McpError::invalid_params(format!(
                 "Algorithm {:?} not allowed",
                 header.alg
             )));
@@ -213,7 +359,7 @@ impl JwtValidator {
         // Get key ID
         let key_id = header.kid.clone().ok_or_else(|| {
             error!("JWT missing kid (key ID) in header");
-            McpError::validation("JWT must include kid (key ID) in header".to_string())
+            McpError::invalid_params("JWT must include kid (key ID) in header".to_string())
         })?;
 
         // Fetch JWKS and find the key
@@ -234,7 +380,7 @@ impl JwtValidator {
                     audience = %self.expected_audience,
                     "JWT validation failed"
                 );
-                McpError::validation(format!("JWT validation failed: {e}"))
+                McpError::invalid_params(format!("JWT validation failed: {e}"))
             })?;
 
         // Extract timestamps
@@ -305,7 +451,7 @@ impl JwtValidator {
         // Find the key with matching kid
         let jwk = jwks.find(key_id).ok_or_else(|| {
             error!(key_id = key_id, "Key ID not found in JWKS");
-            McpError::validation(format!("Key ID '{key_id}' not found in JWKS"))
+            McpError::invalid_params(format!("Key ID '{key_id}' not found in JWKS"))
         })?;
 
         // Convert JWK to DecodingKey
@@ -369,12 +515,40 @@ impl MultiIssuerValidator {
         }
     }
 
-    /// Add a supported issuer
+    /// Add a supported issuer with RFC 8414 discovery
     ///
-    /// This creates a validator for the issuer using the shared JWKS cache,
-    /// which provides efficient caching across multiple issuers.
-    pub fn add_issuer(&mut self, issuer: String) {
-        let jwks_uri = format!("{issuer}/.well-known/openid-configuration/jwks");
+    /// This creates a validator for the issuer using RFC 8414 discovery to find
+    /// the JWKS URI. Falls back to hardcoded pattern if discovery fails.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use turbomcp_auth::jwt::validator::MultiIssuerValidator;
+    /// # tokio_test::block_on(async {
+    /// let mut validator = MultiIssuerValidator::new("https://mcp.example.com".into());
+    /// validator.add_issuer("https://accounts.google.com".into()).await?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// # });
+    /// ```
+    pub async fn add_issuer(&mut self, issuer: String) -> McpResult<()> {
+        // Use RFC 8414 discovery to find JWKS URI
+        let jwks_uri = JwtValidator::discover_jwks_uri(&issuer).await?;
+        let jwks_client = Arc::new(JwksClient::new(jwks_uri));
+
+        let validator = Arc::new(JwtValidator::with_jwks_client(
+            issuer.clone(),
+            self.expected_audience.clone(),
+            jwks_client,
+        ));
+
+        self.validators.insert(issuer, validator);
+        Ok(())
+    }
+
+    /// Add a supported issuer with a known JWKS URI (no discovery)
+    ///
+    /// Use this when you already know the JWKS URI or want to avoid the discovery roundtrip.
+    pub fn add_issuer_with_jwks_uri(&mut self, issuer: String, jwks_uri: String) {
         let jwks_client = Arc::new(JwksClient::new(jwks_uri));
 
         let validator = Arc::new(JwtValidator::with_jwks_client(
@@ -393,7 +567,7 @@ impl MultiIssuerValidator {
         // Decode header to check algorithm BEFORE any other processing
         // This prevents algorithm confusion attacks (e.g., none, HS256 with public key)
         let header = decode_header(token)
-            .map_err(|e| McpError::validation(format!("Invalid JWT format: {e}")))?;
+            .map_err(|e| McpError::invalid_params(format!("Invalid JWT format: {e}")))?;
 
         // SECURITY: Validate algorithm is in allowlist before proceeding
         // Only asymmetric algorithms are allowed for multi-issuer validation
@@ -410,7 +584,7 @@ impl MultiIssuerValidator {
 
         if !ALLOWED_ALGORITHMS.contains(&header.alg) {
             error!(algorithm = ?header.alg, "JWT algorithm not in allowlist");
-            return Err(McpError::validation(format!(
+            return Err(McpError::invalid_params(format!(
                 "JWT algorithm {:?} not allowed. Only asymmetric algorithms (ES*, RS*, PS*) are permitted.",
                 header.alg
             )));
@@ -420,26 +594,26 @@ impl MultiIssuerValidator {
         // This is safe because we'll validate the signature next
         let parts: Vec<&str> = token.split('.').collect();
         if parts.len() != 3 {
-            return Err(McpError::validation("Invalid JWT format".to_string()));
+            return Err(McpError::invalid_params("Invalid JWT format".to_string()));
         }
 
         use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
         let payload = URL_SAFE_NO_PAD
             .decode(parts[1])
-            .map_err(|e| McpError::validation(format!("Invalid JWT payload encoding: {e}")))?;
+            .map_err(|e| McpError::invalid_params(format!("Invalid JWT payload encoding: {e}")))?;
 
         let claims: StandardClaims = serde_json::from_slice(&payload)
-            .map_err(|e| McpError::validation(format!("Invalid JWT claims: {e}")))?;
+            .map_err(|e| McpError::invalid_params(format!("Invalid JWT claims: {e}")))?;
 
-        let issuer = claims
-            .iss
-            .ok_or_else(|| McpError::validation("JWT missing iss (issuer) claim".to_string()))?;
+        let issuer = claims.iss.ok_or_else(|| {
+            McpError::invalid_params("JWT missing iss (issuer) claim".to_string())
+        })?;
 
         // Find validator for this issuer
         let validator = self.validators.get(&issuer).ok_or_else(|| {
             error!(issuer = %issuer, "Unknown issuer");
-            McpError::validation(format!("Issuer '{}' not supported", issuer))
+            McpError::invalid_params(format!("Issuer '{}' not supported", issuer))
         })?;
 
         // Validate with the appropriate validator
@@ -452,10 +626,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_jwt_validator_creation() {
-        let validator = JwtValidator::new(
+    fn test_jwt_validator_creation_with_jwks_uri() {
+        let validator = JwtValidator::with_jwks_uri(
             "https://auth.example.com".to_string(),
             "https://mcp.example.com".to_string(),
+            "https://auth.example.com/jwks".to_string(),
         );
 
         assert_eq!(validator.expected_issuer(), "https://auth.example.com");
@@ -466,9 +641,10 @@ mod tests {
 
     #[test]
     fn test_jwt_validator_custom_clock_skew() {
-        let validator = JwtValidator::new(
+        let validator = JwtValidator::with_jwks_uri(
             "https://auth.example.com".to_string(),
             "https://mcp.example.com".to_string(),
+            "https://auth.example.com/jwks".to_string(),
         )
         .with_clock_skew(Duration::from_secs(30));
 
@@ -477,9 +653,10 @@ mod tests {
 
     #[test]
     fn test_jwt_validator_custom_algorithms() {
-        let validator = JwtValidator::new(
+        let validator = JwtValidator::with_jwks_uri(
             "https://auth.example.com".to_string(),
             "https://mcp.example.com".to_string(),
+            "https://auth.example.com/jwks".to_string(),
         )
         .with_algorithms(vec![Algorithm::ES256]);
 
@@ -496,7 +673,10 @@ mod tests {
     #[test]
     fn test_multi_issuer_validator_add_issuer() {
         let mut validator = MultiIssuerValidator::new("https://mcp.example.com".to_string());
-        validator.add_issuer("https://auth.example.com".to_string());
+        validator.add_issuer_with_jwks_uri(
+            "https://auth.example.com".to_string(),
+            "https://auth.example.com/jwks".to_string(),
+        );
 
         assert_eq!(validator.validators.len(), 1);
         assert!(

@@ -15,15 +15,19 @@
 //! - Enables composition and flexibility
 //! - Provides maximum developer experience through simplicity
 
-use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult};
+
+/// Boxed future type alias for sampling operations
+type BoxSamplingFuture<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
 
 /// MCP-compliant sampling handler trait
 ///
 /// The client receives sampling requests and delegates to configured LLM services.
 /// This maintains separation of concerns per MCP specification.
-#[async_trait]
 pub trait SamplingHandler: Send + Sync + std::fmt::Debug {
     /// Handle a sampling/createMessage request from a server
     ///
@@ -37,11 +41,11 @@ pub trait SamplingHandler: Send + Sync + std::fmt::Debug {
     ///
     /// * `request_id` - The JSON-RPC request ID from the server for proper response correlation
     /// * `request` - The sampling request parameters
-    async fn handle_create_message(
+    fn handle_create_message(
         &self,
         request_id: String,
         request: CreateMessageRequest,
-    ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> BoxSamplingFuture<'_, CreateMessageResult>;
 }
 
 /// Default implementation that delegates to external MCP servers
@@ -57,34 +61,28 @@ pub struct DelegatingSamplingHandler {
 }
 
 /// Interface for connecting to LLM MCP servers
-#[async_trait]
 pub trait LLMServerClient: Send + Sync + std::fmt::Debug {
     /// Forward a sampling request to an LLM MCP server
-    async fn create_message(
+    fn create_message(
         &self,
         request: CreateMessageRequest,
-    ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> BoxSamplingFuture<'_, CreateMessageResult>;
 
     /// Get server capabilities/model info
-    async fn get_server_info(&self)
-    -> Result<ServerInfo, Box<dyn std::error::Error + Send + Sync>>;
+    fn get_server_info(&self) -> BoxSamplingFuture<'_, ServerInfo>;
 }
 
 /// Interface for user interaction (human-in-the-loop)
-#[async_trait]
 pub trait UserInteractionHandler: Send + Sync + std::fmt::Debug {
     /// Present sampling request to user for approval
-    async fn approve_request(
-        &self,
-        request: &CreateMessageRequest,
-    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>>;
+    fn approve_request(&self, request: &CreateMessageRequest) -> BoxSamplingFuture<'_, bool>;
 
     /// Present result to user for review
-    async fn approve_response(
+    fn approve_response(
         &self,
         request: &CreateMessageRequest,
         response: &CreateMessageResult,
-    ) -> Result<Option<CreateMessageResult>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> BoxSamplingFuture<'_, Option<CreateMessageResult>>;
 }
 
 /// Server information for model selection
@@ -95,33 +93,35 @@ pub struct ServerInfo {
     pub capabilities: Vec<String>,
 }
 
-#[async_trait]
 impl SamplingHandler for DelegatingSamplingHandler {
-    async fn handle_create_message(
+    fn handle_create_message(
         &self,
         _request_id: String,
         request: CreateMessageRequest,
-    ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>> {
-        // 1. Human-in-the-loop: Get user approval
-        if !self.user_handler.approve_request(&request).await? {
-            // FIXED: Return HandlerError::UserCancelled (code -1) instead of string error
-            // This ensures the error code is preserved when sent back to the server
-            return Err(Box::new(crate::handlers::HandlerError::UserCancelled));
-        }
+    ) -> BoxSamplingFuture<'_, CreateMessageResult> {
+        Box::pin(async move {
+            // 1. Human-in-the-loop: Get user approval
+            if !self.user_handler.approve_request(&request).await? {
+                // FIXED: Return HandlerError::UserCancelled (code -1) instead of string error
+                // This ensures the error code is preserved when sent back to the server
+                return Err(Box::new(crate::handlers::HandlerError::UserCancelled)
+                    as Box<dyn std::error::Error + Send + Sync>);
+            }
 
-        // 2. Select appropriate LLM server based on model preferences
-        let selected_client = self.select_llm_client(&request).await?;
+            // 2. Select appropriate LLM server based on model preferences
+            let selected_client = self.select_llm_client(&request).await?;
 
-        // 3. Delegate to external LLM MCP server
-        let result = selected_client.create_message(request.clone()).await?;
+            // 3. Delegate to external LLM MCP server
+            let result = selected_client.create_message(request.clone()).await?;
 
-        // 4. Present result for user review
-        let approved_result = self
-            .user_handler
-            .approve_response(&request, &result)
-            .await?;
+            // 4. Present result for user review
+            let approved_result = self
+                .user_handler
+                .approve_response(&request, &result)
+                .await?;
 
-        Ok(approved_result.unwrap_or(result))
+            Ok(approved_result.unwrap_or(result))
+        })
     }
 }
 
@@ -161,20 +161,20 @@ impl DelegatingSamplingHandler {
 #[derive(Debug)]
 pub struct AutoApprovingUserHandler;
 
-#[async_trait]
 impl UserInteractionHandler for AutoApprovingUserHandler {
-    async fn approve_request(
-        &self,
-        _request: &CreateMessageRequest,
-    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(true) // Auto-approve for development
+    fn approve_request(&self, _request: &CreateMessageRequest) -> BoxSamplingFuture<'_, bool> {
+        Box::pin(async move {
+            Ok(true) // Auto-approve for development
+        })
     }
 
-    async fn approve_response(
+    fn approve_response(
         &self,
         _request: &CreateMessageRequest,
         _response: &CreateMessageResult,
-    ) -> Result<Option<CreateMessageResult>, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(None) // Auto-approve, don't modify
+    ) -> BoxSamplingFuture<'_, Option<CreateMessageResult>> {
+        Box::pin(async move {
+            Ok(None) // Auto-approve, don't modify
+        })
     }
 }

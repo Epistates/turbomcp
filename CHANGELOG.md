@@ -7,70 +7,124 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [3.0.0-beta.4] - 2026-01-25
+## [3.0.0-beta.4] - 2026-02-17
+
+### Security
+
+#### Comprehensive Security Audit Remediation
+Full security audit across all 25 crates with fixes at all severity levels.
+
+#### CRITICAL (`turbomcp-auth`, `turbomcp-dpop`, `turbomcp-wasm`)
+- **JWT algorithm confusion prevention** - Fail-closed validation when algorithm list is empty
+- **Key-type/algorithm compatibility enforcement** - RSA keys restricted to RS* algorithms, EC keys to ES* algorithms
+- **Secret redaction in serialization** - Auth config secrets now serialize as `[REDACTED]` instead of plaintext
+- **DPoP proof replay protection** - Enhanced nonce validation and proof binding checks
+- **WASM JWT hardening** - Replaced `window.atob()` with standard `base64` crate for universal WASM target support
+
+#### HIGH (`turbomcp-client`, `turbomcp-transport`, `turbomcp-protocol`)
+- **Client mutex upgrade** - Replaced `std::sync::Mutex` with `parking_lot::Mutex` (no panic on poisoned lock)
+- **Bounded STDIO messages** - `LinesCodec::new_with_max_length()` prevents unbounded memory allocation
+- **Session ID length validation** - `SessionId` rejects IDs longer than 256 bytes
+- **TCP strict mode** - Configurable `strict_mode` for JSON parse error handling (disconnect vs log-and-continue)
+
+#### MEDIUM (`turbomcp-auth`, `turbomcp-protocol`, `turbomcp-websocket`)
+- **SSRF protection hardening** - Blocks private networks, localhost, cloud metadata, link-local, multicast
+- **RFC 8414 OpenID Connect Discovery** - JWT validator supports async discovery of JWKS endpoints
+- **DPoP binding validation** - `AuthContext::validate_dpop_binding()` for thumbprint verification
+- **Enhanced elicitation validation** - Stricter input validation for elicitation request types
+
+#### LOW (across workspace)
+- **EMA overflow protection** - Saturating arithmetic in transport metrics prevents u64 overflow
+- **gRPC capability validation** - `validate_capabilities()` builder method with `tracing::warn!`
+- **Unix socket graceful shutdown** - Broadcast-based shutdown with `JoinSet` task lifecycle management
+- **CLI path validation** - Absolute path verification before filesystem operations
+- **Macro error improvements** - `syn::Error` span-based errors for better IDE integration
+- **Configurable HTTP User-Agent** - Optional `user_agent` field to control fingerprinting
 
 ### Added
 
+#### New Crates
+- **`turbomcp-openapi`** - OpenAPI 3.x to MCP conversion
+  - GET endpoints → MCP Resources, POST/PUT/PATCH/DELETE → MCP Tools
+  - Built-in SSRF protection, configurable timeouts, regex route mapping
+- **`turbomcp-transport-streamable`** - Streamable HTTP transport types (MCP 2025-11-25)
+  - Pure no-I/O SSE encoding/decoding, session management, `no_std` support
+
+#### WASM Server Architecture (`turbomcp-wasm`)
+- **Durable Objects** - `DurableRateLimiter`, `DurableSessionStore`, `DurableStateStore`, `DurableTokenStore`
+- **Streamable Transport** - Session-based HTTP streaming with Server-Sent Events
+- **Enhanced Auth Provider** - WASM-native crypto, multi-provider OAuth 2.1, DPoP, JWKS caching
+- **Rich Request Context** - HTTP headers, method, path, query, correlation IDs, auth principal
+- **Middleware System** - Request/response interception, rate limiting, logging hooks
+- **Visibility Control** - Tool/resource/prompt visibility with user/role-based access
+- **Composite Servers** - Compose multiple servers with automatic namespacing and secure CORS
+
+#### WASM Procedural Macros (`turbomcp-wasm-macros`)
+- `#[server(name = "...", version = "...")]` - Transform impl blocks into MCP servers
+- `#[tool("description")]`, `#[resource("uri")]`, `#[prompt("description")]` - Handler registration
+- Identical attribute syntax to native `turbomcp-macros`
+
+#### Server Composition (`turbomcp-server`)
+- **Composite Server** - Combine multiple servers with automatic prefixing
+- **Typed Middleware** - Per-operation middleware hooks for all MCP operations
+- **Visibility/Access Control** - Role-based resource access
+
+#### CLI Enhancements (`turbomcp-cli`)
+- `turbomcp build` - Build for native and WASM targets (Cloudflare Workers, Deno, generic wasm32)
+- `turbomcp dev` - Development server with hot reload and file watching
+- `turbomcp install` - Install servers to Claude Desktop and Cursor
+- `turbomcp deploy` - Deploy to Cloudflare Workers
+- `turbomcp new` - Create new MCP server projects from templates
+
 #### Child Process Support (`turbomcp-stdio`)
-- **`StdioTransport::from_child(&mut Child)`** - Create transport from spawned child process for MCP clients that communicate with server processes
-- **`StdioTransport::from_raw<R, W>(reader, writer)`** - Lower-level constructor accepting any `AsyncRead`/`AsyncWrite` streams
-- Uses boxed trait objects internally to support both process stdio and child stdio with zero code duplication
-- Comprehensive tests for duplex communication
+- `StdioTransport::from_child(&mut Child)` - Transport from spawned child process
+- `StdioTransport::from_raw<R, W>(reader, writer)` - Custom `AsyncRead`/`AsyncWrite` streams
 
 #### Custom Struct Tool Returns (`turbomcp-core`)
-- **`IntoToolResult` for `Json<T>`** - Tool handlers can now return custom structs wrapped in `Json<T>`:
-  ```rust
-  #[derive(Serialize)]
-  struct UserData { name: String, age: u32 }
+- `IntoToolResult` for `Json<T>` - Tool handlers can return custom structs wrapped in `Json<T>`
 
-  #[tool(description = "Get user")]
-  async fn get_user(&self) -> McpResult<Json<UserData>> {
-      Ok(Json(UserData { name: "Alice".into(), age: 30 }))
-  }
-  ```
+#### Macro Enhancements (`turbomcp-macros`)
+- **Tags and versioning** - `#[tool(tags = ["admin"], version = "2.0")]` on tools, resources, prompts
+- **Type-based `RequestContext` detection** - Detects by type, not parameter name
+- **Improved error messages** - `syn::Error` span-based errors, better deprecated attribute guidance
 
-### Fixed
-
-#### JWT Base64 Decoding (`turbomcp-wasm`)
-- **Replaced hand-rolled base64 with `base64` crate** - JWT token parsing now uses the standard `base64` crate with `URL_SAFE_NO_PAD` engine instead of hand-rolled `window.atob()` implementation
-- **Cloudflare Workers compatibility** - The previous implementation used `window.atob()` which doesn't exist on Workers (they use `ServiceWorkerGlobalScope`). Now works on all WASM targets.
-- Added unit tests for base64 URL decoding
-
-#### Property Tests (`turbomcp-transport`)
-- **Fixed `prop_cache_clear_works` test** - Test now correctly deduplicates message IDs before checking post-clear state, preventing false failures with duplicate inputs like `["t", "t"]`
-
-#### Prompt Handler Context Detection (`turbomcp-macros`)
-- **Type-based `RequestContext` detection** - Prompt handlers now detect `&RequestContext` parameter by type instead of requiring exact name "ctx"
-- All naming variants now work: `ctx`, `_ctx`, `context`, or any other name
-- Previously, using `_ctx: &RequestContext` would incorrectly treat it as a prompt argument
-
-#### Deprecated `transports` Attribute (`turbomcp-macros`)
-- **Helpful compile error for deprecated syntax** - Using `transports = [...]` in `#[server]` macro now produces a clear error message explaining:
-  - The attribute is deprecated in v3
-  - How to enable transports via Cargo.toml features
-  - Available transport methods (`run_stdio`, `run_http`, `run_tcp`, `run_websocket`, `run_unix`)
+#### Authentication (`turbomcp-auth`)
+- `AuthContext` with `requires_dpop()` and `validate_dpop_binding()` methods
+- JWT validator async creation with RFC 8414 discovery
 
 ### Changed
 
-#### Prelude Exports (`turbomcp`)
-- **Added `Role` to prelude** - `Role::User` and `Role::Assistant` now available without explicit import
-- Documentation updated to use ergonomic `PromptResult` builder API:
-  ```rust
-  // Single message
-  Ok(PromptResult::user("Hello!"))
+#### Breaking
+- **JWT validator** - `JwtValidator::new()` is now async with RFC 8414 discovery
+- **Error types** - `McpError::validation()` → `McpError::invalid_params()` in auth validation
 
-  // Multi-message conversation
-  Ok(PromptResult::user("Question")
-      .add_assistant("Answer")
-      .with_description("A conversation"))
-  ```
+#### Improvements
+- **CORS hardening** - Echoes request `Origin` header instead of wildcard `*`, adds `Vary: Origin`
+- **Prelude** - Added `Role` to prelude for ergonomic `PromptResult` builder API
+- **`parking_lot` workspace dep** - Standardized to 0.12.5 across workspace
+- **WASM builder API** - `.tool()` replaces `.with_tool()` (deprecated), same for resources/prompts
+
+### Fixed
+
+- **JWT base64 decoding** (`turbomcp-wasm`) - Cloudflare Workers compatibility (no `window.atob()`)
+- **Property test** (`turbomcp-transport`) - `prop_cache_clear_works` deduplicates IDs correctly
+- **Prompt context detection** (`turbomcp-macros`) - Detects `&RequestContext` by type, not name
+- **Client semaphore handling** (`turbomcp-client`) - Graceful degradation when handler semaphore closed
+- **Sampling handler** (`turbomcp-client`) - Removed panic on poisoned lock
 
 ### Documentation
 
-#### Macro Syntax Corrections (`docs/api/macros.md`)
-- **Resource macro syntax** - Clarified that `#[resource("uri://template")]` requires URI template as first argument (not `description = "..."`)
-- **Parameter descriptions** - Documented `#[description("...")]` attribute for tool/prompt parameters
-- Updated all examples to use correct `Message`, `Role`, and `PromptResult` types
+- **Macro syntax** (`docs/api/macros.md`) - Corrected resource macro syntax, parameter descriptions
+- **McpHandler Clone bound** (`turbomcp-core`) - Documented Arc pattern for shared state
+- **Wire codec** (`turbomcp-wire`) - Send+Sync docs, MsgPackCodec security notes
+- **TelemetryGuard lifecycle** (`turbomcp-telemetry`) - Drop behavior documentation
+- **CLI security warnings** (`turbomcp-cli`) - STDIO risks, token exposure, permissions
+
+### Test Results
+
+- 1,787 tests passing
+- Zero clippy warnings with `--all-features`
+- All transports verified: STDIO, TCP, HTTP, WebSocket, Unix socket, gRPC
 
 ## [3.0.0-beta.3] - 2026-01-22
 
@@ -258,269 +312,6 @@ is now leaner, faster, and more maintainable.
 - Verified consistent versioning (3.0.0-beta.1), lint settings, and documentation
 - Confirmed no vestigial or partially implemented code remains
 - All workspace tests passing
-
-## [3.0.0-exp.2] - 2026-01-13
-
-### Added
-
-#### Ergonomic Handler System (wasm-server feature)
-- **`IntoToolResponse` Trait** - Axum-inspired response conversion for tool handlers
-  - `String`, `&str` - Returns as text content
-  - `Json<T>` - Serializes to JSON text
-  - `Text(String)` - Explicit text wrapper
-  - `Image { data, mime_type }` - Binary image content
-  - `ToolResult` - Full control over the response
-  - `Result<T, E>` - Automatic error handling with `?` operator support
-  - `()` - Empty success response
-  - `Option<T>` - None returns "No result"
-
-- **`IntoToolError` Trait** - Ergonomic error conversion
-  - Any type implementing `std::error::Error` can be converted
-  - `ToolError::new(message)` for custom errors
-  - `ResultExt::map_tool_err()` for easy error mapping
-
-- **Handler Traits** - Type-safe handler registration
-  - `IntoToolHandler` - Convert functions to tool handlers
-  - `IntoResourceHandler` - Convert functions to resource handlers
-  - `IntoPromptHandler` - Convert functions to prompt handlers
-
-- **Improved Builder API** - Cleaner method names
-  - `.tool()` instead of `.with_tool()` (deprecated)
-  - `.tool_no_args()` for tools without arguments
-  - `.tool_raw()` for raw JSON arguments
-  - `.resource()` instead of `.with_resource()` (deprecated)
-  - `.resource_template()` instead of `.with_resource_template()` (deprecated)
-  - `.prompt()` instead of `.with_prompt()` (deprecated)
-  - `.prompt_no_args()` instead of `.with_simple_prompt()` (deprecated)
-
-#### WASM Server Procedural Macros (NEW CRATE)
-- **`turbomcp-wasm-macros`** - Zero-boilerplate proc-macro crate for WASM MCP servers
-  - `#[server(name = "...", version = "...")]` - Transform impl blocks into MCP servers
-  - `#[tool("description")]` - Mark methods as tool handlers
-  - `#[resource("uri://template")]` - Mark methods as resource handlers
-  - `#[prompt("description")]` - Mark methods as prompt handlers
-
-- **Generated Methods**
-  - `into_mcp_server(self) -> McpServer` - Convert to configured server
-  - `server_info() -> (&'static str, &'static str)` - Get (name, version)
-  - `get_tools_metadata()` - List registered tools
-  - `get_resources_metadata()` - List registered resources
-  - `get_prompts_metadata()` - List registered prompts
-
-- **Prelude Module** - Convenient imports via `use turbomcp_wasm::prelude::*`
-
-#### Integration Tests
-- 65 tests for WASM server and macro functionality
-- Comprehensive coverage of handler traits and response types
-
-### Changed
-
-- **Builder Method Naming** - Cleaner API without `with_` prefix
-  - Old: `.with_tool()`, `.with_resource()`, `.with_prompt()`
-  - New: `.tool()`, `.resource()`, `.prompt()` (old methods deprecated)
-
-- **API Consistency with Native Macros** - WASM macros now use identical attribute names
-  - `#[server]` - Same as native `turbomcp-macros`
-  - `#[tool]`, `#[resource]`, `#[prompt]` - Identical syntax
-  - Import via `use turbomcp_wasm::prelude::*` for all macros
-
-### Example
-
-```rust
-use turbomcp_wasm::prelude::*;
-use serde::Deserialize;
-
-#[derive(Clone)]
-struct MyServer;
-
-#[derive(Deserialize, schemars::JsonSchema)]
-struct GreetArgs { name: String }
-
-#[server(name = "my-server", version = "1.0.0")]
-impl MyServer {
-    #[tool("Greet someone")]
-    async fn greet(&self, args: GreetArgs) -> String {
-        format!("Hello, {}!", args.name)
-    }
-
-    #[tool("Get status")]
-    async fn status(&self) -> Result<String, ToolError> {
-        Ok("running".into())
-    }
-
-    #[resource("config://app")]
-    async fn config(&self, uri: String) -> ResourceResult {
-        ResourceResult::text(&uri, r#"{"theme": "dark"}"#)
-    }
-}
-
-#[event(fetch)]
-async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
-    MyServer.into_mcp_server().handle(req).await
-}
-```
-
-## [3.0.0-exp.1] - 2026-01-13
-
-### Added
-
-#### WASM Server Support (wasm-server feature)
-- **Native MCP Servers on Cloudflare Workers** - Build full MCP servers in Rust that run on edge platforms
-- **Type-Safe Tool Registration** - Automatic JSON schema generation from Rust types via `schemars`
-- **McpServer Builder API** - Fluent API for registering tools, resources, and prompts
-  - `with_tool()` - Register typed tool handlers with automatic schema generation
-  - `with_raw_tool()` - Register tools with raw JSON arguments
-  - `with_resource()` - Register static resources
-  - `with_resource_template()` - Register dynamic resource templates with URI patterns
-  - `with_prompt()` - Register prompts with arguments
-  - `with_simple_prompt()` - Register prompts without arguments
-- **JSON-RPC 2.0 Compliant Handler** - Full protocol compliance with proper error codes
-- **CORS Support** - Built-in CORS preflight handling for edge deployment
-- **Security Features** - Content-Type validation, body size limits (1MB max)
-
-## [3.0.0-exp] - 2026-01-10
-
-### 🚀 Major Architectural Redesign
-
-TurboMCP v3.0 represents a ground-up architectural redesign for the next generation of MCP development:
-
-- **Edge-Native**: First-class WASM/WASI support for edge computing
-- **Enterprise-Grade**: OpenTelemetry integration, Tower middleware
-- **Zero-Copy**: rkyv serialization for maximum performance
-- **Modular**: Individual transport crates, lean dependencies
-- **Pristine Error Types**: Unified `McpError` with no legacy `ServerError`
-
-### Added
-
-#### New Foundation Crates
-- **`turbomcp-core`** (`no_std`) - Core types extracted as foundation layer
-  - Works in embedded and WASM environments
-  - rkyv zero-copy message types (`InternalMessage`, `InternalResponse`, `InternalBatch`)
-  - Unified `McpError` type consolidating all error types
-
-- **`turbomcp-wire`** - Wire format codec abstraction
-  - `Codec` trait for pluggable serialization
-  - `JsonCodec` - Standard serde_json (default)
-  - `SimdJsonCodec` - SIMD-accelerated via sonic-rs (optional)
-  - `MsgPackCodec` - MessagePack binary format (optional)
-  - `StreamingJsonDecoder` for SSE transports
-
-- **`turbomcp-transport-traits`** - Lean transport trait definitions
-  - Decoupled from implementations for minimal dependencies
-
-#### New Transport Crates (Extracted from monolithic `turbomcp-transport`)
-- **`turbomcp-stdio`** - Standard MCP STDIO transport
-- **`turbomcp-http`** - HTTP/SSE client transport
-- **`turbomcp-websocket`** - WebSocket bidirectional transport
-- **`turbomcp-tcp`** - Raw TCP socket transport
-- **`turbomcp-unix`** - Unix domain socket transport
-- **`turbomcp-grpc`** - gRPC transport via tonic (NEW)
-
-#### Enterprise Features
-- **`turbomcp-telemetry`** - OpenTelemetry integration
-  - Traces, metrics, and logs
-  - OTLP export support
-  - Tower middleware layer
-
-- **`turbomcp-wasm`** - WebAssembly bindings
-  - Browser client via wasm-bindgen
-  - **WASI Preview 2 runtime support** - Full implementation for Wasmtime, WasmEdge, Wasmer
-    - `StdioTransport` - MCP over STDIO using `wasi:cli/stdin` and `wasi:cli/stdout`
-    - `HttpTransport` - HTTP-based MCP using `wasi:http/outgoing-handler`
-    - `McpClient` - Full MCP client with tools, resources, prompts support
-    - Build target: `wasm32-wasip2`
-
-#### Tower Integration
-- Tower `Layer` and `Service` implementations for:
-  - `turbomcp-auth` - Authentication middleware
-  - `turbomcp-client` - Plugin middleware
-  - `turbomcp-proxy` - Proxy middleware
-  - `turbomcp-telemetry` - Observability middleware
-
-#### Server Error Helpers
-- **`ServerErrorExt` trait** (`turbomcp-server`) - Extension trait for server-specific error helpers
-  ```rust
-  use turbomcp_server::{McpError, ServerErrorExt};
-
-  // Server-specific error constructors
-  let err = McpError::lifecycle("startup failed");
-  let err = McpError::shutdown("shutdown interrupted");
-  let err = McpError::middleware("auth", "token expired");
-  let err = McpError::registry("handler not found");
-  let err = McpError::routing("no route for method");
-  let err = McpError::resource_exhausted("connection pool");
-
-  // Check if error is fatal
-  if err.is_fatal() {
-      // Handle unrecoverable error
-  }
-  ```
-
-### Changed
-
-#### Error Type Unification
-- `ServerError`, `ClientError`, and protocol `Error` unified into `McpError`
-- `ServerResult<T>` and `ClientResult<T>` unified into `McpResult<T>`
-- All error types now in `turbomcp_core::error`
-- `turbomcp-server` re-exports `McpError`, `McpResult`, and `ErrorKind` from `turbomcp-protocol`
-
-#### Protocol Compliance
-- Full MCP 2025-11-25 specification compliance
-- 23/23 protocol compliance tests passing
-- Configurable protocol version negotiation
-
-#### Version Alignment
-- All 21 crates aligned to `3.0.0-exp`
-- Consistent dependency versions across workspace
-
-#### Feature Flag Simplification
-- **All MCP 2025-11-25 features are now core** - No feature flags required for standard protocol features
-- **Removed `mcp-*` feature flags** (`turbomcp-protocol`):
-  - `mcp-icons` → Icons and IconTheme always available
-  - `mcp-url-elicitation` → URL elicitation always available
-  - `mcp-sampling-tools` → tools/tool_choice in CreateMessageRequest always available
-  - `mcp-enum-improvements` → EnumSchema/EnumOption always available
-  - `mcp-draft` → Draft features (description on Implementation) always available
-- **Renamed `mcp-tasks` → `experimental-tasks`** - Only experimental features remain feature-gated
-- **Migration**: Simply remove `mcp-*` features from your `Cargo.toml` - all types are now always available
-
-### Removed
-
-- **`ServerError` enum** (`turbomcp-server`) - Completely removed in favor of unified `McpError`
-  - Use `McpError::internal(msg)` instead of `ServerError::Handler { message, context }`
-  - Use `McpError::lifecycle(msg)` (via `ServerErrorExt`) instead of `ServerError::Lifecycle`
-  - Use `McpError::timeout(msg)` instead of `ServerError::Timeout`
-  - Use `McpError::resource_not_found(name)` instead of `ServerError::NotFound`
-  - Use `error.jsonrpc_code()` instead of `error.error_code()`
-
-### Migration
-
-See [MIGRATION.md](./MIGRATION.md) for detailed v2.x → v3.x migration guide.
-
-```toml
-[dependencies]
-turbomcp = "3.0.0-exp"
-```
-
-#### Error Migration Examples
-
-```rust
-// Before (v2.x)
-use turbomcp_server::ServerError;
-Err(ServerError::Handler { message: "failed".into(), context: None })
-
-// After (v3.0.0-exp)
-use turbomcp_server::{McpError, ServerErrorExt};
-Err(McpError::internal("failed"))
-// Or with context:
-Err(McpError::internal("failed").with_operation("my_operation"))
-```
-
-### Test Results
-
-- 1070 tests passing
-- Zero clippy warnings with `--all-features`
-- All transports verified: STDIO, TCP, HTTP, WebSocket, Unix socket
 
 ## [2.3.7] - 2026-01-05
 

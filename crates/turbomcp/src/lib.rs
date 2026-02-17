@@ -113,6 +113,7 @@
     clippy::return_self_not_must_use,
     clippy::struct_excessive_bools,
     clippy::missing_panics_doc,
+    clippy::missing_errors_doc,
     clippy::default_trait_access,
     clippy::missing_const_for_fn,
     clippy::use_self,
@@ -148,16 +149,77 @@ pub use turbomcp_types::{
 };
 
 // Re-export server builder and transport
-pub use turbomcp_server::{
-    McpHandlerExt, McpServerExt, ServerBuilder, ServerConfig, ServerConfigBuilder, Transport,
-};
+
+/// Extension trait providing transport-specific serve methods (`serve_stdio`, `serve_http`, etc.)
+pub use turbomcp_server::McpHandlerExt;
+
+/// Extension trait for MCP server operations
+pub use turbomcp_server::McpServerExt;
+
+/// Builder for configuring and launching MCP servers with transports
+pub use turbomcp_server::ServerBuilder;
+
+/// Configuration for MCP server behavior, timeouts, and protocol versions
+pub use turbomcp_server::ServerConfig;
+
+/// Builder for constructing `ServerConfig` with type-safe defaults
+pub use turbomcp_server::ServerConfigBuilder;
+
+/// Transport configuration enum for runtime transport selection
+pub use turbomcp_server::Transport;
 
 // Re-export protocol types for advanced usage
-pub use turbomcp_protocol::{
-    CallToolRequest, CallToolResult, ClientCapabilities, Image, InitializeRequest,
-    InitializeResult, IntoToolError, IntoToolResponse, Json, JsonRpcError, JsonRpcNotification,
-    JsonRpcRequest, JsonRpcResponse, MessageId, ServerCapabilities, Text, ToolError,
-};
+
+/// Request payload for tool invocation
+pub use turbomcp_protocol::CallToolRequest;
+
+/// Response payload for tool execution results
+pub use turbomcp_protocol::CallToolResult;
+
+/// Client capability declaration during initialization
+pub use turbomcp_protocol::ClientCapabilities;
+
+/// Image content type for multimodal responses
+pub use turbomcp_protocol::Image;
+
+/// Initial handshake request from client to server
+pub use turbomcp_protocol::InitializeRequest;
+
+/// Initial handshake response with server capabilities
+pub use turbomcp_protocol::InitializeResult;
+
+/// Trait for converting errors into tool error responses
+pub use turbomcp_protocol::IntoToolError;
+
+/// Trait for converting values into tool responses
+pub use turbomcp_protocol::IntoToolResponse;
+
+/// JSON content wrapper for structured data responses
+pub use turbomcp_protocol::Json;
+
+/// JSON-RPC 2.0 error object
+pub use turbomcp_protocol::JsonRpcError;
+
+/// JSON-RPC 2.0 notification (no response expected)
+pub use turbomcp_protocol::JsonRpcNotification;
+
+/// JSON-RPC 2.0 request message
+pub use turbomcp_protocol::JsonRpcRequest;
+
+/// JSON-RPC 2.0 response message
+pub use turbomcp_protocol::JsonRpcResponse;
+
+/// Unique identifier for correlating requests and responses
+pub use turbomcp_protocol::MessageId;
+
+/// Server capability declaration during initialization
+pub use turbomcp_protocol::ServerCapabilities;
+
+/// Text content type for string responses
+pub use turbomcp_protocol::Text;
+
+/// Tool execution error with code and message
+pub use turbomcp_protocol::ToolError;
 
 // ============================================================================
 // Optional Re-exports
@@ -256,7 +318,6 @@ pub mod prelude {
     pub use super::{Image, IntoToolError, IntoToolResponse, Json, Text, ToolError};
 
     // Common external types
-    pub use async_trait::async_trait;
     pub use serde::{Deserialize, Serialize};
     pub use serde_json;
 

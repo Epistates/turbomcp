@@ -13,6 +13,49 @@ use tracing_subscriber::{
 /// When dropped, ensures proper cleanup of telemetry resources including
 /// flushing any pending trace/metric data to exporters.
 ///
+/// # Critical: Drop Behavior
+///
+/// **The `TelemetryGuard` MUST outlive all traced code in your application.**
+///
+/// When the guard is dropped, its `Drop` implementation:
+/// 1. Flushes all pending traces to configured exporters (OTLP, etc.)
+/// 2. Shuts down the OpenTelemetry tracer provider
+/// 3. Releases telemetry resources
+///
+/// ## Common Pitfall
+///
+/// ```rust,ignore
+/// // ❌ WRONG: Guard dropped too early
+/// {
+///     let _guard = TelemetryConfig::default().init()?;
+/// } // Guard dropped here
+/// my_traced_function().await; // Traces lost!
+/// ```
+///
+/// ```rust,ignore
+/// // ✅ CORRECT: Guard outlives traced code
+/// let _guard = TelemetryConfig::default().init()?;
+/// my_traced_function().await;
+/// // Guard dropped at end of scope, traces flushed
+/// ```
+///
+/// ## Best Practice
+///
+/// Store the guard in your main application struct or as a variable in `main()`:
+///
+/// ```rust,ignore
+/// #[tokio::main]
+/// async fn main() -> Result<()> {
+///     let _telemetry = TelemetryConfig::default().init()?;
+///
+///     // Run your server
+///     run_server().await?;
+///
+///     Ok(())
+///     // Guard dropped here after server shutdown
+/// }
+/// ```
+///
 /// # Example
 ///
 /// ```rust,ignore

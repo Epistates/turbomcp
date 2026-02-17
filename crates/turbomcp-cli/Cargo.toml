@@ -16,10 +16,9 @@ rust-version = "1.89.0"
 
 [dependencies]
 # Core TurboMCP
-
-turbomcp-client = { path = "../turbomcp-client", version = "3.0.0-beta.4" }
-turbomcp-transport = { path = "../turbomcp-transport", version = "3.0.0-beta.4" }
-turbomcp-protocol = { path = "../turbomcp-protocol", version = "3.0.0-beta.4" }
+turbomcp-client = { workspace = true }
+turbomcp-transport = { workspace = true }
+turbomcp-protocol = { workspace = true }
 
 # CLI framework
 clap = { workspace = true, features = ["derive", "env", "string"] }
@@ -43,16 +42,16 @@ owo-colors = "4.1"
 indicatif = "0.18"
 
 # Error handling
-anyhow = "1.0"
+anyhow = { workspace = true }
 thiserror = { workspace = true }
 
 # Config
-config = "0.15"
+config = { workspace = true }
 dirs = "6.0"
 
 [dev-dependencies]
-tokio-test = "0.4"
-tempfile = "3.14"
+tokio-test = { workspace = true }
+tempfile = { workspace = true }
 
 [features]
 # Transport features - enable individual transports as needed

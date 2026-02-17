@@ -46,7 +46,7 @@
 //!     .build();
 //! ```
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, warn};
@@ -538,6 +538,176 @@ impl SsrfValidator {
     /// Get the policy
     pub fn policy(&self) -> &SsrfPolicy {
         &self.policy
+    }
+
+    /// Create an HTTP client with pinned DNS resolution
+    ///
+    /// This prevents DNS rebinding attacks by:
+    /// 1. Resolving hostname to IP addresses
+    /// 2. Validating all resolved IPs against SSRF policy
+    /// 3. Creating a reqwest client with DNS pinned to validated IPs
+    /// 4. Setting Host header manually to preserve the original hostname
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL to fetch (must pass `validate_url()` first)
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (reqwest::Client, final_url) where:
+    /// - Client has DNS pinned to validated IP addresses
+    /// - final_url is the URL to use with the client
+    ///
+    /// # Security
+    ///
+    /// The client will ONLY connect to the validated IP addresses, even if
+    /// DNS returns different IPs during the actual fetch. This prevents
+    /// time-of-check/time-of-use (TOCTOU) DNS rebinding attacks.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let validator = SsrfValidator::default();
+    /// validator.validate_url("https://example.com")?;
+    ///
+    /// let (client, url) = validator.create_pinned_client("https://example.com")?;
+    /// let response = client.get(&url).send().await?;
+    /// ```
+    pub fn create_pinned_client(
+        &self,
+        url_str: &str,
+    ) -> Result<(reqwest::Client, String), SsrfError> {
+        // Parse URL
+        let url = Url::parse(url_str)
+            .map_err(|e| SsrfError::InvalidUrl(format!("Failed to parse URL: {}", e)))?;
+
+        let hostname = url
+            .host_str()
+            .ok_or_else(|| SsrfError::InvalidUrl("URL has no host".to_string()))?;
+
+        // Determine port
+        let port = url
+            .port()
+            .unwrap_or_else(|| if url.scheme() == "https" { 443 } else { 80 });
+
+        // Resolve hostname to IP addresses
+        let addr_str = format!("{}:{}", hostname, port);
+        let addrs: Vec<SocketAddr> = addr_str
+            .to_socket_addrs()
+            .map_err(|e| SsrfError::ResolutionFailed(format!("{}: {}", hostname, e)))?
+            .collect();
+
+        if addrs.is_empty() {
+            return Err(SsrfError::ResolutionFailed(format!(
+                "No IP addresses resolved for: {}",
+                hostname
+            )));
+        }
+
+        // Validate all resolved IPs
+        for socket_addr in &addrs {
+            let ip = socket_addr.ip();
+            self.validate_ip_address(&ip)?;
+        }
+
+        // Create reqwest client with pinned DNS
+        let mut client_builder = reqwest::Client::builder().timeout(self.policy.request_timeout);
+
+        // Pin DNS resolution to the validated IPs
+        // Note: reqwest's resolve() takes a hostname and a single SocketAddr
+        // We'll use the first validated IP (they're all validated at this point)
+        if let Some(first_addr) = addrs.first() {
+            debug!(
+                hostname = hostname,
+                resolved_ip = %first_addr.ip(),
+                "Pinning DNS resolution to validated IP"
+            );
+            client_builder = client_builder.resolve(hostname, *first_addr);
+        }
+
+        // Configure redirect policy
+        if !self.policy.allow_redirects {
+            client_builder = client_builder.redirect(reqwest::redirect::Policy::none());
+        } else {
+            client_builder = client_builder.redirect(reqwest::redirect::Policy::limited(
+                self.policy.max_redirects as usize,
+            ));
+        }
+
+        let client = client_builder
+            .build()
+            .map_err(|e| SsrfError::InvalidUrl(format!("Failed to create HTTP client: {}", e)))?;
+
+        // Return the original URL - the client will use pinned DNS
+        Ok((client, url_str.to_string()))
+    }
+
+    /// Fetch a URL with SSRF protection and DNS pinning
+    ///
+    /// This is a convenience method that combines validation, DNS pinning, and fetching.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - The URL to fetch
+    ///
+    /// # Returns
+    ///
+    /// The HTTP response body as bytes
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - URL validation fails
+    /// - DNS resolution fails
+    /// - Any resolved IP is blocked
+    /// - HTTP request fails
+    /// - Response size exceeds limit
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let validator = SsrfValidator::default();
+    /// let body = validator.fetch("https://example.com/.well-known/oauth-client").await?;
+    /// ```
+    pub async fn fetch(&self, url: &str) -> Result<Vec<u8>, SsrfError> {
+        // Validate URL
+        self.validate_url(url)?;
+
+        // Create client with pinned DNS
+        let (client, final_url) = self.create_pinned_client(url)?;
+
+        // Make request
+        let response = client.get(&final_url).send().await.map_err(|e| {
+            if e.is_timeout() {
+                SsrfError::Timeout(self.policy.request_timeout)
+            } else {
+                SsrfError::InvalidUrl(format!("HTTP request failed: {}", e))
+            }
+        })?;
+
+        // Check response size
+        let content_length = response.content_length().unwrap_or(0) as usize;
+        if content_length > self.policy.max_response_size {
+            return Err(SsrfError::ResponseSizeLimitExceeded(
+                content_length,
+                self.policy.max_response_size,
+            ));
+        }
+
+        // Read response body with size limit
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| SsrfError::InvalidUrl(format!("Failed to read response: {}", e)))?;
+
+        if bytes.len() > self.policy.max_response_size {
+            return Err(SsrfError::ResponseSizeLimitExceeded(
+                bytes.len(),
+                self.policy.max_response_size,
+            ));
+        }
+
+        Ok(bytes.to_vec())
     }
 }
 

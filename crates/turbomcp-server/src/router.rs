@@ -57,19 +57,33 @@ pub async fn route_request_with_config<H: McpHandler>(
 ) -> JsonRpcOutgoing {
     let id = request.id.clone();
 
+    // Validate message size against configured limit
+    if let Some(config) = config
+        && let Some(ref params) = request.params
+    {
+        let estimated_size = params.to_string().len();
+        if estimated_size > config.max_message_size {
+            return JsonRpcOutgoing::error(
+                id,
+                McpError::invalid_request(format!(
+                    "Message size {} exceeds maximum allowed size of {} bytes",
+                    estimated_size, config.max_message_size
+                )),
+            );
+        }
+    }
+
     // For initialize requests, apply native-specific validation
     if request.method == "initialize" {
         let params = request.params.clone().unwrap_or_default();
 
         // Validate clientInfo is present (MCP spec requirement)
-        let client_info = params.get("clientInfo");
-        if client_info.is_none() {
+        let Some(client_info) = params.get("clientInfo") else {
             return JsonRpcOutgoing::error(
                 id,
                 McpError::invalid_params("Missing required field: clientInfo"),
             );
-        }
-        let client_info = client_info.unwrap();
+        };
 
         // Validate clientInfo has required fields
         let client_name = client_info.get("name").and_then(|v| v.as_str());
@@ -89,7 +103,20 @@ pub async fn route_request_with_config<H: McpHandler>(
 
         // Negotiate protocol version
         let negotiated_version = match protocol_config.negotiate(protocol_version) {
-            Some(version) => version,
+            Some(version) => {
+                // Log if server fell back to a different version
+                if let Some(client_ver) = protocol_version
+                    && client_ver != version
+                {
+                    tracing::warn!(
+                        client_version = client_ver,
+                        negotiated_version = %version,
+                        supported = ?protocol_config.supported_versions,
+                        "Protocol version fallback: client requested unsupported version"
+                    );
+                }
+                version
+            }
             None => {
                 return JsonRpcOutgoing::error(
                     id,

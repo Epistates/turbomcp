@@ -5,20 +5,17 @@
 //!
 //! # Security Note
 //!
-//! TLS 1.3 is the default minimum version for all configurations.
-//! TLS 1.2 is provided for legacy compatibility but its use is discouraged.
-//! TLS 1.3 provides stronger security guarantees including:
+//! TLS 1.3 is required for all configurations in v3.
+//! TLS 1.3 provides strong security guarantees including:
 //! - Perfect forward secrecy by default
 //! - Improved handshake performance (1-RTT)
 //! - Removal of legacy cryptographic algorithms
 
 /// TLS version specification
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TlsVersion {
-    /// TLS version 1.2 (legacy, use only when required for compatibility)
-    #[deprecated(since = "3.0.0", note = "Use TLS 1.3 for improved security")]
-    TlsV1_2,
-    /// TLS version 1.3 (recommended)
+    /// TLS version 1.3 (required)
+    #[default]
     TlsV1_3,
 }
 

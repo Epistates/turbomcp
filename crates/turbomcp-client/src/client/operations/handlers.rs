@@ -29,21 +29,23 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// use turbomcp_client::handlers::{RootsHandler, HandlerResult};
     /// use turbomcp_protocol::types::Root;
     /// use turbomcp_transport::stdio::StdioTransport;
-    /// use async_trait::async_trait;
     /// use std::sync::Arc;
+    /// use std::future::Future;
+    /// use std::pin::Pin;
     ///
     /// #[derive(Debug)]
     /// struct MyRootsHandler {
     ///     project_dir: String,
     /// }
     ///
-    /// #[async_trait]
     /// impl RootsHandler for MyRootsHandler {
-    ///     async fn handle_roots_request(&self) -> HandlerResult<Vec<Root>> {
-    ///         Ok(vec![Root {
-    ///             uri: format!("file://{}", self.project_dir).into(),
-    ///             name: Some("My Project".to_string()),
-    ///         }])
+    ///     fn handle_roots_request(&self) -> Pin<Box<dyn Future<Output = HandlerResult<Vec<Root>>> + Send + '_>> {
+    ///         Box::pin(async move {
+    ///             Ok(vec![Root {
+    ///                 uri: format!("file://{}", self.project_dir).into(),
+    ///                 name: Some("My Project".to_string()),
+    ///             }])
+    ///         })
     ///     }
     /// }
     ///
@@ -53,11 +55,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// }));
     /// ```
     pub fn set_roots_handler(&self, handler: Arc<dyn RootsHandler>) {
-        self.inner
-            .handlers
-            .lock()
-            .expect("handlers mutex poisoned")
-            .set_roots_handler(handler);
+        self.inner.handlers.lock().set_roots_handler(handler);
     }
 
     /// Register an elicitation handler for processing user input requests
@@ -76,22 +74,24 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// use turbomcp_client::Client;
     /// use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, ElicitationAction, HandlerResult};
     /// use turbomcp_transport::stdio::StdioTransport;
-    /// use async_trait::async_trait;
     /// use std::sync::Arc;
     /// use serde_json::json;
+    /// use std::future::Future;
+    /// use std::pin::Pin;
     ///
     /// #[derive(Debug)]
     /// struct MyElicitationHandler;
     ///
-    /// #[async_trait]
     /// impl ElicitationHandler for MyElicitationHandler {
-    ///     async fn handle_elicitation(
+    ///     fn handle_elicitation(
     ///         &self,
     ///         request: ElicitationRequest,
-    ///     ) -> HandlerResult<ElicitationResponse> {
-    ///         let mut content = std::collections::HashMap::new();
-    ///         content.insert("user_input".to_string(), json!("example"));
-    ///         Ok(ElicitationResponse::accept(content))
+    ///     ) -> Pin<Box<dyn Future<Output = HandlerResult<ElicitationResponse>> + Send + '_>> {
+    ///         Box::pin(async move {
+    ///             let mut content = std::collections::HashMap::new();
+    ///             content.insert("user_input".to_string(), json!("example"));
+    ///             Ok(ElicitationResponse::accept(content))
+    ///         })
     ///     }
     /// }
     ///
@@ -99,11 +99,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// client.set_elicitation_handler(Arc::new(MyElicitationHandler));
     /// ```
     pub fn set_elicitation_handler(&self, handler: Arc<dyn ElicitationHandler>) {
-        self.inner
-            .handlers
-            .lock()
-            .expect("handlers mutex poisoned")
-            .set_elicitation_handler(handler);
+        self.inner.handlers.lock().set_elicitation_handler(handler);
     }
 
     /// Register a log handler for processing server log messages
@@ -122,17 +118,19 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// use turbomcp_client::Client;
     /// use turbomcp_client::handlers::{LogHandler, LoggingNotification, HandlerResult};
     /// use turbomcp_transport::stdio::StdioTransport;
-    /// use async_trait::async_trait;
     /// use std::sync::Arc;
+    /// use std::future::Future;
+    /// use std::pin::Pin;
     ///
     /// #[derive(Debug)]
     /// struct MyLogHandler;
     ///
-    /// #[async_trait]
     /// impl LogHandler for MyLogHandler {
-    ///     async fn handle_log(&self, log: LoggingNotification) -> HandlerResult<()> {
-    ///         println!("Server log: {}", log.data);
-    ///         Ok(())
+    ///     fn handle_log(&self, log: LoggingNotification) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+    ///         Box::pin(async move {
+    ///             println!("Server log: {}", log.data);
+    ///             Ok(())
+    ///         })
     ///     }
     /// }
     ///
@@ -140,11 +138,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// client.set_log_handler(Arc::new(MyLogHandler));
     /// ```
     pub fn set_log_handler(&self, handler: Arc<dyn LogHandler>) {
-        self.inner
-            .handlers
-            .lock()
-            .expect("handlers mutex poisoned")
-            .set_log_handler(handler);
+        self.inner.handlers.lock().set_log_handler(handler);
     }
 
     /// Register a resource update handler for processing resource change notifications
@@ -163,20 +157,22 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// use turbomcp_client::Client;
     /// use turbomcp_client::handlers::{ResourceUpdateHandler, ResourceUpdatedNotification, HandlerResult};
     /// use turbomcp_transport::stdio::StdioTransport;
-    /// use async_trait::async_trait;
     /// use std::sync::Arc;
+    /// use std::future::Future;
+    /// use std::pin::Pin;
     ///
     /// #[derive(Debug)]
     /// struct MyResourceUpdateHandler;
     ///
-    /// #[async_trait]
     /// impl ResourceUpdateHandler for MyResourceUpdateHandler {
-    ///     async fn handle_resource_update(
+    ///     fn handle_resource_update(
     ///         &self,
     ///         notification: ResourceUpdatedNotification,
-    ///     ) -> HandlerResult<()> {
-    ///         println!("Resource updated: {}", notification.uri);
-    ///         Ok(())
+    ///     ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+    ///         Box::pin(async move {
+    ///             println!("Resource updated: {}", notification.uri);
+    ///             Ok(())
+    ///         })
     ///     }
     /// }
     ///
@@ -187,7 +183,6 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         self.inner
             .handlers
             .lock()
-            .expect("handlers mutex poisoned")
             .set_resource_update_handler(handler);
     }
 
@@ -200,11 +195,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     ///
     /// * `handler` - The cancellation handler implementation
     pub fn set_cancellation_handler(&self, handler: Arc<dyn CancellationHandler>) {
-        self.inner
-            .handlers
-            .lock()
-            .expect("handlers mutex poisoned")
-            .set_cancellation_handler(handler);
+        self.inner.handlers.lock().set_cancellation_handler(handler);
     }
 
     /// Register a resource list changed handler
@@ -218,7 +209,6 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         self.inner
             .handlers
             .lock()
-            .expect("handlers mutex poisoned")
             .set_resource_list_changed_handler(handler);
     }
 
@@ -233,7 +223,6 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         self.inner
             .handlers
             .lock()
-            .expect("handlers mutex poisoned")
             .set_prompt_list_changed_handler(handler);
     }
 
@@ -248,47 +237,30 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         self.inner
             .handlers
             .lock()
-            .expect("handlers mutex poisoned")
             .set_tool_list_changed_handler(handler);
     }
 
     /// Check if a roots handler is registered
     #[must_use]
     pub fn has_roots_handler(&self) -> bool {
-        self.inner
-            .handlers
-            .lock()
-            .expect("handlers mutex poisoned")
-            .has_roots_handler()
+        self.inner.handlers.lock().has_roots_handler()
     }
 
     /// Check if an elicitation handler is registered
     #[must_use]
     pub fn has_elicitation_handler(&self) -> bool {
-        self.inner
-            .handlers
-            .lock()
-            .expect("handlers mutex poisoned")
-            .has_elicitation_handler()
+        self.inner.handlers.lock().has_elicitation_handler()
     }
 
     /// Check if a log handler is registered
     #[must_use]
     pub fn has_log_handler(&self) -> bool {
-        self.inner
-            .handlers
-            .lock()
-            .expect("handlers mutex poisoned")
-            .has_log_handler()
+        self.inner.handlers.lock().has_log_handler()
     }
 
     /// Check if a resource update handler is registered
     #[must_use]
     pub fn has_resource_update_handler(&self) -> bool {
-        self.inner
-            .handlers
-            .lock()
-            .expect("handlers mutex poisoned")
-            .has_resource_update_handler()
+        self.inner.handlers.lock().has_resource_update_handler()
     }
 }

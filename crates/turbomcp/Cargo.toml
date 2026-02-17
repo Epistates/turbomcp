@@ -24,9 +24,6 @@ tokio = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# Async traits
-async-trait = "0.1"
-
 # Logging
 tracing = "0.1"
 
@@ -124,31 +121,52 @@ name = "test_client"
 # ============================================================================
 
 [features]
+# Default: STDIO transport with server capabilities
 default = ["stdio"]
 
-# Feature bundles
+# === Feature Bundles ===
+# Minimal configuration with STDIO only (recommended for CLI tools and Claude Desktop integration)
 minimal = ["stdio"]
+
+# Full server with all transports (HTTP/SSE, WebSocket, TCP, Unix sockets)
 full = ["stdio", "http", "websocket", "tcp", "unix"]
+
+# Complete stack including client library with all transports
 full-stack = ["full", "full-client"]
 
-# Transport features
+# === Transport Features ===
+# Standard I/O transport for CLI tools and subprocess communication (works with Claude Desktop)
 stdio = ["turbomcp-transport/stdio", "turbomcp-server/stdio"]
+
+# HTTP/SSE transport with Axum web server integration (server-sent events for streaming)
 http = [
     "turbomcp-transport/http",
     "turbomcp-server/http",
     "turbomcp-macros/http",
     "dep:axum",
 ]
+
+# WebSocket bidirectional transport with full-duplex communication
 websocket = ["turbomcp-transport/websocket", "turbomcp-server/websocket"]
+
+# Raw TCP socket transport for low-latency network communication
 tcp = ["turbomcp-transport/tcp", "turbomcp-server/tcp", "turbomcp-macros/tcp"]
+
+# Unix domain socket transport for high-performance IPC (Unix/Linux only)
 unix = ["turbomcp-transport/unix", "turbomcp-server/unix", "turbomcp-macros/unix"]
 
-# Optional features
+# === Security & Authentication Features ===
+# OAuth 2.1 authentication with PKCE and multi-provider support
 auth = ["dep:turbomcp-auth"]
+
+# RFC 9449 DPoP (Demonstrating Proof-of-Possession) for token binding (requires auth)
 dpop = ["dep:turbomcp-dpop", "auth", "turbomcp-auth/dpop"]
-# Client integration - minimal client with stdio only
+
+# === Client Integration Features ===
+# Minimal client integration with STDIO transport only
 client-integration = ["dep:turbomcp-client", "turbomcp-client/stdio"]
-# Full client - enables all transport features for the client (includes client-integration)
+
+# Full client library with all transport support (includes client-integration)
 full-client = [
     "client-integration",
     "turbomcp-client/http",
@@ -157,7 +175,8 @@ full-client = [
     "turbomcp-client/unix",
 ]
 
-# Convenience aliases
+# === Convenience Aliases ===
+# Enable all transport protocols (same as full without auth)
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]
 
 [package.metadata.docs.rs]

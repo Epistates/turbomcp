@@ -29,8 +29,9 @@
 //! This ensures that there's only ONE consumer of `transport.receive()`,
 //! eliminating race conditions by centralizing all message routing.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex}; // Use std::sync::Mutex for simpler synchronous access
+use std::sync::Arc;
 
 use tokio::sync::{Notify, oneshot};
 use turbomcp_protocol::jsonrpc::{
@@ -157,7 +158,7 @@ impl MessageDispatcher {
     ///
     /// * `handler` - Function to handle incoming requests
     pub fn set_request_handler(&self, handler: RequestHandler) {
-        *self.request_handler.lock().expect("handler mutex poisoned") = Some(handler);
+        *self.request_handler.lock() = Some(handler);
         tracing::debug!("Request handler registered with dispatcher");
     }
 
@@ -169,10 +170,7 @@ impl MessageDispatcher {
     ///
     /// * `handler` - Function to handle incoming notifications
     pub fn set_notification_handler(&self, handler: NotificationHandler) {
-        *self
-            .notification_handler
-            .lock()
-            .expect("handler mutex poisoned") = Some(handler);
+        *self.notification_handler.lock() = Some(handler);
         tracing::debug!("Notification handler registered with dispatcher");
     }
 
@@ -203,10 +201,7 @@ impl MessageDispatcher {
     /// ```
     pub fn wait_for_response(&self, id: MessageId) -> oneshot::Receiver<JsonRpcResponse> {
         let (tx, rx) = oneshot::channel();
-        self.response_waiters
-            .lock()
-            .expect("response_waiters mutex poisoned")
-            .insert(id.clone(), tx);
+        self.response_waiters.lock().insert(id.clone(), tx);
         tracing::trace!("Registered response waiter for request ID: {:?}", id);
         rx
     }
@@ -362,18 +357,14 @@ impl MessageDispatcher {
     ) -> Result<()> {
         // Parse as JSON-RPC message
         let json_msg: JsonRpcMessage = serde_json::from_slice(&msg.payload)
-            .map_err(|e| Error::protocol(format!("Invalid JSON-RPC message: {}", e)))?;
+            .map_err(|e| Error::internal(format!("Invalid JSON-RPC message: {}", e)))?;
 
         match json_msg {
             JsonRpcMessage::Response(response) => {
                 // Route to waiting request() call
                 // ResponseId is Option<RequestId> where RequestId = MessageId
                 if let Some(request_id) = &response.id.0 {
-                    if let Some(tx) = response_waiters
-                        .lock()
-                        .expect("response_waiters mutex poisoned")
-                        .remove(request_id)
-                    {
+                    if let Some(tx) = response_waiters.lock().remove(request_id) {
                         tracing::trace!("Routing response to request ID: {:?}", request_id);
                         // Send response through oneshot channel
                         // Ignore error if receiver was dropped (request timed out)
@@ -403,11 +394,7 @@ impl MessageDispatcher {
                     request.id
                 );
 
-                if let Some(handler) = request_handler
-                    .lock()
-                    .expect("request_handler mutex poisoned")
-                    .as_ref()
-                {
+                if let Some(handler) = request_handler.lock().as_ref() {
                     // Call handler (handler is responsible for sending response)
                     if let Err(e) = handler(request) {
                         tracing::error!("Request handler error: {}", e);
@@ -427,11 +414,7 @@ impl MessageDispatcher {
                     notification.method
                 );
 
-                if let Some(handler) = notification_handler
-                    .lock()
-                    .expect("notification_handler mutex poisoned")
-                    .as_ref()
-                {
+                if let Some(handler) = notification_handler.lock().as_ref() {
                     if let Err(e) = handler(notification) {
                         tracing::error!("Notification handler error: {}", e);
                     }

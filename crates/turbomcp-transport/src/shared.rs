@@ -3,7 +3,8 @@
 //! This module provides thread-safe wrappers around Transport instances that enable
 //! concurrent access across multiple async tasks without exposing Arc/Mutex complexity.
 
-use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -211,7 +212,6 @@ impl<T: Transport> std::fmt::Debug for SharedTransport<T> {
 //
 // All sync methods use cached values captured at construction time.
 // This eliminates the need for async mutex access and prevents panics.
-#[async_trait]
 impl<T: Transport> Transport for SharedTransport<T> {
     fn transport_type(&self) -> TransportType {
         // Return cached value (captured at construction)
@@ -223,32 +223,37 @@ impl<T: Transport> Transport for SharedTransport<T> {
         &self.capabilities
     }
 
-    async fn state(&self) -> TransportState {
-        self.inner.lock().await.state().await
+    fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+        Box::pin(async move { self.inner.lock().await.state().await })
     }
 
-    async fn connect(&self) -> TransportResult<()> {
-        self.inner.lock().await.connect().await
+    fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move { self.inner.lock().await.connect().await })
     }
 
-    async fn disconnect(&self) -> TransportResult<()> {
-        self.inner.lock().await.disconnect().await
+    fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move { self.inner.lock().await.disconnect().await })
     }
 
-    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
-        self.inner.lock().await.send(message).await
+    fn send(
+        &self,
+        message: TransportMessage,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move { self.inner.lock().await.send(message).await })
     }
 
-    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-        self.inner.lock().await.receive().await
+    fn receive(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>> {
+        Box::pin(async move { self.inner.lock().await.receive().await })
     }
 
-    async fn metrics(&self) -> TransportMetrics {
-        self.inner.lock().await.metrics().await
+    fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+        Box::pin(async move { self.inner.lock().await.metrics().await })
     }
 
-    async fn is_connected(&self) -> bool {
-        self.inner.lock().await.is_connected().await
+    fn is_connected(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        Box::pin(async move { self.inner.lock().await.is_connected().await })
     }
 
     fn endpoint(&self) -> Option<String> {
@@ -256,8 +261,11 @@ impl<T: Transport> Transport for SharedTransport<T> {
         self.endpoint.clone()
     }
 
-    async fn configure(&self, config: TransportConfig) -> TransportResult<()> {
-        self.inner.lock().await.configure(config).await
+    fn configure(
+        &self,
+        config: TransportConfig,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move { self.inner.lock().await.configure(config).await })
     }
 }
 

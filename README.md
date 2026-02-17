@@ -22,7 +22,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "3.0.0-exp"
+turbomcp = "3.0.0-beta.4"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -45,13 +45,13 @@ TurboMCP uses feature flags for progressive enhancement. Choose a preset based o
 
 ```toml
 # Production server with all transports
-turbomcp = { version = "3.0.0-exp", features = ["full"] }
+turbomcp = { version = "3.0.0-beta.4", features = ["full"] }
 
 # Add authentication
-turbomcp = { version = "3.0.0-exp", features = ["full", "auth"] }
+turbomcp = { version = "3.0.0-beta.4", features = ["full", "auth"] }
 
 # With SIMD acceleration for high throughput
-turbomcp = { version = "3.0.0-exp", features = ["full", "simd"] }
+turbomcp = { version = "3.0.0-beta.4", features = ["full", "simd"] }
 ```
 
 ### Individual Features
@@ -230,7 +230,7 @@ Start minimal (STDIO only), add features as needed:
 
 ```toml
 [dependencies]
-turbomcp = "3.0.0-exp"
+turbomcp = "3.0.0-beta.4"
 tokio = { version = "1", features = ["full"] }
 ```
 

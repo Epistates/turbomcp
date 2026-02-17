@@ -135,6 +135,28 @@ impl Jwk {
         Ok(())
     }
 
+    /// Validate that this key is suitable for public JWKS endpoints.
+    ///
+    /// # Security
+    ///
+    /// Symmetric keys (HMAC, kty: "oct") MUST NOT appear in public JWKS
+    /// endpoints because they would expose the shared secret to anyone who
+    /// fetches the JWKS. This would allow attackers to forge JWTs.
+    ///
+    /// Always call this when fetching keys from public JWKS endpoints to
+    /// prevent accidental exposure of shared secrets.
+    pub fn validate_for_public_jwks(&self) -> Result<(), AuthError> {
+        if self.is_symmetric() {
+            return Err(AuthError::InvalidCredentialFormat(
+                "Symmetric keys (kty: oct) must not appear in public JWKS endpoints. \
+                 This would expose the shared secret and allow anyone to forge JWTs. \
+                 Use asymmetric keys (RSA, EC) for public JWKS."
+                    .to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Convert to a web-sys JsonWebKey for importing
     pub fn to_web_sys_jwk(&self) -> web_sys::JsonWebKey {
         let jwk = web_sys::JsonWebKey::new(&self.kty);
@@ -201,6 +223,37 @@ impl JwkSet {
     pub fn first_signing_key(&self) -> Option<&Jwk> {
         self.keys.iter().find(|k| k.is_signing_key())
     }
+
+    /// Validate all keys are suitable for public JWKS endpoints.
+    ///
+    /// # Security
+    ///
+    /// This filters out symmetric keys (HMAC) which should never appear in
+    /// public JWKS endpoints. Returns a new JwkSet with only asymmetric keys.
+    ///
+    /// Logs a warning for each symmetric key found, as this indicates a
+    /// serious security misconfiguration on the authorization server.
+    pub fn filter_for_public_jwks(self) -> Self {
+        let mut valid_keys = Vec::new();
+
+        for key in self.keys {
+            if let Err(e) = key.validate_for_public_jwks() {
+                // Log warning about symmetric key in public JWKS
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::warn_1(
+                    &format!(
+                        "⚠️  Security: Rejecting symmetric key from public JWKS (kid: {:?}): {}",
+                        key.kid, e
+                    )
+                    .into(),
+                );
+                continue;
+            }
+            valid_keys.push(key);
+        }
+
+        Self { keys: valid_keys }
+    }
 }
 
 /// Cache entry for JWKS with expiration tracking
@@ -233,6 +286,20 @@ impl FetchError {
     }
 }
 
+/// Maximum cache age in milliseconds (6 hours) regardless of configured TTL.
+///
+/// # Cloudflare Workers Isolate Lifecycle
+///
+/// Cloudflare Workers isolates can persist for hours (sometimes days) without
+/// restarting. The `Rc<RefCell<>>` cache persists for the isolate's lifetime.
+///
+/// This hard cap prevents serving stale keys indefinitely, which is critical
+/// for security when keys are rotated (e.g., after a compromise).
+///
+/// Even if the configured TTL is longer (e.g., 24 hours), the cache will
+/// force a refresh after 6 hours to ensure reasonable key freshness.
+const MAX_CACHE_AGE_MS: f64 = 6.0 * 3600.0 * 1000.0; // 6 hours
+
 /// JWKS cache for efficient key lookups.
 ///
 /// Caches fetched JWKS and automatically refreshes when expired.
@@ -244,12 +311,20 @@ impl FetchError {
 /// on cryptographic key material. HTTP URLs will be rejected unless
 /// explicitly allowed via [`JwksCache::allow_insecure_http`] (NOT recommended
 /// for production use).
+///
+/// # Cache Lifetime in Cloudflare Workers
+///
+/// The cache uses `Rc<RefCell<>>` which persists for the Worker isolate
+/// lifetime (potentially hours or days). To prevent serving stale keys
+/// indefinitely, a hard maximum cache age of 6 hours is enforced regardless
+/// of the configured TTL. This ensures keys are refreshed even if the Worker
+/// isolate doesn't restart.
 #[derive(Clone)]
 pub struct JwksCache {
     /// JWKS endpoint URL
     url: String,
 
-    /// Cache TTL in milliseconds (default: 1 hour)
+    /// Cache TTL in milliseconds (default: 1 hour, max: 6 hours)
     ttl_ms: f64,
 
     /// Cached JWKS entries
@@ -353,11 +428,25 @@ impl JwksCache {
     }
 
     /// Get the JWKS, fetching if needed
+    ///
+    /// # Cache Expiration
+    ///
+    /// The cache is considered expired if either:
+    /// 1. Age exceeds the configured TTL, OR
+    /// 2. Age exceeds the hard maximum (6 hours)
+    ///
+    /// The hard maximum prevents serving stale keys in long-lived Worker
+    /// isolates that might not restart for hours or days.
     pub async fn get_jwks(&self) -> Result<JwkSet, AuthError> {
         // Check cache first
         if let Some(ref entry) = *self.cache.borrow() {
             let now = js_sys::Date::now();
-            if now - entry.fetched_at < self.ttl_ms {
+            let age_ms = now - entry.fetched_at;
+
+            // Enforce BOTH the configured TTL and the hard maximum age
+            let effective_ttl = self.ttl_ms.min(MAX_CACHE_AGE_MS);
+
+            if age_ms < effective_ttl {
                 return Ok(entry.jwks.clone());
             }
         }
@@ -503,6 +592,10 @@ impl JwksCache {
                 "Failed to fetch JWKS from authorization server".to_string(),
             ))
         })?;
+
+        // SECURITY: Filter out symmetric keys from public JWKS endpoints.
+        // Symmetric keys would expose the shared secret, allowing anyone to forge JWTs.
+        let jwks = jwks.filter_for_public_jwks();
 
         Ok(jwks)
     }
@@ -827,5 +920,124 @@ mod tests {
         let cache =
             JwksCache::new("http://test-server/.well-known/jwks.json").allow_insecure_http();
         assert!(cache.validate_url().is_ok());
+    }
+
+    // ==========================================================================
+    // Security Tests: Symmetric Key Rejection in Public JWKS
+    // ==========================================================================
+
+    #[test]
+    fn test_jwk_validate_for_public_jwks_rejects_symmetric() {
+        let hmac_key = Jwk {
+            kty: "oct".to_string(),
+            kid: Some("hmac-key-1".to_string()),
+            alg: Some("HS256".to_string()),
+            use_: Some("sig".to_string()),
+            n: None,
+            e: None,
+            crv: None,
+            x: None,
+            y: None,
+            k: Some("c2VjcmV0".to_string()),
+        };
+
+        let result = hmac_key.validate_for_public_jwks();
+        assert!(result.is_err(), "Symmetric key should be rejected");
+
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("Symmetric keys") && err_msg.contains("must not appear"),
+            "Error should explain symmetric key prohibition: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_jwk_validate_for_public_jwks_accepts_asymmetric() {
+        // RSA key should be accepted
+        let rsa_key = Jwk {
+            kty: "RSA".to_string(),
+            kid: Some("rsa-key-1".to_string()),
+            alg: Some("RS256".to_string()),
+            use_: Some("sig".to_string()),
+            n: Some("modulus".to_string()),
+            e: Some("AQAB".to_string()),
+            crv: None,
+            x: None,
+            y: None,
+            k: None,
+        };
+        assert!(rsa_key.validate_for_public_jwks().is_ok());
+
+        // EC key should be accepted
+        let ec_key = Jwk {
+            kty: "EC".to_string(),
+            kid: Some("ec-key-1".to_string()),
+            alg: Some("ES256".to_string()),
+            use_: Some("sig".to_string()),
+            n: None,
+            e: None,
+            crv: Some("P-256".to_string()),
+            x: Some("x-coord".to_string()),
+            y: Some("y-coord".to_string()),
+            k: None,
+        };
+        assert!(ec_key.validate_for_public_jwks().is_ok());
+    }
+
+    #[test]
+    fn test_jwks_filter_for_public_jwks() {
+        let jwks = JwkSet {
+            keys: vec![
+                // Valid RSA key
+                Jwk {
+                    kty: "RSA".to_string(),
+                    kid: Some("rsa-1".to_string()),
+                    alg: Some("RS256".to_string()),
+                    use_: Some("sig".to_string()),
+                    n: Some("n".to_string()),
+                    e: Some("e".to_string()),
+                    crv: None,
+                    x: None,
+                    y: None,
+                    k: None,
+                },
+                // Invalid HMAC key (should be filtered out)
+                Jwk {
+                    kty: "oct".to_string(),
+                    kid: Some("hmac-1".to_string()),
+                    alg: Some("HS256".to_string()),
+                    use_: Some("sig".to_string()),
+                    n: None,
+                    e: None,
+                    crv: None,
+                    x: None,
+                    y: None,
+                    k: Some("secret".to_string()),
+                },
+                // Valid EC key
+                Jwk {
+                    kty: "EC".to_string(),
+                    kid: Some("ec-1".to_string()),
+                    alg: Some("ES256".to_string()),
+                    use_: Some("sig".to_string()),
+                    n: None,
+                    e: None,
+                    crv: Some("P-256".to_string()),
+                    x: Some("x".to_string()),
+                    y: Some("y".to_string()),
+                    k: None,
+                },
+            ],
+        };
+
+        let filtered = jwks.filter_for_public_jwks();
+
+        // Should only have 2 keys (RSA and EC, HMAC filtered out)
+        assert_eq!(filtered.keys.len(), 2);
+        assert!(filtered.find_by_kid("rsa-1").is_some());
+        assert!(filtered.find_by_kid("hmac-1").is_none()); // Filtered out
+        assert!(filtered.find_by_kid("ec-1").is_some());
     }
 }

@@ -8,11 +8,12 @@
 //!
 //! Run with: `cargo run --example middleware`
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use async_trait::async_trait;
 use serde_json::Value;
 use turbomcp::__macro_support::turbomcp_core::handler::McpHandler;
 use turbomcp::prelude::*;
@@ -26,73 +27,91 @@ use turbomcp_server::middleware::typed::{McpMiddleware, MiddlewareStack, Next};
 #[derive(Clone)]
 struct LoggingMiddleware;
 
-#[async_trait]
 impl McpMiddleware for LoggingMiddleware {
-    async fn on_list_tools<'a>(&'a self, next: Next<'a>) -> Vec<Tool> {
-        let start = Instant::now();
-        let tools = next.list_tools();
-        println!(
-            "[LOG] list_tools: {} tools in {:?}",
-            tools.len(),
-            start.elapsed()
-        );
-        tools
+    fn on_list_tools<'a>(
+        &'a self,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = Vec<Tool>> + Send + 'a>> {
+        Box::pin(async move {
+            let start = Instant::now();
+            let tools = next.list_tools();
+            println!(
+                "[LOG] list_tools: {} tools in {:?}",
+                tools.len(),
+                start.elapsed()
+            );
+            tools
+        })
     }
 
-    async fn on_call_tool<'a>(
+    fn on_call_tool<'a>(
         &'a self,
         name: &'a str,
         args: Value,
         ctx: &'a RequestContext,
         next: Next<'a>,
-    ) -> McpResult<ToolResult> {
-        let start = Instant::now();
-        let name_owned = name.to_string();
-        let result = next.call_tool(name, args, ctx).await;
-        let status = if result.is_ok() { "OK" } else { "ERROR" };
-        println!(
-            "[LOG] call_tool '{}': {} in {:?}",
-            name_owned,
-            status,
-            start.elapsed()
-        );
-        result
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move {
+            let start = Instant::now();
+            let name_owned = name.to_string();
+            let result = next.call_tool(name, args, ctx).await;
+            let status = if result.is_ok() { "OK" } else { "ERROR" };
+            println!(
+                "[LOG] call_tool '{}': {} in {:?}",
+                name_owned,
+                status,
+                start.elapsed()
+            );
+            result
+        })
     }
 
-    async fn on_read_resource<'a>(
+    fn on_read_resource<'a>(
         &'a self,
         uri: &'a str,
         ctx: &'a RequestContext,
         next: Next<'a>,
-    ) -> McpResult<ResourceResult> {
-        let start = Instant::now();
-        let uri_owned = uri.to_string();
-        let result = next.read_resource(uri, ctx).await;
-        let status = if result.is_ok() { "OK" } else { "ERROR" };
-        println!(
-            "[LOG] read_resource '{}': {} in {:?}",
-            uri_owned,
-            status,
-            start.elapsed()
-        );
-        result
+    ) -> Pin<Box<dyn Future<Output = McpResult<ResourceResult>> + Send + 'a>> {
+        Box::pin(async move {
+            let start = Instant::now();
+            let uri_owned = uri.to_string();
+            let result = next.read_resource(uri, ctx).await;
+            let status = if result.is_ok() { "OK" } else { "ERROR" };
+            println!(
+                "[LOG] read_resource '{}': {} in {:?}",
+                uri_owned,
+                status,
+                start.elapsed()
+            );
+            result
+        })
     }
 
-    async fn on_initialize<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
-        println!("[LOG] Server initializing...");
-        let result = next.initialize().await;
-        println!(
-            "[LOG] Server initialized: {}",
-            if result.is_ok() { "OK" } else { "ERROR" }
-        );
-        result
+    fn on_initialize<'a>(
+        &'a self,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + 'a>> {
+        Box::pin(async move {
+            println!("[LOG] Server initializing...");
+            let result = next.initialize().await;
+            println!(
+                "[LOG] Server initialized: {}",
+                if result.is_ok() { "OK" } else { "ERROR" }
+            );
+            result
+        })
     }
 
-    async fn on_shutdown<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
-        println!("[LOG] Server shutting down...");
-        let result = next.shutdown().await;
-        println!("[LOG] Server shutdown complete");
-        result
+    fn on_shutdown<'a>(
+        &'a self,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + 'a>> {
+        Box::pin(async move {
+            println!("[LOG] Server shutting down...");
+            let result = next.shutdown().await;
+            println!("[LOG] Server shutdown complete");
+            result
+        })
     }
 }
 
@@ -128,35 +147,38 @@ impl MetricsMiddleware {
     }
 }
 
-#[async_trait]
 impl McpMiddleware for MetricsMiddleware {
-    async fn on_call_tool<'a>(
+    fn on_call_tool<'a>(
         &'a self,
         name: &'a str,
         args: Value,
         ctx: &'a RequestContext,
         next: Next<'a>,
-    ) -> McpResult<ToolResult> {
-        self.tool_calls.fetch_add(1, Ordering::Relaxed);
-        let result = next.call_tool(name, args, ctx).await;
-        if result.is_err() {
-            self.errors.fetch_add(1, Ordering::Relaxed);
-        }
-        result
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move {
+            self.tool_calls.fetch_add(1, Ordering::Relaxed);
+            let result = next.call_tool(name, args, ctx).await;
+            if result.is_err() {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+            }
+            result
+        })
     }
 
-    async fn on_read_resource<'a>(
+    fn on_read_resource<'a>(
         &'a self,
         uri: &'a str,
         ctx: &'a RequestContext,
         next: Next<'a>,
-    ) -> McpResult<ResourceResult> {
-        self.resource_reads.fetch_add(1, Ordering::Relaxed);
-        let result = next.read_resource(uri, ctx).await;
-        if result.is_err() {
-            self.errors.fetch_add(1, Ordering::Relaxed);
-        }
-        result
+    ) -> Pin<Box<dyn Future<Output = McpResult<ResourceResult>> + Send + 'a>> {
+        Box::pin(async move {
+            self.resource_reads.fetch_add(1, Ordering::Relaxed);
+            let result = next.read_resource(uri, ctx).await;
+            if result.is_err() {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+            }
+            result
+        })
     }
 }
 
@@ -168,28 +190,34 @@ impl McpMiddleware for MetricsMiddleware {
 #[derive(Clone)]
 struct AccessControlMiddleware;
 
-#[async_trait]
 impl McpMiddleware for AccessControlMiddleware {
-    async fn on_list_tools<'a>(&'a self, next: Next<'a>) -> Vec<Tool> {
-        // Filter out dangerous tools from the list
-        next.list_tools()
-            .into_iter()
-            .filter(|tool| !tool.name.contains("dangerous"))
-            .collect()
+    fn on_list_tools<'a>(
+        &'a self,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = Vec<Tool>> + Send + 'a>> {
+        Box::pin(async move {
+            // Filter out dangerous tools from the list
+            next.list_tools()
+                .into_iter()
+                .filter(|tool| !tool.name.contains("dangerous"))
+                .collect()
+        })
     }
 
-    async fn on_call_tool<'a>(
+    fn on_call_tool<'a>(
         &'a self,
         name: &'a str,
         args: Value,
         ctx: &'a RequestContext,
         next: Next<'a>,
-    ) -> McpResult<ToolResult> {
-        // Block calls to dangerous tools
-        if name.contains("dangerous") {
-            return Err(McpError::invalid_request("Access denied: dangerous tool"));
-        }
-        next.call_tool(name, args, ctx).await
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move {
+            // Block calls to dangerous tools
+            if name.contains("dangerous") {
+                return Err(McpError::invalid_request("Access denied: dangerous tool"));
+            }
+            next.call_tool(name, args, ctx).await
+        })
     }
 }
 

@@ -20,7 +20,6 @@ prost = "0.14"
 prost-types = "0.14"
 
 # Async utilities
-async-trait = "0.1"
 async-stream = "0.3"
 
 # Async runtime

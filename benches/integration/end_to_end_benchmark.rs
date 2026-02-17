@@ -63,7 +63,6 @@ impl BenchmarkServer {
     }
 }
 
-#[async_trait]
 impl HandlerRegistration for BenchmarkServer {
     async fn register_with_builder(&self, builder: &mut ServerBuilder) -> McpResult<()> {
         // Register multiple tools for comprehensive benchmarking
@@ -77,7 +76,6 @@ impl HandlerRegistration for BenchmarkServer {
     }
 }
 
-#[async_trait]
 impl TurboMcpServer for BenchmarkServer {
     fn name(&self) -> &'static str {
         "BenchmarkServer"

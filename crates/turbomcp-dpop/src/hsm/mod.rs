@@ -56,11 +56,13 @@
 
 #[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 use super::{DpopAlgorithm, DpopError, DpopKeyPair, Result};
-#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
+use std::future::Future;
 use std::path::PathBuf;
+#[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
+use std::pin::Pin;
 use std::time::Duration;
 #[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
 use std::time::SystemTime;
@@ -70,32 +72,38 @@ use std::time::SystemTime;
 /// This trait defines the interface for all HSM implementations, ensuring
 /// consistent behavior across different HSM types and vendors.
 #[cfg(any(feature = "hsm-pkcs11", feature = "hsm-yubico"))]
-#[async_trait]
 pub trait HsmOperations: Send + Sync {
     /// Generate a DPoP key pair in the HSM
     ///
     /// The private key never leaves the HSM, ensuring maximum security.
-    async fn generate_key_pair(&self, algorithm: DpopAlgorithm) -> Result<DpopKeyPair>;
+    fn generate_key_pair(
+        &self,
+        algorithm: DpopAlgorithm,
+    ) -> Pin<Box<dyn Future<Output = Result<DpopKeyPair>> + Send + '_>>;
 
     /// Sign data using an HSM-stored private key
     ///
     /// This performs the cryptographic signing operation entirely within the HSM.
-    async fn sign_data(&self, key_id: &str, data: &[u8]) -> Result<Vec<u8>>;
+    fn sign_data(
+        &self,
+        key_id: &str,
+        data: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + '_>>;
 
     /// List all DPoP keys stored in the HSM
-    async fn list_keys(&self) -> Result<Vec<String>>;
+    fn list_keys(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>>;
 
     /// Delete a key from the HSM
-    async fn delete_key(&self, key_id: &str) -> Result<()>;
+    fn delete_key(&self, key_id: &str) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
     /// Check HSM connection and health status
-    async fn health_check(&self) -> Result<HsmHealthStatus>;
+    fn health_check(&self) -> Pin<Box<dyn Future<Output = Result<HsmHealthStatus>> + Send + '_>>;
 
     /// Get HSM operation statistics
     fn get_stats(&self) -> HsmStats;
 
     /// Get HSM information and capabilities
-    async fn get_info(&self) -> Result<HsmInfo>;
+    fn get_info(&self) -> Pin<Box<dyn Future<Output = Result<HsmInfo>> + Send + '_>>;
 }
 
 /// HSM configuration with support for multiple backends
@@ -344,8 +352,8 @@ impl<'de> serde::Deserialize<'de> for Pkcs11Config {
                     library_path,
                     slot_id,
                     token_label,
-                    user_pin: secrecy::SecretString::new(user_pin_str),
-                    so_pin: so_pin_str.map(secrecy::SecretString::new),
+                    user_pin: secrecy::SecretString::new(user_pin_str.into()),
+                    so_pin: so_pin_str.map(|s| secrecy::SecretString::new(s.into())),
                     pool_config,
                     timeouts: timeout_config,
                     retry_config,
@@ -456,7 +464,7 @@ impl<'de> serde::Deserialize<'de> for YubiHsmConfig {
                 Ok(YubiHsmConfig {
                     connector,
                     auth_key_id,
-                    password: secrecy::SecretString::new(password_str),
+                    password: secrecy::SecretString::new(password_str.into()),
                     timeouts: timeout_config,
                     retry_config,
                 })
@@ -821,13 +829,13 @@ impl Pkcs11ConfigBuilder {
 
     /// Set the user PIN for PKCS#11 token authentication
     pub fn user_pin<S: Into<String>>(mut self, pin: S) -> Self {
-        self.user_pin = Some(secrecy::SecretString::new(pin.into()));
+        self.user_pin = Some(secrecy::SecretString::new(pin.into().into()));
         self
     }
 
     /// Set the security officer (SO) PIN for PKCS#11 token administration
     pub fn so_pin<S: Into<String>>(mut self, pin: S) -> Self {
-        self.so_pin = Some(secrecy::SecretString::new(pin.into()));
+        self.so_pin = Some(secrecy::SecretString::new(pin.into().into()));
         self
     }
 
@@ -914,7 +922,7 @@ impl YubiHsmConfigBuilder {
 
     /// Set authentication password
     pub fn password<S: Into<String>>(mut self, password: S) -> Self {
-        self.password = Some(secrecy::SecretString::new(password.into()));
+        self.password = Some(secrecy::SecretString::new(password.into().into()));
         self
     }
 

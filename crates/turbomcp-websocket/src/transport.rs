@@ -3,8 +3,9 @@
 //! This module implements the Transport trait for WebSocketBidirectionalTransport,
 //! providing the core send/receive operations and transport management.
 
-use async_trait::async_trait;
 use futures::SinkExt;
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, trace};
@@ -15,7 +16,6 @@ use turbomcp_transport_traits::{
     TransportMetrics, TransportResult, TransportState, TransportType,
 };
 
-#[async_trait]
 impl Transport for WebSocketBidirectionalTransport {
     fn transport_type(&self) -> TransportType {
         TransportType::WebSocket
@@ -25,136 +25,138 @@ impl Transport for WebSocketBidirectionalTransport {
         &self.capabilities
     }
 
-    async fn state(&self) -> TransportState {
-        self.state.read().await.clone()
+    fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+        Box::pin(async move { self.state.read().await.clone() })
     }
 
-    async fn connect(&self) -> TransportResult<()> {
-        self.connect().await
+    fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move { self.connect().await })
     }
 
-    async fn disconnect(&self) -> TransportResult<()> {
-        self.disconnect().await
+    fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move { self.disconnect().await })
     }
 
-    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
-        if let Some(ref mut writer) = *self.writer.lock().await {
-            let text = String::from_utf8(message.payload.to_vec())
-                .map_err(|e| TransportError::SendFailed(format!("Failed to serialize: {}", e)))?;
+    fn send(
+        &self,
+        message: TransportMessage,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            if let Some(ref mut writer) = *self.writer.lock().await {
+                let text = String::from_utf8(message.payload.to_vec()).map_err(|e| {
+                    TransportError::SendFailed(format!("Failed to serialize: {}", e))
+                })?;
 
-            info!("🚀 [CLIENT SEND] Attempting to send message");
-            info!("   Session: {}", self.session_id);
-            info!("   Payload length: {} bytes", text.len());
-            debug!(
-                "   Payload preview: {}",
-                if text.len() > 200 {
-                    format!("{}...", &text[..200])
-                } else {
-                    text.clone()
-                }
-            );
+                info!("🚀 [CLIENT SEND] Attempting to send message");
+                info!("   Session: {}", self.session_id);
+                info!("   Payload length: {} bytes", text.len());
+                debug!(
+                    "   Payload preview: {}",
+                    if text.len() > 200 {
+                        format!("{}...", &text[..200])
+                    } else {
+                        text.clone()
+                    }
+                );
 
-            // Step 1: Send message to buffer
-            writer.send(Message::Text(text.into())).await.map_err(|e| {
-                error!("❌ [CLIENT SEND] WebSocket send() failed: {}", e);
-                TransportError::SendFailed(format!("WebSocket send failed: {}", e))
-            })?;
+                // Send message and flush (SinkExt::send = feed + flush)
+                writer.send(Message::Text(text.into())).await.map_err(|e| {
+                    error!("❌ [CLIENT SEND] WebSocket send failed: {}", e);
+                    TransportError::SendFailed(format!("WebSocket send failed: {}", e))
+                })?;
 
-            debug!("✅ [CLIENT SEND] Message buffered successfully");
-
-            // Step 2: Flush buffer to TCP socket
-            // CRITICAL: Without flush(), messages sit in buffer and never reach the network!
-            // This is required by the futures::Sink trait semantics.
-            writer.flush().await.map_err(|e| {
-                error!("❌ [CLIENT SEND] WebSocket flush() failed: {}", e);
-                TransportError::SendFailed(format!("WebSocket flush failed: {}", e))
-            })?;
-
-            info!("✅ [CLIENT SEND] Message flushed to TCP socket successfully");
-            self.metrics.write().await.messages_sent += 1;
-            trace!(
-                "Sent and flushed message {} in session {}",
-                message.id, self.session_id
-            );
-            Ok(())
-        } else {
-            error!("❌ [CLIENT SEND] Writer is None - WebSocket not connected");
-            Err(TransportError::SendFailed(
-                "WebSocket not connected".to_string(),
-            ))
-        }
-    }
-
-    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-        // Check if connected first to avoid hanging on the channel
-        if *self.state.read().await == TransportState::Disconnected {
-            return Err(TransportError::ConnectionLost(
-                "WebSocket not connected".to_string(),
-            ));
-        }
-
-        // Read from the incoming channel instead of the raw WebSocket stream.
-        //
-        // The background `spawn_message_reader_task()` is the SINGLE consumer of the
-        // WebSocket stream. It routes correlation messages to their waiting handlers
-        // and forwards all other messages to the `incoming_rx` channel.
-        //
-        // This eliminates the race condition where both the background task and this
-        // method competed to read from the same WebSocket stream.
-        let mut incoming_rx = self.incoming_rx.lock().await;
-
-        // Use try_recv to check if a message is available without blocking indefinitely
-        // This matches the behavior expected by the client's MessageDispatcher
-        match incoming_rx.recv().await {
-            Some(message) => {
-                self.metrics.write().await.messages_received += 1;
+                info!("✅ [CLIENT SEND] Message sent and flushed to TCP socket successfully");
+                self.metrics.write().await.messages_sent += 1;
                 trace!(
-                    "Received message {} from incoming channel in session {}",
+                    "Sent and flushed message {} in session {}",
                     message.id, self.session_id
                 );
-                Ok(Some(message))
-            }
-            None => {
-                // Channel closed - transport is likely disconnecting
-                *self.state.write().await = TransportState::Disconnected;
-                Err(TransportError::ConnectionLost(
-                    "Incoming message channel closed".to_string(),
+                Ok(())
+            } else {
+                error!("❌ [CLIENT SEND] Writer is None - WebSocket not connected");
+                Err(TransportError::SendFailed(
+                    "WebSocket not connected".to_string(),
                 ))
             }
-        }
+        })
     }
 
-    async fn metrics(&self) -> TransportMetrics {
-        let mut base_metrics = self.metrics.read().await.clone();
+    fn receive(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>> {
+        Box::pin(async move {
+            // Check if connected first to avoid hanging on the channel
+            if *self.state.read().await == TransportState::Disconnected {
+                return Err(TransportError::ConnectionLost(
+                    "WebSocket not connected".to_string(),
+                ));
+            }
 
-        // Add WebSocket-specific metrics to metadata
-        let config = self.config.lock().expect("config mutex poisoned");
-        base_metrics.metadata.insert(
-            "active_correlations".to_string(),
-            serde_json::json!(self.active_correlations_count()),
-        );
-        base_metrics.metadata.insert(
-            "pending_elicitations".to_string(),
-            serde_json::json!(self.pending_elicitations_count()),
-        );
-        base_metrics.metadata.insert(
-            "session_id".to_string(),
-            serde_json::json!(self.session_id.to_string()),
-        );
-        base_metrics.metadata.insert(
-            "max_message_size".to_string(),
-            serde_json::json!(config.max_message_size),
-        );
-        base_metrics.metadata.insert(
-            "keep_alive_interval_secs".to_string(),
-            serde_json::json!(config.keep_alive_interval.as_secs()),
-        );
+            // Read from the incoming channel instead of the raw WebSocket stream.
+            //
+            // The background `spawn_message_reader_task()` is the SINGLE consumer of the
+            // WebSocket stream. It routes correlation messages to their waiting handlers
+            // and forwards all other messages to the `incoming_rx` channel.
+            //
+            // This eliminates the race condition where both the background task and this
+            // method competed to read from the same WebSocket stream.
+            let mut incoming_rx = self.incoming_rx.lock().await;
 
-        base_metrics
+            // Use try_recv to check if a message is available without blocking indefinitely
+            // This matches the behavior expected by the client's MessageDispatcher
+            match incoming_rx.recv().await {
+                Some(message) => {
+                    self.metrics.write().await.messages_received += 1;
+                    trace!(
+                        "Received message {} from incoming channel in session {}",
+                        message.id, self.session_id
+                    );
+                    Ok(Some(message))
+                }
+                None => {
+                    // Channel closed - transport is likely disconnecting
+                    *self.state.write().await = TransportState::Disconnected;
+                    Err(TransportError::ConnectionLost(
+                        "Incoming message channel closed".to_string(),
+                    ))
+                }
+            }
+        })
+    }
+
+    fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+        Box::pin(async move {
+            let mut base_metrics = self.metrics.read().await.clone();
+
+            // Add WebSocket-specific metrics to metadata
+            let config = self.config.lock();
+            base_metrics.metadata.insert(
+                "active_correlations".to_string(),
+                serde_json::json!(self.active_correlations_count()),
+            );
+            base_metrics.metadata.insert(
+                "pending_elicitations".to_string(),
+                serde_json::json!(self.pending_elicitations_count()),
+            );
+            base_metrics.metadata.insert(
+                "session_id".to_string(),
+                serde_json::json!(self.session_id.to_string()),
+            );
+            base_metrics.metadata.insert(
+                "max_message_size".to_string(),
+                serde_json::json!(config.max_message_size),
+            );
+            base_metrics.metadata.insert(
+                "keep_alive_interval_secs".to_string(),
+                serde_json::json!(config.keep_alive_interval.as_secs()),
+            );
+
+            base_metrics
+        })
     }
 
     fn endpoint(&self) -> Option<String> {
-        let config_guard = self.config.lock().expect("config mutex poisoned");
+        let config_guard = self.config.lock();
         config_guard.url.clone().or_else(|| {
             config_guard
                 .bind_addr
@@ -163,49 +165,54 @@ impl Transport for WebSocketBidirectionalTransport {
         })
     }
 
-    async fn configure(&self, config: TransportConfig) -> TransportResult<()> {
-        let mut ws_config = self.config.lock().expect("config mutex poisoned");
+    fn configure(
+        &self,
+        config: TransportConfig,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            let mut ws_config = self.config.lock();
 
-        // Update keep-alive from standard config
-        if let Some(keep_alive) = config.keep_alive {
-            ws_config.keep_alive_interval = keep_alive;
-        }
-
-        // Extract WebSocket-specific config from custom field
-        if let Some(max_msg_size) = config.custom.get("max_message_size")
-            && let Some(size) = max_msg_size.as_u64()
-        {
-            ws_config.max_message_size = size as usize;
-            trace!(
-                "Updated max_message_size to {} for session {}",
-                size, self.session_id
-            );
-        }
-
-        // Use read_timeout for elicitation_timeout if provided
-        if let Some(read_timeout) = config.read_timeout {
-            if let Some(elicitation_timeout) = config
-                .custom
-                .get("elicitation_timeout")
-                .and_then(|v| v.as_u64())
-                .map(Duration::from_secs)
-            {
-                ws_config.elicitation_timeout = elicitation_timeout;
-            } else {
-                // Fall back to read_timeout if elicitation_timeout not explicitly set
-                ws_config.elicitation_timeout = read_timeout;
+            // Update keep-alive from standard config
+            if let Some(keep_alive) = config.keep_alive {
+                ws_config.keep_alive_interval = keep_alive;
             }
-            trace!(
-                "Updated elicitation_timeout to {:?} for session {}",
-                ws_config.elicitation_timeout, self.session_id
-            );
-        }
 
-        trace!(
-            "Updated transport configuration for session {}",
-            self.session_id
-        );
-        Ok(())
+            // Extract WebSocket-specific config from custom field
+            if let Some(max_msg_size) = config.custom.get("max_message_size")
+                && let Some(size) = max_msg_size.as_u64()
+            {
+                ws_config.max_message_size = size as usize;
+                trace!(
+                    "Updated max_message_size to {} for session {}",
+                    size, self.session_id
+                );
+            }
+
+            // Use read_timeout for elicitation_timeout if provided
+            if let Some(read_timeout) = config.read_timeout {
+                if let Some(elicitation_timeout) = config
+                    .custom
+                    .get("elicitation_timeout")
+                    .and_then(|v| v.as_u64())
+                    .map(Duration::from_secs)
+                {
+                    ws_config.elicitation_timeout = elicitation_timeout;
+                } else {
+                    // Fall back to read_timeout if elicitation_timeout not explicitly set
+                    ws_config.elicitation_timeout = read_timeout;
+                }
+                trace!(
+                    "Updated elicitation_timeout to {:?} for session {}",
+                    ws_config.elicitation_timeout, self.session_id
+                );
+            }
+
+            trace!(
+                "Updated transport configuration for session {}",
+                self.session_id
+            );
+            Ok(())
+        })
     }
 }
 
@@ -213,19 +220,14 @@ impl WebSocketBidirectionalTransport {
     /// Send a raw WebSocket message (for low-level use cases)
     ///
     /// This method sends control frames (ping, pong, close) and other raw messages.
-    /// It properly flushes the buffer to ensure immediate delivery to the TCP socket.
+    /// SinkExt::send already flushes, so no additional flush call is needed.
     pub async fn send_raw_message(&mut self, message: Message) -> TransportResult<()> {
         if let Some(ref mut writer) = *self.writer.lock().await {
-            // Send to buffer
+            // Send message and flush (SinkExt::send = feed + flush)
             writer
                 .send(message)
                 .await
                 .map_err(|e| TransportError::SendFailed(format!("WebSocket send failed: {}", e)))?;
-
-            // Flush to TCP socket (CRITICAL for immediate delivery)
-            writer.flush().await.map_err(|e| {
-                TransportError::SendFailed(format!("WebSocket flush failed: {}", e))
-            })?;
 
             trace!(
                 "Sent and flushed raw WebSocket message in session {}",
@@ -261,38 +263,22 @@ impl WebSocketBidirectionalTransport {
 
     /// Check if the transport supports a specific message size
     pub fn supports_message_size(&self, size: usize) -> bool {
-        size <= self
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .max_message_size
+        size <= self.config.lock().max_message_size
     }
 
     /// Get the maximum supported message size
     pub fn max_message_size(&self) -> usize {
-        self.config
-            .lock()
-            .expect("config mutex poisoned")
-            .max_message_size
+        self.config.lock().max_message_size
     }
 
     /// Validate a message before sending
     pub fn validate_message(&self, message: &TransportMessage) -> TransportResult<()> {
         // Check message size
-        if message.payload.len()
-            > self
-                .config
-                .lock()
-                .expect("config mutex poisoned")
-                .max_message_size
-        {
+        if message.payload.len() > self.config.lock().max_message_size {
             return Err(TransportError::ProtocolError(format!(
                 "Message size {} exceeds maximum {}",
                 message.payload.len(),
-                self.config
-                    .lock()
-                    .expect("config mutex poisoned")
-                    .max_message_size
+                self.config.lock().max_message_size
             )));
         }
 
@@ -330,7 +316,7 @@ impl WebSocketBidirectionalTransport {
             messages_received: metrics.messages_received,
             connection_uptime: connection_stats.uptime(),
             last_activity: connection_stats.last_activity,
-            config: self.config.lock().expect("config mutex poisoned").clone(),
+            config: self.config.lock().clone(),
         }
     }
 }

@@ -32,22 +32,14 @@ impl WebSocketBidirectionalTransport {
         if self.is_at_elicitation_capacity() {
             return Err(TransportError::SendFailed(format!(
                 "Maximum concurrent elicitations reached ({})",
-                self.config
-                    .lock()
-                    .expect("config mutex poisoned")
-                    .max_concurrent_elicitations
+                self.config.lock().max_concurrent_elicitations
             )));
         }
 
         let request_id = Uuid::new_v4().to_string();
         let (response_tx, response_rx) = oneshot::channel();
 
-        let timeout_duration = timeout_duration.unwrap_or(
-            self.config
-                .lock()
-                .expect("config mutex poisoned")
-                .elicitation_timeout,
-        );
+        let timeout_duration = timeout_duration.unwrap_or(self.config.lock().elicitation_timeout);
 
         // Store pending elicitation
         let pending = PendingElicitation::new(request.clone(), response_tx, timeout_duration);

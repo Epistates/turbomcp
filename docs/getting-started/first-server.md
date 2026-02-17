@@ -20,7 +20,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-turbomcp = { version = "3.0.0-exp", features = ["full"] }
+turbomcp = { version = "3.0.0-beta.4", features = ["full"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 ```

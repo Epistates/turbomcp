@@ -4,12 +4,13 @@
 //! key generation, storage, rotation, and secure cryptographic primitives.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use rand::rngs::OsRng;
+use p256::elliptic_curve::rand_core::OsRng;
 use tokio::sync::{Notify, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -290,22 +291,32 @@ impl Default for KeyRotationPolicy {
 }
 
 /// Trait for DPoP key storage backends
-#[async_trait]
 pub trait DpopKeyStorage: Send + Sync + std::fmt::Debug {
     /// Store a DPoP key pair
-    async fn store_key_pair(&self, key_id: &str, key_pair: &DpopKeyPair) -> Result<()>;
+    fn store_key_pair(
+        &self,
+        key_id: &str,
+        key_pair: &DpopKeyPair,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
     /// Retrieve a DPoP key pair by ID
-    async fn get_key_pair(&self, key_id: &str) -> Result<Option<DpopKeyPair>>;
+    fn get_key_pair(
+        &self,
+        key_id: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<DpopKeyPair>>> + Send + '_>>;
 
     /// Delete a DPoP key pair
-    async fn delete_key_pair(&self, key_id: &str) -> Result<()>;
+    fn delete_key_pair(
+        &self,
+        key_id: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
     /// List all stored key pairs (for cleanup and management)
-    async fn list_key_pairs(&self) -> Result<Vec<DpopKeyPair>>;
+    fn list_key_pairs(&self)
+    -> Pin<Box<dyn Future<Output = Result<Vec<DpopKeyPair>>> + Send + '_>>;
 
     /// Get storage health information
-    async fn health_check(&self) -> Result<StorageHealth>;
+    fn health_check(&self) -> Pin<Box<dyn Future<Output = Result<StorageHealth>> + Send + '_>>;
 }
 
 /// Storage health information
@@ -335,38 +346,56 @@ impl MemoryKeyStorage {
     }
 }
 
-#[async_trait]
 impl DpopKeyStorage for MemoryKeyStorage {
-    async fn store_key_pair(&self, key_id: &str, key_pair: &DpopKeyPair) -> Result<()> {
-        self.keys
-            .write()
-            .await
-            .insert(key_id.to_string(), key_pair.clone());
-        Ok(())
+    fn store_key_pair(
+        &self,
+        key_id: &str,
+        key_pair: &DpopKeyPair,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let key_id = key_id.to_string();
+        let key_pair = key_pair.clone();
+        Box::pin(async move {
+            self.keys.write().await.insert(key_id, key_pair);
+            Ok(())
+        })
     }
 
-    async fn get_key_pair(&self, key_id: &str) -> Result<Option<DpopKeyPair>> {
-        Ok(self.keys.read().await.get(key_id).cloned())
+    fn get_key_pair(
+        &self,
+        key_id: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<DpopKeyPair>>> + Send + '_>> {
+        let key_id = key_id.to_string();
+        Box::pin(async move { Ok(self.keys.read().await.get(&key_id).cloned()) })
     }
 
-    async fn delete_key_pair(&self, key_id: &str) -> Result<()> {
-        self.keys.write().await.remove(key_id);
-        Ok(())
+    fn delete_key_pair(
+        &self,
+        key_id: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let key_id = key_id.to_string();
+        Box::pin(async move {
+            self.keys.write().await.remove(&key_id);
+            Ok(())
+        })
     }
 
-    async fn list_key_pairs(&self) -> Result<Vec<DpopKeyPair>> {
-        Ok(self.keys.read().await.values().cloned().collect())
+    fn list_key_pairs(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<DpopKeyPair>>> + Send + '_>> {
+        Box::pin(async move { Ok(self.keys.read().await.values().cloned().collect()) })
     }
 
-    async fn health_check(&self) -> Result<StorageHealth> {
-        let keys = self.keys.read().await;
-        let mut details = HashMap::new();
-        details.insert("storage_type".to_string(), serde_json::json!("memory"));
+    fn health_check(&self) -> Pin<Box<dyn Future<Output = Result<StorageHealth>> + Send + '_>> {
+        Box::pin(async move {
+            let keys = self.keys.read().await;
+            let mut details = HashMap::new();
+            details.insert("storage_type".to_string(), serde_json::json!("memory"));
 
-        Ok(StorageHealth {
-            accessible: true,
-            key_count: keys.len(),
-            details,
+            Ok(StorageHealth {
+                accessible: true,
+                key_count: keys.len(),
+                details,
+            })
         })
     }
 }
@@ -417,27 +446,31 @@ fn generate_es256_key_pair() -> Result<(DpopPrivateKey, DpopPublicKey)> {
 
 /// Compute JWK thumbprint for a public key
 ///
+/// RFC 7638 requires lexicographic ordering of JSON keys for canonical representation.
+/// This function manually constructs the canonical JSON to ensure proper ordering.
+///
 /// Only supports ES256 (ECDSA P-256) as of TurboMCP v3.0+
 fn compute_thumbprint(public_key: &DpopPublicKey, algorithm: DpopAlgorithm) -> Result<String> {
     use sha2::{Digest, Sha256};
 
-    // Create JWK representation - only EC keys supported
-    let jwk = match (public_key, algorithm) {
+    // RFC 7638 requires lexicographic ordering: crv, kty, x, y (for EC keys)
+    // We manually construct the JSON to guarantee this ordering
+    let canonical_json = match (public_key, algorithm) {
         (DpopPublicKey::EcdsaP256 { x, y }, DpopAlgorithm::ES256) => {
-            serde_json::json!({
-                "kty": "EC",
-                "crv": "P-256",
-                "x": URL_SAFE_NO_PAD.encode(x),
-                "y": URL_SAFE_NO_PAD.encode(y),
-            })
+            let x_b64 = URL_SAFE_NO_PAD.encode(x);
+            let y_b64 = URL_SAFE_NO_PAD.encode(y);
+
+            // Escape JSON string values (base64url strings don't contain special chars, but ensure safety)
+            let x_escaped = x_b64.replace('\\', "\\\\").replace('"', "\\\"");
+            let y_escaped = y_b64.replace('\\', "\\\\").replace('"', "\\\"");
+
+            // Construct canonical JSON with guaranteed lexicographic key ordering
+            format!(
+                r#"{{"crv":"P-256","kty":"EC","x":"{}","y":"{}"}}"#,
+                x_escaped, y_escaped
+            )
         }
     };
-
-    // Serialize to canonical JSON
-    let canonical_json =
-        serde_json::to_string(&jwk).map_err(|e| DpopError::SerializationError {
-            reason: format!("Failed to serialize JWK: {e}"),
-        })?;
 
     // Compute SHA-256 hash
     let mut hasher = Sha256::new();

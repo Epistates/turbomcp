@@ -24,7 +24,6 @@ tokio = { workspace = true, features = ["sync", "time"] }
 reqwest = { workspace = true }
 
 # Async utilities
-async-trait = { workspace = true }
 futures = { workspace = true }
 
 # Serialization

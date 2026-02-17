@@ -5,10 +5,11 @@
 //! and cryptographic validation.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest, Sha256};
 use tokio::sync::RwLock;
@@ -363,22 +364,31 @@ impl DpopProofGenerator {
             .as_secs() as i64;
 
         let issued_at = proof.payload.iat;
-        let time_diff = (now - issued_at).abs();
+        let clock_skew_secs = self.clock_skew_tolerance.as_secs() as i64;
 
-        // Check clock skew
-        if time_diff > self.clock_skew_tolerance.as_secs() as i64 {
+        // Check if timestamp is too far in the future (prevents long-lived proofs)
+        if issued_at > now + clock_skew_secs {
             return Err(DpopError::ClockSkewTooLarge {
-                skew_seconds: time_diff,
-                max_skew_seconds: self.clock_skew_tolerance.as_secs() as i64,
+                skew_seconds: issued_at - now,
+                max_skew_seconds: clock_skew_secs,
             });
         }
 
-        // Check if proof has expired
+        // Check if proof has expired (too old)
         let proof_age = now - issued_at;
         if proof_age > self.proof_lifetime.as_secs() as i64 {
             return Err(DpopError::ProofExpired {
                 issued_at,
                 max_age_seconds: self.proof_lifetime.as_secs(),
+            });
+        }
+
+        // Check clock skew (now redundant with the future check above, but kept for completeness)
+        let time_diff = (now - issued_at).abs();
+        if time_diff > clock_skew_secs {
+            return Err(DpopError::ClockSkewTooLarge {
+                skew_seconds: time_diff,
+                max_skew_seconds: clock_skew_secs,
             });
         }
 
@@ -556,16 +566,20 @@ pub struct DpopValidationResult {
 }
 
 /// Trait for nonce tracking to prevent replay attacks
-#[async_trait]
 pub trait NonceTracker: Send + Sync + std::fmt::Debug {
     /// Track a nonce as used
-    async fn track_nonce(&self, nonce: &str, issued_at: i64) -> Result<()>;
+    fn track_nonce(
+        &self,
+        nonce: &str,
+        issued_at: i64,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
     /// Check if a nonce has been used
-    async fn is_nonce_used(&self, nonce: &str) -> Result<bool>;
+    fn is_nonce_used(&self, nonce: &str)
+    -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>>;
 
     /// Clean up expired nonces
-    async fn cleanup_expired_nonces(&self) -> Result<usize>;
+    fn cleanup_expired_nonces(&self) -> Pin<Box<dyn Future<Output = Result<usize>> + Send + '_>>;
 }
 
 /// In-memory nonce tracker for development and testing
@@ -588,35 +602,60 @@ impl MemoryNonceTracker {
     }
 }
 
-#[async_trait]
 impl NonceTracker for MemoryNonceTracker {
-    async fn track_nonce(&self, nonce: &str, issued_at: i64) -> Result<()> {
-        self.used_nonces
-            .write()
-            .await
-            .insert(nonce.to_string(), issued_at);
-        Ok(())
+    fn track_nonce(
+        &self,
+        nonce: &str,
+        issued_at: i64,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let nonce = nonce.to_string();
+        Box::pin(async move {
+            self.used_nonces.write().await.insert(nonce, issued_at);
+            Ok(())
+        })
     }
 
-    async fn is_nonce_used(&self, nonce: &str) -> Result<bool> {
-        Ok(self.used_nonces.read().await.contains_key(nonce))
+    fn is_nonce_used(
+        &self,
+        nonce: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
+        let nonce = nonce.to_string();
+        Box::pin(async move {
+            use subtle::{Choice, ConstantTimeEq};
+
+            // Constant-time nonce lookup to prevent timing attacks
+            // Iterate through all nonces and use constant-time comparison
+            let nonces = self.used_nonces.read().await;
+            let mut found = Choice::from(0u8);
+
+            for (stored_nonce, _) in nonces.iter() {
+                // Constant-time comparison of nonce strings
+                let is_match = stored_nonce.as_bytes().ct_eq(nonce.as_bytes());
+                found |= is_match;
+            }
+
+            Ok(bool::from(found))
+        })
     }
 
-    async fn cleanup_expired_nonces(&self) -> Result<usize> {
-        let cutoff = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| DpopError::InternalError {
-                reason: "System clock before Unix epoch".to_string(),
-            })?
-            .as_secs() as i64
-            - self.max_nonce_age.as_secs() as i64;
+    fn cleanup_expired_nonces(&self) -> Pin<Box<dyn Future<Output = Result<usize>> + Send + '_>> {
+        let max_nonce_age = self.max_nonce_age;
+        Box::pin(async move {
+            let cutoff = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| DpopError::InternalError {
+                    reason: "System clock before Unix epoch".to_string(),
+                })?
+                .as_secs() as i64
+                - max_nonce_age.as_secs() as i64;
 
-        let mut nonces = self.used_nonces.write().await;
-        let initial_count = nonces.len();
+            let mut nonces = self.used_nonces.write().await;
+            let initial_count = nonces.len();
 
-        nonces.retain(|_, &mut timestamp| timestamp > cutoff);
+            nonces.retain(|_, &mut timestamp| timestamp > cutoff);
 
-        Ok(initial_count - nonces.len())
+            Ok(initial_count - nonces.len())
+        })
     }
 }
 
@@ -712,56 +751,70 @@ impl RedisNonceTracker {
 }
 
 #[cfg(feature = "redis-storage")]
-#[async_trait]
 impl NonceTracker for RedisNonceTracker {
-    async fn track_nonce(&self, nonce: &str, issued_at: i64) -> Result<()> {
-        // Convert timestamp to system time for TTL calculation
-        let current_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|_| DpopError::InternalError {
-                reason: "System clock before Unix epoch".to_string(),
-            })?
-            .as_secs() as i64;
+    fn track_nonce(
+        &self,
+        nonce: &str,
+        issued_at: i64,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let nonce = nonce.to_string();
+        let default_client_id = self.default_client_id.clone();
+        let storage = self.storage.clone();
 
-        // Calculate appropriate TTL based on issued_at vs current time
-        let age = current_time.saturating_sub(issued_at);
-        let remaining_ttl = Duration::from_secs(300_u64.saturating_sub(age as u64)); // 5 minutes max
+        Box::pin(async move {
+            // Convert timestamp to system time for TTL calculation
+            let current_time = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| DpopError::InternalError {
+                    reason: "System clock before Unix epoch".to_string(),
+                })?
+                .as_secs() as i64;
 
-        // Store nonce with comprehensive metadata
-        let stored = self
-            .storage
-            .store_nonce(
-                nonce,
-                &format!("jti-{}", nonce), // JTI based on nonce for simplicity
-                "POST", // Default method - would need to be passed through in real usage
-                "https://api.turbomcp.org/default", // Default URI - would need actual URI
-                &self.default_client_id,
-                Some(remaining_ttl),
-            )
-            .await?;
+            // Calculate appropriate TTL based on issued_at vs current time
+            let age = current_time.saturating_sub(issued_at);
+            let remaining_ttl = Duration::from_secs(300_u64.saturating_sub(age as u64)); // 5 minutes max
 
-        if !stored {
-            return Err(DpopError::ProofValidationFailed {
-                reason: format!("Nonce replay detected: {}", nonce),
-            });
-        }
+            // Store nonce with comprehensive metadata
+            let stored = storage
+                .store_nonce(
+                    &nonce,
+                    &format!("jti-{}", nonce), // JTI based on nonce for simplicity
+                    "POST", // Default method - would need to be passed through in real usage
+                    "https://api.turbomcp.org/default", // Default URI - would need actual URI
+                    &default_client_id,
+                    Some(remaining_ttl),
+                )
+                .await?;
 
-        Ok(())
+            if !stored {
+                return Err(DpopError::ProofValidationFailed {
+                    reason: format!("Nonce replay detected: {}", nonce),
+                });
+            }
+
+            Ok(())
+        })
     }
 
-    async fn is_nonce_used(&self, nonce: &str) -> Result<bool> {
-        self.storage
-            .is_nonce_used(nonce, &self.default_client_id)
-            .await
+    fn is_nonce_used(
+        &self,
+        nonce: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
+        let nonce = nonce.to_string();
+        let default_client_id = self.default_client_id.clone();
+        let storage = self.storage.clone();
+
+        Box::pin(async move { storage.is_nonce_used(&nonce, &default_client_id).await })
     }
 
-    async fn cleanup_expired_nonces(&self) -> Result<usize> {
-        // Redis handles expiration automatically via TTL
-        // Return 0 as Redis cleanup is transparent
-        self.storage
-            .cleanup_expired()
-            .await
-            .map(|count| count as usize)
+    fn cleanup_expired_nonces(&self) -> Pin<Box<dyn Future<Output = Result<usize>> + Send + '_>> {
+        let storage = self.storage.clone();
+
+        Box::pin(async move {
+            // Redis handles expiration automatically via TTL
+            // Return 0 as Redis cleanup is transparent
+            storage.cleanup_expired().await.map(|count| count as usize)
+        })
     }
 }
 
@@ -810,9 +863,28 @@ fn is_valid_http_method(method: &str) -> bool {
     )
 }
 
-/// Validate HTTP URI format
+/// Validate HTTP URI format using proper URL parsing
+///
+/// Ensures:
+/// - Valid HTTP or HTTPS scheme
+/// - Non-empty host
+/// - No userinfo component (prevents phishing attacks)
 fn is_valid_http_uri(uri: &str) -> bool {
-    uri.starts_with("https://") || uri.starts_with("http://")
+    match url::Url::parse(uri) {
+        Ok(url) => {
+            // Check scheme is http or https
+            let valid_scheme = matches!(url.scheme(), "http" | "https");
+
+            // Check host is present and non-empty
+            let valid_host = url.host_str().is_some_and(|h| !h.is_empty());
+
+            // Check no userinfo (prevents user:pass@host patterns)
+            let no_userinfo = url.username().is_empty() && url.password().is_none();
+
+            valid_scheme && valid_host && no_userinfo
+        }
+        Err(_) => false,
+    }
 }
 
 /// Clean HTTP URI by removing query parameters and fragment

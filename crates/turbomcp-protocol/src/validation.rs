@@ -3,20 +3,20 @@
 //! This module provides comprehensive validation for MCP protocol messages,
 //! ensuring data integrity and specification compliance.
 
-use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 use crate::jsonrpc::{JsonRpcNotification, JsonRpcRequest, JsonRpcResponse};
 use crate::types::*;
 
 /// Cached regex for URI validation (compiled once)
-static URI_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[a-zA-Z][a-zA-Z0-9+.-]*:").expect("Invalid URI regex pattern"));
+static URI_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[a-zA-Z][a-zA-Z0-9+.-]*:").expect("Invalid URI regex pattern"));
 
 /// Cached regex for method name validation (compiled once)
-static METHOD_NAME_REGEX: Lazy<Regex> = Lazy::new(|| {
+static METHOD_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[a-zA-Z][a-zA-Z0-9_/]*$").expect("Invalid method name regex pattern")
 });
 

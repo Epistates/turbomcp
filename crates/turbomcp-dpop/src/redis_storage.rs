@@ -4,7 +4,6 @@
 //! tracking and replay protection when the `redis-storage` feature is enabled.
 
 use super::{DpopError, NonceStorage, Result};
-use async_trait::async_trait;
 use redis::{AsyncCommands, Client, RedisResult};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -147,7 +146,6 @@ impl RedisNonceStorage {
     }
 }
 
-#[async_trait]
 impl NonceStorage for RedisNonceStorage {
     async fn store_nonce(
         &self,
@@ -189,26 +187,38 @@ impl NonceStorage for RedisNonceStorage {
             Box::pin(async move {
                 let mut conn = client.get_multiplexed_async_connection().await?;
 
-                // Use Redis transaction for atomic operations
-                let (nonce_exists, jti_exists): (bool, bool) = redis::pipe()
-                    .atomic()
-                    .exists(&nonce_key)
-                    .exists(&jti_key)
+                // Use atomic SET NX EX to prevent TOCTOU race condition
+                // SET key value NX EX ttl returns OK if set, nil if key already exists
+                let nonce_set: Option<String> = redis::cmd("SET")
+                    .arg(&nonce_key)
+                    .arg(&serialized)
+                    .arg("NX")
+                    .arg("EX")
+                    .arg(ttl_secs)
                     .query_async(&mut conn)
                     .await?;
 
-                if nonce_exists || jti_exists {
-                    // Nonce or JTI already exists - replay attack detected
+                if nonce_set.is_none() {
+                    // Nonce already exists - replay attack detected
                     return Ok(false);
                 }
 
-                // Store nonce and JTI with expiration
-                let _: () = redis::pipe()
-                    .atomic()
-                    .set_ex(&nonce_key, &serialized, ttl_secs)
-                    .set_ex(&jti_key, &serialized, ttl_secs)
+                // Also store JTI atomically
+                let jti_set: Option<String> = redis::cmd("SET")
+                    .arg(&jti_key)
+                    .arg(&serialized)
+                    .arg("NX")
+                    .arg("EX")
+                    .arg(ttl_secs)
                     .query_async(&mut conn)
                     .await?;
+
+                if jti_set.is_none() {
+                    // JTI already exists - replay attack detected
+                    // Clean up the nonce we just set
+                    let _: () = conn.del(&nonce_key).await?;
+                    return Ok(false);
+                }
 
                 Ok(true)
             })

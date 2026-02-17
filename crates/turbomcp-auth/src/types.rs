@@ -5,9 +5,10 @@
 //! For authentication context, use `crate::context::AuthContext` (the unified canonical type).
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::time::SystemTime;
 
-use async_trait::async_trait;
 use oauth2::RefreshToken;
 use serde::{Deserialize, Serialize};
 
@@ -64,7 +65,6 @@ impl std::fmt::Debug for TokenInfo {
 }
 
 /// Authentication provider trait
-#[async_trait]
 pub trait AuthProvider: Send + Sync + std::fmt::Debug {
     /// Provider name
     fn name(&self) -> &str;
@@ -73,22 +73,32 @@ pub trait AuthProvider: Send + Sync + std::fmt::Debug {
     fn provider_type(&self) -> AuthProviderType;
 
     /// Authenticate user with credentials
-    async fn authenticate(
+    fn authenticate(
         &self,
         credentials: AuthCredentials,
-    ) -> McpResult<crate::context::AuthContext>;
+    ) -> Pin<Box<dyn Future<Output = McpResult<crate::context::AuthContext>> + Send + '_>>;
 
     /// Validate existing token/session
-    async fn validate_token(&self, token: &str) -> McpResult<crate::context::AuthContext>;
+    fn validate_token(
+        &self,
+        token: &str,
+    ) -> Pin<Box<dyn Future<Output = McpResult<crate::context::AuthContext>> + Send + '_>>;
 
     /// Refresh access token
-    async fn refresh_token(&self, refresh_token: &str) -> McpResult<TokenInfo>;
+    fn refresh_token(
+        &self,
+        refresh_token: &str,
+    ) -> Pin<Box<dyn Future<Output = McpResult<TokenInfo>> + Send + '_>>;
 
     /// Revoke token/session
-    async fn revoke_token(&self, token: &str) -> McpResult<()>;
+    fn revoke_token(&self, token: &str)
+    -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + '_>>;
 
     /// Get user information
-    async fn get_user_info(&self, token: &str) -> McpResult<UserInfo>;
+    fn get_user_info(
+        &self,
+        token: &str,
+    ) -> Pin<Box<dyn Future<Output = McpResult<UserInfo>> + Send + '_>>;
 }
 
 /// Authentication credentials
@@ -156,25 +166,38 @@ impl std::fmt::Debug for AuthCredentials {
 }
 
 /// Secure token storage abstraction
-#[async_trait]
 pub trait TokenStorage: Send + Sync + std::fmt::Debug {
     /// Store access token securely
-    async fn store_access_token(&self, user_id: &str, token: &AccessToken) -> McpResult<()>;
+    fn store_access_token(
+        &self,
+        user_id: &str,
+        token: &AccessToken,
+    ) -> impl Future<Output = McpResult<()>> + Send;
 
     /// Retrieve access token
-    async fn get_access_token(&self, user_id: &str) -> McpResult<Option<AccessToken>>;
+    fn get_access_token(
+        &self,
+        user_id: &str,
+    ) -> impl Future<Output = McpResult<Option<AccessToken>>> + Send;
 
     /// Store refresh token securely (encrypted at rest)
-    async fn store_refresh_token(&self, user_id: &str, token: &RefreshToken) -> McpResult<()>;
+    fn store_refresh_token(
+        &self,
+        user_id: &str,
+        token: &RefreshToken,
+    ) -> impl Future<Output = McpResult<()>> + Send;
 
     /// Retrieve refresh token
-    async fn get_refresh_token(&self, user_id: &str) -> McpResult<Option<RefreshToken>>;
+    fn get_refresh_token(
+        &self,
+        user_id: &str,
+    ) -> impl Future<Output = McpResult<Option<RefreshToken>>> + Send;
 
     /// Remove all tokens for user (logout)
-    async fn revoke_tokens(&self, user_id: &str) -> McpResult<()>;
+    fn revoke_tokens(&self, user_id: &str) -> impl Future<Output = McpResult<()>> + Send;
 
     /// List all users with stored tokens (for admin)
-    async fn list_users(&self) -> McpResult<Vec<String>>;
+    fn list_users(&self) -> impl Future<Output = McpResult<Vec<String>>> + Send;
 }
 
 /// Secure access token with metadata
@@ -245,44 +268,51 @@ impl AccessToken {
 }
 
 /// Authentication middleware trait
-#[async_trait]
 pub trait AuthMiddleware: Send + Sync {
     /// Extract authentication token from request
-    async fn extract_token(&self, headers: &HashMap<String, String>) -> Option<String>;
+    fn extract_token(
+        &self,
+        headers: &HashMap<String, String>,
+    ) -> impl Future<Output = Option<String>> + Send;
 
     /// Handle authentication failure
-    async fn handle_auth_failure(&self, error: McpError) -> McpResult<()>;
+    fn handle_auth_failure(&self, error: McpError) -> impl Future<Output = McpResult<()>> + Send;
 }
 
 /// Default authentication middleware
 #[derive(Debug, Clone)]
 pub struct DefaultAuthMiddleware;
 
-#[async_trait]
 impl AuthMiddleware for DefaultAuthMiddleware {
-    async fn extract_token(&self, headers: &HashMap<String, String>) -> Option<String> {
-        // Try Authorization header first
-        if let Some(auth_header) = headers
-            .get("authorization")
-            .or_else(|| headers.get("Authorization"))
-        {
-            if let Some(token) = auth_header.strip_prefix("Bearer ") {
-                return Some(token.to_string());
+    fn extract_token(
+        &self,
+        headers: &HashMap<String, String>,
+    ) -> impl Future<Output = Option<String>> + Send {
+        let headers = headers.clone();
+        async move {
+            // Try Authorization header first
+            if let Some(auth_header) = headers
+                .get("authorization")
+                .or_else(|| headers.get("Authorization"))
+            {
+                if let Some(token) = auth_header.strip_prefix("Bearer ") {
+                    return Some(token.to_string());
+                }
+                if let Some(token) = auth_header.strip_prefix("ApiKey ") {
+                    return Some(token.to_string());
+                }
             }
-            if let Some(token) = auth_header.strip_prefix("ApiKey ") {
-                return Some(token.to_string());
+
+            // Try X-API-Key header
+            if let Some(api_key) = headers
+                .get("x-api-key")
+                .or_else(|| headers.get("X-API-Key"))
+            {
+                return Some(api_key.clone());
             }
-        }
 
-        // Try X-API-Key header
-        if let Some(api_key) = headers
-            .get("x-api-key")
-            .or_else(|| headers.get("X-API-Key"))
-        {
-            return Some(api_key.clone());
+            None
         }
-
-        None
     }
 
     async fn handle_auth_failure(&self, error: McpError) -> McpResult<()> {

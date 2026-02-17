@@ -2,6 +2,9 @@
 //!
 //! World-class authentication and authorization for TurboMCP with standards-compliant
 //! implementations of OAuth 2.1, JWT, API keys, and DPoP token binding.
+
+// Allow missing error/panic docs - auth errors are self-documenting through dedicated error types
+#![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 //!
 //! ## Design Principles
 //!
@@ -104,6 +107,7 @@
 // Submodules
 pub mod api_key_validation; // Sprint 2.3: Constant-time API key validation
 pub mod audit; // Structured audit logging for auth events
+pub mod auth_metrics; // Metrics collection for auth operations
 pub mod config;
 pub mod context;
 pub mod introspection;
@@ -163,6 +167,10 @@ pub use audit::{AuditLogger, AuditRecord, AuthEvent, EventOutcome};
 // Re-export rate limiting
 #[doc(inline)]
 pub use rate_limit::{EndpointLimit, RateLimitConfig, RateLimitInfo, RateLimitKey, RateLimiter};
+
+// Re-export metrics initialization
+#[doc(inline)]
+pub use auth_metrics::init_auth_metrics;
 
 // Re-export DPoP types when feature is enabled
 #[cfg(feature = "dpop")]

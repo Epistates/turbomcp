@@ -3,9 +3,10 @@
 //! This module provides a middleware trait with typed hooks for each MCP operation,
 //! enabling request interception, modification, and short-circuiting.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use serde_json::Value;
 
 use turbomcp_core::context::RequestContext;
@@ -30,13 +31,11 @@ use turbomcp_types::{
 ///
 /// ```rust,ignore
 /// use turbomcp_server::middleware::{McpMiddleware, Next};
-/// use async_trait::async_trait;
 ///
 /// struct RateLimitMiddleware {
 ///     max_calls_per_minute: u32,
 /// }
 ///
-/// #[async_trait]
 /// impl McpMiddleware for RateLimitMiddleware {
 ///     async fn on_call_tool<'a>(
 ///         &'a self,
@@ -53,72 +52,86 @@ use turbomcp_types::{
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait McpMiddleware: Send + Sync + 'static {
     /// Hook called when listing tools.
     ///
     /// Can filter, modify, or replace the tool list.
-    async fn on_list_tools<'a>(&'a self, next: Next<'a>) -> Vec<Tool> {
-        next.list_tools()
+    fn on_list_tools<'a>(
+        &'a self,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = Vec<Tool>> + Send + 'a>> {
+        Box::pin(async move { next.list_tools() })
     }
 
     /// Hook called when listing resources.
-    async fn on_list_resources<'a>(&'a self, next: Next<'a>) -> Vec<Resource> {
-        next.list_resources()
+    fn on_list_resources<'a>(
+        &'a self,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = Vec<Resource>> + Send + 'a>> {
+        Box::pin(async move { next.list_resources() })
     }
 
     /// Hook called when listing prompts.
-    async fn on_list_prompts<'a>(&'a self, next: Next<'a>) -> Vec<Prompt> {
-        next.list_prompts()
+    fn on_list_prompts<'a>(
+        &'a self,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = Vec<Prompt>> + Send + 'a>> {
+        Box::pin(async move { next.list_prompts() })
     }
 
     /// Hook called when a tool is invoked.
     ///
     /// Can modify arguments, short-circuit with an error, or transform the result.
-    async fn on_call_tool<'a>(
+    fn on_call_tool<'a>(
         &'a self,
         name: &'a str,
         args: Value,
         ctx: &'a RequestContext,
         next: Next<'a>,
-    ) -> McpResult<ToolResult> {
-        next.call_tool(name, args, ctx).await
+    ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+        Box::pin(async move { next.call_tool(name, args, ctx).await })
     }
 
     /// Hook called when a resource is read.
-    async fn on_read_resource<'a>(
+    fn on_read_resource<'a>(
         &'a self,
         uri: &'a str,
         ctx: &'a RequestContext,
         next: Next<'a>,
-    ) -> McpResult<ResourceResult> {
-        next.read_resource(uri, ctx).await
+    ) -> Pin<Box<dyn Future<Output = McpResult<ResourceResult>> + Send + 'a>> {
+        Box::pin(async move { next.read_resource(uri, ctx).await })
     }
 
     /// Hook called when a prompt is retrieved.
-    async fn on_get_prompt<'a>(
+    fn on_get_prompt<'a>(
         &'a self,
         name: &'a str,
         args: Option<Value>,
         ctx: &'a RequestContext,
         next: Next<'a>,
-    ) -> McpResult<PromptResult> {
-        next.get_prompt(name, args, ctx).await
+    ) -> Pin<Box<dyn Future<Output = McpResult<PromptResult>> + Send + 'a>> {
+        Box::pin(async move { next.get_prompt(name, args, ctx).await })
     }
 
     /// Hook called when the server is initialized.
     ///
     /// Can perform setup tasks, validate configuration, or short-circuit
     /// initialization by returning an error.
-    async fn on_initialize<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
-        next.initialize().await
+    fn on_initialize<'a>(
+        &'a self,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + 'a>> {
+        Box::pin(async move { next.initialize().await })
     }
 
     /// Hook called when the server is shutting down.
     ///
     /// Can perform cleanup tasks like flushing buffers or closing connections.
-    async fn on_shutdown<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
-        next.shutdown().await
+    fn on_shutdown<'a>(
+        &'a self,
+        next: Next<'a>,
+    ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + 'a>> {
+        Box::pin(async move { next.shutdown().await })
     }
 }
 
@@ -570,48 +583,63 @@ mod tests {
         }
     }
 
-    #[async_trait]
     impl McpMiddleware for CountingMiddleware {
-        async fn on_call_tool<'a>(
+        fn on_call_tool<'a>(
             &'a self,
             name: &'a str,
             args: Value,
             ctx: &'a RequestContext,
             next: Next<'a>,
-        ) -> McpResult<ToolResult> {
-            self.tool_calls.fetch_add(1, Ordering::Relaxed);
-            next.call_tool(name, args, ctx).await
+        ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+            Box::pin(async move {
+                self.tool_calls.fetch_add(1, Ordering::Relaxed);
+                next.call_tool(name, args, ctx).await
+            })
         }
 
-        async fn on_read_resource<'a>(
+        fn on_read_resource<'a>(
             &'a self,
             uri: &'a str,
             ctx: &'a RequestContext,
             next: Next<'a>,
-        ) -> McpResult<ResourceResult> {
-            self.resource_reads.fetch_add(1, Ordering::Relaxed);
-            next.read_resource(uri, ctx).await
+        ) -> Pin<Box<dyn Future<Output = McpResult<ResourceResult>> + Send + 'a>> {
+            Box::pin(async move {
+                self.resource_reads.fetch_add(1, Ordering::Relaxed);
+                next.read_resource(uri, ctx).await
+            })
         }
 
-        async fn on_get_prompt<'a>(
+        fn on_get_prompt<'a>(
             &'a self,
             name: &'a str,
             args: Option<Value>,
             ctx: &'a RequestContext,
             next: Next<'a>,
-        ) -> McpResult<PromptResult> {
-            self.prompt_gets.fetch_add(1, Ordering::Relaxed);
-            next.get_prompt(name, args, ctx).await
+        ) -> Pin<Box<dyn Future<Output = McpResult<PromptResult>> + Send + 'a>> {
+            Box::pin(async move {
+                self.prompt_gets.fetch_add(1, Ordering::Relaxed);
+                next.get_prompt(name, args, ctx).await
+            })
         }
 
-        async fn on_initialize<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
-            self.initializes.fetch_add(1, Ordering::Relaxed);
-            next.initialize().await
+        fn on_initialize<'a>(
+            &'a self,
+            next: Next<'a>,
+        ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + 'a>> {
+            Box::pin(async move {
+                self.initializes.fetch_add(1, Ordering::Relaxed);
+                next.initialize().await
+            })
         }
 
-        async fn on_shutdown<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
-            self.shutdowns.fetch_add(1, Ordering::Relaxed);
-            next.shutdown().await
+        fn on_shutdown<'a>(
+            &'a self,
+            next: Next<'a>,
+        ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + 'a>> {
+            Box::pin(async move {
+                self.shutdowns.fetch_add(1, Ordering::Relaxed);
+                next.shutdown().await
+            })
         }
     }
 
@@ -628,19 +656,20 @@ mod tests {
         }
     }
 
-    #[async_trait]
     impl McpMiddleware for BlockingMiddleware {
-        async fn on_call_tool<'a>(
+        fn on_call_tool<'a>(
             &'a self,
             name: &'a str,
             args: Value,
             ctx: &'a RequestContext,
             next: Next<'a>,
-        ) -> McpResult<ToolResult> {
-            if self.blocked_tools.contains(&name.to_string()) {
-                return Err(McpError::internal(format!("Tool '{}' is blocked", name)));
-            }
-            next.call_tool(name, args, ctx).await
+        ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+            Box::pin(async move {
+                if self.blocked_tools.contains(&name.to_string()) {
+                    return Err(McpError::internal(format!("Tool '{}' is blocked", name)));
+                }
+                next.call_tool(name, args, ctx).await
+            })
         }
     }
 
@@ -748,43 +777,48 @@ mod tests {
     /// Wrapper to make Arc<CountingMiddleware> work as middleware.
     struct CountingClone(Arc<CountingMiddleware>);
 
-    #[async_trait]
     impl McpMiddleware for CountingClone {
-        async fn on_call_tool<'a>(
+        fn on_call_tool<'a>(
             &'a self,
             name: &'a str,
             args: Value,
             ctx: &'a RequestContext,
             next: Next<'a>,
-        ) -> McpResult<ToolResult> {
-            self.0.on_call_tool(name, args, ctx, next).await
+        ) -> Pin<Box<dyn Future<Output = McpResult<ToolResult>> + Send + 'a>> {
+            self.0.on_call_tool(name, args, ctx, next)
         }
 
-        async fn on_read_resource<'a>(
+        fn on_read_resource<'a>(
             &'a self,
             uri: &'a str,
             ctx: &'a RequestContext,
             next: Next<'a>,
-        ) -> McpResult<ResourceResult> {
-            self.0.on_read_resource(uri, ctx, next).await
+        ) -> Pin<Box<dyn Future<Output = McpResult<ResourceResult>> + Send + 'a>> {
+            self.0.on_read_resource(uri, ctx, next)
         }
 
-        async fn on_get_prompt<'a>(
+        fn on_get_prompt<'a>(
             &'a self,
             name: &'a str,
             args: Option<Value>,
             ctx: &'a RequestContext,
             next: Next<'a>,
-        ) -> McpResult<PromptResult> {
-            self.0.on_get_prompt(name, args, ctx, next).await
+        ) -> Pin<Box<dyn Future<Output = McpResult<PromptResult>> + Send + 'a>> {
+            self.0.on_get_prompt(name, args, ctx, next)
         }
 
-        async fn on_initialize<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
-            self.0.on_initialize(next).await
+        fn on_initialize<'a>(
+            &'a self,
+            next: Next<'a>,
+        ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + 'a>> {
+            self.0.on_initialize(next)
         }
 
-        async fn on_shutdown<'a>(&'a self, next: Next<'a>) -> McpResult<()> {
-            self.0.on_shutdown(next).await
+        fn on_shutdown<'a>(
+            &'a self,
+            next: Next<'a>,
+        ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + 'a>> {
+            self.0.on_shutdown(next)
         }
     }
 
@@ -831,10 +865,12 @@ mod tests {
     /// A middleware that blocks initialization.
     struct BlockInitMiddleware;
 
-    #[async_trait]
     impl McpMiddleware for BlockInitMiddleware {
-        async fn on_initialize<'a>(&'a self, _next: Next<'a>) -> McpResult<()> {
-            Err(McpError::internal("initialization blocked by middleware"))
+        fn on_initialize<'a>(
+            &'a self,
+            _next: Next<'a>,
+        ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + 'a>> {
+            Box::pin(async move { Err(McpError::internal("initialization blocked by middleware")) })
         }
     }
 

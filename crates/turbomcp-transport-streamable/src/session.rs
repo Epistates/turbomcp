@@ -8,20 +8,20 @@
 //! - `StoredEvent`: Persisted event for replay support
 
 #[cfg(not(feature = "std"))]
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{string::String, vec::Vec};
 use core::fmt;
 #[cfg(feature = "std")]
-use std::{
-    string::{String, ToString},
-    vec::Vec,
-};
+use std::{string::String, vec::Vec};
 
 use serde::{Deserialize, Serialize};
 
 use crate::marker::MaybeSend;
+
+/// Maximum allowed session ID length (256 characters).
+///
+/// This prevents DoS attacks via extremely long session IDs and ensures
+/// reasonable memory usage for session storage backends.
+pub const MAX_SESSION_ID_LEN: usize = 256;
 
 /// Unique identifier for an MCP session.
 ///
@@ -79,8 +79,32 @@ impl SessionId {
     }
 
     /// Create a session ID from a string.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the session ID exceeds `MAX_SESSION_ID_LEN` (256 characters).
+    /// Use `try_from_string` for non-panicking validation.
     pub fn from_string(s: impl Into<String>) -> Self {
-        Self(s.into())
+        let string = s.into();
+        assert!(
+            string.len() <= MAX_SESSION_ID_LEN,
+            "Session ID length {} exceeds maximum allowed length {}",
+            string.len(),
+            MAX_SESSION_ID_LEN
+        );
+        Self(string)
+    }
+
+    /// Try to create a session ID from a string with validation.
+    ///
+    /// Returns `None` if the session ID exceeds `MAX_SESSION_ID_LEN` (256 characters).
+    pub fn try_from_string(s: impl Into<String>) -> Option<Self> {
+        let string = s.into();
+        if string.len() <= MAX_SESSION_ID_LEN {
+            Some(Self(string))
+        } else {
+            None
+        }
     }
 
     /// Get the session ID as a string slice.
@@ -102,13 +126,13 @@ impl fmt::Display for SessionId {
 
 impl From<String> for SessionId {
     fn from(s: String) -> Self {
-        Self(s)
+        Self::from_string(s)
     }
 }
 
 impl From<&str> for SessionId {
     fn from(s: &str) -> Self {
-        Self(s.to_string())
+        Self::from_string(s)
     }
 }
 
@@ -310,9 +334,10 @@ impl StoredEvent {
 ///
 /// ```rust,ignore
 /// use turbomcp_transport_streamable::{SessionId, Session, SessionStore, StoredEvent};
+/// use std::collections::HashMap;
 ///
 /// struct MemorySessionStore {
-///     sessions: std::collections::HashMap<String, Session>,
+///     sessions: HashMap<String, Session>,
 /// }
 ///
 /// impl SessionStore for MemorySessionStore {
@@ -458,5 +483,46 @@ mod tests {
             StoredEvent::new_with_timestamp("evt-2", "data", 1000).with_event_type("notification");
 
         assert_eq!(event.event_type, Some("notification".to_string()));
+    }
+
+    #[test]
+    fn test_session_id_length_validation() {
+        // Valid session ID within limit
+        let valid_id = "a".repeat(256);
+        let session_id = SessionId::try_from_string(valid_id.clone());
+        assert!(session_id.is_some());
+        assert_eq!(session_id.unwrap().as_str(), valid_id);
+
+        // Session ID at exact limit should be accepted
+        let at_limit = "b".repeat(MAX_SESSION_ID_LEN);
+        let session_id = SessionId::try_from_string(at_limit.clone());
+        assert!(session_id.is_some());
+
+        // Session ID exceeding limit should be rejected
+        let too_long = "c".repeat(MAX_SESSION_ID_LEN + 1);
+        let session_id = SessionId::try_from_string(too_long);
+        assert!(session_id.is_none());
+
+        // Extremely long session ID should be rejected
+        let very_long = "d".repeat(10000);
+        let session_id = SessionId::try_from_string(very_long);
+        assert!(session_id.is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "Session ID length")]
+    fn test_session_id_from_string_panics_on_overflow() {
+        let too_long = "e".repeat(MAX_SESSION_ID_LEN + 1);
+        let _session_id = SessionId::from_string(too_long);
+    }
+
+    #[test]
+    fn test_session_id_from_trait_validates() {
+        // Test From<String> trait
+        let valid = "valid-id".to_string();
+        let _session_id: SessionId = valid.into();
+
+        // Test From<&str> trait
+        let _session_id: SessionId = "another-valid-id".into();
     }
 }

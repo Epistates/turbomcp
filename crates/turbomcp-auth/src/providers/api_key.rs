@@ -8,9 +8,10 @@
 //! See [`crate::api_key_validation`] for implementation details.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use super::super::api_key_validation::validate_api_key;
@@ -54,7 +55,6 @@ impl ApiKeyProvider {
     }
 }
 
-#[async_trait]
 impl AuthProvider for ApiKeyProvider {
     fn name(&self) -> &str {
         &self.name
@@ -64,84 +64,110 @@ impl AuthProvider for ApiKeyProvider {
         AuthProviderType::ApiKey
     }
 
-    async fn authenticate(&self, credentials: AuthCredentials) -> McpResult<AuthContext> {
-        match credentials {
-            AuthCredentials::ApiKey { key } => {
-                let api_keys = self.api_keys.read().await;
+    fn authenticate(
+        &self,
+        credentials: AuthCredentials,
+    ) -> Pin<Box<dyn Future<Output = McpResult<AuthContext>> + Send + '_>> {
+        Box::pin(async move {
+            match credentials {
+                AuthCredentials::ApiKey { key } => {
+                    let api_keys = self.api_keys.read().await;
 
-                // Use constant-time comparison to prevent timing attacks
-                // Instead of HashMap::get (which uses string equality), we iterate
-                // and use secure comparison for each key
-                let mut matched_user_info: Option<UserInfo> = None;
+                    // Use constant-time comparison to prevent timing attacks
+                    // Instead of HashMap::get (which uses string equality), we iterate
+                    // and use secure comparison for each key
+                    let mut matched_user_info: Option<UserInfo> = None;
 
-                for (stored_key, user_info) in api_keys.iter() {
-                    if validate_api_key(&key, stored_key) {
-                        matched_user_info = Some(user_info.clone());
-                        break;
+                    for (stored_key, user_info) in api_keys.iter() {
+                        if validate_api_key(&key, stored_key) {
+                            matched_user_info = Some(user_info.clone());
+                            break;
+                        }
+                    }
+
+                    if let Some(user_info) = matched_user_info {
+                        let token = TokenInfo {
+                            access_token: key,
+                            token_type: "ApiKey".to_string(),
+                            refresh_token: None,
+                            expires_in: None,
+                            scope: None,
+                        };
+
+                        AuthContext::builder()
+                            .subject(user_info.id.clone())
+                            .user(user_info.clone())
+                            .roles(vec!["api_user".to_string()])
+                            .permissions(vec!["api_access".to_string()])
+                            .request_id(uuid::Uuid::new_v4().to_string())
+                            .token(token)
+                            .provider(self.name.clone())
+                            .build()
+                            .map_err(|e| McpError::internal(e.to_string()))
+                    } else {
+                        Err(McpError::internal("Invalid API key".to_string()))
                     }
                 }
+                _ => Err(McpError::internal(
+                    "Invalid credentials for API key provider".to_string(),
+                )),
+            }
+        })
+    }
 
-                if let Some(user_info) = matched_user_info {
-                    let token = TokenInfo {
-                        access_token: key,
-                        token_type: "ApiKey".to_string(),
-                        refresh_token: None,
-                        expires_in: None,
-                        scope: None,
-                    };
+    fn validate_token(
+        &self,
+        token: &str,
+    ) -> Pin<Box<dyn Future<Output = McpResult<AuthContext>> + Send + '_>> {
+        let token = token.to_string();
+        Box::pin(async move {
+            self.authenticate(AuthCredentials::ApiKey { key: token })
+                .await
+        })
+    }
 
-                    AuthContext::builder()
-                        .subject(user_info.id.clone())
-                        .user(user_info.clone())
-                        .roles(vec!["api_user".to_string()])
-                        .permissions(vec!["api_access".to_string()])
-                        .request_id(uuid::Uuid::new_v4().to_string())
-                        .token(token)
-                        .provider(self.name.clone())
-                        .build()
-                        .map_err(|e| McpError::internal(e.to_string()))
-                } else {
-                    Err(McpError::internal("Invalid API key".to_string()))
+    fn refresh_token(
+        &self,
+        _refresh_token: &str,
+    ) -> Pin<Box<dyn Future<Output = McpResult<TokenInfo>> + Send + '_>> {
+        Box::pin(async {
+            Err(McpError::internal(
+                "API keys do not support token refresh".to_string(),
+            ))
+        })
+    }
+
+    fn revoke_token(
+        &self,
+        token: &str,
+    ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + '_>> {
+        let token = token.to_string();
+        Box::pin(async move {
+            let removed = self.remove_api_key(&token).await;
+            if removed {
+                Ok(())
+            } else {
+                Err(McpError::internal("API key not found".to_string()))
+            }
+        })
+    }
+
+    fn get_user_info(
+        &self,
+        token: &str,
+    ) -> Pin<Box<dyn Future<Output = McpResult<UserInfo>> + Send + '_>> {
+        let token = token.to_string();
+        Box::pin(async move {
+            let api_keys = self.api_keys.read().await;
+
+            // Use constant-time comparison to prevent timing attacks
+            for (stored_key, user_info) in api_keys.iter() {
+                if validate_api_key(&token, stored_key) {
+                    return Ok(user_info.clone());
                 }
             }
-            _ => Err(McpError::internal(
-                "Invalid credentials for API key provider".to_string(),
-            )),
-        }
-    }
 
-    async fn validate_token(&self, token: &str) -> McpResult<AuthContext> {
-        self.authenticate(AuthCredentials::ApiKey {
-            key: token.to_string(),
+            Err(McpError::internal("Invalid API key".to_string()))
         })
-        .await
-    }
-
-    async fn refresh_token(&self, _refresh_token: &str) -> McpResult<TokenInfo> {
-        Err(McpError::internal(
-            "API keys do not support token refresh".to_string(),
-        ))
-    }
-
-    async fn revoke_token(&self, token: &str) -> McpResult<()> {
-        let removed = self.remove_api_key(token).await;
-        if removed {
-            Ok(())
-        } else {
-            Err(McpError::internal("API key not found".to_string()))
-        }
-    }
-
-    async fn get_user_info(&self, token: &str) -> McpResult<UserInfo> {
-        let api_keys = self.api_keys.read().await;
-
-        // Use constant-time comparison to prevent timing attacks
-        for (stored_key, user_info) in api_keys.iter() {
-            if validate_api_key(token, stored_key) {
-                return Ok(user_info.clone());
-            }
-        }
-
-        Err(McpError::internal("Invalid API key".to_string()))
     }
 }

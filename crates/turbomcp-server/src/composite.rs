@@ -69,14 +69,9 @@ struct HandlerWrapper<H: McpHandler> {
     handler: H,
 }
 
-#[allow(dead_code)]
 impl<H: McpHandler> HandlerWrapper<H> {
     fn new(handler: H) -> Self {
         Self { handler }
-    }
-
-    fn server_info(&self) -> ServerInfo {
-        self.handler.server_info()
     }
 
     fn list_tools(&self) -> Vec<Tool> {
@@ -123,10 +118,8 @@ impl<H: McpHandler> Clone for HandlerWrapper<H> {
 }
 
 /// Dynamic dispatch trait for type-erased handlers.
-#[allow(dead_code)]
 trait DynHandler: Send + Sync {
     fn dyn_clone(&self) -> Box<dyn DynHandler>;
-    fn dyn_server_info(&self) -> ServerInfo;
     fn dyn_list_tools(&self) -> Vec<Tool>;
     fn dyn_list_resources(&self) -> Vec<Resource>;
     fn dyn_list_prompts(&self) -> Vec<Prompt>;
@@ -152,10 +145,6 @@ trait DynHandler: Send + Sync {
 impl<H: McpHandler> DynHandler for HandlerWrapper<H> {
     fn dyn_clone(&self) -> Box<dyn DynHandler> {
         Box::new(self.clone())
-    }
-
-    fn dyn_server_info(&self) -> ServerInfo {
-        self.server_info()
     }
 
     fn dyn_list_tools(&self) -> Vec<Tool> {

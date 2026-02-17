@@ -283,20 +283,21 @@ mod tests {
     use crate::Result;
     use crate::context::{CompletionContext, ElicitationContext};
     use crate::handlers::{CompletionItem, ElicitationResponse};
-    use async_trait::async_trait;
-
+    use std::future::Future;
+    use std::pin::Pin;
     struct TestElicitationHandler;
 
-    #[async_trait]
     impl ElicitationHandler for TestElicitationHandler {
-        async fn handle_elicitation(
+        fn handle_elicitation(
             &self,
             _context: &ElicitationContext,
-        ) -> Result<ElicitationResponse> {
-            Ok(ElicitationResponse {
-                accepted: true,
-                content: None,
-                decline_reason: None,
+        ) -> Pin<Box<dyn Future<Output = Result<ElicitationResponse>> + Send + '_>> {
+            Box::pin(async move {
+                Ok(ElicitationResponse {
+                    accepted: true,
+                    content: None,
+                    decline_reason: None,
+                })
             })
         }
 
@@ -307,13 +308,12 @@ mod tests {
 
     struct TestCompletionProvider;
 
-    #[async_trait]
     impl CompletionProvider for TestCompletionProvider {
-        async fn provide_completions(
+        fn provide_completions(
             &self,
             _context: &CompletionContext,
-        ) -> Result<Vec<CompletionItem>> {
-            Ok(vec![])
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<CompletionItem>>> + Send + '_>> {
+            Box::pin(async move { Ok(vec![]) })
         }
 
         fn can_provide(&self, _context: &CompletionContext) -> bool {

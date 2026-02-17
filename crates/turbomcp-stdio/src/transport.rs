@@ -12,12 +12,13 @@
 //! - **AtomicMetrics** for lock-free counter updates (10-100x faster than Mutex)
 //! - **tokio::sync::Mutex** for I/O streams (only when necessary, cross .await points)
 
+use parking_lot::Mutex;
+use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
 use tokio::io::{AsyncRead, AsyncWrite, BufReader};
@@ -105,13 +106,13 @@ impl std::fmt::Debug for StreamSource {
 /// ```
 pub struct StdioTransport {
     /// Transport state (std::sync::Mutex - never crosses await)
-    state: Arc<StdMutex<TransportState>>,
+    state: Arc<Mutex<TransportState>>,
 
     /// Transport capabilities (immutable after construction)
     capabilities: TransportCapabilities,
 
     /// Transport configuration (std::sync::Mutex - infrequent access)
-    config: Arc<StdMutex<TransportConfig>>,
+    config: Arc<Mutex<TransportConfig>>,
 
     /// Lock-free atomic metrics (10-100x faster than Mutex)
     metrics: Arc<AtomicMetrics>,
@@ -158,7 +159,7 @@ impl StdioTransport {
         let (event_emitter, _) = TransportEventEmitter::new();
 
         Self {
-            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            state: Arc::new(Mutex::new(TransportState::Disconnected)),
             capabilities: TransportCapabilities {
                 max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE),
                 supports_compression: false,
@@ -168,7 +169,7 @@ impl StdioTransport {
                 compression_algorithms: Vec::new(),
                 custom: std::collections::HashMap::new(),
             },
-            config: Arc::new(StdMutex::new(TransportConfig {
+            config: Arc::new(Mutex::new(TransportConfig {
                 transport_type: TransportType::Stdio,
                 ..Default::default()
             })),
@@ -272,7 +273,7 @@ impl StdioTransport {
         let boxed_writer: BoxedAsyncWrite = Box::pin(writer);
 
         Ok(Self {
-            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            state: Arc::new(Mutex::new(TransportState::Disconnected)),
             capabilities: TransportCapabilities {
                 max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE),
                 supports_compression: false,
@@ -282,7 +283,7 @@ impl StdioTransport {
                 compression_algorithms: Vec::new(),
                 custom: std::collections::HashMap::new(),
             },
-            config: Arc::new(StdMutex::new(TransportConfig {
+            config: Arc::new(Mutex::new(TransportConfig {
                 transport_type: TransportType::Stdio,
                 ..Default::default()
             })),
@@ -304,7 +305,7 @@ impl StdioTransport {
     pub fn with_config(config: TransportConfig) -> Self {
         let transport = Self::new();
         // std::sync::Mutex: .lock() returns LockResult, use expect() for poisoned mutex
-        *transport.config.lock().expect("config mutex poisoned") = config;
+        *transport.config.lock() = config;
         transport
     }
 
@@ -314,7 +315,7 @@ impl StdioTransport {
         let (_, _) = TransportEventEmitter::new();
 
         Self {
-            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            state: Arc::new(Mutex::new(TransportState::Disconnected)),
             capabilities: TransportCapabilities {
                 max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE),
                 supports_compression: false,
@@ -324,7 +325,7 @@ impl StdioTransport {
                 compression_algorithms: Vec::new(),
                 custom: std::collections::HashMap::new(),
             },
-            config: Arc::new(StdMutex::new(TransportConfig {
+            config: Arc::new(Mutex::new(TransportConfig {
                 transport_type: TransportType::Stdio,
                 ..Default::default()
             })),
@@ -340,7 +341,7 @@ impl StdioTransport {
 
     fn set_state(&self, new_state: TransportState) {
         // std::sync::Mutex: short-lived lock, never crosses await
-        let mut state = self.state.lock().expect("state mutex poisoned");
+        let mut state = self.state.lock();
         if *state != new_state {
             trace!("Stdio transport state: {:?} -> {:?}", *state, new_state);
             *state = new_state.clone();
@@ -387,9 +388,14 @@ impl StdioTransport {
                 let boxed_stdin: BoxedAsyncRead = Box::pin(stdin);
                 let buffered_reader: BoxedAsyncBufRead = BufReader::new(boxed_stdin);
                 let stdout: BoxedAsyncWrite = Box::pin(tokio::io::stdout());
-                *self.stdout_writer.lock().await =
-                    Some(FramedWrite::new(stdout, LinesCodec::new()));
-                FramedRead::new(buffered_reader, LinesCodec::new())
+                *self.stdout_writer.lock().await = Some(FramedWrite::new(
+                    stdout,
+                    LinesCodec::new_with_max_length(turbomcp_protocol::MAX_MESSAGE_SIZE),
+                ));
+                FramedRead::new(
+                    buffered_reader,
+                    LinesCodec::new_with_max_length(turbomcp_protocol::MAX_MESSAGE_SIZE),
+                )
             }
             StreamSource::Raw { reader, writer } => {
                 // Use provided raw streams
@@ -406,9 +412,14 @@ impl StdioTransport {
 
                 // Wrap the reader in a BufReader for line-based reading
                 let buffered_reader: BoxedAsyncBufRead = BufReader::new(raw_reader);
-                *self.stdout_writer.lock().await =
-                    Some(FramedWrite::new(raw_writer, LinesCodec::new()));
-                FramedRead::new(buffered_reader, LinesCodec::new())
+                *self.stdout_writer.lock().await = Some(FramedWrite::new(
+                    raw_writer,
+                    LinesCodec::new_with_max_length(turbomcp_protocol::MAX_MESSAGE_SIZE),
+                ));
+                FramedRead::new(
+                    buffered_reader,
+                    LinesCodec::new_with_max_length(turbomcp_protocol::MAX_MESSAGE_SIZE),
+                )
             }
         };
 
@@ -432,7 +443,7 @@ impl StdioTransport {
                             // Validate response size against configured limits (v2.2.0+)
                             let size = line.len();
                             let limits = {
-                                let cfg = config.lock().expect("config mutex poisoned");
+                                let cfg = config.lock();
                                 cfg.limits.clone()
                             };
 
@@ -464,7 +475,8 @@ impl StdioTransport {
                                         Ok(()) => {}
                                         Err(mpsc::error::TrySendError::Full(_)) => {
                                             warn!(
-                                                "STDIO message channel full, applying backpressure"
+                                                message_size = size,
+                                                "STDIO message channel full, applying backpressure - message dropped"
                                             );
                                             // Apply backpressure by dropping this message
                                             continue;
@@ -554,7 +566,6 @@ impl StdioTransport {
     }
 }
 
-#[async_trait]
 impl Transport for StdioTransport {
     fn transport_type(&self) -> TransportType {
         TransportType::Stdio
@@ -564,172 +575,194 @@ impl Transport for StdioTransport {
         &self.capabilities
     }
 
-    async fn state(&self) -> TransportState {
-        // std::sync::Mutex: short-lived lock for reading state
-        self.state.lock().expect("state mutex poisoned").clone()
+    fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+        Box::pin(async move {
+            // std::sync::Mutex: short-lived lock for reading state
+            self.state.lock().clone()
+        })
     }
 
-    async fn connect(&self) -> TransportResult<()> {
-        if matches!(self.state().await, TransportState::Connected) {
-            return Ok(());
-        }
-
-        self.set_state(TransportState::Connecting);
-
-        match self.setup_stdio_streams().await {
-            Ok(()) => {
-                // AtomicMetrics: lock-free increment
-                self.metrics.connections.fetch_add(1, Ordering::Relaxed);
-                self.set_state(TransportState::Connected);
-                debug!("Stdio transport connected");
-                Ok(())
-            }
-            Err(e) => {
-                // AtomicMetrics: lock-free increment
-                self.metrics
-                    .failed_connections
-                    .fetch_add(1, Ordering::Relaxed);
-                self.set_state(TransportState::Failed {
-                    reason: e.to_string(),
-                });
-                error!("Failed to connect stdio transport: {}", e);
-                Err(e)
-            }
-        }
-    }
-
-    async fn disconnect(&self) -> TransportResult<()> {
-        if matches!(self.state().await, TransportState::Disconnected) {
-            return Ok(());
-        }
-
-        self.set_state(TransportState::Disconnecting);
-
-        // Close streams
-        *self.stdin_reader.lock().await = None;
-        *self.stdout_writer.lock().await = None;
-        *self.receive_channel.lock().await = None;
-
-        // Cancel background task
-        if let Some(handle) = self._task_handle.lock().await.take() {
-            handle.abort();
-        }
-
-        self.set_state(TransportState::Disconnected);
-        debug!("Stdio transport disconnected");
-        Ok(())
-    }
-
-    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
-        let state = self.state().await;
-        if !matches!(state, TransportState::Connected) {
-            return Err(TransportError::ConnectionFailed(format!(
-                "Transport not connected: {state}"
-            )));
-        }
-
-        let json_line = Self::serialize_message(&message)?;
-        let size = json_line.len();
-
-        // Validate request size against configured limits (v2.2.0+)
-        let config = self.config.lock().expect("config mutex poisoned").clone();
-        validate_request_size(size, &config.limits)?;
-
-        let mut stdout_writer = self.stdout_writer.lock().await;
-        if let Some(writer) = stdout_writer.as_mut() {
-            if let Err(e) = writer.send(json_line).await {
-                error!("Failed to send message: {}", e);
-                self.set_state(TransportState::Failed {
-                    reason: e.to_string(),
-                });
-                return Err(TransportError::SendFailed(e.to_string()));
+    fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            if matches!(self.state().await, TransportState::Connected) {
+                return Ok(());
             }
 
-            // Flush to ensure message is sent immediately
-            use futures::SinkExt;
-            if let Err(e) = SinkExt::<String>::flush(writer).await {
-                error!("Failed to flush stdout: {}", e);
-                return Err(TransportError::SendFailed(e.to_string()));
-            }
+            self.set_state(TransportState::Connecting);
 
-            // Update metrics (lock-free atomic operations)
-            self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
-            self.metrics
-                .bytes_sent
-                .fetch_add(size as u64, Ordering::Relaxed);
-
-            // Emit event
-            self.event_emitter.emit_message_sent(message.id, size);
-
-            trace!("Sent message: {} bytes", size);
-            Ok(())
-        } else {
-            Err(TransportError::SendFailed(
-                "Stdout writer not available".to_string(),
-            ))
-        }
-    }
-
-    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-        let state = self.state().await;
-        if !matches!(state, TransportState::Connected) {
-            return Err(TransportError::ConnectionFailed(format!(
-                "Transport not connected: {state}"
-            )));
-        }
-
-        let mut receive_channel = self.receive_channel.lock().await;
-        if let Some(receiver) = receive_channel.as_mut() {
-            match receiver.recv().await {
-                Some(message) => {
-                    trace!("Received message: {} bytes", message.size());
-                    Ok(Some(message))
+            match self.setup_stdio_streams().await {
+                Ok(()) => {
+                    // AtomicMetrics: lock-free increment
+                    self.metrics.connections.fetch_add(1, Ordering::Relaxed);
+                    self.set_state(TransportState::Connected);
+                    debug!("Stdio transport connected");
+                    Ok(())
                 }
-                None => {
-                    warn!("Receive channel disconnected");
+                Err(e) => {
+                    // AtomicMetrics: lock-free increment
+                    self.metrics
+                        .failed_connections
+                        .fetch_add(1, Ordering::Relaxed);
                     self.set_state(TransportState::Failed {
-                        reason: "Receive channel disconnected".to_string(),
+                        reason: e.to_string(),
                     });
-                    Err(TransportError::ReceiveFailed(
-                        "Channel disconnected".to_string(),
-                    ))
+                    error!("Failed to connect stdio transport: {}", e);
+                    Err(e)
                 }
             }
-        } else {
-            Err(TransportError::ReceiveFailed(
-                "Receive channel not available".to_string(),
-            ))
-        }
+        })
     }
 
-    async fn metrics(&self) -> TransportMetrics {
-        // AtomicMetrics: lock-free snapshot with Ordering::Relaxed
-        self.metrics.snapshot()
+    fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            if matches!(self.state().await, TransportState::Disconnected) {
+                return Ok(());
+            }
+
+            self.set_state(TransportState::Disconnecting);
+
+            // Close streams
+            *self.stdin_reader.lock().await = None;
+            *self.stdout_writer.lock().await = None;
+            *self.receive_channel.lock().await = None;
+
+            // Cancel background task
+            if let Some(handle) = self._task_handle.lock().await.take() {
+                handle.abort();
+            }
+
+            self.set_state(TransportState::Disconnected);
+            debug!("Stdio transport disconnected");
+            Ok(())
+        })
+    }
+
+    fn send(
+        &self,
+        message: TransportMessage,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            let state = self.state().await;
+            if !matches!(state, TransportState::Connected) {
+                return Err(TransportError::ConnectionFailed(format!(
+                    "Transport not connected: {state}"
+                )));
+            }
+
+            let json_line = Self::serialize_message(&message)?;
+            let size = json_line.len();
+
+            // Validate request size against configured limits (v2.2.0+)
+            let config = self.config.lock().clone();
+            validate_request_size(size, &config.limits)?;
+
+            let mut stdout_writer = self.stdout_writer.lock().await;
+            if let Some(writer) = stdout_writer.as_mut() {
+                if let Err(e) = writer.send(json_line).await {
+                    error!("Failed to send message: {}", e);
+                    self.set_state(TransportState::Failed {
+                        reason: e.to_string(),
+                    });
+                    return Err(TransportError::SendFailed(e.to_string()));
+                }
+
+                // Flush to ensure message is sent immediately
+                use futures::SinkExt;
+                if let Err(e) = SinkExt::<String>::flush(writer).await {
+                    error!("Failed to flush stdout: {}", e);
+                    return Err(TransportError::SendFailed(e.to_string()));
+                }
+
+                // Update metrics (lock-free atomic operations)
+                self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
+                self.metrics
+                    .bytes_sent
+                    .fetch_add(size as u64, Ordering::Relaxed);
+
+                // Emit event
+                self.event_emitter.emit_message_sent(message.id, size);
+
+                trace!("Sent message: {} bytes", size);
+                Ok(())
+            } else {
+                Err(TransportError::SendFailed(
+                    "Stdout writer not available".to_string(),
+                ))
+            }
+        })
+    }
+
+    fn receive(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>> {
+        Box::pin(async move {
+            let state = self.state().await;
+            if !matches!(state, TransportState::Connected) {
+                return Err(TransportError::ConnectionFailed(format!(
+                    "Transport not connected: {state}"
+                )));
+            }
+
+            let mut receive_channel = self.receive_channel.lock().await;
+            if let Some(receiver) = receive_channel.as_mut() {
+                match receiver.recv().await {
+                    Some(message) => {
+                        trace!("Received message: {} bytes", message.size());
+                        Ok(Some(message))
+                    }
+                    None => {
+                        warn!("Receive channel disconnected");
+                        self.set_state(TransportState::Failed {
+                            reason: "Receive channel disconnected".to_string(),
+                        });
+                        Err(TransportError::ReceiveFailed(
+                            "Channel disconnected".to_string(),
+                        ))
+                    }
+                }
+            } else {
+                Err(TransportError::ReceiveFailed(
+                    "Receive channel not available".to_string(),
+                ))
+            }
+        })
+    }
+
+    fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+        Box::pin(async move {
+            // AtomicMetrics: lock-free snapshot with Ordering::Relaxed
+            self.metrics.snapshot()
+        })
     }
 
     fn endpoint(&self) -> Option<String> {
         Some("stdio://".to_string())
     }
 
-    async fn configure(&self, config: TransportConfig) -> TransportResult<()> {
-        if config.transport_type != TransportType::Stdio {
-            return Err(TransportError::ConfigurationError(format!(
-                "Invalid transport type: {:?}",
-                config.transport_type
-            )));
-        }
+    fn configure(
+        &self,
+        config: TransportConfig,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            if config.transport_type != TransportType::Stdio {
+                return Err(TransportError::ConfigurationError(format!(
+                    "Invalid transport type: {:?}",
+                    config.transport_type
+                )));
+            }
 
-        // Validate configuration
-        if config.connect_timeout < Duration::from_millis(100) {
-            return Err(TransportError::ConfigurationError(
-                "Connect timeout too small".to_string(),
-            ));
-        }
+            // Validate configuration
+            if config.connect_timeout < Duration::from_millis(100) {
+                return Err(TransportError::ConfigurationError(
+                    "Connect timeout too small".to_string(),
+                ));
+            }
 
-        // std::sync::Mutex: short-lived lock for updating config
-        *self.config.lock().expect("config mutex poisoned") = config;
-        debug!("Stdio transport configured");
-        Ok(())
+            // std::sync::Mutex: short-lived lock for updating config
+            *self.config.lock() = config;
+            debug!("Stdio transport configured");
+            Ok(())
+        })
     }
 }
 
@@ -797,11 +830,7 @@ mod tests {
 
         let transport = StdioTransport::with_config(config);
         assert_eq!(
-            transport
-                .config
-                .lock()
-                .expect("config mutex poisoned")
-                .connect_timeout,
+            transport.config.lock().connect_timeout,
             Duration::from_secs(10)
         );
     }

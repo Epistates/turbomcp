@@ -201,10 +201,39 @@ pub trait TokenStore: Send + Sync + 'static {
 
 /// In-memory token store for testing and single-request scenarios.
 ///
-/// # Note
+/// # ⚠️ Production Warning
 ///
-/// In Cloudflare Workers, memory is not persisted across requests.
-/// Use KV or Durable Objects for production deployments.
+/// **DO NOT USE IN PRODUCTION.** In Cloudflare Workers, memory is not
+/// persisted across requests. Worker isolates restart approximately every
+/// 15-30 minutes, causing all tokens to be lost.
+///
+/// This will result in:
+/// - Users being logged out unexpectedly
+/// - Refresh tokens becoming invalid
+/// - Authorization codes being lost mid-flow
+///
+/// # Production Alternative
+///
+/// Use `DurableObjectTokenStore` with Cloudflare Durable Objects for
+/// production deployments. Durable Objects provide:
+/// - Strong consistency
+/// - Automatic persistence
+/// - Cross-request state management
+///
+/// # Example
+///
+/// ```ignore
+/// // ❌ DON'T DO THIS IN PRODUCTION
+/// let store = MemoryTokenStore::new();
+///
+/// // ✅ DO THIS INSTEAD
+/// let store = DurableObjectTokenStore::new(env.durable_object("OAUTH_STORAGE")?);
+/// let oauth = OAuthProvider::new(config).with_store(Arc::new(store));
+/// ```
+#[deprecated(
+    note = "Use DurableObjectTokenStore for production. MemoryTokenStore loses all tokens \
+            on Worker restart (~15-30 minutes). Only use for testing or development."
+)]
 #[derive(Debug, Default)]
 pub struct MemoryTokenStore {
     authorization_codes: RwLock<HashMap<String, AuthorizationCodeGrant>>,
@@ -214,7 +243,21 @@ pub struct MemoryTokenStore {
 
 impl MemoryTokenStore {
     /// Create a new in-memory token store.
+    ///
+    /// # ⚠️ Production Warning
+    ///
+    /// **DO NOT USE IN PRODUCTION.** This store loses all tokens when the
+    /// Worker restarts (~15-30 minutes). Use `DurableObjectTokenStore` instead.
+    #[allow(deprecated)]
     pub fn new() -> Self {
+        // Warn users about the limitations of this store
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::warn_1(
+            &"⚠️  Using MemoryTokenStore - tokens will be lost on Worker restart (~15-30 minutes). \
+              Use DurableObjectTokenStore for production deployments."
+                .into(),
+        );
+
         Self::default()
     }
 

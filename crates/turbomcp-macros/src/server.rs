@@ -112,26 +112,13 @@ impl ServerAttrs {
                 description = Some(value.value());
             } else if meta.path.is_ident("transports") {
                 // v3: The `transports` attribute is deprecated.
-                // Transport methods (run_http, run_tcp, etc.) are provided via the McpHandlerExt trait.
-                // Users must enable transport features in Cargo.toml instead.
                 meta.value()?;
                 let _: syn::ExprArray = meta.input.parse()?;
                 return Err(syn::Error::new(
                     meta.path.span(),
-                    "The `transports` attribute is deprecated in TurboMCP v3.\n\n\
-                    Transport methods are now available via the McpHandlerExt trait when features are enabled.\n\n\
-                    To enable transports, add features in Cargo.toml:\n\
-                    ```toml\n\
-                    [dependencies]\n\
-                    turbomcp = { version = \"3.0\", features = [\"http\", \"tcp\", \"websocket\", \"unix\"] }\n\
-                    ```\n\n\
-                    Then use the transport methods directly:\n\
-                    - `server.run_stdio().await` (default, always available with 'stdio' feature)\n\
-                    - `server.run_http(\"0.0.0.0:8080\").await` (requires 'http' feature)\n\
-                    - `server.run_tcp(\"0.0.0.0:9000\").await` (requires 'tcp' feature)\n\
-                    - `server.run_websocket(\"0.0.0.0:8080\").await` (requires 'websocket' feature)\n\
-                    - `server.run_unix(\"/tmp/mcp.sock\").await` (requires 'unix' feature)\n\n\
-                    Remove the `transports = [...]` attribute from your #[server] macro.",
+                    "`transports` attribute is deprecated. Enable features in Cargo.toml instead:\n\
+                    turbomcp = { version = \"3.0\", features = [\"http\", \"tcp\"] }\n\
+                    Then call transport methods: server.run_http(\"0.0.0.0:8080\").await",
                 ));
             } else if meta.path.is_ident("root") {
                 // v3: Ignore `root` attribute for backward compatibility.

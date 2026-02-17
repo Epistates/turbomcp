@@ -13,6 +13,12 @@ use std::{
     vec::Vec,
 };
 
+// Use hashbrown for no_std compatibility
+#[cfg(not(feature = "std"))]
+use hashbrown::HashMap;
+#[cfg(feature = "std")]
+use std::collections::HashMap;
+
 /// HTTP methods supported by Streamable HTTP transport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum HttpMethod {
@@ -181,7 +187,7 @@ pub struct StreamableRequest {
     /// Request body (for POST)
     pub body: Option<String>,
     /// Additional headers for context extraction (authorization, x-request-id, etc.)
-    pub headers: std::collections::HashMap<String, String>,
+    pub headers: HashMap<String, String>,
 }
 
 impl StreamableRequest {
@@ -194,7 +200,7 @@ impl StreamableRequest {
             origin: None,
             accept: Some("text/event-stream".to_string()),
             body: None,
-            headers: std::collections::HashMap::new(),
+            headers: HashMap::new(),
         }
     }
 
@@ -207,7 +213,7 @@ impl StreamableRequest {
             origin: None,
             accept: None,
             body: Some(body.into()),
-            headers: std::collections::HashMap::new(),
+            headers: HashMap::new(),
         }
     }
 
@@ -220,7 +226,7 @@ impl StreamableRequest {
             origin: None,
             accept: None,
             body: None,
-            headers: std::collections::HashMap::new(),
+            headers: HashMap::new(),
         }
     }
 
@@ -266,7 +272,7 @@ impl StreamableRequest {
     }
 
     /// Set headers for context extraction.
-    pub fn with_headers(mut self, headers: std::collections::HashMap<String, String>) -> Self {
+    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
         self.headers = headers;
         self
     }

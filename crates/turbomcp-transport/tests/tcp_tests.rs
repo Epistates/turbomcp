@@ -15,6 +15,8 @@ mod tcp_tests {
         assert_eq!(config.connect_timeout_ms, 5000);
         assert!(config.keep_alive);
         assert_eq!(config.buffer_size, 8192);
+        assert_eq!(config.max_connections, 256);
+        assert_eq!(config.idle_timeout_secs, 300);
     }
 
     #[test]
@@ -46,6 +48,9 @@ mod tcp_tests {
             connect_timeout_ms: 10000,
             keep_alive: false,
             buffer_size: 16384,
+            max_connections: 512,
+            idle_timeout_secs: 600,
+            strict_mode: false,
         };
 
         assert_eq!(config.bind_addr, bind_addr);
@@ -53,6 +58,8 @@ mod tcp_tests {
         assert_eq!(config.connect_timeout_ms, 10000);
         assert!(!config.keep_alive);
         assert_eq!(config.buffer_size, 16384);
+        assert_eq!(config.max_connections, 512);
+        assert_eq!(config.idle_timeout_secs, 600);
     }
 
     #[test]

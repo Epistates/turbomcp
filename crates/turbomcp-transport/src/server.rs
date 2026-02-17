@@ -1,6 +1,5 @@
 //! Server-specific transport functionality for bidirectional MCP communication
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,33 +41,35 @@ pub struct ServerJsonRpcResponse {
 }
 
 /// Server transport dispatcher for server-initiated requests
-#[async_trait]
 pub trait ServerTransportDispatcher: Send + Sync {
     /// Send a server-initiated request to the client
-    async fn send_server_request(
+    fn send_server_request(
         &self,
         request: ServerJsonRpcRequest,
         ctx: RequestContext,
-    ) -> TransportResult<ServerJsonRpcResponse>;
+    ) -> impl std::future::Future<Output = TransportResult<ServerJsonRpcResponse>> + Send;
 
     /// Check if the transport supports server-initiated requests
     fn supports_server_requests(&self) -> bool;
 
     /// Get connected client count
-    async fn connected_clients(&self) -> usize;
+    fn connected_clients(&self) -> impl std::future::Future<Output = usize> + Send;
 
-    /// Broadcast a message to all connected clients  
-    async fn broadcast(&self, message: TransportMessage) -> TransportResult<()>;
+    /// Broadcast a message to all connected clients
+    fn broadcast(
+        &self,
+        message: TransportMessage,
+    ) -> impl std::future::Future<Output = TransportResult<()>> + Send;
 
     /// Send a message to a specific client
-    async fn send_to_client(
+    fn send_to_client(
         &self,
         client_id: &str,
         message: TransportMessage,
-    ) -> TransportResult<()>;
+    ) -> impl std::future::Future<Output = TransportResult<()>> + Send;
 
     /// Get list of connected client IDs
-    async fn get_connected_client_ids(&self) -> Vec<String>;
+    fn get_connected_client_ids(&self) -> impl std::future::Future<Output = Vec<String>> + Send;
 }
 
 /// Server transport manager for handling multiple client connections
@@ -206,7 +207,6 @@ impl ServerTransportManager {
     }
 }
 
-#[async_trait]
 impl ServerTransportDispatcher for ServerTransportManager {
     async fn send_server_request(
         &self,

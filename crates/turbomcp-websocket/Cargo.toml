@@ -26,12 +26,12 @@ turbomcp-protocol = { version = "3.0.0-beta.4", path = "../turbomcp-protocol" }
 # Async runtime
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
-async-trait = { workspace = true }
 futures = { workspace = true }
 
 # Data structures
 bytes = { workspace = true }
 dashmap = { workspace = true }
+parking_lot = { workspace = true }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -41,7 +41,7 @@ serde_json = "1.0"
 uuid = { version = "1.16", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "serde"] }
 tracing = "0.1"
-fastrand = "2.3"
+fastrand = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

@@ -161,16 +161,8 @@ impl McpServerConfig {
         Some(TlsConfig {
             cert_file,
             key_file,
-            // Allow TLS 1.2 for backwards compatibility with older clients
-            #[allow(deprecated)]
-            min_version: std::env::var("TURBOMCP_TLS_MIN_VERSION")
-                .ok()
-                .and_then(|v| match v.as_str() {
-                    "1.2" => Some(TlsVersion::TlsV1_2),
-                    "1.3" => Some(TlsVersion::TlsV1_3),
-                    _ => None,
-                })
-                .unwrap_or(TlsVersion::TlsV1_3),
+            // TLS 1.3 is required in v3
+            min_version: TlsVersion::TlsV1_3,
             enable_http2: std::env::var("TURBOMCP_ENABLE_HTTP2")
                 .ok()
                 .and_then(|v| v.parse().ok())

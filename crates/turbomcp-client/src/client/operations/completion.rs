@@ -20,7 +20,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         context: Option<CompletionContext>,
     ) -> Result<CompletionResponse> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         let request_params = CompleteRequestParams {

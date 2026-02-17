@@ -83,13 +83,13 @@
 #![warn(clippy::all)]
 #![allow(
     clippy::module_name_repetitions,
-    clippy::missing_errors_doc,
     clippy::must_use_candidate,
     clippy::return_self_not_must_use,
     clippy::struct_excessive_bools,
-    clippy::missing_panics_doc,
     clippy::default_trait_access
 )]
+// Note: missing_errors_doc and missing_panics_doc are now workspace-level warnings
+// to improve API documentation quality for enterprise adoption
 
 // Core modules
 mod builder;
@@ -116,9 +116,9 @@ pub use middleware::{McpMiddleware, MiddlewareStack, Next};
 // Public exports
 pub use builder::{McpServerExt, ServerBuilder, Transport};
 pub use config::{
-    CapabilityValidation, ClientCapabilities, ConnectionCounter, ConnectionGuard, ConnectionLimits,
-    ProtocolConfig, RateLimitConfig, RateLimiter, RequiredCapabilities,
-    SUPPORTED_PROTOCOL_VERSIONS, ServerConfig, ServerConfigBuilder,
+    CapabilityValidation, ClientCapabilities, ConfigValidationError, ConnectionCounter,
+    ConnectionGuard, ConnectionLimits, ProtocolConfig, RateLimitConfig, RateLimiter,
+    RequiredCapabilities, SUPPORTED_PROTOCOL_VERSIONS, ServerConfig, ServerConfigBuilder,
 };
 pub use context::{RequestContext, TransportType};
 pub use handler::McpHandlerExt;

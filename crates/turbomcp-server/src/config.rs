@@ -119,7 +119,10 @@ impl ServerConfigBuilder {
         self
     }
 
-    /// Build the server configuration.
+    /// Build the server configuration with sensible defaults.
+    ///
+    /// This method always succeeds and uses defaults for any unset fields.
+    /// For strict validation, use [`try_build()`](Self::try_build).
     #[must_use]
     pub fn build(self) -> ServerConfig {
         ServerConfig {
@@ -130,6 +133,104 @@ impl ServerConfigBuilder {
             max_message_size: self.max_message_size.unwrap_or(DEFAULT_MAX_MESSAGE_SIZE),
         }
     }
+
+    /// Build the server configuration with validation.
+    ///
+    /// This method validates the configuration and returns an error if any
+    /// constraints are violated. Use this for stricter configuration checking
+    /// in enterprise deployments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - `max_message_size` is less than 1024 bytes (minimum viable message size)
+    /// - Rate limit `max_requests` is 0
+    /// - Rate limit `window` is zero
+    /// - Connection limits have all values set to 0
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use turbomcp_server::ServerConfig;
+    ///
+    /// // Validated build - catches configuration errors
+    /// let config = ServerConfig::builder()
+    ///     .max_message_size(1024 * 1024) // 1MB
+    ///     .try_build()
+    ///     .expect("Invalid configuration");
+    /// ```
+    pub fn try_build(self) -> Result<ServerConfig, ConfigValidationError> {
+        let max_message_size = self.max_message_size.unwrap_or(DEFAULT_MAX_MESSAGE_SIZE);
+
+        // Validate message size
+        if max_message_size < 1024 {
+            return Err(ConfigValidationError::InvalidMessageSize {
+                size: max_message_size,
+                min: 1024,
+            });
+        }
+
+        // Validate rate limit if provided
+        if let Some(ref rate_limit) = self.rate_limit {
+            if rate_limit.max_requests == 0 {
+                return Err(ConfigValidationError::InvalidRateLimit {
+                    reason: "max_requests cannot be 0".to_string(),
+                });
+            }
+            if rate_limit.window.is_zero() {
+                return Err(ConfigValidationError::InvalidRateLimit {
+                    reason: "rate limit window cannot be zero".to_string(),
+                });
+            }
+        }
+
+        // Validate connection limits
+        let connection_limits = self.connection_limits.unwrap_or_default();
+        if connection_limits.max_tcp_connections == 0
+            && connection_limits.max_websocket_connections == 0
+            && connection_limits.max_http_concurrent == 0
+            && connection_limits.max_unix_connections == 0
+        {
+            return Err(ConfigValidationError::InvalidConnectionLimits {
+                reason: "at least one connection limit must be non-zero".to_string(),
+            });
+        }
+
+        Ok(ServerConfig {
+            protocol: self.protocol.unwrap_or_default(),
+            rate_limit: self.rate_limit,
+            connection_limits,
+            required_capabilities: self.required_capabilities.unwrap_or_default(),
+            max_message_size,
+        })
+    }
+}
+
+/// Errors that can occur during configuration validation.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum ConfigValidationError {
+    /// Invalid message size configuration.
+    #[error("Invalid max_message_size: {size} bytes is below minimum of {min} bytes")]
+    InvalidMessageSize {
+        /// The configured size.
+        size: usize,
+        /// The minimum allowed size.
+        min: usize,
+    },
+
+    /// Invalid rate limit configuration.
+    #[error("Invalid rate limit: {reason}")]
+    InvalidRateLimit {
+        /// Description of the validation failure.
+        reason: String,
+    },
+
+    /// Invalid connection limits configuration.
+    #[error("Invalid connection limits: {reason}")]
+    InvalidConnectionLimits {
+        /// Description of the validation failure.
+        reason: String,
+    },
 }
 
 /// Protocol version configuration.
@@ -401,6 +502,8 @@ pub struct RateLimiter {
     global_bucket: Mutex<TokenBucket>,
     /// Per-client buckets (keyed by client ID).
     client_buckets: Mutex<std::collections::HashMap<String, TokenBucket>>,
+    /// Last cleanup timestamp for automatic cleanup.
+    last_cleanup: Mutex<Instant>,
 }
 
 impl RateLimiter {
@@ -410,6 +513,7 @@ impl RateLimiter {
         Self {
             global_bucket: Mutex::new(TokenBucket::new(config.max_requests, config.window)),
             client_buckets: Mutex::new(std::collections::HashMap::new()),
+            last_cleanup: Mutex::new(Instant::now()),
             config,
         }
     }
@@ -418,6 +522,16 @@ impl RateLimiter {
     ///
     /// Returns `true` if allowed, `false` if rate limited.
     pub fn check(&self, client_id: Option<&str>) -> bool {
+        // Periodic cleanup of stale client buckets (avoid unbounded growth)
+        let needs_cleanup = {
+            let last = self.last_cleanup.lock();
+            last.elapsed() > Duration::from_secs(60)
+        };
+        if needs_cleanup {
+            self.cleanup(Duration::from_secs(300));
+            *self.last_cleanup.lock() = Instant::now();
+        }
+
         if self.config.per_client {
             if let Some(id) = client_id {
                 let mut buckets = self.client_buckets.lock();
@@ -448,63 +562,6 @@ impl RateLimiter {
     }
 }
 
-/// Default cleanup interval for rate limiter (5 minutes).
-#[allow(dead_code)]
-pub const DEFAULT_CLEANUP_INTERVAL: Duration = Duration::from_secs(300);
-
-/// Default max age for client buckets (1 hour).
-#[allow(dead_code)]
-pub const DEFAULT_CLIENT_BUCKET_MAX_AGE: Duration = Duration::from_secs(3600);
-
-/// Spawn a background task to periodically clean up the rate limiter (LOW-004).
-///
-/// This prevents unbounded memory growth when many clients connect.
-///
-/// # Arguments
-/// * `limiter` - Arc-wrapped rate limiter to clean up
-/// * `interval` - How often to run cleanup (default: 5 minutes)
-/// * `max_age` - Maximum age of client buckets before removal (default: 1 hour)
-///
-/// # Example
-///
-/// ```ignore
-/// use std::sync::Arc;
-/// use turbomcp_server::config::{RateLimiter, RateLimitConfig, spawn_rate_limiter_cleanup};
-///
-/// let limiter = Arc::new(RateLimiter::new(RateLimitConfig::default()));
-/// spawn_rate_limiter_cleanup(limiter.clone(), None, None);
-/// ```
-#[allow(dead_code)]
-pub fn spawn_rate_limiter_cleanup(
-    limiter: Arc<RateLimiter>,
-    interval: Option<Duration>,
-    max_age: Option<Duration>,
-) -> tokio::task::JoinHandle<()> {
-    let cleanup_interval = interval.unwrap_or(DEFAULT_CLEANUP_INTERVAL);
-    let bucket_max_age = max_age.unwrap_or(DEFAULT_CLIENT_BUCKET_MAX_AGE);
-
-    tokio::spawn(async move {
-        let mut interval_timer = tokio::time::interval(cleanup_interval);
-        // Skip first tick which fires immediately
-        interval_timer.tick().await;
-
-        loop {
-            interval_timer.tick().await;
-            let before_count = limiter.client_bucket_count();
-            limiter.cleanup(bucket_max_age);
-            let after_count = limiter.client_bucket_count();
-
-            if before_count != after_count {
-                tracing::debug!(
-                    "Rate limiter cleanup: removed {} stale buckets ({} remaining)",
-                    before_count - after_count,
-                    after_count
-                );
-            }
-        }
-    })
-}
-
 /// Token bucket for rate limiting.
 #[derive(Debug)]
 struct TokenBucket {
@@ -529,8 +586,17 @@ impl TokenBucket {
     }
 
     fn try_acquire(&mut self) -> bool {
-        self.refill();
-        self.last_access = Instant::now();
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_refill);
+
+        // Only refill if meaningful time has passed (reduces syscalls on burst traffic)
+        if elapsed >= Duration::from_millis(10) {
+            self.tokens =
+                (self.tokens + elapsed.as_secs_f64() * self.refill_rate).min(self.max_tokens);
+            self.last_refill = now;
+        }
+
+        self.last_access = now;
 
         if self.tokens >= 1.0 {
             self.tokens -= 1.0;
@@ -538,13 +604,6 @@ impl TokenBucket {
         } else {
             false
         }
-    }
-
-    fn refill(&mut self) {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
-        self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.max_tokens);
-        self.last_refill = now;
     }
 }
 
@@ -573,7 +632,9 @@ impl ConnectionCounter {
     /// Returns a guard that releases the slot when dropped, or None if at capacity.
     /// The guard is `Send + 'static` and can be moved into spawned async tasks.
     pub fn try_acquire_arc(self: &Arc<Self>) -> Option<ConnectionGuard> {
-        loop {
+        // CAS loop with bounded iterations to prevent infinite spin
+        // In practice this should succeed in 1-2 iterations; 1000 indicates a bug
+        for _ in 0..1000 {
             let current = self.current.load(Ordering::Relaxed);
             if current >= self.max {
                 return None;
@@ -587,7 +648,14 @@ impl ConnectionCounter {
                     counter: Arc::clone(self),
                 });
             }
+            // Hint to the CPU that we're spinning (avoids pipeline stalls)
+            std::hint::spin_loop();
         }
+        // This should never be reached in normal operation
+        tracing::error!(
+            "ConnectionCounter CAS loop exceeded 1000 iterations - possible contention bug"
+        );
+        None
     }
 
     /// Get current connection count.
@@ -692,5 +760,117 @@ mod tests {
 
         let guard4 = counter.try_acquire_arc();
         assert!(guard4.is_some());
+    }
+
+    // =========================================================================
+    // Builder validation tests
+    // =========================================================================
+
+    #[test]
+    fn test_builder_default_succeeds() {
+        // Default configuration should always succeed
+        let config = ServerConfig::builder().build();
+        assert_eq!(config.max_message_size, DEFAULT_MAX_MESSAGE_SIZE);
+    }
+
+    #[test]
+    fn test_builder_try_build_valid() {
+        let result = ServerConfig::builder()
+            .max_message_size(1024 * 1024)
+            .try_build();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_builder_try_build_invalid_message_size() {
+        let result = ServerConfig::builder()
+            .max_message_size(100) // Below minimum
+            .try_build();
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ConfigValidationError::InvalidMessageSize { .. }
+        ));
+    }
+
+    #[test]
+    fn test_builder_try_build_invalid_rate_limit() {
+        let result = ServerConfig::builder()
+            .rate_limit(RateLimitConfig {
+                max_requests: 0, // Invalid
+                window: Duration::from_secs(1),
+                per_client: true,
+            })
+            .try_build();
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ConfigValidationError::InvalidRateLimit { .. }
+        ));
+    }
+
+    #[test]
+    fn test_builder_try_build_zero_window() {
+        let result = ServerConfig::builder()
+            .rate_limit(RateLimitConfig {
+                max_requests: 100,
+                window: Duration::ZERO, // Invalid
+                per_client: true,
+            })
+            .try_build();
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ConfigValidationError::InvalidRateLimit { .. }
+        ));
+    }
+
+    #[test]
+    fn test_builder_try_build_invalid_connection_limits() {
+        let result = ServerConfig::builder()
+            .connection_limits(ConnectionLimits {
+                max_tcp_connections: 0,
+                max_websocket_connections: 0,
+                max_http_concurrent: 0,
+                max_unix_connections: 0,
+            })
+            .try_build();
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            ConfigValidationError::InvalidConnectionLimits { .. }
+        ));
+    }
+}
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn config_builder_never_panics(
+            max_msg_size in 0usize..10_000_000,
+        ) {
+            // Builder should never panic, just return errors for invalid inputs
+            let _ = ServerConfig::builder()
+                .max_message_size(max_msg_size)
+                .try_build();
+        }
+
+        #[test]
+        fn connection_counter_bounded(max in 1usize..10000) {
+            let counter = Arc::new(ConnectionCounter::new(max));
+            let mut guards = Vec::new();
+            // Should never acquire more than max
+            for _ in 0..max + 10 {
+                if let Some(guard) = counter.try_acquire_arc() {
+                    guards.push(guard);
+                }
+            }
+            assert_eq!(guards.len(), max);
+            assert_eq!(counter.current(), max);
+        }
     }
 }

@@ -22,9 +22,11 @@ alloc = []
 
 [dependencies]
 # Serialization (no_std compatible with alloc)
-# Note: Using local deps instead of workspace to enable default-features = false for no_std support
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+
+# HashMap for no_std environments (std provides std::collections::HashMap)
+hashbrown = { version = "0.15", default-features = false, features = ["serde", "inline-more"] }
 
 # Base64 for event ID encoding (pure Rust, no_std)
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }

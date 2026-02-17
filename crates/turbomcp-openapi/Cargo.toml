@@ -14,8 +14,8 @@ rust-version = "1.89.0"
 
 [dependencies]
 # Core TurboMCP
-turbomcp-core = { path = "../turbomcp-core", version = "3.0.0-beta.4" }
-turbomcp-types = { path = "../turbomcp-types", version = "3.0.0-beta.4" }
+turbomcp-core = { workspace = true }
+turbomcp-types = { workspace = true }
 
 # OpenAPI parsing
 openapiv3 = "2.2"
@@ -44,9 +44,9 @@ regex = "1.11"
 ipnetwork = "0.20"
 
 [dev-dependencies]
-tokio-test = "0.4"
-tempfile = "3.14"
-wiremock = "0.6"
+tokio-test = { workspace = true }
+tempfile = { workspace = true }
+wiremock = { workspace = true }
 
 [[example]]
 name = "petstore"

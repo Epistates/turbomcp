@@ -169,26 +169,43 @@ impl ToolAttrs {
     }
 }
 
-/// Parse a `key = "value"` pattern from token string.
+/// Parse a `key = "value"` pattern from token stream.
+/// Fallback for complex attribute syntax when standard parsing fails.
 pub fn parse_quoted_value(token_str: &str, key: &str) -> Option<String> {
+    // Try to parse using syn's token stream first
+    if let Ok(tokens) = syn::parse_str::<proc_macro2::TokenStream>(token_str) {
+        for token in tokens {
+            if let proc_macro2::TokenTree::Ident(ident) = &token
+                && ident == key
+            {
+                // Found the key, look for = "value" pattern
+                continue;
+            }
+        }
+    }
+
+    // Fallback to string manipulation if syn parsing doesn't help
     let key_start = token_str.find(key)?;
-    let eq_pos = token_str[key_start..].find('=')?;
-    let after_eq = &token_str[key_start + eq_pos + 1..];
+    let after_key = &token_str[key_start + key.len()..];
+    let eq_pos = after_key.find('=')?;
+    let after_eq = &after_key[eq_pos + 1..];
     let quote_start = after_eq.find('"')?;
     let after_quote = &after_eq[quote_start + 1..];
     let quote_end = after_quote.find('"')?;
     Some(after_quote[..quote_end].to_string())
 }
 
-/// Parse `tags = ["a", "b", "c"]` pattern from token string.
+/// Parse `tags = ["a", "b", "c"]` pattern from token stream.
+/// Fallback for complex attribute syntax when standard parsing fails.
 pub fn parse_tags_array(token_str: &str) -> Vec<String> {
     let Some(tags_start) = token_str.find("tags") else {
         return Vec::new();
     };
-    let Some(bracket_start) = token_str[tags_start..].find('[') else {
+    let after_tags = &token_str[tags_start + 4..]; // "tags".len() == 4
+    let Some(bracket_start) = after_tags.find('[') else {
         return Vec::new();
     };
-    let after_bracket = &token_str[tags_start + bracket_start + 1..];
+    let after_bracket = &after_tags[bracket_start + 1..];
     let Some(bracket_end) = after_bracket.find(']') else {
         return Vec::new();
     };
@@ -297,13 +314,13 @@ fn analyze_parameters(sig: &Signature) -> Result<Vec<ParameterInfo>, syn::Error>
 fn extract_description_attr(attrs: &[syn::Attribute]) -> Option<String> {
     for attr in attrs {
         if attr.path().is_ident("description") {
-            // Handle #[description("text")]
+            // Handle #[description("text")] - List style
             if let syn::Meta::List(meta_list) = &attr.meta
                 && let Ok(lit) = syn::parse2::<syn::LitStr>(meta_list.tokens.clone())
             {
                 return Some(lit.value());
             }
-            // Handle #[description = "text"]
+            // Handle #[description = "text"] - NameValue style
             if let syn::Meta::NameValue(meta_nv) = &attr.meta
                 && let syn::Expr::Lit(syn::ExprLit {
                     lit: syn::Lit::Str(lit_str),

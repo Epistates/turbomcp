@@ -3,7 +3,9 @@
 //! This backend uses turbomcp-transport's `StdioTransport` and `ChildProcessTransport`
 //! to communicate with MCP servers over stdin/stdout.
 
-use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
+
 use bytes::Bytes;
 use serde_json::Value;
 use tracing::{debug, trace};
@@ -166,72 +168,89 @@ impl StdioBackend {
     }
 }
 
-#[async_trait]
 impl McpBackend for StdioBackend {
-    async fn initialize(&mut self, request: InitializeRequest) -> ProxyResult<InitializeResult> {
-        debug!("Initializing STDIO backend via turbomcp-transport");
+    fn initialize(
+        &mut self,
+        request: InitializeRequest,
+    ) -> Pin<Box<dyn Future<Output = ProxyResult<InitializeResult>> + Send + '_>> {
+        Box::pin(async move {
+            debug!("Initializing STDIO backend via turbomcp-transport");
 
-        let params = serde_json::to_value(&request).map_err(|e| {
-            ProxyError::backend(format!("Failed to serialize initialize request: {e}"))
-        })?;
+            let params = serde_json::to_value(&request).map_err(|e| {
+                ProxyError::backend(format!("Failed to serialize initialize request: {e}"))
+            })?;
 
-        let result = self.send_request("initialize", params).await?;
+            let result = self.send_request("initialize", params).await?;
 
-        let init_result: InitializeResult = serde_json::from_value(result).map_err(|e| {
-            ProxyError::backend(format!("Failed to deserialize initialize result: {e}"))
-        })?;
+            let init_result: InitializeResult = serde_json::from_value(result).map_err(|e| {
+                ProxyError::backend(format!("Failed to deserialize initialize result: {e}"))
+            })?;
 
-        debug!(
-            server_name = %init_result.server_info.name,
-            server_version = %init_result.server_info.version,
-            protocol_version = %init_result.protocol_version,
-            "Server initialized successfully"
-        );
+            debug!(
+                server_name = %init_result.server_info.name,
+                server_version = %init_result.server_info.version,
+                protocol_version = %init_result.protocol_version,
+                "Server initialized successfully"
+            );
 
-        // Send initialized notification
-        self.send_notification("notifications/initialized", serde_json::json!({}))
-            .await?;
+            // Send initialized notification
+            self.send_notification("notifications/initialized", serde_json::json!({}))
+                .await?;
 
-        Ok(init_result)
+            Ok(init_result)
+        })
     }
 
-    async fn call_method(&mut self, method: &str, params: Value) -> ProxyResult<Value> {
-        self.send_request(method, params).await
+    fn call_method<'a>(
+        &'a mut self,
+        method: &'a str,
+        params: Value,
+    ) -> Pin<Box<dyn Future<Output = ProxyResult<Value>> + Send + 'a>> {
+        Box::pin(async move { self.send_request(method, params).await })
     }
 
-    async fn send_notification(&mut self, method: &str, params: Value) -> ProxyResult<()> {
-        let notification = JsonRpcNotification {
-            jsonrpc: JsonRpcVersion,
-            method: method.to_string(),
-            params: Some(params),
-        };
+    fn send_notification<'a>(
+        &'a mut self,
+        method: &'a str,
+        params: Value,
+    ) -> Pin<Box<dyn Future<Output = ProxyResult<()>> + Send + 'a>> {
+        Box::pin(async move {
+            let notification = JsonRpcNotification {
+                jsonrpc: JsonRpcVersion,
+                method: method.to_string(),
+                params: Some(params),
+            };
 
-        let notification_json = serde_json::to_string(&notification)
-            .map_err(|e| ProxyError::backend(format!("Failed to serialize notification: {e}")))?;
+            let notification_json = serde_json::to_string(&notification).map_err(|e| {
+                ProxyError::backend(format!("Failed to serialize notification: {e}"))
+            })?;
 
-        trace!(method = %method, "Sending notification");
+            trace!(method = %method, "Sending notification");
 
-        let message = TransportMessage {
-            id: turbomcp_protocol::MessageId::String(Uuid::new_v4().to_string()),
-            payload: Bytes::from(notification_json.into_bytes()),
-            metadata: TransportMessageMetadata::default(),
-        };
+            let message = TransportMessage {
+                id: turbomcp_protocol::MessageId::String(Uuid::new_v4().to_string()),
+                payload: Bytes::from(notification_json.into_bytes()),
+                metadata: TransportMessageMetadata::default(),
+            };
 
-        self.transport
-            .send(message)
-            .await
-            .map_err(|e| ProxyError::backend(format!("Failed to send notification: {e}")))?;
+            self.transport
+                .send(message)
+                .await
+                .map_err(|e| ProxyError::backend(format!("Failed to send notification: {e}")))?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
-    async fn shutdown(&mut self) -> ProxyResult<()> {
-        debug!("Shutting down STDIO backend");
+    fn shutdown(&mut self) -> Pin<Box<dyn Future<Output = ProxyResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            debug!("Shutting down STDIO backend");
 
-        // ChildProcessTransport handles cleanup on drop
-        // No explicit shutdown needed - process will be killed on drop if kill_on_drop is true
+            // ChildProcessTransport handles cleanup on drop
+            // No explicit shutdown needed - process will be killed on drop if kill_on_drop is true
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn description(&self) -> String {

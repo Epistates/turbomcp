@@ -80,8 +80,8 @@ type SessionStateMap = dashmap::DashMap<String, Arc<RwLock<HashMap<String, Value
 /// This global singleton design enables session state to be shared across
 /// handler invocations without threading server references through the
 /// entire call chain.
-static SESSION_STATE: once_cell::sync::Lazy<SessionStateMap> =
-    once_cell::sync::Lazy::new(SessionStateMap::new);
+static SESSION_STATE: std::sync::LazyLock<SessionStateMap> =
+    std::sync::LazyLock::new(SessionStateMap::new);
 
 /// RAII guard that automatically cleans up session state when dropped.
 ///

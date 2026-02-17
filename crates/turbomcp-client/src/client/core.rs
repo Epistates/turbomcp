@@ -18,8 +18,9 @@
 //! - **Arc<Mutex<...>>** for handlers/plugins (infrequent mutation)
 //! - **`Arc<ClientInner<T>>`** for cheap cloning
 
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
 
 use tokio::sync::Semaphore;
 
@@ -56,10 +57,10 @@ pub(super) struct ClientInner<T: Transport + 'static> {
     pub(super) initialized: AtomicBool,
 
     /// Optional sampling handler (mutex for dynamic updates)
-    pub(super) sampling_handler: Arc<StdMutex<Option<Arc<dyn SamplingHandler>>>>,
+    pub(super) sampling_handler: Arc<Mutex<Option<Arc<dyn SamplingHandler>>>>,
 
     /// Handler registry for bidirectional communication (mutex for registration)
-    pub(super) handlers: Arc<StdMutex<HandlerRegistry>>,
+    pub(super) handlers: Arc<Mutex<HandlerRegistry>>,
 
     /// ✅ Semaphore for bounded concurrency of request/notification handlers
     /// Limits concurrent server-initiated request handlers to prevent resource exhaustion
@@ -149,29 +150,15 @@ impl<T: Transport + 'static> Drop for ClientInner<T> {
         // Best-effort cleanup if shutdown() wasn't called
         // This is a safety net, but applications SHOULD call shutdown() explicitly
 
-        // Single warning to catch attention
+        // Single clear warning
         tracing::warn!(
-            "MCP Client dropped without explicit shutdown() - call client.shutdown().await for clean resource cleanup"
+            "MCP Client dropped without explicit shutdown(). \
+             Call client.shutdown().await before dropping for clean resource cleanup. \
+             Background tasks (WebSocket reconnection) may continue running."
         );
-
-        // Details at debug level to avoid noise in production
-        tracing::debug!("   📘 RECOMMENDATION: Call client.shutdown().await before dropping");
-        tracing::debug!(
-            "   🐛 IMPACT: Background tasks (especially WebSocket reconnection) may continue running"
-        );
-        tracing::debug!("   💡 See client shutdown documentation for best practices");
 
         // We can shutdown the dispatcher (it's synchronous)
         self.protocol.dispatcher().shutdown();
-        tracing::debug!("   ✅ Message dispatcher stopped");
-
-        // ⚠️  LIMITATION: Cannot call transport.disconnect() from Drop because it's async
-        //    This means:
-        //    - WebSocket: Close frame not sent, reconnection tasks keep running
-        //    - HTTP: Connections may not close cleanly
-        //    - All transports: Background tasks may be orphaned
-        tracing::debug!("   ❌ Transport NOT disconnected (Drop cannot call async methods)");
-        tracing::debug!("   ⚠️  WebSocket reconnection and other background tasks may continue");
     }
 }
 
@@ -201,8 +188,8 @@ impl<T: Transport + 'static> Client<T> {
                 protocol: ProtocolClient::new(transport),
                 capabilities: capabilities.clone(),
                 initialized: AtomicBool::new(false),
-                sampling_handler: Arc::new(StdMutex::new(None)),
-                handlers: Arc::new(StdMutex::new(HandlerRegistry::new())),
+                sampling_handler: Arc::new(Mutex::new(None)),
+                handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
             }),
         };
@@ -243,8 +230,8 @@ impl<T: Transport + 'static> Client<T> {
                 protocol: ProtocolClient::new(transport),
                 capabilities: capabilities.clone(),
                 initialized: AtomicBool::new(false),
-                sampling_handler: Arc::new(StdMutex::new(None)),
-                handlers: Arc::new(StdMutex::new(HandlerRegistry::new())),
+                sampling_handler: Arc::new(Mutex::new(None)),
+                handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
             }),
         };
@@ -477,7 +464,7 @@ impl Client<turbomcp_transport::tcp::TcpTransport> {
         let server_addr: SocketAddr = addr
             .as_ref()
             .parse()
-            .map_err(|e| Error::bad_request(format!("Invalid address: {}", e)))?;
+            .map_err(|e| Error::invalid_request(format!("Invalid address: {}", e)))?;
 
         // Client binds to 0.0.0.0:0 (any available port)
         let bind_addr: SocketAddr = if server_addr.is_ipv6() {
@@ -568,10 +555,16 @@ impl<T: Transport + 'static> Client<T> {
             // ✅ Spawn async task with bounded concurrency
             tokio::spawn(async move {
                 // Acquire permit (blocks if 100 requests already in flight)
-                let _permit = semaphore
-                    .acquire()
-                    .await
-                    .expect("Semaphore should not be closed");
+                let _permit = match semaphore.acquire().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        tracing::warn!(
+                            "Handler semaphore closed, dropping request: method={}",
+                            method
+                        );
+                        return;
+                    }
+                };
 
                 tracing::debug!(
                     "🔄 [request_handler] Handling server-initiated request: method={}, id={:?}",
@@ -607,10 +600,13 @@ impl<T: Transport + 'static> Client<T> {
             // ✅ Spawn async task with bounded concurrency
             tokio::spawn(async move {
                 // Acquire permit (blocks if 100 handlers already in flight)
-                let _permit = semaphore
-                    .acquire()
-                    .await
-                    .expect("Semaphore should not be closed");
+                let _permit = match semaphore.acquire().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        tracing::warn!("Handler semaphore closed, dropping notification");
+                        return;
+                    }
+                };
 
                 if let Err(e) = client.handle_notification(notification).await {
                     tracing::error!("Error handling server notification: {}", e);
@@ -635,12 +631,7 @@ impl<T: Transport + 'static> Client<T> {
     async fn handle_request(&self, request: JsonRpcRequest) -> Result<()> {
         match request.method.as_str() {
             "sampling/createMessage" => {
-                let handler_opt = self
-                    .inner
-                    .sampling_handler
-                    .lock()
-                    .expect("sampling_handler mutex poisoned")
-                    .clone();
+                let handler_opt = self.inner.sampling_handler.lock().clone();
                 if let Some(handler) = handler_opt {
                     // Extract request ID for proper correlation
                     let request_id = match &request.id {
@@ -652,13 +643,13 @@ impl<T: Transport + 'static> Client<T> {
                     let params: CreateMessageRequest =
                         serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
                             .map_err(|e| {
-                            Error::protocol(format!("Invalid createMessage params: {}", e))
+                            Error::internal(format!("Invalid createMessage params: {}", e))
                         })?;
 
                     match handler.handle_create_message(request_id, params).await {
                         Ok(result) => {
                             let result_value = serde_json::to_value(result).map_err(|e| {
-                                Error::protocol(format!("Failed to serialize response: {}", e))
+                                Error::internal(format!("Failed to serialize response: {}", e))
                             })?;
                             let response = JsonRpcResponse::success(result_value, request.id);
                             self.send_response(response).await?;
@@ -733,13 +724,7 @@ impl<T: Transport + 'static> Client<T> {
             "roots/list" => {
                 // Handle roots/list request from server
                 // Clone the handler Arc to avoid holding mutex across await
-                let handler_opt = self
-                    .inner
-                    .handlers
-                    .lock()
-                    .expect("handlers mutex poisoned")
-                    .roots
-                    .clone();
+                let handler_opt = self.inner.handlers.lock().roots.clone();
 
                 let roots_result = if let Some(handler) = handler_opt {
                     handler.handle_roots_request().await
@@ -756,7 +741,7 @@ impl<T: Transport + 'static> Client<T> {
                                 _meta: None,
                             })
                             .map_err(|e| {
-                                Error::protocol(format!(
+                                Error::internal(format!(
                                     "Failed to serialize roots response: {}",
                                     e
                                 ))
@@ -775,19 +760,13 @@ impl<T: Transport + 'static> Client<T> {
             }
             "elicitation/create" => {
                 // Clone handler Arc before await to avoid holding mutex across await
-                let handler_opt = self
-                    .inner
-                    .handlers
-                    .lock()
-                    .expect("handlers mutex poisoned")
-                    .elicitation
-                    .clone();
+                let handler_opt = self.inner.handlers.lock().elicitation.clone();
                 if let Some(handler) = handler_opt {
                     // Parse elicitation request params as MCP protocol type
                     let proto_request: turbomcp_protocol::types::ElicitRequest =
                         serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
                             .map_err(|e| {
-                            Error::protocol(format!("Invalid elicitation params: {}", e))
+                            Error::internal(format!("Invalid elicitation params: {}", e))
                         })?;
 
                     // Wrap protocol request with ID for handler (preserves type safety!)
@@ -800,7 +779,7 @@ impl<T: Transport + 'static> Client<T> {
                             // Convert handler response back to protocol type
                             let proto_result = elicit_response.into_protocol();
                             let result_value = serde_json::to_value(proto_result).map_err(|e| {
-                                Error::protocol(format!(
+                                Error::internal(format!(
                                     "Failed to serialize elicitation response: {}",
                                     e
                                 ))
@@ -860,19 +839,14 @@ impl<T: Transport + 'static> Client<T> {
 
             "notifications/message" => {
                 // Route to log handler
-                let handler_opt = self
-                    .inner
-                    .handlers
-                    .lock()
-                    .expect("handlers mutex poisoned")
-                    .get_log_handler();
+                let handler_opt = self.inner.handlers.lock().get_log_handler();
 
                 if let Some(handler) = handler_opt {
                     // Parse log message
                     let log: crate::handlers::LoggingNotification = serde_json::from_value(
                         notification.params.unwrap_or(serde_json::Value::Null),
                     )
-                    .map_err(|e| Error::protocol(format!("Invalid log notification: {}", e)))?;
+                    .map_err(|e| Error::internal(format!("Invalid log notification: {}", e)))?;
 
                     // Call handler
                     if let Err(e) = handler.handle_log(log).await {
@@ -885,12 +859,7 @@ impl<T: Transport + 'static> Client<T> {
 
             "notifications/resources/updated" => {
                 // Route to resource update handler
-                let handler_opt = self
-                    .inner
-                    .handlers
-                    .lock()
-                    .expect("handlers mutex poisoned")
-                    .get_resource_update_handler();
+                let handler_opt = self.inner.handlers.lock().get_resource_update_handler();
 
                 if let Some(handler) = handler_opt {
                     // Parse resource update notification
@@ -899,7 +868,7 @@ impl<T: Transport + 'static> Client<T> {
                             notification.params.unwrap_or(serde_json::Value::Null),
                         )
                         .map_err(|e| {
-                            Error::protocol(format!("Invalid resource update notification: {}", e))
+                            Error::internal(format!("Invalid resource update notification: {}", e))
                         })?;
 
                     // Call handler
@@ -919,7 +888,6 @@ impl<T: Transport + 'static> Client<T> {
                     .inner
                     .handlers
                     .lock()
-                    .expect("handlers mutex poisoned")
                     .get_resource_list_changed_handler();
 
                 if let Some(handler) = handler_opt {
@@ -935,12 +903,7 @@ impl<T: Transport + 'static> Client<T> {
 
             "notifications/prompts/list_changed" => {
                 // Route to prompt list changed handler
-                let handler_opt = self
-                    .inner
-                    .handlers
-                    .lock()
-                    .expect("handlers mutex poisoned")
-                    .get_prompt_list_changed_handler();
+                let handler_opt = self.inner.handlers.lock().get_prompt_list_changed_handler();
 
                 if let Some(handler) = handler_opt {
                     if let Err(e) = handler.handle_prompt_list_changed().await {
@@ -955,12 +918,7 @@ impl<T: Transport + 'static> Client<T> {
 
             "notifications/tools/list_changed" => {
                 // Route to tool list changed handler
-                let handler_opt = self
-                    .inner
-                    .handlers
-                    .lock()
-                    .expect("handlers mutex poisoned")
-                    .get_tool_list_changed_handler();
+                let handler_opt = self.inner.handlers.lock().get_tool_list_changed_handler();
 
                 if let Some(handler) = handler_opt {
                     if let Err(e) = handler.handle_tool_list_changed().await {
@@ -975,12 +933,7 @@ impl<T: Transport + 'static> Client<T> {
 
             "notifications/cancelled" => {
                 // Route to cancellation handler
-                let handler_opt = self
-                    .inner
-                    .handlers
-                    .lock()
-                    .expect("handlers mutex poisoned")
-                    .get_cancellation_handler();
+                let handler_opt = self.inner.handlers.lock().get_cancellation_handler();
 
                 if let Some(handler) = handler_opt {
                     // Parse cancellation notification
@@ -989,7 +942,7 @@ impl<T: Transport + 'static> Client<T> {
                             notification.params.unwrap_or(serde_json::Value::Null),
                         )
                         .map_err(|e| {
-                            Error::protocol(format!("Invalid cancellation notification: {}", e))
+                            Error::internal(format!("Invalid cancellation notification: {}", e))
                         })?;
 
                     // Call handler
@@ -1018,7 +971,7 @@ impl<T: Transport + 'static> Client<T> {
 
         let payload = serde_json::to_vec(&response).map_err(|e| {
             tracing::error!("❌ [send_response] Failed to serialize response: {}", e);
-            Error::protocol(format!("Failed to serialize response: {}", e))
+            Error::internal(format!("Failed to serialize response: {}", e))
         })?;
 
         tracing::debug!(
@@ -1195,11 +1148,11 @@ impl<T: Transport + 'static> Client<T> {
     /// ```
     pub async fn subscribe(&self, uri: &str) -> Result<EmptyResult> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         if uri.is_empty() {
-            return Err(Error::bad_request("Subscription URI cannot be empty"));
+            return Err(Error::invalid_request("Subscription URI cannot be empty"));
         }
 
         // Send resources/subscribe request
@@ -1212,7 +1165,7 @@ impl<T: Transport + 'static> Client<T> {
             .request(
                 "resources/subscribe",
                 Some(serde_json::to_value(request).map_err(|e| {
-                    Error::protocol(format!("Failed to serialize subscribe request: {}", e))
+                    Error::internal(format!("Failed to serialize subscribe request: {}", e))
                 })?),
             )
             .await
@@ -1256,11 +1209,11 @@ impl<T: Transport + 'static> Client<T> {
     /// ```
     pub async fn unsubscribe(&self, uri: &str) -> Result<EmptyResult> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         if uri.is_empty() {
-            return Err(Error::bad_request("Unsubscription URI cannot be empty"));
+            return Err(Error::invalid_request("Unsubscription URI cannot be empty"));
         }
 
         // Send resources/unsubscribe request
@@ -1273,7 +1226,7 @@ impl<T: Transport + 'static> Client<T> {
             .request(
                 "resources/unsubscribe",
                 Some(serde_json::to_value(request).map_err(|e| {
-                    Error::protocol(format!("Failed to serialize unsubscribe request: {}", e))
+                    Error::internal(format!("Failed to serialize unsubscribe request: {}", e))
                 })?),
             )
             .await
@@ -1311,7 +1264,7 @@ impl<T: Transport + 'static> Client<T> {
             .request(
                 "tasks/get",
                 Some(serde_json::to_value(request).map_err(|e| {
-                    Error::protocol(format!("Failed to serialize get_task request: {}", e))
+                    Error::internal(format!("Failed to serialize get_task request: {}", e))
                 })?),
             )
             .await
@@ -1339,7 +1292,7 @@ impl<T: Transport + 'static> Client<T> {
             .request(
                 "tasks/cancel",
                 Some(serde_json::to_value(request).map_err(|e| {
-                    Error::protocol(format!("Failed to serialize cancel_task request: {}", e))
+                    Error::internal(format!("Failed to serialize cancel_task request: {}", e))
                 })?),
             )
             .await
@@ -1370,7 +1323,7 @@ impl<T: Transport + 'static> Client<T> {
             .request(
                 "tasks/list",
                 Some(serde_json::to_value(request).map_err(|e| {
-                    Error::protocol(format!("Failed to serialize list_tasks request: {}", e))
+                    Error::internal(format!("Failed to serialize list_tasks request: {}", e))
                 })?),
             )
             .await
@@ -1399,7 +1352,7 @@ impl<T: Transport + 'static> Client<T> {
             .request(
                 "tasks/result",
                 Some(serde_json::to_value(request).map_err(|e| {
-                    Error::protocol(format!(
+                    Error::internal(format!(
                         "Failed to serialize get_task_result request: {}",
                         e
                     ))

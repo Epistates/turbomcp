@@ -22,7 +22,6 @@ turbomcp-wire = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt", "time", "sync", "macros"] }
 tokio-util = { workspace = true }
 futures = { workspace = true }
-async-trait = { workspace = true }
 pin-project-lite = { workspace = true }
 
 # Serialization
@@ -49,7 +48,6 @@ metrics = { workspace = true, optional = true }
 smallvec = { workspace = true }
 compact_str = { workspace = true }
 ahash = { workspace = true }
-once_cell = { workspace = true }
 arc-swap = { workspace = true }
 
 # SIMD support

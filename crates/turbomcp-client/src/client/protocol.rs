@@ -181,7 +181,7 @@ impl<T: Transport + 'static> ProtocolClient<T> {
 
         // Step 2: Serialize and send request
         let payload = serde_json::to_vec(&request)
-            .map_err(|e| Error::protocol(format!("Failed to serialize request: {e}")))?;
+            .map_err(|e| Error::internal(format!("Failed to serialize request: {e}")))?;
 
         let message = TransportMessage::new(
             turbomcp_protocol::MessageId::from(format!("req-{id}")),
@@ -215,12 +215,12 @@ impl<T: Transport + 'static> ProtocolClient<T> {
 
         // Handle JSON-RPC errors
         if let Some(error) = response.error() {
-            return Err(Error::rpc(error.code, &error.message));
+            return Err(Error::from_rpc_code(error.code, &error.message));
         }
 
         // Deserialize result
         serde_json::from_value(response.result().unwrap_or_default().clone())
-            .map_err(|e| Error::protocol(format!("Failed to deserialize response: {e}")))
+            .map_err(|e| Error::internal(format!("Failed to deserialize response: {e}")))
     }
 
     /// Send JSON-RPC notification (no response expected)
@@ -236,7 +236,7 @@ impl<T: Transport + 'static> ProtocolClient<T> {
         });
 
         let payload = serde_json::to_vec(&request)
-            .map_err(|e| Error::protocol(format!("Failed to serialize notification: {e}")))?;
+            .map_err(|e| Error::internal(format!("Failed to serialize notification: {e}")))?;
 
         let message = TransportMessage::new(
             turbomcp_protocol::MessageId::from("notification"),

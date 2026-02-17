@@ -1,8 +1,9 @@
 //! Core transport traits.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use futures::{Sink, Stream};
 
 use crate::error::{TransportError, TransportResult};
@@ -14,7 +15,6 @@ use crate::types::{TransportCapabilities, TransportConfig, TransportState, Trans
 ///
 /// This trait defines the essential, asynchronous operations for a message-based
 /// communication channel, such as connecting, disconnecting, sending, and receiving.
-#[async_trait]
 pub trait Transport: Send + Sync + std::fmt::Debug {
     /// Returns the type of this transport.
     fn transport_type(&self) -> TransportType;
@@ -23,26 +23,31 @@ pub trait Transport: Send + Sync + std::fmt::Debug {
     fn capabilities(&self) -> &TransportCapabilities;
 
     /// Returns the current state of the transport.
-    async fn state(&self) -> TransportState;
+    fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>>;
 
     /// Establishes a connection to the remote endpoint.
-    async fn connect(&self) -> TransportResult<()>;
+    fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>>;
 
     /// Closes the connection to the remote endpoint.
-    async fn disconnect(&self) -> TransportResult<()>;
+    fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>>;
 
     /// Sends a single message over the transport.
-    async fn send(&self, message: TransportMessage) -> TransportResult<()>;
+    fn send(
+        &self,
+        message: TransportMessage,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>>;
 
     /// Receives a single message from the transport in a non-blocking way.
-    async fn receive(&self) -> TransportResult<Option<TransportMessage>>;
+    fn receive(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>>;
 
     /// Returns a snapshot of the transport's current performance metrics.
-    async fn metrics(&self) -> TransportMetrics;
+    fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>>;
 
     /// Returns `true` if the transport is currently in the `Connected` state.
-    async fn is_connected(&self) -> bool {
-        matches!(self.state().await, TransportState::Connected)
+    fn is_connected(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+        Box::pin(async move { matches!(self.state().await, TransportState::Connected) })
     }
 
     /// Returns the endpoint address or identifier for this transport, if applicable.
@@ -51,9 +56,14 @@ pub trait Transport: Send + Sync + std::fmt::Debug {
     }
 
     /// Applies a new configuration to the transport.
-    async fn configure(&self, config: TransportConfig) -> TransportResult<()> {
-        let _ = config;
-        Ok(())
+    fn configure(
+        &self,
+        config: TransportConfig,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            let _ = config;
+            Ok(())
+        })
     }
 }
 
@@ -61,24 +71,28 @@ pub trait Transport: Send + Sync + std::fmt::Debug {
 ///
 /// This extends the base `Transport` trait with the ability to send a request and
 /// await a correlated response.
-#[async_trait]
 pub trait BidirectionalTransport: Transport {
     /// Sends a request message and waits for a corresponding response.
-    async fn send_request(
+    fn send_request(
         &self,
         message: TransportMessage,
         timeout: Option<Duration>,
-    ) -> TransportResult<TransportMessage>;
+    ) -> Pin<Box<dyn Future<Output = TransportResult<TransportMessage>> + Send + '_>>;
 
     /// Starts tracking a request-response correlation.
-    async fn start_correlation(&self, correlation_id: String) -> TransportResult<()>;
+    fn start_correlation(
+        &self,
+        correlation_id: String,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>>;
 
     /// Stops tracking a request-response correlation.
-    async fn stop_correlation(&self, correlation_id: &str) -> TransportResult<()>;
+    fn stop_correlation(
+        &self,
+        correlation_id: &str,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>>;
 }
 
 /// A trait for transports that support streaming data.
-#[async_trait]
 pub trait StreamingTransport: Transport {
     /// The type of the stream used for sending messages.
     type SendStream: Stream<Item = TransportResult<TransportMessage>> + Send + Unpin;
@@ -87,10 +101,14 @@ pub trait StreamingTransport: Transport {
     type ReceiveStream: Sink<TransportMessage, Error = TransportError> + Send + Unpin;
 
     /// Returns a stream for sending messages.
-    async fn send_stream(&self) -> TransportResult<Self::SendStream>;
+    fn send_stream(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Self::SendStream>> + Send + '_>>;
 
     /// Returns a sink for receiving messages.
-    async fn receive_stream(&self) -> TransportResult<Self::ReceiveStream>;
+    fn receive_stream(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Self::ReceiveStream>> + Send + '_>>;
 }
 
 /// A factory for creating instances of a specific transport type.

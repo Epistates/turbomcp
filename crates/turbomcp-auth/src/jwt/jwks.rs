@@ -196,7 +196,7 @@ impl JwksClient {
         // Validate HTTPS in production
         if !self.jwks_uri.starts_with("https://") && !self.jwks_uri.starts_with("http://localhost")
         {
-            return Err(McpError::validation(
+            return Err(McpError::invalid_params(
                 "JWKS endpoint must use HTTPS (HTTP only allowed for localhost)".to_string(),
             ));
         }

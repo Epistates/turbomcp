@@ -3,11 +3,11 @@
 //! This module defines the core types used throughout the WebSocket transport
 //! implementation, including stream type aliases and pending request structures.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::{stream::SplitSink, stream::SplitStream};
@@ -98,7 +98,7 @@ pub struct WebSocketBidirectionalTransport {
     pub capabilities: TransportCapabilities,
 
     /// Configuration (mutex for interior mutability)
-    pub config: Arc<std::sync::Mutex<WebSocketBidirectionalConfig>>,
+    pub config: Arc<parking_lot::Mutex<WebSocketBidirectionalConfig>>,
 
     /// Metrics collector
     pub metrics: Arc<RwLock<TransportMetrics>>,
@@ -214,12 +214,7 @@ impl WebSocketBidirectionalTransport {
 
     /// Check if the transport is at elicitation capacity
     pub fn is_at_elicitation_capacity(&self) -> bool {
-        self.elicitations.len()
-            >= self
-                .config
-                .lock()
-                .expect("config mutex poisoned")
-                .max_concurrent_elicitations
+        self.elicitations.len() >= self.config.lock().max_concurrent_elicitations
     }
 
     /// Get session ID
@@ -239,19 +234,18 @@ impl WebSocketBidirectionalTransport {
 }
 
 /// Trait for types that can be used as WebSocket stream endpoints
-#[async_trait]
 pub trait WebSocketStreamHandler {
     /// Setup the WebSocket stream
-    async fn setup_stream(
+    fn setup_stream(
         &mut self,
         stream: WebSocketStream<MaybeTlsStream<TcpStream>>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    ) -> impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send;
 
     /// Handle incoming WebSocket message
-    async fn handle_message(
+    fn handle_message(
         &self,
         message: Message,
-    ) -> Result<Option<Message>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> impl Future<Output = Result<Option<Message>, Box<dyn std::error::Error + Send + Sync>>> + Send;
 }
 
 /// WebSocket message processing result

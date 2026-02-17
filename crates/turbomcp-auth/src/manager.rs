@@ -150,7 +150,10 @@ impl AuthManager {
             .get(provider_name)
             .ok_or_else(|| McpError::internal(format!("Provider '{provider_name}' not found")))?;
 
-        let mut auth_context = provider.authenticate(credentials).await?;
+        // Authenticate and record metrics
+        let result = provider.authenticate(credentials).await;
+        crate::auth_metrics::record_auth_attempt(provider_name, result.is_ok());
+        let mut auth_context = result?;
 
         // Apply default roles if configured
         if auth_context.roles.is_empty() {
@@ -206,14 +209,33 @@ impl AuthManager {
             let provider = providers.get(provider_name).ok_or_else(|| {
                 McpError::internal(format!("Provider '{provider_name}' not found"))
             })?;
-            provider.validate_token(token).await
+
+            // Measure validation duration
+            let start = std::time::Instant::now();
+            let result = provider.validate_token(token).await;
+            let duration = start.elapsed().as_secs_f64();
+
+            // Record metrics (cache_hit = false since we don't track cache at this level)
+            crate::auth_metrics::record_token_validation(provider_name, result.is_ok(), false);
+            crate::auth_metrics::record_token_validation_duration(duration);
+
+            result
         } else {
             // Try all providers
+            let start = std::time::Instant::now();
             for provider in providers.values() {
                 if let Ok(auth_context) = provider.validate_token(token).await {
+                    let duration = start.elapsed().as_secs_f64();
+                    let provider_name = provider.name();
+                    crate::auth_metrics::record_token_validation(provider_name, true, false);
+                    crate::auth_metrics::record_token_validation_duration(duration);
                     return Ok(auth_context);
                 }
             }
+
+            let duration = start.elapsed().as_secs_f64();
+            crate::auth_metrics::record_token_validation("unknown", false, false);
+            crate::auth_metrics::record_token_validation_duration(duration);
             Err(McpError::internal("Token validation failed".to_string()))
         }
     }
@@ -242,8 +264,8 @@ impl AuthManager {
 // PkceCodeChallenge::new_random_sha256() method for maximum security
 
 /// Global authentication manager
-static GLOBAL_AUTH_MANAGER: once_cell::sync::Lazy<tokio::sync::RwLock<Option<Arc<AuthManager>>>> =
-    once_cell::sync::Lazy::new(|| tokio::sync::RwLock::new(None));
+static GLOBAL_AUTH_MANAGER: std::sync::LazyLock<tokio::sync::RwLock<Option<Arc<AuthManager>>>> =
+    std::sync::LazyLock::new(|| tokio::sync::RwLock::new(None));
 
 /// Set the global authentication manager
 pub async fn set_global_auth_manager(manager: Arc<AuthManager>) {

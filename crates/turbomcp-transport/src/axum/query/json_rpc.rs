@@ -1,13 +1,7 @@
-//! JSON-RPC request and response types
+//! JSON-RPC request and response types for HTTP boundary parsing.
 //!
-//! This module re-exports the canonical JSON-RPC types from `turbomcp-protocol`
-//! for HTTP boundary parsing.
-//!
-//! **Note**: This module is deprecated. Use `crate::axum::types` instead.
-//! This file exists for backward compatibility with code that imports from
-//! `crate::axum::query::json_rpc`.
+//! Re-exports the canonical JSON-RPC types from `turbomcp-protocol`.
 
-// Re-export canonical types with backward-compatible names
 pub use turbomcp_protocol::jsonrpc::JsonRpcError;
 pub use turbomcp_protocol::jsonrpc::http::HttpJsonRpcRequest as JsonRpcRequest;
 pub use turbomcp_protocol::jsonrpc::http::HttpJsonRpcResponse as JsonRpcResponse;

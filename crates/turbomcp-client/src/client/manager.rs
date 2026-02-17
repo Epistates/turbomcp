@@ -120,15 +120,6 @@ impl ManagerConfig {
 struct ManagedConnection<T: Transport + 'static> {
     client: Client<T>,
     info: ConnectionInfo,
-    /// Number of reconnection attempts (reserved for future reconnection logic)
-    #[allow(dead_code)]
-    reconnect_attempts: usize,
-    /// Next reconnection delay (reserved for future reconnection logic)
-    #[allow(dead_code)]
-    next_reconnect_delay: Duration,
-    /// Transport factory for reconnection (reserved for future reconnection logic)
-    #[allow(dead_code)]
-    transport_factory: Option<Arc<dyn Fn() -> T + Send + Sync>>,
 }
 
 /// Server group configuration for failover support
@@ -272,7 +263,7 @@ impl<T: Transport + Send + 'static> SessionManager<T> {
 
         // Check connection limit
         if connections.len() >= self.config.max_connections {
-            return Err(Error::bad_request(format!(
+            return Err(Error::invalid_request(format!(
                 "Maximum connections limit ({}) reached",
                 self.config.max_connections
             )));
@@ -280,7 +271,7 @@ impl<T: Transport + Send + 'static> SessionManager<T> {
 
         // Check for duplicate ID
         if connections.contains_key(&id) {
-            return Err(Error::bad_request(format!(
+            return Err(Error::invalid_request(format!(
                 "Connection with ID '{}' already exists",
                 id
             )));
@@ -300,98 +291,7 @@ impl<T: Transport + Send + 'static> SessionManager<T> {
             failed_requests: 0,
         };
 
-        connections.insert(
-            id,
-            ManagedConnection {
-                client,
-                info,
-                reconnect_attempts: 0,
-                next_reconnect_delay: self.config.reconnect_delay,
-                transport_factory: None, // No automatic reconnection for manual adds
-            },
-        );
-
-        Ok(())
-    }
-
-    /// Add a server session with automatic reconnection support
-    ///
-    /// This method accepts a factory function that creates new transport instances,
-    /// enabling automatic reconnection if the session fails.
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - Unique identifier for this server
-    /// * `transport_factory` - Function that creates new transport instances
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use turbomcp_client::SessionManager;
-    /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # async fn example() -> turbomcp_protocol::Result<()> {
-    /// let mut manager = SessionManager::with_defaults();
-    ///
-    /// // Transport with reconnection factory
-    /// manager.add_server_with_reconnect("api", || {
-    ///     StdioTransport::new()
-    /// }).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn add_server_with_reconnect<F>(
-        &mut self,
-        id: impl Into<String>,
-        transport_factory: F,
-    ) -> Result<()>
-    where
-        F: Fn() -> T + Send + Sync + 'static,
-    {
-        let id = id.into();
-        let factory = Arc::new(transport_factory);
-
-        // Create initial transport and client
-        let transport = (factory)();
-        let client = Client::new(transport);
-        client.initialize().await?;
-
-        let info = ConnectionInfo {
-            id: id.clone(),
-            state: ConnectionState::Healthy,
-            established_at: Instant::now(),
-            last_health_check: Some(Instant::now()),
-            failed_health_checks: 0,
-            successful_requests: 0,
-            failed_requests: 0,
-        };
-
-        let mut connections = self.connections.write().await;
-
-        // Check limits
-        if connections.len() >= self.config.max_connections {
-            return Err(Error::bad_request(format!(
-                "Maximum sessions limit ({}) reached",
-                self.config.max_connections
-            )));
-        }
-
-        if connections.contains_key(&id) {
-            return Err(Error::bad_request(format!(
-                "Server with ID '{}' already exists",
-                id
-            )));
-        }
-
-        connections.insert(
-            id,
-            ManagedConnection {
-                client,
-                info,
-                reconnect_attempts: 0,
-                next_reconnect_delay: self.config.reconnect_delay,
-                transport_factory: Some(factory),
-            },
-        );
+        connections.insert(id, ManagedConnection { client, info });
 
         Ok(())
     }

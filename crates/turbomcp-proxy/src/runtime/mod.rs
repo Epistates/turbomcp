@@ -1232,7 +1232,7 @@ impl RuntimeProxy {
             // Unknown method
             method => {
                 error!("Unknown method: {}", method);
-                Err(McpError::protocol(format!("Method not found: {method}")))
+                Err(McpError::internal(format!("Method not found: {method}")))
             }
         }
     }

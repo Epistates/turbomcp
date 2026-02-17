@@ -189,11 +189,20 @@ pub struct OAuth2Config {
 }
 
 // Custom serialization for SecretString
+// Security: Never serialize secrets in plaintext - use redacted placeholder
 fn serialize_secret<S>(secret: &SecretString, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
-    serializer.serialize_str(secret.expose_secret())
+    // Check if secret is empty to provide accurate serialization
+    // This check is safe because it doesn't expose the secret value
+    let is_empty = secret.expose_secret().is_empty();
+
+    if is_empty {
+        serializer.serialize_str("")
+    } else {
+        serializer.serialize_str("[REDACTED]")
+    }
 }
 
 // Custom deserialization for SecretString
@@ -202,7 +211,7 @@ where
     D: serde::Deserializer<'de>,
 {
     let s: String = serde::Deserialize::deserialize(deserializer)?;
-    Ok(SecretString::new(s))
+    Ok(SecretString::new(s.into()))
 }
 
 /// Default auto resource indicators setting (enabled for MCP compliance)
@@ -361,7 +370,7 @@ impl McpResourceRegistry {
                 Ok(true)
             }
         } else {
-            Err(McpError::validation(format!(
+            Err(McpError::invalid_params(format!(
                 "Unknown resource: {}",
                 resource_uri
             )))
@@ -543,13 +552,13 @@ impl DynamicClientRegistration {
             .json(&registration_request)
             .send()
             .await
-            .map_err(|e| McpError::validation(format!("Registration request failed: {}", e)))?;
+            .map_err(|e| McpError::invalid_params(format!("Registration request failed: {}", e)))?;
 
         // Handle response
         if response.status().is_success() {
             let registration_response: ClientRegistrationResponse =
                 response.json().await.map_err(|e| {
-                    McpError::validation(format!("Invalid registration response: {}", e))
+                    McpError::invalid_params(format!("Invalid registration response: {}", e))
                 })?;
             Ok(registration_response)
         } else {
@@ -557,8 +566,8 @@ impl DynamicClientRegistration {
             let error_response: ClientRegistrationError = response
                 .json()
                 .await
-                .map_err(|e| McpError::validation(format!("Invalid error response: {}", e)))?;
-            Err(McpError::validation(format!(
+                .map_err(|e| McpError::invalid_params(format!("Invalid error response: {}", e)))?;
+            Err(McpError::invalid_params(format!(
                 "Client registration failed: {} - {}",
                 error_response.error as u32,
                 error_response.error_description.unwrap_or_default()

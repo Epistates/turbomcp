@@ -51,7 +51,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// ```
     pub async fn list_resources(&self) -> Result<Vec<Resource>> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         // Send resources/list request
@@ -100,11 +100,11 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// ```
     pub async fn read_resource(&self, uri: &str) -> Result<ReadResourceResult> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         if uri.is_empty() {
-            return Err(Error::bad_request("Resource URI cannot be empty"));
+            return Err(Error::invalid_request("Resource URI cannot be empty"));
         }
 
         // Send read_resource request
@@ -156,7 +156,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// ```
     pub async fn list_resource_templates(&self) -> Result<Vec<String>> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         // Send resources/templates request

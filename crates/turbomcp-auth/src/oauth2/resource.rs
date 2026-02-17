@@ -82,7 +82,7 @@ use url::Url;
 pub fn validate_resource_uri(uri: &str) -> McpResult<String> {
     // Parse URL
     let url = Url::parse(uri)
-        .map_err(|e| McpError::validation(format!("Invalid resource URI format: {e}")))?;
+        .map_err(|e| McpError::invalid_params(format!("Invalid resource URI format: {e}")))?;
 
     // Validate scheme (MCP requires https, but allow http for localhost development)
     match url.scheme() {
@@ -96,7 +96,7 @@ pub fn validate_resource_uri(uri: &str) -> McpResult<String> {
                     || host == "[::1]"; // IPv6 localhost
 
                 if !is_localhost {
-                    return Err(McpError::validation(
+                    return Err(McpError::invalid_params(
                         "Resource URI must use https scheme (http only allowed for localhost)"
                             .to_string(),
                     ));
@@ -104,20 +104,20 @@ pub fn validate_resource_uri(uri: &str) -> McpResult<String> {
             }
         }
         scheme => {
-            return Err(McpError::validation(format!(
+            return Err(McpError::invalid_params(format!(
                 "Resource URI must use http or https scheme, got: {scheme}"
             )));
         }
     }
 
     // Validate host is present
-    let host = url
-        .host_str()
-        .ok_or_else(|| McpError::validation("Resource URI must have a valid host".to_string()))?;
+    let host = url.host_str().ok_or_else(|| {
+        McpError::invalid_params("Resource URI must have a valid host".to_string())
+    })?;
 
     // Reject fragments (RFC 8707 requirement)
     if url.fragment().is_some() {
-        return Err(McpError::validation(
+        return Err(McpError::invalid_params(
             "Resource URI must not contain fragment (#)".to_string(),
         ));
     }

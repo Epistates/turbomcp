@@ -262,11 +262,7 @@ impl WebSocketBidirectionalTransport {
     /// This task now listens for shutdown signals and terminates gracefully.
     pub fn spawn_keep_alive_task(&self) -> tokio::task::JoinHandle<()> {
         let writer = self.writer.clone();
-        let interval = self
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .keep_alive_interval;
+        let interval = self.config.lock().keep_alive_interval;
         let state = self.state.clone();
         let session_id = self.session_id.clone();
 
@@ -418,7 +414,7 @@ impl WebSocketBidirectionalTransport {
     /// terminates gracefully, preventing unwanted reconnection attempts.
     pub fn spawn_reconnection_task(&self) -> tokio::task::JoinHandle<()> {
         let state = self.state.clone();
-        let config = self.config.lock().expect("config mutex poisoned").clone();
+        let config = self.config.lock().clone();
         let session_id = self.session_id.clone();
         let reconnect_allowed = self.reconnect_allowed.clone();
 
@@ -714,13 +710,7 @@ impl WebSocketBidirectionalTransport {
         handles.push(metrics_handle);
 
         // Reconnection task (if enabled)
-        if self
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .reconnect
-            .enabled
-        {
+        if self.config.lock().reconnect.enabled {
             let reconnect_handle = self.spawn_reconnection_task();
             handles.push(reconnect_handle);
         }

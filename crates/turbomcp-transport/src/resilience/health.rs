@@ -6,7 +6,6 @@
 //! - Health status tracking with detailed information
 //! - Integration with transport implementations
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
@@ -204,10 +203,10 @@ impl HealthChecker {
 }
 
 /// Trait for health checkable components
-#[async_trait]
 pub trait HealthCheckable {
     /// Perform a health check
-    async fn health_check(&self) -> TransportResult<HealthInfo>;
+    fn health_check(&self)
+    -> impl std::future::Future<Output = TransportResult<HealthInfo>> + Send;
 
     /// Get current health status
     fn health_status(&self) -> HealthStatus;
@@ -220,6 +219,8 @@ mod tests {
         TransportCapabilities, TransportMessage, TransportMetrics, TransportState, TransportType,
     };
     use bytes::Bytes;
+    use std::future::Future;
+    use std::pin::Pin;
     use turbomcp_protocol::MessageId;
     use uuid::Uuid;
 
@@ -228,37 +229,50 @@ mod tests {
         connected: std::sync::Arc<std::sync::atomic::AtomicBool>,
     }
 
-    #[async_trait]
     impl Transport for MockTransport {
-        async fn connect(&self) -> TransportResult<()> {
-            self.connected
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            Ok(())
+        fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async move {
+                self.connected
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                Ok(())
+            })
         }
 
-        async fn disconnect(&self) -> TransportResult<()> {
-            self.connected
-                .store(false, std::sync::atomic::Ordering::Relaxed);
-            Ok(())
+        fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async move {
+                self.connected
+                    .store(false, std::sync::atomic::Ordering::Relaxed);
+                Ok(())
+            })
         }
 
-        async fn send(&self, _message: TransportMessage) -> TransportResult<()> {
-            Ok(())
+        fn send(
+            &self,
+            _message: TransportMessage,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async move { Ok(()) })
         }
 
-        async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-            Ok(Some(TransportMessage::new(
-                MessageId::from(Uuid::new_v4()),
-                Bytes::from("test"),
-            )))
+        fn receive(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>>
+        {
+            Box::pin(async move {
+                Ok(Some(TransportMessage::new(
+                    MessageId::from(Uuid::new_v4()),
+                    Bytes::from("test"),
+                )))
+            })
         }
 
-        async fn state(&self) -> TransportState {
-            if self.connected.load(std::sync::atomic::Ordering::Relaxed) {
-                TransportState::Connected
-            } else {
-                TransportState::Disconnected
-            }
+        fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+            Box::pin(async move {
+                if self.connected.load(std::sync::atomic::Ordering::Relaxed) {
+                    TransportState::Connected
+                } else {
+                    TransportState::Disconnected
+                }
+            })
         }
 
         fn transport_type(&self) -> TransportType {
@@ -271,16 +285,19 @@ mod tests {
             &CAPS
         }
 
-        async fn metrics(&self) -> TransportMetrics {
-            TransportMetrics::default()
+        fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+            Box::pin(async move { TransportMetrics::default() })
         }
 
         fn endpoint(&self) -> Option<String> {
             Some("mock://test".to_string())
         }
 
-        async fn configure(&self, _config: crate::core::TransportConfig) -> TransportResult<()> {
-            Ok(())
+        fn configure(
+            &self,
+            _config: crate::core::TransportConfig,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async move { Ok(()) })
         }
     }
 

@@ -7,6 +7,9 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use turbomcp_protocol::MessageId;
 
+/// Maximum number of custom headers per message (DoS protection)
+const MAX_CUSTOM_HEADERS: usize = 64;
+
 /// A wrapper for a message being sent or received over a transport.
 #[derive(Debug, Clone)]
 pub struct TransportMessage {
@@ -90,6 +93,14 @@ pub struct TransportMessageMetadata {
 }
 
 impl TransportMessageMetadata {
+    /// Validate metadata constraints
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.headers.len() > MAX_CUSTOM_HEADERS {
+            return Err("Too many custom headers");
+        }
+        Ok(())
+    }
+
     /// Creates a new `TransportMessageMetadata` with a specified content type.
     pub fn with_content_type(content_type: impl Into<String>) -> Self {
         Self {
@@ -159,5 +170,24 @@ mod tests {
         assert_eq!(metadata.headers.get("custom"), Some(&"value".to_string()));
         assert_eq!(metadata.priority, Some(5));
         assert_eq!(metadata.ttl, Some(30000));
+    }
+
+    #[test]
+    fn test_metadata_header_limit() {
+        let mut metadata = TransportMessageMetadata::default();
+
+        // Add headers up to the limit
+        for i in 0..MAX_CUSTOM_HEADERS {
+            metadata
+                .headers
+                .insert(format!("key{}", i), format!("value{}", i));
+        }
+        assert!(metadata.validate().is_ok());
+
+        // Exceed the limit
+        metadata
+            .headers
+            .insert("overflow".to_string(), "value".to_string());
+        assert!(metadata.validate().is_err());
     }
 }

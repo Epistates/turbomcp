@@ -15,61 +15,64 @@
 //!
 //! ```rust,no_run
 //! use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse, ElicitationAction, HandlerError};
-//! use async_trait::async_trait;
+//! use std::future::Future;
+//! use std::pin::Pin;
 //!
 //! // Implement elicitation handler
 //! #[derive(Debug)]
 //! struct MyElicitationHandler;
 //!
-//! #[async_trait]
 //! impl ElicitationHandler for MyElicitationHandler {
-//!     async fn handle_elicitation(
+//!     fn handle_elicitation(
 //!         &self,
 //!         request: ElicitationRequest,
-//!     ) -> Result<ElicitationResponse, HandlerError> {
-//!         // Display the prompt to the user
-//!         eprintln!("\n{}", request.message());
-//!         eprintln!("---");
+//!     ) -> Pin<Box<dyn Future<Output = Result<ElicitationResponse, HandlerError>> + Send + '_>> {
+//!         Box::pin(async move {
+//!             // Display the prompt to the user
+//!             eprintln!("\n{}", request.message());
+//!             eprintln!("---");
 //!
-//!         // Access the typed schema (not serde_json::Value!)
-//!         let mut content = std::collections::HashMap::new();
-//!         if let Some(schema) = request.schema() {
-//!             for (field_name, field_def) in &schema.properties {
-//!                 eprint!("{}: ", field_name);
+//!             // Access the typed schema (not serde_json::Value!)
+//!             let mut content = std::collections::HashMap::new();
+//!             if let Some(schema) = request.schema() {
+//!                 for (field_name, field_def) in &schema.properties {
+//!                     eprint!("{}: ", field_name);
 //!
-//!                 let mut input = String::new();
-//!                 std::io::stdin().read_line(&mut input)
-//!                     .map_err(|e| HandlerError::Generic {
-//!                         message: e.to_string()
-//!                     })?;
+//!                     let mut input = String::new();
+//!                     std::io::stdin().read_line(&mut input)
+//!                         .map_err(|e| HandlerError::Generic {
+//!                             message: e.to_string()
+//!                         })?;
 //!
-//!                 let input = input.trim();
+//!                     let input = input.trim();
 //!
-//!                 // Parse input based on field type (from typed schema!)
-//!                 use turbomcp_protocol::types::PrimitiveSchemaDefinition;
-//!                 let value: serde_json::Value = match field_def {
-//!                     PrimitiveSchemaDefinition::Boolean { .. } => {
-//!                         serde_json::json!(input == "true" || input == "yes" || input == "1")
-//!                     }
-//!                     PrimitiveSchemaDefinition::Number { .. } | PrimitiveSchemaDefinition::Integer { .. } => {
-//!                         input.parse::<f64>()
-//!                             .map(|n| serde_json::json!(n))
-//!                             .unwrap_or_else(|_| serde_json::json!(input))
-//!                     }
-//!                     _ => serde_json::json!(input),
-//!                 };
+//!                     // Parse input based on field type (from typed schema!)
+//!                     use turbomcp_protocol::types::PrimitiveSchemaDefinition;
+//!                     let value: serde_json::Value = match field_def {
+//!                         PrimitiveSchemaDefinition::Boolean { .. } => {
+//!                             serde_json::json!(input == "true" || input == "yes" || input == "1")
+//!                         }
+//!                         PrimitiveSchemaDefinition::Number { .. } | PrimitiveSchemaDefinition::Integer { .. } => {
+//!                             input.parse::<f64>()
+//!                                 .map(|n| serde_json::json!(n))
+//!                                 .unwrap_or_else(|_| serde_json::json!(input))
+//!                         }
+//!                         _ => serde_json::json!(input),
+//!                     };
 //!
-//!                 content.insert(field_name.clone(), value);
+//!                     content.insert(field_name.clone(), value);
+//!                 }
 //!             }
-//!         }
 //!
-//!         Ok(ElicitationResponse::accept(content))
+//!             Ok(ElicitationResponse::accept(content))
+//!         })
 //!     }
 //! }
 //! ```
 
-use async_trait::async_trait;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -439,33 +442,34 @@ impl ElicitationResponse {
 ///
 /// ```rust,no_run
 /// use turbomcp_client::handlers::{ElicitationAction, ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerResult};
-/// use async_trait::async_trait;
 /// use serde_json::json;
+/// use std::future::Future;
+/// use std::pin::Pin;
 ///
 /// #[derive(Debug)]
 /// struct CLIElicitationHandler;
 ///
-/// #[async_trait]
 /// impl ElicitationHandler for CLIElicitationHandler {
-///     async fn handle_elicitation(
+///     fn handle_elicitation(
 ///         &self,
 ///         request: ElicitationRequest,
-///     ) -> HandlerResult<ElicitationResponse> {
-///         println!("Server request: {}", request.message());
+///     ) -> Pin<Box<dyn Future<Output = HandlerResult<ElicitationResponse>> + Send + '_>> {
+///         Box::pin(async move {
+///             println!("Server request: {}", request.message());
 ///
-///         // In a real implementation, you would:
-///         // 1. Inspect the typed schema to understand what input is needed
-///         // 2. Present an appropriate UI (CLI prompts, GUI forms, etc.)
-///         // 3. Validate the user's input against the schema
-///         // 4. Return the structured response
+///             // In a real implementation, you would:
+///             // 1. Inspect the typed schema to understand what input is needed
+///             // 2. Present an appropriate UI (CLI prompts, GUI forms, etc.)
+///             // 3. Validate the user's input against the schema
+///             // 4. Return the structured response
 ///
-///         let mut content = std::collections::HashMap::new();
-///         content.insert("user_choice".to_string(), json!("example_value"));
-///         Ok(ElicitationResponse::accept(content))
+///             let mut content = std::collections::HashMap::new();
+///             content.insert("user_choice".to_string(), json!("example_value"));
+///             Ok(ElicitationResponse::accept(content))
+///         })
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait ElicitationHandler: Send + Sync + std::fmt::Debug {
     /// Handle an elicitation request from the server
     ///
@@ -479,10 +483,10 @@ pub trait ElicitationHandler: Send + Sync + std::fmt::Debug {
     /// # Returns
     ///
     /// Returns the user's response or an error if the operation failed.
-    async fn handle_elicitation(
+    fn handle_elicitation(
         &self,
         request: ElicitationRequest,
-    ) -> HandlerResult<ElicitationResponse>;
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<ElicitationResponse>> + Send + '_>>;
 }
 
 // ============================================================================
@@ -505,31 +509,32 @@ pub trait ElicitationHandler: Send + Sync + std::fmt::Debug {
 /// ```rust,no_run
 /// use turbomcp_client::handlers::{LogHandler, LoggingNotification, HandlerResult};
 /// use turbomcp_protocol::types::LogLevel;
-/// use async_trait::async_trait;
+/// use std::future::Future;
+/// use std::pin::Pin;
 ///
 /// #[derive(Debug)]
 /// struct TraceLogHandler;
 ///
-/// #[async_trait]
 /// impl LogHandler for TraceLogHandler {
-///     async fn handle_log(&self, log: LoggingNotification) -> HandlerResult<()> {
-///         // MCP spec: data can be any JSON type (string, object, etc.)
-///         let message = log.data.to_string();
-///         match log.level {
-///             LogLevel::Error => tracing::error!("Server: {}", message),
-///             LogLevel::Warning => tracing::warn!("Server: {}", message),
-///             LogLevel::Info => tracing::info!("Server: {}", message),
-///             LogLevel::Debug => tracing::debug!("Server: {}", message),
-///             LogLevel::Notice => tracing::info!("Server: {}", message),
-///             LogLevel::Critical => tracing::error!("Server CRITICAL: {}", message),
-///             LogLevel::Alert => tracing::error!("Server ALERT: {}", message),
-///             LogLevel::Emergency => tracing::error!("Server EMERGENCY: {}", message),
-///         }
-///         Ok(())
+///     fn handle_log(&self, log: LoggingNotification) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+///         Box::pin(async move {
+///             // MCP spec: data can be any JSON type (string, object, etc.)
+///             let message = log.data.to_string();
+///             match log.level {
+///                 LogLevel::Error => tracing::error!("Server: {}", message),
+///                 LogLevel::Warning => tracing::warn!("Server: {}", message),
+///                 LogLevel::Info => tracing::info!("Server: {}", message),
+///                 LogLevel::Debug => tracing::debug!("Server: {}", message),
+///                 LogLevel::Notice => tracing::info!("Server: {}", message),
+///                 LogLevel::Critical => tracing::error!("Server CRITICAL: {}", message),
+///                 LogLevel::Alert => tracing::error!("Server ALERT: {}", message),
+///                 LogLevel::Emergency => tracing::error!("Server EMERGENCY: {}", message),
+///             }
+///             Ok(())
+///         })
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait LogHandler: Send + Sync + std::fmt::Debug {
     /// Handle a log message from the server
     ///
@@ -543,7 +548,10 @@ pub trait LogHandler: Send + Sync + std::fmt::Debug {
     /// # Returns
     ///
     /// Returns `Ok(())` if the log message was processed successfully.
-    async fn handle_log(&self, log: LoggingNotification) -> HandlerResult<()>;
+    fn handle_log(
+        &self,
+        log: LoggingNotification,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>>;
 }
 
 // ============================================================================
@@ -566,32 +574,33 @@ pub trait LogHandler: Send + Sync + std::fmt::Debug {
 ///
 /// ```rust,no_run
 /// use turbomcp_client::handlers::{ResourceUpdateHandler, ResourceUpdatedNotification, HandlerResult};
-/// use async_trait::async_trait;
+/// use std::future::Future;
+/// use std::pin::Pin;
 ///
 /// #[derive(Debug)]
 /// struct CacheInvalidationHandler;
 ///
-/// #[async_trait]
 /// impl ResourceUpdateHandler for CacheInvalidationHandler {
-///     async fn handle_resource_update(
+///     fn handle_resource_update(
 ///         &self,
 ///         notification: ResourceUpdatedNotification,
-///     ) -> HandlerResult<()> {
-///         // Per MCP spec: notification only contains URI
-///         // Client must call resources/read to get updated content
-///         println!("Resource {} was updated", notification.uri);
+///     ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+///         Box::pin(async move {
+///             // Per MCP spec: notification only contains URI
+///             // Client must call resources/read to get updated content
+///             println!("Resource {} was updated", notification.uri);
 ///
-///         // In a real implementation, you might:
-///         // - Invalidate cached data for this resource
-///         // - Refresh UI components that display this resource
-///         // - Log the change for audit purposes
-///         // - Trigger dependent computations
-///         
-///         Ok(())
+///             // In a real implementation, you might:
+///             // - Invalidate cached data for this resource
+///             // - Refresh UI components that display this resource
+///             // - Log the change for audit purposes
+///             // - Trigger dependent computations
+///
+///             Ok(())
+///         })
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait ResourceUpdateHandler: Send + Sync + std::fmt::Debug {
     /// Handle a resource update notification
     ///
@@ -604,10 +613,10 @@ pub trait ResourceUpdateHandler: Send + Sync + std::fmt::Debug {
     /// # Returns
     ///
     /// Returns `Ok(())` if the notification was processed successfully.
-    async fn handle_resource_update(
+    fn handle_resource_update(
         &self,
         notification: ResourceUpdatedNotification,
-    ) -> HandlerResult<()>;
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>>;
 }
 
 // ============================================================================
@@ -626,27 +635,28 @@ pub trait ResourceUpdateHandler: Send + Sync + std::fmt::Debug {
 /// ```rust,no_run
 /// use turbomcp_client::handlers::{RootsHandler, HandlerResult};
 /// use turbomcp_protocol::types::Root;
-/// use async_trait::async_trait;
+/// use std::future::Future;
+/// use std::pin::Pin;
 ///
 /// #[derive(Debug)]
 /// struct MyRootsHandler {
 ///     project_dirs: Vec<String>,
 /// }
 ///
-/// #[async_trait]
 /// impl RootsHandler for MyRootsHandler {
-///     async fn handle_roots_request(&self) -> HandlerResult<Vec<Root>> {
-///         Ok(self.project_dirs
-///             .iter()
-///             .map(|dir| Root {
-///                 uri: format!("file://{}", dir).into(),
-///                 name: Some(dir.split('/').last().unwrap_or("").to_string()),
-///             })
-///             .collect())
+///     fn handle_roots_request(&self) -> Pin<Box<dyn Future<Output = HandlerResult<Vec<Root>>> + Send + '_>> {
+///         Box::pin(async move {
+///             Ok(self.project_dirs
+///                 .iter()
+///                 .map(|dir| Root {
+///                     uri: format!("file://{}", dir).into(),
+///                     name: Some(dir.split('/').last().unwrap_or("").to_string()),
+///                 })
+///                 .collect())
+///         })
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait RootsHandler: Send + Sync + std::fmt::Debug {
     /// Handle a roots/list request from the server
     ///
@@ -663,7 +673,9 @@ pub trait RootsHandler: Send + Sync + std::fmt::Debug {
     ///
     /// Per MCP specification, URIs must start with `file://` for now. This restriction
     /// may be relaxed in future protocol versions.
-    async fn handle_roots_request(&self) -> HandlerResult<Vec<turbomcp_protocol::types::Root>>;
+    fn handle_roots_request(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<Vec<turbomcp_protocol::types::Root>>> + Send + '_>>;
 }
 
 // ============================================================================
@@ -683,37 +695,38 @@ pub trait RootsHandler: Send + Sync + std::fmt::Debug {
 ///
 /// From the MCP spec:
 /// - "The request SHOULD still be in-flight, but due to communication latency,
-///    it is always possible that this notification MAY arrive after the request
-///    has already finished."
+///   it is always possible that this notification MAY arrive after the request
+///   has already finished."
 /// - "A client MUST NOT attempt to cancel its `initialize` request."
 ///
 /// # Examples
 ///
 /// ```rust,no_run
 /// use turbomcp_client::handlers::{CancellationHandler, CancelledNotification, HandlerResult};
-/// use async_trait::async_trait;
+/// use std::future::Future;
+/// use std::pin::Pin;
 ///
 /// #[derive(Debug)]
 /// struct MyCancellationHandler;
 ///
-/// #[async_trait]
 /// impl CancellationHandler for MyCancellationHandler {
-///     async fn handle_cancellation(&self, notification: CancelledNotification) -> HandlerResult<()> {
-///         println!("Request {} was cancelled", notification.request_id);
-///         if let Some(reason) = &notification.reason {
-///             println!("Reason: {}", reason);
-///         }
+///     fn handle_cancellation(&self, notification: CancelledNotification) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+///         Box::pin(async move {
+///             println!("Request {} was cancelled", notification.request_id);
+///             if let Some(reason) = &notification.reason {
+///                 println!("Reason: {}", reason);
+///             }
 ///
-///         // In a real implementation:
-///         // - Look up the in-flight request by notification.request_id
-///         // - Signal cancellation (e.g., via CancellationToken)
-///         // - Clean up any resources
+///             // In a real implementation:
+///             // - Look up the in-flight request by notification.request_id
+///             // - Signal cancellation (e.g., via CancellationToken)
+///             // - Clean up any resources
 ///
-///         Ok(())
+///             Ok(())
+///         })
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait CancellationHandler: Send + Sync + std::fmt::Debug {
     /// Handle a cancellation notification
     ///
@@ -727,7 +740,10 @@ pub trait CancellationHandler: Send + Sync + std::fmt::Debug {
     /// # Returns
     ///
     /// Returns `Ok(())` if the cancellation was processed successfully.
-    async fn handle_cancellation(&self, notification: CancelledNotification) -> HandlerResult<()>;
+    fn handle_cancellation(
+        &self,
+        notification: CancelledNotification,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>>;
 }
 
 // ============================================================================
@@ -747,21 +763,22 @@ pub trait CancellationHandler: Send + Sync + std::fmt::Debug {
 ///
 /// ```rust,no_run
 /// use turbomcp_client::handlers::{ResourceListChangedHandler, HandlerResult};
-/// use async_trait::async_trait;
+/// use std::future::Future;
+/// use std::pin::Pin;
 ///
 /// #[derive(Debug)]
 /// struct MyResourceListHandler;
 ///
-/// #[async_trait]
 /// impl ResourceListChangedHandler for MyResourceListHandler {
-///     async fn handle_resource_list_changed(&self) -> HandlerResult<()> {
-///         println!("Server's resource list changed - refreshing...");
-///         // In a real implementation, re-query: client.list_resources().await
-///         Ok(())
+///     fn handle_resource_list_changed(&self) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+///         Box::pin(async move {
+///             println!("Server's resource list changed - refreshing...");
+///             // In a real implementation, re-query: client.list_resources().await
+///             Ok(())
+///         })
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait ResourceListChangedHandler: Send + Sync + std::fmt::Debug {
     /// Handle a resource list changed notification
     ///
@@ -770,7 +787,9 @@ pub trait ResourceListChangedHandler: Send + Sync + std::fmt::Debug {
     /// # Returns
     ///
     /// Returns `Ok(())` if the notification was processed successfully.
-    async fn handle_resource_list_changed(&self) -> HandlerResult<()>;
+    fn handle_resource_list_changed(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>>;
 }
 
 /// Handler for prompt list changes
@@ -783,20 +802,21 @@ pub trait ResourceListChangedHandler: Send + Sync + std::fmt::Debug {
 ///
 /// ```rust,no_run
 /// use turbomcp_client::handlers::{PromptListChangedHandler, HandlerResult};
-/// use async_trait::async_trait;
+/// use std::future::Future;
+/// use std::pin::Pin;
 ///
 /// #[derive(Debug)]
 /// struct MyPromptListHandler;
 ///
-/// #[async_trait]
 /// impl PromptListChangedHandler for MyPromptListHandler {
-///     async fn handle_prompt_list_changed(&self) -> HandlerResult<()> {
-///         println!("Server's prompt list changed - refreshing...");
-///         Ok(())
+///     fn handle_prompt_list_changed(&self) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+///         Box::pin(async move {
+///             println!("Server's prompt list changed - refreshing...");
+///             Ok(())
+///         })
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait PromptListChangedHandler: Send + Sync + std::fmt::Debug {
     /// Handle a prompt list changed notification
     ///
@@ -805,7 +825,9 @@ pub trait PromptListChangedHandler: Send + Sync + std::fmt::Debug {
     /// # Returns
     ///
     /// Returns `Ok(())` if the notification was processed successfully.
-    async fn handle_prompt_list_changed(&self) -> HandlerResult<()>;
+    fn handle_prompt_list_changed(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>>;
 }
 
 /// Handler for tool list changes
@@ -818,20 +840,21 @@ pub trait PromptListChangedHandler: Send + Sync + std::fmt::Debug {
 ///
 /// ```rust,no_run
 /// use turbomcp_client::handlers::{ToolListChangedHandler, HandlerResult};
-/// use async_trait::async_trait;
+/// use std::future::Future;
+/// use std::pin::Pin;
 ///
 /// #[derive(Debug)]
 /// struct MyToolListHandler;
 ///
-/// #[async_trait]
 /// impl ToolListChangedHandler for MyToolListHandler {
-///     async fn handle_tool_list_changed(&self) -> HandlerResult<()> {
-///         println!("Server's tool list changed - refreshing...");
-///         Ok(())
+///     fn handle_tool_list_changed(&self) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+///         Box::pin(async move {
+///             println!("Server's tool list changed - refreshing...");
+///             Ok(())
+///         })
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait ToolListChangedHandler: Send + Sync + std::fmt::Debug {
     /// Handle a tool list changed notification
     ///
@@ -840,7 +863,9 @@ pub trait ToolListChangedHandler: Send + Sync + std::fmt::Debug {
     /// # Returns
     ///
     /// Returns `Ok(())` if the notification was processed successfully.
-    async fn handle_tool_list_changed(&self) -> HandlerResult<()>;
+    fn handle_tool_list_changed(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>>;
 }
 
 // ============================================================================
@@ -1068,14 +1093,15 @@ impl HandlerRegistry {
 #[derive(Debug)]
 pub struct DeclineElicitationHandler;
 
-#[async_trait]
 impl ElicitationHandler for DeclineElicitationHandler {
-    async fn handle_elicitation(
+    fn handle_elicitation(
         &self,
         request: ElicitationRequest,
-    ) -> HandlerResult<ElicitationResponse> {
-        warn!("Declining elicitation request: {}", request.message());
-        Ok(ElicitationResponse::decline())
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<ElicitationResponse>> + Send + '_>> {
+        Box::pin(async move {
+            warn!("Declining elicitation request: {}", request.message());
+            Ok(ElicitationResponse::decline())
+        })
     }
 }
 
@@ -1083,25 +1109,29 @@ impl ElicitationHandler for DeclineElicitationHandler {
 #[derive(Debug)]
 pub struct TracingLogHandler;
 
-#[async_trait]
 impl LogHandler for TracingLogHandler {
-    async fn handle_log(&self, log: LoggingNotification) -> HandlerResult<()> {
-        let logger_prefix = log.logger.as_deref().unwrap_or("server");
+    fn handle_log(
+        &self,
+        log: LoggingNotification,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            let logger_prefix = log.logger.as_deref().unwrap_or("server");
 
-        // Per MCP spec: data can be any JSON type (string, object, etc.)
-        let message = log.data.to_string();
-        match log.level {
-            LogLevel::Error => error!("[{}] {}", logger_prefix, message),
-            LogLevel::Warning => warn!("[{}] {}", logger_prefix, message),
-            LogLevel::Info => info!("[{}] {}", logger_prefix, message),
-            LogLevel::Debug => debug!("[{}] {}", logger_prefix, message),
-            LogLevel::Notice => info!("[{}] [NOTICE] {}", logger_prefix, message),
-            LogLevel::Critical => error!("[{}] [CRITICAL] {}", logger_prefix, message),
-            LogLevel::Alert => error!("[{}] [ALERT] {}", logger_prefix, message),
-            LogLevel::Emergency => error!("[{}] [EMERGENCY] {}", logger_prefix, message),
-        }
+            // Per MCP spec: data can be any JSON type (string, object, etc.)
+            let message = log.data.to_string();
+            match log.level {
+                LogLevel::Error => error!("[{}] {}", logger_prefix, message),
+                LogLevel::Warning => warn!("[{}] {}", logger_prefix, message),
+                LogLevel::Info => info!("[{}] {}", logger_prefix, message),
+                LogLevel::Debug => debug!("[{}] {}", logger_prefix, message),
+                LogLevel::Notice => info!("[{}] [NOTICE] {}", logger_prefix, message),
+                LogLevel::Critical => error!("[{}] [CRITICAL] {}", logger_prefix, message),
+                LogLevel::Alert => error!("[{}] [ALERT] {}", logger_prefix, message),
+                LogLevel::Emergency => error!("[{}] [EMERGENCY] {}", logger_prefix, message),
+            }
 
-        Ok(())
+            Ok(())
+        })
     }
 }
 
@@ -1109,15 +1139,16 @@ impl LogHandler for TracingLogHandler {
 #[derive(Debug)]
 pub struct LoggingResourceUpdateHandler;
 
-#[async_trait]
 impl ResourceUpdateHandler for LoggingResourceUpdateHandler {
-    async fn handle_resource_update(
+    fn handle_resource_update(
         &self,
         notification: ResourceUpdatedNotification,
-    ) -> HandlerResult<()> {
-        // Per MCP spec: notification only contains URI
-        info!("Resource {} was updated", notification.uri);
-        Ok(())
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            // Per MCP spec: notification only contains URI
+            info!("Resource {} was updated", notification.uri);
+            Ok(())
+        })
     }
 }
 
@@ -1125,18 +1156,22 @@ impl ResourceUpdateHandler for LoggingResourceUpdateHandler {
 #[derive(Debug)]
 pub struct LoggingCancellationHandler;
 
-#[async_trait]
 impl CancellationHandler for LoggingCancellationHandler {
-    async fn handle_cancellation(&self, notification: CancelledNotification) -> HandlerResult<()> {
-        if let Some(reason) = &notification.reason {
-            info!(
-                "Request {} was cancelled: {}",
-                notification.request_id, reason
-            );
-        } else {
-            info!("Request {} was cancelled", notification.request_id);
-        }
-        Ok(())
+    fn handle_cancellation(
+        &self,
+        notification: CancelledNotification,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            if let Some(reason) = &notification.reason {
+                info!(
+                    "Request {} was cancelled: {}",
+                    notification.request_id, reason
+                );
+            } else {
+                info!("Request {} was cancelled", notification.request_id);
+            }
+            Ok(())
+        })
     }
 }
 
@@ -1144,11 +1179,14 @@ impl CancellationHandler for LoggingCancellationHandler {
 #[derive(Debug)]
 pub struct LoggingResourceListChangedHandler;
 
-#[async_trait]
 impl ResourceListChangedHandler for LoggingResourceListChangedHandler {
-    async fn handle_resource_list_changed(&self) -> HandlerResult<()> {
-        info!("Server's resource list changed");
-        Ok(())
+    fn handle_resource_list_changed(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            info!("Server's resource list changed");
+            Ok(())
+        })
     }
 }
 
@@ -1156,11 +1194,14 @@ impl ResourceListChangedHandler for LoggingResourceListChangedHandler {
 #[derive(Debug)]
 pub struct LoggingPromptListChangedHandler;
 
-#[async_trait]
 impl PromptListChangedHandler for LoggingPromptListChangedHandler {
-    async fn handle_prompt_list_changed(&self) -> HandlerResult<()> {
-        info!("Server's prompt list changed");
-        Ok(())
+    fn handle_prompt_list_changed(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            info!("Server's prompt list changed");
+            Ok(())
+        })
     }
 }
 
@@ -1168,11 +1209,14 @@ impl PromptListChangedHandler for LoggingPromptListChangedHandler {
 #[derive(Debug)]
 pub struct LoggingToolListChangedHandler;
 
-#[async_trait]
 impl ToolListChangedHandler for LoggingToolListChangedHandler {
-    async fn handle_tool_list_changed(&self) -> HandlerResult<()> {
-        info!("Server's tool list changed");
-        Ok(())
+    fn handle_tool_list_changed(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            info!("Server's tool list changed");
+            Ok(())
+        })
     }
 }
 
@@ -1186,15 +1230,16 @@ mod tests {
     #[derive(Debug)]
     struct TestElicitationHandler;
 
-    #[async_trait]
     impl ElicitationHandler for TestElicitationHandler {
-        async fn handle_elicitation(
+        fn handle_elicitation(
             &self,
             _request: ElicitationRequest,
-        ) -> HandlerResult<ElicitationResponse> {
-            let mut content = HashMap::new();
-            content.insert("test".to_string(), json!("response"));
-            Ok(ElicitationResponse::accept(content))
+        ) -> Pin<Box<dyn Future<Output = HandlerResult<ElicitationResponse>> + Send + '_>> {
+            Box::pin(async move {
+                let mut content = HashMap::new();
+                content.insert("test".to_string(), json!("response"));
+                Ok(ElicitationResponse::accept(content))
+            })
         }
     }
 

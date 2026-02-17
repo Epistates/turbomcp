@@ -23,24 +23,27 @@ pub mod common {
 
     use super::super::*;
     use crate::tower::SessionInfo;
+    use std::future::Future;
+    use std::pin::Pin;
     use turbomcp_protocol::Result as McpResult;
 
     /// Test MCP service implementation for use in tests
     #[derive(Clone, Debug)]
     pub struct TestMcpService;
 
-    #[async_trait::async_trait]
     impl McpService for TestMcpService {
-        async fn process_request(
+        fn process_request(
             &self,
             request: serde_json::Value,
             _session: &SessionInfo,
-        ) -> McpResult<serde_json::Value> {
-            // Echo the request back as result
-            Ok(serde_json::json!({
-                "echo": request,
-                "timestamp": chrono::Utc::now().to_rfc3339()
-            }))
+        ) -> Pin<Box<dyn Future<Output = McpResult<serde_json::Value>> + Send + '_>> {
+            Box::pin(async move {
+                // Echo the request back as result
+                Ok(serde_json::json!({
+                    "echo": request,
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                }))
+            })
         }
     }
 }

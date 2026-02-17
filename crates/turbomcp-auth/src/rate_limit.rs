@@ -268,6 +268,9 @@ impl RateLimiter {
             let oldest = tracker.timestamps.first().copied().unwrap_or(now);
             let retry_after = limit.window - (now - oldest);
 
+            // Record rate limit metric
+            crate::auth_metrics::record_rate_limited(endpoint, &key.key_type);
+
             return Err(RateLimitInfo {
                 retry_after,
                 current_count,

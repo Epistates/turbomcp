@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::time::{Duration, SystemTime};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
@@ -122,7 +123,7 @@ impl DpopKeyPair {
     /// Returns error if key generation fails
     pub fn generate_p256() -> Result<Self, crate::errors::DpopError> {
         use p256::ecdsa::{SigningKey, VerifyingKey};
-        use rand::rngs::OsRng;
+        use p256::elliptic_curve::rand_core::OsRng;
         use sha2::{Digest, Sha256};
 
         let signing_key = SigningKey::random(&mut OsRng);
@@ -593,29 +594,29 @@ pub fn generate_ticket_id() -> TicketId {
 
 /// Compute JWK thumbprint as defined in RFC 7638
 ///
+/// RFC 7638 requires lexicographic ordering of JSON keys for canonical representation.
+/// This function manually constructs the canonical JSON to ensure proper ordering.
+///
 /// Only supports ES256 (ECDSA P-256) as of TurboMCP v3.0+
 pub fn compute_jwk_thumbprint(jwk: &DpopJwk) -> super::Result<String> {
     use sha2::{Digest, Sha256};
 
-    // Create canonical JWK representation for thumbprint computation
-    // Only EC keys are supported
-    let canonical_jwk = match jwk {
+    // RFC 7638 requires lexicographic ordering: crv, kty, x, y (for EC keys)
+    // We manually construct the JSON to guarantee this ordering
+    let canonical_json = match jwk {
         DpopJwk::Ec { crv, x, y, .. } => {
-            serde_json::json!({
-                "crv": crv,
-                "kty": "EC",
-                "x": x,
-                "y": y
-            })
+            // Escape JSON string values (base64url strings don't contain special chars, but ensure safety)
+            let crv_escaped = crv.replace('\\', "\\\\").replace('"', "\\\"");
+            let x_escaped = x.replace('\\', "\\\\").replace('"', "\\\"");
+            let y_escaped = y.replace('\\', "\\\\").replace('"', "\\\"");
+
+            // Construct canonical JSON with guaranteed lexicographic key ordering
+            format!(
+                r#"{{"crv":"{}","kty":"EC","x":"{}","y":"{}"}}"#,
+                crv_escaped, x_escaped, y_escaped
+            )
         }
     };
-
-    // Serialize to canonical JSON (keys in lexicographic order)
-    let canonical_json = serde_json::to_string(&canonical_jwk).map_err(|e| {
-        super::DpopError::CryptographicError {
-            reason: format!("Failed to serialize JWK for thumbprint: {e}"),
-        }
-    })?;
 
     // Compute SHA-256 hash
     let mut hasher = Sha256::new();
@@ -697,7 +698,6 @@ impl Default for StorageStats {
 ///
 /// This trait defines the interface for storing and managing DPoP nonces to prevent replay attacks.
 /// Implementations should ensure thread-safety and efficient concurrent access.
-#[async_trait::async_trait]
 pub trait NonceStorage: Send + Sync + std::fmt::Debug {
     /// Store a nonce with associated metadata
     ///
@@ -713,7 +713,7 @@ pub trait NonceStorage: Send + Sync + std::fmt::Debug {
     /// * `Ok(true)` - Nonce was successfully stored (first use)
     /// * `Ok(false)` - Nonce already exists (replay attack detected)
     /// * `Err(_)` - Storage operation failed
-    async fn store_nonce(
+    fn store_nonce(
         &self,
         nonce: &str,
         jti: &str,
@@ -721,7 +721,7 @@ pub trait NonceStorage: Send + Sync + std::fmt::Debug {
         http_uri: &str,
         client_id: &str,
         ttl: Option<Duration>,
-    ) -> super::Result<bool>;
+    ) -> impl Future<Output = super::Result<bool>> + Send;
 
     /// Check if a nonce has been used before
     ///
@@ -733,19 +733,23 @@ pub trait NonceStorage: Send + Sync + std::fmt::Debug {
     /// * `Ok(true)` - Nonce has been used before
     /// * `Ok(false)` - Nonce is new
     /// * `Err(_)` - Storage operation failed
-    async fn is_nonce_used(&self, nonce: &str, client_id: &str) -> super::Result<bool>;
+    fn is_nonce_used(
+        &self,
+        nonce: &str,
+        client_id: &str,
+    ) -> impl Future<Output = super::Result<bool>> + Send;
 
     /// Clean up expired nonces
     ///
     /// # Returns
     /// Number of expired nonces cleaned up
-    async fn cleanup_expired(&self) -> super::Result<u64>;
+    fn cleanup_expired(&self) -> impl Future<Output = super::Result<u64>> + Send;
 
     /// Get storage usage statistics
     ///
     /// # Returns
     /// Statistics about nonce storage usage and performance
-    async fn get_usage_stats(&self) -> super::Result<StorageStats>;
+    fn get_usage_stats(&self) -> impl Future<Output = super::Result<StorageStats>> + Send;
 }
 
 #[cfg(test)]

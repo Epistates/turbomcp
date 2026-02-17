@@ -3,10 +3,11 @@
 //! This module provides enhanced transport capabilities for MCP 2025-06-18 protocol
 //! including server-initiated requests, message correlation, and protocol direction validation.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use dashmap::DashMap;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::time::timeout;
@@ -387,7 +388,6 @@ fn detect_server_initiated_type(message: &TransportMessage) -> Option<ServerInit
 }
 
 // Implement Transport trait for the wrapper
-#[async_trait]
 impl<T: Transport> Transport for BidirectionalTransportWrapper<T> {
     fn transport_type(&self) -> TransportType {
         self.inner.transport_type()
@@ -397,102 +397,125 @@ impl<T: Transport> Transport for BidirectionalTransportWrapper<T> {
         self.inner.capabilities()
     }
 
-    async fn state(&self) -> TransportState {
-        self.inner.state().await
+    fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+        Box::pin(async move { self.inner.state().await })
     }
 
-    async fn connect(&self) -> TransportResult<()> {
-        self.inner.connect().await
+    fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move { self.inner.connect().await })
     }
 
-    async fn disconnect(&self) -> TransportResult<()> {
-        // Clean up correlations
-        self.correlations.clear();
-        self.inner.disconnect().await
+    fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            // Clean up correlations
+            self.correlations.clear();
+            self.inner.disconnect().await
+        })
     }
 
-    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
-        // Validate direction before sending
-        let message_type = extract_message_type(&message);
-        if !self.validator.validate(&message_type, self.direction) {
-            return Err(TransportError::ProtocolError(format!(
-                "Cannot send {} in direction {:?}",
-                message_type, self.direction
-            )));
-        }
-        self.inner.send(message).await
+    fn send(
+        &self,
+        message: TransportMessage,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            // Validate direction before sending
+            let message_type = extract_message_type(&message);
+            if !self.validator.validate(&message_type, self.direction) {
+                return Err(TransportError::ProtocolError(format!(
+                    "Cannot send {} in direction {:?}",
+                    message_type, self.direction
+                )));
+            }
+            self.inner.send(message).await
+        })
     }
 
-    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-        if let Some(message) = self.inner.receive().await? {
-            self.process_incoming(message.clone()).await?;
-            Ok(Some(message))
-        } else {
-            Ok(None)
-        }
+    fn receive(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>> {
+        Box::pin(async move {
+            if let Some(message) = self.inner.receive().await? {
+                self.process_incoming(message.clone()).await?;
+                Ok(Some(message))
+            } else {
+                Ok(None)
+            }
+        })
     }
 
-    async fn metrics(&self) -> crate::core::TransportMetrics {
-        self.inner.metrics().await
+    fn metrics(&self) -> Pin<Box<dyn Future<Output = crate::core::TransportMetrics> + Send + '_>> {
+        Box::pin(async move { self.inner.metrics().await })
     }
 }
 
 // Implement BidirectionalTransport trait
-#[async_trait]
 impl<T: Transport> BidirectionalTransport for BidirectionalTransportWrapper<T> {
-    async fn send_request(
+    fn send_request(
         &self,
         message: TransportMessage,
         timeout_duration: Option<Duration>,
-    ) -> TransportResult<TransportMessage> {
-        let timeout_duration = timeout_duration.unwrap_or(Duration::from_secs(30));
+    ) -> Pin<Box<dyn Future<Output = TransportResult<TransportMessage>> + Send + '_>> {
+        Box::pin(async move {
+            let timeout_duration = timeout_duration.unwrap_or(Duration::from_secs(30));
 
-        // Create correlation
-        let correlation_id = Uuid::new_v4().to_string();
-        let (tx, rx) = oneshot::channel();
+            // Create correlation
+            let correlation_id = Uuid::new_v4().to_string();
+            let (tx, rx) = oneshot::channel();
 
-        let context = CorrelationContext {
-            correlation_id: correlation_id.clone(),
-            request_id: Uuid::new_v4().to_string(),
-            response_tx: Some(tx),
-            timeout: timeout_duration,
-            created_at: std::time::Instant::now(),
-        };
+            let context = CorrelationContext {
+                correlation_id: correlation_id.clone(),
+                request_id: Uuid::new_v4().to_string(),
+                response_tx: Some(tx),
+                timeout: timeout_duration,
+                created_at: std::time::Instant::now(),
+            };
 
-        self.correlations.insert(correlation_id.clone(), context);
+            self.correlations.insert(correlation_id.clone(), context);
 
-        // Send message
-        self.send(message).await?;
+            // Send message
+            self.send(message).await?;
 
-        // Wait for response
-        match timeout(timeout_duration, rx).await {
-            Ok(Ok(response)) => Ok(response),
-            Ok(Err(_)) => Err(TransportError::Internal(
-                "Response channel closed".to_string(),
-            )),
-            Err(_) => {
-                self.correlations.remove(&correlation_id);
-                Err(TransportError::Timeout)
+            // Wait for response
+            match timeout(timeout_duration, rx).await {
+                Ok(Ok(response)) => Ok(response),
+                Ok(Err(_)) => Err(TransportError::Internal(
+                    "Response channel closed".to_string(),
+                )),
+                Err(_) => {
+                    self.correlations.remove(&correlation_id);
+                    Err(TransportError::Timeout)
+                }
             }
-        }
+        })
     }
 
-    async fn start_correlation(&self, correlation_id: String) -> TransportResult<()> {
-        let context = CorrelationContext {
-            correlation_id: correlation_id.clone(),
-            request_id: Uuid::new_v4().to_string(),
-            response_tx: None,
-            timeout: Duration::from_secs(30),
-            created_at: std::time::Instant::now(),
-        };
+    fn start_correlation(
+        &self,
+        correlation_id: String,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            let context = CorrelationContext {
+                correlation_id: correlation_id.clone(),
+                request_id: Uuid::new_v4().to_string(),
+                response_tx: None,
+                timeout: Duration::from_secs(30),
+                created_at: std::time::Instant::now(),
+            };
 
-        self.correlations.insert(correlation_id, context);
-        Ok(())
+            self.correlations.insert(correlation_id, context);
+            Ok(())
+        })
     }
 
-    async fn stop_correlation(&self, correlation_id: &str) -> TransportResult<()> {
-        self.correlations.remove(correlation_id);
-        Ok(())
+    fn stop_correlation(
+        &self,
+        correlation_id: &str,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        let correlation_id = correlation_id.to_string();
+        Box::pin(async move {
+            self.correlations.remove(&correlation_id);
+            Ok(())
+        })
     }
 }
 

@@ -90,14 +90,12 @@ pub async fn route_request<H: McpHandler>(
             let params = request.params.clone().unwrap_or_default();
 
             // Validate clientInfo is present (MCP spec requirement)
-            let client_info = params.get("clientInfo");
-            if client_info.is_none() {
+            let Some(client_info) = params.get("clientInfo") else {
                 return JsonRpcOutgoing::error(
                     id,
                     McpError::invalid_params("Missing required field: clientInfo"),
                 );
-            }
-            let client_info = client_info.unwrap();
+            };
 
             // Validate clientInfo has required fields
             let client_name = client_info.get("name").and_then(|v| v.as_str());
@@ -141,10 +139,16 @@ pub async fn route_request<H: McpHandler>(
             let args = params.get("arguments").cloned().unwrap_or_default();
 
             match handler.call_tool(name, args, ctx).await {
-                Ok(result) => {
-                    let result_value = serde_json::to_value(&result).unwrap_or_default();
-                    JsonRpcOutgoing::success(id, result_value)
-                }
+                Ok(result) => match serde_json::to_value(&result) {
+                    Ok(result_value) => JsonRpcOutgoing::success(id, result_value),
+                    Err(e) => JsonRpcOutgoing::error(
+                        id,
+                        McpError::internal(alloc::format!(
+                            "Failed to serialize tool result: {}",
+                            e
+                        )),
+                    ),
+                },
                 Err(err) => JsonRpcOutgoing::error(id, err),
             }
         }
@@ -164,10 +168,16 @@ pub async fn route_request<H: McpHandler>(
                 .unwrap_or_default();
 
             match handler.read_resource(uri, ctx).await {
-                Ok(result) => {
-                    let result_value = serde_json::to_value(&result).unwrap_or_default();
-                    JsonRpcOutgoing::success(id, result_value)
-                }
+                Ok(result) => match serde_json::to_value(&result) {
+                    Ok(result_value) => JsonRpcOutgoing::success(id, result_value),
+                    Err(e) => JsonRpcOutgoing::error(
+                        id,
+                        McpError::internal(alloc::format!(
+                            "Failed to serialize resource result: {}",
+                            e
+                        )),
+                    ),
+                },
                 Err(err) => JsonRpcOutgoing::error(id, err),
             }
         }
@@ -188,10 +198,16 @@ pub async fn route_request<H: McpHandler>(
             let args = params.get("arguments").cloned();
 
             match handler.get_prompt(name, args, ctx).await {
-                Ok(result) => {
-                    let result_value = serde_json::to_value(&result).unwrap_or_default();
-                    JsonRpcOutgoing::success(id, result_value)
-                }
+                Ok(result) => match serde_json::to_value(&result) {
+                    Ok(result_value) => JsonRpcOutgoing::success(id, result_value),
+                    Err(e) => JsonRpcOutgoing::error(
+                        id,
+                        McpError::internal(alloc::format!(
+                            "Failed to serialize prompt result: {}",
+                            e
+                        )),
+                    ),
+                },
                 Err(err) => JsonRpcOutgoing::error(id, err),
             }
         }

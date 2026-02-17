@@ -32,11 +32,12 @@ use super::{
     HsmHealthStatus, HsmInfo, HsmOperations, HsmStats, TokenInfo, YubiHsmConfig, YubiHsmConnector,
     common,
 };
-use async_trait::async_trait;
 #[cfg(feature = "hsm-yubico")]
 use parking_lot::RwLock;
 use secrecy::ExposeSecret;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tracing::{debug, info, trace};
@@ -479,183 +480,202 @@ impl YubiHsmManager {
     }
 }
 
-#[async_trait]
 impl HsmOperations for YubiHsmManager {
-    async fn generate_key_pair(&self, algorithm: DpopAlgorithm) -> Result<DpopKeyPair> {
-        let start_time = Instant::now();
+    fn generate_key_pair(
+        &self,
+        algorithm: DpopAlgorithm,
+    ) -> Pin<Box<dyn Future<Output = Result<DpopKeyPair>> + Send + '_>> {
+        Box::pin(async move {
+            let start_time = Instant::now();
 
-        debug!("Generating {:?} key pair in YubiHSM 2", algorithm);
+            debug!("Generating {:?} key pair in YubiHSM 2", algorithm);
 
-        self.ensure_connection().await?;
+            self.ensure_connection().await?;
 
-        // Only ES256 is supported
-        let (key_id, key_label) = self.generate_ecdsa_key_pair(algorithm).await?;
+            // Only ES256 is supported
+            let (key_id, key_label) = self.generate_ecdsa_key_pair(algorithm).await?;
 
-        // Get public key bytes for JWK
-        let _public_key_bytes = self.get_public_key_bytes(key_id, algorithm)?;
+            // Get public key bytes for JWK
+            let _public_key_bytes = self.get_public_key_bytes(key_id, algorithm)?;
 
-        // Update statistics
-        {
-            let mut stats = self.stats.write();
-            stats.keys_generated += 1;
-        }
+            // Update statistics
+            {
+                let mut stats = self.stats.write();
+                stats.keys_generated += 1;
+            }
 
-        let elapsed = start_time.elapsed();
-        self.track_operation_time(elapsed);
+            let elapsed = start_time.elapsed();
+            self.track_operation_time(elapsed);
 
-        info!(
-            "Generated {:?} key pair '{}' in {:?}",
-            algorithm, key_label, elapsed
-        );
+            info!(
+                "Generated {:?} key pair '{}' in {:?}",
+                algorithm, key_label, elapsed
+            );
 
-        // Get actual public key bytes from YubiHSM
-        let public_key_bytes = self.get_public_key_bytes(key_id, algorithm)?;
+            // Get actual public key bytes from YubiHSM
+            let public_key_bytes = self.get_public_key_bytes(key_id, algorithm)?;
 
-        // For HSM keys, private key material never leaves the HSM - create key references instead
-        // Only ES256 is supported
-        let private_key = DpopPrivateKey::EcdsaP256 {
-            key_bytes: [0u8; 32], // HSM reference - actual key stays in hardware
-        };
+            // For HSM keys, private key material never leaves the HSM - create key references instead
+            // Only ES256 is supported
+            let private_key = DpopPrivateKey::EcdsaP256 {
+                key_bytes: [0u8; 32], // HSM reference - actual key stays in hardware
+            };
 
-        // Parse public key using proven cryptographic libraries
-        let public_key = self.parse_public_key_from_bytes(&public_key_bytes, algorithm)?;
+            // Parse public key using proven cryptographic libraries
+            let public_key = self.parse_public_key_from_bytes(&public_key_bytes, algorithm)?;
 
-        // Compute RFC 7638 compliant JWK thumbprint
-        let thumbprint = self.compute_jwk_thumbprint(&public_key, algorithm)?;
+            // Compute RFC 7638 compliant JWK thumbprint
+            let thumbprint = self.compute_jwk_thumbprint(&public_key, algorithm)?;
 
-        Ok(DpopKeyPair {
-            id: key_label.clone(),
-            private_key,
-            public_key,
-            thumbprint,
-            algorithm,
-            created_at: SystemTime::now(),
-            expires_at: None, // YubiHSM keys typically don't expire
-            metadata: DpopKeyMetadata {
-                description: Some(format!("YubiHSM-generated {} key", algorithm.as_str())),
-                client_id: None,
-                session_id: None,
-                usage_count: 0,
-                last_used: None,
-                rotation_generation: 0,
-                custom: std::collections::HashMap::new(),
-            },
+            Ok(DpopKeyPair {
+                id: key_label.clone(),
+                private_key,
+                public_key,
+                thumbprint,
+                algorithm,
+                created_at: SystemTime::now(),
+                expires_at: None, // YubiHSM keys typically don't expire
+                metadata: DpopKeyMetadata {
+                    description: Some(format!("YubiHSM-generated {} key", algorithm.as_str())),
+                    client_id: None,
+                    session_id: None,
+                    usage_count: 0,
+                    last_used: None,
+                    rotation_generation: 0,
+                    custom: std::collections::HashMap::new(),
+                },
+            })
         })
     }
 
-    async fn sign_data(&self, key_label: &str, data: &[u8]) -> Result<Vec<u8>> {
-        let start_time = Instant::now();
+    fn sign_data(
+        &self,
+        key_label: &str,
+        data: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>>> + Send + '_>> {
+        let key_label = key_label.to_string();
+        let data = data.to_vec();
+        Box::pin(async move {
+            let start_time = Instant::now();
 
-        trace!("Signing data with YubiHSM key: {}", key_label);
+            trace!("Signing data with YubiHSM key: {}", key_label);
 
-        self.ensure_connection().await?;
+            self.ensure_connection().await?;
 
-        // Parse key ID from label (simplified)
-        let key_id = self.parse_key_id_from_label(key_label)?;
+            // Parse key ID from label (simplified)
+            let key_id = self.parse_key_id_from_label(&key_label)?;
 
-        // Only ES256 is supported
-        let algorithm = DpopAlgorithm::ES256;
+            // Only ES256 is supported
+            let algorithm = DpopAlgorithm::ES256;
 
-        // Sign the data
-        let signature = self.sign_data_yubihsm(key_id, data, algorithm)?;
+            // Sign the data
+            let signature = self.sign_data_yubihsm(key_id, &data, algorithm)?;
 
-        // Update statistics
-        {
-            let mut stats = self.stats.write();
-            stats.signatures_created += 1;
-        }
+            // Update statistics
+            {
+                let mut stats = self.stats.write();
+                stats.signatures_created += 1;
+            }
 
-        let elapsed = start_time.elapsed();
-        self.track_operation_time(elapsed);
+            let elapsed = start_time.elapsed();
+            self.track_operation_time(elapsed);
 
-        trace!("Signed data in {:?}", elapsed);
-        Ok(signature)
+            trace!("Signed data in {:?}", elapsed);
+            Ok(signature)
+        })
     }
 
-    async fn list_keys(&self) -> Result<Vec<String>> {
-        debug!("Listing DPoP keys in YubiHSM 2");
+    fn list_keys(&self) -> Pin<Box<dyn Future<Output = Result<Vec<String>>> + Send + '_>> {
+        Box::pin(async move {
+            debug!("Listing DPoP keys in YubiHSM 2");
 
-        self.ensure_connection().await?;
+            self.ensure_connection().await?;
 
-        let client = self.client.read();
+            let client = self.client.read();
 
-        // Get list of asymmetric key objects
-        let filter = yubihsm::object::Filter::Type(object::Type::AsymmetricKey);
-        let objects =
-            client
-                .list_objects(&[filter])
-                .map_err(|e| DpopError::KeyManagementError {
-                    reason: format!("Failed to list YubiHSM objects: {}", e),
-                })?;
+            // Get list of asymmetric key objects
+            let filter = yubihsm::object::Filter::Type(object::Type::AsymmetricKey);
+            let objects =
+                client
+                    .list_objects(&[filter])
+                    .map_err(|e| DpopError::KeyManagementError {
+                        reason: format!("Failed to list YubiHSM objects: {}", e),
+                    })?;
 
-        let mut key_labels = Vec::new();
+            let mut key_labels = Vec::new();
 
-        for obj in objects {
-            // Get object info to extract label
-            if let Ok(info) = client.get_object_info(obj.object_id, obj.object_type) {
-                let label_str = info.label.to_string();
-                if label_str.starts_with("dpop_") {
-                    key_labels.push(label_str);
+            for obj in objects {
+                // Get object info to extract label
+                if let Ok(info) = client.get_object_info(obj.object_id, obj.object_type) {
+                    let label_str = info.label.to_string();
+                    if label_str.starts_with("dpop_") {
+                        key_labels.push(label_str);
+                    }
                 }
             }
-        }
 
-        debug!("Found {} DPoP keys", key_labels.len());
-        Ok(key_labels)
+            debug!("Found {} DPoP keys", key_labels.len());
+            Ok(key_labels)
+        })
     }
 
-    async fn delete_key(&self, key_label: &str) -> Result<()> {
-        debug!("Deleting key: {}", key_label);
+    fn delete_key(&self, key_label: &str) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        let key_label = key_label.to_string();
+        Box::pin(async move {
+            debug!("Deleting key: {}", key_label);
 
-        self.ensure_connection().await?;
+            self.ensure_connection().await?;
 
-        // Parse key ID from label
-        let key_id = self.parse_key_id_from_label(key_label)?;
+            // Parse key ID from label
+            let key_id = self.parse_key_id_from_label(&key_label)?;
 
-        let client = self.client.read();
-
-        // Delete the asymmetric key
-        client
-            .delete_object(key_id, object::Type::AsymmetricKey)
-            .map_err(|e| DpopError::KeyManagementError {
-                reason: format!("Failed to delete YubiHSM key: {}", e),
-            })?;
-
-        info!("Deleted key: {}", key_label);
-        Ok(())
-    }
-
-    async fn health_check(&self) -> Result<HsmHealthStatus> {
-        let start_time = Instant::now();
-
-        // Try to get device info to test connectivity
-        let device_info = {
             let client = self.client.read();
+
+            // Delete the asymmetric key
             client
-                .device_info()
+                .delete_object(key_id, object::Type::AsymmetricKey)
                 .map_err(|e| DpopError::KeyManagementError {
-                    reason: format!("YubiHSM health check failed: {}", e),
-                })?
-        };
+                    reason: format!("Failed to delete YubiHSM key: {}", e),
+                })?;
 
-        let health_status = HsmHealthStatus {
-            healthy: true,
-            active_sessions: 1, // YubiHSM uses single session
-            last_operation: SystemTime::now(),
-            error_count: 0,
-            message: "YubiHSM is healthy".to_string(),
-            token_info: Some(TokenInfo {
-                label: "YubiHSM".to_string(),
-                manufacturer: "Yubico".to_string(),
-                model: "YubiHSM 2".to_string(),
-                serial_number: device_info.serial_number.to_string(),
-                free_memory: None, // YubiHSM doesn't expose memory info directly
-                total_memory: None,
-            }),
-        };
+            info!("Deleted key: {}", key_label);
+            Ok(())
+        })
+    }
 
-        trace!("Health check completed in {:?}", start_time.elapsed());
-        Ok(health_status)
+    fn health_check(&self) -> Pin<Box<dyn Future<Output = Result<HsmHealthStatus>> + Send + '_>> {
+        Box::pin(async move {
+            let start_time = Instant::now();
+
+            // Try to get device info to test connectivity
+            let device_info = {
+                let client = self.client.read();
+                client
+                    .device_info()
+                    .map_err(|e| DpopError::KeyManagementError {
+                        reason: format!("YubiHSM health check failed: {}", e),
+                    })?
+            };
+
+            let health_status = HsmHealthStatus {
+                healthy: true,
+                active_sessions: 1, // YubiHSM uses single session
+                last_operation: SystemTime::now(),
+                error_count: 0,
+                message: "YubiHSM is healthy".to_string(),
+                token_info: Some(TokenInfo {
+                    label: "YubiHSM".to_string(),
+                    manufacturer: "Yubico".to_string(),
+                    model: "YubiHSM 2".to_string(),
+                    serial_number: device_info.serial_number.to_string(),
+                    free_memory: None, // YubiHSM doesn't expose memory info directly
+                    total_memory: None,
+                }),
+            };
+
+            trace!("Health check completed in {:?}", start_time.elapsed());
+            Ok(health_status)
+        })
     }
 
     fn get_stats(&self) -> HsmStats {
@@ -690,44 +710,46 @@ impl HsmOperations for YubiHsmManager {
         updated_stats
     }
 
-    async fn get_info(&self) -> Result<HsmInfo> {
-        self.ensure_connection().await?;
+    fn get_info(&self) -> Pin<Box<dyn Future<Output = Result<HsmInfo>> + Send + '_>> {
+        Box::pin(async move {
+            self.ensure_connection().await?;
 
-        let device_info = {
-            let client = self.client.read();
-            client
-                .device_info()
-                .map_err(|e| DpopError::KeyManagementError {
-                    reason: format!("Failed to get YubiHSM device info: {}", e),
-                })?
-        };
+            let device_info = {
+                let client = self.client.read();
+                client
+                    .device_info()
+                    .map_err(|e| DpopError::KeyManagementError {
+                        reason: format!("Failed to get YubiHSM device info: {}", e),
+                    })?
+            };
 
-        let mut capabilities = HashMap::new();
-        capabilities.insert("key_generation".to_string(), true);
-        capabilities.insert("signing".to_string(), true);
-        capabilities.insert("verification".to_string(), true);
-        capabilities.insert("secure_storage".to_string(), true);
-        capabilities.insert("audit_logging".to_string(), true);
+            let mut capabilities = HashMap::new();
+            capabilities.insert("key_generation".to_string(), true);
+            capabilities.insert("signing".to_string(), true);
+            capabilities.insert("verification".to_string(), true);
+            capabilities.insert("secure_storage".to_string(), true);
+            capabilities.insert("audit_logging".to_string(), true);
 
-        let mut max_key_lengths = HashMap::new();
-        max_key_lengths.insert(DpopAlgorithm::ES256, 256);
+            let mut max_key_lengths = HashMap::new();
+            max_key_lengths.insert(DpopAlgorithm::ES256, 256);
 
-        Ok(HsmInfo {
-            hsm_type: "YubiHSM 2".to_string(),
-            version: format!(
-                "{}.{}.{}",
-                device_info.major_version, device_info.minor_version, device_info.build_version
-            ),
-            supported_algorithms: vec![DpopAlgorithm::ES256],
-            max_key_lengths,
-            capabilities,
-            hardware_features: vec![
-                "Hardware random number generation".to_string(),
-                "Tamper-resistant key storage".to_string(),
-                "Cryptographic authentication".to_string(),
-                "Audit logging".to_string(),
-                "Secure backup and restore".to_string(),
-            ],
+            Ok(HsmInfo {
+                hsm_type: "YubiHSM 2".to_string(),
+                version: format!(
+                    "{}.{}.{}",
+                    device_info.major_version, device_info.minor_version, device_info.build_version
+                ),
+                supported_algorithms: vec![DpopAlgorithm::ES256],
+                max_key_lengths,
+                capabilities,
+                hardware_features: vec![
+                    "Hardware random number generation".to_string(),
+                    "Tamper-resistant key storage".to_string(),
+                    "Cryptographic authentication".to_string(),
+                    "Audit logging".to_string(),
+                    "Secure backup and restore".to_string(),
+                ],
+            })
         })
     }
 }

@@ -18,6 +18,11 @@
 //! Using this in production without proper authentication will issue tokens
 //! to anyone who requests them, defeating the purpose of OAuth.
 //!
+//! # SECURITY: Compile-Time Check
+//!
+//! When building in release mode, a compile warning will be emitted if this
+//! module is used. You MUST implement proper authentication before deploying.
+//!
 //! # Features
 //!
 //! - Authorization Code Grant with PKCE (RFC 7636)
@@ -63,11 +68,21 @@
 //! - Constant-time comparison for secrets
 //! - Single-use authorization codes
 
+// Security: Emit compile warning in release builds about demo-user (unless demo-oauth feature enabled)
+#[cfg(all(not(debug_assertions), not(test), not(feature = "demo-oauth")))]
+compile_error!(
+    "⚠️  SECURITY WARNING: OAuthProvider uses demo auto-approval by default. \
+     You MUST configure a UserAuthenticator before deploying to production, or enable \
+     the 'demo-oauth' feature flag to explicitly opt into demo mode. See module documentation for details."
+);
+
 mod crypto;
 mod storage;
 mod types;
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use serde::Deserialize;
@@ -87,26 +102,203 @@ pub use types::{
     OAuthError, OAuthProviderConfig, ResponseType, TokenResponse,
 };
 
+/// Authenticated user information from the authentication gate.
+#[derive(Debug, Clone)]
+pub struct AuthenticatedUser {
+    /// Subject identifier (user ID)
+    pub subject: String,
+    /// Display name for consent screen (optional)
+    pub display_name: Option<String>,
+}
+
+/// User authentication trait for OAuth authorization endpoint.
+///
+/// Implement this trait to provide proper user authentication for the OAuth
+/// authorization flow. This replaces the demo auto-approval behavior.
+///
+/// # Example
+///
+/// ```ignore
+/// struct SessionAuthenticator {
+///     // Your session management implementation
+/// }
+///
+/// impl UserAuthenticator for SessionAuthenticator {
+///     fn authenticate<'a>(
+///         &'a self,
+///         req: &'a Request,
+///     ) -> Pin<Box<dyn Future<Output = Result<Option<AuthenticatedUser>, worker::Error>> + 'a>> {
+///         Box::pin(async move {
+///             // Check session cookie, verify with your auth system
+///             if let Some(user_id) = self.get_user_from_session(req) {
+///                 Ok(Some(AuthenticatedUser {
+///                     subject: user_id,
+///                     display_name: Some("John Doe".to_string()),
+///                 }))
+///             } else {
+///                 Ok(None)
+///             }
+///         })
+///     }
+///
+///     fn login_redirect(&self, return_to: &str) -> worker::Result<Response> {
+///         let login_url = format!("/login?return_to={}", urlencoding::encode(return_to));
+///         let headers = Headers::new();
+///         headers.set("Location", &login_url)?;
+///         Response::empty()?.with_status(302).with_headers(headers)
+///     }
+/// }
+/// ```
+pub trait UserAuthenticator: 'static {
+    /// Authenticate the user from the incoming request (e.g., via session cookie).
+    ///
+    /// Returns `Ok(Some(user))` if the user is authenticated, `Ok(None)` if not authenticated.
+    fn authenticate<'a>(
+        &'a self,
+        req: &'a Request,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<AuthenticatedUser>, worker::Error>> + 'a>>;
+
+    /// Return a redirect response to the login page.
+    ///
+    /// The `return_to` parameter contains the original authorization request URL
+    /// that should be redirected to after successful login.
+    fn login_redirect(&self, return_to: &str) -> worker::Result<Response>;
+}
+
+/// Rate limiting result
+#[derive(Debug, Clone)]
+pub enum RateLimitResult {
+    /// Request is allowed, with remaining count
+    Allowed { remaining: u32 },
+    /// Rate limit exceeded, with retry-after seconds
+    Exceeded { retry_after_secs: u32 },
+}
+
+/// Rate limiter trait for OAuth endpoints.
+///
+/// Implement this trait to provide rate limiting for token and authorization endpoints.
+///
+/// # Example
+///
+/// ```ignore
+/// struct RedisRateLimiter {
+///     // Your Redis client
+/// }
+///
+/// impl RateLimiter for RedisRateLimiter {
+///     fn check<'a>(
+///         &'a self,
+///         key: &'a str,
+///         max_requests: u32,
+///         window_secs: u32,
+///     ) -> Pin<Box<dyn Future<Output = Result<RateLimitResult, worker::Error>> + 'a>> {
+///         Box::pin(async move {
+///             // Implement sliding window or token bucket algorithm
+///             let count = self.redis.incr(key).await?;
+///             if count > max_requests {
+///                 Ok(RateLimitResult::Exceeded { retry_after_secs: window_secs })
+///             } else {
+///                 Ok(RateLimitResult::Allowed { remaining: max_requests - count })
+///             }
+///         })
+///     }
+/// }
+/// ```
+pub trait RateLimiter: 'static {
+    /// Check if the request is within rate limits.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Rate limit key (e.g., client IP address)
+    /// * `max_requests` - Maximum requests allowed in the window
+    /// * `window_secs` - Time window in seconds
+    ///
+    /// Returns the rate limit result (allowed or exceeded).
+    fn check<'a>(
+        &'a self,
+        key: &'a str,
+        max_requests: u32,
+        window_secs: u32,
+    ) -> Pin<Box<dyn Future<Output = Result<RateLimitResult, worker::Error>> + 'a>>;
+}
+
 /// OAuth 2.1 Authorization Server.
 ///
 /// Handles OAuth endpoints for authorization, token issuance, and management.
+///
+/// # Production Usage
+///
+/// **IMPORTANT:** The default configuration uses an in-memory token store that
+/// loses all tokens on Worker restart (~15-30 minutes). For production:
+///
+/// 1. Use `with_store()` to provide a durable token store (e.g., Durable Objects)
+/// 2. Use `with_user_authenticator()` to implement proper user authentication
+/// 3. Use `with_rate_limiter()` to add rate limiting protection
+///
+/// # Example
+///
+/// ```ignore
+/// let oauth = OAuthProvider::new(config)
+///     .with_user_authenticator(Box::new(MyAuthenticator::new()))
+///     .with_rate_limiter(Box::new(MyRateLimiter::new()));
+/// ```
 pub struct OAuthProvider {
     config: OAuthProviderConfig,
     store: SharedTokenStore,
+    user_authenticator: Option<Box<dyn UserAuthenticator>>,
+    rate_limiter: Option<Box<dyn RateLimiter>>,
 }
 
 impl OAuthProvider {
     /// Create a new OAuth provider with the given configuration.
+    ///
+    /// # Security Warning
+    ///
+    /// The default configuration uses:
+    /// - **In-memory token store** that loses all tokens on Worker restart (~15-30 minutes)
+    /// - **No user authentication** - you must add a `UserAuthenticator` for production
+    ///
+    /// Use `with_store()` and `with_user_authenticator()` before deploying to production.
     pub fn new(config: OAuthProviderConfig) -> Self {
+        // Warn about memory store usage
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::warn_1(
+            &"⚠️  Using MemoryTokenStore - tokens will be lost on Worker restart (~15-30 min). \
+              Use with_store() with DurableObjectTokenStore for production."
+                .into(),
+        );
+
         Self {
             config,
             store: Arc::new(MemoryTokenStore::new()),
+            user_authenticator: None,
+            rate_limiter: None,
         }
     }
 
     /// Create a new OAuth provider with a custom token store.
-    pub fn with_store(config: OAuthProviderConfig, store: SharedTokenStore) -> Self {
-        Self { config, store }
+    ///
+    /// Use this with a Durable Object-backed store for production deployments.
+    pub fn with_store(mut self, store: SharedTokenStore) -> Self {
+        self.store = store;
+        self
+    }
+
+    /// Set the user authenticator for the authorization endpoint.
+    ///
+    /// **Required for production.** Without this, authorization requests will
+    /// return 501 Not Implemented (unless the `demo-oauth` feature is enabled).
+    pub fn with_user_authenticator(mut self, authenticator: Box<dyn UserAuthenticator>) -> Self {
+        self.user_authenticator = Some(authenticator);
+        self
+    }
+
+    /// Set the rate limiter for token and authorization endpoints.
+    ///
+    /// Recommended for production to prevent abuse.
+    pub fn with_rate_limiter(mut self, rate_limiter: Box<dyn RateLimiter>) -> Self {
+        self.rate_limiter = Some(rate_limiter);
+        self
     }
 
     /// Get the provider configuration.
@@ -165,6 +357,24 @@ impl OAuthProvider {
     // =========================================================================
 
     async fn handle_authorize(&self, req: Request) -> worker::Result<Response> {
+        // Rate limit authorization requests (if rate limiter configured)
+        if let Some(ref limiter) = self.rate_limiter {
+            if let Some(ip) = self.extract_client_ip(&req) {
+                match limiter
+                    .check(&format!("oauth:authorize:{}", ip), 20, 60)
+                    .await?
+                {
+                    RateLimitResult::Exceeded { retry_after_secs } => {
+                        let headers = Headers::new();
+                        let _ = headers.set("Retry-After", &retry_after_secs.to_string());
+                        return Response::error("Too many requests", 429)
+                            .map(|r| r.with_headers(headers));
+                    }
+                    RateLimitResult::Allowed { .. } => {}
+                }
+            }
+        }
+
         let url = req.url()?;
         let params = Self::parse_query_params(&url);
 
@@ -229,11 +439,48 @@ impl OAuthProvider {
 
         let scopes = client.effective_scopes(&requested_scopes);
 
-        // For demonstration, we'll auto-approve the request.
-        // In a real implementation, you would:
-        // 1. Authenticate the user
-        // 2. Show a consent screen
-        // 3. Generate the code after user approval
+        // =====================================================================
+        // AUTHENTICATION GATE: Verify user is authenticated
+        // =====================================================================
+
+        let authenticated_user = if let Some(ref authenticator) = self.user_authenticator {
+            // Use configured authenticator
+            match authenticator.authenticate(&req).await? {
+                Some(user) => user,
+                None => {
+                    // User not authenticated - redirect to login
+                    let request_url = url.to_string();
+                    return authenticator.login_redirect(&request_url);
+                }
+            }
+        } else {
+            // No authenticator configured
+            #[cfg(feature = "demo-oauth")]
+            {
+                // Demo mode - auto-approve with hardcoded user
+                #[cfg(target_arch = "wasm32")]
+                web_sys::console::warn_1(
+                    &"⚠️  OAuth demo mode: auto-approving request with 'demo-user'. \
+                      DO NOT USE IN PRODUCTION."
+                        .into(),
+                );
+                AuthenticatedUser {
+                    subject: "demo-user".to_string(),
+                    display_name: Some("Demo User".to_string()),
+                }
+            }
+
+            #[cfg(not(feature = "demo-oauth"))]
+            {
+                // Production mode - require authenticator
+                return Response::error(
+                    "OAuth provider requires a UserAuthenticator to be configured. \
+                     Use with_user_authenticator() to set up proper authentication, or enable \
+                     the 'demo-oauth' feature flag for development (NOT for production).",
+                    501,
+                );
+            }
+        };
 
         // Generate authorization code
         let code = match generate_authorization_code() {
@@ -261,14 +508,14 @@ impl OAuthProvider {
             }
         };
 
-        // Create grant
+        // Create grant with authenticated user's subject
         let grant = AuthorizationCodeGrant {
             client_id: client_id.clone(),
             redirect_uri: redirect_uri.clone(),
             scopes,
             code_challenge,
             code_challenge_method: Some(code_challenge_method),
-            subject: "demo-user".to_string(), // TODO: Get from actual authentication
+            subject: authenticated_user.subject,
             expires_at: now_secs() + self.config.authorization_code_lifetime,
             nonce: params.get("nonce").cloned(),
             state: state.clone(),
@@ -305,6 +552,24 @@ impl OAuthProvider {
     // =========================================================================
 
     async fn handle_token(&self, mut req: Request) -> worker::Result<Response> {
+        // Rate limit token requests (if rate limiter configured)
+        if let Some(ref limiter) = self.rate_limiter {
+            if let Some(ip) = self.extract_client_ip(&req) {
+                match limiter
+                    .check(&format!("oauth:token:{}", ip), 10, 60)
+                    .await?
+                {
+                    RateLimitResult::Exceeded { retry_after_secs } => {
+                        let headers = Headers::new();
+                        let _ = headers.set("Retry-After", &retry_after_secs.to_string());
+                        return Response::error("Too many requests", 429)
+                            .map(|r| r.with_headers(headers));
+                    }
+                    RateLimitResult::Allowed { .. } => {}
+                }
+            }
+        }
+
         // Parse form body
         let body = req.text().await?;
         let params = Self::parse_form_params(&body);
@@ -807,6 +1072,22 @@ impl OAuthProvider {
         }
 
         Ok(None)
+    }
+
+    // =========================================================================
+    // Helper Methods
+    // =========================================================================
+
+    /// Extract client IP address from request headers.
+    ///
+    /// Cloudflare Workers provide the client IP in the CF-Connecting-IP header.
+    fn extract_client_ip(&self, req: &Request) -> Option<String> {
+        req.headers()
+            .get("CF-Connecting-IP")
+            .ok()
+            .flatten()
+            .or_else(|| req.headers().get("X-Forwarded-For").ok().flatten())
+            .or_else(|| req.headers().get("X-Real-IP").ok().flatten())
     }
 
     // =========================================================================

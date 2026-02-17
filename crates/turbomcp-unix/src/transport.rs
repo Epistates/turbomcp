@@ -1,14 +1,17 @@
 //! Unix domain socket transport implementation for MCP
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
+use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex as StdMutex};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
+use tokio::task::JoinSet;
 use tokio_util::codec::{Framed, LinesCodec};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
@@ -20,7 +23,6 @@ use turbomcp_transport_traits::{
 };
 
 /// Unix domain socket transport implementation with integrated security
-#[derive(Debug)]
 pub struct UnixTransport {
     /// Socket path
     socket_path: PathBuf,
@@ -31,61 +33,86 @@ pub struct UnixTransport {
     /// Message receiver for incoming messages (tokio mutex - crosses await)
     receiver: Arc<tokio::sync::Mutex<Option<mpsc::Receiver<TransportMessage>>>>,
     /// Active connections map: path -> outgoing message sender (std mutex - short-lived)
-    connections: Arc<StdMutex<HashMap<String, mpsc::Sender<String>>>>,
+    connections: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
     /// Transport capabilities (immutable)
     capabilities: TransportCapabilities,
     /// Current state (std mutex - short-lived)
-    state: Arc<StdMutex<TransportState>>,
+    state: Arc<Mutex<TransportState>>,
     /// Transport metrics (lock-free atomic)
     metrics: Arc<AtomicMetrics>,
+    /// Task lifecycle management
+    task_handles: Arc<tokio::sync::Mutex<JoinSet<()>>>,
+    /// Shutdown signal broadcaster
+    shutdown_tx: broadcast::Sender<()>,
+}
+
+// Manual Debug implementation since broadcast::Sender doesn't implement Debug
+impl std::fmt::Debug for UnixTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnixTransport")
+            .field("socket_path", &self.socket_path)
+            .field("is_server", &self.is_server)
+            .field("capabilities", &self.capabilities)
+            .field("state", &self.state)
+            .field("metrics", &self.metrics)
+            .finish()
+    }
 }
 
 impl UnixTransport {
     /// Create a new Unix socket transport for server mode
     #[must_use]
     pub fn new_server(socket_path: PathBuf) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(1);
         Self {
             socket_path,
             is_server: true,
             sender: Arc::new(tokio::sync::Mutex::new(None)),
             receiver: Arc::new(tokio::sync::Mutex::new(None)),
-            connections: Arc::new(StdMutex::new(HashMap::new())),
+            connections: Arc::new(Mutex::new(HashMap::new())),
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
                 max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
-            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            state: Arc::new(Mutex::new(TransportState::Disconnected)),
             metrics: Arc::new(AtomicMetrics::default()),
+            task_handles: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
+            shutdown_tx,
         }
     }
 
     /// Create a new Unix socket transport for client mode
     #[must_use]
     pub fn new_client(socket_path: PathBuf) -> Self {
+        let (shutdown_tx, _) = broadcast::channel(1);
         Self {
             socket_path,
             is_server: false,
             sender: Arc::new(tokio::sync::Mutex::new(None)),
             receiver: Arc::new(tokio::sync::Mutex::new(None)),
-            connections: Arc::new(StdMutex::new(HashMap::new())),
+            connections: Arc::new(Mutex::new(HashMap::new())),
             capabilities: TransportCapabilities {
                 supports_bidirectional: true,
                 supports_streaming: true,
                 max_message_size: Some(turbomcp_protocol::MAX_MESSAGE_SIZE), // 1MB for security
                 ..Default::default()
             },
-            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            state: Arc::new(Mutex::new(TransportState::Disconnected)),
             metrics: Arc::new(AtomicMetrics::default()),
+            task_handles: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
+            shutdown_tx,
         }
     }
 
-    /// Create a new Unix socket transport for client mode with security validation
     /// Start Unix socket server
     async fn start_server(&self) -> TransportResult<()> {
         // Remove existing socket file if it exists (ASYNC - Non-blocking!)
-        if self.socket_path.exists() {
+        if tokio::fs::try_exists(&self.socket_path)
+            .await
+            .unwrap_or(false)
+        {
             tokio::fs::remove_file(&self.socket_path)
                 .await
                 .map_err(|e| {
@@ -96,48 +123,86 @@ impl UnixTransport {
         }
 
         info!("Starting Unix socket server at {:?}", self.socket_path);
-        *self.state.lock().expect("state mutex poisoned") = TransportState::Connecting;
+        *self.state.lock() = TransportState::Connecting;
 
         let listener = UnixListener::bind(&self.socket_path).map_err(|e| {
-            *self.state.lock().expect("state mutex poisoned") = TransportState::Failed {
+            *self.state.lock() = TransportState::Failed {
                 reason: format!("Failed to bind: {e}"),
             };
             TransportError::ConnectionFailed(format!("Failed to bind Unix socket listener: {e}"))
         })?;
 
+        // Set restrictive socket permissions (owner read/write only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            std::fs::set_permissions(&self.socket_path, perms).map_err(|e| {
+                TransportError::ConfigurationError(format!("Failed to set socket permissions: {e}"))
+            })?;
+            info!("Set socket permissions to 0600 on {:?}", self.socket_path);
+        }
+
         let (tx, rx) = mpsc::channel(1000); // Bounded channel for backpressure control
         *self.sender.lock().await = Some(tx.clone());
         *self.receiver.lock().await = Some(rx);
-        *self.state.lock().expect("state mutex poisoned") = TransportState::Connected;
+        *self.state.lock() = TransportState::Connected;
 
-        // Accept connections in background
+        // Accept connections in background with proper task tracking
         let connections = self.connections.clone();
-        tokio::spawn(async move {
+        let task_handles = Arc::clone(&self.task_handles);
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+
+        // Spawn accept loop and store handle
+        task_handles.lock().await.spawn(async move {
+            // Inner JoinSet for connection handlers
+            let mut connection_tasks = JoinSet::new();
+
             loop {
-                match listener.accept().await {
-                    Ok((stream, _addr)) => {
-                        info!("Accepted Unix socket connection");
-                        let incoming_sender = tx.clone();
-                        let connections_ref = connections.clone();
-                        // Handle connection in separate task
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_unix_connection_framed(
-                                stream,
-                                incoming_sender,
-                                connections_ref,
-                            )
-                            .await
-                            {
-                                error!("Unix socket connection handler failed: {}", e);
-                            }
-                        });
-                    }
-                    Err(e) => {
-                        error!("Failed to accept Unix socket connection: {}", e);
+                tokio::select! {
+                    // Listen for shutdown signal
+                    _ = shutdown_rx.recv() => {
+                        info!("Unix socket accept loop received shutdown signal");
                         break;
+                    }
+
+                    // Accept new connections
+                    result = listener.accept() => {
+                        match result {
+                            Ok((stream, _addr)) => {
+                                info!("Accepted Unix socket connection");
+                                let incoming_sender = tx.clone();
+                                let connections_ref = connections.clone();
+
+                                // Handle connection in separate task and store handle
+                                connection_tasks.spawn(async move {
+                                    if let Err(e) = handle_unix_connection_framed(
+                                        stream,
+                                        incoming_sender,
+                                        connections_ref,
+                                    )
+                                    .await
+                                    {
+                                        error!("Unix socket connection handler failed: {}", e);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                error!("Failed to accept Unix socket connection: {}", e);
+                                break;
+                            }
+                        }
                     }
                 }
             }
+
+            // Gracefully shutdown all connection handlers
+            info!(
+                "Shutting down {} active Unix socket connections",
+                connection_tasks.len()
+            );
+            connection_tasks.shutdown().await;
+            info!("Unix socket accept loop shutdown complete");
         });
 
         Ok(())
@@ -147,10 +212,10 @@ impl UnixTransport {
     /// Following the proven TCP transport pattern for consistent architecture
     async fn connect_client(&self) -> TransportResult<()> {
         info!("Connecting to Unix socket at {:?}", self.socket_path);
-        *self.state.lock().expect("state mutex poisoned") = TransportState::Connecting;
+        *self.state.lock() = TransportState::Connecting;
 
         let stream = UnixStream::connect(&self.socket_path).await.map_err(|e| {
-            *self.state.lock().expect("state mutex poisoned") = TransportState::Failed {
+            *self.state.lock() = TransportState::Failed {
                 reason: format!("Failed to connect: {e}"),
             };
             TransportError::ConnectionFailed(format!("Failed to connect to Unix socket: {e}"))
@@ -160,7 +225,7 @@ impl UnixTransport {
         let (tx, rx) = mpsc::channel(1000); // Bounded channel for backpressure control
         *self.sender.lock().await = Some(tx.clone());
         *self.receiver.lock().await = Some(rx);
-        *self.state.lock().expect("state mutex poisoned") = TransportState::Connected;
+        *self.state.lock() = TransportState::Connected;
 
         // Handle connection using the same framed approach as TCP and server connections
         // This ensures the client gets registered in the connections HashMap
@@ -200,7 +265,7 @@ impl UnixTransport {
 async fn handle_unix_connection_framed(
     stream: UnixStream,
     incoming_sender: mpsc::Sender<TransportMessage>,
-    connections: Arc<StdMutex<HashMap<String, mpsc::Sender<String>>>>,
+    connections: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
 ) -> TransportResult<()> {
     handle_unix_connection_framed_with_signal(stream, incoming_sender, connections, None).await
 }
@@ -210,7 +275,7 @@ async fn handle_unix_connection_framed(
 async fn handle_unix_connection_framed_with_signal(
     stream: UnixStream,
     incoming_sender: mpsc::Sender<TransportMessage>,
-    connections: Arc<StdMutex<HashMap<String, mpsc::Sender<String>>>>,
+    connections: Arc<Mutex<HashMap<String, mpsc::Sender<String>>>>,
     ready_tx: impl Into<Option<tokio::sync::oneshot::Sender<()>>>,
 ) -> TransportResult<()> {
     let ready_tx = ready_tx.into();
@@ -232,15 +297,8 @@ async fn handle_unix_connection_framed_with_signal(
     );
     connections
         .lock()
-        .expect("connections mutex poisoned")
         .insert(connection_key.clone(), outgoing_sender);
-    debug!(
-        "Total connections now: {}",
-        connections
-            .lock()
-            .expect("connections mutex poisoned")
-            .len()
-    );
+    debug!("Total connections now: {}", connections.lock().len());
 
     // Signal that the connection is ready (for client mode)
     if let Some(tx) = ready_tx {
@@ -334,16 +392,33 @@ async fn handle_unix_connection_framed_with_signal(
     }
 
     // Clean up connection
-    connections_cleanup
-        .lock()
-        .expect("connections mutex poisoned")
-        .remove(&cleanup_key);
+    connections_cleanup.lock().remove(&cleanup_key);
     send_task.abort();
     debug!("Unix socket connection handler finished");
     Ok(())
 }
 
-#[async_trait]
+impl Drop for UnixTransport {
+    fn drop(&mut self) {
+        // Clean up socket file if we're in server mode and the file exists
+        // This ensures socket files don't accumulate after server shutdown
+        if self.is_server && self.socket_path.exists() {
+            // Use synchronous remove since we can't await in Drop
+            // This is acceptable for cleanup as it's a small file operation
+            if let Err(e) = std::fs::remove_file(&self.socket_path) {
+                // Log error but don't panic - socket might have been cleaned up already
+                tracing::debug!(
+                    "Failed to remove socket file {:?} during drop: {}",
+                    self.socket_path,
+                    e
+                );
+            } else {
+                tracing::debug!("Cleaned up socket file {:?} during drop", self.socket_path);
+            }
+        }
+    }
+}
+
 impl Transport for UnixTransport {
     fn transport_type(&self) -> TransportType {
         TransportType::Unix
@@ -353,118 +428,170 @@ impl Transport for UnixTransport {
         &self.capabilities
     }
 
-    async fn state(&self) -> TransportState {
-        self.state.lock().expect("state mutex poisoned").clone()
+    fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+        Box::pin(async move { self.state.lock().clone() })
     }
 
-    async fn connect(&self) -> TransportResult<()> {
-        if self.is_server {
-            self.start_server().await
-        } else {
-            self.connect_client().await
-        }
+    fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            if self.is_server {
+                self.start_server().await
+            } else {
+                self.connect_client().await
+            }
+        })
     }
 
-    async fn disconnect(&self) -> TransportResult<()> {
-        info!("Stopping Unix socket transport");
-        *self.state.lock().expect("state mutex poisoned") = TransportState::Disconnecting;
-        *self.sender.lock().await = None;
-        *self.receiver.lock().await = None;
+    fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            info!("Stopping Unix socket transport");
+            *self.state.lock() = TransportState::Disconnecting;
 
-        // Clean up socket file if we're the server (ASYNC - Non-blocking!)
-        if self.is_server
-            && self.socket_path.exists()
-            && let Err(e) = tokio::fs::remove_file(&self.socket_path).await
-        {
-            debug!("Failed to remove socket file: {}", e);
-        }
+            // Signal all tasks to shutdown
+            let _ = self.shutdown_tx.send(());
 
-        *self.state.lock().expect("state mutex poisoned") = TransportState::Disconnected;
-        Ok(())
-    }
+            // Wait for all tasks to complete with timeout
+            let mut tasks = self.task_handles.lock().await;
+            let task_count = tasks.len();
 
-    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
-        self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
-        self.metrics
-            .bytes_sent
-            .fetch_add(message.size() as u64, Ordering::Relaxed);
+            if task_count > 0 {
+                info!("Waiting for {} Unix socket tasks to complete", task_count);
 
-        // Use unified channel-based approach for both server and client (same as TCP transport)
-        let json_str = String::from_utf8_lossy(&message.payload).to_string();
-        let connections = self.connections.lock().expect("connections mutex poisoned");
-        debug!(
-            "Unix transport send: {} connections registered",
-            connections.len()
-        );
-        for (key, _) in connections.iter() {
-            debug!("  Connection key: {}", key);
-        }
-        if connections.is_empty() {
-            return Err(TransportError::ConnectionFailed(
-                "No active Unix socket connections".into(),
-            ));
-        }
+                let shutdown_timeout = std::time::Duration::from_secs(5);
+                let start = std::time::Instant::now();
 
-        let mut failed_connections = Vec::new();
-        for (key, sender) in connections.iter() {
-            // Use try_send with backpressure handling
-            match sender.try_send(json_str.clone()) {
-                Ok(()) => {}
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    warn!("Connection {} channel full, applying backpressure", key);
-                    // Don't mark as failed, just apply backpressure
+                while let Some(result) = tokio::time::timeout(
+                    shutdown_timeout.saturating_sub(start.elapsed()),
+                    tasks.join_next(),
+                )
+                .await
+                .ok()
+                .flatten()
+                {
+                    if let Err(e) = result
+                        && e.is_panic()
+                    {
+                        warn!("Unix socket task panicked during shutdown: {:?}", e);
+                    }
                 }
-                Err(mpsc::error::TrySendError::Closed(_)) => {
-                    warn!("Failed to send message to Unix socket connection {}", key);
-                    failed_connections.push(key.clone());
+
+                // Abort remaining tasks if timeout occurred
+                if !tasks.is_empty() {
+                    warn!("Aborting {} Unix socket tasks due to timeout", tasks.len());
+                    tasks.shutdown().await;
+                }
+
+                info!("All Unix socket tasks shutdown complete");
+            }
+
+            // Clean up resources
+            *self.sender.lock().await = None;
+            *self.receiver.lock().await = None;
+
+            // Clean up socket file if we're the server (ASYNC - Non-blocking!)
+            if self.is_server
+                && self.socket_path.exists()
+                && let Err(e) = tokio::fs::remove_file(&self.socket_path).await
+            {
+                debug!("Failed to remove socket file: {}", e);
+            }
+
+            *self.state.lock() = TransportState::Disconnected;
+            Ok(())
+        })
+    }
+
+    fn send(
+        &self,
+        message: TransportMessage,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .bytes_sent
+                .fetch_add(message.size() as u64, Ordering::Relaxed);
+
+            // Use unified channel-based approach for both server and client (same as TCP transport)
+            let json_str = String::from_utf8_lossy(&message.payload).to_string();
+            let connections = self.connections.lock();
+            debug!(
+                "Unix transport send: {} connections registered",
+                connections.len()
+            );
+            for (key, _) in connections.iter() {
+                debug!("  Connection key: {}", key);
+            }
+            if connections.is_empty() {
+                return Err(TransportError::ConnectionFailed(
+                    "No active Unix socket connections".into(),
+                ));
+            }
+
+            let mut failed_connections = Vec::new();
+            for (key, sender) in connections.iter() {
+                // Use try_send with backpressure handling
+                match sender.try_send(json_str.clone()) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        warn!("Connection {} channel full, applying backpressure", key);
+                        // Don't mark as failed, just apply backpressure
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        warn!("Failed to send message to Unix socket connection {}", key);
+                        failed_connections.push(key.clone());
+                    }
                 }
             }
-        }
 
-        // Clean up failed connections
-        drop(connections);
-        if !failed_connections.is_empty() {
-            let mut connections = self.connections.lock().expect("connections mutex poisoned");
-            for key in failed_connections {
-                connections.remove(&key);
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-        // Use unified channel-based reception for both server and client (same as TCP transport)
-        let mut receiver_guard = self.receiver.lock().await;
-        if let Some(ref mut receiver) = *receiver_guard {
-            match receiver.recv().await {
-                Some(message) => {
-                    self.metrics
-                        .messages_received
-                        .fetch_add(1, Ordering::Relaxed);
-                    self.metrics
-                        .bytes_received
-                        .fetch_add(message.size() as u64, Ordering::Relaxed);
-                    Ok(Some(message))
-                }
-                None => {
-                    *self.state.lock().expect("state mutex poisoned") = TransportState::Failed {
-                        reason: "Channel disconnected".into(),
-                    };
-                    Err(TransportError::ReceiveFailed(
-                        "Unix socket transport channel closed".into(),
-                    ))
+            // Clean up failed connections
+            drop(connections);
+            if !failed_connections.is_empty() {
+                let mut connections = self.connections.lock();
+                for key in failed_connections {
+                    connections.remove(&key);
                 }
             }
-        } else {
-            Err(TransportError::ConnectionFailed(
-                "Unix socket transport not connected".into(),
-            ))
-        }
+
+            Ok(())
+        })
     }
 
-    async fn metrics(&self) -> TransportMetrics {
-        self.metrics.snapshot()
+    fn receive(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>> {
+        Box::pin(async move {
+            // Use unified channel-based reception for both server and client (same as TCP transport)
+            let mut receiver_guard = self.receiver.lock().await;
+            if let Some(ref mut receiver) = *receiver_guard {
+                match receiver.recv().await {
+                    Some(message) => {
+                        self.metrics
+                            .messages_received
+                            .fetch_add(1, Ordering::Relaxed);
+                        self.metrics
+                            .bytes_received
+                            .fetch_add(message.size() as u64, Ordering::Relaxed);
+                        Ok(Some(message))
+                    }
+                    None => {
+                        *self.state.lock() = TransportState::Failed {
+                            reason: "Channel disconnected".into(),
+                        };
+                        Err(TransportError::ReceiveFailed(
+                            "Unix socket transport channel closed".into(),
+                        ))
+                    }
+                }
+            } else {
+                Err(TransportError::ConnectionFailed(
+                    "Unix socket transport not connected".into(),
+                ))
+            }
+        })
+    }
+
+    fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+        Box::pin(async move { self.metrics.snapshot() })
     }
 
     fn endpoint(&self) -> Option<String> {
@@ -585,7 +712,7 @@ mod tests {
         assert_eq!(transport.socket_path, Path::new("/tmp/test-server.sock"));
         assert!(transport.is_server);
         assert!(matches!(
-            *transport.state.lock().expect("state mutex poisoned"),
+            *transport.state.lock(),
             TransportState::Disconnected
         ));
     }

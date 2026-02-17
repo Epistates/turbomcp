@@ -59,7 +59,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// ```
     pub async fn list_prompts(&self) -> Result<Vec<Prompt>> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         // Send prompts/list request - return full Prompt objects per MCP spec
@@ -125,11 +125,11 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         arguments: Option<PromptInput>,
     ) -> Result<GetPromptResult> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         if name.is_empty() {
-            return Err(Error::bad_request("Prompt name cannot be empty"));
+            return Err(Error::invalid_request("Prompt name cannot be empty"));
         }
 
         // Send prompts/get request with full argument support
@@ -144,7 +144,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             .request(
                 "prompts/get",
                 Some(serde_json::to_value(request).map_err(|e| {
-                    Error::protocol(format!("Failed to serialize prompt request: {}", e))
+                    Error::internal(format!("Failed to serialize prompt request: {}", e))
                 })?),
             )
             .await

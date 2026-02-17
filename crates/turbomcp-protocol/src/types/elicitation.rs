@@ -419,48 +419,10 @@ pub struct UntitledMultiSelectItems {
     pub enum_values: Vec<String>,
 }
 
-/// Legacy enum schema with enumNames (deprecated, non-standard)
+/// Standards-based enum schema (MCP 2025-11-25, SEP-1330)
 ///
-/// **Deprecated**: This uses the non-standard `enumNames` keyword which is not part of
-/// JSON Schema 2020-12. Use `TitledSingleSelectEnumSchema` with `oneOf` pattern instead.
-///
-/// This type is maintained for backward compatibility only and will be removed
-/// in a future version of the MCP specification.
-///
-/// ## Example
-/// ```json
-/// {
-///   "type": "string",
-///   "enum": ["#FF0000", "#00FF00"],
-///   "enumNames": ["Red", "Green"]
-/// }
-/// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LegacyTitledEnumSchema {
-    /// Schema type (must be "string")
-    #[serde(rename = "type")]
-    pub schema_type: String,
-    /// Array of allowed values
-    #[serde(rename = "enum")]
-    pub enum_values: Vec<String>,
-    /// Display names for enum values (non-standard, deprecated)
-    #[serde(rename = "enumNames")]
-    pub enum_names: Vec<String>,
-    /// Optional schema title
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// Optional schema description
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Optional default value
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default: Option<String>,
-}
-
-/// Standards-based enum schema (MCP 2025-11-25 draft, SEP-1330)
-///
-/// Replaces non-standard `enumNames` pattern with JSON Schema 2020-12 compliant
-/// `oneOf`/`const` (single-select) and `anyOf` (multi-select) patterns.
+/// JSON Schema 2020-12 compliant enum patterns using `oneOf`/`const` (single-select)
+/// and `anyOf` (multi-select) patterns.
 ///
 /// ## Variants
 ///
@@ -468,17 +430,13 @@ pub struct LegacyTitledEnumSchema {
 /// - **UntitledSingleSelect**: Single-select without titles (simple enum)
 /// - **TitledMultiSelect**: Multi-select with display titles (array + anyOf)
 /// - **UntitledMultiSelect**: Multi-select without titles (array + enum)
-/// - **LegacyTitled**: Backward compatibility (enum + enumNames, deprecated)
 ///
 /// ## Standards Compliance
 ///
-/// The new patterns use only standard JSON Schema 2020-12 keywords:
+/// All patterns use standard JSON Schema 2020-12 keywords:
 /// - `oneOf` with `const` and `title` for discriminated unions
 /// - `anyOf` for array items with multiple allowed types
 /// - `enum` for simple value restrictions
-///
-/// The legacy `enumNames` keyword was never part of any JSON Schema specification
-/// and has been replaced with standards-compliant patterns.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum EnumSchema {
@@ -490,8 +448,6 @@ pub enum EnumSchema {
     TitledMultiSelect(TitledMultiSelectEnumSchema),
     /// Multi-select enum without titles (array + enum)
     UntitledMultiSelect(UntitledMultiSelectEnumSchema),
-    /// Legacy enum with enumNames (deprecated, for backward compatibility)
-    LegacyTitled(LegacyTitledEnumSchema),
 }
 
 /// Elicit request mode (MCP 2025-11-25 draft, SEP-1036)
@@ -961,33 +917,6 @@ mod tests {
         let deserialized: UntitledMultiSelectEnumSchema = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.items.enum_values.len(), 3);
         assert_eq!(deserialized.default.as_ref().unwrap().len(), 2);
-    }
-
-    #[test]
-    fn test_legacy_titled_enum_schema() {
-        use super::LegacyTitledEnumSchema;
-
-        let schema = LegacyTitledEnumSchema {
-            schema_type: "string".to_string(),
-            enum_values: vec!["#FF0000".to_string(), "#00FF00".to_string()],
-            enum_names: vec!["Red".to_string(), "Green".to_string()],
-            title: Some("Color Selection".to_string()),
-            description: Some("Choose a color (legacy)".to_string()),
-            default: Some("#FF0000".to_string()),
-        };
-
-        let json = serde_json::to_string(&schema).unwrap();
-        assert!(json.contains("\"type\":\"string\""));
-        assert!(json.contains("\"enum\""));
-        assert!(json.contains("\"enumNames\""));
-        assert!(json.contains("\"Red\""));
-        assert!(!json.contains("oneOf"));
-
-        // Verify deserialization
-        let deserialized: LegacyTitledEnumSchema = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.enum_values.len(), 2);
-        assert_eq!(deserialized.enum_names.len(), 2);
-        assert_eq!(deserialized.enum_names[0], "Red");
     }
 
     #[test]

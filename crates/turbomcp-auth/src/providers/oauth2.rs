@@ -2,21 +2,25 @@
 //!
 //! Implements the AuthProvider trait for OAuth 2.1 authorization flows.
 
+use std::future::Future;
+use std::num::NonZeroUsize;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use async_trait::async_trait;
+use lru::LruCache;
 use tokio::sync::RwLock;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::super::config::AuthProviderType;
 use super::super::context::AuthContext;
+use super::super::introspection::IntrospectionClient;
 use super::super::oauth2::OAuth2Client;
 use super::super::types::{AuthCredentials, AuthProvider, TokenInfo, UserInfo};
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
 
 /// OAuth 2.1 authentication provider
-#[derive(Debug)]
 pub struct OAuth2Provider {
     /// Provider name
     name: String,
@@ -27,8 +31,30 @@ pub struct OAuth2Provider {
     resource_uri: String,
     /// HTTP client for userinfo endpoint
     http_client: reqwest::Client,
-    /// Token cache to avoid redundant requests
-    token_cache: Arc<RwLock<std::collections::HashMap<String, CachedToken>>>,
+    /// Token cache with LRU eviction (capacity: 10,000 entries)
+    token_cache: Arc<RwLock<LruCache<String, CachedToken>>>,
+    /// Optional introspection client for revocation checking
+    introspection_client: Option<Arc<IntrospectionClient>>,
+}
+
+// Manual Debug impl to prevent token_cache details from being exposed
+impl std::fmt::Debug for OAuth2Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuth2Provider")
+            .field("name", &self.name)
+            .field("client", &self.client)
+            .field("resource_uri", &self.resource_uri)
+            .field("http_client", &"<reqwest::Client>")
+            .field("token_cache", &"<LruCache>")
+            .field(
+                "introspection_client",
+                &self
+                    .introspection_client
+                    .as_ref()
+                    .map(|_| "<IntrospectionClient>"),
+            )
+            .finish()
+    }
 }
 
 /// Cached token with metadata
@@ -59,7 +85,45 @@ impl OAuth2Provider {
             client,
             resource_uri,
             http_client: reqwest::Client::new(),
-            token_cache: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            token_cache: Arc::new(RwLock::new(LruCache::new(
+                NonZeroUsize::new(10_000).expect("10,000 is non-zero"),
+            ))),
+            introspection_client: None,
+        }
+    }
+
+    /// Create a new OAuth2 provider with introspection support
+    ///
+    /// Enables real-time token revocation checking via RFC 7662 introspection endpoint.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Provider name for identification
+    /// * `client` - OAuth2 client configured for the provider
+    /// * `resource_uri` - **MCP server canonical URI** (RFC 8707)
+    /// * `introspection_client` - Client for token introspection
+    ///
+    /// # Security
+    ///
+    /// Introspection provides defense-in-depth by checking token revocation even
+    /// when cached tokens haven't expired. This is best-effort: if introspection
+    /// fails, the cached result is used to prevent breaking auth during temporary
+    /// introspection endpoint outages.
+    pub fn with_introspection(
+        name: String,
+        client: Arc<OAuth2Client>,
+        resource_uri: String,
+        introspection_client: Arc<IntrospectionClient>,
+    ) -> Self {
+        Self {
+            name,
+            client,
+            resource_uri,
+            http_client: reqwest::Client::new(),
+            token_cache: Arc::new(RwLock::new(LruCache::new(
+                NonZeroUsize::new(10_000).expect("10,000 is non-zero"),
+            ))),
+            introspection_client: Some(introspection_client),
         }
     }
 
@@ -134,7 +198,6 @@ impl OAuth2Provider {
     }
 }
 
-#[async_trait]
 impl AuthProvider for OAuth2Provider {
     fn name(&self) -> &str {
         &self.name
@@ -144,116 +207,186 @@ impl AuthProvider for OAuth2Provider {
         AuthProviderType::OAuth2
     }
 
-    async fn authenticate(&self, credentials: AuthCredentials) -> McpResult<AuthContext> {
-        match credentials {
-            AuthCredentials::OAuth2Code { code: _, state: _ } => {
-                // In a real implementation, we'd validate state parameter
-                // For now, we need the PKCE code verifier which should be stored
-                // This is a simplified implementation - in practice, code_verifier
-                // would come from session storage based on state parameter
+    fn authenticate(
+        &self,
+        credentials: AuthCredentials,
+    ) -> Pin<Box<dyn Future<Output = McpResult<AuthContext>> + Send + '_>> {
+        Box::pin(async move {
+            match credentials {
+                AuthCredentials::OAuth2Code { code: _, state: _ } => {
+                    // In a real implementation, we'd validate state parameter
+                    // For now, we need the PKCE code verifier which should be stored
+                    // This is a simplified implementation - in practice, code_verifier
+                    // would come from session storage based on state parameter
 
-                // Exchange code for token using empty verifier (in real implementation,
-                // this would come from stored session state)
-                // For now, return an error - the flow should be:
-                // 1. Client calls authorization_code_flow() -> gets code_verifier
-                // 2. User redirects with code
-                // 3. Client calls exchange_code_for_token() with code_verifier
-                // 4. Provider stores token and creates AuthContext
+                    // Exchange code for token using empty verifier (in real implementation,
+                    // this would come from stored session state)
+                    // For now, return an error - the flow should be:
+                    // 1. Client calls authorization_code_flow() -> gets code_verifier
+                    // 2. User redirects with code
+                    // 3. Client calls exchange_code_for_token() with code_verifier
+                    // 4. Provider stores token and creates AuthContext
 
-                Err(McpError::internal(
-                    "OAuth2 authentication requires exchange_code_for_token() method. \
-                     Use OAuth2Client.authorization_code_flow() and \
-                     OAuth2Client.exchange_code_for_token() directly."
-                        .to_string(),
-                ))
+                    Err(McpError::internal(
+                        "OAuth2 authentication requires exchange_code_for_token() method. \
+                         Use OAuth2Client.authorization_code_flow() and \
+                         OAuth2Client.exchange_code_for_token() directly."
+                            .to_string(),
+                    ))
+                }
+                _ => Err(McpError::invalid_params(
+                    "OAuth2 provider only accepts OAuth2Code credentials".to_string(),
+                )),
             }
-            _ => Err(McpError::validation(
-                "OAuth2 provider only accepts OAuth2Code credentials".to_string(),
-            )),
-        }
+        })
     }
 
-    async fn validate_token(&self, token: &str) -> McpResult<AuthContext> {
-        // Check cache first
-        {
-            let cache = self.token_cache.read().await;
-            if let Some(cached) = cache.get(token) {
-                let elapsed = cached
-                    .cached_at
-                    .elapsed()
-                    .unwrap_or(std::time::Duration::from_secs(0));
-                // Cache for 5 minutes
-                if elapsed < std::time::Duration::from_secs(300) {
-                    let user_info = self.fetch_user_info(token).await?;
-                    let request_id = Uuid::new_v4().to_string();
-                    let mut builder = AuthContext::builder()
-                        .subject(user_info.id.clone())
-                        .user(user_info)
-                        .roles(vec!["oauth_user".to_string()])
-                        .permissions(vec!["api_access".to_string()])
-                        .request_id(request_id)
-                        .token(cached.token.clone())
-                        .provider(self.name.clone())
-                        .authenticated_at(SystemTime::now());
+    fn validate_token(
+        &self,
+        token: &str,
+    ) -> Pin<Box<dyn Future<Output = McpResult<AuthContext>> + Send + '_>> {
+        let token = token.to_string();
+        Box::pin(async move {
+            // Check cache first (with reduced TTL from 300s to 60s)
+            {
+                let mut cache = self.token_cache.write().await;
+                if let Some(cached) = cache.get(&token) {
+                    let elapsed = cached
+                        .cached_at
+                        .elapsed()
+                        .unwrap_or(std::time::Duration::from_secs(0));
+                    // Cache for 60 seconds (reduced from 300s for better revocation detection)
+                    if elapsed < std::time::Duration::from_secs(60) {
+                        // If introspection is configured, check if token is still active
+                        if let Some(ref introspection_client) = self.introspection_client {
+                            match introspection_client.is_token_active(&token).await {
+                                Ok(false) => {
+                                    // Token was revoked - remove from cache
+                                    debug!(
+                                        "Token revoked according to introspection, removing from cache"
+                                    );
+                                    cache.pop(&token);
+                                    return Err(McpError::invalid_params(
+                                        "Token has been revoked".to_string(),
+                                    ));
+                                }
+                                Ok(true) => {
+                                    // Token is still active, continue with cached result
+                                    debug!("Token confirmed active via introspection");
+                                }
+                                Err(e) => {
+                                    // Introspection failed - log warning but fall through to cached result
+                                    // This is best-effort: we don't break auth if introspection is temporarily down
+                                    warn!(
+                                        error = %e,
+                                        "Introspection check failed, falling back to cached result"
+                                    );
+                                }
+                            }
+                        }
 
-                    if let Some(secs) = cached.token.expires_in {
-                        builder = builder
-                            .expires_at(SystemTime::now() + std::time::Duration::from_secs(secs));
+                        // Build context from cached token
+                        drop(cache); // Release write lock before async operations
+                        let user_info = self.fetch_user_info(&token).await?;
+                        let request_id = Uuid::new_v4().to_string();
+                        let cached_token = {
+                            // Re-acquire lock to read cached token
+                            let cache = self.token_cache.read().await;
+                            cache
+                                .peek(&token)
+                                .ok_or_else(|| {
+                                    McpError::internal("Token removed from cache".to_string())
+                                })?
+                                .token
+                                .clone()
+                        };
+
+                        let mut builder = AuthContext::builder()
+                            .subject(user_info.id.clone())
+                            .user(user_info)
+                            .roles(vec!["oauth_user".to_string()])
+                            .permissions(vec!["api_access".to_string()])
+                            .request_id(request_id)
+                            .token(cached_token.clone())
+                            .provider(self.name.clone())
+                            .authenticated_at(SystemTime::now());
+
+                        if let Some(secs) = cached_token.expires_in {
+                            builder = builder.expires_at(
+                                SystemTime::now() + std::time::Duration::from_secs(secs),
+                            );
+                        }
+
+                        return builder
+                            .build()
+                            .map_err(|e| McpError::internal(e.to_string()));
                     }
-
-                    return builder
-                        .build()
-                        .map_err(|e| McpError::internal(e.to_string()));
                 }
             }
-        }
 
-        // Token not in cache or cache expired - fetch user info to validate
-        let user_info = self.fetch_user_info(token).await?;
-        let request_id = Uuid::new_v4().to_string();
+            // Token not in cache or cache expired - fetch user info to validate
+            let user_info = self.fetch_user_info(&token).await?;
+            let request_id = Uuid::new_v4().to_string();
 
-        AuthContext::builder()
-            .subject(user_info.id.clone())
-            .user(user_info)
-            .roles(vec!["oauth_user".to_string()])
-            .permissions(vec!["api_access".to_string()])
-            .request_id(request_id)
-            .provider(self.name.clone())
-            .authenticated_at(SystemTime::now())
-            .build()
-            .map_err(|e| McpError::internal(e.to_string()))
+            AuthContext::builder()
+                .subject(user_info.id.clone())
+                .user(user_info)
+                .roles(vec!["oauth_user".to_string()])
+                .permissions(vec!["api_access".to_string()])
+                .request_id(request_id)
+                .provider(self.name.clone())
+                .authenticated_at(SystemTime::now())
+                .build()
+                .map_err(|e| McpError::internal(e.to_string()))
+        })
     }
 
-    async fn refresh_token(&self, refresh_token: &str) -> McpResult<TokenInfo> {
-        // Refresh token using the OAuth2 client
-        // Note: RFC 8707 resource parameter is handled in OAuth2Client::refresh_access_token
-        self.client.refresh_access_token(refresh_token).await
+    fn refresh_token(
+        &self,
+        refresh_token: &str,
+    ) -> Pin<Box<dyn Future<Output = McpResult<TokenInfo>> + Send + '_>> {
+        let refresh_token = refresh_token.to_string();
+        Box::pin(async move {
+            // Refresh token using the OAuth2 client
+            // Note: RFC 8707 resource parameter is handled in OAuth2Client::refresh_access_token
+            self.client.refresh_access_token(&refresh_token).await
+        })
     }
 
-    async fn revoke_token(&self, token: &str) -> McpResult<()> {
-        // Remove from cache first
-        let cached_token = self.token_cache.write().await.remove(token);
+    fn revoke_token(
+        &self,
+        token: &str,
+    ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + '_>> {
+        let token = token.to_string();
+        Box::pin(async move {
+            // Remove from cache first (LRU cache uses pop instead of remove)
+            let cached_token = self.token_cache.write().await.pop(&token);
 
-        // If we have the full token info, revoke it at the provider (RFC 7009)
-        if let Some(cached) = cached_token {
-            self.client.revoke_token(&cached.token).await?;
-        } else {
-            // If not in cache, create a minimal TokenInfo for revocation
-            let token_info = TokenInfo {
-                access_token: token.to_string(),
-                token_type: "Bearer".to_string(),
-                refresh_token: None,
-                expires_in: None,
-                scope: None,
-            };
-            self.client.revoke_token(&token_info).await?;
-        }
+            // If we have the full token info, revoke it at the provider (RFC 7009)
+            if let Some(cached) = cached_token {
+                self.client.revoke_token(&cached.token).await?;
+            } else {
+                // If not in cache, create a minimal TokenInfo for revocation
+                let token_info = TokenInfo {
+                    access_token: token,
+                    token_type: "Bearer".to_string(),
+                    refresh_token: None,
+                    expires_in: None,
+                    scope: None,
+                };
+                self.client.revoke_token(&token_info).await?;
+            }
 
-        Ok(())
+            Ok(())
+        })
     }
 
-    async fn get_user_info(&self, token: &str) -> McpResult<UserInfo> {
-        self.fetch_user_info(token).await
+    fn get_user_info(
+        &self,
+        token: &str,
+    ) -> Pin<Box<dyn Future<Output = McpResult<UserInfo>> + Send + '_>> {
+        let token = token.to_string();
+        Box::pin(async move { self.fetch_user_info(&token).await })
     }
 }
 

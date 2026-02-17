@@ -854,14 +854,7 @@ async fn test_websocket_tls_config() {
         .expect("Failed to create transport");
 
     // Verify TLS config is stored
-    assert!(
-        transport
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .tls_config
-            .is_some()
-    );
+    assert!(transport.config.lock().tls_config.is_some());
 }
 
 #[tokio::test]
@@ -876,7 +869,7 @@ async fn test_websocket_tls_insecure() {
         .expect("Failed to create transport");
 
     // Verify insecure mode
-    let config_guard = transport.config.lock().expect("config mutex poisoned");
+    let config_guard = transport.config.lock();
     assert!(config_guard.tls_config.is_some());
     assert!(config_guard.tls_config.as_ref().unwrap().skip_verify);
 }

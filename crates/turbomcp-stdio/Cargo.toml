@@ -23,11 +23,11 @@ turbomcp-protocol = { workspace = true }
 tokio = { workspace = true, features = ["io-std", "io-util", "sync", "time", "process"] }
 tokio-util = { workspace = true, features = ["codec"] }
 futures = { workspace = true }
-async-trait = { workspace = true }
 
 # Serialization
 serde_json = { workspace = true }
 bytes = { workspace = true }
+parking_lot = { workspace = true }
 
 # Observability
 tracing = { workspace = true }

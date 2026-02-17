@@ -187,13 +187,13 @@ impl BearerTokenValidator {
         let parts: Vec<&str> = authorization_header.split_whitespace().collect();
 
         if parts.len() != 2 {
-            return Err(McpError::validation(
+            return Err(McpError::invalid_params(
                 "Authorization header must have format: Bearer <token>".to_string(),
             ));
         }
 
         if parts[0].to_lowercase() != "bearer" {
-            return Err(McpError::validation(
+            return Err(McpError::invalid_params(
                 "Only Bearer token authentication is supported".to_string(),
             ));
         }
@@ -207,15 +207,15 @@ impl BearerTokenValidator {
     /// always validate tokens with the authorization server.
     pub fn validate_format(token: &str) -> McpResult<()> {
         if token.is_empty() {
-            return Err(McpError::validation("Token is empty".to_string()));
+            return Err(McpError::invalid_params("Token is empty".to_string()));
         }
 
         if token.len() < 10 {
-            return Err(McpError::validation("Token is too short".to_string()));
+            return Err(McpError::invalid_params("Token is too short".to_string()));
         }
 
         if token.len() > 10000 {
-            return Err(McpError::validation("Token is too long".to_string()));
+            return Err(McpError::invalid_params("Token is too long".to_string()));
         }
 
         Ok(())
@@ -278,18 +278,24 @@ pub fn validate_audience(token_aud: &str, server_uri: &str) -> turbomcp_protocol
     use url::Url;
 
     let token_url = Url::parse(token_aud).map_err(|e| {
-        turbomcp_protocol::Error::validation(format!("Invalid token audience URI: {}", e))
+        turbomcp_protocol::Error::invalid_params(format!("Invalid token audience URI: {}", e))
     })?;
 
-    let server_url = Url::parse(server_uri)
-        .map_err(|e| turbomcp_protocol::Error::validation(format!("Invalid server URI: {}", e)))?;
+    let server_url = Url::parse(server_uri).map_err(|e| {
+        turbomcp_protocol::Error::invalid_params(format!("Invalid server URI: {}", e))
+    })?;
 
     // Normalize per RFC 8707
     let token_normalized = normalize_resource_uri(&token_url);
     let server_normalized = normalize_resource_uri(&server_url);
 
-    if token_normalized != server_normalized {
-        return Err(turbomcp_protocol::Error::validation(format!(
+    // SECURITY: Use constant-time comparison to prevent timing attacks
+    let matches: bool =
+        subtle::ConstantTimeEq::ct_eq(token_normalized.as_bytes(), server_normalized.as_bytes())
+            .into();
+
+    if !matches {
+        return Err(turbomcp_protocol::Error::invalid_params(format!(
             "Token audience '{}' does not match server URI '{}' (normalized: '{}' vs '{}')",
             token_aud, server_uri, token_normalized, server_normalized
         )));

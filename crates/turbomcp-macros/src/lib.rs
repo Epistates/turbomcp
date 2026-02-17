@@ -152,9 +152,38 @@ pub fn server(args: TokenStream, input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn tool(_args: TokenStream, input: TokenStream) -> TokenStream {
-    // Tool attribute is processed by the #[server] macro
-    // When used standalone, just pass through
-    input
+    // Tool attribute must be used within a #[server] impl block
+    // When used standalone, emit a compile error with proper span
+    if let Ok(func) = syn::parse::<syn::ItemFn>(input.clone()) {
+        syn::Error::new(
+            func.sig.ident.span(),
+            "#[tool] must be used within a #[server] impl block. \
+             The #[server] macro discovers tools by scanning impl blocks.\n\n\
+             Example:\n\
+             \n\
+             #[derive(Clone)]\n\
+             struct MyServer;\n\
+             \n\
+             #[server(name = \"my-server\", version = \"1.0.0\")]\n\
+             impl MyServer {\n\
+                 #[tool]\n\
+                 async fn my_tool(&self, arg: String) -> String {\n\
+                     // ...\n\
+                 }\n\
+             }",
+        )
+        .to_compile_error()
+        .into()
+    } else {
+        // Fallback for non-function items
+        let input2 = proc_macro2::TokenStream::from(input);
+        syn::Error::new_spanned(
+            &input2,
+            "#[tool] must be used within a #[server] impl block.",
+        )
+        .to_compile_error()
+        .into()
+    }
 }
 
 /// Marks a method as a resource handler within a `#[server]` block.
@@ -197,9 +226,38 @@ pub fn tool(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn resource(_args: TokenStream, input: TokenStream) -> TokenStream {
-    // Resource attribute is processed by the #[server] macro
-    // When used standalone, just pass through
-    input
+    // Resource attribute must be used within a #[server] impl block
+    // When used standalone, emit a compile error with proper span
+    if let Ok(func) = syn::parse::<syn::ItemFn>(input.clone()) {
+        syn::Error::new(
+            func.sig.ident.span(),
+            "#[resource] must be used within a #[server] impl block. \
+             The #[server] macro discovers resources by scanning impl blocks.\n\n\
+             Example:\n\
+             \n\
+             #[derive(Clone)]\n\
+             struct MyServer;\n\
+             \n\
+             #[server(name = \"my-server\", version = \"1.0.0\")]\n\
+             impl MyServer {\n\
+                 #[resource(\"config://app\")]\n\
+                 async fn config(&self, uri: String, ctx: &RequestContext) -> String {\n\
+                     // ...\n\
+                 }\n\
+             }",
+        )
+        .to_compile_error()
+        .into()
+    } else {
+        // Fallback for non-function items
+        let input2 = proc_macro2::TokenStream::from(input);
+        syn::Error::new_spanned(
+            &input2,
+            "#[resource] must be used within a #[server] impl block.",
+        )
+        .to_compile_error()
+        .into()
+    }
 }
 
 /// Marks a method as a prompt handler within a `#[server]` block.
@@ -233,9 +291,38 @@ pub fn resource(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn prompt(_args: TokenStream, input: TokenStream) -> TokenStream {
-    // Prompt attribute is processed by the #[server] macro
-    // When used standalone, just pass through
-    input
+    // Prompt attribute must be used within a #[server] impl block
+    // When used standalone, emit a compile error with proper span
+    if let Ok(func) = syn::parse::<syn::ItemFn>(input.clone()) {
+        syn::Error::new(
+            func.sig.ident.span(),
+            "#[prompt] must be used within a #[server] impl block. \
+             The #[server] macro discovers prompts by scanning impl blocks.\n\n\
+             Example:\n\
+             \n\
+             #[derive(Clone)]\n\
+             struct MyServer;\n\
+             \n\
+             #[server(name = \"my-server\", version = \"1.0.0\")]\n\
+             impl MyServer {\n\
+                 #[prompt]\n\
+                 async fn greeting(&self, name: String, ctx: &RequestContext) -> String {\n\
+                     // ...\n\
+                 }\n\
+             }",
+        )
+        .to_compile_error()
+        .into()
+    } else {
+        // Fallback for non-function items
+        let input2 = proc_macro2::TokenStream::from(input);
+        syn::Error::new_spanned(
+            &input2,
+            "#[prompt] must be used within a #[server] impl block.",
+        )
+        .to_compile_error()
+        .into()
+    }
 }
 
 /// Provides a description for a tool parameter.
@@ -297,7 +384,31 @@ pub fn prompt(_args: TokenStream, input: TokenStream) -> TokenStream {
 /// ```
 #[proc_macro_attribute]
 pub fn description(_args: TokenStream, input: TokenStream) -> TokenStream {
-    // Description attribute is processed by the #[server] macro's parameter analysis
-    // When used standalone, just pass through
-    input
+    // Description attribute must be used on parameters within a #[tool] method
+    // When used standalone, emit a compile error
+    let error = quote::quote! {
+        compile_error!(
+            "#[description] attribute can only be used on parameters within a #[tool] method\n\n\
+            Example:\n\
+            \n\
+            #[server(name = \"my-server\", version = \"1.0.0\")]\n\
+            impl MyServer {\n\
+                #[tool]\n\
+                async fn search(\n\
+                    &self,\n\
+                    #[description(\"The search query string\")] query: String,\n\
+                ) -> Vec<SearchResult> {\n\
+                    // ...\n\
+                }\n\
+            }"
+        );
+    };
+
+    // Also pass through the original input to avoid cascading errors
+    let input_tokens = proc_macro2::TokenStream::from(input);
+    let combined = quote::quote! {
+        #error
+        #input_tokens
+    };
+    combined.into()
 }

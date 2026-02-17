@@ -40,7 +40,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// ```
     pub async fn list_tools(&self) -> Result<Vec<Tool>> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         // Send tools/list request
@@ -185,7 +185,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         arguments: Option<HashMap<String, serde_json::Value>>,
     ) -> Result<CallToolResult> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
-            return Err(Error::bad_request("Client not initialized"));
+            return Err(Error::invalid_request("Client not initialized"));
         }
 
         let request_data = CallToolRequest {

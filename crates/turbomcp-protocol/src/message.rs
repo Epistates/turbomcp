@@ -445,7 +445,7 @@ impl Message {
                         .map_err(|e| Error::serialization(format!("JSON parsing failed: {e}")))
                 },
             ),
-            _ => Err(Error::validation("Message payload is not JSON")),
+            _ => Err(Error::invalid_params("Message payload is not JSON")),
         }
     }
 
@@ -471,7 +471,7 @@ impl Message {
             MessagePayload::Json(json_payload) => Ok(json_payload.raw.clone()),
             MessagePayload::Text(text) => Ok(Bytes::from(text.clone())),
             MessagePayload::Empty => Ok(Bytes::from_static(b"{}")),
-            MessagePayload::Binary(_) => Err(Error::validation(
+            MessagePayload::Binary(_) => Err(Error::invalid_params(
                 "Cannot serialize non-JSON payload as JSON",
             )),
         }
@@ -487,7 +487,7 @@ impl Message {
                     Err(Error::serialization("Invalid JSON payload"))
                 }
             }
-            _ => Err(Error::validation(
+            _ => Err(Error::invalid_params(
                 "Cannot serialize non-JSON payload with SIMD JSON",
             )),
         }
@@ -514,13 +514,17 @@ impl Message {
                         Ok(Bytes::from(buffer))
                     },
                 ),
-                _ => Err(Error::validation("Cannot serialize payload as MessagePack")),
+                _ => Err(Error::invalid_params(
+                    "Cannot serialize payload as MessagePack",
+                )),
             }
         }
         #[cfg(not(feature = "messagepack"))]
         {
             let _ = self; // Silence unused warning
-            Err(Error::validation("MessagePack serialization not available"))
+            Err(Error::invalid_params(
+                "MessagePack serialization not available",
+            ))
         }
     }
 
@@ -576,7 +580,7 @@ impl Message {
                     }
                 }
             }
-            _ => Err(Error::validation("Cannot serialize payload as CBOR")),
+            _ => Err(Error::invalid_params("Cannot serialize payload as CBOR")),
         }
     }
 

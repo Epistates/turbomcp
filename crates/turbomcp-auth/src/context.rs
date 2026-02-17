@@ -444,6 +444,94 @@ impl AuthContext {
             None => Err(AuthError::DpopRequired),
         }
     }
+
+    #[cfg(feature = "dpop")]
+    /// Check if DPoP binding is required
+    ///
+    /// Returns true if the token was issued with DPoP binding (dpop_jkt is set).
+    /// Callers MUST invoke `validate_dpop_binding()` when this returns true.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// if auth_ctx.requires_dpop() {
+    ///     // Extract DPoP proof from HTTP headers
+    ///     let dpop_header = request.header("DPoP")?;
+    ///     let proof = parse_dpop_proof(dpop_header)?;
+    ///     let jkt = compute_jkt_from_proof(&proof)?;
+    ///
+    ///     // Validate binding
+    ///     auth_ctx.validate_dpop_binding(&jkt)?;
+    /// }
+    /// ```
+    pub fn requires_dpop(&self) -> bool {
+        self.dpop_jkt.is_some()
+    }
+
+    #[cfg(feature = "dpop")]
+    /// Validate DPoP binding by comparing JWK thumbprints
+    ///
+    /// This method checks if a DPoP proof's JWK thumbprint matches the bound
+    /// thumbprint from token issuance. Callers MUST extract the DPoP proof from
+    /// HTTP headers and compute the JWK thumbprint before calling this method.
+    ///
+    /// # Arguments
+    ///
+    /// * `proof_thumbprint` - JWK thumbprint (jkt) computed from the DPoP proof
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Token requires DPoP but no binding is set (should never happen)
+    /// - Proof thumbprint doesn't match the bound thumbprint
+    ///
+    /// # Security Note
+    ///
+    /// DPoP proof validation (signature, nonce, timestamp) is NOT performed by
+    /// this method. The actual DPoP proof comes from HTTP headers which the auth
+    /// provider doesn't have direct access to. This method only validates the
+    /// binding between the token and the proof's public key.
+    ///
+    /// Callers are responsible for:
+    /// 1. Extracting DPoP proof from HTTP "DPoP" header
+    /// 2. Validating proof signature, nonce, timestamp (use turbomcp-dpop crate)
+    /// 3. Computing JWK thumbprint from proof's public key
+    /// 4. Calling this method to validate the binding
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use turbomcp_auth::context::AuthContext;
+    /// use turbomcp_dpop::DpopProof;
+    ///
+    /// // After validating the DPoP proof from HTTP headers
+    /// let proof = DpopProof::parse_and_validate(dpop_header, http_method, http_uri)?;
+    /// let jkt = proof.compute_jkt()?;
+    ///
+    /// // Validate binding
+    /// auth_ctx.validate_dpop_binding(&jkt)?;
+    /// ```
+    pub fn validate_dpop_binding(&self, proof_thumbprint: &str) -> Result<(), AuthError> {
+        match &self.dpop_jkt {
+            Some(bound_jkt) if bound_jkt == proof_thumbprint => Ok(()),
+            Some(bound_jkt) => {
+                // Thumbprint mismatch - token was bound to a different key
+                tracing::warn!(
+                    expected = bound_jkt,
+                    received = proof_thumbprint,
+                    "DPoP binding validation failed: thumbprint mismatch"
+                );
+                Err(AuthError::DpopMismatch)
+            }
+            None => {
+                // Token doesn't require DPoP (dpop_jkt not set)
+                tracing::error!(
+                    "validate_dpop_binding called but token has no DPoP binding (dpop_jkt not set)"
+                );
+                Err(AuthError::DpopRequired)
+            }
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════

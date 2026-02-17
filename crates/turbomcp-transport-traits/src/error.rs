@@ -164,6 +164,123 @@ impl From<serde_json::Error> for TransportError {
     }
 }
 
+// =========================================================================
+// Integration with unified McpError (v3.0.0 unified error architecture)
+// =========================================================================
+
+impl From<TransportError> for turbomcp_protocol::McpError {
+    fn from(err: TransportError) -> Self {
+        use turbomcp_protocol::ErrorKind;
+
+        let (kind, message) = match &err {
+            TransportError::ConnectionFailed(msg) => {
+                (ErrorKind::Transport, format!("Connection failed: {}", msg))
+            }
+            TransportError::ConnectionLost(msg) => {
+                (ErrorKind::Transport, format!("Connection lost: {}", msg))
+            }
+            TransportError::SendFailed(msg) => {
+                (ErrorKind::Transport, format!("Send failed: {}", msg))
+            }
+            TransportError::ReceiveFailed(msg) => {
+                (ErrorKind::Transport, format!("Receive failed: {}", msg))
+            }
+            TransportError::SerializationFailed(msg) => (
+                ErrorKind::Serialization,
+                format!("Serialization failed: {}", msg),
+            ),
+            TransportError::ProtocolError(msg) => (
+                ErrorKind::InvalidRequest,
+                format!("Protocol error: {}", msg),
+            ),
+            TransportError::Timeout => (ErrorKind::Timeout, "Operation timed out".to_string()),
+            TransportError::ConnectionTimeout { operation, timeout } => (
+                ErrorKind::Timeout,
+                format!(
+                    "Connection timed out after {:?} for operation: {}",
+                    timeout, operation
+                ),
+            ),
+            TransportError::RequestTimeout { operation, timeout } => (
+                ErrorKind::Timeout,
+                format!(
+                    "Request timed out after {:?} for operation: {}",
+                    timeout, operation
+                ),
+            ),
+            TransportError::TotalTimeout { operation, timeout } => (
+                ErrorKind::Timeout,
+                format!(
+                    "Total operation timed out after {:?} for operation: {}",
+                    timeout, operation
+                ),
+            ),
+            TransportError::ReadTimeout { operation, timeout } => (
+                ErrorKind::Timeout,
+                format!(
+                    "Read timed out after {:?} for operation: {}",
+                    timeout, operation
+                ),
+            ),
+            TransportError::ConfigurationError(msg) => (
+                ErrorKind::Configuration,
+                format!("Configuration error: {}", msg),
+            ),
+            TransportError::AuthenticationFailed(msg) => (
+                ErrorKind::Authentication,
+                format!("Authentication failed: {}", msg),
+            ),
+            TransportError::RateLimitExceeded => {
+                (ErrorKind::RateLimited, "Rate limit exceeded".to_string())
+            }
+            TransportError::NotAvailable(msg) => (
+                ErrorKind::Unavailable,
+                format!("Transport not available: {}", msg),
+            ),
+            TransportError::Io(msg) => (ErrorKind::Transport, format!("IO error: {}", msg)),
+            TransportError::Internal(msg) => {
+                (ErrorKind::Internal, format!("Internal error: {}", msg))
+            }
+            TransportError::RequestTooLarge { size, max } => (
+                ErrorKind::InvalidParams,
+                format!(
+                    "Request size ({} bytes) exceeds maximum allowed ({} bytes)",
+                    size, max
+                ),
+            ),
+            TransportError::ResponseTooLarge { size, max } => (
+                ErrorKind::Internal,
+                format!(
+                    "Response size ({} bytes) exceeds maximum allowed ({} bytes)",
+                    size, max
+                ),
+            ),
+        };
+
+        turbomcp_protocol::McpError::new(kind, message).with_component("transport")
+    }
+}
+
+impl From<turbomcp_protocol::McpError> for TransportError {
+    fn from(err: turbomcp_protocol::McpError) -> Self {
+        use turbomcp_protocol::ErrorKind;
+
+        match err.kind {
+            ErrorKind::Timeout => TransportError::Timeout,
+            ErrorKind::Transport => TransportError::ConnectionFailed(err.message),
+            ErrorKind::Authentication => TransportError::AuthenticationFailed(err.message),
+            ErrorKind::RateLimited => TransportError::RateLimitExceeded,
+            ErrorKind::Unavailable => TransportError::NotAvailable(err.message),
+            ErrorKind::Configuration => TransportError::ConfigurationError(err.message),
+            ErrorKind::Serialization => TransportError::SerializationFailed(err.message),
+            ErrorKind::InvalidRequest | ErrorKind::InvalidParams | ErrorKind::ParseError => {
+                TransportError::ProtocolError(err.message)
+            }
+            _ => TransportError::Internal(err.message),
+        }
+    }
+}
+
 /// Validates that a request message size does not exceed the configured limit.
 ///
 /// # Arguments

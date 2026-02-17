@@ -53,6 +53,8 @@
 //! ```
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
+// Allow missing error/panic docs - telemetry errors are self-documenting through TelemetryError type
+#![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 mod config;
 mod error;

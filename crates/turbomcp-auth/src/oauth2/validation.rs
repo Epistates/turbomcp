@@ -30,36 +30,36 @@ pub fn validate_canonical_resource_uri(uri: &str) -> McpResult<()> {
 
     // Check canonical form BEFORE parsing (URL parser normalizes automatically)
     // RFC 8707 requires canonical URIs: lowercase scheme and host
-    let scheme_end = uri
-        .find("://")
-        .ok_or_else(|| McpError::validation("Resource URI must have a valid scheme".to_string()))?;
+    let scheme_end = uri.find("://").ok_or_else(|| {
+        McpError::invalid_params("Resource URI must have a valid scheme".to_string())
+    })?;
 
     let scheme = &uri[..scheme_end];
     if scheme != scheme.to_lowercase() {
-        return Err(McpError::validation(
+        return Err(McpError::invalid_params(
             "Resource URI must use canonical form (lowercase scheme and host)".to_string(),
         ));
     }
 
-    let parsed =
-        Url::parse(uri).map_err(|e| McpError::validation(format!("Invalid resource URI: {e}")))?;
+    let parsed = Url::parse(uri)
+        .map_err(|e| McpError::invalid_params(format!("Invalid resource URI: {e}")))?;
 
     // RFC 8707 requirements
     if parsed.scheme() != "https" && parsed.scheme() != "http" {
-        return Err(McpError::validation(
+        return Err(McpError::invalid_params(
             "Resource URI must use http or https scheme".to_string(),
         ));
     }
 
     if parsed.fragment().is_some() {
-        return Err(McpError::validation(
+        return Err(McpError::invalid_params(
             "Resource URI must not contain fragment".to_string(),
         ));
     }
 
     // MCP-specific validation for canonical URIs
     if parsed.host_str().is_none() {
-        return Err(McpError::validation(
+        return Err(McpError::invalid_params(
             "Resource URI must include host".to_string(),
         ));
     }
@@ -77,12 +77,60 @@ pub fn validate_canonical_resource_uri(uri: &str) -> McpResult<()> {
     let original_host = &host_in_uri[..host_end];
 
     if original_host != original_host.to_lowercase() {
-        return Err(McpError::validation(
+        return Err(McpError::invalid_params(
             "Resource URI must use canonical form (lowercase scheme and host)".to_string(),
         ));
     }
 
     Ok(())
+}
+
+/// Constant-time OAuth state parameter validation
+///
+/// This function validates OAuth 2.1 state parameters using constant-time comparison
+/// to prevent timing attacks that could leak state values (CSRF tokens).
+///
+/// # Security
+/// The state parameter is used for CSRF protection in OAuth flows. If an attacker
+/// can use timing attacks to determine valid state values, they could potentially
+/// forge OAuth callbacks. This function uses constant-time comparison to prevent
+/// such timing attacks.
+///
+/// # Arguments
+/// * `expected_state` - The state value stored in the session/database
+/// * `received_state` - The state value received from the OAuth callback
+///
+/// # Returns
+/// * `Ok(())` if states match
+/// * `Err(McpError)` if states don't match or are invalid
+///
+/// # Example
+/// ```ignore
+/// // In OAuth callback handler
+/// let stored_state = session.get("oauth_state")?;
+/// let callback_state = request.query_param("state")?;
+/// validate_oauth_state(&stored_state, &callback_state)?;
+/// ```
+pub fn validate_oauth_state(expected_state: &str, received_state: &str) -> McpResult<()> {
+    use subtle::ConstantTimeEq;
+
+    // Validate state is not empty (security requirement)
+    if expected_state.is_empty() || received_state.is_empty() {
+        return Err(McpError::invalid_params(
+            "OAuth state parameter cannot be empty".to_string(),
+        ));
+    }
+
+    // Constant-time comparison to prevent timing attacks
+    let is_equal = expected_state.as_bytes().ct_eq(received_state.as_bytes());
+
+    if bool::from(is_equal) {
+        Ok(())
+    } else {
+        Err(McpError::invalid_params(
+            "OAuth state parameter mismatch - possible CSRF attack".to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -146,5 +194,45 @@ mod tests {
                 .to_string()
                 .contains("http or https scheme")
         );
+    }
+
+    #[test]
+    fn test_oauth_state_validation_success() {
+        let state = "random-csrf-token-123";
+        assert!(validate_oauth_state(state, state).is_ok());
+    }
+
+    #[test]
+    fn test_oauth_state_validation_mismatch() {
+        let expected = "state-abc123";
+        let received = "state-xyz789";
+        let result = validate_oauth_state(expected, received);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("state parameter mismatch")
+        );
+    }
+
+    #[test]
+    fn test_oauth_state_validation_empty_expected() {
+        let result = validate_oauth_state("", "some-state");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_oauth_state_validation_empty_received() {
+        let result = validate_oauth_state("some-state", "");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_oauth_state_validation_case_sensitive() {
+        let result = validate_oauth_state("State123", "state123");
+        assert!(result.is_err());
     }
 }

@@ -10,11 +10,12 @@
 //! - Session management with Mcp-Session-Id
 //! - Protocol version headers
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
 use reqwest::{Client as HttpClient, header};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock, mpsc};
@@ -84,8 +85,25 @@ impl RetryPolicy {
                 {
                     return None;
                 }
-                let delay = base.as_secs() * 2u64.pow(attempt);
-                Some(Duration::from_secs(delay.min(max_delay.as_secs())))
+                let base_delay = base.as_millis() as u64 * 2u64.pow(attempt);
+                let max_delay_ms = max_delay.as_millis() as u64;
+                let capped = base_delay.min(max_delay_ms);
+                // Add ±25% jitter to prevent thundering herd
+                let jitter_range = capped / 4;
+                let jitter_offset = if jitter_range > 0 {
+                    // Use simple deterministic-ish jitter from attempt number
+                    // (avoids adding rand dependency just for this)
+                    let hash = (attempt as u64)
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    hash % (jitter_range * 2)
+                } else {
+                    0
+                };
+                let final_delay = capped
+                    .saturating_sub(jitter_range)
+                    .saturating_add(jitter_offset);
+                Some(Duration::from_millis(final_delay))
             }
             Self::Never => None,
         }
@@ -113,8 +131,17 @@ pub struct StreamableHttpClientConfig {
     /// Custom headers
     pub headers: HashMap<String, String>,
 
-    /// User agent
-    pub user_agent: String,
+    /// User agent string (set to None to disable User-Agent header)
+    ///
+    /// Default: `TurboMCP-Client/{version}`
+    ///
+    /// # Security Note
+    ///
+    /// The User-Agent header can expose client version information. Consider:
+    /// - Setting to `None` to disable User-Agent header entirely
+    /// - Using a generic string like "MCP-Client" to minimize fingerprinting
+    /// - Keeping the default to aid server-side debugging and analytics
+    pub user_agent: Option<String>,
 
     /// Protocol version to use
     pub protocol_version: String,
@@ -135,7 +162,7 @@ impl Default for StreamableHttpClientConfig {
             retry_policy: RetryPolicy::default(),
             auth_token: None,
             headers: HashMap::new(),
-            user_agent: format!("TurboMCP-Client/{}", env!("CARGO_PKG_VERSION")),
+            user_agent: Some(format!("TurboMCP-Client/{}", env!("CARGO_PKG_VERSION"))),
             protocol_version: "2025-11-25".to_string(),
             limits: LimitsConfig::default(),
             tls: TlsConfig::default(),
@@ -204,8 +231,12 @@ impl StreamableHttpClientTransport {
         // See: https://github.com/seanmonstar/reqwest/issues/1314
         let mut client_builder = HttpClient::builder()
             .use_rustls_tls()
-            .timeout(config.timeout)
-            .user_agent(&config.user_agent);
+            .timeout(config.timeout);
+
+        // Set User-Agent header if configured
+        if let Some(ref user_agent) = config.user_agent {
+            client_builder = client_builder.user_agent(user_agent);
+        }
 
         // Configure TLS version (TLS 1.3 only in v3.0)
         client_builder = match config.tls.min_version {
@@ -220,41 +251,52 @@ impl StreamableHttpClientTransport {
 
             if std::env::var(INSECURE_TLS_ENV_VAR).is_err() {
                 error!(
-                    "SECURITY ERROR: Certificate validation is disabled but {} is not set. \
-                     Disabling TLS certificate validation makes connections vulnerable to \
-                     man-in-the-middle attacks. To proceed (ONLY for testing/mTLS mesh): \
-                     export {}=1",
+                    "SECURITY: Certificate validation disabled but {} not set. \
+                     Overriding to validate_certificates=true for safety. \
+                     Set {}=1 to allow insecure TLS.",
                     INSECURE_TLS_ENV_VAR, INSECURE_TLS_ENV_VAR
                 );
-                panic!(
-                    "Certificate validation disabled without explicit opt-in. \
-                     Set {}=1 if you understand the security implications.",
-                    INSECURE_TLS_ENV_VAR
+                // Override: force secure config instead of panicking
+                // Don't apply danger_accept_invalid_certs
+            } else {
+                warn!(
+                    "SECURITY WARNING: TLS certificate validation is DISABLED. \
+                     This configuration is INSECURE and should ONLY be used: \
+                     (1) In development/testing environments, or \
+                     (2) In secure mTLS mesh where validation happens elsewhere. \
+                     NEVER use in production connecting to untrusted servers."
                 );
+
+                client_builder = client_builder.danger_accept_invalid_certs(true);
             }
-
-            warn!(
-                "SECURITY WARNING: TLS certificate validation is DISABLED. \
-                 This configuration is INSECURE and should ONLY be used: \
-                 (1) In development/testing environments, or \
-                 (2) In secure mTLS mesh where validation happens elsewhere. \
-                 NEVER use in production connecting to untrusted servers."
-            );
-
-            client_builder = client_builder.danger_accept_invalid_certs(true);
         }
 
         // Add custom CA certificates if provided
         if let Some(ca_certs) = &config.tls.custom_ca_certs {
+            let mut loaded = 0usize;
+            let total = ca_certs.len();
             for cert_bytes in ca_certs {
                 // Try to parse as PEM or DER
                 if let Ok(cert) = reqwest::Certificate::from_pem(cert_bytes) {
                     client_builder = client_builder.add_root_certificate(cert);
+                    loaded += 1;
                 } else if let Ok(cert) = reqwest::Certificate::from_der(cert_bytes) {
                     client_builder = client_builder.add_root_certificate(cert);
+                    loaded += 1;
                 } else {
-                    warn!("Failed to parse custom CA certificate, skipping");
+                    warn!(
+                        "Failed to parse custom CA certificate ({}/{}), skipping",
+                        loaded + 1,
+                        total
+                    );
                 }
+            }
+            if loaded == 0 && total > 0 {
+                error!("All {} custom CA certificates failed to parse", total);
+                // Don't panic - but log at error level. The connection will likely fail with TLS errors.
+            }
+            if loaded > 0 {
+                info!("Loaded {}/{} custom CA certificates", loaded, total);
             }
         }
 
@@ -685,249 +727,263 @@ impl StreamableHttpClientTransport {
     }
 }
 
-#[async_trait]
 impl Transport for StreamableHttpClientTransport {
-    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
-        debug!("Sending message via HTTP POST");
+    fn send(
+        &self,
+        message: TransportMessage,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            debug!("Sending message via HTTP POST");
 
-        // Validate request size against configured limits (v2.2.0+)
-        validate_request_size(message.payload.len(), &self.config.limits)?;
+            // Validate request size against configured limits (v2.2.0+)
+            validate_request_size(message.payload.len(), &self.config.limits)?;
 
-        // Get message endpoint (discovered or default)
-        let url = self.get_message_endpoint_url().await;
+            // Get message endpoint (discovered or default)
+            let url = self.get_message_endpoint_url().await;
 
-        // Build headers with proper Accept negotiation
-        let headers = self
-            .build_headers("application/json, text/event-stream")
-            .await;
+            // Build headers with proper Accept negotiation
+            let headers = self
+                .build_headers("application/json, text/event-stream")
+                .await;
 
-        // Send POST request
-        let response = self
-            .http_client
-            .post(&url)
-            .headers(headers)
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(message.payload.to_vec())
-            .send()
-            .await
-            .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
+            // Send POST request
+            let response = self
+                .http_client
+                .post(&url)
+                .headers(headers)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(message.payload.to_vec())
+                .send()
+                .await
+                .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
 
-        if !response.status().is_success() {
-            return Err(TransportError::ConnectionFailed(format!(
-                "POST failed: {}",
-                response.status()
-            )));
-        }
+            if !response.status().is_success() {
+                return Err(TransportError::ConnectionFailed(format!(
+                    "POST failed: {}",
+                    response.status()
+                )));
+            }
 
-        // Update session ID if provided
-        if let Some(session_id) = response
-            .headers()
-            .get("Mcp-Session-Id")
-            .and_then(|v| v.to_str().ok())
-        {
-            *self.session_id.write().await = Some(session_id.to_string());
-        }
+            // Update session ID if provided
+            if let Some(session_id) = response
+                .headers()
+                .get("Mcp-Session-Id")
+                .and_then(|v| v.to_str().ok())
+            {
+                *self.session_id.write().await = Some(session_id.to_string());
+            }
 
-        // MCP 2025-11-25: HTTP 202 Accepted means notification/response was accepted (no body)
-        if response.status() == reqwest::StatusCode::ACCEPTED {
-            debug!("Received HTTP 202 Accepted (no response body expected)");
+            // MCP 2025-11-25: HTTP 202 Accepted means notification/response was accepted (no body)
+            if response.status() == reqwest::StatusCode::ACCEPTED {
+                debug!("Received HTTP 202 Accepted (no response body expected)");
+                // Update metrics
+                {
+                    let mut metrics = self.metrics.write().await;
+                    metrics.messages_sent += 1;
+                    metrics.bytes_sent += message.payload.len() as u64;
+                }
+                return Ok(());
+            }
+
+            // Check response content type and handle accordingly
+            let content_type = response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+
+            if content_type.contains("application/json") {
+                // MCP 2025-11-25: Server returned immediate JSON response
+                debug!("Received JSON response from POST");
+
+                let response_bytes = response
+                    .bytes()
+                    .await
+                    .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
+
+                // Validate response size against configured limits (v2.2.0+)
+                validate_response_size(response_bytes.len(), &self.config.limits)?;
+
+                let response_message = TransportMessage::new(
+                    MessageId::from("http-response".to_string()),
+                    response_bytes,
+                );
+
+                // Queue the response for the next receive() call
+                self.response_sender
+                    .send(response_message)
+                    .await
+                    .map_err(|e| TransportError::ConnectionLost(e.to_string()))?;
+
+                debug!("JSON response queued successfully");
+            } else if content_type.contains("text/event-stream") {
+                // MCP 2025-11-25: Server returned SSE stream response from POST
+                // Process the stream synchronously to ensure responses are available
+                debug!("Received SSE stream response from POST, processing events");
+
+                let response_sender = self.response_sender.clone();
+                let last_event_id = Arc::clone(&self.last_event_id);
+
+                // Process SSE stream inline (not spawned) to ensure proper ordering
+                let mut stream = response.bytes_stream();
+                let mut buffer = String::new();
+
+                while let Some(chunk_result) = stream.next().await {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            let chunk_str = String::from_utf8_lossy(&chunk);
+                            buffer.push_str(&chunk_str);
+
+                            // Process complete events
+                            while let Some(pos) = buffer.find("\n\n") {
+                                let event_str = buffer[..pos].to_string();
+                                buffer = buffer[pos + 2..].to_string();
+
+                                if let Err(e) = Self::process_post_sse_event(
+                                    &event_str,
+                                    &response_sender,
+                                    &last_event_id,
+                                )
+                                .await
+                                {
+                                    warn!("Failed to process POST SSE event: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Error reading POST SSE stream: {}", e);
+                            break;
+                        }
+                    }
+                }
+                debug!("POST SSE stream processing completed");
+            }
+
             // Update metrics
             {
                 let mut metrics = self.metrics.write().await;
                 metrics.messages_sent += 1;
                 metrics.bytes_sent += message.payload.len() as u64;
             }
-            return Ok(());
-        }
 
-        // Check response content type and handle accordingly
-        let content_type = response
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
+            debug!("Message sent successfully");
+            Ok(())
+        })
+    }
 
-        if content_type.contains("application/json") {
-            // MCP 2025-11-25: Server returned immediate JSON response
-            debug!("Received JSON response from POST");
-
-            let response_bytes = response
-                .bytes()
-                .await
-                .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?;
-
-            // Validate response size against configured limits (v2.2.0+)
-            validate_response_size(response_bytes.len(), &self.config.limits)?;
-
-            let response_message =
-                TransportMessage::new(MessageId::from("http-response".to_string()), response_bytes);
-
-            // Queue the response for the next receive() call
-            self.response_sender
-                .send(response_message)
-                .await
-                .map_err(|e| TransportError::ConnectionLost(e.to_string()))?;
-
-            debug!("JSON response queued successfully");
-        } else if content_type.contains("text/event-stream") {
-            // MCP 2025-11-25: Server returned SSE stream response from POST
-            // Process the stream synchronously to ensure responses are available
-            debug!("Received SSE stream response from POST, processing events");
-
-            let response_sender = self.response_sender.clone();
-            let last_event_id = Arc::clone(&self.last_event_id);
-
-            // Process SSE stream inline (not spawned) to ensure proper ordering
-            let mut stream = response.bytes_stream();
-            let mut buffer = String::new();
-
-            while let Some(chunk_result) = stream.next().await {
-                match chunk_result {
-                    Ok(chunk) => {
-                        let chunk_str = String::from_utf8_lossy(&chunk);
-                        buffer.push_str(&chunk_str);
-
-                        // Process complete events
-                        while let Some(pos) = buffer.find("\n\n") {
-                            let event_str = buffer[..pos].to_string();
-                            buffer = buffer[pos + 2..].to_string();
-
-                            if let Err(e) = Self::process_post_sse_event(
-                                &event_str,
-                                &response_sender,
-                                &last_event_id,
-                            )
-                            .await
-                            {
-                                warn!("Failed to process POST SSE event: {}", e);
-                            }
+    fn receive(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>> {
+        Box::pin(async move {
+            // CRITICAL: Check response queue FIRST (for immediate JSON responses from POST)
+            // This ensures request-response pattern works correctly per MCP 2025-11-25
+            {
+                let mut response_receiver = self.response_receiver.lock().await;
+                match response_receiver.try_recv() {
+                    Ok(message) => {
+                        debug!("Received queued JSON response");
+                        // Update metrics
+                        {
+                            let mut metrics = self.metrics.write().await;
+                            metrics.messages_received += 1;
+                            metrics.bytes_received += message.payload.len() as u64;
                         }
+                        return Ok(Some(message));
                     }
-                    Err(e) => {
-                        warn!("Error reading POST SSE stream: {}", e);
-                        break;
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        // No queued responses, continue to check SSE channel
+                    }
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        return Err(TransportError::ConnectionLost(
+                            "Response channel disconnected".to_string(),
+                        ));
                     }
                 }
             }
-            debug!("POST SSE stream processing completed");
-        }
 
-        // Update metrics
-        {
-            let mut metrics = self.metrics.write().await;
-            metrics.messages_sent += 1;
-            metrics.bytes_sent += message.payload.len() as u64;
-        }
-
-        debug!("Message sent successfully");
-        Ok(())
-    }
-
-    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-        // CRITICAL: Check response queue FIRST (for immediate JSON responses from POST)
-        // This ensures request-response pattern works correctly per MCP 2025-11-25
-        {
-            let mut response_receiver = self.response_receiver.lock().await;
-            match response_receiver.try_recv() {
+            // Check SSE channel for server-initiated messages
+            let mut sse_receiver = self.sse_receiver.lock().await;
+            match sse_receiver.try_recv() {
                 Ok(message) => {
-                    debug!("Received queued JSON response");
+                    debug!("Received SSE message");
                     // Update metrics
                     {
                         let mut metrics = self.metrics.write().await;
                         metrics.messages_received += 1;
                         metrics.bytes_received += message.payload.len() as u64;
                     }
-                    return Ok(Some(message));
+                    Ok(Some(message))
                 }
-                Err(mpsc::error::TryRecvError::Empty) => {
-                    // No queued responses, continue to check SSE channel
-                }
-                Err(mpsc::error::TryRecvError::Disconnected) => {
-                    return Err(TransportError::ConnectionLost(
-                        "Response channel disconnected".to_string(),
-                    ));
-                }
+                Err(mpsc::error::TryRecvError::Empty) => Ok(None),
+                Err(mpsc::error::TryRecvError::Disconnected) => Err(
+                    TransportError::ConnectionLost("SSE channel disconnected".to_string()),
+                ),
             }
-        }
-
-        // Check SSE channel for server-initiated messages
-        let mut sse_receiver = self.sse_receiver.lock().await;
-        match sse_receiver.try_recv() {
-            Ok(message) => {
-                debug!("Received SSE message");
-                // Update metrics
-                {
-                    let mut metrics = self.metrics.write().await;
-                    metrics.messages_received += 1;
-                    metrics.bytes_received += message.payload.len() as u64;
-                }
-                Ok(Some(message))
-            }
-            Err(mpsc::error::TryRecvError::Empty) => Ok(None),
-            Err(mpsc::error::TryRecvError::Disconnected) => Err(TransportError::ConnectionLost(
-                "SSE channel disconnected".to_string(),
-            )),
-        }
+        })
     }
 
     fn capabilities(&self) -> &TransportCapabilities {
         &self.capabilities
     }
 
-    async fn state(&self) -> TransportState {
-        self.state.read().await.clone()
+    fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+        Box::pin(async move { self.state.read().await.clone() })
     }
 
     fn transport_type(&self) -> TransportType {
         TransportType::Http
     }
 
-    async fn metrics(&self) -> TransportMetrics {
-        self.metrics.read().await.clone()
+    fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+        Box::pin(async move { self.metrics.read().await.clone() })
     }
 
-    async fn connect(&self) -> TransportResult<()> {
-        info!("Connecting to {}", self.get_endpoint_url());
+    fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            info!("Connecting to {}", self.get_endpoint_url());
 
-        *self.state.write().await = TransportState::Connecting;
+            *self.state.write().await = TransportState::Connecting;
 
-        // Start SSE connection task
-        self.start_sse_connection().await?;
+            // Start SSE connection task
+            self.start_sse_connection().await?;
 
-        // Wait a bit for endpoint discovery
-        tokio::time::sleep(Duration::from_millis(500)).await;
+            // Wait a bit for endpoint discovery
+            tokio::time::sleep(Duration::from_millis(500)).await;
 
-        *self.state.write().await = TransportState::Connected;
+            *self.state.write().await = TransportState::Connected;
 
-        info!("Connected successfully");
-        Ok(())
+            info!("Connected successfully");
+            Ok(())
+        })
     }
 
-    async fn disconnect(&self) -> TransportResult<()> {
-        info!("Disconnecting");
+    fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            info!("Disconnecting");
 
-        *self.state.write().await = TransportState::Disconnecting;
+            *self.state.write().await = TransportState::Disconnecting;
 
-        // Cancel SSE task
-        if let Some(handle) = self.sse_task_handle.lock().await.take() {
-            handle.abort();
-        }
-
-        // Send DELETE to terminate session
-        if let Some(session_id) = self.session_id.read().await.as_ref() {
-            let url = self.get_endpoint_url();
-            let mut headers = header::HeaderMap::new();
-            if let Ok(session_value) = header::HeaderValue::from_str(session_id) {
-                headers.insert("Mcp-Session-Id", session_value);
+            // Cancel SSE task
+            if let Some(handle) = self.sse_task_handle.lock().await.take() {
+                handle.abort();
             }
 
-            let _ = self.http_client.delete(&url).headers(headers).send().await;
-        }
+            // Send DELETE to terminate session
+            if let Some(session_id) = self.session_id.read().await.as_ref() {
+                let url = self.get_endpoint_url();
+                let mut headers = header::HeaderMap::new();
+                if let Ok(session_value) = header::HeaderValue::from_str(session_id) {
+                    headers.insert("Mcp-Session-Id", session_value);
+                }
 
-        *self.state.write().await = TransportState::Disconnected;
+                let _ = self.http_client.delete(&url).headers(headers).send().await;
+            }
 
-        info!("Disconnected");
-        Ok(())
+            *self.state.write().await = TransportState::Disconnected;
+
+            info!("Disconnected");
+            Ok(())
+        })
     }
 }
 
@@ -956,11 +1012,23 @@ mod tests {
             max_attempts: None,
         };
 
-        assert_eq!(policy.delay(0), Some(Duration::from_secs(1)));
-        assert_eq!(policy.delay(1), Some(Duration::from_secs(2)));
-        assert_eq!(policy.delay(2), Some(Duration::from_secs(4)));
-        assert_eq!(policy.delay(3), Some(Duration::from_secs(8)));
-        assert_eq!(policy.delay(10), Some(Duration::from_secs(60))); // Capped at max_delay
+        // With jitter, verify delays are within expected bounds
+        // Expected base delays: 1s, 2s, 4s, 8s, etc. with ±25% jitter
+        let delay0 = policy.delay(0).unwrap();
+        assert!(delay0 >= Duration::from_millis(750) && delay0 <= Duration::from_millis(1250));
+
+        let delay1 = policy.delay(1).unwrap();
+        assert!(delay1 >= Duration::from_millis(1500) && delay1 <= Duration::from_millis(2500));
+
+        let delay2 = policy.delay(2).unwrap();
+        assert!(delay2 >= Duration::from_millis(3000) && delay2 <= Duration::from_millis(5000));
+
+        let delay3 = policy.delay(3).unwrap();
+        assert!(delay3 >= Duration::from_millis(6000) && delay3 <= Duration::from_millis(10000));
+
+        let delay10 = policy.delay(10).unwrap();
+        // Should be capped at max_delay (60s) with jitter
+        assert!(delay10 >= Duration::from_millis(45000) && delay10 <= Duration::from_millis(75000));
     }
 
     #[tokio::test]

@@ -1,6 +1,9 @@
 //! # TurboMCP DPoP - RFC 9449 Implementation
 //!
 //! DPoP (Demonstrating Proof-of-Possession) implementation for OAuth 2.0 as specified in RFC 9449.
+
+// Allow missing error/panic docs - this crate has extensive error types that are self-documenting
+#![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 //! DPoP binds access tokens to cryptographic key pairs, preventing token theft and replay attacks.
 //!
 //! ## Core Features

@@ -197,7 +197,7 @@ impl Service<ProxyRequest> for ProxyTowerService {
         // Check if this method should bypass proxy processing
         if self.config.should_bypass(&method) {
             return Box::pin(async move {
-                Err(McpError::protocol(format!(
+                Err(McpError::internal(format!(
                     "Method '{method}' is bypassed by proxy configuration"
                 )))
             });

@@ -14,7 +14,6 @@ rust-version = "1.89.0"
 
 [dependencies]
 # Core dependencies
-async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }

@@ -12,12 +12,14 @@
 //! - **AtomicMetrics** for lock-free counter updates (10-100x faster than Mutex)
 //! - **tokio::sync::Mutex** for channels/tasks (cross .await points)
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use serde_json;
 use tokio::sync::{Mutex as TokioMutex, mpsc};
@@ -100,7 +102,7 @@ impl SessionInfo {
 #[derive(Debug, Clone)]
 pub struct SessionManager {
     /// Active sessions (std::sync::Mutex - short-lived access, never crosses await)
-    sessions: Arc<StdMutex<HashMap<SessionId, SessionInfo>>>,
+    sessions: Arc<Mutex<HashMap<SessionId, SessionInfo>>>,
 
     /// Session timeout duration
     session_timeout: Duration,
@@ -113,7 +115,7 @@ impl SessionManager {
     /// Create a new session manager
     pub fn new() -> Self {
         Self {
-            sessions: Arc::new(StdMutex::new(HashMap::new())),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             session_timeout: Duration::from_secs(300), // 5 minutes default
             max_sessions: 1000,                        // Reasonable default
         }
@@ -122,7 +124,7 @@ impl SessionManager {
     /// Create session manager with custom settings
     pub fn with_config(session_timeout: Duration, max_sessions: usize) -> Self {
         Self {
-            sessions: Arc::new(StdMutex::new(HashMap::new())),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             session_timeout,
             max_sessions,
         }
@@ -130,7 +132,7 @@ impl SessionManager {
 
     /// Create a new session
     pub async fn create_session(&self) -> TransportResult<SessionInfo> {
-        let mut sessions = self.sessions.lock().expect("sessions mutex poisoned");
+        let mut sessions = self.sessions.lock();
 
         // Check session limit
         if sessions.len() >= self.max_sessions {
@@ -153,7 +155,7 @@ impl SessionManager {
 
     /// Get session by ID
     pub fn get_session(&self, session_id: &str) -> Option<SessionInfo> {
-        let mut sessions = self.sessions.lock().expect("sessions mutex poisoned");
+        let mut sessions = self.sessions.lock();
 
         if let Some(session) = sessions.get_mut(session_id) {
             // Update last activity
@@ -166,7 +168,7 @@ impl SessionManager {
 
     /// Update session metadata
     pub fn update_session_metadata(&self, session_id: &str, key: String, value: String) {
-        let mut sessions = self.sessions.lock().expect("sessions mutex poisoned");
+        let mut sessions = self.sessions.lock();
 
         if let Some(session) = sessions.get_mut(session_id) {
             session.metadata.insert(key, value);
@@ -176,7 +178,7 @@ impl SessionManager {
 
     /// Remove session
     pub fn remove_session(&self, session_id: &str) -> bool {
-        let mut sessions = self.sessions.lock().expect("sessions mutex poisoned");
+        let mut sessions = self.sessions.lock();
         let removed = sessions.remove(session_id).is_some();
 
         if removed {
@@ -188,12 +190,12 @@ impl SessionManager {
 
     /// Get active session count
     pub async fn active_session_count(&self) -> usize {
-        self.sessions.lock().expect("sessions mutex poisoned").len()
+        self.sessions.lock().len()
     }
 
     /// Clean up expired sessions
     pub async fn cleanup_expired_sessions(&self) -> usize {
-        let mut sessions = self.sessions.lock().expect("sessions mutex poisoned");
+        let mut sessions = self.sessions.lock();
         self.cleanup_expired_sessions_locked(&mut sessions)
     }
 
@@ -216,12 +218,7 @@ impl SessionManager {
 
     /// List all active sessions (for debugging/monitoring)
     pub async fn list_sessions(&self) -> Vec<SessionInfo> {
-        self.sessions
-            .lock()
-            .expect("sessions mutex poisoned")
-            .values()
-            .cloned()
-            .collect()
+        self.sessions.lock().values().cloned().collect()
     }
 }
 
@@ -249,7 +246,7 @@ pub struct TowerTransportAdapter {
     capabilities: TransportCapabilities,
 
     /// Current transport state (std::sync::Mutex - never crosses await)
-    state: Arc<StdMutex<TransportState>>,
+    state: Arc<Mutex<TransportState>>,
 
     /// Lock-free atomic metrics (10-100x faster than Mutex)
     metrics: Arc<AtomicMetrics>,
@@ -289,7 +286,7 @@ impl TowerTransportAdapter {
                 ],
                 custom: HashMap::new(),
             },
-            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            state: Arc::new(Mutex::new(TransportState::Disconnected)),
             metrics: Arc::new(AtomicMetrics::default()),
             event_emitter,
             session_manager: SessionManager::new(),
@@ -425,7 +422,7 @@ impl TowerTransportAdapter {
     /// Update transport state
     fn set_state(&self, new_state: TransportState) {
         // std::sync::Mutex: short-lived lock, never crosses await
-        let mut state = self.state.lock().expect("state mutex poisoned");
+        let mut state = self.state.lock();
         if *state != new_state {
             trace!("Tower transport state: {:?} -> {:?}", *state, new_state);
             *state = new_state.clone();
@@ -456,7 +453,6 @@ impl TowerTransportAdapter {
     }
 }
 
-#[async_trait]
 impl Transport for TowerTransportAdapter {
     fn transport_type(&self) -> TransportType {
         TransportType::Http
@@ -466,150 +462,167 @@ impl Transport for TowerTransportAdapter {
         &self.capabilities
     }
 
-    async fn state(&self) -> TransportState {
-        // std::sync::Mutex: short-lived lock for reading state
-        self.state.lock().expect("state mutex poisoned").clone()
+    fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+        Box::pin(async move {
+            // std::sync::Mutex: short-lived lock for reading state
+            self.state.lock().clone()
+        })
     }
 
-    async fn connect(&self) -> TransportResult<()> {
-        if matches!(self.state().await, TransportState::Connected) {
-            return Ok(());
-        }
-
-        self.set_state(TransportState::Connecting);
-
-        match self.initialize().await {
-            Ok(()) => {
-                // AtomicMetrics: lock-free increment
-                self.metrics.connections.fetch_add(1, Ordering::Relaxed);
-                info!("Tower transport adapter connected");
-                Ok(())
-            }
-            Err(e) => {
-                // AtomicMetrics: lock-free increment
-                self.metrics
-                    .failed_connections
-                    .fetch_add(1, Ordering::Relaxed);
-                self.set_state(TransportState::Failed {
-                    reason: e.to_string(),
-                });
-                error!("Failed to connect Tower transport adapter: {}", e);
-                Err(TransportError::ConnectionFailed(e.to_string()))
-            }
-        }
-    }
-
-    async fn disconnect(&self) -> TransportResult<()> {
-        if matches!(self.state().await, TransportState::Disconnected) {
-            return Ok(());
-        }
-
-        self.set_state(TransportState::Disconnecting);
-
-        // Close channels
-        *self.sender.lock().await = None;
-        *self.receiver.lock().await = None;
-
-        // Cancel cleanup task
-        if let Some(handle) = self._cleanup_task.lock().await.take() {
-            handle.abort();
-        }
-
-        self.set_state(TransportState::Disconnected);
-        info!("Tower transport adapter disconnected");
-        Ok(())
-    }
-
-    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
-        let state = self.state().await;
-        if !matches!(state, TransportState::Connected) {
-            return Err(TransportError::ConnectionFailed(format!(
-                "Tower transport not connected: {state}"
-            )));
-        }
-
-        let sender_guard = self.sender.lock().await;
-        if let Some(sender) = sender_guard.as_ref() {
-            let message_id = message.id.clone();
-            let message_size = message.size();
-
-            // Use try_send with backpressure handling
-            match sender.try_send(message) {
-                Ok(()) => {}
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    return Err(TransportError::SendFailed(
-                        "Transport channel full, applying backpressure".to_string(),
-                    ));
-                }
-                Err(mpsc::error::TrySendError::Closed(_)) => {
-                    return Err(TransportError::SendFailed(
-                        "Transport channel closed".to_string(),
-                    ));
-                }
+    fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            if matches!(self.state().await, TransportState::Connected) {
+                return Ok(());
             }
 
-            // Update metrics (lock-free atomic operations)
-            self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
-            self.metrics
-                .bytes_sent
-                .fetch_add(message_size as u64, Ordering::Relaxed);
+            self.set_state(TransportState::Connecting);
 
-            // Emit event
-            self.event_emitter
-                .emit_message_sent(message_id, message_size);
-
-            trace!("Sent message via Tower transport: {} bytes", message_size);
-            Ok(())
-        } else {
-            Err(TransportError::SendFailed(
-                "Sender not available".to_string(),
-            ))
-        }
-    }
-
-    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-        let state = self.state().await;
-        if !matches!(state, TransportState::Connected) {
-            return Err(TransportError::ConnectionFailed(format!(
-                "Tower transport not connected: {state}"
-            )));
-        }
-
-        let mut receiver_guard = self.receiver.lock().await;
-        if let Some(ref mut receiver) = receiver_guard.as_mut() {
-            match receiver.recv().await {
-                Some(message) => {
-                    trace!(
-                        "Received message via Tower transport: {} bytes",
-                        message.size()
-                    );
-                    Ok(Some(message))
+            match self.initialize().await {
+                Ok(()) => {
+                    // AtomicMetrics: lock-free increment
+                    self.metrics.connections.fetch_add(1, Ordering::Relaxed);
+                    info!("Tower transport adapter connected");
+                    Ok(())
                 }
-                None => {
-                    warn!("Tower transport receiver disconnected");
+                Err(e) => {
+                    // AtomicMetrics: lock-free increment
+                    self.metrics
+                        .failed_connections
+                        .fetch_add(1, Ordering::Relaxed);
                     self.set_state(TransportState::Failed {
-                        reason: "Receiver channel disconnected".to_string(),
+                        reason: e.to_string(),
                     });
-                    Err(TransportError::ReceiveFailed(
-                        "Channel disconnected".to_string(),
-                    ))
+                    error!("Failed to connect Tower transport adapter: {}", e);
+                    Err(TransportError::ConnectionFailed(e.to_string()))
                 }
             }
-        } else {
-            Err(TransportError::ReceiveFailed(
-                "Receiver not available".to_string(),
-            ))
-        }
+        })
     }
 
-    async fn metrics(&self) -> TransportMetrics {
-        // AtomicMetrics: lock-free snapshot with Ordering::Relaxed
-        let mut metrics = self.metrics.snapshot();
+    fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            if matches!(self.state().await, TransportState::Disconnected) {
+                return Ok(());
+            }
 
-        // Add session metrics
-        metrics.active_connections = self.session_manager.active_session_count().await as u64;
+            self.set_state(TransportState::Disconnecting);
 
-        metrics
+            // Close channels
+            *self.sender.lock().await = None;
+            *self.receiver.lock().await = None;
+
+            // Cancel cleanup task
+            if let Some(handle) = self._cleanup_task.lock().await.take() {
+                handle.abort();
+            }
+
+            self.set_state(TransportState::Disconnected);
+            info!("Tower transport adapter disconnected");
+            Ok(())
+        })
+    }
+
+    fn send(
+        &self,
+        message: TransportMessage,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            let state = self.state().await;
+            if !matches!(state, TransportState::Connected) {
+                return Err(TransportError::ConnectionFailed(format!(
+                    "Tower transport not connected: {state}"
+                )));
+            }
+
+            let sender_guard = self.sender.lock().await;
+            if let Some(sender) = sender_guard.as_ref() {
+                let message_id = message.id.clone();
+                let message_size = message.size();
+
+                // Use try_send with backpressure handling
+                match sender.try_send(message) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        return Err(TransportError::SendFailed(
+                            "Transport channel full, applying backpressure".to_string(),
+                        ));
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        return Err(TransportError::SendFailed(
+                            "Transport channel closed".to_string(),
+                        ));
+                    }
+                }
+
+                // Update metrics (lock-free atomic operations)
+                self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
+                self.metrics
+                    .bytes_sent
+                    .fetch_add(message_size as u64, Ordering::Relaxed);
+
+                // Emit event
+                self.event_emitter
+                    .emit_message_sent(message_id, message_size);
+
+                trace!("Sent message via Tower transport: {} bytes", message_size);
+                Ok(())
+            } else {
+                Err(TransportError::SendFailed(
+                    "Sender not available".to_string(),
+                ))
+            }
+        })
+    }
+
+    fn receive(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>> {
+        Box::pin(async move {
+            let state = self.state().await;
+            if !matches!(state, TransportState::Connected) {
+                return Err(TransportError::ConnectionFailed(format!(
+                    "Tower transport not connected: {state}"
+                )));
+            }
+
+            let mut receiver_guard = self.receiver.lock().await;
+            if let Some(ref mut receiver) = receiver_guard.as_mut() {
+                match receiver.recv().await {
+                    Some(message) => {
+                        trace!(
+                            "Received message via Tower transport: {} bytes",
+                            message.size()
+                        );
+                        Ok(Some(message))
+                    }
+                    None => {
+                        warn!("Tower transport receiver disconnected");
+                        self.set_state(TransportState::Failed {
+                            reason: "Receiver channel disconnected".to_string(),
+                        });
+                        Err(TransportError::ReceiveFailed(
+                            "Channel disconnected".to_string(),
+                        ))
+                    }
+                }
+            } else {
+                Err(TransportError::ReceiveFailed(
+                    "Receiver not available".to_string(),
+                ))
+            }
+        })
+    }
+
+    fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+        Box::pin(async move {
+            // AtomicMetrics: lock-free snapshot with Ordering::Relaxed
+            let mut metrics = self.metrics.snapshot();
+
+            // Add session metrics
+            metrics.active_connections = self.session_manager.active_session_count().await as u64;
+
+            metrics
+        })
     }
 
     fn endpoint(&self) -> Option<String> {

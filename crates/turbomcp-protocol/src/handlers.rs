@@ -25,37 +25,40 @@
 //! ```rust
 //! use turbomcp_protocol::{ElicitationHandler, ElicitationContext, ElicitationResponse};
 //! use turbomcp_protocol::Result;
-//! use async_trait::async_trait;
 //! use std::collections::HashMap;
+//! use std::future::Future;
+//! use std::pin::Pin;
 //!
 //! struct MyElicitationHandler;
 //!
-//! #[async_trait]
 //! impl ElicitationHandler for MyElicitationHandler {
-//!     async fn handle_elicitation(
+//!     fn handle_elicitation(
 //!         &self,
 //!         context: &ElicitationContext
-//!     ) -> Result<ElicitationResponse> {
-//!         // Check if we can handle this elicitation type
-//!         if !self.can_handle(context) {
-//!             return Ok(ElicitationResponse {
-//!                 accepted: false,
-//!                 content: None,
-//!                 decline_reason: Some("Unsupported elicitation type".to_string()),
-//!             });
-//!         }
+//!     ) -> Pin<Box<dyn Future<Output = Result<ElicitationResponse>> + Send + '_>> {
+//!         let can_handle = self.can_handle(context);
+//!         Box::pin(async move {
+//!             // Check if we can handle this elicitation type
+//!             if !can_handle {
+//!                 return Ok(ElicitationResponse {
+//!                     accepted: false,
+//!                     content: None,
+//!                     decline_reason: Some("Unsupported elicitation type".to_string()),
+//!                 });
+//!             }
 //!
-//!         // Process the elicitation (e.g., prompt user)
-//!         let mut response_data = HashMap::new();
-//!         response_data.insert(
-//!             "user_input".to_string(),
-//!             serde_json::json!("User provided value")
-//!         );
+//!             // Process the elicitation (e.g., prompt user)
+//!             let mut response_data = HashMap::new();
+//!             response_data.insert(
+//!                 "user_input".to_string(),
+//!                 serde_json::json!("User provided value")
+//!             );
 //!
-//!         Ok(ElicitationResponse {
-//!             accepted: true,
-//!             content: Some(response_data),
-//!             decline_reason: None,
+//!             Ok(ElicitationResponse {
+//!                 accepted: true,
+//!                 content: Some(response_data),
+//!                 decline_reason: None,
+//!             })
 //!         })
 //!     }
 //!
@@ -75,37 +78,39 @@
 //! ```rust
 //! use turbomcp_protocol::{CompletionProvider, CompletionContext, CompletionItem};
 //! use turbomcp_protocol::Result;
-//! use async_trait::async_trait;
+//! use std::future::Future;
+//! use std::pin::Pin;
 //!
 //! struct FilePathCompletionProvider;
 //!
-//! #[async_trait]
 //! impl CompletionProvider for FilePathCompletionProvider {
-//!     async fn provide_completions(
+//!     fn provide_completions(
 //!         &self,
 //!         context: &CompletionContext
-//!     ) -> Result<Vec<CompletionItem>> {
-//!         // Provide file path completions
-//!         let mut completions = vec![
-//!             CompletionItem {
-//!                 value: "/home/user/documents".to_string(),
-//!                 label: Some("Documents".to_string()),
-//!                 documentation: Some("User documents folder".to_string()),
-//!                 sort_priority: Some(1),
-//!                 insert_text: None,
-//!                 metadata: Default::default(),
-//!             },
-//!             CompletionItem {
-//!                 value: "/home/user/downloads".to_string(),
-//!                 label: Some("Downloads".to_string()),
-//!                 documentation: Some("Downloads folder".to_string()),
-//!                 sort_priority: Some(2),
-//!                 insert_text: None,
-//!                 metadata: Default::default(),
-//!             },
-//!         ];
+//!     ) -> Pin<Box<dyn Future<Output = Result<Vec<CompletionItem>>> + Send + '_>> {
+//!         Box::pin(async move {
+//!             // Provide file path completions
+//!             let completions = vec![
+//!                 CompletionItem {
+//!                     value: "/home/user/documents".to_string(),
+//!                     label: Some("Documents".to_string()),
+//!                     documentation: Some("User documents folder".to_string()),
+//!                     sort_priority: Some(1),
+//!                     insert_text: None,
+//!                     metadata: Default::default(),
+//!                 },
+//!                 CompletionItem {
+//!                     value: "/home/user/downloads".to_string(),
+//!                     label: Some("Downloads".to_string()),
+//!                     documentation: Some("Downloads folder".to_string()),
+//!                     sort_priority: Some(2),
+//!                     insert_text: None,
+//!                     metadata: Default::default(),
+//!                 },
+//!             ];
 //!
-//!         Ok(completions)
+//!             Ok(completions)
+//!         })
 //!     }
 //!
 //!     fn can_provide(&self, context: &CompletionContext) -> bool {
@@ -115,19 +120,22 @@
 //! }
 //! ```
 
-use async_trait::async_trait;
 use serde_json::Value;
 use std::collections::HashMap;
+
+use std::future::Future;
+use std::pin::Pin;
 
 use crate::Result;
 use crate::context::{CompletionContext, ElicitationContext, ServerInitiatedContext};
 
 /// Handler for server-initiated elicitation requests
-#[async_trait]
 pub trait ElicitationHandler: Send + Sync {
     /// Handle an elicitation request from the server
-    async fn handle_elicitation(&self, context: &ElicitationContext)
-    -> Result<ElicitationResponse>;
+    fn handle_elicitation(
+        &self,
+        context: &ElicitationContext,
+    ) -> Pin<Box<dyn Future<Output = Result<ElicitationResponse>> + Send + '_>>;
 
     /// Check if this handler can process the given elicitation
     fn can_handle(&self, context: &ElicitationContext) -> bool;
@@ -150,11 +158,12 @@ pub struct ElicitationResponse {
 }
 
 /// Provider for argument completion
-#[async_trait]
 pub trait CompletionProvider: Send + Sync {
     /// Provide completions for the given context
-    async fn provide_completions(&self, context: &CompletionContext)
-    -> Result<Vec<CompletionItem>>;
+    fn provide_completions(
+        &self,
+        context: &CompletionContext,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<CompletionItem>>> + Send + '_>>;
 
     /// Check if this provider can handle the completion request
     fn can_provide(&self, context: &CompletionContext) -> bool;
@@ -183,20 +192,24 @@ pub struct CompletionItem {
 }
 
 /// Handler for resource templates
-#[async_trait]
 pub trait ResourceTemplateHandler: Send + Sync {
     /// List available resource templates
-    async fn list_templates(&self) -> Result<Vec<ResourceTemplate>>;
+    fn list_templates(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ResourceTemplate>>> + Send + '_>>;
 
     /// Get a specific resource template
-    async fn get_template(&self, name: &str) -> Result<Option<ResourceTemplate>>;
+    fn get_template(
+        &self,
+        name: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<ResourceTemplate>>> + Send + '_>>;
 
     /// Resolve template parameters
-    async fn resolve_template(
+    fn resolve_template(
         &self,
         template: &ResourceTemplate,
         params: HashMap<String, Value>,
-    ) -> Result<ResolvedResource>;
+    ) -> Pin<Box<dyn Future<Output = Result<ResolvedResource>> + Send + '_>>;
 }
 
 /// Resource template definition
@@ -245,13 +258,18 @@ pub struct ResolvedResource {
 }
 
 /// Handler for bidirectional ping requests
-#[async_trait]
 pub trait PingHandler: Send + Sync {
     /// Handle a ping request
-    async fn handle_ping(&self, context: &ServerInitiatedContext) -> Result<PingResponse>;
+    fn handle_ping(
+        &self,
+        context: &ServerInitiatedContext,
+    ) -> Pin<Box<dyn Future<Output = Result<PingResponse>> + Send + '_>>;
 
     /// Send a ping to the remote party
-    async fn send_ping(&self, target: &str) -> Result<PingResponse>;
+    fn send_ping(
+        &self,
+        target: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<PingResponse>> + Send + '_>>;
 }
 
 /// Response to a ping request
@@ -354,13 +372,11 @@ impl HandlerCapabilities {
 ///
 /// ```rust,ignore
 /// use turbomcp_protocol::JsonRpcHandler;
-/// use async_trait::async_trait;
 /// use serde_json::Value;
 ///
 /// #[derive(Clone)]
 /// struct WeatherServer;
 ///
-/// #[async_trait]
 /// impl JsonRpcHandler for WeatherServer {
 ///     async fn handle_request(&self, req: Value) -> Value {
 ///         // Parse method and dispatch
@@ -399,7 +415,6 @@ impl HandlerCapabilities {
 /// let transport = StdioTransport::new(handler);
 /// transport.run().await?;
 /// ```
-#[async_trait]
 pub trait JsonRpcHandler: Send + Sync + 'static {
     /// Handle a JSON-RPC request and return a response
     ///
@@ -424,7 +439,10 @@ pub trait JsonRpcHandler: Send + Sync + 'static {
     ///
     /// The request and response are `serde_json::Value` to avoid tight coupling with
     /// protocol types. Transport layers handle conversion to/from typed structs.
-    async fn handle_request(&self, request: serde_json::Value) -> serde_json::Value;
+    fn handle_request(
+        &self,
+        request: serde_json::Value,
+    ) -> Pin<Box<dyn Future<Output = serde_json::Value> + Send + '_>>;
 
     /// Get server metadata
     ///

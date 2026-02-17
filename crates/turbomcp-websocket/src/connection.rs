@@ -41,7 +41,7 @@ impl WebSocketBidirectionalTransport {
         Ok(Self {
             state: Arc::new(RwLock::new(TransportState::Disconnected)),
             capabilities,
-            config: Arc::new(std::sync::Mutex::new(config)),
+            config: Arc::new(parking_lot::Mutex::new(config)),
             metrics: Arc::new(RwLock::new(
                 turbomcp_transport_traits::TransportMetrics::default(),
             )),
@@ -165,13 +165,7 @@ impl WebSocketBidirectionalTransport {
         handles.push(metrics_handle);
 
         // Reconnection task (if enabled)
-        if self
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .reconnect
-            .enabled
-        {
+        if self.config.lock().reconnect.enabled {
             let reconnect_handle = self.spawn_reconnection_task();
             handles.push(reconnect_handle);
         }
@@ -185,21 +179,10 @@ impl WebSocketBidirectionalTransport {
 
     /// Connect using the configured URL
     pub async fn connect(&self) -> TransportResult<()> {
-        let url = self
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .url
-            .clone();
+        let url = self.config.lock().url.clone();
         if let Some(url) = url {
             self.connect_client(&url).await
-        } else if self
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .bind_addr
-            .is_some()
-        {
+        } else if self.config.lock().bind_addr.is_some() {
             // Server mode would be initiated by accept_connection
             Ok(())
         } else {
@@ -384,52 +367,24 @@ impl WebSocketBidirectionalTransport {
 
     /// Reconnect with exponential backoff
     pub async fn reconnect(&mut self) -> TransportResult<()> {
-        if !self
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .reconnect
-            .enabled
-        {
+        if !self.config.lock().reconnect.enabled {
             return Err(TransportError::NotAvailable(
                 "Reconnection is disabled".to_string(),
             ));
         }
 
-        let url = self
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .url
-            .clone()
-            .ok_or_else(|| {
-                TransportError::ConfigurationError("No URL configured for reconnection".to_string())
-            })?;
+        let url = self.config.lock().url.clone().ok_or_else(|| {
+            TransportError::ConfigurationError("No URL configured for reconnection".to_string())
+        })?;
 
         let mut retry_count = 0;
-        let mut delay = self
-            .config
-            .lock()
-            .expect("config mutex poisoned")
-            .reconnect
-            .initial_delay;
+        let mut delay = self.config.lock().reconnect.initial_delay;
 
-        while retry_count
-            < self
-                .config
-                .lock()
-                .expect("config mutex poisoned")
-                .reconnect
-                .max_retries
-        {
+        while retry_count < self.config.lock().reconnect.max_retries {
             info!(
                 "Attempting reconnection {} of {}",
                 retry_count + 1,
-                self.config
-                    .lock()
-                    .expect("config mutex poisoned")
-                    .reconnect
-                    .max_retries
+                self.config.lock().reconnect.max_retries
             );
 
             // Update metrics
@@ -447,33 +402,13 @@ impl WebSocketBidirectionalTransport {
                     warn!("Reconnection attempt {} failed: {}", retry_count + 1, e);
                     retry_count += 1;
 
-                    if retry_count
-                        < self
-                            .config
-                            .lock()
-                            .expect("config mutex poisoned")
-                            .reconnect
-                            .max_retries
-                    {
+                    if retry_count < self.config.lock().reconnect.max_retries {
                         tokio::time::sleep(delay).await;
 
                         // Exponential backoff
                         delay = std::time::Duration::from_secs_f64(
-                            (delay.as_secs_f64()
-                                * self
-                                    .config
-                                    .lock()
-                                    .expect("config mutex poisoned")
-                                    .reconnect
-                                    .backoff_factor)
-                                .min(
-                                    self.config
-                                        .lock()
-                                        .expect("config mutex poisoned")
-                                        .reconnect
-                                        .max_delay
-                                        .as_secs_f64(),
-                                ),
+                            (delay.as_secs_f64() * self.config.lock().reconnect.backoff_factor)
+                                .min(self.config.lock().reconnect.max_delay.as_secs_f64()),
                         );
                     }
                 }
@@ -482,11 +417,7 @@ impl WebSocketBidirectionalTransport {
 
         Err(TransportError::ConnectionFailed(format!(
             "Reconnection failed after {} attempts",
-            self.config
-                .lock()
-                .expect("config mutex poisoned")
-                .reconnect
-                .max_retries
+            self.config.lock().reconnect.max_retries
         )))
     }
 

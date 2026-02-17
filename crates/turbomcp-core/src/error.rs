@@ -51,9 +51,8 @@ pub struct McpError {
     /// Human-readable error message
     pub message: String,
     /// Source location (file:line for debugging)
-    /// Note: Only serialized in debug builds to prevent information leakage
-    #[cfg_attr(not(debug_assertions), serde(skip_serializing))]
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Note: Never serialized to clients to prevent information leakage
+    #[serde(skip_serializing)]
     pub source_location: Option<String>,
     /// Additional context (boxed to keep McpError small)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -420,46 +419,6 @@ impl McpError {
         )
     }
 
-    // =========================================================================
-    // Migration aliases (map old Error methods to McpError equivalents)
-    // =========================================================================
-
-    /// Create a validation error (alias for invalid_params)
-    #[must_use]
-    pub fn validation(message: impl Into<String>) -> Self {
-        Self::invalid_params(message)
-    }
-
-    /// Create a bad request error (alias for invalid_request)
-    #[must_use]
-    pub fn bad_request(message: impl Into<String>) -> Self {
-        Self::invalid_request(message)
-    }
-
-    /// Create a handler error (maps to internal)
-    #[must_use]
-    pub fn handler(message: impl Into<String>) -> Self {
-        Self::internal(message)
-    }
-
-    /// Create a protocol error (maps to method_not_found)
-    #[must_use]
-    pub fn protocol(message: impl Into<String>) -> Self {
-        Self::new(ErrorKind::MethodNotFound, message)
-    }
-
-    /// Create a not found error (alias for resource_not_found)
-    #[must_use]
-    pub fn not_found(message: impl Into<String>) -> Self {
-        Self::resource_not_found(message)
-    }
-
-    /// Create a JSON-RPC error from code and message (alias for from_rpc_code)
-    #[must_use]
-    pub fn rpc(code: i32, message: &str) -> Self {
-        Self::from_rpc_code(code, message)
-    }
-
     /// Create an error from a JSON-RPC error code
     #[must_use]
     pub fn from_rpc_code(code: i32, message: impl Into<String>) -> Self {
@@ -781,5 +740,15 @@ mod tests {
         assert_eq!(McpError::tool_not_found("x").http_status(), 404);
         assert_eq!(McpError::authentication("x").http_status(), 401);
         assert_eq!(McpError::internal("x").http_status(), 500);
+    }
+
+    #[test]
+    fn test_error_size_reasonable() {
+        // McpError should fit in 2 cache lines (128 bytes) for efficient Result<T, E>
+        assert!(
+            core::mem::size_of::<McpError>() <= 128,
+            "McpError size: {} bytes (should be ≤128)",
+            core::mem::size_of::<McpError>()
+        );
     }
 }

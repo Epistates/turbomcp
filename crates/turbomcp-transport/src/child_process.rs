@@ -12,12 +12,14 @@
 //! - **AtomicMetrics** for lock-free counter updates (10-100x faster than Mutex)
 //! - **tokio::sync::Mutex** for child process and I/O (cross .await points)
 
+use parking_lot::Mutex;
+use std::future::Future;
+use std::pin::Pin;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
-use async_trait::async_trait;
 use bytes::Bytes;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, Command};
@@ -97,7 +99,7 @@ pub struct ChildProcessTransport {
     child: Arc<TokioMutex<Option<Child>>>,
 
     /// Transport state (std::sync::Mutex - never crosses await)
-    state: Arc<StdMutex<TransportState>>,
+    state: Arc<Mutex<TransportState>>,
 
     /// Transport capabilities (immutable after construction)
     capabilities: TransportCapabilities,
@@ -133,7 +135,7 @@ impl ChildProcessTransport {
         Self {
             config,
             child: Arc::new(TokioMutex::new(None)),
-            state: Arc::new(StdMutex::new(TransportState::Disconnected)),
+            state: Arc::new(Mutex::new(TransportState::Disconnected)),
             capabilities,
             metrics: Arc::new(AtomicMetrics::default()),
             event_emitter: TransportEventEmitter::new().0,
@@ -268,7 +270,7 @@ impl ChildProcessTransport {
         *self._stdout_task.lock().await = Some(stdout_task);
 
         // Update state
-        *self.state.lock().expect("state mutex poisoned") = TransportState::Connected;
+        *self.state.lock() = TransportState::Connected;
 
         // Wait for process to be ready with timeout
         match timeout(self.config.startup_timeout, self.wait_for_ready()).await {
@@ -355,7 +357,7 @@ impl ChildProcessTransport {
         }
 
         // Update state
-        *self.state.lock().expect("state mutex poisoned") = TransportState::Disconnected;
+        *self.state.lock() = TransportState::Disconnected;
         self.event_emitter.emit(TransportEvent::Disconnected {
             transport_type: TransportType::ChildProcess,
             endpoint: format!("{}:{:?}", self.config.command, self.config.args),
@@ -380,116 +382,128 @@ impl ChildProcessTransport {
     }
 }
 
-#[async_trait]
 impl Transport for ChildProcessTransport {
-    async fn connect(&self) -> TransportResult<()> {
-        match *self.state.lock().expect("state mutex poisoned") {
-            TransportState::Connected => return Ok(()),
-            TransportState::Connecting => {
-                return Err(TransportError::Internal("Already connecting".to_string()));
+    fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            match *self.state.lock() {
+                TransportState::Connected => return Ok(()),
+                TransportState::Connecting => {
+                    return Err(TransportError::Internal("Already connecting".to_string()));
+                }
+                _ => {}
             }
-            _ => {}
-        }
 
-        *self.state.lock().expect("state mutex poisoned") = TransportState::Connecting;
-        self.start_process().await
+            *self.state.lock() = TransportState::Connecting;
+            self.start_process().await
+        })
     }
 
-    async fn disconnect(&self) -> TransportResult<()> {
-        self.stop_process().await
+    fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move { self.stop_process().await })
     }
 
-    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
-        let state = self.state.lock().expect("state mutex poisoned").clone();
-        if state != TransportState::Connected {
-            return Err(TransportError::Internal(format!(
-                "Cannot send in state: {state:?}"
-            )));
-        }
+    fn send(
+        &self,
+        message: TransportMessage,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            let state = self.state.lock().clone();
+            if state != TransportState::Connected {
+                return Err(TransportError::Internal(format!(
+                    "Cannot send in state: {state:?}"
+                )));
+            }
 
-        if message.payload.len() > self.config.max_message_size {
-            return Err(TransportError::Internal(format!(
-                "Message too large: {} bytes (max: {})",
-                message.payload.len(),
-                self.config.max_message_size
-            )));
-        }
+            if message.payload.len() > self.config.max_message_size {
+                return Err(TransportError::Internal(format!(
+                    "Message too large: {} bytes (max: {})",
+                    message.payload.len(),
+                    self.config.max_message_size
+                )));
+            }
 
-        // Convert message payload to string
-        let payload_str = String::from_utf8(message.payload.to_vec()).map_err(|e| {
-            TransportError::SerializationFailed(format!("Invalid UTF-8 in message payload: {e}"))
-        })?;
-
-        // Send through stdin channel
-        let stdin_sender = self.stdin_sender.lock().await;
-        if let Some(sender) = stdin_sender.as_ref() {
-            sender.send(payload_str).await.map_err(|_| {
-                error!("Failed to send message: stdin channel closed");
-                TransportError::ConnectionLost("STDIN channel closed".to_string())
+            // Convert message payload to string
+            let payload_str = String::from_utf8(message.payload.to_vec()).map_err(|e| {
+                TransportError::SerializationFailed(format!(
+                    "Invalid UTF-8 in message payload: {e}"
+                ))
             })?;
 
-            // Update metrics (lock-free atomic operations)
-            self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
-            self.metrics
-                .bytes_sent
-                .fetch_add(message.payload.len() as u64, Ordering::Relaxed);
+            // Send through stdin channel
+            let stdin_sender = self.stdin_sender.lock().await;
+            if let Some(sender) = stdin_sender.as_ref() {
+                sender.send(payload_str).await.map_err(|_| {
+                    error!("Failed to send message: stdin channel closed");
+                    TransportError::ConnectionLost("STDIN channel closed".to_string())
+                })?;
 
-            trace!("Sent message via child process transport");
-            Ok(())
-        } else {
-            Err(TransportError::ConnectionLost(
-                "No stdin channel available".to_string(),
-            ))
-        }
-    }
+                // Update metrics (lock-free atomic operations)
+                self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
+                self.metrics
+                    .bytes_sent
+                    .fetch_add(message.payload.len() as u64, Ordering::Relaxed);
 
-    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-        let state = self.state.lock().expect("state mutex poisoned").clone();
-        if state != TransportState::Connected {
-            return Ok(None);
-        }
-
-        // Check if process is still alive
-        if !self.is_process_alive().await {
-            warn!("Child process died, disconnecting transport");
-            self.stop_process().await?;
-            return Ok(None);
-        }
-
-        // Properly block and wait for messages from stdout channel
-        let mut stdout_receiver = self.stdout_receiver.lock().await;
-        if let Some(ref mut receiver) = stdout_receiver.as_mut() {
-            match receiver.recv().await {
-                Some(line) => {
-                    let payload = Bytes::from(line);
-                    let message = TransportMessage::new(
-                        MessageId::String(uuid::Uuid::new_v4().to_string()),
-                        payload,
-                    );
-
-                    // Update metrics (lock-free atomic operations)
-                    self.metrics
-                        .messages_received
-                        .fetch_add(1, Ordering::Relaxed);
-                    self.metrics
-                        .bytes_received
-                        .fetch_add(message.payload.len() as u64, Ordering::Relaxed);
-
-                    trace!("Received message via child process transport");
-                    Ok(Some(message))
-                }
-                None => {
-                    debug!("STDOUT channel disconnected");
-                    Ok(None)
-                }
+                trace!("Sent message via child process transport");
+                Ok(())
+            } else {
+                Err(TransportError::ConnectionLost(
+                    "No stdin channel available".to_string(),
+                ))
             }
-        } else {
-            Ok(None)
-        }
+        })
     }
 
-    async fn state(&self) -> TransportState {
-        self.state.lock().expect("state mutex poisoned").clone()
+    fn receive(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>> {
+        Box::pin(async move {
+            let state = self.state.lock().clone();
+            if state != TransportState::Connected {
+                return Ok(None);
+            }
+
+            // Check if process is still alive
+            if !self.is_process_alive().await {
+                warn!("Child process died, disconnecting transport");
+                self.stop_process().await?;
+                return Ok(None);
+            }
+
+            // Properly block and wait for messages from stdout channel
+            let mut stdout_receiver = self.stdout_receiver.lock().await;
+            if let Some(ref mut receiver) = stdout_receiver.as_mut() {
+                match receiver.recv().await {
+                    Some(line) => {
+                        let payload = Bytes::from(line);
+                        let message = TransportMessage::new(
+                            MessageId::String(uuid::Uuid::new_v4().to_string()),
+                            payload,
+                        );
+
+                        // Update metrics (lock-free atomic operations)
+                        self.metrics
+                            .messages_received
+                            .fetch_add(1, Ordering::Relaxed);
+                        self.metrics
+                            .bytes_received
+                            .fetch_add(message.payload.len() as u64, Ordering::Relaxed);
+
+                        trace!("Received message via child process transport");
+                        Ok(Some(message))
+                    }
+                    None => {
+                        debug!("STDOUT channel disconnected");
+                        Ok(None)
+                    }
+                }
+            } else {
+                Ok(None)
+            }
+        })
+    }
+
+    fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+        Box::pin(async move { self.state.lock().clone() })
     }
 
     fn transport_type(&self) -> TransportType {
@@ -500,9 +514,11 @@ impl Transport for ChildProcessTransport {
         &self.capabilities
     }
 
-    async fn metrics(&self) -> TransportMetrics {
-        // AtomicMetrics: lock-free snapshot with Ordering::Relaxed
-        self.metrics.snapshot()
+    fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+        Box::pin(async move {
+            // AtomicMetrics: lock-free snapshot with Ordering::Relaxed
+            self.metrics.snapshot()
+        })
     }
 }
 

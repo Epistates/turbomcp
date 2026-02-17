@@ -16,7 +16,7 @@ rust-version = "1.89.0"
 # Core dependencies
 turbomcp-protocol = { workspace = true }
 turbomcp-transport-traits = { workspace = true }
-# v3.0: Individual transport crates (re-exported for backward compatibility)
+# Individual transport crates
 turbomcp-stdio = { workspace = true, optional = true }
 turbomcp-http = { workspace = true, optional = true }
 turbomcp-websocket = { workspace = true, optional = true }
@@ -26,7 +26,6 @@ tokio = { workspace = true, features = ["net", "io-std", "io-util", "process", "
 tokio-util = { workspace = true, features = ["codec", "io"] }
 futures = { workspace = true }
 futures-util = { version = "0.3", optional = true }
-async-trait = { workspace = true }
 pin-project-lite = { workspace = true }
 
 # Serialization
@@ -42,9 +41,9 @@ anyhow = { workspace = true }
 axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
-hyper = { version = "1.0", optional = true }
-hyper-util = { version = "0.1", optional = true }
-tokio-tungstenite = { version = "0.28.0", optional = true, features = ["rustls-tls-native-roots"] }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+tokio-tungstenite = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 async-stream = { version = "0.3", optional = true }
 
@@ -62,20 +61,19 @@ tracing = { workspace = true }
 metrics = { workspace = true, optional = true }
 
 # Authentication (optional)
-turbomcp-auth = { version = "3.0.0-beta.4", path = "../turbomcp-auth", optional = true }
-jsonwebtoken = { version = "10.2", optional = true, features = ["aws_lc_rs", "use_pem"] }
-base64 = { version = "0.22", optional = true }
+turbomcp-auth = { workspace = true, optional = true }
+jsonwebtoken = { workspace = true, optional = true }
+base64 = { workspace = true, optional = true }
 
 # Utilities
 uuid = { workspace = true }
 chrono = { workspace = true }
-url = "2.5"
+url = { workspace = true }
 ahash = { workspace = true }
 parking_lot = { workspace = true }
 arc-swap = { workspace = true }
 dashmap = { workspace = true }
-fastrand = "2.0"
-once_cell = "1.19"
+fastrand = { workspace = true }
 rand = { workspace = true }
 
 # Development utilities
@@ -85,22 +83,17 @@ wiremock = { version = "0.6", optional = true }
 criterion = { workspace = true }
 tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
-serial_test = "3.0"
+serial_test = { workspace = true }
 tempfile = { workspace = true }
 proptest = { workspace = true }
 [features]
 default = ["stdio"]
 
 # Core transports
-# v3.0: stdio transport is now provided by turbomcp-stdio crate
 stdio = ["dep:turbomcp-stdio"]
-# v3.0: HTTP client provided by turbomcp-http crate; server-side config remains here
 http = ["dep:turbomcp-http", "axum", "tower", "tower-http", "hyper", "hyper-util", "async-stream"]
-# v3.0: WebSocket transport provided by turbomcp-websocket crate; axum integration remains here
 websocket = ["dep:turbomcp-websocket", "tokio-tungstenite", "http", "futures-util"]
-# v3.0: TCP transport provided by turbomcp-tcp crate
 tcp = ["dep:turbomcp-tcp", "tokio/net"]
-# v3.0: Unix socket transport provided by turbomcp-unix crate
 unix = ["dep:turbomcp-unix", "tokio/net"]
 
 # gRPC support (future)

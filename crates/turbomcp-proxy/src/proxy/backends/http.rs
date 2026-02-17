@@ -225,7 +225,7 @@ impl HttpBackend {
             JsonRpcResponsePayload::Success { result } => Ok(result),
             JsonRpcResponsePayload::Error { error } => {
                 // Preserve JSON-RPC error code by using rpc() constructor
-                Err(turbomcp_protocol::Error::rpc(error.code, &error.message).into())
+                Err(turbomcp_protocol::Error::from_rpc_code(error.code, &error.message).into())
             }
         }
     }

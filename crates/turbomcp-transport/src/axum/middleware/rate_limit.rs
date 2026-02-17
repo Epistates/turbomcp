@@ -1,7 +1,8 @@
 //! Rate limiting middleware using token bucket algorithm
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::{
     extract::State,
@@ -58,7 +59,7 @@ pub async fn rate_limiting_middleware(
 
     // Scope to limit the lock duration
     {
-        let mut limiter = RATE_LIMITER.lock().unwrap();
+        let mut limiter = RATE_LIMITER.lock();
         let (last_reset, count) = limiter.entry(rate_key.clone()).or_insert((now, 0));
 
         // Reset counter if a minute has passed

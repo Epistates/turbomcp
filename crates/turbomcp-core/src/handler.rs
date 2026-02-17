@@ -158,6 +158,46 @@ use turbomcp_types::{
 ///     }
 /// }
 /// ```
+///
+/// # Clone Bound Rationale
+///
+/// The `Clone` bound is required because MCP handlers are typically shared across multiple
+/// concurrent connections and requests. This enables:
+///
+/// - **Multi-connection support**: Each connection can hold its own handler instance
+/// - **Cheap sharing**: Handlers follow the Arc-cloning pattern (like Axum/Tower services)
+/// - **Zero-cost abstraction**: Clone typically just increments an Arc reference count
+///
+/// ## Recommended Pattern
+///
+/// Wrap your server state in `Arc` for cheap cloning:
+///
+/// ```rust,ignore
+/// use std::sync::Arc;
+/// use turbomcp::prelude::*;
+///
+/// #[derive(Clone)]
+/// struct MyServer {
+///     state: Arc<ServerState>,
+/// }
+///
+/// struct ServerState {
+///     database: Database,
+///     cache: Cache,
+///     // Heavy resources that shouldn't be cloned
+/// }
+///
+/// #[server(name = "my-server", version = "1.0.0")]
+/// impl MyServer {
+///     #[tool]
+///     async fn process(&self, input: String) -> String {
+///         // Access shared state via Arc (cheap clone on each call)
+///         self.state.database.query(&input).await
+///     }
+/// }
+/// ```
+///
+/// Cloning `MyServer` only increments the Arc reference count, not the actual state.
 pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
     // ===== Server Metadata =====
 

@@ -30,7 +30,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 # Optional: JSON Schema generation
-schemars = { version = "1.0", optional = true }
+schemars = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

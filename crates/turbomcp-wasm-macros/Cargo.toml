@@ -18,10 +18,9 @@ proc-macro = true
 
 [features]
 default = []
-# NOTE: The `native` feature has been removed. For native server support
-# (stdio, HTTP, TCP, WebSocket, Unix), use `#[turbomcp::server]` from
-# the `turbomcp-macros` crate instead. That generates `impl McpHandler`
-# which works with all native transports via `McpHandlerExt`.
+# NOTE: For native server support (stdio, HTTP, TCP, WebSocket, Unix), use
+# `#[turbomcp::server]` from the `turbomcp-macros` crate. That generates
+# `impl McpHandler` which works with all native transports via `McpHandlerExt`.
 
 [dependencies]
 proc-macro2 = "1.0"

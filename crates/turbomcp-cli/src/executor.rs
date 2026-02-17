@@ -67,7 +67,11 @@ impl CommandExecutor {
                         HashMap::new()
                     } else {
                         serde_json::from_str(&arguments).map_err(|e| {
-                            CliError::InvalidArguments(format!("Invalid JSON arguments: {}", e))
+                            let location = format!("line {}, column {}", e.line(), e.column());
+                            CliError::InvalidArguments(format!(
+                                "Invalid JSON arguments at {}: {}",
+                                location, e
+                            ))
                         })?
                     };
 
@@ -108,7 +112,14 @@ impl CommandExecutor {
                 client.initialize().await?;
                 let tools = client.list_tools().await?;
 
-                // Create output directory (must exist for path validation)
+                // Validate output directory path before creation
+                if !output.is_absolute() {
+                    return Err(CliError::InvalidArguments(
+                        "Output directory must be an absolute path".to_string(),
+                    ));
+                }
+
+                // Create output directory after validation
                 std::fs::create_dir_all(&output)?;
 
                 let mut exported_count = 0;
@@ -222,7 +233,11 @@ impl CommandExecutor {
                         HashMap::new()
                     } else {
                         serde_json::from_str(&arguments).map_err(|e| {
-                            CliError::InvalidArguments(format!("Invalid JSON arguments: {}", e))
+                            let location = format!("line {}, column {}", e.line(), e.column());
+                            CliError::InvalidArguments(format!(
+                                "Invalid JSON arguments at {}: {}",
+                                location, e
+                            ))
                         })?
                     };
 

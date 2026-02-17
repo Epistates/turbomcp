@@ -34,10 +34,7 @@ use serde::{Deserialize, Serialize};
 use dashmap::DashMap;
 
 #[cfg(feature = "jwt-validation")]
-use once_cell::sync::Lazy;
-
-#[cfg(feature = "jwt-validation")]
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 /// Authentication error with WWW-Authenticate header support
 ///
@@ -142,7 +139,7 @@ pub struct JwtClaims {
 /// Maintains separate caches for each JWKS URI to support multiple
 /// OAuth providers simultaneously.
 #[cfg(feature = "jwt-validation")]
-static JWKS_CACHES: Lazy<DashMap<String, Arc<JwksCache>>> = Lazy::new(DashMap::new);
+static JWKS_CACHES: LazyLock<DashMap<String, Arc<JwksCache>>> = LazyLock::new(DashMap::new);
 
 /// Get or create JWKS cache for a given URI
 #[cfg(feature = "jwt-validation")]

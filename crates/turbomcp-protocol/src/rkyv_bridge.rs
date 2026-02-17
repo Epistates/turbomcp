@@ -155,7 +155,7 @@ pub fn from_internal_message(msg: &InternalMessage) -> Result<JsonRpcRequest, Mc
         Some(InternalId::Number(n)) => RequestId::Number(*n),
         Some(InternalId::String(s)) => RequestId::String(s.clone()),
         None => {
-            return Err(McpError::validation(
+            return Err(McpError::invalid_params(
                 "Cannot convert notification to request",
             ));
         }

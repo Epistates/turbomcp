@@ -10,7 +10,6 @@
 //!
 //! struct LoggingMiddleware;
 //!
-//! #[async_trait]
 //! impl McpMiddleware for LoggingMiddleware {
 //!     async fn on_call_tool(
 //!         &self,

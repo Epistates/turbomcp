@@ -7,11 +7,12 @@
 //! - Message deduplication
 //! - Comprehensive metrics collection
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use async_trait::async_trait;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::sleep;
 
@@ -226,7 +227,6 @@ impl TurboTransport {
     }
 }
 
-#[async_trait]
 impl Transport for TurboTransport {
     fn transport_type(&self) -> TransportType {
         // Delegate to the inner transport - no need to cache since this is a cheap operation
@@ -246,66 +246,83 @@ impl Transport for TurboTransport {
         &DEFAULT_CAPABILITIES
     }
 
-    async fn state(&self) -> TransportState {
-        let inner = self.inner.lock().await;
-        inner.state().await
-    }
-
-    async fn connect(&self) -> TransportResult<()> {
-        let inner = self.inner.clone();
-        self.execute_with_retry(move || {
-            let inner = inner.clone();
-            async move {
-                let transport = inner.lock().await;
-                transport.connect().await
-            }
+    fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+        Box::pin(async move {
+            let inner = self.inner.lock().await;
+            inner.state().await
         })
-        .await
     }
 
-    async fn disconnect(&self) -> TransportResult<()> {
-        let inner = self.inner.lock().await;
-        inner.disconnect().await
-    }
-
-    async fn send(&self, message: TransportMessage) -> TransportResult<()> {
-        // Check for duplicate messages
-        {
-            let mut dedup = self.dedup_cache.write().await;
-            if dedup.is_duplicate(&message.id.to_string()) {
-                self.metrics.record_duplicate_filtered();
-                return Ok(()); // Silently drop duplicate
-            }
-        }
-
-        let inner = self.inner.clone();
-        let msg = message.clone();
-        self.execute_with_retry(move || {
-            let inner = inner.clone();
-            let msg = msg.clone();
-            async move {
-                let transport = inner.lock().await;
-                transport.send(msg).await
-            }
+    fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            let inner = self.inner.clone();
+            self.execute_with_retry(move || {
+                let inner = inner.clone();
+                async move {
+                    let transport = inner.lock().await;
+                    transport.connect().await
+                }
+            })
+            .await
         })
-        .await
     }
 
-    async fn receive(&self) -> TransportResult<Option<TransportMessage>> {
-        let inner = self.inner.clone();
-        self.execute_with_retry(move || {
-            let inner = inner.clone();
-            async move {
-                let transport = inner.lock().await;
-                transport.receive().await
-            }
+    fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            let inner = self.inner.lock().await;
+            inner.disconnect().await
         })
-        .await
     }
 
-    async fn metrics(&self) -> TransportMetrics {
-        let inner = self.inner.lock().await;
-        inner.metrics().await
+    fn send(
+        &self,
+        message: TransportMessage,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            // Check for duplicate messages
+            {
+                let mut dedup = self.dedup_cache.write().await;
+                if dedup.is_duplicate(&message.id.to_string()) {
+                    self.metrics.record_duplicate_filtered();
+                    return Ok(()); // Silently drop duplicate
+                }
+            }
+
+            let inner = self.inner.clone();
+            let msg = message.clone();
+            self.execute_with_retry(move || {
+                let inner = inner.clone();
+                let msg = msg.clone();
+                async move {
+                    let transport = inner.lock().await;
+                    transport.send(msg).await
+                }
+            })
+            .await
+        })
+    }
+
+    fn receive(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>> {
+        Box::pin(async move {
+            let inner = self.inner.clone();
+            self.execute_with_retry(move || {
+                let inner = inner.clone();
+                async move {
+                    let transport = inner.lock().await;
+                    transport.receive().await
+                }
+            })
+            .await
+        })
+    }
+
+    fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+        Box::pin(async move {
+            let inner = self.inner.lock().await;
+            inner.metrics().await
+        })
     }
 
     fn endpoint(&self) -> Option<String> {
@@ -319,8 +336,13 @@ impl Transport for TurboTransport {
         }
     }
 
-    async fn configure(&self, config: TransportConfig) -> TransportResult<()> {
-        let inner = self.inner.lock().await;
-        inner.configure(config).await
+    fn configure(
+        &self,
+        config: TransportConfig,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            let inner = self.inner.lock().await;
+            inner.configure(config).await
+        })
     }
 }

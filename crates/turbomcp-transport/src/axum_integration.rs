@@ -129,7 +129,6 @@ use turbomcp_protocol::Result as McpResult;
 
 #[cfg(feature = "http")]
 /// MCP service trait for handling MCP requests
-#[async_trait::async_trait]
 pub trait McpService: Send + Sync + 'static {
     /// Process an MCP request and return a response
     async fn process_request(
@@ -415,14 +414,8 @@ impl McpServerConfig {
         let cert_file = std::env::var("TLS_CERT_FILE").ok()?;
         let key_file = std::env::var("TLS_KEY_FILE").ok()?;
 
-        let min_version = std::env::var("TLS_MIN_VERSION")
-            .ok()
-            .and_then(|v| match v.as_str() {
-                "1.2" => Some(TlsVersion::TlsV1_2),
-                "1.3" => Some(TlsVersion::TlsV1_3),
-                _ => None,
-            })
-            .unwrap_or(TlsVersion::TlsV1_3);
+        // TLS 1.3 is required in v3
+        let min_version = TlsVersion::TlsV1_3;
 
         let enable_http2 = std::env::var("TLS_ENABLE_HTTP2")
             .ok()
@@ -1524,22 +1517,25 @@ pub use axum;
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+    use std::future::Future;
+    use std::pin::Pin;
 
     #[derive(Clone)]
     struct TestMcpService;
 
-    #[async_trait::async_trait]
     impl McpService for TestMcpService {
-        async fn process_request(
+        fn process_request(
             &self,
             request: serde_json::Value,
             _session: &SessionInfo,
-        ) -> McpResult<serde_json::Value> {
-            // Echo the request back as result
-            Ok(serde_json::json!({
-                "echo": request,
-                "timestamp": chrono::Utc::now().to_rfc3339()
-            }))
+        ) -> Pin<Box<dyn Future<Output = McpResult<serde_json::Value>> + Send + '_>> {
+            Box::pin(async move {
+                // Echo the request back as result
+                Ok(serde_json::json!({
+                    "echo": request,
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                }))
+            })
         }
     }
 

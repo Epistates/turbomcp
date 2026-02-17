@@ -89,36 +89,38 @@
 //! use turbomcp_client::Client;
 //! use turbomcp_client::sampling::SamplingHandler;
 //! use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult, Role, Content, StopReason, TextContent};
-//! use async_trait::async_trait;
+//! use std::future::Future;
+//! use std::pin::Pin;
 //!
 //! #[derive(Debug)]
 //! struct MySamplingHandler {
 //!     // Your LLM client would go here
 //! }
 //!
-//! #[async_trait]
 //! impl SamplingHandler for MySamplingHandler {
-//!     async fn handle_create_message(
+//!     fn handle_create_message(
 //!         &self,
 //!         request_id: String,
 //!         request: CreateMessageRequest
-//!     ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>> {
-//!         // Forward to your LLM provider (OpenAI, Anthropic, etc.)
-//!         // Use request_id for correlation tracking
-//!         // Allows the server to request LLM sampling through the client
-//!         
-//!         Ok(CreateMessageResult {
-//!             role: Role::Assistant,
-//!             content: Content::Text(
-//!                 TextContent {
-//!                     text: "Response from LLM".to_string(),
-//!                     annotations: None,
-//!                     meta: None,
-//!                 }
-//!             ),
-//!             model: "gpt-4".to_string(),
-//!             stop_reason: Some(StopReason::EndTurn),
-//!             _meta: None,
+//!     ) -> Pin<Box<dyn Future<Output = Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>>> + Send + '_>> {
+//!         Box::pin(async move {
+//!             // Forward to your LLM provider (OpenAI, Anthropic, etc.)
+//!             // Use request_id for correlation tracking
+//!             // Allows the server to request LLM sampling through the client
+//!
+//!             Ok(CreateMessageResult {
+//!                 role: Role::Assistant,
+//!                 content: Content::Text(
+//!                     TextContent {
+//!                         text: "Response from LLM".to_string(),
+//!                         annotations: None,
+//!                         meta: None,
+//!                     }
+//!                 ),
+//!                 model: "gpt-4".to_string(),
+//!                 stop_reason: Some(StopReason::EndTurn),
+//!                 _meta: None,
+//!             })
 //!         })
 //!     }
 //! }

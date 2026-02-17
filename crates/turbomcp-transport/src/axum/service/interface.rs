@@ -3,6 +3,9 @@
 //! This module defines the core MCP service trait that implementations
 //! must provide to handle MCP protocol requests.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use crate::tower::SessionInfo;
 use turbomcp_protocol::Result as McpResult;
 
@@ -11,7 +14,6 @@ use turbomcp_protocol::Result as McpResult;
 /// Implementations of this trait provide the business logic for handling
 /// MCP protocol requests. The trait is designed to be object-safe to
 /// allow for dynamic dispatch.
-#[async_trait::async_trait]
 pub trait McpService: Send + Sync + 'static {
     /// Process an MCP request and return a response
     ///
@@ -23,11 +25,11 @@ pub trait McpService: Send + Sync + 'static {
     /// # Returns
     ///
     /// Returns the JSON response or an error if processing fails.
-    async fn process_request(
+    fn process_request(
         &self,
         request: serde_json::Value,
         session: &SessionInfo,
-    ) -> McpResult<serde_json::Value>;
+    ) -> Pin<Box<dyn Future<Output = McpResult<serde_json::Value>> + Send + '_>>;
 
     /// Get service capabilities
     ///

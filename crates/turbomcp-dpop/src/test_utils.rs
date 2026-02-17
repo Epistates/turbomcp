@@ -7,7 +7,6 @@
 //! be used in production code.
 
 use super::{DpopAlgorithm, DpopKeyPair, NonceStorage, Result, StorageStats};
-use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use p256::ecdsa::{SigningKey, VerifyingKey};
 use p256::elliptic_curve::rand_core::OsRng;
@@ -299,7 +298,6 @@ impl MockNonceStorage {
     }
 }
 
-#[async_trait]
 impl NonceStorage for MockNonceStorage {
     async fn store_nonce(
         &self,

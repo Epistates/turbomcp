@@ -147,3 +147,71 @@ jobs:
 
     - name: Run unit tests
       run: cargo test -p turbomcp-wasm --lib
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    # Run coverage on main branch pushes only to save CI resources
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Free up disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
+        sudo rm -rf /usr/local/lib/android /usr/local/share/powershell
+        sudo apt-get clean
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: llvm-tools-preview
+
+    - name: Install cargo-llvm-cov
+      uses: taiki-e/install-action@cargo-llvm-cov
+
+    - name: Cache cargo dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-coverage-
+
+    - name: Generate coverage report
+      env:
+        CARGO_TARGET_DIR: /tmp/cargo-coverage
+      run: |
+        cargo llvm-cov --workspace --lib --lcov --output-path lcov.info \
+          --ignore-filename-regex '(tests?/|benches/|examples/)'
+
+        # Extract coverage percentage
+        COVERAGE=$(cargo llvm-cov report --workspace --lib 2>/dev/null | grep -E 'TOTAL' | awk '{print $NF}' | tr -d '%')
+        echo "Coverage: ${COVERAGE}%"
+        echo "COVERAGE_PERCENT=${COVERAGE}" >> $GITHUB_ENV
+
+        # Fail if coverage is below minimum threshold (70%)
+        MIN_COVERAGE=70
+        if [ "$(echo "$COVERAGE < $MIN_COVERAGE" | bc -l)" -eq 1 ]; then
+          echo "::error::Coverage ${COVERAGE}% is below minimum threshold of ${MIN_COVERAGE}%"
+          exit 1
+        fi
+
+        # Warn if coverage is below target (80%)
+        TARGET_COVERAGE=80
+        if [ "$(echo "$COVERAGE < $TARGET_COVERAGE" | bc -l)" -eq 1 ]; then
+          echo "::warning::Coverage ${COVERAGE}% is below target of ${TARGET_COVERAGE}%"
+        fi
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: lcov.info
+        fail_ci_if_error: false
+        verbose: true
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

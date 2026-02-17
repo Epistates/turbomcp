@@ -40,6 +40,43 @@ pub struct ToolResult {
     #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
     /// Structured content conforming to the tool's output schema
+    ///
+    /// Use this field when your tool has declared an `output_schema` in its Tool definition.
+    /// The structured content should conform to that schema and provides machine-readable
+    /// output for LLMs to parse programmatically.
+    ///
+    /// # When to Use
+    ///
+    /// - **Use `structured_content`**: When the tool returns data that should be parsed
+    ///   by the LLM (JSON objects, arrays, typed data matching the output schema)
+    /// - **Use `content`**: For human-readable text, error messages, logs, or unstructured output
+    ///
+    /// # Relationship to Tool::output_schema
+    ///
+    /// If your tool declares:
+    /// ```rust,ignore
+    /// Tool {
+    ///     name: "get_user",
+    ///     output_schema: Some(json!({
+    ///         "type": "object",
+    ///         "properties": {
+    ///             "id": {"type": "number"},
+    ///             "name": {"type": "string"}
+    ///         }
+    ///     }))
+    /// }
+    /// ```
+    ///
+    /// Then return structured content matching that schema:
+    /// ```rust,ignore
+    /// ToolResult::json(&json!({
+    ///     "id": 42,
+    ///     "name": "Alice"
+    /// }))
+    /// ```
+    ///
+    /// The `structured_content` field enables the LLM to extract typed data without parsing
+    /// natural language from the `content` field.
     #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
     pub structured_content: Option<Value>,
 }

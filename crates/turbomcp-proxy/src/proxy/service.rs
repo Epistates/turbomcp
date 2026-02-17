@@ -3,9 +3,11 @@
 //! This service implements the `McpService` trait from turbomcp-transport,
 //! enabling it to be used with the Axum integration for HTTP/SSE transport.
 
-use async_trait::async_trait;
-use serde_json::Value;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+
+use serde_json::Value;
 use tracing::{debug, error, trace};
 use turbomcp_protocol::{Error as McpError, Result as McpResult, jsonrpc::JsonRpcRequest};
 use turbomcp_transport::tower::SessionInfo;
@@ -164,21 +166,26 @@ impl ProxyService {
             // Unknown method
             method => {
                 error!("Unknown method: {}", method);
-                Err(McpError::protocol(format!("Method not found: {method}")))
+                Err(McpError::internal(format!("Method not found: {method}")))
             }
         }
     }
 }
 
-#[async_trait]
 impl turbomcp_transport::axum::McpService for ProxyService {
-    async fn process_request(&self, request: Value, _session: &SessionInfo) -> McpResult<Value> {
-        // Parse JSON-RPC request
-        let json_rpc_request: JsonRpcRequest =
-            serde_json::from_value(request).map_err(|e| McpError::serialization(e.to_string()))?;
+    fn process_request(
+        &self,
+        request: Value,
+        _session: &SessionInfo,
+    ) -> Pin<Box<dyn Future<Output = McpResult<Value>> + Send + '_>> {
+        Box::pin(async move {
+            // Parse JSON-RPC request
+            let json_rpc_request: JsonRpcRequest = serde_json::from_value(request)
+                .map_err(|e| McpError::serialization(e.to_string()))?;
 
-        // Process the request
-        self.process_jsonrpc(json_rpc_request).await
+            // Process the request
+            self.process_jsonrpc(json_rpc_request).await
+        })
     }
 
     fn get_capabilities(&self) -> Value {

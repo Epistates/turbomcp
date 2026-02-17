@@ -144,7 +144,7 @@ impl<'a> McpHandler<'a> {
         let context = Arc::new(Self::create_context_from_request(&req));
 
         // SECURITY: Check Content-Length header BEFORE reading body to prevent DoS.
-        // This prevents attackers from exhausting memory with large request bodies.
+        // This is the fast path for rejecting large requests before they're read.
         if let Some(content_length) = req.headers().get("content-length").ok().flatten()
             && let Ok(length) = content_length.parse::<usize>()
             && length > MAX_BODY_SIZE
@@ -152,21 +152,32 @@ impl<'a> McpHandler<'a> {
             return self.error_response(413, "Request body too large", origin_ref);
         }
 
-        // Get request body with size limit protection (secondary check after reading)
+        // SECURITY: Read body and enforce size limit IMMEDIATELY.
+        //
+        // Cloudflare Workers don't support streaming body reads - req.text() reads
+        // the entire body into memory before returning. This is a platform limitation.
+        // We enforce the size limit immediately after reading to handle:
+        // 1. Chunked transfer encoding (no Content-Length header)
+        // 2. Content-Length header mismatches
+        // 3. Malicious clients lying about body size
+        //
+        // The MAX_BODY_SIZE of 1MB is reasonable for MCP JSON-RPC requests.
         let body = match req.text().await {
-            Ok(b) if b.len() > MAX_BODY_SIZE => {
-                // This catches chunked transfers or Content-Length mismatches
-                return self.error_response(413, "Request body too large", origin_ref);
+            Ok(b) => {
+                // CRITICAL: Check size BEFORE any processing to prevent DoS
+                if b.len() > MAX_BODY_SIZE {
+                    return self.error_response(413, "Request body too large", origin_ref);
+                }
+                if b.is_empty() {
+                    let response = JsonRpcResponse::error(
+                        None,
+                        error_codes::INVALID_REQUEST,
+                        "Empty request body",
+                    );
+                    return self.json_response(&response, origin_ref);
+                }
+                b
             }
-            Ok(b) if b.is_empty() => {
-                let response = JsonRpcResponse::error(
-                    None,
-                    error_codes::INVALID_REQUEST,
-                    "Empty request body",
-                );
-                return self.json_response(&response, origin_ref);
-            }
-            Ok(b) => b,
             Err(e) => {
                 let response = JsonRpcResponse::error(
                     None,
@@ -568,6 +579,13 @@ impl<'a> McpHandler<'a> {
     ///
     /// Supports `{param}` style placeholders in URI templates.
     /// Each `{param}` matches any non-empty path segment.
+    ///
+    /// # Security
+    ///
+    /// This function rejects path traversal attempts in template parameters:
+    /// - Segments containing ".."
+    /// - Segments containing null bytes ('\0')
+    /// - Segments containing percent-encoded characters ('%')
     fn matches_template(template: &str, uri: &str) -> bool {
         let template_parts: Vec<&str> = template.split('/').collect();
         let uri_parts: Vec<&str> = uri.split('/').collect();
@@ -582,6 +600,10 @@ impl<'a> McpHandler<'a> {
                 if u.is_empty() {
                     return false;
                 }
+                // SECURITY: Reject path traversal attempts
+                if u.contains("..") || u.contains('\0') || u.contains('%') {
+                    return false;
+                }
                 continue;
             }
             if t != u {
@@ -590,6 +612,51 @@ impl<'a> McpHandler<'a> {
         }
 
         true
+    }
+
+    /// Extract template parameters from a matched URI.
+    ///
+    /// Returns a map of parameter names to their values. Returns an empty map
+    /// if the URI doesn't match the template or contains dangerous content.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let params = McpHandler::extract_template_params(
+    ///     "file:///{name}.txt",
+    ///     "file:///document.txt"
+    /// );
+    /// assert_eq!(params.get("name"), Some(&"document".to_string()));
+    /// ```
+    #[allow(dead_code)] // Public API for user code
+    pub fn extract_template_params(template: &str, uri: &str) -> HashMap<String, String> {
+        let mut params = HashMap::new();
+
+        let template_parts: Vec<&str> = template.split('/').collect();
+        let uri_parts: Vec<&str> = uri.split('/').collect();
+
+        if template_parts.len() != uri_parts.len() {
+            return params;
+        }
+
+        for (t, u) in template_parts.iter().zip(uri_parts.iter()) {
+            if t.starts_with('{') && t.ends_with('}') {
+                // Extract parameter name (strip braces)
+                let param_name = &t[1..t.len() - 1];
+
+                // Validate segment (reject dangerous content)
+                if u.is_empty() || u.contains("..") || u.contains('\0') || u.contains('%') {
+                    return HashMap::new(); // Return empty map on validation failure
+                }
+
+                params.insert(param_name.to_string(), u.to_string());
+            } else if t != u {
+                // Non-parameter segment doesn't match
+                return HashMap::new();
+            }
+        }
+
+        params
     }
 
     /// Create CORS headers for responses.
@@ -713,6 +780,86 @@ mod tests {
         // Empty segments should not match template params
         assert!(!McpHandler::matches_template("file:///{name}", "file:///"));
         assert!(!McpHandler::matches_template("a/{b}/c", "a//c"));
+    }
+
+    #[test]
+    fn test_template_matching_rejects_path_traversal() {
+        // Path traversal attempts should be rejected
+        assert!(!McpHandler::matches_template(
+            "file:///{name}",
+            "file:///../etc/passwd"
+        ));
+        assert!(!McpHandler::matches_template(
+            "data://{id}/content",
+            "data://../secret/content"
+        ));
+        assert!(!McpHandler::matches_template(
+            "user://{id}",
+            "user://../../root"
+        ));
+    }
+
+    #[test]
+    fn test_template_matching_rejects_null_bytes() {
+        // Null byte injection should be rejected
+        assert!(!McpHandler::matches_template(
+            "file:///{name}",
+            "file:///test\0.txt"
+        ));
+    }
+
+    #[test]
+    fn test_template_matching_rejects_percent_encoding() {
+        // Percent-encoded characters should be rejected (prevent double-decode attacks)
+        assert!(!McpHandler::matches_template(
+            "file:///{name}",
+            "file:///%2e%2e%2fetc%2fpasswd"
+        ));
+        assert!(!McpHandler::matches_template(
+            "data://{type}/{id}",
+            "data://users/%2e%2e"
+        ));
+    }
+
+    #[test]
+    fn test_extract_template_params_valid() {
+        // Test single parameter
+        let params = McpHandler::extract_template_params("file:///{name}", "file:///document.txt");
+        assert_eq!(params.get("name"), Some(&"document.txt".to_string()));
+
+        // Test parameter in path segment
+        let params =
+            McpHandler::extract_template_params("user://{id}/profile", "user://123/profile");
+        assert_eq!(params.get("id"), Some(&"123".to_string()));
+
+        // Test multiple parameters
+        let params = McpHandler::extract_template_params("data://{type}/{id}", "data://users/42");
+        assert_eq!(params.get("type"), Some(&"users".to_string()));
+        assert_eq!(params.get("id"), Some(&"42".to_string()));
+
+        // Test with special characters (allowed in segments)
+        let params =
+            McpHandler::extract_template_params("file:///{name}", "file:///document-2024.txt");
+        assert_eq!(params.get("name"), Some(&"document-2024.txt".to_string()));
+    }
+
+    #[test]
+    fn test_extract_template_params_rejects_dangerous_content() {
+        // Path traversal
+        let params = McpHandler::extract_template_params("file:///{name}", "file:///../etc/passwd");
+        assert!(params.is_empty());
+
+        // Null bytes
+        let params = McpHandler::extract_template_params("file:///{name}", "file:///test\0.txt");
+        assert!(params.is_empty());
+
+        // Percent encoding
+        let params = McpHandler::extract_template_params("file:///{name}", "file:///%2e%2e");
+        assert!(params.is_empty());
+
+        // Empty segment
+        let params = McpHandler::extract_template_params("file:///{name}/data", "file:////data");
+        assert!(params.is_empty());
     }
 
     #[test]

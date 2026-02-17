@@ -3,9 +3,10 @@
 //! This module implements the BidirectionalTransport trait, providing
 //! request-response patterns with correlation handling and timeout management.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
@@ -15,109 +16,135 @@ use turbomcp_transport_traits::{
     TransportResult,
 };
 
-#[async_trait]
 impl BidirectionalTransport for WebSocketBidirectionalTransport {
-    async fn send_request(
+    fn send_request(
         &self,
         message: TransportMessage,
         timeout: Option<Duration>,
-    ) -> TransportResult<TransportMessage> {
-        let correlation_id = Uuid::new_v4().to_string();
-        let (tx, rx) = oneshot::channel();
+    ) -> Pin<Box<dyn Future<Output = TransportResult<TransportMessage>> + Send + '_>> {
+        Box::pin(async move {
+            // Check correlation limit before accepting new requests
+            if self.active_correlations_count() >= 10_000 {
+                return Err(TransportError::ProtocolError(
+                    "Maximum active correlations exceeded".to_string(),
+                ));
+            }
 
-        // Store correlation
-        let ctx = CorrelationContext {
-            correlation_id: correlation_id.clone(),
-            request_id: message.id.to_string(),
-            response_tx: Some(tx),
-            timeout: timeout.unwrap_or(Duration::from_secs(30)),
-            created_at: std::time::Instant::now(),
-        };
+            let correlation_id = Uuid::new_v4().to_string();
+            let (tx, rx) = oneshot::channel();
 
-        self.correlations.insert(correlation_id.clone(), ctx);
+            // Store correlation
+            let ctx = CorrelationContext {
+                correlation_id: correlation_id.clone(),
+                request_id: message.id.to_string(),
+                response_tx: Some(tx),
+                timeout: timeout.unwrap_or(Duration::from_secs(30)),
+                created_at: std::time::Instant::now(),
+            };
 
-        // Add correlation ID to message metadata
-        let mut message = message;
-        message.metadata.correlation_id = Some(correlation_id.clone());
+            self.correlations.insert(correlation_id.clone(), ctx);
 
-        // Send the message
-        self.send(message).await?;
+            // Add correlation ID to message metadata
+            let mut message = message;
+            message.metadata.correlation_id = Some(correlation_id.clone());
 
-        // Wait for response
-        match timeout {
-            Some(duration) => match tokio::time::timeout(duration, rx).await {
-                Ok(Ok(response)) => {
+            // Send the message
+            self.send(message).await?;
+
+            // Wait for response
+            match timeout {
+                Some(duration) => match tokio::time::timeout(duration, rx).await {
+                    Ok(Ok(response)) => {
+                        tracing::debug!(
+                            "Received response for correlation {} in session {}",
+                            correlation_id,
+                            self.session_id
+                        );
+                        Ok(response)
+                    }
+                    Ok(Err(_)) => {
+                        self.correlations.remove(&correlation_id);
+                        Err(TransportError::ReceiveFailed("Channel closed".to_string()))
+                    }
+                    Err(_) => {
+                        self.correlations.remove(&correlation_id);
+                        tracing::warn!(
+                            "Request timed out for correlation {} in session {}",
+                            correlation_id,
+                            self.session_id
+                        );
+                        Err(TransportError::Timeout)
+                    }
+                },
+                None => {
+                    let response = rx.await.map_err(|_| {
+                        self.correlations.remove(&correlation_id);
+                        TransportError::ReceiveFailed("Channel closed".to_string())
+                    })?;
                     tracing::debug!(
-                        "Received response for correlation {} in session {}",
+                        "Received response for correlation {} in session {} (no timeout)",
                         correlation_id,
                         self.session_id
                     );
                     Ok(response)
                 }
-                Ok(Err(_)) => {
-                    self.correlations.remove(&correlation_id);
-                    Err(TransportError::ReceiveFailed("Channel closed".to_string()))
-                }
-                Err(_) => {
-                    self.correlations.remove(&correlation_id);
-                    tracing::warn!(
-                        "Request timed out for correlation {} in session {}",
-                        correlation_id,
-                        self.session_id
-                    );
-                    Err(TransportError::Timeout)
-                }
-            },
-            None => {
-                let response = rx.await.map_err(|_| {
-                    self.correlations.remove(&correlation_id);
-                    TransportError::ReceiveFailed("Channel closed".to_string())
-                })?;
+            }
+        })
+    }
+
+    fn start_correlation(
+        &self,
+        correlation_id: String,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        Box::pin(async move {
+            // Check correlation limit before accepting new correlations
+            if self.active_correlations_count() >= 10_000 {
+                return Err(TransportError::ProtocolError(
+                    "Maximum active correlations exceeded".to_string(),
+                ));
+            }
+
+            // Create a correlation context to track request-response pairs
+            let ctx = CorrelationContext {
+                correlation_id: correlation_id.clone(),
+                request_id: String::new(),
+                response_tx: None,
+                timeout: Duration::from_secs(30),
+                created_at: std::time::Instant::now(),
+            };
+
+            self.correlations.insert(correlation_id.clone(), ctx);
+            tracing::debug!(
+                "Started correlation {} in session {}",
+                correlation_id,
+                self.session_id
+            );
+            Ok(())
+        })
+    }
+
+    fn stop_correlation(
+        &self,
+        correlation_id: &str,
+    ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+        let correlation_id = correlation_id.to_string();
+        Box::pin(async move {
+            let removed = self.correlations.remove(&correlation_id).is_some();
+            if removed {
                 tracing::debug!(
-                    "Received response for correlation {} in session {} (no timeout)",
+                    "Stopped correlation {} in session {}",
                     correlation_id,
                     self.session_id
                 );
-                Ok(response)
+            } else {
+                tracing::warn!(
+                    "Attempted to stop non-existent correlation {} in session {}",
+                    correlation_id,
+                    self.session_id
+                );
             }
-        }
-    }
-
-    async fn start_correlation(&self, correlation_id: String) -> TransportResult<()> {
-        // Create a correlation context to track request-response pairs
-        let ctx = CorrelationContext {
-            correlation_id: correlation_id.clone(),
-            request_id: String::new(),
-            response_tx: None,
-            timeout: Duration::from_secs(30),
-            created_at: std::time::Instant::now(),
-        };
-
-        self.correlations.insert(correlation_id.clone(), ctx);
-        tracing::debug!(
-            "Started correlation {} in session {}",
-            correlation_id,
-            self.session_id
-        );
-        Ok(())
-    }
-
-    async fn stop_correlation(&self, correlation_id: &str) -> TransportResult<()> {
-        let removed = self.correlations.remove(correlation_id).is_some();
-        if removed {
-            tracing::debug!(
-                "Stopped correlation {} in session {}",
-                correlation_id,
-                self.session_id
-            );
-        } else {
-            tracing::warn!(
-                "Attempted to stop non-existent correlation {} in session {}",
-                correlation_id,
-                self.session_id
-            );
-        }
-        Ok(())
+            Ok(())
+        })
     }
 }
 

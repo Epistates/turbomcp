@@ -30,21 +30,23 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// use turbomcp_client::{Client, sampling::SamplingHandler};
     /// use turbomcp_transport::stdio::StdioTransport;
     /// use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult};
-    /// use async_trait::async_trait;
     /// use std::sync::Arc;
+    /// use std::future::Future;
+    /// use std::pin::Pin;
     ///
     /// #[derive(Debug)]
     /// struct ExampleHandler;
     ///
-    /// #[async_trait]
     /// impl SamplingHandler for ExampleHandler {
-    ///     async fn handle_create_message(
+    ///     fn handle_create_message(
     ///         &self,
     ///         _request_id: String,
     ///         _request: CreateMessageRequest,
-    ///     ) -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>> {
-    ///         // Handle sampling request (use request_id for tracking/correlation)
-    ///         todo!("Implement sampling logic")
+    ///     ) -> Pin<Box<dyn Future<Output = Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>>> + Send + '_>> {
+    ///         Box::pin(async move {
+    ///             // Handle sampling request (use request_id for tracking/correlation)
+    ///             todo!("Implement sampling logic")
+    ///         })
     ///     }
     /// }
     ///
@@ -52,11 +54,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// client.set_sampling_handler(Arc::new(ExampleHandler));
     /// ```
     pub fn set_sampling_handler(&self, handler: Arc<dyn SamplingHandler>) {
-        *self
-            .inner
-            .sampling_handler
-            .lock()
-            .expect("sampling_handler mutex poisoned") = Some(handler);
+        *self.inner.sampling_handler.lock() = Some(handler);
     }
 
     /// Check if sampling is enabled
@@ -65,11 +63,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// capabilities are enabled.
     #[must_use]
     pub fn has_sampling_handler(&self) -> bool {
-        self.inner
-            .sampling_handler
-            .lock()
-            .expect("sampling_handler mutex poisoned")
-            .is_some()
+        self.inner.sampling_handler.lock().is_some()
     }
 
     /// Remove the sampling handler
@@ -77,11 +71,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// Disables sampling capabilities and removes the handler. The client
     /// will no longer advertise sampling support to servers.
     pub fn remove_sampling_handler(&self) {
-        *self
-            .inner
-            .sampling_handler
-            .lock()
-            .expect("sampling_handler mutex poisoned") = None;
+        *self.inner.sampling_handler.lock() = None;
     }
 
     /// Get sampling capabilities for initialization
@@ -89,13 +79,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// Returns the sampling capabilities to be sent during client initialization
     /// if sampling is enabled.
     pub(crate) fn get_sampling_capabilities(&self) -> Option<SamplingCapabilities> {
-        if self
-            .inner
-            .sampling_handler
-            .lock()
-            .expect("sampling_handler mutex poisoned")
-            .is_some()
-        {
+        if self.inner.sampling_handler.lock().is_some() {
             Some(SamplingCapabilities {})
         } else {
             None

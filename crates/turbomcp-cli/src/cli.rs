@@ -12,7 +12,13 @@ use std::path::PathBuf;
     about = "Comprehensive CLI for MCP servers - complete protocol support with rich UX",
     long_about = "TurboMCP CLI provides comprehensive access to MCP (Model Context Protocol) servers.\n\
                   Supports all MCP operations: tools, resources, prompts, completions, sampling, and more.\n\
-                  Multiple transports: stdio, HTTP SSE, WebSocket, TCP, Unix sockets."
+                  Multiple transports: stdio, HTTP SSE, WebSocket, TCP, Unix sockets.\n\n\
+                  SECURITY WARNINGS:\n\
+                  - STDIO transport executes arbitrary commands on your system\n\
+                  - Only use --command with trusted MCP servers from verified sources\n\
+                  - Auth tokens passed via --auth or MCP_AUTH may be logged or exposed\n\
+                  - Consider using environment variables or config files for sensitive credentials\n\
+                  - Review server permissions before executing tools that modify data"
 )]
 pub struct Cli {
     /// Subcommand to run

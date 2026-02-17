@@ -8,11 +8,9 @@
 //!
 //! ```ignore
 //! use turbomcp_wasm::wasm_server::*;
-//! use async_trait::async_trait;
 //!
 //! struct Calculator;
 //!
-//! #[async_trait(?Send)]
 //! impl ToolHandler for Calculator {
 //!     type Args = CalculatorArgs;
 //!

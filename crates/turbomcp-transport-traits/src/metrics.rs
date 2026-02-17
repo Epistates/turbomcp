@@ -104,7 +104,8 @@ impl AtomicMetrics {
             latency_us
         } else {
             // EMA with alpha = 0.1: new_avg = old_avg * 0.9 + new_value * 0.1
-            (current * 9 + latency_us) / 10
+            // Use saturating operations to prevent overflow on sustained multi-second latencies
+            current.saturating_mul(9).saturating_add(latency_us) / 10
         };
         self.avg_latency_us.store(new_avg, Ordering::Relaxed);
     }
@@ -189,5 +190,35 @@ mod tests {
 
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.bytes_sent, 0);
+    }
+
+    #[test]
+    fn test_ema_overflow_protection() {
+        let metrics = AtomicMetrics::new();
+
+        // Test with extremely large latency values that could cause overflow
+        // without saturating operations
+        let large_latency = u64::MAX / 5;
+
+        // First update - should not panic
+        metrics.update_latency_us(large_latency);
+        let snapshot1 = metrics.snapshot();
+        assert_eq!(snapshot1.average_latency_ms, large_latency as f64 / 1000.0);
+
+        // Second update with large value - EMA calculation should saturate instead of overflow
+        metrics.update_latency_us(large_latency);
+        let snapshot2 = metrics.snapshot();
+
+        // Verify the result is reasonable and didn't overflow
+        assert!(snapshot2.average_latency_ms > 0.0);
+        assert!(snapshot2.average_latency_ms.is_finite());
+
+        // Multiple sustained high-latency updates should not overflow
+        for _ in 0..100 {
+            metrics.update_latency_us(large_latency);
+        }
+        let snapshot3 = metrics.snapshot();
+        assert!(snapshot3.average_latency_ms > 0.0);
+        assert!(snapshot3.average_latency_ms.is_finite());
     }
 }
