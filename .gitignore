@@ -117,6 +117,9 @@ pnpm-lock.yaml
 
 .strategy
 
+# Scripts (local development only)
+scripts/
+
 # Benchmark and performance testing directories
 benchmarks/
 benchmark_results.md
