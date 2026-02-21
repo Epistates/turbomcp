@@ -7,31 +7,13 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
-use crate::content::{Content, Message, Role};
+use crate::content::{
+    BlobResourceContents, Content, Message, ResourceContents, Role, TextResourceContents,
+};
 
 /// Result from calling a tool.
-///
-/// This is the unified result type for all tool invocations. It supports:
-/// - Simple text responses
-/// - Error responses
-/// - JSON/structured responses
-/// - Multi-content responses (text + images, etc.)
-///
-/// # Examples
-///
-/// ```
-/// use turbomcp_types::ToolResult;
-///
-/// // Simple text result
-/// let result = ToolResult::text("Hello, world!");
-///
-/// // Error result
-/// let error = ToolResult::error("Something went wrong");
-///
-/// // JSON result with structured content
-/// let json = ToolResult::json(&serde_json::json!({"key": "value"})).unwrap();
-/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ToolResult {
     /// Content blocks in the result
@@ -40,104 +22,41 @@ pub struct ToolResult {
     #[serde(rename = "isError", skip_serializing_if = "Option::is_none")]
     pub is_error: Option<bool>,
     /// Structured content conforming to the tool's output schema
-    ///
-    /// Use this field when your tool has declared an `output_schema` in its Tool definition.
-    /// The structured content should conform to that schema and provides machine-readable
-    /// output for LLMs to parse programmatically.
-    ///
-    /// # When to Use
-    ///
-    /// - **Use `structured_content`**: When the tool returns data that should be parsed
-    ///   by the LLM (JSON objects, arrays, typed data matching the output schema)
-    /// - **Use `content`**: For human-readable text, error messages, logs, or unstructured output
-    ///
-    /// # Relationship to Tool::output_schema
-    ///
-    /// If your tool declares:
-    /// ```rust,ignore
-    /// Tool {
-    ///     name: "get_user",
-    ///     output_schema: Some(json!({
-    ///         "type": "object",
-    ///         "properties": {
-    ///             "id": {"type": "number"},
-    ///             "name": {"type": "string"}
-    ///         }
-    ///     }))
-    /// }
-    /// ```
-    ///
-    /// Then return structured content matching that schema:
-    /// ```rust,ignore
-    /// ToolResult::json(&json!({
-    ///     "id": 42,
-    ///     "name": "Alice"
-    /// }))
-    /// ```
-    ///
-    /// The `structured_content` field enables the LLM to extract typed data without parsing
-    /// natural language from the `content` field.
     #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
     pub structured_content: Option<Value>,
+    /// Extension metadata
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, Value>>,
 }
 
 impl ToolResult {
     /// Create a text result.
-    ///
-    /// # Example
-    /// ```
-    /// use turbomcp_types::ToolResult;
-    ///
-    /// let result = ToolResult::text("Operation completed");
-    /// assert!(!result.is_error());
-    /// ```
     #[must_use]
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             content: vec![Content::text(text)],
-            is_error: None,
-            structured_content: None,
+            ..Default::default()
         }
     }
 
     /// Create an error result.
-    ///
-    /// # Example
-    /// ```
-    /// use turbomcp_types::ToolResult;
-    ///
-    /// let result = ToolResult::error("File not found");
-    /// assert!(result.is_error());
-    /// ```
     #[must_use]
     pub fn error(text: impl Into<String>) -> Self {
         Self {
             content: vec![Content::text(text)],
             is_error: Some(true),
-            structured_content: None,
+            ..Default::default()
         }
     }
 
     /// Create a JSON result with structured content.
-    ///
-    /// This creates both human-readable text content and machine-readable
-    /// structured content for tools with output schemas.
-    ///
-    /// # Example
-    /// ```
-    /// use turbomcp_types::ToolResult;
-    ///
-    /// let data = serde_json::json!({"count": 42, "items": ["a", "b"]});
-    /// let result = ToolResult::json(&data).unwrap();
-    /// assert!(result.structured_content.is_some());
-    /// ```
     pub fn json<T: Serialize>(value: &T) -> Result<Self, serde_json::Error> {
         let structured = serde_json::to_value(value)?;
         let text = serde_json::to_string_pretty(value)?;
         Ok(Self {
             content: vec![Content::text(text)],
-            is_error: None,
             structured_content: Some(structured),
+            ..Default::default()
         })
     }
 
@@ -173,6 +92,13 @@ impl ToolResult {
         self.with_content(Content::image(data, mime_type))
     }
 
+    /// Set metadata.
+    #[must_use]
+    pub fn with_meta(mut self, meta: HashMap<String, Value>) -> Self {
+        self.meta = Some(meta);
+        self
+    }
+
     /// Get the first text content if present.
     #[must_use]
     pub fn first_text(&self) -> Option<&str> {
@@ -181,25 +107,13 @@ impl ToolResult {
 }
 
 /// Result from reading a resource.
-///
-/// # Examples
-///
-/// ```
-/// use turbomcp_types::ResourceResult;
-///
-/// // Text resource
-/// let result = ResourceResult::text("file:///example.txt", "File contents");
-///
-/// // JSON resource
-/// let json = ResourceResult::json("config://settings", &serde_json::json!({"debug": true})).unwrap();
-///
-/// // Binary resource
-/// let binary = ResourceResult::binary("file:///image.png", "base64data...", "image/png");
-/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ResourceResult {
-    /// Resource contents (can be multiple for multi-part resources)
-    pub contents: Vec<ResourceContent>,
+    /// Resource contents
+    pub contents: Vec<ResourceContents>,
+    /// Extension metadata
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, Value>>,
 }
 
 impl ResourceResult {
@@ -207,12 +121,12 @@ impl ResourceResult {
     #[must_use]
     pub fn text(uri: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
-            contents: vec![ResourceContent {
+            contents: vec![ResourceContents::Text(TextResourceContents {
                 uri: uri.into(),
                 mime_type: Some("text/plain".into()),
-                text: Some(content.into()),
-                blob: None,
-            }],
+                text: content.into(),
+            })],
+            ..Default::default()
         }
     }
 
@@ -222,12 +136,12 @@ impl ResourceResult {
         value: &T,
     ) -> Result<Self, serde_json::Error> {
         Ok(Self {
-            contents: vec![ResourceContent {
+            contents: vec![ResourceContents::Text(TextResourceContents {
                 uri: uri.into(),
                 mime_type: Some("application/json".into()),
-                text: Some(serde_json::to_string_pretty(value)?),
-                blob: None,
-            }],
+                text: serde_json::to_string_pretty(value)?,
+            })],
+            ..Default::default()
         })
     }
 
@@ -239,12 +153,12 @@ impl ResourceResult {
         mime_type: impl Into<String>,
     ) -> Self {
         Self {
-            contents: vec![ResourceContent {
+            contents: vec![ResourceContents::Blob(BlobResourceContents {
                 uri: uri.into(),
                 mime_type: Some(mime_type.into()),
-                text: None,
-                blob: Some(data.into()),
-            }],
+                blob: data.into(),
+            })],
+            ..Default::default()
         }
     }
 
@@ -256,78 +170,29 @@ impl ResourceResult {
 
     /// Add additional content to the result.
     #[must_use]
-    pub fn with_content(mut self, content: ResourceContent) -> Self {
+    pub fn with_content(mut self, content: ResourceContents) -> Self {
         self.contents.push(content);
+        self
+    }
+
+    /// Set metadata.
+    #[must_use]
+    pub fn with_meta(mut self, meta: HashMap<String, Value>) -> Self {
+        self.meta = Some(meta);
         self
     }
 
     /// Get the first content's text if present.
     #[must_use]
     pub fn first_text(&self) -> Option<&str> {
-        self.contents.first().and_then(|c| c.text.as_deref())
-    }
-}
-
-/// Content of a resource.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ResourceContent {
-    /// Resource URI
-    pub uri: String,
-    /// MIME type of the content
-    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
-    pub mime_type: Option<String>,
-    /// Text content (for text resources)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    /// Binary content as base64 (for binary resources)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub blob: Option<String>,
-}
-
-impl ResourceContent {
-    /// Create text content.
-    #[must_use]
-    pub fn text(uri: impl Into<String>, content: impl Into<String>) -> Self {
-        Self {
-            uri: uri.into(),
-            mime_type: Some("text/plain".into()),
-            text: Some(content.into()),
-            blob: None,
-        }
-    }
-
-    /// Create binary content.
-    #[must_use]
-    pub fn binary(
-        uri: impl Into<String>,
-        data: impl Into<String>,
-        mime_type: impl Into<String>,
-    ) -> Self {
-        Self {
-            uri: uri.into(),
-            mime_type: Some(mime_type.into()),
-            text: None,
-            blob: Some(data.into()),
-        }
+        self.contents.first().and_then(|c| match c {
+            ResourceContents::Text(t) => Some(t.text.as_str()),
+            ResourceContents::Blob(_) => None,
+        })
     }
 }
 
 /// Result from getting a prompt.
-///
-/// # Examples
-///
-/// ```
-/// use turbomcp_types::PromptResult;
-///
-/// // Simple user prompt
-/// let result = PromptResult::user("Hello! How can I help?");
-///
-/// // Multi-turn prompt
-/// let result = PromptResult::user("What's the weather like?")
-///     .add_assistant("I'd be happy to help. What location?")
-///     .add_user("San Francisco")
-///     .with_description("Weather inquiry prompt");
-/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct PromptResult {
     /// Description of this prompt result
@@ -335,6 +200,9 @@ pub struct PromptResult {
     pub description: Option<String>,
     /// Messages in the prompt
     pub messages: Vec<Message>,
+    /// Extension metadata
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, Value>>,
 }
 
 impl PromptResult {
@@ -342,8 +210,8 @@ impl PromptResult {
     #[must_use]
     pub fn new(messages: Vec<Message>) -> Self {
         Self {
-            description: None,
             messages,
+            ..Default::default()
         }
     }
 
@@ -393,6 +261,13 @@ impl PromptResult {
         self
     }
 
+    /// Set metadata.
+    #[must_use]
+    pub fn with_meta(mut self, meta: HashMap<String, Value>) -> Self {
+        self.meta = Some(meta);
+        self
+    }
+
     /// Check if the prompt is empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -436,14 +311,22 @@ mod tests {
     fn test_resource_result_text() {
         let result = ResourceResult::text("file:///test.txt", "content");
         assert_eq!(result.first_text(), Some("content"));
-        assert_eq!(result.contents[0].uri, "file:///test.txt");
+        match &result.contents[0] {
+            ResourceContents::Text(t) => assert_eq!(t.uri, "file:///test.txt"),
+            _ => panic!("Expected text resource contents"),
+        }
     }
 
     #[test]
     fn test_resource_result_binary() {
         let result = ResourceResult::binary("file:///img.png", "base64data", "image/png");
-        assert_eq!(result.contents[0].blob, Some("base64data".into()));
-        assert_eq!(result.contents[0].mime_type, Some("image/png".into()));
+        match &result.contents[0] {
+            ResourceContents::Blob(b) => {
+                assert_eq!(b.blob, "base64data");
+                assert_eq!(b.mime_type, Some("image/png".into()));
+            }
+            _ => panic!("Expected blob resource contents"),
+        }
     }
 
     #[test]

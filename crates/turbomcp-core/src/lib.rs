@@ -154,7 +154,7 @@ pub use turbomcp_types::{
     PromptResult,
     Resource,
     ResourceAnnotations,
-    ResourceContent,
+    ResourceContents,
     ResourceResult,
     ResourceTemplate,
     Role,

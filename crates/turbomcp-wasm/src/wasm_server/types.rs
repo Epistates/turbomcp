@@ -116,16 +116,16 @@ mod tests {
     fn test_resource_result_text() {
         let result = ResourceResult::text("file:///test", "content");
         assert_eq!(result.contents.len(), 1);
-        assert_eq!(result.contents[0].uri, "file:///test");
-        assert_eq!(result.contents[0].text, Some("content".to_string()));
+        assert_eq!(result.contents[0].uri(), "file:///test");
+        assert_eq!(result.contents[0].text(), Some("content"));
     }
 
     #[test]
     fn test_resource_result_binary() {
         let result = ResourceResult::binary("file:///img", "base64data", "image/png");
         assert_eq!(result.contents.len(), 1);
-        assert_eq!(result.contents[0].blob, Some("base64data".to_string()));
-        assert_eq!(result.contents[0].mime_type, Some("image/png".to_string()));
+        assert_eq!(result.contents[0].blob(), Some("base64data"));
+        assert_eq!(result.contents[0].mime_type(), Some("image/png"));
     }
 
     #[test]

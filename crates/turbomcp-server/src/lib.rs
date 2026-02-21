@@ -135,6 +135,20 @@ pub type JsonRpcRequest = JsonRpcIncoming;
 /// Type alias for backward compatibility (use `JsonRpcOutgoing` for new code).
 pub type JsonRpcResponse = JsonRpcOutgoing;
 
+/// Internal module for macro-generated code.
+#[doc(hidden)]
+pub mod __macro_support {
+    pub use schemars;
+    pub use serde_json;
+    pub use tokio;
+    pub use tracing;
+    pub use uuid;
+
+    pub use turbomcp_core;
+    pub use turbomcp_protocol;
+    pub use turbomcp_types;
+}
+
 /// Prelude for easy imports.
 ///
 /// This prelude provides everything needed to build MCP servers:
@@ -194,7 +208,7 @@ pub mod prelude {
         PromptArgument,
         PromptResult,
         Resource,
-        ResourceContent,
+        ResourceContents,
         ResourceResult,
         ServerInfo,
         Tool,

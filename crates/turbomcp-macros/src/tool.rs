@@ -334,16 +334,16 @@ fn extract_description_attr(attrs: &[syn::Attribute]) -> Option<String> {
     None
 }
 
-/// Check if a type is a context type.
+/// Check if a type is a context type (supports both owned and reference forms).
 fn is_context_type(ty: &Type) -> bool {
-    if let Type::Path(type_path) = ty {
-        type_path
+    match ty {
+        Type::Path(type_path) => type_path
             .path
             .segments
             .last()
-            .is_some_and(|seg| seg.ident == "Context" || seg.ident == "RequestContext")
-    } else {
-        false
+            .is_some_and(|seg| seg.ident == "Context" || seg.ident == "RequestContext"),
+        Type::Reference(type_ref) => is_context_type(&type_ref.elem),
+        _ => false,
     }
 }
 
@@ -365,12 +365,12 @@ fn is_option_type(ty: &Type) -> bool {
 /// This function generates code that produces a `ToolInputSchema` at runtime.
 /// All types use schemars for consistent, accurate schema generation.
 ///
-/// Uses `::turbomcp::__macro_support::` paths so users don't need to add
-/// internal crates to their Cargo.toml.
-pub fn generate_schema_code(parameters: &[ParameterInfo]) -> TokenStream {
+/// The `krate` parameter is the resolved path to the turbomcp crate
+/// (e.g., `::turbomcp` or `::turbomcp_server`).
+pub fn generate_schema_code(parameters: &[ParameterInfo], krate: &TokenStream) -> TokenStream {
     if parameters.is_empty() {
         return quote! {
-            ::turbomcp::__macro_support::turbomcp_types::ToolInputSchema::empty()
+            #krate::__macro_support::turbomcp_types::ToolInputSchema::empty()
         };
     }
 
@@ -385,18 +385,18 @@ pub fn generate_schema_code(parameters: &[ParameterInfo]) -> TokenStream {
         // schemars 1.0: schema_for! returns Schema directly (not RootSchema with .schema field)
         let schema_code = quote! {
             {
-                let schema = ::turbomcp::__macro_support::schemars::schema_for!(#ty);
-                match ::turbomcp::__macro_support::serde_json::to_value(&schema) {
+                let schema = #krate::__macro_support::schemars::schema_for!(#ty);
+                match #krate::__macro_support::serde_json::to_value(&schema) {
                     Ok(schema_value) => schema_value.as_object().cloned().unwrap_or_else(|| {
                         // Fallback: create minimal object schema if conversion fails
-                        let mut m = ::turbomcp::__macro_support::serde_json::Map::new();
-                        m.insert("type".to_string(), ::turbomcp::__macro_support::serde_json::Value::String("object".to_string()));
+                        let mut m = #krate::__macro_support::serde_json::Map::new();
+                        m.insert("type".to_string(), #krate::__macro_support::serde_json::Value::String("object".to_string()));
                         m
                     }),
                     Err(_) => {
                         // Error fallback: create minimal object schema
-                        let mut m = ::turbomcp::__macro_support::serde_json::Map::new();
-                        m.insert("type".to_string(), ::turbomcp::__macro_support::serde_json::Value::String("object".to_string()));
+                        let mut m = #krate::__macro_support::serde_json::Map::new();
+                        m.insert("type".to_string(), #krate::__macro_support::serde_json::Value::String("object".to_string()));
                         m
                     }
                 }
@@ -405,7 +405,7 @@ pub fn generate_schema_code(parameters: &[ParameterInfo]) -> TokenStream {
 
         let description_code = if let Some(desc) = &param.description {
             quote! {
-                prop.insert("description".to_string(), ::turbomcp::__macro_support::serde_json::Value::String(#desc.to_string()));
+                prop.insert("description".to_string(), #krate::__macro_support::serde_json::Value::String(#desc.to_string()));
             }
         } else {
             quote! {}
@@ -415,7 +415,7 @@ pub fn generate_schema_code(parameters: &[ParameterInfo]) -> TokenStream {
             {
                 let mut prop = #schema_code;
                 #description_code
-                properties.insert(#name.to_string(), ::turbomcp::__macro_support::serde_json::Value::Object(prop));
+                properties.insert(#name.to_string(), #krate::__macro_support::serde_json::Value::Object(prop));
             }
         });
 
@@ -426,14 +426,14 @@ pub fn generate_schema_code(parameters: &[ParameterInfo]) -> TokenStream {
 
     quote! {
         {
-            let mut properties = ::turbomcp::__macro_support::serde_json::Map::new();
+            let mut properties = #krate::__macro_support::serde_json::Map::new();
             #(#prop_code)*
 
             let required: Vec<String> = vec![#(#required_names.to_string()),*];
 
-            ::turbomcp::__macro_support::turbomcp_types::ToolInputSchema {
+            #krate::__macro_support::turbomcp_types::ToolInputSchema {
                 schema_type: "object".to_string(),
-                properties: Some(::turbomcp::__macro_support::serde_json::Value::Object(properties)),
+                properties: Some(#krate::__macro_support::serde_json::Value::Object(properties)),
                 required: if required.is_empty() { None } else { Some(required) },
                 additional_properties: Some(false),
             }
@@ -447,9 +447,8 @@ const MAX_PARAM_VALUE_SIZE: usize = 1024 * 1024;
 /// Generate parameter extraction code with size validation.
 ///
 /// This includes security checks to prevent DoS attacks via oversized parameters.
-/// Uses `::turbomcp::__macro_support::` paths so users don't need to add
-/// internal crates to their Cargo.toml.
-pub fn generate_extraction_code(parameters: &[ParameterInfo]) -> TokenStream {
+/// The `krate` parameter is the resolved path to the turbomcp crate.
+pub fn generate_extraction_code(parameters: &[ParameterInfo], krate: &TokenStream) -> TokenStream {
     if parameters.is_empty() {
         return quote! {};
     }
@@ -459,7 +458,7 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo]) -> TokenStream {
     let mut extraction = quote! {
         // Validate parameter count (defense against parameter pollution)
         if args.len() > #param_count + 10 {
-            return Err(::turbomcp::__macro_support::turbomcp_core::error::McpError::invalid_params(
+            return Err(#krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
                 format!("Too many parameters: got {}, expected at most {}", args.len(), #param_count)
             ));
         }
@@ -476,7 +475,7 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo]) -> TokenStream {
             if let Some(v) = args.get(#name_str) {
                 let size_estimate = v.to_string().len();
                 if size_estimate > #MAX_PARAM_VALUE_SIZE {
-                    return Err(::turbomcp::__macro_support::turbomcp_core::error::McpError::invalid_params(
+                    return Err(#krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
                         format!("Parameter '{}' exceeds maximum size ({} bytes)", #name_str, size_estimate)
                     ));
                 }
@@ -488,9 +487,9 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo]) -> TokenStream {
                 #size_check
                 let #name_ident: #ty = args
                     .get(#name_str)
-                    .map(|v| ::turbomcp::__macro_support::serde_json::from_value(v.clone()))
+                    .map(|v| #krate::__macro_support::serde_json::from_value(v.clone()))
                     .transpose()
-                    .map_err(|e| ::turbomcp::__macro_support::turbomcp_core::error::McpError::invalid_params(
+                    .map_err(|e| #krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
                         format!("Invalid parameter '{}': {}", #name_str, e)
                     ))?
                     .flatten();
@@ -500,11 +499,11 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo]) -> TokenStream {
                 #size_check
                 let #name_ident: #ty = args
                     .get(#name_str)
-                    .ok_or_else(|| ::turbomcp::__macro_support::turbomcp_core::error::McpError::invalid_params(
+                    .ok_or_else(|| #krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
                         format!("Missing required parameter: {}", #name_str)
                     ))
-                    .and_then(|v| ::turbomcp::__macro_support::serde_json::from_value(v.clone())
-                        .map_err(|e| ::turbomcp::__macro_support::turbomcp_core::error::McpError::invalid_params(
+                    .and_then(|v| #krate::__macro_support::serde_json::from_value(v.clone())
+                        .map_err(|e| #krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
                             format!("Invalid parameter '{}': {}", #name_str, e)
                         )))?;
             });
@@ -584,6 +583,9 @@ mod tests {
         assert!(is_context_type(&ty));
 
         let ty: Type = parse_quote!(RequestContext);
+        assert!(is_context_type(&ty));
+
+        let ty: Type = parse_quote!(&RequestContext);
         assert!(is_context_type(&ty));
 
         let ty: Type = parse_quote!(String);

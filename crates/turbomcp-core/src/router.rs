@@ -212,6 +212,66 @@ pub async fn route_request<H: McpHandler>(
             }
         }
 
+        // Task methods (SEP-1686)
+        "tasks/list" => {
+            let params = request.params.unwrap_or_default();
+            let cursor = params.get("cursor").and_then(|v| v.as_str());
+            let limit = params
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+
+            match handler.list_tasks(cursor, limit, ctx).await {
+                Ok(result) => match serde_json::to_value(&result) {
+                    Ok(v) => JsonRpcOutgoing::success(id, v),
+                    Err(e) => JsonRpcOutgoing::error(id, McpError::internal(e.to_string())),
+                },
+                Err(err) => JsonRpcOutgoing::error(id, err),
+            }
+        }
+
+        "tasks/get" => {
+            let params = request.params.unwrap_or_default();
+            let Some(task_id) = params.get("taskId").and_then(|v| v.as_str()) else {
+                return JsonRpcOutgoing::error(id, McpError::invalid_params("Missing taskId"));
+            };
+
+            match handler.get_task(task_id, ctx).await {
+                Ok(result) => match serde_json::to_value(&result) {
+                    Ok(v) => JsonRpcOutgoing::success(id, v),
+                    Err(e) => JsonRpcOutgoing::error(id, McpError::internal(e.to_string())),
+                },
+                Err(err) => JsonRpcOutgoing::error(id, err),
+            }
+        }
+
+        "tasks/cancel" => {
+            let params = request.params.unwrap_or_default();
+            let Some(task_id) = params.get("taskId").and_then(|v| v.as_str()) else {
+                return JsonRpcOutgoing::error(id, McpError::invalid_params("Missing taskId"));
+            };
+
+            match handler.cancel_task(task_id, ctx).await {
+                Ok(result) => match serde_json::to_value(&result) {
+                    Ok(v) => JsonRpcOutgoing::success(id, v),
+                    Err(e) => JsonRpcOutgoing::error(id, McpError::internal(e.to_string())),
+                },
+                Err(err) => JsonRpcOutgoing::error(id, err),
+            }
+        }
+
+        "tasks/result" => {
+            let params = request.params.unwrap_or_default();
+            let Some(task_id) = params.get("taskId").and_then(|v| v.as_str()) else {
+                return JsonRpcOutgoing::error(id, McpError::invalid_params("Missing taskId"));
+            };
+
+            match handler.get_task_result(task_id, ctx).await {
+                Ok(result) => JsonRpcOutgoing::success(id, result),
+                Err(err) => JsonRpcOutgoing::error(id, err),
+            }
+        }
+
         // Ping
         "ping" => JsonRpcOutgoing::success(id, serde_json::json!({})),
 
@@ -260,6 +320,16 @@ fn build_initialize_result<H: McpHandler>(
             serde_json::json!({ "listChanged": true }),
         );
     }
+
+    // NOTE: Per MCP 2025-11-25, `elicitation` and `sampling` are CLIENT
+    // capabilities, not server capabilities. Servers do NOT advertise them.
+    //
+    // Task capabilities are only advertised if the handler actually supports
+    // them (default trait impl returns CapabilityNotSupported). The tasks
+    // capability follows the spec structure:
+    //   { list?: object, cancel?: object, requests?: { tools?: { call?: object } } }
+    //
+    // TODO: Once handlers can opt-in to task support, conditionally advertise.
 
     // Build server info
     let mut server_info = serde_json::Map::new();

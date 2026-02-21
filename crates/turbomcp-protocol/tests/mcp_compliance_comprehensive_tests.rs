@@ -22,7 +22,7 @@ mod mcp_compliance_tests {
                 version: "1.0.0".to_string(),
                 title: None,
                 description: None,
-                icons: None,
+                ..Default::default()
             },
             capabilities: ServerCapabilities::default(),
             instructions: None,
@@ -132,7 +132,7 @@ mod mcp_compliance_tests {
                 version: "1.0.0".to_string(),
                 title: None,
                 description: None,
-                icons: None,
+                ..Default::default()
             },
             _meta: Some(json!({"init_meta": "test"})),
         };
@@ -209,7 +209,7 @@ mod mcp_compliance_tests {
                 version: "1.0.0".to_string(),
                 title: None,
                 description: None,
-                icons: None,
+                ..Default::default()
             },
             capabilities: ServerCapabilities::default(),
             instructions: None,

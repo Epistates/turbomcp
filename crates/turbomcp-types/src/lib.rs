@@ -49,6 +49,7 @@ extern crate alloc;
 pub mod component;
 pub mod content;
 pub mod definitions;
+pub mod protocol;
 pub mod results;
 pub mod traits;
 
@@ -56,6 +57,7 @@ pub mod traits;
 pub use component::*;
 pub use content::*;
 pub use definitions::*;
+pub use protocol::*;
 pub use results::*;
 pub use traits::*;
 

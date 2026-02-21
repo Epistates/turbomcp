@@ -148,6 +148,11 @@ pub struct Implementation {
     /// **MCP 2025-11-25 draft**: New field added (SEP-973)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icons: Option<Vec<Icon>>,
+    /// Optional website URL for this implementation
+    ///
+    /// **MCP 2025-11-25 draft**: New field added
+    #[serde(rename = "websiteUrl", skip_serializing_if = "Option::is_none")]
+    pub website_url: Option<String>,
 }
 
 impl Default for Implementation {
@@ -158,6 +163,7 @@ impl Default for Implementation {
             version: "0.0.0".to_string(),
             description: None,
             icons: None,
+            website_url: None,
         }
     }
 }

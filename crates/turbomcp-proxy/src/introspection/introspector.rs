@@ -158,10 +158,8 @@ impl McpIntrospector {
             },
             client_info: Implementation {
                 name: self.client_name.clone(),
-                title: None,
                 version: self.client_version.clone(),
-                description: None,
-                icons: None,
+                ..Default::default()
             },
             _meta: None,
         };

@@ -144,8 +144,8 @@ pub use turbomcp_core::handler::McpHandler;
 // Re-export types
 pub use turbomcp_types::{
     IntoPromptResult, IntoResourceResult, IntoToolResult, Message, Prompt, PromptArgument,
-    PromptResult, Resource, ResourceContent, ResourceResult, Role, ServerInfo, Tool,
-    ToolInputSchema, ToolResult,
+    PromptResult, Resource, ResourceContents, ResourceLink, ResourceResult, Role, SamplingContent,
+    SamplingContentBlock, ServerInfo, Tool, ToolInputSchema, ToolResult,
 };
 
 // Re-export server builder and transport
@@ -311,7 +311,7 @@ pub mod prelude {
     // Common protocol types
     pub use super::{
         CallToolRequest, CallToolResult, Message, Prompt, PromptArgument, RequestContext, Resource,
-        ResourceContent, Role, ServerInfo, Tool, ToolInputSchema,
+        ResourceContents, Role, ServerInfo, Tool, ToolInputSchema,
     };
 
     // Unified response types

@@ -5,6 +5,25 @@ use quote::quote;
 use syn::spanned::Spanned;
 use syn::{Ident, ItemImpl};
 
+/// Helper to resolve the correct turbomcp crate path.
+fn turbomcp_crate() -> TokenStream {
+    match proc_macro_crate::crate_name("turbomcp") {
+        Ok(proc_macro_crate::FoundCrate::Itself) => quote!(::turbomcp),
+        Ok(proc_macro_crate::FoundCrate::Name(name)) => {
+            let ident = Ident::new(&name, proc_macro2::Span::call_site());
+            quote!(::#ident)
+        }
+        Err(_) => match proc_macro_crate::crate_name("turbomcp-server") {
+            Ok(proc_macro_crate::FoundCrate::Itself) => quote!(::turbomcp_server),
+            Ok(proc_macro_crate::FoundCrate::Name(name)) => {
+                let ident = Ident::new(&name, proc_macro2::Span::call_site());
+                quote!(::#ident)
+            }
+            Err(_) => quote!(crate),
+        },
+    }
+}
+
 use super::tool::{
     ToolAttrs, ToolInfo, generate_call_args, generate_extraction_code, generate_schema_code,
     parse_quoted_value, parse_tags_array,
@@ -428,7 +447,11 @@ fn strip_handler_attributes(impl_block: &ItemImpl) -> ItemImpl {
 }
 
 /// Generate code for the meta field (tags and version).
-fn generate_meta_code(tags: &[String], version: &Option<String>) -> TokenStream {
+fn generate_meta_code(
+    tags: &[String],
+    version: &Option<String>,
+    krate: &TokenStream,
+) -> TokenStream {
     if tags.is_empty() && version.is_none() {
         return quote! { None };
     }
@@ -440,8 +463,8 @@ fn generate_meta_code(tags: &[String], version: &Option<String>) -> TokenStream 
         quote! {
             meta.insert(
                 "tags".to_string(),
-                ::turbomcp::__macro_support::serde_json::Value::Array(
-                    vec![#(::turbomcp::__macro_support::serde_json::Value::String(#tag_strings)),*]
+                #krate::__macro_support::serde_json::Value::Array(
+                    vec![#(#krate::__macro_support::serde_json::Value::String(#tag_strings)),*]
                 )
             );
         }
@@ -451,7 +474,7 @@ fn generate_meta_code(tags: &[String], version: &Option<String>) -> TokenStream 
         quote! {
             meta.insert(
                 "version".to_string(),
-                ::turbomcp::__macro_support::serde_json::Value::String(#ver.to_string())
+                #krate::__macro_support::serde_json::Value::String(#ver.to_string())
             );
         }
     } else {
@@ -475,6 +498,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
     let stripped_impl_block = strip_handler_attributes(impl_block);
     let name = &info.name;
     let version = &info.version;
+    let turbomcp = turbomcp_crate();
 
     let description_code = if let Some(desc) = &info.description {
         quote! { .with_description(#desc) }
@@ -483,23 +507,24 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
     };
 
     // Generate tool listing code
-    // Uses ::turbomcp::__macro_support:: paths so users don't need internal crates
+    // Uses #turbomcp::__macro_support:: paths so users don't need internal crates
     let tool_list_code = info.tools.iter().map(|tool| {
         let tool_name = &tool.name;
         let tool_desc = &tool.description;
-        let schema_code = generate_schema_code(&tool.parameters);
+        let schema_code = generate_schema_code(&tool.parameters, &turbomcp);
 
         // Generate meta field if tags or version present
-        let meta_code = generate_meta_code(&tool.tags, &tool.version);
+        let meta_code = generate_meta_code(&tool.tags, &tool.version, &turbomcp);
 
         quote! {
-            ::turbomcp::__macro_support::turbomcp_types::Tool {
+            #turbomcp::__macro_support::turbomcp_types::Tool {
                 name: #tool_name.to_string(),
                 description: Some(#tool_desc.to_string()),
                 input_schema: #schema_code,
                 title: None,
-                icon: None,
+                icons: None,
                 annotations: None,
+                execution: None,
                 output_schema: None,
                 meta: #meta_code,
             }
@@ -511,19 +536,19 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         let uri = &resource.uri_template;
         let name = &resource.name;
         let desc = resource.description.as_deref().unwrap_or("");
-        let meta_code = generate_meta_code(&resource.tags, &resource.version);
+        let meta_code = generate_meta_code(&resource.tags, &resource.version, &turbomcp);
         let mime_type_code = if let Some(mime) = &resource.mime_type {
             quote! { Some(#mime.to_string()) }
         } else {
             quote! { None }
         };
         quote! {
-            ::turbomcp::__macro_support::turbomcp_types::Resource {
+            #turbomcp::__macro_support::turbomcp_types::Resource {
                 uri: #uri.to_string(),
                 name: #name.to_string(),
                 description: Some(#desc.to_string()),
                 title: None,
-                icon: None,
+                icons: None,
                 mime_type: #mime_type_code,
                 annotations: None,
                 size: None,
@@ -536,7 +561,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
     let prompt_list_code = info.prompts.iter().map(|prompt| {
         let name = &prompt.name;
         let desc = prompt.description.as_deref().unwrap_or("");
-        let meta_code = generate_meta_code(&prompt.tags, &prompt.version);
+        let meta_code = generate_meta_code(&prompt.tags, &prompt.version, &turbomcp);
 
         // Generate arguments
         let args_code = if prompt.arguments.is_empty() {
@@ -547,8 +572,9 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 let arg_desc = arg.description.as_deref().unwrap_or("");
                 let required = arg.required;
                 quote! {
-                    ::turbomcp::__macro_support::turbomcp_types::PromptArgument {
+                    #turbomcp::__macro_support::turbomcp_types::PromptArgument {
                         name: #arg_name.to_string(),
+                        title: None,
                         description: Some(#arg_desc.to_string()),
                         required: Some(#required),
                     }
@@ -558,11 +584,11 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         };
 
         quote! {
-            ::turbomcp::__macro_support::turbomcp_types::Prompt {
+            #turbomcp::__macro_support::turbomcp_types::Prompt {
                 name: #name.to_string(),
                 description: Some(#desc.to_string()),
                 title: None,
-                icon: None,
+                icons: None,
                 arguments: #args_code,
                 meta: #meta_code,
             }
@@ -573,14 +599,14 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
     let tool_dispatch_code = info.tools.iter().map(|tool| {
         let tool_name = &tool.name;
         let fn_name = syn::Ident::new(&tool.name, proc_macro2::Span::call_site());
-        let extraction = generate_extraction_code(&tool.parameters);
+        let extraction = generate_extraction_code(&tool.parameters, &turbomcp);
         let call_args = generate_call_args(&tool.sig);
 
         quote! {
             #tool_name => {
                 #extraction
                 let result = self.#fn_name(#call_args).await;
-                Ok(::turbomcp::__macro_support::turbomcp_types::IntoToolResult::into_tool_result(result))
+                Ok(#turbomcp::__macro_support::turbomcp_types::IntoToolResult::into_tool_result(result))
             }
         }
     });
@@ -603,7 +629,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 if uri.starts_with(#prefix) && uri.ends_with(#suffix) && uri.len() >= #prefix.len() + #suffix.len() {
                     let result = self.#fn_name(uri.to_string(), ctx).await;
                     return match result {
-                        Ok(r) => Ok(::turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)),
+                        Ok(r) => Ok(#turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)),
                         Err(e) => Err(e),
                     };
                 }
@@ -614,7 +640,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 if uri == #uri_template {
                     let result = self.#fn_name(uri.to_string(), ctx).await;
                     return match result {
-                        Ok(r) => Ok(::turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)),
+                        Ok(r) => Ok(#turbomcp::__macro_support::turbomcp_types::IntoResourceResult::into_resource_result(r, &uri)),
                         Err(e) => Err(e),
                     };
                 }
@@ -643,7 +669,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                         .and_then(|a| a.get(#arg_name))
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
-                        .ok_or_else(|| ::turbomcp::__macro_support::turbomcp_core::error::McpError::invalid_params(
+                        .ok_or_else(|| #turbomcp::__macro_support::turbomcp_core::error::McpError::invalid_params(
                             format!("Missing required argument: {}", #arg_name)
                         ))?;
                 }
@@ -668,7 +694,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             quote! {
                 #prompt_name => {
                     let result = self.#fn_name(&ctx).await;
-                    Ok(::turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(result))
+                    Ok(#turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(result))
                 }
             }
         } else {
@@ -676,7 +702,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                 #prompt_name => {
                     #(#arg_extractions)*
                     let result = self.#fn_name(#(#call_args,)* &ctx).await;
-                    Ok(::turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(result))
+                    Ok(#turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(result))
                 }
             }
         }
@@ -687,37 +713,37 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         #stripped_impl_block
 
         // Generate McpHandler implementation (unified v3 architecture)
-        // Uses ::turbomcp::__macro_support:: paths so users don't need internal crates
-        impl ::turbomcp::__macro_support::turbomcp_core::handler::McpHandler for #struct_name {
-            fn server_info(&self) -> ::turbomcp::__macro_support::turbomcp_types::ServerInfo {
-                ::turbomcp::__macro_support::turbomcp_types::ServerInfo::new(#name, #version)
+        // Uses #turbomcp::__macro_support:: paths so users don't need internal crates
+        impl #turbomcp::__macro_support::turbomcp_core::handler::McpHandler for #struct_name {
+            fn server_info(&self) -> #turbomcp::__macro_support::turbomcp_types::ServerInfo {
+                #turbomcp::__macro_support::turbomcp_types::ServerInfo::new(#name, #version)
                     #description_code
             }
 
-            fn list_tools(&self) -> Vec<::turbomcp::__macro_support::turbomcp_types::Tool> {
+            fn list_tools(&self) -> Vec<#turbomcp::__macro_support::turbomcp_types::Tool> {
                 vec![#(#tool_list_code),*]
             }
 
-            fn list_resources(&self) -> Vec<::turbomcp::__macro_support::turbomcp_types::Resource> {
+            fn list_resources(&self) -> Vec<#turbomcp::__macro_support::turbomcp_types::Resource> {
                 vec![#(#resource_list_code),*]
             }
 
-            fn list_prompts(&self) -> Vec<::turbomcp::__macro_support::turbomcp_types::Prompt> {
+            fn list_prompts(&self) -> Vec<#turbomcp::__macro_support::turbomcp_types::Prompt> {
                 vec![#(#prompt_list_code),*]
             }
 
             fn call_tool<'a>(
                 &'a self,
                 name: &'a str,
-                args: ::turbomcp::__macro_support::serde_json::Value,
-                ctx: &'a ::turbomcp::__macro_support::turbomcp_core::context::RequestContext,
-            ) -> impl ::std::future::Future<Output = ::turbomcp::__macro_support::turbomcp_core::error::McpResult<::turbomcp::__macro_support::turbomcp_types::ToolResult>> + ::turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
+                args: #turbomcp::__macro_support::serde_json::Value,
+                ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = #turbomcp::__macro_support::turbomcp_core::error::McpResult<#turbomcp::__macro_support::turbomcp_types::ToolResult>> + #turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
                 let name = name.to_string();
                 async move {
                     let args = args.as_object().cloned().unwrap_or_default();
                     match name.as_str() {
                         #(#tool_dispatch_code)*
-                        _ => Err(::turbomcp::__macro_support::turbomcp_core::error::McpError::tool_not_found(&name))
+                        _ => Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::tool_not_found(&name))
                     }
                 }
             }
@@ -725,44 +751,77 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             fn read_resource<'a>(
                 &'a self,
                 uri: &'a str,
-                ctx: &'a ::turbomcp::__macro_support::turbomcp_core::context::RequestContext,
-            ) -> impl ::std::future::Future<Output = ::turbomcp::__macro_support::turbomcp_core::error::McpResult<::turbomcp::__macro_support::turbomcp_types::ResourceResult>> + ::turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
+                ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = #turbomcp::__macro_support::turbomcp_core::error::McpResult<#turbomcp::__macro_support::turbomcp_types::ResourceResult>> + #turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
                 let uri = uri.to_string();
                 async move {
                     // Security: Validate URI length to prevent DoS
-                    if uri.len() > ::turbomcp::__macro_support::turbomcp_core::DEFAULT_MAX_URI_LENGTH {
-                        return Err(::turbomcp::__macro_support::turbomcp_core::error::McpError::invalid_params(
-                            format!("URI too long: {} bytes (max: {})", uri.len(), ::turbomcp::__macro_support::turbomcp_core::DEFAULT_MAX_URI_LENGTH)
+                    if uri.len() > #turbomcp::__macro_support::turbomcp_core::DEFAULT_MAX_URI_LENGTH {
+                        return Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::invalid_params(
+                            format!("URI too long: {} bytes (max: {})", uri.len(), #turbomcp::__macro_support::turbomcp_core::DEFAULT_MAX_URI_LENGTH)
                         ));
                     }
 
                     // Security: Validate URI scheme against allowlist
-                    if let Err(e) = ::turbomcp::__macro_support::turbomcp_core::validate_uri_scheme(&uri) {
-                        return Err(::turbomcp::__macro_support::turbomcp_core::error::McpError::security(
+                    if let Err(e) = #turbomcp::__macro_support::turbomcp_core::validate_uri_scheme(&uri) {
+                        return Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::security(
                             format!("URI scheme validation failed: {}", e)
                         ));
                     }
 
                     #(#resource_dispatch_code)*
-                    Err(::turbomcp::__macro_support::turbomcp_core::error::McpError::resource_not_found(&uri))
+                    Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::resource_not_found(&uri))
                 }
             }
 
             fn get_prompt<'a>(
                 &'a self,
                 name: &'a str,
-                args: Option<::turbomcp::__macro_support::serde_json::Value>,
-                ctx: &'a ::turbomcp::__macro_support::turbomcp_core::context::RequestContext,
-            ) -> impl ::std::future::Future<Output = ::turbomcp::__macro_support::turbomcp_core::error::McpResult<::turbomcp::__macro_support::turbomcp_types::PromptResult>> + ::turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
+                args: Option<#turbomcp::__macro_support::serde_json::Value>,
+                ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = #turbomcp::__macro_support::turbomcp_core::error::McpResult<#turbomcp::__macro_support::turbomcp_types::PromptResult>> + #turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
                 let name = name.to_string();
                 // HIGH-002: Convert args to Map for argument extraction
                 let prompt_args = args.and_then(|v| v.as_object().cloned());
                 async move {
                     match name.as_str() {
                         #(#prompt_dispatch_code)*
-                        _ => Err(::turbomcp::__macro_support::turbomcp_core::error::McpError::prompt_not_found(&name))
+                        _ => Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::prompt_not_found(&name))
                     }
                 }
+            }
+
+            fn list_tasks<'a>(
+                &'a self,
+                _cursor: Option<&'a str>,
+                _limit: Option<usize>,
+                _ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = #turbomcp::__macro_support::turbomcp_core::error::McpResult<#turbomcp::__macro_support::turbomcp_types::ListTasksResult>> + #turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
+                async { Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::capability_not_supported("tasks/list")) }
+            }
+
+            fn get_task<'a>(
+                &'a self,
+                _task_id: &'a str,
+                _ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = #turbomcp::__macro_support::turbomcp_core::error::McpResult<#turbomcp::__macro_support::turbomcp_types::Task>> + #turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
+                async { Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::capability_not_supported("tasks/get")) }
+            }
+
+            fn cancel_task<'a>(
+                &'a self,
+                _task_id: &'a str,
+                _ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = #turbomcp::__macro_support::turbomcp_core::error::McpResult<#turbomcp::__macro_support::turbomcp_types::Task>> + #turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
+                async { Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::capability_not_supported("tasks/cancel")) }
+            }
+
+            fn get_task_result<'a>(
+                &'a self,
+                _task_id: &'a str,
+                _ctx: &'a #turbomcp::__macro_support::turbomcp_core::context::RequestContext,
+            ) -> impl ::std::future::Future<Output = #turbomcp::__macro_support::turbomcp_core::error::McpResult<#turbomcp::__macro_support::serde_json::Value>> + #turbomcp::__macro_support::turbomcp_core::marker::MaybeSend + 'a {
+                async { Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::capability_not_supported("tasks/result")) }
             }
         }
     }

@@ -583,6 +583,36 @@ impl McpError {
 }
 
 impl ErrorKind {
+    /// Create ErrorKind from a JSON-RPC error code.
+    ///
+    /// Includes standard JSON-RPC codes and MCP-specific codes per 2025-11-25 spec.
+    #[must_use]
+    pub fn from_i32(code: i32) -> Self {
+        match code {
+            // MCP-specific
+            -1 => Self::UserRejected,
+            -32001 => Self::ToolNotFound,
+            -32002 => Self::ToolExecutionFailed,
+            -32003 => Self::PromptNotFound,
+            -32004 => Self::ResourceNotFound,
+            -32005 => Self::ResourceAccessDenied,
+            -32006 => Self::CapabilityNotSupported,
+            -32007 => Self::ProtocolVersionMismatch,
+            -32008 => Self::Authentication,
+            -32009 => Self::RateLimited,
+            -32010 => Self::ServerOverloaded,
+            // MCP 2025-11-25: URL elicitation required
+            -32042 => Self::CapabilityNotSupported,
+            // Standard JSON-RPC
+            -32600 => Self::InvalidRequest,
+            -32601 => Self::MethodNotFound,
+            -32602 => Self::InvalidParams,
+            -32603 => Self::Internal,
+            -32700 => Self::ParseError,
+            _ => Self::Internal,
+        }
+    }
+
     /// Get a human-readable description
     #[must_use]
     pub const fn description(self) -> &'static str {

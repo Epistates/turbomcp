@@ -22,9 +22,12 @@ pub struct ServerInfo {
     /// Server description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Server icon
+    /// Server icons
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<Icon>,
+    pub icons: Option<Vec<Icon>>,
+    /// Website URL for this implementation
+    #[serde(rename = "websiteUrl", skip_serializing_if = "Option::is_none")]
+    pub website_url: Option<String>,
 }
 
 impl ServerInfo {
@@ -52,22 +55,77 @@ impl ServerInfo {
         self
     }
 
-    /// Set the icon.
+    /// Add an icon.
     #[must_use]
     pub fn with_icon(mut self, icon: Icon) -> Self {
-        self.icon = Some(icon);
+        self.icons.get_or_insert_with(Vec::new).push(icon);
+        self
+    }
+
+    /// Set the website URL.
+    #[must_use]
+    pub fn with_website_url(mut self, url: impl Into<String>) -> Self {
+        self.website_url = Some(url.into());
         self
     }
 }
 
 /// Icon for tools, resources, prompts, or servers.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum Icon {
-    /// Data URI (embedded icon)
-    DataUri(String),
-    /// HTTP URL to icon
-    Url(String),
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Icon {
+    /// URI of the icon (HTTP/HTTPS or data: URI)
+    pub src: String,
+    /// MIME type of the icon
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// Sized icons (e.g., "48x48", "96x96", "any")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sizes: Option<Vec<String>>,
+    /// Theme for which this icon is designed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<IconTheme>,
+}
+
+/// Theme for an icon.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum IconTheme {
+    /// Designed for light backgrounds
+    Light,
+    /// Designed for dark backgrounds
+    Dark,
+}
+
+impl Icon {
+    /// Create a new icon from a URI.
+    #[must_use]
+    pub fn new(src: impl Into<String>) -> Self {
+        Self {
+            src: src.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Set the MIME type.
+    #[must_use]
+    pub fn with_mime_type(mut self, mime_type: impl Into<String>) -> Self {
+        self.mime_type = Some(mime_type.into());
+        self
+    }
+
+    /// Set the sizes.
+    #[must_use]
+    pub fn with_sizes(mut self, sizes: Vec<impl Into<String>>) -> Self {
+        self.sizes = Some(sizes.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Set the theme.
+    #[must_use]
+    pub fn with_theme(mut self, theme: IconTheme) -> Self {
+        self.theme = Some(theme);
+        self
+    }
 }
 
 /// Tool definition.
@@ -86,21 +144,19 @@ pub struct Tool {
     /// Human-readable title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Tool icon
+    /// Tool icons
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<Icon>,
+    pub icons: Option<Vec<Icon>>,
     /// Tool annotations (hints about behavior)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
+    /// Tool execution properties
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ToolExecution>,
     /// Output schema for structured results
     #[serde(rename = "outputSchema", skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Value>,
     /// Extension metadata (tags, version, etc.)
-    ///
-    /// This field can contain arbitrary key-value pairs for extensibility.
-    /// Common keys:
-    /// - `tags`: Array of strings for categorization
-    /// - `version`: Semantic version string
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<std::collections::HashMap<String, Value>>,
 }
@@ -138,6 +194,20 @@ impl Tool {
         self
     }
 
+    /// Add an icon.
+    #[must_use]
+    pub fn with_icon(mut self, icon: Icon) -> Self {
+        self.icons.get_or_insert_with(Vec::new).push(icon);
+        self
+    }
+
+    /// Set tool execution properties.
+    #[must_use]
+    pub fn with_execution(mut self, execution: ToolExecution) -> Self {
+        self.execution = Some(execution);
+        self
+    }
+
     /// Mark as read-only (hint for clients).
     #[must_use]
     pub fn read_only(mut self) -> Self {
@@ -151,6 +221,26 @@ impl Tool {
         self.annotations = Some(self.annotations.unwrap_or_default().with_destructive(true));
         self
     }
+}
+
+/// Execution properties for a tool.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ToolExecution {
+    /// Support level for task-augmented execution
+    #[serde(rename = "taskSupport", skip_serializing_if = "Option::is_none")]
+    pub task_support: Option<TaskSupportLevel>,
+}
+
+/// Task support level for tools.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskSupportLevel {
+    /// Tool does not support task-augmented execution (default)
+    Forbidden,
+    /// Tool may support task-augmented execution
+    Optional,
+    /// Tool requires task-augmented execution
+    Required,
 }
 
 /// JSON Schema for tool input parameters.
@@ -263,9 +353,9 @@ pub struct Resource {
     /// Human-readable title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Resource icon
+    /// Resource icons
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<Icon>,
+    pub icons: Option<Vec<Icon>>,
     /// MIME type of the resource content
     #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
@@ -311,17 +401,29 @@ impl Resource {
         self.size = Some(size);
         self
     }
+
+    /// Add an icon.
+    #[must_use]
+    pub fn with_icon(mut self, icon: Icon) -> Self {
+        self.icons.get_or_insert_with(Vec::new).push(icon);
+        self
+    }
 }
 
 /// Annotations for resources.
+///
+/// Same structure as content `Annotations` per MCP 2025-11-25.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ResourceAnnotations {
     /// Target audience
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audience: Option<Vec<crate::Role>>,
-    /// Priority level
+    /// Priority level (0.0 to 1.0)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub priority: Option<f64>,
+    /// Last modified timestamp (ISO 8601)
+    #[serde(rename = "lastModified", skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
 }
 
 /// Resource template definition.
@@ -340,9 +442,9 @@ pub struct ResourceTemplate {
     /// Human-readable title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Template icon
+    /// Template icons
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<Icon>,
+    pub icons: Option<Vec<Icon>>,
     /// MIME type of resources from this template
     #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
@@ -368,6 +470,13 @@ impl ResourceTemplate {
         self.description = Some(description.into());
         self
     }
+
+    /// Add an icon.
+    #[must_use]
+    pub fn with_icon(mut self, icon: Icon) -> Self {
+        self.icons.get_or_insert_with(Vec::new).push(icon);
+        self
+    }
 }
 
 /// Prompt definition.
@@ -383,9 +492,9 @@ pub struct Prompt {
     /// Human-readable title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Prompt icon
+    /// Prompt icons
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<Icon>,
+    pub icons: Option<Vec<Icon>>,
     /// Prompt arguments
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Vec<PromptArgument>>,
@@ -431,13 +540,25 @@ impl Prompt {
     ) -> Self {
         self.with_argument(PromptArgument::optional(name, description))
     }
+
+    /// Add an icon.
+    #[must_use]
+    pub fn with_icon(mut self, icon: Icon) -> Self {
+        self.icons.get_or_insert_with(Vec::new).push(icon);
+        self
+    }
 }
 
 /// Argument definition for prompts.
+///
+/// Extends `BaseMetadata` per MCP 2025-11-25 (`name` + optional `title`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PromptArgument {
-    /// Argument name
+    /// Argument name (machine-readable identifier)
     pub name: String,
+    /// Human-readable title
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     /// Argument description
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -452,6 +573,7 @@ impl PromptArgument {
     pub fn required(name: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            title: None,
             description: Some(description.into()),
             required: Some(true),
         }
@@ -462,6 +584,7 @@ impl PromptArgument {
     pub fn optional(name: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            title: None,
             description: Some(description.into()),
             required: Some(false),
         }
@@ -476,11 +599,17 @@ mod tests {
     fn test_server_info() {
         let info = ServerInfo::new("my-server", "1.0.0")
             .with_title("My Server")
-            .with_description("A test server");
+            .with_description("A test server")
+            .with_icon(Icon::new("https://example.com/icon.png"));
 
         assert_eq!(info.name, "my-server");
         assert_eq!(info.version, "1.0.0");
         assert_eq!(info.title, Some("My Server".into()));
+        assert_eq!(info.icons.as_ref().unwrap().len(), 1);
+        assert_eq!(
+            info.icons.as_ref().unwrap()[0].src,
+            "https://example.com/icon.png"
+        );
     }
 
     #[test]

@@ -137,8 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let result = client.read_resource("info://calculator").await?;
         let text = result.contents.first()
-            .and_then(|c| c.text.as_ref())
-            .map(|s| s.as_str())
+            .and_then(|c| c.text())
             .unwrap_or("");
         println!("info://calculator = {}", text);
         println!();

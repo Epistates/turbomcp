@@ -516,11 +516,13 @@ pub trait ResourceResultAssertions {
 
 impl ResourceResultAssertions for ResourceResult {
     fn first_text(&self) -> Option<String> {
-        self.contents.first().and_then(|c| c.text.clone())
+        self.contents
+            .first()
+            .and_then(|c| c.text().map(|s| s.to_string()))
     }
 
     fn assert_uri(&self, expected: &str) {
-        let actual = self.contents.first().map(|c| c.uri.as_str());
+        let actual = self.contents.first().map(|c| c.uri());
         assert_eq!(
             actual,
             Some(expected),

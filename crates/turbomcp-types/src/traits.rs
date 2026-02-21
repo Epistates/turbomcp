@@ -427,7 +427,10 @@ mod tests {
     fn test_string_into_resource_result() {
         let result = "content".to_string().into_resource_result("file:///test");
         assert_eq!(result.first_text(), Some("content"));
-        assert_eq!(result.contents[0].uri, "file:///test");
+        match &result.contents[0] {
+            crate::content::ResourceContents::Text(t) => assert_eq!(t.uri, "file:///test"),
+            _ => panic!("Expected text resource contents"),
+        }
     }
 
     #[test]

@@ -1077,8 +1077,7 @@ fn create_valid_initialize_request() -> InitializeRequest {
             name: "test-client".to_string(),
             title: Some("Test Client".to_string()),
             version: "1.0.0".to_string(),
-            description: None,
-            icons: None,
+            ..Default::default()
         },
         _meta: None,
     }

@@ -206,8 +206,9 @@ impl McpHandler for OpenApiHandler {
                 description: op.summary.clone().or_else(|| op.description.clone()),
                 input_schema: Self::build_input_schema(op),
                 title: op.summary.clone(),
-                icon: None,
+                icons: None,
                 annotations: None,
+                execution: None,
                 output_schema: None,
                 meta: Some({
                     let mut meta = HashMap::new();
@@ -230,7 +231,7 @@ impl McpHandler for OpenApiHandler {
                 name: op.operation_id.clone().unwrap_or_else(|| op.path.clone()),
                 description: op.summary.clone().or_else(|| op.description.clone()),
                 title: op.summary.clone(),
-                icon: None,
+                icons: None,
                 mime_type: Some("application/json".to_string()),
                 annotations: None,
                 size: None,

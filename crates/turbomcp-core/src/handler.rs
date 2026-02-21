@@ -288,6 +288,82 @@ pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
         ctx: &'a RequestContext,
     ) -> impl Future<Output = McpResult<PromptResult>> + MaybeSend + 'a;
 
+    // ===== Task Management (SEP-1686) =====
+
+    /// Lists all active and recent tasks.
+    ///
+    /// # Arguments
+    ///
+    /// * `cursor` - Opaque pagination cursor
+    /// * `limit` - Maximum number of tasks to return
+    /// * `ctx` - Request context
+    fn list_tasks<'a>(
+        &'a self,
+        _cursor: Option<&'a str>,
+        _limit: Option<usize>,
+        _ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<turbomcp_types::ListTasksResult>> + MaybeSend + 'a {
+        async {
+            Err(crate::error::McpError::capability_not_supported(
+                "tasks/list",
+            ))
+        }
+    }
+
+    /// Gets the current state of a specific task.
+    ///
+    /// # Arguments
+    ///
+    /// * `task_id` - Unique task identifier
+    /// * `ctx` - Request context
+    fn get_task<'a>(
+        &'a self,
+        _task_id: &'a str,
+        _ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<turbomcp_types::Task>> + MaybeSend + 'a {
+        async {
+            Err(crate::error::McpError::capability_not_supported(
+                "tasks/get",
+            ))
+        }
+    }
+
+    /// Cancels a running task.
+    ///
+    /// # Arguments
+    ///
+    /// * `task_id` - Unique task identifier
+    /// * `ctx` - Request context
+    fn cancel_task<'a>(
+        &'a self,
+        _task_id: &'a str,
+        _ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<turbomcp_types::Task>> + MaybeSend + 'a {
+        async {
+            Err(crate::error::McpError::capability_not_supported(
+                "tasks/cancel",
+            ))
+        }
+    }
+
+    /// Gets the result of a completed task.
+    ///
+    /// # Arguments
+    ///
+    /// * `task_id` - Unique task identifier
+    /// * `ctx` - Request context
+    fn get_task_result<'a>(
+        &'a self,
+        _task_id: &'a str,
+        _ctx: &'a RequestContext,
+    ) -> impl Future<Output = McpResult<Value>> + MaybeSend + 'a {
+        async {
+            Err(crate::error::McpError::capability_not_supported(
+                "tasks/result",
+            ))
+        }
+    }
+
     // ===== Lifecycle Hooks =====
 
     /// Called when the server is initialized.

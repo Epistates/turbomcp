@@ -8,28 +8,23 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use tokio_util::sync::CancellationToken;
+use turbomcp_core::error::McpResult;
+use turbomcp_types::{CreateMessageRequest, CreateMessageResult, ElicitResult};
 use uuid::Uuid;
 
 // Re-export TransportType from core for unified type system (DRY)
 pub use turbomcp_core::context::TransportType;
 
+/// Trait for bidirectional session communication.
+#[async_trait::async_trait]
+pub trait McpSession: Send + Sync + std::fmt::Debug {
+    /// Send a request to the client and wait for a response.
+    async fn call(&self, method: &str, params: serde_json::Value) -> McpResult<serde_json::Value>;
+    /// Send a notification to the client.
+    async fn notify(&self, method: &str, params: serde_json::Value) -> McpResult<()>;
+}
+
 /// Context information for an MCP request.
-///
-/// This is a simplified context compared to the full protocol RequestContext,
-/// focusing on essential information for handler execution.
-///
-/// # Example
-///
-/// ```
-/// use turbomcp_server::{RequestContext, TransportType};
-///
-/// let ctx = RequestContext::new()
-///     .with_transport(TransportType::Http)
-///     .with_user_id("user-123");
-///
-/// assert_eq!(ctx.transport(), TransportType::Http);
-/// assert_eq!(ctx.user_id(), Some("user-123"));
-/// ```
 #[derive(Debug, Clone)]
 pub struct RequestContext {
     /// Unique request identifier
@@ -50,6 +45,8 @@ pub struct RequestContext {
     metadata: HashMap<String, serde_json::Value>,
     /// Cancellation token for cooperative cancellation
     cancellation_token: Option<Arc<CancellationToken>>,
+    /// Session handle for bidirectional communication
+    session: Option<Arc<dyn McpSession>>,
 }
 
 impl Default for RequestContext {
@@ -72,7 +69,95 @@ impl RequestContext {
             client_id: None,
             metadata: HashMap::new(),
             cancellation_token: None,
+            session: None,
         }
+    }
+
+    /// Set the session handle for bidirectional communication.
+    #[must_use]
+    pub fn with_session(mut self, session: Arc<dyn McpSession>) -> Self {
+        self.session = Some(session);
+        self
+    }
+
+    /// Request user input via a form.
+    pub async fn elicit_form(
+        &self,
+        message: impl Into<String>,
+        schema: serde_json::Value,
+    ) -> McpResult<ElicitResult> {
+        let session = self.session.as_ref().ok_or_else(|| {
+            turbomcp_core::error::McpError::capability_not_supported(
+                "Server-to-client requests not available on this transport",
+            )
+        })?;
+
+        let params = serde_json::json!({
+            "mode": "form",
+            "message": message.into(),
+            "requestedSchema": schema
+        });
+
+        let result = session.call("elicitation/create", params).await?;
+        serde_json::from_value(result).map_err(|e| {
+            turbomcp_core::error::McpError::internal(format!(
+                "Failed to parse elicit result: {}",
+                e
+            ))
+        })
+    }
+
+    /// Request user action via a URL.
+    pub async fn elicit_url(
+        &self,
+        message: impl Into<String>,
+        url: impl Into<String>,
+        elicitation_id: impl Into<String>,
+    ) -> McpResult<ElicitResult> {
+        let session = self.session.as_ref().ok_or_else(|| {
+            turbomcp_core::error::McpError::capability_not_supported(
+                "Server-to-client requests not available on this transport",
+            )
+        })?;
+
+        let params = serde_json::json!({
+            "mode": "url",
+            "message": message.into(),
+            "url": url.into(),
+            "elicitationId": elicitation_id.into()
+        });
+
+        let result = session.call("elicitation/create", params).await?;
+        serde_json::from_value(result).map_err(|e| {
+            turbomcp_core::error::McpError::internal(format!(
+                "Failed to parse elicit result: {}",
+                e
+            ))
+        })
+    }
+
+    /// Request LLM sampling from the client.
+    pub async fn sample(&self, request: CreateMessageRequest) -> McpResult<CreateMessageResult> {
+        let session = self.session.as_ref().ok_or_else(|| {
+            turbomcp_core::error::McpError::capability_not_supported(
+                "Server-to-client requests not available on this transport",
+            )
+        })?;
+
+        let params = serde_json::to_value(request).map_err(|e| {
+            turbomcp_core::error::McpError::invalid_params(format!(
+                "Failed to serialize sampling request: {}",
+                e
+            ))
+        })?;
+
+        let result = session.call("sampling/createMessage", params).await?;
+        serde_json::from_value(result).map_err(|e| {
+            turbomcp_core::error::McpError::internal(format!(
+                "Failed to parse sampling result: {}",
+                e
+            ))
+        })
     }
 
     /// Create a new request context for STDIO transport.
