@@ -101,7 +101,7 @@ pub use crate::jsonrpc::JsonRpcError;
 
 /// Base interface for metadata with name (identifier) and title (display name) properties.
 /// Per MCP specification 2025-06-18, this is the foundation for Tool, Resource, and Prompt metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaseMetadata {
     /// Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
     pub name: String,
@@ -115,8 +115,26 @@ pub struct BaseMetadata {
     pub title: Option<String>,
 }
 
+impl BaseMetadata {
+    /// Create metadata with a name and no title.
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            title: None,
+        }
+    }
+
+    /// Set the display title.
+    #[must_use]
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+}
+
 /// Implementation information for MCP clients and servers
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Implementation {
     /// Implementation name
     pub name: String,
@@ -250,7 +268,10 @@ pub enum Role {
     Assistant,
 }
 
-/// Base result type for MCP protocol responses
+/// Base result type for MCP protocol responses (not `std::result::Result`).
+///
+/// This is the MCP protocol's `Result` structure, which carries optional
+/// `_meta` metadata. It is distinct from Rust's `std::result::Result<T, E>`.
 ///
 /// Per MCP 2025-06-18 specification, all result types should support
 /// optional metadata in the `_meta` field.
@@ -263,11 +284,13 @@ pub struct Result {
 
 impl Result {
     /// Create a new result with no metadata
+    #[must_use]
     pub fn new() -> Self {
         Self { _meta: None }
     }
 
     /// Create a result with metadata
+    #[must_use]
     pub fn with_meta(meta: serde_json::Value) -> Self {
         Self { _meta: Some(meta) }
     }

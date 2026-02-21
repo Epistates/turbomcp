@@ -47,7 +47,7 @@ pub struct Task {
 }
 
 /// The status of a task.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     /// Task was cancelled.
@@ -60,6 +60,18 @@ pub enum TaskStatus {
     InputRequired,
     /// Task is currently running.
     Working,
+}
+
+impl std::fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cancelled => f.write_str("cancelled"),
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+            Self::InputRequired => f.write_str("input_required"),
+            Self::Working => f.write_str("working"),
+        }
+    }
 }
 
 /// Result of a task-augmented request.
@@ -100,13 +112,60 @@ pub struct RelatedTaskMetadata {
 // =============================================================================
 
 /// Parameters for an elicitation request.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "mode", rename_all = "lowercase")]
+///
+/// Per MCP 2025-11-25, `mode` is optional for form requests (defaults to `"form"`)
+/// but required for URL requests. `Serialize` and `Deserialize` are implemented
+/// manually to handle the optional `mode` tag on the form variant.
+#[derive(Debug, Clone, PartialEq)]
 pub enum ElicitRequestParams {
     /// Form elicitation (structured input)
     Form(ElicitRequestFormParams),
     /// URL elicitation (out-of-band interaction)
     Url(ElicitRequestURLParams),
+}
+
+impl Serialize for ElicitRequestParams {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Form(params) => {
+                // Serialize form params with mode: "form"
+                let mut value = serde_json::to_value(params).map_err(serde::ser::Error::custom)?;
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("mode".into(), Value::String("form".into()));
+                }
+                value.serialize(serializer)
+            }
+            Self::Url(params) => {
+                // Serialize URL params with mode: "url"
+                let mut value = serde_json::to_value(params).map_err(serde::ser::Error::custom)?;
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("mode".into(), Value::String("url".into()));
+                }
+                value.serialize(serializer)
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ElicitRequestParams {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        let mode = value.get("mode").and_then(|v| v.as_str()).unwrap_or("form");
+
+        match mode {
+            "url" => {
+                let params: ElicitRequestURLParams =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(Self::Url(params))
+            }
+            _ => {
+                // Default to "form" when mode is absent or explicitly "form"
+                let params: ElicitRequestFormParams =
+                    serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+                Ok(Self::Form(params))
+            }
+        }
+    }
 }
 
 /// Parameters for form-based elicitation.
@@ -158,7 +217,7 @@ pub struct ElicitResult {
 }
 
 /// Action taken in response to elicitation.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum ElicitAction {
     /// User accepted the request.
@@ -167,6 +226,16 @@ pub enum ElicitAction {
     Decline,
     /// User cancelled or dismissed the request.
     Cancel,
+}
+
+impl std::fmt::Display for ElicitAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Accept => f.write_str("accept"),
+            Self::Decline => f.write_str("decline"),
+            Self::Cancel => f.write_str("cancel"),
+        }
+    }
 }
 
 /// Notification that a URL elicitation has completed.
@@ -291,10 +360,20 @@ pub struct ModelHint {
     pub name: Option<String>,
 }
 
+impl std::fmt::Display for IncludeContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AllServers => f.write_str("allServers"),
+            Self::ThisServer => f.write_str("thisServer"),
+            Self::None => f.write_str("none"),
+        }
+    }
+}
+
 /// Context inclusion mode for sampling.
 ///
 /// `thisServer` and `allServers` are soft-deprecated in 2025-11-25.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum IncludeContext {
     /// Include context from all servers (soft-deprecated).
     #[serde(rename = "allServers")]
@@ -318,7 +397,7 @@ pub struct ToolChoice {
 }
 
 /// Mode for tool choice.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum ToolChoiceMode {
     /// Model decides whether to use tools (default).
@@ -327,6 +406,16 @@ pub enum ToolChoiceMode {
     None,
     /// Model MUST use at least one tool.
     Required,
+}
+
+impl std::fmt::Display for ToolChoiceMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Auto => f.write_str("auto"),
+            Self::None => f.write_str("none"),
+            Self::Required => f.write_str("required"),
+        }
+    }
 }
 
 /// Result of a sampling request.
@@ -648,5 +737,195 @@ mod tests {
         let v: Value = serde_json::from_str(&json).unwrap();
         // Verify nested structure matches spec
         assert!(v["tasks"]["requests"]["tools"]["call"].is_object());
+    }
+
+    // C-3: ElicitAction and ElicitResult serde
+    #[test]
+    fn test_elicit_action_serde() {
+        let cases = [
+            (ElicitAction::Accept, "\"accept\""),
+            (ElicitAction::Decline, "\"decline\""),
+            (ElicitAction::Cancel, "\"cancel\""),
+        ];
+        for (action, expected) in cases {
+            let json = serde_json::to_string(&action).unwrap();
+            assert_eq!(json, expected);
+            let parsed: ElicitAction = serde_json::from_str(expected).unwrap();
+            assert_eq!(parsed, action);
+        }
+    }
+
+    #[test]
+    fn test_elicit_result_round_trip() {
+        let result = ElicitResult {
+            action: ElicitAction::Accept,
+            content: Some(serde_json::json!({"name": "test"})),
+            meta: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: ElicitResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.action, ElicitAction::Accept);
+        assert!(parsed.content.is_some());
+
+        // Decline with no content
+        let decline = ElicitResult {
+            action: ElicitAction::Decline,
+            content: None,
+            meta: None,
+        };
+        let json = serde_json::to_string(&decline).unwrap();
+        assert!(!json.contains("\"content\""));
+        let parsed: ElicitResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.action, ElicitAction::Decline);
+        assert!(parsed.content.is_none());
+    }
+
+    // H-7: ServerCapabilities must NOT contain elicitation or sampling
+    #[test]
+    fn test_server_capabilities_no_elicitation_or_sampling() {
+        let caps = ServerCapabilities::default();
+        let json = serde_json::to_string(&caps).unwrap();
+        assert!(!json.contains("elicitation"));
+        assert!(!json.contains("sampling"));
+
+        // Even fully populated
+        let caps = ServerCapabilities {
+            tools: Some(ToolCapabilities {
+                list_changed: Some(true),
+            }),
+            resources: Some(ResourceCapabilities {
+                subscribe: Some(true),
+                list_changed: Some(true),
+            }),
+            prompts: Some(PromptCapabilities {
+                list_changed: Some(true),
+            }),
+            logging: Some(HashMap::new()),
+            completions: Some(HashMap::new()),
+            tasks: Some(ServerTaskCapabilities::default()),
+            experimental: Some(HashMap::new()),
+        };
+        let json = serde_json::to_string(&caps).unwrap();
+        assert!(!json.contains("elicitation"));
+        assert!(!json.contains("sampling"));
+    }
+
+    // H-8: SamplingMessage array content round-trip preserves array
+    #[test]
+    fn test_sampling_message_array_content_round_trip() {
+        let json_array =
+            r#"{"role":"user","content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}"#;
+        let parsed: SamplingMessage = serde_json::from_str(json_array).unwrap();
+        let re_serialized = serde_json::to_string(&parsed).unwrap();
+        let re_parsed: Value = serde_json::from_str(&re_serialized).unwrap();
+        assert!(re_parsed["content"].is_array());
+        assert_eq!(re_parsed["content"].as_array().unwrap().len(), 2);
+    }
+
+    // H-10: All ToolChoiceMode variants
+    #[test]
+    fn test_tool_choice_mode_all_variants() {
+        let cases = [
+            (ToolChoiceMode::Auto, "\"auto\""),
+            (ToolChoiceMode::None, "\"none\""),
+            (ToolChoiceMode::Required, "\"required\""),
+        ];
+        for (mode, expected) in cases {
+            let json = serde_json::to_string(&mode).unwrap();
+            assert_eq!(json, expected);
+            let parsed: ToolChoiceMode = serde_json::from_str(expected).unwrap();
+            assert_eq!(parsed, mode);
+        }
+    }
+
+    // CRITICAL-2: ElicitRequestParams custom serde - optional mode field
+    #[test]
+    fn test_elicit_request_params_form_without_mode() {
+        // Per MCP 2025-11-25, mode is optional and defaults to "form"
+        let json = r#"{"message":"Enter name","requestedSchema":{"type":"object"}}"#;
+        let parsed: ElicitRequestParams = serde_json::from_str(json).unwrap();
+        match &parsed {
+            ElicitRequestParams::Form(params) => {
+                assert_eq!(params.message, "Enter name");
+            }
+            ElicitRequestParams::Url(_) => panic!("expected Form variant"),
+        }
+    }
+
+    #[test]
+    fn test_elicit_request_params_form_with_explicit_mode() {
+        let json = r#"{"mode":"form","message":"Enter name","requestedSchema":{"type":"object"}}"#;
+        let parsed: ElicitRequestParams = serde_json::from_str(json).unwrap();
+        match &parsed {
+            ElicitRequestParams::Form(params) => {
+                assert_eq!(params.message, "Enter name");
+            }
+            ElicitRequestParams::Url(_) => panic!("expected Form variant"),
+        }
+    }
+
+    #[test]
+    fn test_elicit_request_params_url_mode() {
+        let json = r#"{"mode":"url","message":"Authenticate","url":"https://example.com/auth","elicitationId":"e-123"}"#;
+        let parsed: ElicitRequestParams = serde_json::from_str(json).unwrap();
+        match &parsed {
+            ElicitRequestParams::Url(params) => {
+                assert_eq!(params.message, "Authenticate");
+                assert_eq!(params.url, "https://example.com/auth");
+                assert_eq!(params.elicitation_id, "e-123");
+            }
+            ElicitRequestParams::Form(_) => panic!("expected Url variant"),
+        }
+    }
+
+    #[test]
+    fn test_elicit_request_params_form_round_trip() {
+        let params = ElicitRequestParams::Form(ElicitRequestFormParams {
+            message: "Enter details".into(),
+            requested_schema: serde_json::json!({"type": "object", "properties": {"name": {"type": "string"}}}),
+            task: None,
+            meta: None,
+        });
+        let json = serde_json::to_string(&params).unwrap();
+        // Serialized output must include mode: "form"
+        let v: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["mode"], "form");
+        // Round-trip
+        let parsed: ElicitRequestParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, params);
+    }
+
+    #[test]
+    fn test_elicit_request_params_url_round_trip() {
+        let params = ElicitRequestParams::Url(ElicitRequestURLParams {
+            message: "Please authenticate".into(),
+            url: "https://example.com/oauth".into(),
+            elicitation_id: "elicit-456".into(),
+            task: None,
+            meta: None,
+        });
+        let json = serde_json::to_string(&params).unwrap();
+        let v: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["mode"], "url");
+        let parsed: ElicitRequestParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, params);
+    }
+
+    // M-6: All TaskStatus variants
+    #[test]
+    fn test_task_status_all_variants() {
+        let cases = [
+            (TaskStatus::Cancelled, "\"cancelled\""),
+            (TaskStatus::Completed, "\"completed\""),
+            (TaskStatus::Failed, "\"failed\""),
+            (TaskStatus::InputRequired, "\"input_required\""),
+            (TaskStatus::Working, "\"working\""),
+        ];
+        for (status, expected) in cases {
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(json, expected);
+            let parsed: TaskStatus = serde_json::from_str(expected).unwrap();
+            assert_eq!(parsed, status);
+        }
     }
 }

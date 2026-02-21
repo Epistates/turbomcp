@@ -179,13 +179,31 @@ impl Implementation {
 }
 
 /// Base metadata with name and title
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaseMetadata {
     /// Programmatic name/identifier
     pub name: String,
     /// Human-readable display title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+}
+
+impl BaseMetadata {
+    /// Create metadata with a name and no title.
+    #[must_use]
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            title: None,
+        }
+    }
+
+    /// Set the display title.
+    #[must_use]
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
 }
 
 /// Optional metadata hints for MCP objects.

@@ -23,6 +23,15 @@ pub enum Role {
     Assistant,
 }
 
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::User => f.write_str("user"),
+            Self::Assistant => f.write_str("assistant"),
+        }
+    }
+}
+
 // =============================================================================
 // ContentBlock — used in tool results and prompt messages
 // =============================================================================
@@ -116,6 +125,7 @@ impl Content {
                 uri: uri.into(),
                 mime_type: Some("text/plain".into()),
                 text: text.into(),
+                meta: None,
             }),
             annotations: None,
             meta: None,
@@ -240,6 +250,9 @@ impl SamplingContent {
 ///
 /// Per MCP 2025-11-25, `SamplingMessage.content` is
 /// `SamplingMessageContentBlock | SamplingMessageContentBlock[]`.
+///
+/// `Serialize` and `Deserialize` are implemented manually below to handle
+/// the single-vs-array polymorphism (single serializes as object, array as array).
 #[derive(Debug, Clone, PartialEq)]
 pub enum SamplingContentBlock {
     /// A single content block.
@@ -264,9 +277,11 @@ impl SamplingContentBlock {
         }
     }
 
-    /// Return all content blocks as a slice.
+    /// Collect all content blocks into a `Vec` of references.
+    ///
+    /// Note: this allocates. For iteration, use `iter()` instead.
     #[must_use]
-    pub fn as_slice(&self) -> Vec<&SamplingContent> {
+    pub fn to_vec(&self) -> Vec<&SamplingContent> {
         match self {
             Self::Single(c) => vec![c],
             Self::Multiple(v) => v.iter().collect(),
@@ -516,6 +531,9 @@ pub struct TextResourceContents {
     pub mime_type: Option<String>,
     /// Text content
     pub text: String,
+    /// Extension metadata
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, Value>>,
 }
 
 /// Binary resource contents.
@@ -528,6 +546,9 @@ pub struct BlobResourceContents {
     pub mime_type: Option<String>,
     /// Base64-encoded binary data
     pub blob: String,
+    /// Extension metadata
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, Value>>,
 }
 
 // =============================================================================
@@ -756,5 +777,174 @@ mod tests {
         } else {
             panic!("Expected text content");
         }
+    }
+
+    // C-1: ResourceContents untagged deserialization disambiguation
+    #[test]
+    fn test_resource_contents_text_deser() {
+        let json = r#"{"uri":"file:///test.txt","mimeType":"text/plain","text":"hello"}"#;
+        let rc: ResourceContents = serde_json::from_str(json).unwrap();
+        assert!(matches!(rc, ResourceContents::Text(_)));
+        assert_eq!(rc.uri(), "file:///test.txt");
+        assert_eq!(rc.text(), Some("hello"));
+        assert!(rc.blob().is_none());
+    }
+
+    #[test]
+    fn test_resource_contents_blob_deser() {
+        let json = r#"{"uri":"file:///img.png","mimeType":"image/png","blob":"aGVsbG8="}"#;
+        let rc: ResourceContents = serde_json::from_str(json).unwrap();
+        assert!(matches!(rc, ResourceContents::Blob(_)));
+        assert_eq!(rc.uri(), "file:///img.png");
+        assert_eq!(rc.blob(), Some("aGVsbG8="));
+        assert!(rc.text().is_none());
+    }
+
+    #[test]
+    fn test_resource_contents_round_trip() {
+        let text = ResourceContents::Text(TextResourceContents {
+            uri: "file:///a.txt".into(),
+            mime_type: Some("text/plain".into()),
+            text: "content".into(),
+            meta: None,
+        });
+        let json = serde_json::to_string(&text).unwrap();
+        let parsed: ResourceContents = serde_json::from_str(&json).unwrap();
+        assert_eq!(text, parsed);
+
+        let blob = ResourceContents::Blob(BlobResourceContents {
+            uri: "file:///b.bin".into(),
+            mime_type: Some("application/octet-stream".into()),
+            blob: "AQID".into(),
+            meta: None,
+        });
+        let json = serde_json::to_string(&blob).unwrap();
+        let parsed: ResourceContents = serde_json::from_str(&json).unwrap();
+        assert_eq!(blob, parsed);
+    }
+
+    // C-2: ToolResultContent serde round-trip
+    #[test]
+    fn test_sampling_content_tool_result_serde() {
+        let content = SamplingContent::ToolResult(ToolResultContent {
+            tool_use_id: "tu_1".into(),
+            content: vec![Content::text("result data")],
+            structured_content: Some(serde_json::json!({"key": "value"})),
+            is_error: Some(false),
+            meta: None,
+        });
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains("\"type\":\"tool_result\""));
+        assert!(json.contains("\"toolUseId\":\"tu_1\""));
+        assert!(json.contains("\"structuredContent\""));
+
+        let parsed: SamplingContent = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, SamplingContent::ToolResult(_)));
+    }
+
+    // H-1: SamplingContentBlock empty array
+    #[test]
+    fn test_sampling_content_block_empty_array() {
+        let parsed: SamplingContentBlock = serde_json::from_str("[]").unwrap();
+        assert!(matches!(parsed, SamplingContentBlock::Multiple(v) if v.is_empty()));
+    }
+
+    // H-2: Single-element array vs single object
+    #[test]
+    fn test_sampling_content_block_single_element_array() {
+        let single_obj = r#"{"type":"text","text":"x"}"#;
+        let single_arr = r#"[{"type":"text","text":"x"}]"#;
+
+        let parsed_obj: SamplingContentBlock = serde_json::from_str(single_obj).unwrap();
+        assert!(matches!(parsed_obj, SamplingContentBlock::Single(_)));
+
+        let parsed_arr: SamplingContentBlock = serde_json::from_str(single_arr).unwrap();
+        assert!(matches!(parsed_arr, SamplingContentBlock::Multiple(v) if v.len() == 1));
+    }
+
+    // H-3: All Content type discriminants round-trip
+    #[test]
+    fn test_content_all_type_discriminants() {
+        let variants: Vec<(&str, Content)> = vec![
+            ("text", Content::text("hi")),
+            ("image", Content::image("data", "image/png")),
+            ("audio", Content::audio("data", "audio/wav")),
+            (
+                "resource_link",
+                Content::ResourceLink(ResourceLink {
+                    uri: "file:///x".into(),
+                    name: "x".into(),
+                    description: None,
+                    title: None,
+                    icons: None,
+                    mime_type: None,
+                    annotations: None,
+                    size: None,
+                    meta: None,
+                }),
+            ),
+            ("resource", Content::resource("file:///x", "text")),
+        ];
+
+        for (expected_type, content) in variants {
+            let json = serde_json::to_string(&content).unwrap();
+            assert!(
+                json.contains(&format!("\"type\":\"{}\"", expected_type)),
+                "Missing type discriminant for {expected_type}: {json}"
+            );
+            let parsed: Content = serde_json::from_str(&json).unwrap();
+            assert_eq!(content, parsed, "Round-trip failed for {expected_type}");
+        }
+    }
+
+    // H-4: _meta field serialization presence/absence
+    #[test]
+    fn test_meta_field_skip_serializing_if_none() {
+        let content = TextContent::new("hello");
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(!json.contains("_meta"), "None meta should be omitted");
+
+        let mut meta = HashMap::new();
+        meta.insert("key".into(), Value::String("val".into()));
+        let content = TextContent {
+            text: "hello".into(),
+            annotations: None,
+            meta: Some(meta),
+        };
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains("\"_meta\""), "Some meta should be present");
+    }
+
+    // H-4: _meta on ResourceContents
+    #[test]
+    fn test_resource_contents_meta_field() {
+        let mut meta = HashMap::new();
+        meta.insert("k".into(), Value::Bool(true));
+        let rc = ResourceContents::Text(TextResourceContents {
+            uri: "x".into(),
+            mime_type: None,
+            text: "y".into(),
+            meta: Some(meta),
+        });
+        let json = serde_json::to_string(&rc).unwrap();
+        assert!(json.contains("\"_meta\""));
+        let parsed: ResourceContents = serde_json::from_str(&json).unwrap();
+        assert_eq!(rc, parsed);
+    }
+
+    // H-6: SamplingContentBlock to_vec
+    #[test]
+    fn test_sampling_content_block_to_vec() {
+        let single = SamplingContentBlock::Single(SamplingContent::text("a"));
+        assert_eq!(single.to_vec().len(), 1);
+
+        let multi = SamplingContentBlock::Multiple(vec![
+            SamplingContent::text("a"),
+            SamplingContent::text("b"),
+        ]);
+        assert_eq!(multi.to_vec().len(), 2);
+
+        // as_text on Multiple finds first text
+        assert_eq!(multi.as_text(), Some("a"));
     }
 }

@@ -693,7 +693,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
         if prompt.arguments.is_empty() {
             quote! {
                 #prompt_name => {
-                    let result = self.#fn_name(&ctx).await;
+                    let result = self.#fn_name(ctx).await;
                     Ok(#turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(result))
                 }
             }
@@ -701,7 +701,7 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
             quote! {
                 #prompt_name => {
                     #(#arg_extractions)*
-                    let result = self.#fn_name(#(#call_args,)* &ctx).await;
+                    let result = self.#fn_name(#(#call_args,)* ctx).await;
                     Ok(#turbomcp::__macro_support::turbomcp_types::IntoPromptResult::into_prompt_result(result))
                 }
             }

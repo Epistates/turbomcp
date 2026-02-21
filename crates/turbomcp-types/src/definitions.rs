@@ -87,13 +87,22 @@ pub struct Icon {
 }
 
 /// Theme for an icon.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum IconTheme {
     /// Designed for light backgrounds
     Light,
     /// Designed for dark backgrounds
     Dark,
+}
+
+impl std::fmt::Display for IconTheme {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Light => f.write_str("light"),
+            Self::Dark => f.write_str("dark"),
+        }
+    }
 }
 
 impl Icon {
@@ -232,7 +241,7 @@ pub struct ToolExecution {
 }
 
 /// Task support level for tools.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskSupportLevel {
     /// Tool does not support task-augmented execution (default)
@@ -241,6 +250,16 @@ pub enum TaskSupportLevel {
     Optional,
     /// Tool requires task-augmented execution
     Required,
+}
+
+impl std::fmt::Display for TaskSupportLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Forbidden => f.write_str("forbidden"),
+            Self::Optional => f.write_str("optional"),
+            Self::Required => f.write_str("required"),
+        }
+    }
 }
 
 /// JSON Schema for tool input parameters.

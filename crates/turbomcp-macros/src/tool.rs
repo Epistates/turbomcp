@@ -516,7 +516,6 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo], krate: &TokenStrea
 /// Generate call arguments.
 pub fn generate_call_args(sig: &Signature) -> TokenStream {
     let mut args = Vec::new();
-    let mut first = true;
 
     for input in &sig.inputs {
         match input {
@@ -529,13 +528,10 @@ pub fn generate_call_args(sig: &Signature) -> TokenStream {
                         let name = &pat_ident.ident;
                         args.push(quote! { #name });
                     }
-                    first = false;
                 }
             }
         }
     }
-
-    let _ = first; // silence warning
 
     quote! { #(#args),* }
 }

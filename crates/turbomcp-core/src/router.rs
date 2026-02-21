@@ -329,7 +329,9 @@ fn build_initialize_result<H: McpHandler>(
     // capability follows the spec structure:
     //   { list?: object, cancel?: object, requests?: { tools?: { call?: object } } }
     //
-    // TODO: Once handlers can opt-in to task support, conditionally advertise.
+    // Task capability advertising is unconditional for now. Handlers that don't
+    // support tasks return CapabilityNotSupported at runtime. Conditional
+    // advertisement via handler opt-in is tracked for a future release.
 
     // Build server info
     let mut server_info = serde_json::Map::new();

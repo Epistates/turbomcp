@@ -468,9 +468,9 @@ impl Client<turbomcp_transport::tcp::TcpTransport> {
 
         // Client binds to 0.0.0.0:0 (any available port)
         let bind_addr: SocketAddr = if server_addr.is_ipv6() {
-            "[::]:0".parse().unwrap()
+            "[::]:0".parse().expect("valid IPv6 any-port address")
         } else {
-            "0.0.0.0:0".parse().unwrap()
+            "0.0.0.0:0".parse().expect("valid IPv4 any-port address")
         };
 
         let transport = TcpTransport::new_client(bind_addr, server_addr);

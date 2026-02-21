@@ -125,6 +125,7 @@ impl ResourceResult {
                 uri: uri.into(),
                 mime_type: Some("text/plain".into()),
                 text: content.into(),
+                meta: None,
             })],
             ..Default::default()
         }
@@ -140,6 +141,7 @@ impl ResourceResult {
                 uri: uri.into(),
                 mime_type: Some("application/json".into()),
                 text: serde_json::to_string_pretty(value)?,
+                meta: None,
             })],
             ..Default::default()
         })
@@ -157,6 +159,7 @@ impl ResourceResult {
                 uri: uri.into(),
                 mime_type: Some(mime_type.into()),
                 blob: data.into(),
+                meta: None,
             })],
             ..Default::default()
         }

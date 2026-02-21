@@ -76,9 +76,13 @@ pub struct ErrorContext {
     pub request_id: Option<String>,
 }
 
-/// Error classification for programmatic handling
+/// Error classification for programmatic handling.
+///
+/// This enum is `#[non_exhaustive]` — new variants may be added in future
+/// minor releases without a breaking change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ErrorKind {
     // === MCP-Specific Errors ===
     /// Tool not found (MCP -32001)
@@ -780,5 +784,41 @@ mod tests {
             "McpError size: {} bytes (should be ≤128)",
             core::mem::size_of::<McpError>()
         );
+    }
+
+    // H-15: ErrorKind::from_i32 maps all known codes
+    #[test]
+    fn test_error_kind_from_i32() {
+        // MCP-specific codes
+        assert_eq!(ErrorKind::from_i32(-32001), ErrorKind::ToolNotFound);
+        assert_eq!(ErrorKind::from_i32(-32002), ErrorKind::ToolExecutionFailed);
+        assert_eq!(ErrorKind::from_i32(-32003), ErrorKind::PromptNotFound);
+        assert_eq!(ErrorKind::from_i32(-32004), ErrorKind::ResourceNotFound);
+        assert_eq!(ErrorKind::from_i32(-32005), ErrorKind::ResourceAccessDenied);
+        assert_eq!(
+            ErrorKind::from_i32(-32006),
+            ErrorKind::CapabilityNotSupported
+        );
+        assert_eq!(
+            ErrorKind::from_i32(-32007),
+            ErrorKind::ProtocolVersionMismatch
+        );
+        assert_eq!(ErrorKind::from_i32(-32008), ErrorKind::Authentication);
+        assert_eq!(ErrorKind::from_i32(-32009), ErrorKind::RateLimited);
+        assert_eq!(ErrorKind::from_i32(-32010), ErrorKind::ServerOverloaded);
+        // MCP 2025-11-25: URL elicitation required maps to CapabilityNotSupported
+        assert_eq!(
+            ErrorKind::from_i32(-32042),
+            ErrorKind::CapabilityNotSupported
+        );
+        // Standard JSON-RPC codes
+        assert_eq!(ErrorKind::from_i32(-32600), ErrorKind::InvalidRequest);
+        assert_eq!(ErrorKind::from_i32(-32601), ErrorKind::MethodNotFound);
+        assert_eq!(ErrorKind::from_i32(-32602), ErrorKind::InvalidParams);
+        assert_eq!(ErrorKind::from_i32(-32603), ErrorKind::Internal);
+        assert_eq!(ErrorKind::from_i32(-32700), ErrorKind::ParseError);
+        // Unknown codes fall back to Internal
+        assert_eq!(ErrorKind::from_i32(-99999), ErrorKind::Internal);
+        assert_eq!(ErrorKind::from_i32(0), ErrorKind::Internal);
     }
 }
