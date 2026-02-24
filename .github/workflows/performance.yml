@@ -264,7 +264,7 @@ jobs:
       run: |
         if [[ "${{ runner.os }}" == "Windows" ]]; then
           # Exclude unix transport on Windows (UnixListener/UnixStream unavailable)
-          cargo build --release --features stdio,http,websocket,tcp,auth,dpop
+          cargo build --release --workspace --exclude turbomcp-unix
         else
           cargo build --release --all-features
         fi
