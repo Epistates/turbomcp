@@ -95,8 +95,8 @@ jobs:
     - name: Run performance benchmarks
       run: |
         echo "Running benchmark suite"
-        # Run zero-copy benchmarks (turbomcp-core)
-        cargo bench --package turbomcp-core --bench rkyv_zero_copy_benchmark
+        # Run zero-copy benchmarks (turbomcp-core, requires zero-copy feature)
+        cargo bench --package turbomcp-core --bench rkyv_zero_copy_benchmark --features turbomcp-core/zero-copy
 
         # Run proxy benchmarks
         cargo bench --package turbomcp-proxy --bench introspection
@@ -202,10 +202,10 @@ jobs:
     - name: Run memory benchmarks
       run: |
         # Run memory-specific benchmarks (zero-copy in turbomcp-core)
-        cargo bench --package turbomcp-core --bench rkyv_zero_copy_benchmark -- --output-format json > memory_results.json || true
+        cargo bench --package turbomcp-core --bench rkyv_zero_copy_benchmark --features turbomcp-core/zero-copy -- --output-format json > memory_results.json || true
 
         # Analyze memory usage patterns
-        valgrind --tool=massif --stacks=yes cargo bench --package turbomcp-core --bench rkyv_zero_copy_benchmark -- --test || true
+        valgrind --tool=massif --stacks=yes cargo bench --package turbomcp-core --bench rkyv_zero_copy_benchmark --features turbomcp-core/zero-copy -- --test || true
 
     - name: Upload memory analysis
       uses: actions/upload-artifact@v4
@@ -265,7 +265,7 @@ jobs:
     - name: Run core benchmarks
       run: |
         # Run a subset of benchmarks for platform comparison
-        cargo bench --package turbomcp-core --bench rkyv_zero_copy_benchmark
+        cargo bench --package turbomcp-core --bench rkyv_zero_copy_benchmark --features turbomcp-core/zero-copy
         cargo bench --package turbomcp-proxy --bench introspection
 
     - name: Upload platform results
