@@ -263,17 +263,22 @@ jobs:
       shell: bash
       run: |
         if [[ "${{ runner.os }}" == "Windows" ]]; then
-          # Exclude unix transport on Windows (UnixListener/UnixStream unavailable)
-          cargo build --release --workspace --exclude turbomcp-unix
+          # turbomcp-proxy hardcodes unix transport dep, so only build turbomcp-core on Windows
+          cargo build --release -p turbomcp-core --features zero-copy
         else
           cargo build --release --all-features
         fi
 
     - name: Run core benchmarks
+      shell: bash
       run: |
-        # Run a subset of benchmarks for platform comparison
+        # Run zero-copy benchmark (all platforms)
         cargo bench --package turbomcp-core --bench rkyv_zero_copy_benchmark --features turbomcp-core/zero-copy
-        cargo bench --package turbomcp-proxy --bench introspection
+
+        if [[ "${{ runner.os }}" != "Windows" ]]; then
+          # turbomcp-proxy requires unix transport, skip on Windows
+          cargo bench --package turbomcp-proxy --bench introspection
+        fi
 
     - name: Upload platform results
       uses: actions/upload-artifact@v4
