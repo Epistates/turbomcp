@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-demo"
-version = "3.0.0-beta.4"
+version = "3.0.0-beta.5"
 edition = "2024"
 license = "MIT"
 description = "Demo project showcasing TurboMCP v3 architecture"
@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 # TurboMCP SDK with v3 macros
 # NOTE: Using path dependencies for demo. For production, use versioned dependencies:
-#   turbomcp = { version = "3.0.0-beta.4", features = [...] }
+#   turbomcp = { version = "3.0.0-beta.5", features = [...] }
 turbomcp = { path = "../crates/turbomcp" }
 
 # Async runtime

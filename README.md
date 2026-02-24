@@ -22,7 +22,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "3.0.0-beta.4"
+turbomcp = "3.0.0-beta.5"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -45,13 +45,13 @@ TurboMCP uses feature flags for progressive enhancement. Choose a preset based o
 
 ```toml
 # Production server with all transports
-turbomcp = { version = "3.0.0-beta.4", features = ["full"] }
+turbomcp = { version = "3.0.0-beta.5", features = ["full"] }
 
 # Add authentication
-turbomcp = { version = "3.0.0-beta.4", features = ["full", "auth"] }
+turbomcp = { version = "3.0.0-beta.5", features = ["full", "auth"] }
 
 # With SIMD acceleration for high throughput
-turbomcp = { version = "3.0.0-beta.4", features = ["full", "simd"] }
+turbomcp = { version = "3.0.0-beta.5", features = ["full", "simd"] }
 ```
 
 ### Individual Features
@@ -230,7 +230,7 @@ Start minimal (STDIO only), add features as needed:
 
 ```toml
 [dependencies]
-turbomcp = "3.0.0-beta.4"
+turbomcp = "3.0.0-beta.5"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -278,9 +278,9 @@ turbomcp-cli tools call hello --arguments '{"name": "World"}' --command "./your-
 
 ---
 
-## Client Connections (v2.1)
+## Client Connections
 
-TurboMCP v2.1 provides beautiful one-liner client connections with automatic initialization:
+TurboMCP provides beautiful one-liner client connections with automatic initialization:
 
 ### HTTP Client
 ```rust
@@ -1035,7 +1035,7 @@ Licensed under the [MIT License](./LICENSE) - Enterprise-friendly open source.
 
 ## Status
 
-TurboMCP v2.2.0 provides:
+TurboMCP v3.0.0-beta.5 provides:
 
 - Zero known security vulnerabilities with continuous monitoring
 - Performance focus with automated regression detection
@@ -1048,7 +1048,7 @@ TurboMCP v2.2.0 provides:
 - **NEW**: RFC 9728 Protected Resource Metadata support
 - **NEW**: JWT and JWKS authentication middleware
 
-**Production Status:** TurboMCP 2.2.0 is production-ready with full MCP 2025-11-25 compliance, comprehensive test coverage (1,165+ tests passing), and the complete authentication stack. The API is stable.
+**Beta Status:** TurboMCP 3.0.0-beta.5 features full MCP 2025-11-25 compliance, comprehensive test coverage, edge-native WASM support, modular transport crates, and the complete authentication stack including DPoP. The API is stabilizing toward 3.0.0 final release.
 
 ---
 

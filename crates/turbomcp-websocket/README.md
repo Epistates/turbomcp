@@ -27,7 +27,7 @@ Or use through the main transport crate:
 
 ```toml
 [dependencies]
-turbomcp-transport = { version = "3.0.0-beta.4", features = ["websocket"] }
+turbomcp-transport = { version = "3.0.0-beta.5", features = ["websocket"] }
 ```
 
 ## Quick Start

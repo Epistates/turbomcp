@@ -4,7 +4,7 @@ This directory contains the individual crates that make up the TurboMCP framewor
 
 ## Table of Contents
 
-- [v2.0.0 Architecture & Performance Highlights](#-v200-rc2-architecture--performance-highlights)
+- [v3.0.0 Architecture & Performance Highlights](#-v300-architecture--performance-highlights)
 - [Architecture Overview](#architecture-overview)
 - [Crates](#crates)
   - [turbomcp (Main SDK)](#turbomcp---main-sdk)
@@ -18,9 +18,9 @@ This directory contains the individual crates that make up the TurboMCP framewor
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 
-## 🎯 v2.0.0 Architecture & Performance Highlights
+## 🎯 v3.0.0 Architecture & Performance Highlights
 
-**Major improvements in 2.0.0:**
+**Major improvements in 3.0.0:**
 - **Modular Architecture** - Core and protocol modules decomposed for better maintainability
 - **Zero-Copy Optimizations** - Enhanced message processing with minimal allocations
 - **Security Enhancements** - Integrated security validation and path protection

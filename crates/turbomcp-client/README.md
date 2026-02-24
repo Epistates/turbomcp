@@ -541,7 +541,7 @@ cargo run --example stdio_client
 Enable features in `Cargo.toml`:
 ```toml
 [dependencies]
-turbomcp-client = { version = "3.0.0-beta.4", features = ["tcp", "websocket"] }
+turbomcp-client = { version = "3.0.0-beta.5", features = ["tcp", "websocket"] }
 ```
 
 ## Architecture

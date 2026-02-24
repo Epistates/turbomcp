@@ -19,7 +19,7 @@ TurboMCP provides enterprise-grade authentication and authorization:
 Add to `Cargo.toml`:
 
 ```toml
-turbomcp = { version = "3.0.0-beta.4", features = ["auth"] }
+turbomcp = { version = "3.0.0-beta.5", features = ["auth"] }
 ```
 
 ### 2. Configure OAuth
@@ -191,7 +191,7 @@ async fn custom_auth(auth: AuthContext) -> McpResult<String> {
 Add RFC 9449 DPoP for token binding:
 
 ```toml
-turbomcp = { version = "3.0.0-beta.4", features = ["auth", "dpop"] }
+turbomcp = { version = "3.0.0-beta.5", features = ["auth", "dpop"] }
 ```
 
 ```rust

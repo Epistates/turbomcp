@@ -117,10 +117,10 @@ fn extract_token(auth_header: &str) -> Result<String, Box<dyn std::error::Error>
 
 ```toml
 [dependencies]
-turbomcp-auth = "3.0.0-beta.4"
+turbomcp-auth = "3.0.0-beta.5"
 
 # With DPoP support for enhanced security
-turbomcp-auth = { version = "3.0.0-beta.4", features = ["dpop"] }
+turbomcp-auth = { version = "3.0.0-beta.5", features = ["dpop"] }
 
 # With tokio runtime
 tokio = { version = "1", features = ["full"] }

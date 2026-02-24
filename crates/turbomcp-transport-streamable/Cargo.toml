@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-transport-streamable"
-version = "3.0.0-beta.4"
+version = "3.0.0-beta.5"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Streamable HTTP transport types for TurboMCP - SSE encoding, session management, MCP 2025-11-25 spec"

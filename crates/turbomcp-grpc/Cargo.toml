@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-grpc"
-version = "3.0.0-beta.4"
+version = "3.0.0-beta.5"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "gRPC transport for TurboMCP - high-performance MCP over HTTP/2"
@@ -28,9 +28,9 @@ tokio-stream = { version = "0.1", features = ["net"] }
 futures = "0.3"
 
 # Internal dependencies
-turbomcp-core = { version = "3.0.0-beta.4", path = "../turbomcp-core", default-features = false, features = ["std"] }
-turbomcp-protocol = { version = "3.0.0-beta.4", path = "../turbomcp-protocol", default-features = false }
-turbomcp-transport-traits = { version = "3.0.0-beta.4", path = "../turbomcp-transport-traits", default-features = false }
+turbomcp-core = { version = "3.0.0-beta.5", path = "../turbomcp-core", default-features = false, features = ["std"] }
+turbomcp-protocol = { version = "3.0.0-beta.5", path = "../turbomcp-protocol", default-features = false }
+turbomcp-transport-traits = { version = "3.0.0-beta.5", path = "../turbomcp-transport-traits", default-features = false }
 
 # Tower integration
 tower = { workspace = true }

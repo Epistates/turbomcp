@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0-beta.5] - 2026-02-23
+
+### Security
+
+- **DPoP authentication hardening** - Comprehensive DPoP (RFC 9449) implementation across turbomcp components with enhanced proof-of-possession validation, token binding, and authorization flows (`turbomcp-auth`, `turbomcp-dpop`, `turbomcp-server`)
+- **WASM authentication provider** - Full OAuth 2.1 provider for WASM targets with Web Crypto API integration, secure token storage, and PKCE support (`turbomcp-wasm`)
+
+### Added
+
+#### WASM Server Architecture (`turbomcp-wasm`, `turbomcp-wasm-macros`)
+- **Durable Objects support** - Rate limiter, session store, state store, and token store durable objects for Cloudflare Workers
+- **Streaming transport** - Streamable HTTP transport for edge-native WASM servers with SSE support
+- **Composite server** - Multi-server composition with namespace isolation for WASM targets
+- **Rich context system** - Enhanced request context with authentication, rate limiting, and middleware state
+- **Middleware stack** - Typed middleware system for WASM servers (auth, rate limiting, logging, CORS)
+- **Testing utilities** - Comprehensive test harness for WASM server implementations
+
+#### CLI Enhancements (`turbomcp-cli`)
+- **`turbomcp new` command** - Project scaffolding with templates for WASM, native, and hybrid servers
+- **`turbomcp build` command** - WASM-aware build pipeline with wasm-pack integration
+- **`turbomcp deploy` command** - Deploy scaffolding for Cloudflare Workers and other edge platforms
+
+#### Streamable HTTP Transport (`turbomcp-transport-streamable`)
+- New crate providing MCP 2025-11-25 Streamable HTTP transport types
+- Session management with configurable timeouts and cleanup
+- SSE event stream handling with proper connection lifecycle
+
+#### MCP Content Types Enhancement (`turbomcp-types`, `turbomcp-protocol`)
+- **Metadata fields** - Added metadata support to MCP content types for extensibility
+- **Polymorphic serialization** - Robust `SamplingContentBlock` serialization supporting text, image, and audio content
+- **`Role` display implementation** - `Display` trait for `Role` enum for human-readable output
+
+#### Auth Tower Middleware (`turbomcp-auth`)
+- **Rate limiting middleware** - Token bucket rate limiter as Tower middleware with configurable per-client limits
+- **Auth metrics** - Observable authentication metrics (success/failure rates, latency histograms)
+- **Auth context** - Request-scoped authentication context with claims, scopes, and DPoP binding
+
+### Changed
+
+- **Strict protocol compliance** - Enhanced macro-generated code for stricter MCP protocol adherence across tool handlers and server initialization (`turbomcp-macros`, `turbomcp-core`)
+- **Error handling improvements** - Extended `McpError` with additional error variants for protocol compliance
+- **Router enhancements** - Improved handler routing with better error propagation (`turbomcp-core`)
+- **Client dispatcher** - Refined client-server interaction patterns (`turbomcp-client`)
+
+### Fixed
+
+- **Protocol compliance** - Fixed strict protocol compliance issues in server macro generation and tool handler dispatch (`turbomcp-macros`, `turbomcp-core`)
+- **Name alias resolution** - Fixed crate name alias configuration
+
+### Internal
+
+- Code cleanup and polish across workspace
+- CI workflow improvements for WASM builds and performance testing
+- Dependency version updates across all crates
+
 ## [3.0.0-beta.4] - 2026-02-17
 
 ### Security
