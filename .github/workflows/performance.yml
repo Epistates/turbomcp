@@ -260,7 +260,14 @@ jobs:
         fi
 
     - name: Build project
-      run: cargo build --release --all-features
+      shell: bash
+      run: |
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          # Exclude unix transport on Windows (UnixListener/UnixStream unavailable)
+          cargo build --release --features stdio,http,websocket,tcp,auth,dpop
+        else
+          cargo build --release --all-features
+        fi
 
     - name: Run core benchmarks
       run: |
