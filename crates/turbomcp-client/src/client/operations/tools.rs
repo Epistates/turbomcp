@@ -87,6 +87,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     ///
     /// * `name` - The name of the tool to call
     /// * `arguments` - Optional arguments to pass to the tool
+    /// * `task` - Optional task metadata for task-augmented requests (MCP 2025-11-25 draft)
     ///
     /// # Returns
     ///
@@ -95,6 +96,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// - `is_error: Option<bool>` - Whether the tool execution resulted in an error
     /// - `structured_content: Option<serde_json::Value>` - Schema-validated structured output
     /// - `_meta: Option<serde_json::Value>` - Metadata for client applications (not exposed to LLMs)
+    /// - `task_id: Option<String>` - Task identifier if task-augmented
     ///
     /// # Examples
     ///
@@ -112,70 +114,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// let mut args = HashMap::new();
     /// args.insert("input".to_string(), serde_json::json!("test"));
     ///
-    /// let result = client.call_tool("my_tool", Some(args)).await?;
-    ///
-    /// // Access all content blocks
-    /// for content in &result.content {
-    ///     match content {
-    ///         Content::Text(text) => println!("Text: {}", text.text),
-    ///         Content::Image(image) => println!("Image: {}", image.mime_type),
-    ///         _ => {}
-    ///     }
-    /// }
-    ///
-    /// // Check for errors
-    /// if result.is_error.unwrap_or(false) {
-    ///     eprintln!("Tool execution failed");
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// ## Structured Output (Schema Validation)
-    ///
-    /// ```rust,no_run
-    /// # use turbomcp_client::Client;
-    /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # use serde::Deserialize;
-    /// # use std::collections::HashMap;
-    /// # async fn example() -> turbomcp_protocol::Result<()> {
-    /// # #[derive(Deserialize)]
-    /// # struct WeatherData {
-    /// #     temperature: f64,
-    /// #     conditions: String,
-    /// # }
-    /// let mut client = Client::new(StdioTransport::new());
-    /// client.initialize().await?;
-    ///
-    /// let result = client.call_tool("get_weather", None).await?;
-    ///
-    /// // Access schema-validated structured output
-    /// if let Some(structured) = result.structured_content {
-    ///     let weather: WeatherData = serde_json::from_value(structured)?;
-    ///     println!("Temperature: {}°C", weather.temperature);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    ///
-    /// ## Metadata Access
-    ///
-    /// ```rust,no_run
-    /// # use turbomcp_client::Client;
-    /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # use std::collections::HashMap;
-    /// # async fn example() -> turbomcp_protocol::Result<()> {
-    /// let mut client = Client::new(StdioTransport::new());
-    /// client.initialize().await?;
-    ///
-    /// let result = client.call_tool("query_database", None).await?;
-    ///
-    /// // Access metadata (tracking IDs, performance metrics, etc.)
-    /// if let Some(meta) = result._meta {
-    ///     if let Some(query_id) = meta.get("query_id") {
-    ///         println!("Query ID: {}", query_id);
-    ///     }
-    /// }
+    /// let result = client.call_tool("my_tool", Some(args), None).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -183,6 +122,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         &self,
         name: &str,
         arguments: Option<HashMap<String, serde_json::Value>>,
+        task: Option<turbomcp_protocol::types::tasks::TaskMetadata>,
     ) -> Result<CallToolResult> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::invalid_request("Client not initialized"));
@@ -191,8 +131,8 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
         let request_data = CallToolRequest {
             name: name.to_string(),
             arguments: Some(arguments.unwrap_or_default()),
+            task,
             _meta: None,
-            ..Default::default()
         };
 
         // Core protocol call

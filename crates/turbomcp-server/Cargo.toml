@@ -75,3 +75,6 @@ unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
 # Feature bundles
 all-transports = ["stdio", "http", "websocket", "tcp", "unix"]
 full = ["all-transports"]
+
+# Experimental features
+experimental-tasks = ["turbomcp-protocol/experimental-tasks"]

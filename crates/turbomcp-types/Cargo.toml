@@ -24,6 +24,8 @@ std = ["serde/std", "serde_json/std"]
 alloc = ["serde/alloc"]
 # JSON Schema generation for tool input schemas
 schema = ["dep:schemars"]
+# Tasks API (SEP-1686) - marked experimental in MCP 2025-11-25 spec
+experimental-tasks = []
 
 [dependencies]
 serde = { workspace = true }
