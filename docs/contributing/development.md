@@ -427,6 +427,21 @@ cargo expand -p turbomcp server::core
 
 ## Testing
 
+### Fuzzing (Continuous Security)
+
+TurboMCP uses `cargo-fuzz` to guarantee "Google-grade" protocol safety against the JSON-RPC parsing boundary. Fuzzing continuously feeds random byte streams to the protocol parsers to uncover panics or memory vulnerabilities.
+
+To run the fuzzers locally:
+
+```bash
+# Install cargo-fuzz (requires nightly Rust)
+cargo install cargo-fuzz
+
+# Run JSON-RPC parser fuzzing
+cd crates/turbomcp-protocol
+cargo +nightly fuzz run fuzz_jsonrpc_parsing
+```
+
 ### Test Organization
 
 **Unit Tests** (`#[cfg(test)]` modules):

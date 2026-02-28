@@ -1,0 +1,70 @@
+name: Fuzzing
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run daily at midnight UTC
+    - cron: '0 0 * * *'
+
+env:
+  FUZZ_DIR: crates/turbomcp-protocol
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_jsonrpc_parsing
+          - fuzz_tool_deserialization
+          - fuzz_message_validation
+          - fuzz_capability_parsing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust Nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo-fuzz binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-fuzz
+          key: cargo-fuzz-${{ runner.os }}
+
+      - name: Install cargo-fuzz
+        run: command -v cargo-fuzz || cargo install cargo-fuzz
+
+      - name: Cache fuzz build artifacts
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.FUZZ_DIR }}/fuzz/target
+          key: fuzz-target-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('crates/turbomcp-protocol/Cargo.toml') }}
+          restore-keys: |
+            fuzz-target-${{ runner.os }}-${{ matrix.target }}-
+
+      - name: Determine fuzz duration
+        id: duration
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "seconds=300" >> "$GITHUB_OUTPUT"
+          else
+            echo "seconds=60" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fuzz ${{ matrix.target }}
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=${{ steps.duration.outputs.seconds }}
+        working-directory: ${{ env.FUZZ_DIR }}
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: |
+            ${{ env.FUZZ_DIR }}/fuzz/artifacts/${{ matrix.target }}/
+          retention-days: 30

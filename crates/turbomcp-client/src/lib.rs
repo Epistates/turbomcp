@@ -135,7 +135,7 @@
 //! # use turbomcp_transport::stdio::StdioTransport;
 //! # async fn example() -> turbomcp_protocol::Result<()> {
 //! # let mut client = Client::new(StdioTransport::new());
-//! match client.call_tool("my_tool", None).await {
+//! match client.call_tool("my_tool", None, None).await {
 //!     Ok(result) => println!("Tool result: {:?}", result),
 //!     Err(e) => eprintln!("Tool call failed: {}", e),
 //! }

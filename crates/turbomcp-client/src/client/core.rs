@@ -125,7 +125,7 @@ pub(super) struct ClientInner<T: Transport + 'static> {
 /// let tools = client.list_tools().await?;
 /// let mut args = HashMap::new();
 /// args.insert("input".to_string(), serde_json::json!("test"));
-/// let result = client.call_tool("my_tool", Some(args)).await?;
+/// let result = client.call_tool("my_tool", Some(args), None).await?;
 /// # Ok(())
 /// # }
 /// ```

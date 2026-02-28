@@ -130,6 +130,7 @@ benchmark_results.md
 !README.md
 !CHANGELOG.md
 !docs/**/*.md
+!**/MIGRATION.md
 
 site
 

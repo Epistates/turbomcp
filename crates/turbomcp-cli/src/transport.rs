@@ -80,15 +80,15 @@ impl UnifiedClient {
     ) -> CliResult<serde_json::Value> {
         let result = match &self.inner {
             #[cfg(feature = "stdio")]
-            ClientInner::Stdio(client) => client.call_tool(name, arguments).await?,
+            ClientInner::Stdio(client) => client.call_tool(name, arguments, None).await?,
             #[cfg(feature = "tcp")]
-            ClientInner::Tcp(client) => client.call_tool(name, arguments).await?,
+            ClientInner::Tcp(client) => client.call_tool(name, arguments, None).await?,
             #[cfg(feature = "unix")]
-            ClientInner::Unix(client) => client.call_tool(name, arguments).await?,
+            ClientInner::Unix(client) => client.call_tool(name, arguments, None).await?,
             #[cfg(feature = "http")]
-            ClientInner::Http(client) => client.call_tool(name, arguments).await?,
+            ClientInner::Http(client) => client.call_tool(name, arguments, None).await?,
             #[cfg(feature = "websocket")]
-            ClientInner::WebSocket(client) => client.call_tool(name, arguments).await?,
+            ClientInner::WebSocket(client) => client.call_tool(name, arguments, None).await?,
         };
 
         // Serialize CallToolResult to JSON for CLI display

@@ -91,7 +91,7 @@ impl<T: Transport + 'static> ProxyClient for ConcreteProxyClient<T> {
         let client = self.client.clone();
         let name = name.to_string();
         Box::pin(async move {
-            let result = client.call_tool(&name, arguments).await?;
+            let result = client.call_tool(&name, arguments, None).await?;
             // Serialize CallToolResult to JSON for proxy transport
             Ok(serde_json::to_value(result)?)
         })

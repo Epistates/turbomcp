@@ -59,7 +59,7 @@ mod bidirectional_tests {
     /// client.set_elicitation_handler(Arc::new(MyHandler));
     ///
     /// // Call tool that triggers elicitation
-    /// let result = client.call_tool("test_elicitation", None).await?;
+    /// let result = client.call_tool("test_elicitation", None, None).await?;
     ///
     /// // Flow:
     /// // 1. call_tool() sends tools/call request via ProtocolClient
