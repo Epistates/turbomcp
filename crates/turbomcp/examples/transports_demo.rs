@@ -58,45 +58,51 @@ impl TransportsServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("=== TurboMCP v3 Transports Demonstration ===\n");
+    // Initialize tracing to stderr (MUST NOT write to stdout as it pollutes the MCP protocol)
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
-    println!("In TurboMCP v3, transports are enabled via Cargo features:\n");
-    println!("  [dependencies]");
-    println!("  turbomcp = {{ version = \"3.0\", features = [\"http\", \"tcp\"] }}\n");
+    tracing::info!("=== TurboMCP v3 Transports Demonstration ===");
 
-    println!("Transport methods available with this build:\n");
-    println!("  - run_stdio() (always available)");
+    tracing::info!("In TurboMCP v3, transports are enabled via Cargo features:");
+    tracing::info!("  [dependencies]");
+    tracing::info!("  turbomcp = {{ version = \"3.0\", features = [\"http\", \"tcp\"] }}");
+
+    tracing::info!("Transport methods available with this build:");
+    tracing::info!("  - run_stdio() (always available)");
 
     #[cfg(feature = "http")]
-    println!("  - run_http(\"0.0.0.0:8080\")");
+    tracing::info!("  - run_http(\"0.0.0.0:8080\")");
 
     #[cfg(feature = "tcp")]
-    println!("  - run_tcp(\"0.0.0.0:9000\")");
+    tracing::info!("  - run_tcp(\"0.0.0.0:9000\")");
 
     #[cfg(feature = "websocket")]
-    println!("  - run_websocket(\"0.0.0.0:8080\")");
+    tracing::info!("  - run_websocket(\"0.0.0.0:8080\")");
 
     #[cfg(feature = "unix")]
-    println!("  - run_unix(\"/tmp/mcp.sock\")");
+    tracing::info!("  - run_unix(\"/tmp/mcp.sock\")");
 
-    println!("\n=== Usage Examples ===\n");
+    tracing::info!("=== Usage Examples ===");
 
-    println!("// STDIO (default, no extra features needed)");
-    println!("TransportsServer.run_stdio().await?;\n");
+    tracing::info!("// STDIO (default, no extra features needed)");
+    tracing::info!("TransportsServer.run_stdio().await?;");
 
     #[cfg(feature = "http")]
     {
-        println!("// HTTP (requires 'http' feature)");
-        println!("TransportsServer.run_http(\"0.0.0.0:8080\").await?;\n");
+        tracing::info!("// HTTP (requires 'http' feature)");
+        tracing::info!("TransportsServer.run_http(\"0.0.0.0:8080\").await?;");
     }
 
     #[cfg(feature = "tcp")]
     {
-        println!("// TCP (requires 'tcp' feature)");
-        println!("TransportsServer.run_tcp(\"0.0.0.0:9000\").await?;\n");
+        tracing::info!("// TCP (requires 'tcp' feature)");
+        tracing::info!("TransportsServer.run_tcp(\"0.0.0.0:9000\").await?;");
     }
 
-    println!("=== Running STDIO server... ===\n");
+    tracing::info!("=== Running STDIO server... ===");
     TransportsServer.run_stdio().await?;
 
     Ok(())

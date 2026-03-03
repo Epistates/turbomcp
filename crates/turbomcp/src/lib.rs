@@ -233,6 +233,10 @@ pub use turbomcp_auth as auth;
 #[cfg(feature = "dpop")]
 pub use turbomcp_dpop as dpop;
 
+/// OpenTelemetry integration and observability
+#[cfg(feature = "telemetry")]
+pub use turbomcp_telemetry as telemetry;
+
 /// Client library for full-stack development
 #[cfg(feature = "client-integration")]
 pub use turbomcp_client;
@@ -355,6 +359,11 @@ pub mod prelude {
     #[cfg(all(unix, feature = "unix"))]
     #[cfg_attr(docsrs, doc(cfg(all(unix, feature = "unix"))))]
     pub use turbomcp_transport::unix::{UnixTransport, UnixTransportBuilder};
+
+    /// Telemetry and observability helpers
+    #[cfg(feature = "telemetry")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "telemetry")))]
+    pub use turbomcp_telemetry::{TelemetryConfig, TelemetryConfigBuilder, TelemetryGuard};
 
     /// Client types for full-stack development
     #[cfg(feature = "client-integration")]

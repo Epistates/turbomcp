@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-03-03
+
+### Added
+
+- **Telemetry Integration in top-level crate** - Integrated `turbomcp-telemetry` into the main `turbomcp` crate for instant observability.
+- **New `telemetry` feature** - Added a dedicated feature flag to `turbomcp` that enables OpenTelemetry, Prometheus metrics, and structured logging.
+- **Enhanced Prelude** - Added `TelemetryConfig`, `TelemetryConfigBuilder`, and `TelemetryGuard` to the `turbomcp::prelude` for improved DX.
+- **Telemetry in Bundles** - Included `telemetry` in the `full` and `full-stack` feature bundles.
+
+### Changed
+
+- **Version Bump** - Final release version `v3.0.0` across all workspace crates.
+- **Audit Completion** - Successfully completed a comprehensive "Google-grade" technical audit of the entire SDK, ensuring SOTA (Q1 2026) compliance and architectural integrity.
+
+### Fixed
+
+- **Example fixes** - Resolved compilation errors in `tcp_client` and `unix_client` examples by adding the missing `TaskMetadata` argument to `call_tool` calls.
+- **Dependency cleanup** - Refined workspace dependencies to ensure clean propagation of features.
+
 ## [3.0.0-beta.5] - 2026-02-23
 
 ### Security

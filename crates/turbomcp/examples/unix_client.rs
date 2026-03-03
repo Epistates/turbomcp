@@ -53,14 +53,14 @@ async fn main() -> Result<()> {
         "message".to_string(),
         serde_json::json!("Hello Unix Socket!"),
     );
-    let result = client.call_tool("echo", Some(args)).await?;
+    let result = client.call_tool("echo", Some(args), None).await?;
     tracing::info!("📝 Echo result: {:?}", result);
 
     // Call multiply tool
     let mut args = HashMap::new();
     args.insert("a".to_string(), serde_json::json!(7.0));
     args.insert("b".to_string(), serde_json::json!(6.0));
-    let result = client.call_tool("multiply", Some(args)).await?;
+    let result = client.call_tool("multiply", Some(args), None).await?;
     tracing::info!("🔢 Multiply result: {:?}", result);
 
     // List and read resources

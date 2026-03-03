@@ -49,14 +49,14 @@ async fn main() -> Result<()> {
     // Call echo tool
     let mut args = HashMap::new();
     args.insert("message".to_string(), serde_json::json!("Hello TCP!"));
-    let result = client.call_tool("echo", Some(args)).await?;
+    let result = client.call_tool("echo", Some(args), None).await?;
     tracing::info!("📝 Echo result: {:?}", result);
 
     // Call add tool
     let mut args = HashMap::new();
     args.insert("a".to_string(), serde_json::json!(10.5));
     args.insert("b".to_string(), serde_json::json!(20.3));
-    let result = client.call_tool("add", Some(args)).await?;
+    let result = client.call_tool("add", Some(args), None).await?;
     tracing::info!("🔢 Add result: {:?}", result);
 
     tracing::info!("✅ Demo complete");
