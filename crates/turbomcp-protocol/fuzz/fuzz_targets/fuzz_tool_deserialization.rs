@@ -96,6 +96,7 @@ fuzz_target!(|data: &[u8]| {
             output_schema: None,
             execution,
             annotations,
+            icons: None,
             meta: None,
         };
 
