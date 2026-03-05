@@ -25,6 +25,8 @@ pub enum TransportType {
     Unix,
     /// A transport that manages a child process.
     ChildProcess,
+    /// In-process channel transport (zero-copy, no serialization overhead).
+    Channel,
     /// gRPC for high-performance RPC.
     #[cfg(feature = "grpc")]
     Grpc,
@@ -42,6 +44,7 @@ impl fmt::Display for TransportType {
             Self::Tcp => write!(f, "tcp"),
             Self::Unix => write!(f, "unix"),
             Self::ChildProcess => write!(f, "child_process"),
+            Self::Channel => write!(f, "channel"),
             #[cfg(feature = "grpc")]
             Self::Grpc => write!(f, "grpc"),
             #[cfg(feature = "quic")]

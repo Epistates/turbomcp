@@ -293,6 +293,7 @@ mod tests {
         assert_eq!(TransportType::Tcp.to_string(), "tcp");
         assert_eq!(TransportType::Unix.to_string(), "unix");
         assert_eq!(TransportType::Wasm.to_string(), "wasm");
+        assert_eq!(TransportType::Channel.to_string(), "channel");
         assert_eq!(TransportType::Unknown.to_string(), "unknown");
     }
 
@@ -305,6 +306,7 @@ mod tests {
 
         assert!(TransportType::Stdio.is_local());
         assert!(TransportType::Unix.is_local());
+        assert!(TransportType::Channel.is_local());
         assert!(!TransportType::Http.is_local());
     }
 

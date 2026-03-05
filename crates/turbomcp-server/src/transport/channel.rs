@@ -72,7 +72,7 @@ impl ChannelTransport {
 
 impl Transport for ChannelTransport {
     fn transport_type(&self) -> TransportType {
-        TransportType::Stdio // Reuse Stdio type for client compatibility
+        TransportType::Channel
     }
 
     fn capabilities(&self) -> &TransportCapabilities {
@@ -229,8 +229,7 @@ pub async fn run_in_process_with_buffer<H: McpHandler + 'static>(
 
     let handler = handler.clone();
     let server_handle = tokio::spawn(async move {
-        let result = run_server_loop(handler, server_rx, server_tx).await;
-        result
+        run_server_loop(handler, server_rx, server_tx).await
     });
 
     Ok((client_transport, server_handle))
@@ -460,32 +459,30 @@ mod tests {
             vec![]
         }
 
-        fn call_tool<'a>(
-            &'a self,
-            _name: &'a str,
+        async fn call_tool(
+            &self,
+            _name: &str,
             _args: Value,
-            _ctx: &'a CoreRequestContext,
-        ) -> impl std::future::Future<Output = McpResult<ToolResult>> + Send + 'a {
-            async { Ok(ToolResult::text("pong")) }
+            _ctx: &CoreRequestContext,
+        ) -> McpResult<ToolResult> {
+            Ok(ToolResult::text("pong"))
         }
 
-        fn read_resource<'a>(
-            &'a self,
-            uri: &'a str,
-            _ctx: &'a CoreRequestContext,
-        ) -> impl std::future::Future<Output = McpResult<ResourceResult>> + Send + 'a {
-            let uri = uri.to_string();
-            async move { Err(McpError::resource_not_found(&uri)) }
+        async fn read_resource(
+            &self,
+            uri: &str,
+            _ctx: &CoreRequestContext,
+        ) -> McpResult<ResourceResult> {
+            Err(McpError::resource_not_found(uri))
         }
 
-        fn get_prompt<'a>(
-            &'a self,
-            name: &'a str,
+        async fn get_prompt(
+            &self,
+            name: &str,
             _args: Option<Value>,
-            _ctx: &'a CoreRequestContext,
-        ) -> impl std::future::Future<Output = McpResult<PromptResult>> + Send + 'a {
-            let name = name.to_string();
-            async move { Err(McpError::prompt_not_found(&name)) }
+            _ctx: &CoreRequestContext,
+        ) -> McpResult<PromptResult> {
+            Err(McpError::prompt_not_found(name))
         }
     }
 
