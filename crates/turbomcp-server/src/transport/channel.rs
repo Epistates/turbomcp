@@ -228,9 +228,8 @@ pub async fn run_in_process_with_buffer<H: McpHandler + 'static>(
     let client_transport = ChannelTransport::new(client_tx, client_rx);
 
     let handler = handler.clone();
-    let server_handle = tokio::spawn(async move {
-        run_server_loop(handler, server_rx, server_tx).await
-    });
+    let server_handle =
+        tokio::spawn(async move { run_server_loop(handler, server_rx, server_tx).await });
 
     Ok((client_transport, server_handle))
 }

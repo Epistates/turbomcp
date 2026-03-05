@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-03-05
+
+### Added
+
+- **In-process channel transport** - Zero-overhead `channel` transport using `tokio::sync::mpsc` channels for same-process MCP communication. Eliminates line framing, flushing, and redundant JSON parsing. 1.4x faster than rmcp on tool call latency (14μs vs 19μs), 1.2x higher throughput (71k rps vs 59k rps).
+- **`TransportType::Channel` variant** - Added `Channel` to both `turbomcp-core` and `turbomcp-transport-traits` `TransportType` enums, with `is_local()` classification and proper `Display`/serde support.
+- **`RequestContext::channel()` factory** - Convenience constructor for channel transport contexts in `turbomcp-server`.
+- **`channel` feature flag** - New feature on `turbomcp-server` and `turbomcp` crates, included in `all-transports` bundle.
+
+### Fixed
+
+- **Channel transport type identification** - `ChannelTransport::transport_type()` now correctly returns `TransportType::Channel` instead of `TransportType::Stdio`.
+
 ## [3.0.0] - 2026-03-03
 
 ### Added
