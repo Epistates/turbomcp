@@ -27,6 +27,9 @@ pub mod tcp;
 #[cfg(feature = "unix")]
 pub mod unix;
 
+#[cfg(feature = "channel")]
+pub mod channel;
+
 #[cfg(feature = "http")]
 pub mod http;
 

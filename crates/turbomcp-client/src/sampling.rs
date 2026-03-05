@@ -21,7 +21,7 @@ use std::sync::Arc;
 use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult};
 
 /// Boxed future type alias for sampling operations
-type BoxSamplingFuture<'a, T> =
+pub type BoxSamplingFuture<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
 
 /// MCP-compliant sampling handler trait

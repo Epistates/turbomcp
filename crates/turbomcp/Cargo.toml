@@ -182,7 +182,10 @@ full-client = [
 
 # === Convenience Aliases ===
 # Enable all transport protocols (same as full without auth)
-all-transports = ["stdio", "http", "websocket", "tcp", "unix"]
+all-transports = ["stdio", "http", "websocket", "tcp", "unix", "channel"]
+
+# In-process channel transport (zero-overhead for testing and benchmarks)
+channel = ["turbomcp-server/channel"]
 
 # === Experimental Features ===
 experimental-tasks = [

@@ -196,6 +196,12 @@ impl RequestContext {
         Self::new().with_transport(TransportType::Wasm)
     }
 
+    /// Create a new request context for in-process channel transport.
+    #[must_use]
+    pub fn channel() -> Self {
+        Self::new().with_transport(TransportType::Channel)
+    }
+
     /// Create a new request context with a specific request ID.
     #[must_use]
     pub fn with_id(id: impl Into<String>) -> Self {

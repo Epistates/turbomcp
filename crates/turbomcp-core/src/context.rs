@@ -53,6 +53,8 @@ pub enum TransportType {
     Unix,
     /// WebAssembly/Worker transport (Cloudflare Workers, etc.)
     Wasm,
+    /// In-process channel transport (zero-copy, no serialization overhead)
+    Channel,
     /// Unknown or custom transport
     Unknown,
 }
@@ -67,7 +69,7 @@ impl TransportType {
     /// Returns true if this is a local transport.
     #[inline]
     pub fn is_local(&self) -> bool {
-        matches!(self, Self::Stdio | Self::Unix)
+        matches!(self, Self::Stdio | Self::Unix | Self::Channel)
     }
 
     /// Returns the transport name as a string.
@@ -79,6 +81,7 @@ impl TransportType {
             Self::Tcp => "tcp",
             Self::Unix => "unix",
             Self::Wasm => "wasm",
+            Self::Channel => "channel",
             Self::Unknown => "unknown",
         }
     }

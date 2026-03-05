@@ -71,9 +71,10 @@ http = [
 websocket = ["dep:turbomcp-transport", "turbomcp-transport/websocket", "http"]
 tcp = ["dep:turbomcp-transport", "turbomcp-transport/tcp"]
 unix = ["dep:turbomcp-transport", "turbomcp-transport/unix"]
+channel = ["dep:turbomcp-transport"]
 
 # Feature bundles
-all-transports = ["stdio", "http", "websocket", "tcp", "unix"]
+all-transports = ["stdio", "http", "websocket", "tcp", "unix", "channel"]
 full = ["all-transports"]
 
 # Experimental features
