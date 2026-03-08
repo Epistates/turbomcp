@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.2] - 2026-03-08
+
+### Changed
+
+- **Dependency updates** - Updated all workspace dependencies to latest versions for security, performance, and correctness:
+  - **Major bumps**: `simd-json` 0.13→0.17, `jsonschema` 0.17→0.44, `config` 0.14→0.15, `flume` 0.11→0.12
+  - **Runtime**: `tokio` 1.49→1.50, `hyper` 1.0→1.8, `reqwest` 0.13→0.13.2, `serde` 1.0→1.0.228, `serde_json` 1.0→1.0.149
+  - **Observability**: `tracing` 0.1→0.1.44, `tracing-opentelemetry` 0.32→0.32.1, `metrics` 0.24→0.24.3
+  - **Security**: `ring` 0.17→0.17.14, `jsonwebtoken` 10.2→10.3, `base64` 0.22→0.22.1
+  - **Diagnostics**: `miette` 7.0→7.6, `anyhow` 1.0→1.0.102, `color-eyre` 0.6→0.6.5
+  - **Testing**: `criterion` 0.8.1→0.8.2, `proptest` 1.9→1.10, `insta` 1.34→1.46, `testcontainers` 0.25→0.27, `wiremock` 0.6→0.6.5, `serial_test` 3.0→3.4
+  - **Utilities**: `arc-swap` 1.6→1.8, `crossbeam` 0.8→0.8.4, `ahash` 0.8→0.8.12, `walkdir` 2.4→2.5
+
 ## [3.0.1] - 2026-03-05
 
 ### Added

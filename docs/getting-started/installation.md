@@ -26,7 +26,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-turbomcp = "3.0.1"
+turbomcp = "3.0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -48,7 +48,7 @@ TurboMCP v3 has a modular architecture with optional features for different use 
 ### Minimal (STDIO only)
 
 ```toml
-turbomcp = "3.0.1"
+turbomcp = "3.0.2"
 ```
 
 - Just STDIO transport
@@ -58,7 +58,7 @@ turbomcp = "3.0.1"
 ### Full Stack (All Transports + Auth)
 
 ```toml
-turbomcp = { version = "3.0.1", features = ["full"] }
+turbomcp = { version = "3.0.2", features = ["full"] }
 ```
 
 - All transports (STDIO, HTTP, WebSocket, TCP, Unix, gRPC)
@@ -72,39 +72,39 @@ turbomcp = { version = "3.0.1", features = ["full"] }
 **For HTTP servers:**
 
 ```toml
-turbomcp = { version = "3.0.1", features = ["http", "websocket"] }
+turbomcp = { version = "3.0.2", features = ["http", "websocket"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
 **For gRPC transport (v3):**
 
 ```toml
-turbomcp = { version = "3.0.1", features = ["grpc"] }
+turbomcp = { version = "3.0.2", features = ["grpc"] }
 tokio = { version = "1", features = ["full"] }
 ```
 
 **For OAuth authentication:**
 
 ```toml
-turbomcp = { version = "3.0.1", features = ["http", "auth"] }
+turbomcp = { version = "3.0.2", features = ["http", "auth"] }
 ```
 
 **For DPoP token binding:**
 
 ```toml
-turbomcp = { version = "3.0.1", features = ["http", "auth", "dpop"] }
+turbomcp = { version = "3.0.2", features = ["http", "auth", "dpop"] }
 ```
 
 **For performance-critical applications:**
 
 ```toml
-turbomcp = { version = "3.0.1", features = ["full", "simd"] }
+turbomcp = { version = "3.0.2", features = ["full", "simd"] }
 ```
 
 **For OpenTelemetry observability (v3):**
 
 ```toml
-turbomcp = { version = "3.0.1", features = ["http", "telemetry"] }
+turbomcp = { version = "3.0.2", features = ["http", "telemetry"] }
 ```
 
 **For WASM/browser clients (v3):**
@@ -171,7 +171,7 @@ Only experimental features require feature flags:
 
 ```toml
 # Experimental tasks API
-turbomcp = { version = "3.0.1", features = ["experimental-tasks"] }
+turbomcp = { version = "3.0.2", features = ["experimental-tasks"] }
 ```
 
 ## Using Individual Crates
@@ -233,7 +233,7 @@ Make sure you have tokio in your dependencies:
 ```toml
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-turbomcp = "3.0.1"
+turbomcp = "3.0.2"
 ```
 
 ### `error: extern crate 'turbomcp' is unused`
@@ -246,10 +246,10 @@ TurboMCP has many optional features. If you only need STDIO, don't enable unnece
 
 ```toml
 # Fast compilation, minimal features
-turbomcp = "3.0.1"  # Just STDIO
+turbomcp = "3.0.2"  # Just STDIO
 
 # Slow compilation, all features
-turbomcp = { version = "3.0.1", features = ["full"] }
+turbomcp = { version = "3.0.2", features = ["full"] }
 ```
 
 ### `error: failed to resolve: use of undeclared crate or module 'McpResult'`

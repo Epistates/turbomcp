@@ -22,7 +22,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "3.0.1"
+turbomcp = "3.0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -45,13 +45,13 @@ TurboMCP uses feature flags for progressive enhancement. Choose a preset based o
 
 ```toml
 # Production server with all transports
-turbomcp = { version = "3.0.1", features = ["full"] }
+turbomcp = { version = "3.0.2", features = ["full"] }
 
 # Add authentication
-turbomcp = { version = "3.0.1", features = ["full", "auth"] }
+turbomcp = { version = "3.0.2", features = ["full", "auth"] }
 
 # With SIMD acceleration for high throughput
-turbomcp = { version = "3.0.1", features = ["full", "simd"] }
+turbomcp = { version = "3.0.2", features = ["full", "simd"] }
 ```
 
 ### Individual Features
@@ -230,7 +230,7 @@ Start minimal (STDIO only), add features as needed:
 
 ```toml
 [dependencies]
-turbomcp = "3.0.1"
+turbomcp = "3.0.2"
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -1035,7 +1035,7 @@ Licensed under the [MIT License](./LICENSE) - Enterprise-friendly open source.
 
 ## Status
 
-TurboMCP v3.0.1 provides:
+TurboMCP v3.0.2 provides:
 
 - Zero known security vulnerabilities with continuous monitoring
 - Performance focus with automated regression detection
@@ -1048,7 +1048,7 @@ TurboMCP v3.0.1 provides:
 - **NEW**: RFC 9728 Protected Resource Metadata support
 - **NEW**: JWT and JWKS authentication middleware
 
-**Stable Status:** TurboMCP 3.0.1 features full MCP 2025-11-25 compliance, comprehensive test coverage, edge-native WASM support, modular transport crates, and the complete authentication stack including DPoP. This is the current stable release.
+**Stable Status:** TurboMCP 3.0.2 features full MCP 2025-11-25 compliance, comprehensive test coverage, edge-native WASM support, modular transport crates, and the complete authentication stack including DPoP. This is the current stable release.
 
 ---
 

@@ -17,14 +17,14 @@ This crate provides TCP transport with:
 
 ```toml
 [dependencies]
-turbomcp-tcp = "3.0.1"
+turbomcp-tcp = "3.0.2"
 ```
 
 Or use through the main transport crate:
 
 ```toml
 [dependencies]
-turbomcp-transport = { version = "3.0.1", features = ["tcp"] }
+turbomcp-transport = { version = "3.0.2", features = ["tcp"] }
 ```
 
 ## Quick Start

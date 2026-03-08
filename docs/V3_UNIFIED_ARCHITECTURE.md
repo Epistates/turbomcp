@@ -214,4 +214,4 @@ pub struct RequestContext {
 ---
 
 *Document updated: 2026-01-20*
-*Reflects actual v3.0.1 implementation*
+*Reflects actual v3.0.2 implementation*

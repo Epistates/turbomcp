@@ -21,7 +21,7 @@ The `turbomcp-compat` crate provides deprecated type aliases with compiler warni
 
 ```toml
 [dependencies]
-turbomcp = "3.0.1"
+turbomcp = "3.0.2"
 turbomcp-compat = "3.0"  # For gradual migration
 ```
 
@@ -39,7 +39,7 @@ turbomcp = "2.x"
 
 # After (v3.x)
 [dependencies]
-turbomcp = "3.0.1"
+turbomcp = "3.0.2"
 ```
 
 ## 💥 Breaking Changes in v3.0.0
