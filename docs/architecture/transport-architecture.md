@@ -2,7 +2,7 @@
 
 > **Status**: Accepted
 > **Date**: 2026-01-20
-> **Context**: v3.0.0-beta.1
+> **Context**: v3.0.1
 
 ## Decision
 

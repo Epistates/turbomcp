@@ -41,8 +41,6 @@ anyhow = { workspace = true }
 axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
-hyper = { workspace = true, optional = true }
-hyper-util = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 async-stream = { version = "0.3", optional = true }
@@ -91,7 +89,7 @@ default = ["stdio"]
 
 # Core transports
 stdio = ["dep:turbomcp-stdio"]
-http = ["dep:turbomcp-http", "axum", "tower", "tower-http", "hyper", "hyper-util", "async-stream"]
+http = ["dep:turbomcp-http", "axum", "tower", "tower-http", "async-stream"]
 websocket = ["dep:turbomcp-websocket", "tokio-tungstenite", "http", "futures-util"]
 tcp = ["dep:turbomcp-tcp", "tokio/net"]
 unix = ["dep:turbomcp-unix", "tokio/net"]

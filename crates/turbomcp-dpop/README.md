@@ -63,13 +63,13 @@ let jwk = key_pair.public_jwk();
 
 ```toml
 [dependencies]
-turbomcp-dpop = "3.0.0-beta.5"
+turbomcp-dpop = "3.0.1"
 
 # With Redis storage
-turbomcp-dpop = { version = "3.0.0-beta.5", features = ["redis-storage"] }
+turbomcp-dpop = { version = "3.0.1", features = ["redis-storage"] }
 
 # With HSM support
-turbomcp-dpop = { version = "3.0.0-beta.5", features = ["hsm"] }
+turbomcp-dpop = { version = "3.0.1", features = ["hsm"] }
 ```
 
 ## Feature Flags
