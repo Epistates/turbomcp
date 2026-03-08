@@ -171,7 +171,7 @@ fn bench_critical_path_operations(c: &mut Criterion) {
 
     // Schema validation performance
     group.bench_function("schema_validation_tool_call", |b| {
-        use jsonschema::{Draft, JSONSchema};
+        use jsonschema::{Draft, Validator};
 
         let schema = serde_json::json!({
             "type": "object",
@@ -182,9 +182,9 @@ fn bench_critical_path_operations(c: &mut Criterion) {
             "required": ["name", "arguments"]
         });
 
-        let compiled = JSONSchema::options()
+        let compiled = Validator::options()
             .with_draft(Draft::Draft7)
-            .compile(&schema)
+            .build(&schema)
             .unwrap();
 
         let instance = serde_json::json!({

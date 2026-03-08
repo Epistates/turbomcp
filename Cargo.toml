@@ -80,7 +80,7 @@ const_is_empty = "allow"
 # Core async runtime and utilities
 # Tokio: Production optimization - use only needed features instead of "full"
 # Includes: runtime, networking, sync, timers, signal handling, process, macros, io
-tokio = { version = "1.49", features = [
+tokio = { version = "1.50", features = [
     "rt", "rt-multi-thread",  # Multi-threaded async runtime
     "net",                     # TCP/UDP networking
     "sync",                    # Channels, mutexes, RwLock
@@ -90,75 +90,75 @@ tokio = { version = "1.49", features = [
     "macros",                  # #[tokio::main] macro
     "io-util",                 # Async I/O utilities
 ] }
-tokio-util = { version = "0.7", features = ["codec", "io"] }
+tokio-util = { version = "0.7.18", features = ["codec", "io"] }
 futures = "0.3.31"
-pin-project-lite = "0.2"
+pin-project-lite = "0.2.17"
 
 # Test utilities
-walkdir = "2.4"
+walkdir = "2.5"
 tempfile = "3.26"
 
 # Serialization with performance focus
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = { version = "1.0", features = ["raw_value", "preserve_order"] }
+serde = { version = "1.0.228", features = ["derive", "rc"] }
+serde_json = { version = "1.0.149", features = ["raw_value", "preserve_order"] }
 msgpacker = { version = "0.4", features = ["derive", "alloc"] }  # MessagePack for binary efficiency
-sonic-rs = "0.5"   # High-performance JSON
-simd-json = "0.13" # SIMD-accelerated JSON parsing
+sonic-rs = "0.5.7"   # High-performance JSON
+simd-json = "0.17" # SIMD-accelerated JSON parsing
 ciborium = "0.2"
 
 # Schema validation and generation
-schemars = { version = "1.2", features = ["chrono04", "uuid1"] }
-jsonschema = { version = "0.17.1", default-features = false, features = ["resolve-file"] }
+schemars = { version = "1.2.1", features = ["chrono04", "uuid1"] }
+jsonschema = { version = "0.44", default-features = false }
 
 # HTTP/WebSocket/Network
-reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
 axum = { version = "0.8.8", features = ["ws", "tracing", "macros"] }
 tower = { version = "0.5.3", features = ["util", "retry", "timeout"] }
 tower-http = { version = "0.6.8", features = ["compression-br", "compression-gzip", "cors", "timeout", "trace", "limit"] }
-hyper = { version = "1.0", features = ["http1", "http2", "server", "client"] }
-hyper-util = { version = "0.1", features = ["tokio", "server-auto", "client-legacy"] }
+hyper = { version = "1.8", features = ["http1", "http2", "server", "client"] }
+hyper-util = { version = "0.1.20", features = ["tokio", "server-auto", "client-legacy"] }
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-native-roots"] }
 
 # Error handling and diagnostics
 thiserror = "2.0.18"
-anyhow = "1.0"
-miette = { version = "7.0", features = ["fancy"] }
-color-eyre = "0.6"
+anyhow = "1.0.102"
+miette = { version = "7.6", features = ["fancy"] }
+color-eyre = "0.6.5"
 
 # Observability and monitoring
-tracing = "0.1"
+tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json", "tracing-log"] }
-tracing-opentelemetry = "0.32"
+tracing-opentelemetry = "0.32.1"
 tracing-appender = "0.2"  # File-based logging with non-blocking I/O
 opentelemetry = "0.31"
 opentelemetry-otlp = { version = "0.31", features = ["tonic", "metrics", "logs"] }
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
-metrics = "0.24"
-metrics-exporter-prometheus = "0.18"
+metrics = "0.24.3"
+metrics-exporter-prometheus = "0.18.1"
 
 # Concurrency and synchronization
 parking_lot = "0.12.5"
 dashmap = "6.1.0"
-crossbeam = "0.8"
+crossbeam = "0.8.4"
 crossbeam-channel = "0.5"
-flume = "0.11"
+flume = "0.12"
 tokio-stream = "0.1"
 
 # URL and random utilities
-url = "2.5"
+url = "2.5.8"
 fastrand = "2.3"
 
 # Configuration and CLI
-config = "0.14"
+config = "0.15"
 clap = { version = "4.5.60", features = ["derive", "env", "color"] }
 clap_complete = "4.5"
 
 # Security and authentication
-ring = "0.17"
-base64 = "0.22"
-percent-encoding = "2.3"  # URL percent encoding/decoding (RFC 3986)
+ring = "0.17.14"
+base64 = "0.22.1"
+percent-encoding = "2.3.2"  # URL percent encoding/decoding (RFC 3986)
 uuid = { version = "1.22", features = ["v4", "serde"] }
-jsonwebtoken = { version = "10.2", features = ["aws_lc_rs", "use_pem"] }
+jsonwebtoken = { version = "10.3", features = ["aws_lc_rs", "use_pem"] }
 
 # Time and date handling
 chrono = { version = "0.4.44", features = ["serde"] }
@@ -168,23 +168,23 @@ time = { version = "0.3.47", features = ["serde", "macros"] }
 bytes = "1.11.1"
 smallvec = { version = "1.11", features = ["serde"] }
 compact_str = { version = "0.9", features = ["serde"] }
-ahash = "0.8"
-arc-swap = "1.6"
+ahash = "0.8.12"
+arc-swap = "1.8"
 
 # Development and testing
-criterion = { version = "0.8.1", features = ["html_reports"] }
-proptest = "1.9"
+criterion = { version = "0.8.2", features = ["html_reports"] }
+proptest = "1.10"
 tokio-test = "0.4"
-wiremock = "0.6"
-pretty_assertions = "1.4"
-insta = { version = "1.34", features = ["json", "redactions"] }
+wiremock = "0.6.5"
+pretty_assertions = "1.4.1"
+insta = { version = "1.46", features = ["json", "redactions"] }
 rand = "0.9"
 quickcheck = "1.0"
 quickcheck_macros = "1.0"
 mock_instant = "0.3"
-serial_test = "3.0"
+serial_test = "3.4"
 sha2 = "0.10"
-testcontainers = "0.25.0"
+testcontainers = "0.27"
 
 # Documentation
 doc-comment = "0.3"
