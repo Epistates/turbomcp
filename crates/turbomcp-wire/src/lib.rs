@@ -387,6 +387,7 @@ impl StreamingJsonDecoder {
 
         // Enforce buffer size limit to prevent DoS
         if self.buffer.len() > self.max_buffer_size {
+            #[cfg(feature = "std")]
             tracing::warn!(
                 buffer_size = self.buffer.len(),
                 max_size = self.max_buffer_size,

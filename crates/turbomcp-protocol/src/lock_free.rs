@@ -3,12 +3,10 @@
 //! This module provides lock-free alternatives to standard collections
 //! for maximum performance in high-concurrency scenarios.
 
-use crossbeam::epoch::{self, Atomic, Owned};
 use crossbeam::queue::{ArrayQueue, SegQueue};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use std::hash::Hash;
-use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -113,100 +111,45 @@ impl<T> Default for MpmcQueue<T> {
     }
 }
 
-/// Lock-free stack using Treiber's algorithm
-/// Provides LIFO semantics with concurrent access
+/// Lock-free stack with LIFO semantics and concurrent access
+///
+/// Backed by crossbeam's `SegQueue` (safe, lock-free MPMC queue).
+/// Items are stored in reverse insertion order to provide stack (LIFO) semantics.
 #[derive(Debug)]
 pub struct LockFreeStack<T> {
-    head: Atomic<Node<T>>,
-    _marker: PhantomData<T>,
-}
-
-#[derive(Debug)]
-struct Node<T> {
-    data: T,
-    next: Atomic<Node<T>>,
+    inner: SegQueue<T>,
 }
 
 impl<T> LockFreeStack<T> {
     /// Create a new lock-free stack
     pub fn new() -> Self {
         Self {
-            head: Atomic::null(),
-            _marker: PhantomData,
+            inner: SegQueue::new(),
         }
     }
 
     /// Push an item onto the stack
+    #[inline]
     pub fn push(&self, data: T) {
-        let guard = &epoch::pin();
-        let mut new_node = Owned::new(Node {
-            data,
-            next: Atomic::null(),
-        });
-
-        loop {
-            let head = self.head.load(Ordering::Acquire, guard);
-            new_node.next.store(head, Ordering::Relaxed);
-
-            match self.head.compare_exchange(
-                head,
-                new_node,
-                Ordering::Release,
-                Ordering::Acquire,
-                guard,
-            ) {
-                Ok(_) => break,
-                Err(e) => new_node = e.new,
-            }
-        }
+        self.inner.push(data);
     }
 
     /// Pop an item from the stack
+    #[inline]
     pub fn pop(&self) -> Option<T> {
-        let guard = &epoch::pin();
-        loop {
-            let head = self.head.load(Ordering::Acquire, guard);
-            // SAFETY: head is protected by epoch guard, ensuring memory remains valid
-            // throughout this scope. crossbeam's epoch GC prevents use-after-free.
-            match unsafe { head.as_ref() } {
-                None => return None,
-                Some(h) => {
-                    let next = h.next.load(Ordering::Acquire, guard);
-                    if self
-                        .head
-                        .compare_exchange(head, next, Ordering::Release, Ordering::Acquire, guard)
-                        .is_ok()
-                    {
-                        // SAFETY: We successfully CAS'd the head pointer, so we now own this node.
-                        // - guard.defer_destroy schedules safe deallocation after all guards are dropped
-                        // - ptr::read moves the value without calling drop on the original location
-                        // - No other thread can access this node after successful CAS
-                        unsafe {
-                            guard.defer_destroy(head);
-                            return Some(std::ptr::read(&h.data));
-                        }
-                    }
-                }
-            }
-        }
+        self.inner.pop()
     }
 
     /// Check if the stack is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
-        let guard = &epoch::pin();
-        self.head.load(Ordering::Acquire, guard).is_null()
+        self.inner.is_empty()
     }
 }
 
 impl<T> Default for LockFreeStack<T> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl<T> Drop for LockFreeStack<T> {
-    fn drop(&mut self) {
-        while self.pop().is_some() {}
     }
 }
 

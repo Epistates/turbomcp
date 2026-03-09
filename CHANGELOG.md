@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Eliminated unsafe code in `LockFreeStack`** - Replaced hand-rolled Treiber stack (using `crossbeam::epoch` raw pointers, `ptr::read`, `defer_destroy`) with safe `crossbeam::queue::SegQueue`-backed implementation. Zero unsafe blocks remain in application-level code.
+- **Fixed `turbomcp-wire` compilation with `--all-features`** - Added missing `#[cfg(feature = "std")]` gate on `tracing::warn!` call in `StreamingJsonDecoder::feed()`.
 - **Dependency updates** - Updated all workspace dependencies to latest versions for security, performance, and correctness:
   - **Major bumps**: `simd-json` 0.13→0.17, `jsonschema` 0.17→0.44, `config` 0.14→0.15, `flume` 0.11→0.12
   - **Runtime**: `tokio` 1.49→1.50, `hyper` 1.0→1.8, `reqwest` 0.13→0.13.2, `serde` 1.0→1.0.228, `serde_json` 1.0→1.0.149
