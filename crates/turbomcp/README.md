@@ -716,17 +716,15 @@ Protocol Layer (turbomcp-protocol)
 JSON-RPC Response
 ```
 
-See `examples/error_patterns.rs` for comprehensive examples of both error types.
-
 ### Ergonomic Error Creation
 
-Use the `mcp_error!` macro for easy error creation:
+Use `McpError` constructors for error creation:
 
 ```rust
 #[tool("Divide numbers")]
 async fn divide(&self, a: f64, b: f64) -> McpResult<f64> {
     if b == 0.0 {
-        return Err(mcp_error!("Division by zero: {} / {}", a, b));
+        return Err(McpError::invalid_params(format!("Division by zero: {} / {}", a, b)));
     }
     Ok(a / b)
 }
@@ -734,7 +732,7 @@ async fn divide(&self, a: f64, b: f64) -> McpResult<f64> {
 #[tool("Read file")]
 async fn read_file(&self, path: String) -> McpResult<String> {
     tokio::fs::read_to_string(&path).await
-        .map_err(|e| mcp_error!("Failed to read file {}: {}", path, e))
+        .map_err(|e| McpError::internal(format!("Failed to read file {}: {}", path, e)))
 }
 ```
 
@@ -1057,7 +1055,7 @@ cargo test --workspace
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature-name`
 3. Make your changes and add tests
-4. Run the full test suite: `make test`
+4. Run the full test suite: `just test`
 5. Submit a pull request
 
 ## Performance Architecture

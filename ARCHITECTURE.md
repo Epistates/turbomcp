@@ -1,267 +1,203 @@
 # TurboMCP Architecture
 
-This document explains the modular architecture of **TurboMCP**, a high-performance Rust SDK for the Model Context Protocol (MCP).
+This document explains the modular architecture of **TurboMCP v3.0**, a high-performance Rust SDK for the Model Context Protocol (MCP).
 
 ## Overview
 
 TurboMCP is built as a **layered architecture** with clear separation between foundational infrastructure and ergonomic developer APIs. This design enables both rapid prototyping and production-grade performance optimization.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      TurboMCP Framework                     │
-│              Ergonomic APIs & Developer Experience         │
-└─────────────────────────────────────────────────────────────┘
-┌─────────────────────────────────────────────────────────────┐
-│                   Infrastructure Layer                     │
-│          Server • Client • Transport • Protocol            │
-└─────────────────────────────────────────────────────────────┘
-┌─────────────────────────────────────────────────────────────┐
-│                     Foundation Layer                       │
-│             Core Types • Messages • State                  │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                   turbomcp (SDK / Ergonomic API)                 │
+│         Re-exports everything. Zero-boilerplate entry point.     │
+└──────────────────────────────────────────────────────────────────┘
+┌────────────────────┐  ┌────────────────────┐  ┌────────────────┐
+│  turbomcp-server   │  │  turbomcp-client   │  │ turbomcp-macros│
+│  Request routing   │  │  Connection mgmt   │  │ #[server] etc. │
+│  Middleware stack  │  │  Auto-retry / cap. │  │ Schema codegen │
+└────────────────────┘  └────────────────────┘  └────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                      turbomcp-protocol                           │
+│  JSON-RPC 2.0 · MCP 2025-11-25 · Session state · Schema valid.  │
+└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                      turbomcp-transport                          │
+│   Aggregator crate — re-exports individual transport crates      │
+│   turbomcp-stdio · -http · -websocket · -tcp · -unix            │
+└──────────────────────────────────────────────────────────────────┘
+┌────────────────────────────┐  ┌───────────────────────────────┐
+│  turbomcp-transport-traits │  │        turbomcp-types         │
+│  Lean trait definitions    │  │  Unified MCP types (std only) │
+│  (foundation layer)        │  │  Single source of truth       │
+└────────────────────────────┘  └───────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                       turbomcp-core                              │
+│       no_std / alloc — core primitives, WASM-compatible          │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-## Core Infrastructure
+## Crate Reference
 
-The foundation consists of focused crates that provide robust, low-level functionality:
+### Foundation Layer
 
-### [`turbomcp-protocol`](./crates/turbomcp-protocol/) - Foundation Layer
+#### [`turbomcp-core`](./crates/turbomcp-core/)
 
-**Purpose:** Protocol implementation, core abstractions, and performance-critical types
+The lowest-level crate. `no_std` compatible (with `alloc`) and WASM-safe. Provides core primitives and types used across the entire workspace. Enabled with `default = ["std"]`; disable std for embedded/WASM builds.
+
+- `no_std` + `alloc` compatible, targeting WASM and WASI
+- Optional `zero-copy` feature backed by `rkyv`
+- Optional `rich-errors` feature adds UUID-tracked errors with timestamps
+
+#### [`turbomcp-types`](./crates/turbomcp-types/)
+
+The single authoritative source of all MCP message types, capability structs, and protocol enumerations. All higher-level crates depend on this rather than duplicating type definitions.
+
+#### [`turbomcp-transport-traits`](./crates/turbomcp-transport-traits/)
+
+Lean crate containing only transport trait definitions and the associated error types. Individual transport crates implement these traits. Nothing here pulls in network dependencies — it is safe to depend on without bloating compile times.
+
+### Transport Layer
+
+#### Individual Transport Crates
+
+Each transport is a self-contained crate. Use the one you need; pay only for what you use.
+
+| Crate | Protocol | Use Case |
+|---|---|---|
+| [`turbomcp-stdio`](./crates/turbomcp-stdio/) | STDIO | Local processes, subprocess servers |
+| [`turbomcp-http`](./crates/turbomcp-http/) | HTTP/SSE | Web clients, Claude.ai, remote agents |
+| [`turbomcp-websocket`](./crates/turbomcp-websocket/) | WebSocket | Real-time bidirectional communication |
+| [`turbomcp-tcp`](./crates/turbomcp-tcp/) | TCP | Network socket communication |
+| [`turbomcp-unix`](./crates/turbomcp-unix/) | Unix domain sockets | Local IPC (Linux/macOS) |
+
+#### [`turbomcp-transport`](./crates/turbomcp-transport/)
+
+Aggregator crate. Re-exports all individual transport crates behind feature flags (`stdio`, `http`, `websocket`, `tcp`, `unix`). Use this when you want multiple transports under a single dependency. Default feature is `stdio`.
+
+### Protocol Layer
+
+#### [`turbomcp-protocol`](./crates/turbomcp-protocol/)
+
+Full MCP 2025-11-25 protocol implementation on top of the foundation layer.
 
 ```
 Responsibilities:
-├── JSON-RPC 2.0 message format
-├── MCP protocol version 2025-06-18
-├── SIMD-accelerated message processing
+├── JSON-RPC 2.0 message framing and dispatch
+├── MCP 2025-11-25 specification
+├── Protocol version negotiation (2025-11-25 / 2025-06-18 / 2025-03-26 / 2024-11-05)
+├── SIMD-accelerated message processing (optional `simd` feature)
 ├── Request/Response context management
-├── Rich error handling with context
 ├── Session state management
-├── Component registry system
 ├── Capability negotiation
-├── JSON Schema validation
-└── Zero-copy optimization utilities
+├── JSON Schema validation (jsonschema)
+└── Zero-copy message optimizations (Bytes)
 ```
 
-**Key Features:**
-- 🚀 **SIMD JSON Processing** - 2-3x faster than `serde_json` with `simd-json`
-- 📦 **Zero-Copy Messages** - Memory-efficient processing with `Bytes`
-- 🧵 **Thread-Safe State** - Concurrent session and request management
-- 🎯 **Rich Error Context** - Structured error handling with `thiserror`
-- 📊 **Observability Hooks** - Built-in metrics and tracing integration
-- 📋 **Complete MCP Support** - Full implementation of MCP 2025-06-18 specification
-- 🔧 **JSON-RPC 2.0** - Compliant request/response/notification handling
-- ✅ **Schema Validation** - Runtime validation with `jsonschema` crate
-- 🤝 **Capability Negotiation** - Automatic feature detection and negotiation
+**Note on v2 → v3:** In v2.0.0, the former `turbomcp-core` crate was merged into `turbomcp-protocol` to eliminate circular dependencies. In v3.0.0, `turbomcp-core` was re-extracted as a dedicated `no_std` foundation layer to support WASM targets, and `turbomcp-types` was introduced as the single authoritative type crate.
 
-**Note:** In v2.0.0, the former `turbomcp-core` crate was merged into `turbomcp-protocol` to eliminate circular dependencies and provide a unified foundation layer.
+### Server and Client
 
+#### [`turbomcp-server`](./crates/turbomcp-server/)
 
-### [`turbomcp-transport`](./crates/turbomcp-transport/) - Transport Layer
-
-**Purpose:** Network communication and connection management
+HTTP server implementation and request processing framework.
 
 ```
 Responsibilities:
-├── Multi-protocol transport support
-├── Connection pooling & management
-├── Security & authentication
-├── Compression & optimization  
-├── Circuit breakers & reliability
-└── TLS/SSL support
-```
-
-**Supported Transports:**
-- 📟 **STDIO** - Standard input/output for local processes
-- 🌐 **HTTP/SSE** - Server-Sent Events for web applications
-- 🔌 **WebSocket** - Real-time bidirectional communication
-- 🖧 **TCP** - Network socket communication
-- 🔗 **Unix Sockets** - Local inter-process communication
-
-**Security Features:**
-- 🔒 **Enterprise Security** - CORS, CSP, security headers, rate limiting
-- 🔑 **Authentication** - JWT validation, API key authentication
-- 🔐 **TLS Support** - Modern TLS with `rustls`
-- 🛡️ **Circuit Breakers** - Fault tolerance and reliability
-
-### [`turbomcp-server`](./crates/turbomcp-server/) - Server Framework
-
-**Purpose:** HTTP server implementation and request processing
-
-```
-Responsibilities:
-├── Handler registry & routing
+├── Handler registry and routing
 ├── Middleware stack processing
-├── OAuth 2.0 authentication
-├── Health checks & metrics
-├── Graceful shutdown handling
-└── Production middleware
+├── OAuth 2.1 authentication integration
+├── Health checks and metrics endpoints
+└── Graceful shutdown and connection draining
 ```
 
-**Key Features:**
-- 🗂️ **Handler Registry** - Type-safe handler registration and discovery
-- 🔀 **Request Routing** - Efficient method dispatch and parameter injection
-- 🔐 **OAuth 2.0 Integration** - Google, GitHub, Microsoft provider support
-- 📊 **Health & Metrics** - Built-in monitoring and observability
-- 🛑 **Graceful Shutdown** - Clean resource cleanup and connection draining
+#### [`turbomcp-client`](./crates/turbomcp-client/)
 
-### [`turbomcp-client`](./crates/turbomcp-client/) - Client Implementation
-
-**Purpose:** MCP client functionality with connection management
+MCP client with full connection lifecycle management.
 
 ```
 Responsibilities:
-├── Connection establishment & management
+├── Connection establishment across all transports
 ├── Request/response correlation
-├── Error recovery & retry logic
-├── Capability negotiation
-├── Session lifecycle management
-└── Transport abstraction
+├── Configurable retry with exponential backoff
+├── Capability negotiation on connect
+└── Session lifecycle management
 ```
 
-**Key Features:**
-- 🔌 **Multi-Transport** - Works with all transport protocols
-- 🔄 **Auto-Retry** - Configurable retry logic with exponential backoff
-- 📞 **Request Correlation** - Automatic ID generation and response matching
-- 🤝 **Capability Negotiation** - Automatic server capability discovery
+### Macro Layer
 
-### [`turbomcp-macros`](./crates/turbomcp-macros/) - Procedural Macros
+#### [`turbomcp-macros`](./crates/turbomcp-macros/)
 
-**Purpose:** Developer ergonomics through compile-time code generation
+Procedural macros for compile-time code generation and zero-boilerplate server development.
 
 ```
-Generated Code:
-├── #[server] - Server trait implementation
-├── #[tool] - Tool handler registration  
-├── #[resource] - Resource handler registration
-├── #[prompt] - Prompt handler registration
-└── Schema generation & validation
+Macros:
+├── #[server]   — Full server trait implementation and transport methods
+├── #[tool]     — Tool handler registration + JSON schema generation
+├── #[resource] — Resource handler registration
+└── #[prompt]   — Prompt handler registration
 ```
 
-**Key Features:**
-- 🎯 **Zero Boilerplate** - Automatic handler registration and trait implementation
-- 📋 **Schema Generation** - Compile-time JSON schema creation from Rust types
-- ✅ **Type Safety** - Compile-time parameter validation and conversion
-- 🔍 **IDE Support** - Full IntelliSense and error reporting
+Schema generation uses `schemars` and happens entirely at compile time — zero runtime overhead.
 
-### [`turbomcp-cli`](./crates/turbomcp-cli/) - Command Line Tools
+### SDK Crate
 
-**Purpose:** Development and debugging utilities
+#### [`turbomcp`](./crates/turbomcp/)
+
+The top-level SDK crate most developers depend on. Re-exports `turbomcp-protocol`, `turbomcp-server`, `turbomcp-client`, `turbomcp-macros`, and `turbomcp-transport` behind a unified `prelude`. This is the intended entry point for application authors.
+
+### CLI
+
+#### [`turbomcp-cli`](./crates/turbomcp-cli/)
+
+Development and debugging utilities.
 
 ```
 Commands:
-├── tools-list - List available server tools
-├── tools-call - Execute tool with arguments
-├── schema-export - Export JSON schemas  
-├── server-test - Test server functionality
-└── debug - Protocol debugging utilities
+├── tools list   — List available server tools
+├── tools call   — Execute a tool with arguments
+├── schema-export — Export JSON schemas
+└── debug        — Protocol-level debugging
 ```
 
-**Key Features:**
-- 🧪 **Server Testing** - Comprehensive server validation and testing
-- 📊 **Schema Export** - JSON schema extraction for documentation
-- 🔧 **Debug Tools** - Protocol-level debugging and inspection
-- 🌐 **Multi-Transport** - Works with all transport protocols
+### Specialized Crates
 
-## TurboMCP Framework
+These crates extend the SDK for specific deployment scenarios:
 
-The main [`turbomcp`](./crates/turbomcp/) crate provides the high-level, ergonomic API that most developers will use:
+| Crate | Purpose |
+|---|---|
+| [`turbomcp-auth`](./crates/turbomcp-auth/) | OAuth 2.1 with PKCE; Google, GitHub, Microsoft providers |
+| [`turbomcp-dpop`](./crates/turbomcp-dpop/) | RFC 9449 DPoP (Demonstration of Proof-of-Possession) |
+| [`turbomcp-telemetry`](./crates/turbomcp-telemetry/) | OpenTelemetry integration (OTLP, Prometheus) |
+| [`turbomcp-grpc`](./crates/turbomcp-grpc/) | gRPC transport via `tonic` |
+| [`turbomcp-wasm`](./crates/turbomcp-wasm/) | WebAssembly bindings for browsers and WASI |
+| [`turbomcp-wasm-macros`](./crates/turbomcp-wasm-macros/) | Proc macros for WASM server targets |
+| [`turbomcp-wire`](./crates/turbomcp-wire/) | Wire format codec abstraction (JSON, MessagePack, CBOR) |
+| [`turbomcp-openapi`](./crates/turbomcp-openapi/) | OpenAPI → MCP tool conversion |
+| [`turbomcp-proxy`](./crates/turbomcp-proxy/) | Universal MCP adapter and code generation |
+| [`turbomcp-transport-streamable`](./crates/turbomcp-transport-streamable/) | Streamable HTTP transport types |
 
-### Design Principles
-
-- **🚀 Zero Boilerplate** - Minimal code required for maximum functionality
-- **⚡ Performance First** - Built on optimized infrastructure layer
-- **🔒 Type Safety** - Compile-time validation prevents runtime errors
-- **🎯 Progressive Complexity** - Simple by default, powerful when needed
-
-### Framework Components
-
-#### 1. Ergonomic Server Definition
-```rust
-use turbomcp::prelude::*;
-
-#[derive(Clone)]
-struct Calculator;
-
-#[server]
-impl Calculator {
-    #[tool("Add two numbers")]
-    async fn add(&self, a: f64, b: f64) -> McpResult<f64> {
-        Ok(a + b)
-    }
-}
-
-// Compiles to full server implementation using turbomcp-server
-```
-
-#### 2. Automatic Schema Generation
-```rust
-#[tool("Process user data")]
-async fn process_user(
-    &self,
-    #[description("User's email address")]
-    email: String,
-    #[description("User's age in years")]
-    age: u8,
-) -> McpResult<UserProfile> {
-    // JSON schema automatically generated and validated
-    Ok(UserProfile { email, age })
-}
-```
-
-#### 3. Context Injection
-```rust
-#[tool("Tool with context")]
-async fn context_tool(&self, ctx: Context, data: String) -> McpResult<String> {
-    // Context provides:
-    // - Request correlation ID
-    // - User authentication info  
-    // - Performance metrics
-    // - Structured logging
-    ctx.info("Processing request").await?;
-    Ok(format!("Processed: {}", data))
-}
-```
-
-#### 4. Transport Integration
-```rust
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let server = Calculator;
-    
-    // All transport methods available
-    server.run_stdio().await?;                // STDIO
-    // server.run_tcp("127.0.0.1:8080").await?;  // TCP
-    // server.run_unix("/tmp/mcp.sock").await?;  // Unix
-    
-    Ok(())
-}
-```
-
-## Data Flow Architecture
+## Data Flow
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Transport as turbomcp-transport
-    participant Protocol as turbomcp-protocol  
-    participant Core as turbomcp-protocol
+    participant Transport as turbomcp-transport<br/>(stdio / http / ws / tcp / unix)
+    participant Protocol as turbomcp-protocol
     participant Server as turbomcp-server
-    participant Handler as TurboMCP Handler
-    
-    Client->>Transport: Request (HTTP/WS/STDIO)
-    Transport->>Protocol: Raw Message
-    Protocol->>Protocol: Parse JSON-RPC
-    Protocol->>Protocol: Validate Schema
-    Protocol->>Core: Create RequestContext
-    Core->>Server: Route to Handler
-    Server->>Server: Lookup in Registry
-    Server->>Handler: Execute #[tool] Function
-    Handler-->>Server: Return Result
-    Server-->>Core: Wrap Response
-    Core-->>Protocol: Serialize Response
-    Protocol-->>Transport: JSON-RPC Response  
-    Transport-->>Client: Send Response
+    participant Handler as #[tool] / #[resource] Handler
+
+    Client->>Transport: Incoming message
+    Transport->>Protocol: Raw bytes / JSON-RPC frame
+    Protocol->>Protocol: Parse JSON-RPC 2.0
+    Protocol->>Protocol: Validate against MCP 2025-11-25 schema
+    Protocol->>Protocol: Create RequestContext
+    Protocol->>Server: Route to handler registry
+    Server->>Server: Middleware stack
+    Server->>Handler: Execute handler function
+    Handler-->>Server: McpResult<T>
+    Server-->>Protocol: Serialize response
+    Protocol-->>Transport: JSON-RPC response frame
+    Transport-->>Client: Send response
 ```
 
 ## Usage Patterns
@@ -274,7 +210,7 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct MyServer;
 
-#[server] 
+#[server]
 impl MyServer {
     #[tool("Example tool")]
     async fn my_tool(&self, input: String) -> McpResult<String> {
@@ -289,82 +225,84 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-### Low-Level Infrastructure API (Advanced)
+### Context Injection
 
 ```rust
-use turbomcp_server::{McpServer, HandlerRegistry};
-use turbomcp_transport::stdio::StdioTransport;
-use turbomcp_protocol::types::ToolInfo;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut server = McpServer::new();
-
-    // Manual handler registration
-    server.register_tool_handler("my_tool", |params| async {
-        // Custom handler implementation
-        Ok(serde_json::json!({"result": "processed"}))
-    }).await?;
-
-    // Manual transport setup
-    server.serve(StdioTransport::new()).await?;
-    Ok(())
+#[tool("Tool with request context")]
+async fn context_tool(&self, ctx: Context, data: String) -> McpResult<String> {
+    // ctx provides: correlation ID, auth info, structured logging, headers
+    Ok(format!("Processed: {}", data))
 }
+```
+
+### Transport Selection
+
+```rust
+// STDIO (default — subprocess / Claude Desktop)
+server.run_stdio().await?;
+
+// TCP
+server.run_tcp("127.0.0.1:8080").await?;
+
+// Unix domain socket
+server.run_unix("/tmp/mcp.sock").await?;
 ```
 
 ## Performance Characteristics
 
-### Benchmarks (vs Standard Libraries)
-
-- **JSON Processing:** 2-3x faster than `serde_json` with SIMD acceleration
-- **Memory Usage:** 40% reduction with zero-copy message handling
-- **Concurrency:** Linear scaling with Tokio async runtime
-- **Transport Overhead:** Sub-millisecond request routing
-
 ### Optimization Features
 
-- 🚀 **SIMD Acceleration** - CPU-optimized JSON processing
-- 📦 **Zero-Copy** - Minimal memory allocations and copies
-- 🔄 **Connection Pooling** - Efficient connection reuse
-- ⚡ **Circuit Breakers** - Prevent cascade failures
-- 📊 **Efficient Routing** - O(1) handler lookup
+- **SIMD Acceleration** — Optional `simd` feature enables `simd-json` and `sonic-rs` for accelerated JSON processing on supported CPUs
+- **Zero-Copy Messages** — `Bytes` type throughout the message pipeline minimizes allocations
+- **Connection Pooling** — Built into HTTP and TCP transports
+- **Circuit Breakers** — Automatic fault tolerance in transport layer
+- **Compile-Time Schemas** — `schemars`-based schema generation runs at compile time; zero runtime cost
+
+### Build Profiles
+
+| Profile | Use Case |
+|---|---|
+| `dev` | Development builds (opt-level 1, line-table debug info) |
+| `release` | Production (fat LTO, single codegen unit, stripped) |
+| `ci` | CI environments (thin LTO, size-optimized) |
+| `wasm-release` | WASM targets (aggressive size optimization with `opt-level = "z"`) |
+| `bench` | Benchmarking (release + debug info) |
 
 ## Crate Selection Guide
 
 | Use Case | Recommended Approach | Crates Needed |
-|----------|---------------------|---------------|
-| **🚀 Quick Prototyping** | Use high-level framework | [`turbomcp`](./crates/turbomcp/) |
-| **🏭 Production Application** | Framework + selective core crates | [`turbomcp`](./crates/turbomcp/) + [`turbomcp-transport`](./crates/turbomcp-transport/) |
-| **🔧 Custom Transport** | Build on infrastructure | [`turbomcp-protocol`](./crates/turbomcp-protocol/) + custom transport |
-| **📚 Library Integration** | Use specific components | [`turbomcp-protocol`](./crates/turbomcp-protocol/) + needed layers |
-| **⚡ Performance Critical** | Direct infrastructure usage | Core crates + manual optimization |
-| **🧪 Testing & Development** | CLI tools | [`turbomcp-cli`](./crates/turbomcp-cli/) |
+|---|---|---|
+| Quick prototyping | High-level framework | `turbomcp` |
+| Production application | Framework + selective transport | `turbomcp` + individual transport crates |
+| Custom transport | Implement transport traits | `turbomcp-transport-traits` + `turbomcp-protocol` |
+| WASM / browser target | Edge-native bindings | `turbomcp-wasm` + `turbomcp-wasm-macros` |
+| Library integration | Specific components only | `turbomcp-protocol` + needed layers |
+| Testing and debugging | CLI tools | `turbomcp-cli` |
 
-## Architecture Benefits
+## Dependency Graph (Simplified)
 
-### 🏗️ **Modularity**
-- **Composable Design** - Mix and match crates as needed
-- **Clear Boundaries** - Well-defined responsibilities per crate
-- **Custom Extensions** - Add custom transports, middleware, handlers
-
-### 👨‍💻 **Developer Experience**  
-- **Progressive Complexity** - Start simple, add complexity when needed
-- **Type Safety** - Compile-time validation prevents runtime errors
-- **Rich Tooling** - CLI tools, schema generation, debugging support
-
-### 🚀 **Performance**
-- **SIMD Optimization** - CPU-level acceleration for JSON processing
-- **Zero-Copy Design** - Minimal memory allocations and copies
-- **Efficient Networking** - Connection pooling and circuit breakers
-
-### 🛡️ **Production Ready**
-- **Enterprise Security** - OAuth 2.0, CORS, rate limiting, TLS
-- **Observability** - Built-in metrics, tracing, health checks
-- **Reliability** - Graceful shutdown, error recovery, fault tolerance
+```
+turbomcp
+  └── turbomcp-macros
+  └── turbomcp-server
+        └── turbomcp-protocol
+              └── turbomcp-types
+              └── turbomcp-core (no_std)
+  └── turbomcp-client
+        └── turbomcp-protocol
+  └── turbomcp-transport
+        └── turbomcp-stdio
+        └── turbomcp-http
+        └── turbomcp-websocket
+        └── turbomcp-tcp
+        └── turbomcp-unix
+              └── turbomcp-transport-traits
+                    └── turbomcp-protocol
+```
 
 ## Related Documentation
 
-- **[Main README](./README.md)** - Getting started and overview
-- **[Security Guide](./crates/turbomcp-transport/SECURITY_FEATURES.md)** - Enterprise security features
-- **[API Documentation](https://docs.rs/turbomcp)** - Complete API reference
-- **[Migration Guide](./MIGRATION.md)** - v1.x to v2.0 migration guide
+- **[Main README](./README.md)** — Getting started and overview
+- **[Security Guide](./crates/turbomcp-transport/SECURITY_FEATURES.md)** — Enterprise security features
+- **[API Documentation](https://docs.rs/turbomcp)** — Complete API reference
+- **[Migration Guide](./MIGRATION.md)** — v1, v2, and v3 migration guide
