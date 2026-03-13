@@ -217,6 +217,7 @@ impl Pkcs11HsmManager {
 
     /// Parse EC public key from SubjectPublicKeyInfo structure  
     /// Used by some PKCS#11 implementations that return full DER structures
+    #[allow(clippy::result_large_err)] // ParseError comes from the asn1 crate; mapped away immediately
     fn parse_ec_subject_public_key_info(&self, der_bytes: &[u8]) -> Result<Vec<u8>> {
         asn1::parse(der_bytes, |parser| {
             parser
