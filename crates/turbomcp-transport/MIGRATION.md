@@ -1,277 +1,163 @@
-> **Note:** This is the v1.x to v2.0.0 migration guide. For v2.x to v3.x migration, see the [top-level MIGRATION.md](../../MIGRATION.md).
+> For workspace-level migration (protocol, server, macros, etc.), see the [top-level MIGRATION.md](../../MIGRATION.md).
 
-# TurboMCP Transport 2.0.0 Migration Guide
+# turbomcp-transport Migration Guide
 
-This guide helps you migrate from turbomcp-transport 1.x to 2.0.0.
+This guide covers breaking changes and migration steps for the `turbomcp-transport` crate.
 
-## 📋 Table of Contents
+---
 
-- [Overview](#overview)
-- [Breaking Changes](#breaking-changes)
-- [New Features](#new-features)
-- [Migration Steps](#migration-steps)
+## v2.x to v3.0
 
-## 🚀 Overview
+v3.0 is the only version of this crate with significant breaking changes. The primary change is architectural: transport implementations were extracted from the monolithic `turbomcp-transport` crate into individual crates (`turbomcp-stdio`, `turbomcp-http`, `turbomcp-websocket`, `turbomcp-tcp`, `turbomcp-unix`). The `turbomcp-transport` crate is now an aggregator that re-exports from these modular crates.
 
-**TurboMCP Transport 2.0.0** has minimal breaking changes and focuses on enhancements.
+### Modular transport crates
 
-### Key Changes
-- **Zero Breaking API Changes** - Public API unchanged
-- **Enhanced Resilience** - Circuit breaker metrics and better timeout handling
-- **Performance Improvements** - Optimized message processing
-- **Better Error Messages** - More detailed error context
+Each transport is now a standalone crate:
 
-### Migration Timeline
-- **Minimal Impact** - Most users won't need any changes
-- **Backward Compatible** - v1.x code works without modification
-- **Optional Enhancements** - New features available when needed
+| Transport | Crate |
+|-----------|-------|
+| STDIO | `turbomcp-stdio` |
+| HTTP/SSE | `turbomcp-http` |
+| WebSocket | `turbomcp-websocket` |
+| TCP | `turbomcp-tcp` |
+| Unix sockets | `turbomcp-unix` |
 
-## 💥 Breaking Changes
+If you depend only on `turbomcp-transport`, the re-exports preserve your existing import paths and no changes are required for most users. If you depended directly on transport implementation types from `turbomcp-transport::stdio`, `turbomcp-transport::http`, etc., those modules now re-export from the underlying crates. Existing paths remain valid.
 
-### None! 🎉
-
-**TurboMCP Transport 2.0.0 has ZERO breaking changes.**
-
-All existing transport usage from v1.x continues to work without modification:
-- STDIO transport - Works identically
-- HTTP/SSE transport - Works identically
-- WebSocket transport - Works identically
-- TCP transport - Works identically
-- Unix domain socket transport - Works identically
-
-## ✨ New Features
-
-### 1. Enhanced Circuit Breaker
-
-**NEW:** Circuit breaker now exposes metrics:
-
-```rust
-use turbomcp_transport::resilience::CircuitBreaker;
-
-let breaker = CircuitBreaker::new(config);
-
-// NEW: Access metrics
-let metrics = breaker.metrics();
-println!("Failures: {}", metrics.failure_count);
-println!("State: {:?}", metrics.state);
-println!("Last failure: {:?}", metrics.last_failure_time);
-```
-
-**Benefits:**
-- Better observability
-- Easier debugging
-- Production monitoring
-
-### 2. Improved Timeout Handling
-
-**ENHANCED:** Better timeout configuration and error messages:
-
-```rust
-use turbomcp_transport::stdio::StdioTransport;
-use std::time::Duration;
-
-let transport = StdioTransport::new(command)
-    .with_timeout(Duration::from_secs(30))  // More granular control
-    .with_read_timeout(Duration::from_secs(5))  // Separate read timeout
-    .with_write_timeout(Duration::from_secs(5)); // Separate write timeout
-```
-
-**Benefits:**
-- Fine-grained timeout control
-- Better error messages
-- Reduced timeout-related issues
-
-### 3. Enhanced Error Context
-
-**IMPROVED:** Error messages now include more context:
-
-```rust
-// v1.x error
-// "Connection failed"
-
-// v2.0.0 error
-// "Connection failed to tcp://localhost:8080: Connection refused (errno 61)"
-```
-
-**Benefits:**
-- Faster debugging
-- Better error tracking
-- Clearer production logs
-
-### 4. Performance Optimizations
-
-- **Zero-copy message processing** for supported transports
-- **Reduced allocations** in hot paths
-- **Better buffering** for network transports
-- **Optimized serialization** with SIMD support
-
-## 🔧 Migration Steps
-
-### Step 1: Update Dependencies
+If you want a minimal build without the aggregator, you can depend directly on the individual crates:
 
 ```toml
-# Before (v1.x)
+# Minimal: only STDIO
 [dependencies]
-turbomcp-transport = "1.1.2"
+turbomcp-stdio = "3.0"
 
-# After (v2.0.0)
+# Only HTTP
 [dependencies]
-turbomcp-transport = "2.0.0"
+turbomcp-http = "3.0"
 ```
 
-### Step 2: Build and Test
+### Feature flag changes
 
-```bash
-# Clean build
-cargo clean
-cargo build --all-features
+Feature names are unchanged. The default feature remains `stdio`.
 
-# Run tests
-cargo test
+```toml
+# v2.x and v3.0 - feature names identical
+turbomcp-transport = { version = "3.0", features = ["http", "websocket", "tcp"] }
 ```
 
-### Step 3: Optional - Adopt New Features
+Each feature now activates the corresponding modular crate as an optional dependency in addition to pulling in required framework crates (axum, tower, tokio-tungstenite, etc.):
 
-#### Use Circuit Breaker Metrics
+| Feature | Activates |
+|---------|-----------|
+| `stdio` | `dep:turbomcp-stdio` |
+| `http` | `dep:turbomcp-http`, `axum`, `tower`, `tower-http`, `async-stream` |
+| `websocket` | `dep:turbomcp-websocket`, `tokio-tungstenite`, `http`, `futures-util` |
+| `tcp` | `dep:turbomcp-tcp`, `tokio/net` |
+| `unix` | `dep:turbomcp-unix`, `tokio/net` |
+
+### Timeout configuration
+
+In v3.0, timeouts are configured via `TransportConfigBuilder` with a `TimeoutConfig` struct. Setting timeouts directly on individual transport types (e.g., `.with_timeout()` on `StdioTransport`) is not supported.
 
 ```rust
-use turbomcp_transport::resilience::CircuitBreaker;
+use turbomcp_transport::config::{TransportConfigBuilder, TimeoutConfig, TransportType};
 
-let breaker = CircuitBreaker::new(config);
+// Use a preset
+let config = TransportConfigBuilder::new(TransportType::Http)
+    .timeouts(TimeoutConfig::fast())
+    .build()?;
 
-// Monitor circuit breaker state
-if let Some(metrics) = breaker.metrics() {
-    if metrics.failure_count > 10 {
-        log::warn!("High failure rate detected");
-    }
+// Or configure manually
+let timeouts = TimeoutConfig {
+    connect: Duration::from_secs(10),
+    request: Some(Duration::from_secs(30)),
+    read: Some(Duration::from_secs(15)),
+    total: Some(Duration::from_secs(60)),
+};
+let config = TransportConfigBuilder::new(TransportType::Http)
+    .timeouts(timeouts)
+    .build()?;
+```
+
+`TimeoutConfig` presets:
+
+| Preset | connect | request | read | total |
+|--------|---------|---------|------|-------|
+| `default()` | 30s | 60s | 30s | 120s |
+| `fast()` | 5s | 10s | 5s | 15s |
+| `patient()` | 60s | 300s | 120s | 600s |
+| `unlimited()` | 30s | None | None | None |
+
+### Circuit breaker API
+
+The circuit breaker statistics method is `statistics()`, returning `CircuitBreakerStats`. There is no `metrics()` method.
+
+```rust
+use turbomcp_transport::resilience::{CircuitBreaker, CircuitBreakerConfig};
+
+let mut breaker = CircuitBreaker::new(CircuitBreakerConfig::default());
+
+// Record results
+breaker.record_result(true, Duration::from_millis(50));
+
+// Read statistics
+let stats = breaker.statistics();
+println!("State: {:?}", stats.state);
+println!("Failure count: {}", stats.failure_count);
+println!("Failure rate: {:.2}", stats.failure_rate);
+println!("Avg duration: {:?}", stats.avg_operation_duration);
+```
+
+The returned `CircuitBreakerStats` struct contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `state` | `CircuitState` | Current state (Closed, Open, HalfOpen) |
+| `failure_count` | `u32` | Failures in current window |
+| `success_count` | `u32` | Successes in half-open state |
+| `failure_rate` | `f64` | Rate from 0.0 to 1.0 |
+| `avg_operation_duration` | `Duration` | Rolling window average |
+| `time_in_current_state` | `Duration` | Time since last state change |
+
+### Runtime transport feature detection
+
+v3.0 adds `Features` for runtime detection of compiled-in transports:
+
+```rust
+use turbomcp_transport::Features;
+
+if Features::has_websocket() {
+    // websocket feature was compiled in
 }
+
+let available = Features::available_transports();
 ```
 
-#### Configure Granular Timeouts
+---
 
-```rust
-use turbomcp_transport::http::HttpTransport;
-use std::time::Duration;
+## v1.x to v2.0
 
-let transport = HttpTransport::new(url)
-    .with_connect_timeout(Duration::from_secs(5))
-    .with_request_timeout(Duration::from_secs(30))
-    .with_read_timeout(Duration::from_secs(10));
-```
-
-## 🎯 Common Migration Patterns
-
-### Pattern 1: STDIO Transport (No Changes)
-
-```rust
-// v1.x and v2.0.0 - IDENTICAL
-use turbomcp_transport::stdio::StdioTransport;
-
-let transport = StdioTransport::new("./my-server")?;
-```
-
-### Pattern 2: HTTP Transport (No Changes)
-
-```rust
-// v1.x and v2.0.0 - IDENTICAL
-use turbomcp_transport::http::HttpTransport;
-
-let transport = HttpTransport::new("http://localhost:3000/mcp")?;
-```
-
-### Pattern 3: WebSocket Transport (No Changes)
-
-```rust
-// v1.x and v2.0.0 - IDENTICAL
-use turbomcp_transport::websocket::WebSocketTransport;
-
-let transport = WebSocketTransport::new("ws://localhost:8080")?;
-```
-
-### Pattern 4: TCP Transport with New Timeouts
-
-```rust
-// v1.x - Basic config
-let transport = TcpTransport::new("localhost:8080")?;
-
-// v2.0.0 - Enhanced config (optional)
-let transport = TcpTransport::new("localhost:8080")?
-    .with_connect_timeout(Duration::from_secs(5))
-    .with_read_timeout(Duration::from_secs(10));
-```
-
-## 🐛 Troubleshooting
-
-### Issue: Build errors after upgrade
-
-**Solution:** Clean and rebuild:
-
-```bash
-cargo clean
-cargo build
-```
-
-### Issue: Feature flags not recognized
-
-**Solution:** Check feature names are correct:
+v2.0 had no breaking changes to the public API. All v1.x transport code compiles and behaves identically under v2.0. The only required change is the version number in `Cargo.toml`:
 
 ```toml
-# Correct
-turbomcp-transport = { version = "2.0.0", features = ["http", "websocket"] }
+# Before
+turbomcp-transport = "1"
 
-# Feature names unchanged from v1.x
+# After
+turbomcp-transport = "2"
 ```
 
-### Issue: Transport not working as expected
+v2.0 additions (all opt-in, no migration required):
 
-**Solution:** Check logs for enhanced error messages:
+- Circuit breaker statistics via `CircuitBreaker::statistics()`
+- `TransportConfigBuilder` with `TimeoutConfig` and `LimitsConfig`
+- Enhanced error context in `TransportError` variants
 
-```rust
-// Enable detailed logging
-env_logger::init();
+---
 
-// Errors now include more context
-```
+## Additional resources
 
-## 📊 Feature Comparison
-
-| Feature | v1.x | v2.0.0 |
-|---------|------|--------|
-| STDIO transport | ✅ | ✅ |
-| HTTP/SSE transport | ✅ | ✅ Enhanced |
-| WebSocket transport | ✅ | ✅ Enhanced |
-| TCP transport | ✅ | ✅ Enhanced |
-| Unix socket transport | ✅ | ✅ Enhanced |
-| Circuit breaker | ✅ | ✅ + Metrics |
-| Timeouts | Basic | ✅ Granular |
-| Error messages | Basic | ✅ Enhanced |
-| Performance | Fast | ✅ Faster |
-
-## 📚 Additional Resources
-
-- **Main Migration Guide**: See `../../MIGRATION.md` for workspace-level changes
-- **API Documentation**: https://docs.rs/turbomcp-transport
-- **Examples**: See `../../examples/` for transport usage
-- **Transport Guide**: See README.md for comprehensive documentation
-
-## 🎉 Benefits of 2.0.0
-
-- ✅ **Backward Compatible** - All v1.x code works unchanged
-- ✅ **Better Observability** - Circuit breaker metrics and enhanced errors
-- ✅ **Performance** - Optimized message processing
-- ✅ **Flexibility** - Granular timeout configuration
-- ✅ **Production Ready** - Enhanced resilience features
-
-## 🤝 Getting Help
-
-- **Issues**: https://github.com/Epistates/turbomcp/issues
-- **Discussions**: https://github.com/Epistates/turbomcp/discussions
-- **Documentation**: https://docs.rs/turbomcp-transport
-
-## 📝 Version Compatibility
-
-| turbomcp-transport | Status | Migration |
-|--------------------|--------|-----------|
-| 2.0.0                | ✅ Current | Zero changes needed |
-| 1.1.x              | 🟡 Maintenance | Upgrade for new features |
-| 1.0.x              | ⚠️ EOL | Upgrade recommended |
+- [Top-level MIGRATION.md](../../MIGRATION.md) - Workspace-wide migration guide
+- [API documentation](https://docs.rs/turbomcp-transport)
+- [Transport README](README.md)
+- [GitHub issues](https://github.com/Epistates/turbomcp/issues)

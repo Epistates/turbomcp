@@ -1,401 +1,178 @@
-> **Note:** This is the v1.x to v2.0.0 migration guide. For v2.x to v3.x migration, see the [top-level MIGRATION.md](../../MIGRATION.md).
+# turbomcp-server Migration Guide
 
-# TurboMCP Server 2.0.0 Migration Guide
+This guide covers breaking changes specific to the `turbomcp-server` crate. For workspace-wide migration context, see the [top-level MIGRATION.md](../../MIGRATION.md).
 
-This guide helps you migrate from turbomcp-server 1.x to 2.0.0.
+---
 
-## 📋 Table of Contents
+## v2.x to v3.0
 
-- [Overview](#overview)
-- [Breaking Changes](#breaking-changes)
-- [New Features](#new-features)
-- [Migration Steps](#migration-steps)
+### Unified error types
 
-## 🚀 Overview
-
-**TurboMCP Server 2.0.0** has one major breaking change (RBAC removal) but is otherwise backward compatible.
-
-### Key Changes
-- **RBAC Removed** - Authorization moved to application layer (breaking)
-- **Enhanced Middleware** - Better middleware composition
-- **Improved Context** - Enhanced context management
-- **Better Errors** - More detailed error messages
-
-### Migration Timeline
-- **Major Impact**: If using RBAC feature (see migration below)
-- **Minor Impact**: All other users (minimal changes)
-- **Full Compatibility**: Core server functionality unchanged
-
-## 💥 Breaking Changes
-
-### 1. RBAC Feature Removed
-
-**What Changed:**
-```toml
-# v1.x - RBAC included
-[dependencies]
-turbomcp-server = { version = "1.x", features = ["rbac"] }
-
-# v2.0.0 - RBAC removed
-[dependencies]
-turbomcp-server = { version = "2.0.0" }
-# Feature "rbac" no longer exists
-```
-
-**Why:**
-- Authorization is an application-layer concern, not protocol-layer
-- Eliminates `casbin` dependency and `instant` unmaintained warning
-- Reduces attack surface and improves security
-- Follows industry best practices (separation of concerns)
-
-**Migration Path:**
+In v2.x, the server crate exposed its own error and result types. In v3.x, error handling is unified under a single canonical type defined in `turbomcp-core` and re-exported by every crate.
 
 ```rust
-// Before (v1.x) - RBAC middleware
-use turbomcp_server::middleware::rbac::RbacMiddleware;
+// Before (v2.x)
+use turbomcp_server::{ServerError, ServerResult};
 
-let rbac = RbacMiddleware::new(policy_path)?;
-builder.with_middleware(rbac);
+fn my_handler() -> ServerResult<Value> {
+    Err(ServerError::Internal("failed".to_string()))
+}
 
-// After (v2.0.0) - Implement in your application
+// After (v3.x)
+use turbomcp_server::prelude::*; // re-exports McpError and McpResult
 
-// Option 1: Use JWT claims for authorization
-use turbomcp_server::middleware::auth::AuthMiddleware;
-
-let auth = AuthMiddleware::new(|claims: &Claims| {
-    // Your authorization logic here
-    claims.role == "admin" || claims.permissions.contains("tool:execute")
-});
-builder.with_middleware(auth);
-
-// Option 2: Use external policy engine (Oso, Casbin, etc.)
-use oso::Oso;
-
-let oso = Oso::new()?;
-oso.load_files(vec!["policy.polar"])?;
-
-let auth = AuthMiddleware::new(move |claims: &Claims, resource: &str| {
-    oso.is_allowed(claims.user, resource, "execute")
-});
-builder.with_middleware(auth);
-
-// Option 3: Custom authorization logic
-let auth = AuthMiddleware::new(|claims: &Claims| {
-    // Database lookup
-    let user_perms = db.get_user_permissions(&claims.user_id)?;
-    user_perms.can_execute_tools()
-});
-builder.with_middleware(auth);
-```
-
-**Complete Examples**: See `../../RBAC-REMOVAL-SUMMARY.md` for detailed patterns.
-
-### 2. authz Middleware Removed
-
-Similar to RBAC, the generic `authz` middleware was removed. Use `AuthMiddleware` with custom logic instead.
-
-## ✨ New Features
-
-### 1. Enhanced Middleware System
-
-**IMPROVED:** Better middleware composition and ordering:
-
-```rust
-use turbomcp_server::ServerBuilder;
-use turbomcp_server::middleware::{auth::*, rate_limit::*, cors::*};
-
-let server = ServerBuilder::new()
-    .with_middleware(CorsMiddleware::permissive())  // First
-    .with_middleware(AuthMiddleware::new(auth_fn))  // Second
-    .with_middleware(RateLimitMiddleware::new(config))  // Third
-    .build()?;
-```
-
-**Benefits:**
-- Clear middleware ordering
-- Better error propagation
-- Enhanced observability
-
-### 2. Improved Context Management
-
-**ENHANCED:** Better context injection and lifecycle:
-
-```rust
-use turbomcp_server::context::RequestContext;
-
-#[tool("Process data")]
-async fn process(ctx: RequestContext, data: String) -> McpResult<String> {
-    // Enhanced context with better methods
-    ctx.info("Processing started").await?;
-    ctx.track_metric("process_calls", 1).await?;
-
-    Ok(processed)
+fn my_handler() -> McpResult<Value> {
+    Err(McpError::internal("failed"))
 }
 ```
 
-**Benefits:**
-- Better async handling
-- Enhanced tracking capabilities
-- Improved error context
+`McpError` and `McpResult<T>` are also available via `turbomcp::prelude::*` or directly from `turbomcp_core::error`.
 
-### 3. Graceful Shutdown
+### ProtocolConfig replaces ProtocolVersionConfig
 
-**NEW:** Built-in graceful shutdown support:
+`ProtocolVersionConfig` does not exist in v3.x. Protocol negotiation is configured through `ProtocolConfig` on `ServerConfig`.
 
 ```rust
-use turbomcp_server::ServerBuilder;
-use tokio::signal;
+// After (v3.x)
+use turbomcp_server::{ProtocolConfig, ServerConfig};
 
-let server = ServerBuilder::new()
-    .with_graceful_shutdown(async {
-        signal::ctrl_c().await.ok();
+// Default: accept all supported versions, fallback enabled
+let config = ServerConfig::new();
+
+// Strict mode: only accept a single version, reject others
+let config = ServerConfig::builder()
+    .protocol(ProtocolConfig::strict("2025-11-25"))
+    .build();
+
+// Custom: specific preferred version with fallback
+let config = ServerConfig::builder()
+    .protocol(ProtocolConfig {
+        preferred_version: "2025-06-18".to_string(),
+        supported_versions: vec![
+            "2025-11-25".to_string(),
+            "2025-06-18".to_string(),
+        ],
+        allow_fallback: true,
     })
-    .build()?;
-
-// Server will complete in-flight requests before shutting down
+    .build();
 ```
 
-**Benefits:**
-- No lost requests
-- Clean resource cleanup
-- Better production behavior
+`ProtocolConfig` fields:
 
-### 4. Enhanced Health Checks
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `preferred_version` | `String` | `"2025-11-25"` | Version offered when client's is unsupported |
+| `supported_versions` | `Vec<String>` | All four versions | Versions this server accepts |
+| `allow_fallback` | `bool` | `true` | Offer preferred version when client's is unsupported |
 
-**IMPROVED:** Built-in health check support:
+### New channel transport feature
 
-```rust
-use turbomcp_server::ServerBuilder;
-
-let server = ServerBuilder::new()
-    .with_health_check(|server_state| async {
-        // Custom health check logic
-        Ok(server_state.is_healthy())
-    })
-    .build()?;
-```
-
-## 🔧 Migration Steps
-
-### Step 1: Update Dependencies
+v3.x adds an in-process channel transport for zero-overhead communication between components in the same process. Enable with the `channel` feature flag:
 
 ```toml
-# Before (v1.x)
-[dependencies]
-turbomcp-server = { version = "1.1.2", features = ["rbac"] }
-
-# After (v2.0.0)
-[dependencies]
-turbomcp-server = "2.0.0"
-# Note: "rbac" feature removed
+turbomcp-server = { version = "3.0.2", features = ["channel"] }
 ```
 
-### Step 2: Migrate RBAC Usage
+### ServerConfig now has try_build for validation
 
-If you were using RBAC:
+`ServerConfigBuilder` gains `try_build()` alongside `build()`. Use `try_build()` when you want configuration errors surfaced at startup rather than at runtime:
 
 ```rust
-// v1.x - RBAC middleware
-use turbomcp_server::middleware::rbac::RbacMiddleware;
-use turbomcp_server::middleware::authz::AuthzMiddleware;
+use turbomcp_server::{ServerConfig, ConfigValidationError};
 
-builder
-    .with_middleware(RbacMiddleware::new(policy)?)
-    .with_middleware(AuthzMiddleware::new(rules)?);
-
-// v2.0.0 - Application-layer authorization
-use turbomcp_server::middleware::auth::AuthMiddleware;
-
-builder.with_middleware(AuthMiddleware::new(|claims| {
-    // Implement your authorization logic
-    check_permissions(claims)
-}));
+let config = ServerConfig::builder()
+    .max_message_size(1024 * 1024)
+    .try_build()
+    .expect("invalid server configuration");
 ```
 
-See `../../RBAC-REMOVAL-SUMMARY.md` for complete migration patterns.
+`try_build()` rejects: `max_message_size` below 1024 bytes, `max_requests` of 0, zero-duration rate limit window, and connection limits where all four transport limits are 0.
 
-### Step 3: Update Middleware Stack
+### Feature flag defaults unchanged
 
-```rust
-// v1.x - Old middleware imports
-use turbomcp_server::middleware::{auth::*, rate_limit::*, rbac::*};
-
-// v2.0.0 - No RBAC
-use turbomcp_server::middleware::{auth::*, rate_limit::*};
-
-// Authorization in AuthMiddleware instead
-```
-
-### Step 4: Build and Test
-
-```bash
-# Clean build
-cargo clean
-cargo build --all-features
-
-# Run tests
-cargo test
-```
-
-## 🎯 Common Migration Patterns
-
-### Pattern 1: Basic Server (No RBAC - No Changes)
-
-```rust
-// v1.x and v2.0.0 - IDENTICAL
-use turbomcp_server::ServerBuilder;
-
-#[server]
-impl MyServer {
-    #[tool("Process")]
-    async fn process(&self, input: String) -> McpResult<String> {
-        Ok(input)
-    }
-}
-```
-
-**No changes needed if you weren't using RBAC!**
-
-### Pattern 2: Server with RBAC → Auth
-
-```rust
-// v1.x - RBAC
-use turbomcp_server::middleware::rbac::RbacMiddleware;
-
-let server = ServerBuilder::new()
-    .with_middleware(RbacMiddleware::new("policy.csv")?)
-    .build()?;
-
-// v2.0.0 - Custom authorization
-use turbomcp_server::middleware::auth::AuthMiddleware;
-
-let server = ServerBuilder::new()
-    .with_middleware(AuthMiddleware::new(|claims: &Claims| {
-        // Implement RBAC logic here
-        let role = claims.get("role")?;
-        matches!(role, "admin" | "editor")
-    }))
-    .build()?;
-```
-
-### Pattern 3: Multiple Middleware
-
-```rust
-// v1.x
-use turbomcp_server::middleware::{auth::*, rate_limit::*, rbac::*};
-
-builder
-    .with_middleware(AuthMiddleware::new(config))
-    .with_middleware(RbacMiddleware::new(policy)?)
-    .with_middleware(RateLimitMiddleware::new(rate_config));
-
-// v2.0.0 - RBAC logic in AuthMiddleware
-use turbomcp_server::middleware::{auth::*, rate_limit::*};
-
-builder
-    .with_middleware(AuthMiddleware::new_with_authz(
-        auth_config,
-        |claims, resource| {
-            // Authorization logic (was in RBAC)
-            check_permissions(claims, resource)
-        }
-    ))
-    .with_middleware(RateLimitMiddleware::new(rate_config));
-```
-
-### Pattern 4: Graceful Shutdown (NEW)
-
-```rust
-// v2.0.0 - NEW feature
-use turbomcp_server::ServerBuilder;
-use tokio::signal;
-
-let server = ServerBuilder::new()
-    .with_graceful_shutdown(async {
-        signal::ctrl_c().await.ok();
-    })
-    .build()?;
-
-server.run().await?;
-```
-
-## 🐛 Troubleshooting
-
-### Issue: "feature 'rbac' not found"
-
-**Solution:** RBAC removed, implement in application:
+The default feature is `stdio`. This has not changed between v2.x and v3.x. If you were explicitly opting into transport features, your `Cargo.toml` entries continue to work:
 
 ```toml
-# Remove rbac feature
-[dependencies]
-turbomcp-server = "2.0.0"  # Not features = ["rbac"]
+# These all work the same as before
+turbomcp-server = { version = "3.0.2", features = ["http"] }
+turbomcp-server = { version = "3.0.2", features = ["stdio", "http", "websocket", "tcp"] }
+turbomcp-server = { version = "3.0.2", features = ["full"] }
 ```
 
-See `RBAC-REMOVAL-SUMMARY.md` for migration guide.
+---
 
-### Issue: "module 'rbac' not found"
+## v1.x to v2.0
 
-**Solution:** Use AuthMiddleware with custom logic:
+### Import paths: turbomcp-core merged into turbomcp-protocol
+
+The `turbomcp-core` crate was absorbed into `turbomcp-protocol` in v2.0. Any imports that referenced `turbomcp_core` directly need to move to `turbomcp_protocol` or use the re-exports from `turbomcp_server`.
 
 ```rust
-// Instead of:
-use turbomcp_server::middleware::rbac::RbacMiddleware;
+// Before (v1.x) - if depending on turbomcp-core directly
+use turbomcp_core::types::Tool;
 
-// Use:
-use turbomcp_server::middleware::auth::AuthMiddleware;
-
-// Implement authorization in AuthMiddleware
+// After (v2.x+)
+use turbomcp_protocol::types::Tool;
+// or, preferred:
+use turbomcp_server::prelude::*;
 ```
 
-### Issue: Build errors after removing RBAC
+Note: in v3.x, `turbomcp-core` was reintroduced as a `no_std` foundation layer, so `turbomcp_core` import paths are valid again. The `turbomcp_server::prelude` re-exports from whichever internal crate is canonical, so using `prelude::*` remains the most stable choice across versions.
 
-**Solution:** Clean and rebuild:
+### Authentication extracted to turbomcp-auth
 
-```bash
-cargo clean
-rm Cargo.lock
-cargo build
+OAuth and JWT support moved from `turbomcp-server` into the standalone `turbomcp-auth` crate. If you were importing auth types from `turbomcp_server::auth`, add the `turbomcp-auth` dependency and update the import paths.
+
+```toml
+# Before (v1.x) - auth was bundled in turbomcp-server
+[dependencies]
+turbomcp-server = "1.x"
+
+# After (v2.x) - auth is a separate optional crate
+[dependencies]
+turbomcp-server = "2.0"
+turbomcp-auth = "2.0"  # add if you use OAuth/JWT features
 ```
 
-## 📊 Feature Comparison
+### with_middleware is on MiddlewareStack, not ServerBuilder
 
-| Feature | v1.x | v2.0.0 |
-|---------|------|--------|
-| Core server | ✅ | ✅ |
-| Tools/Resources | ✅ | ✅ |
-| Middleware | ✅ | ✅ Enhanced |
-| Rate limiting | ✅ | ✅ |
-| CORS | ✅ | ✅ |
-| Auth | ✅ | ✅ Enhanced |
-| RBAC | ✅ | ❌ Removed |
-| Graceful shutdown | ❌ | ✅ NEW |
-| Health checks | Basic | ✅ Enhanced |
+`ServerBuilder` does not have a `with_middleware` method. Middleware is composed through `MiddlewareStack`:
 
-## 📚 Additional Resources
+```rust
+use turbomcp_server::{MiddlewareStack, McpServerExt};
 
-- **RBAC Migration**: See `../../RBAC-REMOVAL-SUMMARY.md`
-- **Main Migration Guide**: See `../../MIGRATION.md`
-- **API Documentation**: https://docs.rs/turbomcp-server
-- **Examples**: See `../../examples/` for server patterns
+// Compose middleware, then wrap the handler
+let stack = MiddlewareStack::new(my_middleware).handler(MyServer);
 
-## 🎉 Benefits of 2.0.0
+stack.builder()
+    .transport(Transport::http("0.0.0.0:8080"))
+    .serve()
+    .await?;
+```
 
-- ✅ **Cleaner Architecture** - Authorization in application layer
-- ✅ **Better Security** - Removed unmaintained dependencies
-- ✅ **Enhanced Middleware** - Better composition and ordering
-- ✅ **Graceful Shutdown** - Production-ready lifecycle
-- ✅ **Flexible Authorization** - Implement your own logic
+### ServerBuilder API reference (v3.0.2)
 
-## 🤝 Getting Help
+The following methods are available on `ServerBuilder<H>`:
 
-- **Issues**: https://github.com/Epistates/turbomcp/issues
-- **Discussions**: https://github.com/Epistates/turbomcp/discussions
-- **Documentation**: https://docs.rs/turbomcp-server
+| Method | Description |
+|---|---|
+| `.transport(Transport)` | Set the transport (default: `Transport::Stdio`) |
+| `.with_rate_limit(u32, Duration)` | Enable token-bucket rate limiting |
+| `.with_connection_limit(usize)` | Cap concurrent connections across all transports |
+| `.with_graceful_shutdown(Duration)` | Wait up to this duration for in-flight requests on shutdown |
+| `.with_max_message_size(usize)` | Reject messages larger than this (default: 10 MB) |
+| `.with_config(ServerConfig)` | Apply a fully constructed `ServerConfig` |
+| `.serve()` | Start the server (async, blocks until shutdown) |
+| `.into_axum_router()` | Return an `axum::Router` for BYO server integration (requires `http` feature) |
+| `.into_service()` | Return a Tower service (requires `http` feature) |
+| `.into_handler()` | Consume the builder and return the underlying handler |
 
-## 📝 Version Compatibility
+Available transports via `Transport`:
 
-| turbomcp-server | Status | Migration |
-|-----------------|--------|-----------|
-| 2.0.0             | ✅ Current | RBAC removed, see guide |
-| 1.1.x           | 🟡 Maintenance | Upgrade for security |
-| 1.0.x           | ⚠️ EOL | Upgrade recommended |
+| Constructor | Feature flag | Notes |
+|---|---|---|
+| `Transport::stdio()` | `stdio` | Default; used by Claude Desktop |
+| `Transport::http(addr)` | `http` | JSON-RPC over HTTP POST |
+| `Transport::websocket(addr)` | `websocket` | Bidirectional; implies `http` |
+| `Transport::tcp(addr)` | `tcp` | Line-framed JSON-RPC over TCP |
+| `Transport::unix(path)` | `unix` | Unix domain sockets |

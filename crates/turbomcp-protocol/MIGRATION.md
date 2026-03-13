@@ -1,476 +1,186 @@
-> **Note:** This is the v1.x to v2.0.0 migration guide. For v2.x to v3.x migration, see the [top-level MIGRATION.md](../../MIGRATION.md).
+# turbomcp-protocol Migration Guide
 
-# TurboMCP Protocol 2.0.0 Migration Guide
+This document covers breaking changes and migration steps specific to the `turbomcp-protocol` crate. For workspace-wide migration guidance covering transport, server, client, and macros, see the top-level [MIGRATION.md](../../MIGRATION.md).
 
-This guide helps you migrate from turbomcp-protocol 1.x to 2.0.0.
+---
 
-## 📋 Table of Contents
+## v2.x to v3.0
 
-- [Overview](#overview)
-- [Breaking Changes](#breaking-changes)
-- [New Features](#new-features)
-- [Migration Steps](#migration-steps)
-- [Troubleshooting](#troubleshooting)
+### turbomcp-core re-extracted as a no_std foundation
 
-## 🚀 Overview
+In v3.0, `turbomcp-core` was re-introduced as a separate crate that `turbomcp-protocol` depends on. It provides a `no_std`-compatible foundation with:
 
-**TurboMCP Protocol 2.0.0** represents a major architectural consolidation:
+- Unified error types: `McpError`, `McpResult`, `ErrorKind`, `ErrorContext`
+- Protocol constants: `PROTOCOL_VERSION`, `SUPPORTED_VERSIONS`, `MAX_MESSAGE_SIZE`, `DEFAULT_TIMEOUT_MS`
+- Constant namespaces: `methods`, `error_codes`, `features`
+- Handler response types: `IntoToolResponse`, `IntoToolError`, `Text`, `Json`, `Image`, `ToolError`
 
-### Key Changes
-- **Merged `turbomcp-core`**: All core functionality integrated into `turbomcp-protocol`
-- **Module Reorganization**: Context and types modules split into focused submodules
-- **Zero Breaking API Changes**: Public API unchanged, only import paths affected
-- **Enhanced Features**: New zero-copy message processing and SIMD acceleration
+All of these are re-exported at the `turbomcp_protocol` crate root. No changes are required unless you took a direct dependency on `turbomcp-core`, which was not a public crate in v2.x.
 
-### Migration Timeline
-- **Minimal Impact**: Most users won't need any changes
-- **Import Updates**: Only if using internal modules directly
-- **Full Compatibility**: v1.x code continues working with minor import adjustments
+The foundation crate is also accessible as `turbomcp_protocol::mcp_core` for advanced use cases.
 
-## 💥 Breaking Changes
+### McpError is now the canonical error type
 
-### 1. turbomcp-core Merged into turbomcp-protocol
+In v2.x, `turbomcp_protocol::Error` was a `thiserror`-derived enum defined in this crate. In v3.0, `McpError` from `turbomcp-core` is the canonical type. The `Error` type alias is preserved for backward compatibility and points to `McpError`. `Result<T>` is an alias for `McpResult<T>`.
 
-**What Changed:**
+```rust
+// v2.x - continues to compile in v3.0 via alias
+use turbomcp_protocol::Error;
+
+// v3.0 preferred
+use turbomcp_protocol::McpError;
+use turbomcp_protocol::McpResult;
+```
+
+### Default protocol version updated to 2025-11-25
+
+`PROTOCOL_VERSION` is now `"2025-11-25"`. Servers built with v3.0 default to this version with fallback enabled. If you need to prefer `"2025-06-18"` for Claude Code compatibility, configure your server with `ProtocolVersionConfig::compatible()`. See the top-level MIGRATION.md for `ServerConfig` details.
+
+### MCP 2025-11-25 features are always enabled
+
+In v2.x, the following features required explicit feature flags. In v3.0, they are unconditionally compiled:
+
+- Icons on Tool, Resource, Prompt (SEP-973)
+- URL mode for elicitation (SEP-1036)
+- Tool calling in sampling requests (SEP-1577)
+- Enum schema improvements for ElicitResult (SEP-1330)
+
+Remove any feature flag entries for these. Runtime availability is determined by protocol version negotiation, not compile-time flags.
+
+The only experimental feature flag remaining is `experimental-tasks` for the Tasks API (SEP-1686).
+
+### Feature flags in v3.0
+
+| Feature | Default | Enables |
+|---------|---------|---------|
+| `std` | yes | Standard library support |
+| `simd` | yes | `simd-json`, `sonic-rs`, `simdutf8` for SIMD-accelerated JSON |
+| `zero-copy` | no | `bytes/serde` for zero-copy message handling |
+| `rkyv` | no | rkyv zero-copy serialization bridge |
+| `wire` | no | `turbomcp-wire` codec abstraction |
+| `wire-simd` | no | Wire codec with SIMD acceleration |
+| `wire-msgpack` | no | Wire codec with MessagePack support |
+| `lock-free` | no | Lock-free data structures (requires `unsafe`) |
+| `mmap` | no | Memory-mapped file support (requires `unsafe`) |
+| `fancy-errors` | no | `miette`-based error diagnostics |
+| `experimental-tasks` | no | Tasks API (SEP-1686) |
+
+To opt out of the default SIMD acceleration:
+
 ```toml
-# v1.x - Two separate crates
+turbomcp-protocol = { version = "3.0", default-features = false, features = ["std"] }
+```
+
+---
+
+## v1.x to v2.0
+
+### turbomcp-core merged into turbomcp-protocol
+
+The main change in v2.0 was merging the `turbomcp-core` crate into `turbomcp-protocol`. The separate `turbomcp-core` dependency was removed from the workspace.
+
+**Dependency update:**
+
+```toml
+# v1.x
 [dependencies]
 turbomcp-core = "1.x"
 turbomcp-protocol = "1.x"
 
-# v2.0.0 - Single crate
+# v2.0
 [dependencies]
-turbomcp-protocol = "2.0.0"
+turbomcp-protocol = "2.0"
 ```
 
-**Why:**
-- Eliminates circular dependency issues
-- Better cohesion and maintainability
-- Simpler dependency graph
-- Enables fully-typed bidirectional communication
+**Import update:**
 
-**Migration:**
 ```rust
-// Before (v1.x)
+// v1.x
 use turbomcp_core::RequestContext;
 use turbomcp_core::Error;
 use turbomcp_protocol::types::CreateMessageRequest;
 
-// After (v2.0.0)
+// v2.0
 use turbomcp_protocol::RequestContext;
 use turbomcp_protocol::Error;
 use turbomcp_protocol::types::CreateMessageRequest;
-
-// Or using a single import
-use turbomcp_protocol::{RequestContext, Error, types::CreateMessageRequest};
 ```
 
-### 2. Module Reorganization
+Find and replace `turbomcp_core::` with `turbomcp_protocol::` across your codebase. The public API is otherwise unchanged.
 
-**Context Module Split** (2,046 lines → 8 focused modules):
-```rust
-// Before (v1.x) - Monolithic module
-use turbomcp_core::context::*;
+### Context module split from monolith into submodules
 
-// After (v2.0.0) - Specific submodules
-use turbomcp_protocol::context::request::RequestContext;
-use turbomcp_protocol::context::capabilities::CapabilitiesContext;
-use turbomcp_protocol::context::client::ClientContext;
-use turbomcp_protocol::context::elicitation::ElicitationContext;
-use turbomcp_protocol::context::completion::CompletionContext;
-use turbomcp_protocol::context::ping::PingContext;
-use turbomcp_protocol::context::server_initiated::ServerInitiatedContext;
-use turbomcp_protocol::context::templates::ResourceTemplatesContext;
+The monolithic `context.rs` (2,046 lines) was split into eight focused submodules. All types remain accessible via `turbomcp_protocol::*` or `turbomcp_protocol::context::*` without further qualification — each submodule re-exports its contents flat.
 
-// Re-exports still work (backward compatible)
-use turbomcp_protocol::context::*;  // Gets all contexts
-```
+**Submodules and their primary types:**
 
-**Types Module Split** (2,888 lines → 12 focused modules):
-```rust
-// Before (v1.x) - Monolithic module
-use turbomcp_protocol::types::*;
+| Submodule | Key types |
+|-----------|-----------|
+| `context::request` | `RequestContext`, `ResponseContext`, `RequestContextExt`, `BidirectionalContext`, `CommunicationDirection`, `CommunicationInitiator` |
+| `context::capabilities` | `ServerToClientRequests` (trait), `CompletionCapabilities`, `ConnectionMetrics` |
+| `context::client` | `ClientCapabilities` (re-exported as `ContextClientCapabilities`), `ClientSession`, `ClientId`, `ClientIdExtractor` |
+| `context::elicitation` | `ElicitationContext`, `ElicitationState` |
+| `context::completion` | `CompletionContext`, `CompletionOption`, `CompletionReference` (re-exported as `ContextCompletionReference`) |
+| `context::ping` | `PingContext`, `PingOrigin` |
+| `context::server_initiated` | `ServerInitiatedContext`, `ServerInitiatedType` |
+| `context::templates` | `ResourceTemplateContext`, `TemplateParameter` |
+| `context::rich` | `SessionStateGuard`, `RichContextExt`, `StateError`, `active_sessions_count`, `cleanup_session_state` |
 
-// After (v2.0.0) - Specific submodules available
-use turbomcp_protocol::types::core::*;
-use turbomcp_protocol::types::tools::*;
-use turbomcp_protocol::types::resources::*;
-use turbomcp_protocol::types::prompts::*;
-use turbomcp_protocol::types::capabilities::*;
-// ... etc
+No import changes are required if you used `turbomcp_protocol::RequestContext` or `turbomcp_protocol::context::*`. Only direct imports of internal submodule paths are affected.
 
-// Re-exports still work (backward compatible)
-use turbomcp_protocol::types::*;  // Gets all types
-```
+Note on naming: the capabilities submodule exposes the `ServerToClientRequests` trait. There is no type named `CapabilitiesContext`. The client submodule exposes `ClientCapabilities` and `ClientSession`, not a type named `ClientContext`. The templates submodule type is `ResourceTemplateContext`, not `ResourceTemplatesContext`.
 
-**Why:**
-- Improved maintainability (no 2,000+ line files)
-- Better code organization and navigation
-- Clearer semantic grouping
-- Easier to contribute and review changes
+### Types module split from monolith into submodules
 
-**Impact:**
-- **Zero breaking changes** for users of `use turbomcp_protocol::types::*;`
-- Only affects users importing internal submodules directly
+The monolithic `types.rs` (2,888 lines) was split into 17-18 focused submodules. The `turbomcp_protocol::types` namespace is unchanged — all types remain accessible as before via `use turbomcp_protocol::types::*` or by full path.
 
-## ✨ New Features
+### SessionManager now accepts SessionConfig
 
-### 1. Zero-Copy Message Processing
-
-**NEW:** Advanced `ZeroCopyMessage` type for ultra-high throughput scenarios:
-
-```rust
-use turbomcp_protocol::message::ZeroCopyMessage;
-use bytes::Bytes;
-
-// Zero-allocation message processing
-let raw_bytes = Bytes::from(json_data);
-let message = ZeroCopyMessage::from_bytes(raw_bytes)?;
-
-// Process without copying
-match message {
-    ZeroCopyMessage::Request(req) => {
-        // No allocation - direct access to underlying bytes
-        process_request(req).await?;
-    }
-    _ => {}
-}
-```
-
-**Benefits:**
-- Eliminates unnecessary allocations in hot paths
-- Reduces memory pressure for high-throughput scenarios
-- Enables efficient message forwarding/proxying
-
-### 2. Enhanced SIMD Support
-
-**NEW:** Improved SIMD-accelerated JSON processing:
-
-```toml
-[dependencies]
-turbomcp-protocol = { version = "2.0.0", features = ["simd"] }
-```
-
-**Features:**
-- `sonic-rs` integration for fast JSON serialization
-- `simd-json` for accelerated parsing
-- `simdutf8` for UTF-8 validation
-- Automatic fallback to standard JSON when SIMD unavailable
-
-### 3. Security Validation Module
-
-**NEW:** Built-in security utilities from dissolved security crate:
-
-```rust
-use turbomcp_protocol::security::{
-    validate_path,
-    validate_path_within,
-    validate_file_extension,
-};
-
-// Path traversal protection
-let safe_path = validate_path(&user_input)?;
-
-// Boundary enforcement
-let safe_relative = validate_path_within(&base_dir, &user_path)?;
-
-// Extension validation
-validate_file_extension(&path, &["json", "txt"])?;
-```
-
-### 4. Enhanced Session Management
-
-**NEW:** Memory-bounded session management with automatic cleanup:
-
-```rust
-use turbomcp_protocol::session::SessionManager;
-
-let session_mgr = SessionManager::new(
-    max_sessions: 1000,      // Max concurrent sessions
-    idle_timeout: 300,       // 5 minutes
-    cleanup_interval: 60,    // Check every minute
-);
-
-// Automatic LRU eviction when limit reached
-// Background cleanup of expired sessions
-```
-
-## 🔄 Migration Steps
-
-### Step 1: Update Dependencies
-
-```toml
-# Before (v1.x)
-[dependencies]
-turbomcp-core = "1.1.2"
-turbomcp-protocol = "1.1.2"
-
-# After (v2.0.0)
-[dependencies]
-turbomcp-protocol = "2.0.0"
-```
-
-### Step 2: Update Imports
-
-**Option A: Search and Replace (Recommended)**
-
-```bash
-# Find all turbomcp_core imports
-rg "use turbomcp_core::" -l | xargs sed -i '' 's/turbomcp_core::/turbomcp_protocol::/g'
-
-# Or use ast-grep for structural replacement
-ast-grep --pattern 'use turbomcp_core::$$$' \
-         --rewrite 'use turbomcp_protocol::$$$' \
-         --lang rust -i
-```
-
-**Option B: Manual Update**
-
-Find and replace in your code:
-- `turbomcp_core::` → `turbomcp_protocol::`
-- `use turbomcp_core` → `use turbomcp_protocol`
-
-### Step 3: Verify Build
-
-```bash
-# Clean build to ensure no stale artifacts
-cargo clean
-
-# Build with warnings as errors
-cargo build --all-features
-
-# Run tests
-cargo test --all-features
-```
-
-### Step 4: Optional - Use New Features
-
-If you have high-throughput requirements:
-
-```toml
-[dependencies]
-turbomcp-protocol = { version = "2.0.0", features = ["simd", "zero-copy"] }
-```
-
-```rust
-// Enable zero-copy processing in hot paths
-use turbomcp_protocol::message::ZeroCopyMessage;
-
-async fn process_messages(raw: bytes::Bytes) -> Result<()> {
-    let msg = ZeroCopyMessage::from_bytes(raw)?;
-    // Process without allocating
-    Ok(())
-}
-```
-
-## 🐛 Troubleshooting
-
-### Issue: "crate `turbomcp_core` not found"
-
-**Solution:**
-```toml
-# Remove turbomcp-core dependency
-[dependencies]
-# turbomcp-core = "1.x"  # Remove this line
-turbomcp-protocol = "2.0.0"
-```
-
-Update imports:
-```rust
-// Change this:
-use turbomcp_core::RequestContext;
-
-// To this:
-use turbomcp_protocol::RequestContext;
-```
-
-### Issue: "module `context` is private"
-
-**Solution:** You're likely importing an internal module. Use the re-exports:
-
-```rust
-// Instead of:
-use turbomcp_protocol::context::request::RequestContext;
-
-// Use:
-use turbomcp_protocol::RequestContext;
-// Or:
-use turbomcp_protocol::context::RequestContext;
-```
-
-### Issue: Compilation errors after updating imports
-
-**Solution:** Make sure you've updated ALL imports, not just some:
-
-```bash
-# Check for remaining turbomcp_core references
-rg "turbomcp_core" --type rust
-
-# Should return no results (except in comments/documentation)
-```
-
-### Issue: "type `X` not found in module `types`"
-
-**Solution:** Type might have moved to a specific submodule. Check the documentation:
-
-```rust
-// If you get an error like: "ToolInfo not found"
-// The type exists but might be in a submodule
-
-// Try:
-use turbomcp_protocol::types::tools::ToolInfo;
-// Or use the wildcard (all types re-exported):
-use turbomcp_protocol::types::*;
-```
-
-## 📊 Before/After Comparison
-
-### Dependency Graph
-
-**Before (v1.x):**
-```
-turbomcp-server
-├── turbomcp-protocol
-│   └── turbomcp-core  ❌ Circular dependency risk
-└── turbomcp-core
-```
-
-**After (v2.0.0):**
-```
-turbomcp-server
-└── turbomcp-protocol  ✅ Clean linear dependency
-```
-
-### Import Simplification
-
-**Before (v1.x):**
-```rust
-use turbomcp_core::RequestContext;
-use turbomcp_core::Error;
-use turbomcp_core::session::SessionManager;
-use turbomcp_protocol::types::Tool;
-use turbomcp_protocol::types::Resource;
-use turbomcp_protocol::jsonrpc::JsonRpcRequest;
-```
-
-**After (v2.0.0):**
-```rust
-use turbomcp_protocol::{
-    RequestContext,
-    Error,
-    session::SessionManager,
-    types::{Tool, Resource},
-    jsonrpc::JsonRpcRequest,
-};
-```
-
-## 🎯 Common Migration Patterns
-
-### Pattern 1: Basic Tool Implementation
+In v1.x, `SessionManager::new` accepted individual parameters. In v2.0, it accepts a `SessionConfig` struct.
 
 ```rust
 // v1.x
-use turbomcp_core::RequestContext;
-use turbomcp_protocol::types::ToolInfo;
+let manager = SessionManager::new(1000, some_duration);
 
-async fn my_tool(ctx: RequestContext, input: String) -> Result<String> {
-    Ok(format!("Processed: {}", input))
-}
+// v2.0
+use turbomcp_protocol::{SessionManager, SessionConfig};
+use chrono::Duration;
 
-// v2.0.0 (only import changes)
-use turbomcp_protocol::{RequestContext, types::ToolInfo};
-
-async fn my_tool(ctx: RequestContext, input: String) -> Result<String> {
-    Ok(format!("Processed: {}", input))
-}
+let config = SessionConfig {
+    max_sessions: 1000,
+    session_timeout: Duration::hours(24),  // field is session_timeout
+    max_request_history: 10000,
+    max_requests_per_session: Some(10000),
+    cleanup_interval: std::time::Duration::from_secs(300),
+    enable_analytics: true,
+};
+let manager = SessionManager::new(config);
 ```
 
-### Pattern 2: Server-to-Client Communication
+The timeout field is named `session_timeout`. There is no `idle_timeout` field.
+
+### Security validation functions added to crate root
+
+`turbomcp_protocol::security` exposes three path security functions, all re-exported at the crate root:
 
 ```rust
-// v1.x
-use turbomcp_core::RequestContext;
-use turbomcp_protocol::types::CreateMessageRequest;
-use turbomcp_core::ServerToClientRequests;
-
-async fn sample_llm(ctx: RequestContext) -> Result<String> {
-    let req = CreateMessageRequest { /* ... */ };
-    let resp = ctx.server_to_client()?.create_message(req, ctx.clone()).await?;
-    Ok(resp.content.text)
-}
-
-// v2.0.0 (only import changes)
-use turbomcp_protocol::{
-    RequestContext,
-    types::CreateMessageRequest,
-    ServerToClientRequests,
-};
-
-async fn sample_llm(ctx: RequestContext) -> Result<String> {
-    let req = CreateMessageRequest { /* ... */ };
-    let resp = ctx.server_to_client()?.create_message(req, ctx.clone()).await?;
-    Ok(resp.content.text)
-}
+use turbomcp_protocol::{validate_path, validate_path_within, validate_file_extension};
 ```
 
-### Pattern 3: Custom Error Handling
+These did not exist in v1.x. No migration action needed unless you had your own implementations that should be replaced.
+
+### ServerToClientRequests trait is now public
+
+This trait lives in `context::capabilities` and is re-exported at the crate root. It enables fully-typed server-initiated requests (sampling, elicitation, roots). In v1.x, bidirectional communication was not available as a typed public trait.
 
 ```rust
-// v1.x
-use turbomcp_core::Error as McpError;
-use turbomcp_protocol::jsonrpc::{JsonRpcError, ErrorCode};
-
-fn custom_error(msg: &str) -> McpError {
-    McpError::Protocol(JsonRpcError {
-        code: ErrorCode::InvalidRequest,
-        message: msg.to_string(),
-        data: None,
-    })
-}
-
-// v2.0.0 (only import changes)
-use turbomcp_protocol::{
-    Error as McpError,
-    jsonrpc::{JsonRpcError, ErrorCode},
-};
-
-fn custom_error(msg: &str) -> McpError {
-    McpError::Protocol(JsonRpcError {
-        code: ErrorCode::InvalidRequest,
-        message: msg.to_string(),
-        data: None,
-    })
-}
+use turbomcp_protocol::ServerToClientRequests;
 ```
 
-## 📚 Additional Resources
+### SIMD and zero-copy features available
 
-- **Main Migration Guide**: See `../../MIGRATION.md` for workspace-level changes
-- **API Documentation**: https://docs.rs/turbomcp-protocol
-- **Examples**: See `../../examples/` for updated 2.0 examples
-- **Changelog**: See `../../CHANGELOG.md` for complete version history
+The `simd` feature (on by default) enables `simd-json`, `sonic-rs`, and `simdutf8` for accelerated JSON processing. The `zero-copy` feature enables `bytes/serde` support for `ZeroCopyMessage` in the `zero_copy` module. Neither was available as a first-class feature in v1.x.
 
-## 🎉 Benefits of 2.0.0
+---
 
-After migration, you'll enjoy:
-
-- ✅ **Simpler Dependencies** - One crate instead of two
-- ✅ **Better Organization** - Focused modules instead of monoliths
-- ✅ **Zero-Copy Performance** - Optional high-performance message processing
-- ✅ **Enhanced Security** - Built-in security validation utilities
-- ✅ **Better Documentation** - Clearer module structure and examples
-- ✅ **Same API** - No breaking changes to public interfaces
-
-## 🤝 Getting Help
-
-- **Issues**: https://github.com/Epistates/turbomcp/issues
-- **Discussions**: https://github.com/Epistates/turbomcp/discussions
-- **Documentation**: https://docs.rs/turbomcp-protocol
-
-## 📝 Version Compatibility
-
-| turbomcp-protocol | Replaces | Status |
-|-------------------|----------|--------|
-| 2.0.0               | turbomcp-core 1.x + turbomcp-protocol 1.x | ✅ Current |
-| 1.1.x             | - | 🟡 Maintenance |
-| 1.0.x             | - | ⚠️ EOL |
+For transport-layer, server, or macro migration details, see the top-level [MIGRATION.md](../../MIGRATION.md).

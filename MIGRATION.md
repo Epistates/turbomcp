@@ -2,7 +2,7 @@
 
 This guide helps you migrate between major TurboMCP versions.
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [v3.0.0 Migration (v2.x → v3.x)](#v300-migration-v2x--v3x)
 - [v2.0.0 Migration (v1.x → v2.x)](#v200-migration-v1x--v2x)
@@ -11,26 +11,9 @@ This guide helps you migrate between major TurboMCP versions.
 
 # v3.0.0 Migration (v2.x → v3.x)
 
-TurboMCP 3.0.0 represents a major modular architecture redesign with **individual transport crates**, a **`no_std` core layer**, and full **MCP 2025-11-25 specification compliance**.
+TurboMCP 3.0.0 is a major modular architecture redesign with **individual transport crates**, a **`no_std` core layer**, **unified error types**, and full **MCP 2025-11-25 specification compliance**.
 
-## 🚀 Quick Start for v3.0
-
-### Using the Compatibility Crate (Recommended)
-
-The `turbomcp-compat` crate provides deprecated type aliases with compiler warnings guiding migration:
-
-```toml
-[dependencies]
-turbomcp = "3.0.2"
-turbomcp-compat = "3.0"  # For gradual migration
-```
-
-```rust
-// Deprecation warnings will guide migration
-use turbomcp_compat::v2::{ServerError, ServerResult};
-```
-
-### Direct Migration
+## Quick Start for v3.0
 
 ```toml
 # Before (v2.x)
@@ -42,28 +25,42 @@ turbomcp = "2.x"
 turbomcp = "3.0.2"
 ```
 
-## 💥 Breaking Changes in v3.0.0
+Feature flags for transports work the same way:
 
-### 1. Error Type Unification
+```toml
+turbomcp = { version = "3.0.2", features = ["stdio", "http", "websocket"] }
+```
+
+## Breaking Changes in v3.0.0
+
+### 1. Unified Error Types
 
 **What Changed:**
-- `ServerError`, `ClientError`, and protocol `Error` are unified into `McpError`
-- `ServerResult<T>` and `ClientResult<T>` are unified into `McpResult<T>`
+
+In v2.x, each layer had its own error type:
+- `turbomcp_server::ServerError` / `turbomcp_server::ServerResult`
+- `turbomcp_protocol::Error` / `turbomcp_protocol::Result`
+- `turbomcp::McpError` (wrapper enum over the above)
+
+In v3.x, there is a single canonical error type across all crates:
+- `McpError` (defined in `turbomcp-core`, re-exported everywhere)
+- `McpResult<T>` (alias for `Result<T, McpError>`)
 
 **Migration:**
 
 ```rust
 // Before (v2.x)
-use turbomcp_server::ServerError;
-use turbomcp_server::ServerResult;
+use turbomcp_server::{ServerError, ServerResult};
+use turbomcp_protocol::{Error, Result};
 
 fn my_handler() -> ServerResult<Value> {
-    Err(ServerError::internal("failed"))
+    Err(ServerError::Internal("failed".to_string()))
 }
 
 // After (v3.x)
-use turbomcp::McpError;
-use turbomcp::McpResult;
+use turbomcp::{McpError, McpResult};
+// Or use the prelude (recommended):
+use turbomcp::prelude::*;
 
 fn my_handler() -> McpResult<Value> {
     Err(McpError::internal("failed"))
@@ -73,18 +70,19 @@ fn my_handler() -> McpResult<Value> {
 ### 2. Modular Transport Architecture
 
 **What Changed:**
-- Individual transport crates extracted from monolithic `turbomcp-transport`
-- Each transport is now a separate crate with its own feature flag
+
+Transports have been extracted from the monolithic `turbomcp-transport` crate into individual crates. The `turbomcp-transport` crate still exists as a re-export hub, so **existing feature flags continue to work**.
 
 **New Transport Crates:**
+
 | Crate | Feature | Use Case |
 |-------|---------|----------|
 | `turbomcp-stdio` | `stdio` | Standard MCP transport (default) |
-| `turbomcp-http` | `http` | HTTP/SSE for web apps |
+| `turbomcp-http` | `http` | HTTP/SSE Streamable HTTP client |
 | `turbomcp-websocket` | `websocket` | Bidirectional WebSocket |
 | `turbomcp-tcp` | `tcp` | Raw TCP sockets |
 | `turbomcp-unix` | `unix` | Unix domain sockets |
-| `turbomcp-grpc` | `grpc` | gRPC transport |
+| `turbomcp-grpc` | — | gRPC transport via tonic (standalone) |
 
 **Migration:**
 
@@ -93,604 +91,417 @@ fn my_handler() -> McpResult<Value> {
 turbomcp = { version = "2.x", features = ["http", "websocket"] }
 
 # After (v3.x) - same feature flags, modular internals
-turbomcp = { version = "3.0", features = ["http", "websocket"] }
+turbomcp = { version = "3.0.2", features = ["http", "websocket"] }
 
-# Or use individual crates directly
-turbomcp-http = "3.0"
-turbomcp-websocket = "3.0"
+# Or use individual transport crates directly (advanced)
+turbomcp-http = "3.0.2"
+turbomcp-websocket = "3.0.2"
 ```
 
 ### 3. `no_std` Core Layer
 
 **What Changed:**
-- `turbomcp-core` is now a `no_std` foundation layer
-- Core types work in embedded and WASM environments
-- Standard library features are opt-in via `std` feature
+
+In v2.x, `turbomcp-core` was merged into `turbomcp-protocol`. In v3.x, `turbomcp-core` is re-extracted as a `no_std + alloc` foundation layer for WASM and embedded environments.
+
+**New foundation crates:**
+- `turbomcp-types` — canonical MCP type definitions (`no_std` ready via `alloc` feature)
+- `turbomcp-core` — error types, handler trait, JSON-RPC, auth primitives (`no_std` compatible)
+- `turbomcp-wire` — codec abstraction (JSON, SIMD JSON, MessagePack) (`no_std` compatible)
+- `turbomcp-transport-traits` — transport trait definitions (requires `std`/tokio)
 
 **Migration:**
 
 ```toml
-# For no_std environments
-turbomcp-core = { version = "3.0", default-features = false }
+# For no_std/WASM environments
+turbomcp-core = { version = "3.0.2", default-features = false }
+turbomcp-wire = { version = "3.0.2", default-features = false }
 
-# For standard environments (default)
-turbomcp-core = "3.0"
+# For standard environments (default, no change needed)
+turbomcp = "3.0.2"
 ```
+
+Most users will not interact with these crates directly — they are re-exported through the main `turbomcp` crate.
 
 ### 4. Protocol Version Support
 
 **What Changed:**
-- Default protocol version: `2025-11-25` (latest MCP spec)
-- Full compliance with MCP 2025-11-25 specification
-- Configurable protocol negotiation
+- Default protocol version updated to `2025-11-25` (latest MCP spec)
+- Configurable protocol version negotiation with fallback support
+- New `ProtocolConfig` type replaces ad-hoc version handling
 
 **Migration:**
 
 ```rust
-// v3.x offers flexible protocol version configuration
-use turbomcp_server::{ServerConfig, ProtocolVersionConfig};
+use turbomcp_server::{ServerConfig, ProtocolConfig};
 
 // Default: Latest spec (2025-11-25) with fallback enabled
+// Supports all versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05
 let config = ServerConfig::builder().build();
 
-// Claude Code compatible: Prefer 2025-06-18
+// Strict mode: Only accept specific version, no fallback
 let config = ServerConfig::builder()
-    .protocol_version_config(ProtocolVersionConfig::compatible())
+    .protocol(ProtocolConfig::strict("2025-11-25"))
     .build();
 
-// Strict mode: Only accept specific version
+// Custom: Specific preferred version with fallback
 let config = ServerConfig::builder()
-    .protocol_version_config(ProtocolVersionConfig::strict("2025-11-25"))
+    .protocol(ProtocolConfig {
+        preferred_version: "2025-06-18".to_string(),
+        supported_versions: vec![
+            "2025-11-25".to_string(),
+            "2025-06-18".to_string(),
+        ],
+        allow_fallback: true,
+    })
     .build();
 ```
 
-### 5. Feature Flag Simplification
+### 5. Feature Flag Changes
 
-**What Changed:**
-- All MCP 2025-11-25 features are now **always available** (no feature flags needed)
-- The `mcp-*` feature flags have been removed
-- Only `experimental-tasks` remains for experimental features
+**MCP spec features removed (now always enabled):**
 
-**Removed Features (now always enabled):**
-| Old Feature Flag | Types Now Always Available |
-|-----------------|---------------------------|
+In v2.x, several MCP 2025-11-25 draft features required explicit feature flags on `turbomcp-protocol`. In v3.x, these are always available:
+
+| Old Feature Flag (v2.x) | Types Now Always Available (v3.x) |
+|--------------------------|-----------------------------------|
 | `mcp-icons` | `Icons`, `IconTheme` |
-| `mcp-url-elicitation` | `URLElicitRequestParams` |
+| `mcp-url-elicitation` | URL mode in elicitation |
 | `mcp-sampling-tools` | `tools`/`tool_choice` in `CreateMessageRequest` |
 | `mcp-enum-improvements` | `EnumSchema`, `EnumOption` |
-| `mcp-draft` | `description` on `Implementation` |
-
-**Migration:**
+| `mcp-draft` | Bundle of all above |
 
 ```toml
 # Before (v2.x) - with feature flags
 turbomcp-protocol = { version = "2.x", features = ["mcp-icons", "mcp-url-elicitation"] }
 
 # After (v3.x) - no feature flags needed
-turbomcp-protocol = "3.0"
+turbomcp-protocol = "3.0.2"
 ```
 
-```rust
-// Before (v2.x) - conditional compilation
-#[cfg(feature = "mcp-sampling-tools")]
-tools: None,
+**Only `experimental-tasks` remains as a feature flag** for the experimental Tasks API (SEP-1686):
 
-// After (v3.x) - always available
-tools: None,
-```
-
-**Experimental Features:**
 ```toml
-# Only experimental features require feature flags
-turbomcp = { version = "3.0", features = ["experimental-tasks"] }
+turbomcp = { version = "3.0.2", features = ["experimental-tasks"] }
 ```
 
-### 6. New Crates in v3.0
+**New feature bundles in v3.x:**
 
-| Crate | Description |
-|-------|-------------|
-| `turbomcp-core` | `no_std` core types (re-extracted) |
-| `turbomcp-transport-traits` | Lean transport trait definitions |
-| `turbomcp-telemetry` | OpenTelemetry integration |
-| `turbomcp-grpc` | gRPC transport via tonic |
-| `turbomcp-wasm` | WebAssembly bindings |
-| `turbomcp-wire` | Wire format codec abstraction |
+| Bundle | Contents |
+|--------|----------|
+| `minimal` | STDIO only |
+| `full` | All transports + telemetry |
+| `full-stack` | `full` + full client library |
+| `all-transports` | stdio, http, websocket, tcp, unix, channel |
 
-### 7. Authentication Migration
+**New features in v3.x:**
+
+| Feature | Description |
+|---------|-------------|
+| `channel` | In-process channel transport (zero-overhead for testing) |
+| `telemetry` | OpenTelemetry, metrics, structured logging |
+| `full-client` | Client library with all transports |
+
+**Removed v2.x features** (no longer on the main `turbomcp` or `turbomcp-server` crate in v3.x):
+
+| Feature | Notes |
+|---------|-------|
+| `context-injection` | Always enabled in v3 |
+| `uri-templates` | Always enabled in v3 |
+| `middleware` | Always available when server feature is enabled |
+| `tls` | Handled per-transport in v3 |
+| `network` | Use `["stdio", "tcp"]` instead |
+| `server-only` | Use `["tcp", "unix"]` instead |
+| `multi-tenancy` | Removed |
+| `sessions` | Removed |
+| `security` | Removed |
+| `input-validation` | Removed |
+| `rate-limiting` | Removed |
+| `dpop-redis` | Use `turbomcp-dpop` crate directly with `redis-storage` feature |
+| `dpop-hsm-pkcs11` | Use `turbomcp-dpop` crate directly with `hsm-pkcs11` feature |
+| `dpop-hsm-yubico` | Use `turbomcp-dpop` crate directly with `hsm-yubico` feature |
+| `dpop-test-utils` | Use `turbomcp-dpop` crate directly with `test-utils` feature |
+
+Note: `schema-generation` was already always-on since v2 (schemars required by macros).
+
+### 6. Authentication Migration
 
 **What Changed:**
-- `Claims` type moved to `turbomcp_auth::AuthContext`
-- Enhanced authentication context with more metadata
 
-**Migration:**
+The `Claims` type (v2 `turbomcp_server::middleware::Claims`) is replaced by more specific types:
+- `StandardClaims` in `turbomcp_core::auth` — JWT standard claims
+- `AuthContext` in `turbomcp_auth` — rich authentication context (OAuth 2.1, API key, JWT)
 
 ```rust
 // Before (v2.x)
 use turbomcp_server::middleware::Claims;
+// or
+use turbomcp_server::Claims;
+
+fn check_auth(claims: &Claims) { ... }
 
 // After (v3.x)
-use turbomcp_auth::AuthContext;
+use turbomcp_core::auth::StandardClaims;   // JWT claims
+use turbomcp_auth::AuthContext;             // Rich auth context (requires "auth" feature)
 ```
 
-## 🔄 Type Mapping Reference
+### 7. New Crates in v3.0
 
-| v2.x Type | v3.x Type | Notes |
-|-----------|-----------|-------|
-| `ServerError` | `McpError` | Unified error type |
-| `ServerResult<T>` | `McpResult<T>` | Unified result type |
-| `ClientError` | `McpError` | Unified error type |
-| `ClientResult<T>` | `McpResult<T>` | Unified result type |
-| `Error` (protocol) | `McpError` | Protocol errors consolidated |
-| `Claims` | `AuthContext` | Use turbomcp-auth crate |
+| Crate | Description |
+|-------|-------------|
+| `turbomcp-types` | Canonical MCP type definitions (`no_std` ready via `alloc` feature) |
+| `turbomcp-core` | `no_std` core: errors, handler trait, JSON-RPC |
+| `turbomcp-wire` | Wire format codec abstraction (JSON, SIMD, MsgPack) |
+| `turbomcp-transport-traits` | Transport trait definitions |
+| `turbomcp-transport-streamable` | Portable Streamable HTTP types (`no_std`/WASM) |
+| `turbomcp-telemetry` | OpenTelemetry, Prometheus, structured logging |
+| `turbomcp-grpc` | gRPC transport via tonic |
+| `turbomcp-wasm` | WebAssembly bindings (browser + WASI) |
+| `turbomcp-wasm-macros` | WASM server proc macros |
+| `turbomcp-openapi` | OpenAPI 3.0 to MCP tool/resource conversion |
+| `turbomcp-stdio` | Extracted STDIO transport |
+| `turbomcp-http` | Extracted HTTP/SSE client transport |
+| `turbomcp-websocket` | Extracted WebSocket transport |
+| `turbomcp-tcp` | Extracted TCP transport |
+| `turbomcp-unix` | Extracted Unix socket transport |
 
-## ⏰ Deprecation Timeline
+## Type Mapping Reference (v2 → v3)
 
-- **v3.0.0**: All compat types marked with `#[deprecated]` warnings
-- **v3.1.0**: Deprecation warnings become errors with `#[deny(deprecated)]`
-- **v4.0.0**: `turbomcp-compat` crate removed
+| v2.x Type | v3.x Type | Location |
+|-----------|-----------|----------|
+| `turbomcp_server::ServerError` | `McpError` | `turbomcp_core::error` |
+| `turbomcp_server::ServerResult<T>` | `McpResult<T>` | `turbomcp_core::error` |
+| `turbomcp_protocol::Error` | `McpError` | `turbomcp_core::error` |
+| `turbomcp_protocol::Result<T>` | `McpResult<T>` | `turbomcp_core::error` |
+| `turbomcp::McpError` (wrapper enum) | `McpError` (unified) | `turbomcp_core::error` |
+| `turbomcp::McpResult<T>` | `McpResult<T>` | `turbomcp_core::error` |
+| `turbomcp_server::Claims` | `StandardClaims` | `turbomcp_core::auth` |
+| N/A | `AuthContext` | `turbomcp_auth` (new) |
 
-## 📝 Version Compatibility
+All v3 types are re-exported from the `turbomcp` crate and available via `use turbomcp::prelude::*`.
+
+## Version Compatibility
 
 | TurboMCP Version | Rust Version | MCP Spec | Status |
 |-----------------|--------------|----------|--------|
-| 3.0.x           | 1.89.0+      | 2025-11-25 | ✅ Current |
-| 2.3.x           | 1.89.0+      | 2025-06-18 | 🟡 Maintenance |
-| 2.0.x           | 1.89.0+      | 2024-11-05 | ⚠️ EOL |
+| 3.0.x           | 1.89.0+      | 2025-11-25 | Current |
+| 2.3.x           | 1.89.0+      | 2025-06-18 | Maintenance |
+| 1.1.x           | 1.89.0+      | 2025-06-18 | EOL |
 
 ---
 
 # v2.0.0 Migration (v1.x → v2.x)
 
-This section helps you migrate from TurboMCP 1.x to 2.0.0. The 2.0.0 release represents a major architectural overhaul focused on **clean minimal core + progressive enhancement**.
+The 2.0.0 release focused on **clean minimal core + progressive enhancement**, with separate auth/DPoP crates and `turbomcp-core` merged into `turbomcp-protocol`.
 
-## 📋 v2.0.0 Table of Contents
-
-- [Quick Start](#quick-start)
-- [Breaking Changes Summary](#breaking-changes-summary)
-- [Crate-by-Crate Migration](#crate-by-crate-migration)
-- [Feature Flag Changes](#feature-flag-changes)
-- [Common Migration Patterns](#common-migration-patterns)
-- [Troubleshooting](#troubleshooting)
-
-## 🚀 Quick Start
-
-### Minimal Migration (Recommended)
-
-If you want to keep existing behavior:
+## Quick Start
 
 ```toml
-# In your Cargo.toml
-
-# Before (1.x)
+# Before (v1.x) - full by default
 [dependencies]
 turbomcp = "1.x"
 
-# After (2.0)
+# After (v2.0) - minimal by default, add features as needed
 [dependencies]
-turbomcp = { version = "2.0.0", features = ["full"] }
+turbomcp = { version = "2.0", features = ["full"] }  # Restores v1.x behavior
+# Or start minimal:
+turbomcp = "2.0"  # STDIO only (default)
 ```
 
-The `full` feature set restores 1.x behavior with all transports enabled.
+## Breaking Changes Summary
 
-### Progressive Migration
+### 1. Default Features Changed
 
-For new projects or to embrace the minimal-by-default philosophy:
-
-```toml
-# Start minimal
-turbomcp = { version = "2.0.0", features = ["stdio"] }  # or just "2.0" (stdio is default)
-
-# Add features as needed
-turbomcp = { version = "2.0.0", features = ["stdio", "http", "tcp"] }
-```
-
-## 💥 Breaking Changes Summary
-
-### 1. RBAC Removal (Major)
-
-**What Changed:**
-- The `rbac` feature has been completely removed
-- Authorization functionality is no longer in the protocol layer
-
-**Why:**
-- Authorization is an application-layer concern, not protocol-layer
-- Eliminates `casbin` dependency and `instant` unmaintained warning
-- Reduces attack surface and improves security
-
-**Migration Path:**
-
-```rust
-// Before (1.x)
-use turbomcp::middleware::rbac::RbacMiddleware;
-
-let rbac = RbacMiddleware::new(policy_path)?;
-builder.with_middleware(rbac);
-
-// After (2.0) - Implement in your application
-use turbomcp::middleware::auth::AuthMiddleware;
-
-// Option 1: Use JWT claims for authorization
-let auth = AuthMiddleware::new(|claims: &Claims| {
-    // Your authorization logic here
-    claims.role == "admin" || claims.permissions.contains("tool:execute")
-});
-
-// Option 2: Use external policy engine (Oso, Casbin, etc.)
-use oso::Oso;
-let oso = Oso::new()?;
-oso.load_files(vec!["policy.polar"])?;
-
-let auth = AuthMiddleware::new(move |claims: &Claims, resource: &str| {
-    oso.is_allowed(claims.user, resource, "execute")
-});
-
-builder.with_middleware(auth);
-```
-
-**Complete Examples:** See `RBAC-REMOVAL-SUMMARY.md` for detailed migration patterns.
-
-### 2. Default Features Changed
-
-**What Changed:**
 ```toml
 # 1.x default
-default = ["full"]  # All features enabled
+default = ["full", "simd"]  # All features enabled
 
 # 2.0 default
 default = ["stdio"]  # Minimal by default
 ```
 
-**Why:**
-- Progressive enhancement philosophy
-- Smaller binaries by default
-- Users opt-in to features they need
-- Reduces compilation time for simple servers
-
-**Migration:**
+If you relied on all transports being available by default, add the `full` feature:
 
 ```toml
-# If you need all features (1.x behavior)
-turbomcp = { version = "2.0.0", features = ["full"] }
+turbomcp = { version = "2.0", features = ["full"] }
+```
 
-# Or selectively enable features
-turbomcp = { version = "2.0.0", features = ["stdio", "http", "tcp"] }
+Or selectively enable what you need:
+
+```toml
+turbomcp = { version = "2.0", features = ["stdio", "http", "tcp"] }
+```
+
+### 2. `turbomcp-core` Merged into `turbomcp-protocol`
+
+**What Changed:**
+- The `turbomcp-core` crate was merged into `turbomcp-protocol`
+- Direct imports from `turbomcp_core::` need to be updated to `turbomcp_protocol::`
+- The `turbomcp-core` crate no longer exists as a workspace member in v2
+- Context types (`RequestContext`, etc.) moved from `turbomcp_core::context` to `turbomcp_protocol::context`
+
+```rust
+// Before (v1.x) - importing from turbomcp-core
+use turbomcp_core::context::RequestContext;
+use turbomcp_core::error::Error;
+
+// After (v2.0) - import from turbomcp-protocol
+use turbomcp_protocol::context::RequestContext;
+use turbomcp_protocol::error::Error;
+
+// Or use the prelude (recommended - works in both versions)
+use turbomcp::prelude::*;
 ```
 
 ### 3. New Crate Architecture
 
 **What Changed:**
-- Authentication extracted to `turbomcp-auth` crate
-- DPoP extracted to `turbomcp-dpop` crate
+- Authentication extracted from `turbomcp-server` to new `turbomcp-auth` crate
+- DPoP remains in `turbomcp-dpop` (existed since v1.x)
 - Both are optional dependencies
 
-**Why:**
-- Cleaner separation of concerns
-- Optional security features
-- Smaller core for minimal use cases
-
-**Migration:**
-
 ```toml
-# Before (1.x)
+# Before (v1.x) - auth feature on server, DPoP as separate crate
 [dependencies]
-turbomcp = { version = "1.x", features = ["auth", "dpop"] }
+turbomcp = { version = "1.x", features = ["dpop"] }
 
-# After (2.0) - Automatically included via features
+# After (v2.0) - auth extracted to separate crate, accessible via features
 [dependencies]
-turbomcp = { version = "2.0.0", features = ["auth", "dpop"] }
+turbomcp = { version = "2.0", features = ["auth", "dpop"] }
 
 # Or use crates directly
 turbomcp-auth = "2.0"
 turbomcp-dpop = "2.0"
 ```
 
-```rust
-// Before (1.x)
-use turbomcp::auth::*;
-use turbomcp::dpop::*;
+v2 added the `Claims` type in `turbomcp_server::middleware` for JWT-based auth:
 
-// After (2.0) - Same API
+```rust
+// New in v2.0 - Claims type for auth middleware
+use turbomcp_server::Claims;
 use turbomcp_auth::*;
-use turbomcp_dpop::*;
-
-// Or re-exported from main crate when features enabled
-use turbomcp::auth::*;  // Still works with "auth" feature
-use turbomcp::dpop::*;  // Still works with "dpop" feature
 ```
 
-### 4. Feature Gate Renames
+### 4. Feature Flag Changes
 
-**What Changed:**
+**v2.0 added:**
+- `auth` — OAuth 2.1, API key authentication (via new `turbomcp-auth` crate)
+- `context-injection` — Enhanced Context API
+- `uri-templates` — URI template matching for resources
+- `middleware` — Tower middleware support
+- `multi-tenancy` — Multi-tenant SaaS support
+- `security` — Handler name validation
+- `input-validation` — Input validation with `garde`
+- `rate-limiting` — Rate limiting via `governor`
+- `sessions` — Session management via `tower-sessions`
+
+**v2.0 changed:**
+- `schema-generation` — Still exists in v2.0.0 but removed by v2.3.x (schemars always required by macros)
+- `full` (main crate) — Includes context-injection, uri-templates, all transports, tls
+- `full` (server crate) — Includes all-transports, auth, dpop, sessions, security, input-validation, multi-tenancy, health-checks, metrics, middleware, rate-limiting, mcp-tasks, tls
+
+**v2.0 added DPoP sub-features on the main crate:**
 ```toml
-# Old names (1.x)
-dpop-redis → redis-storage
-dpop-test-utils → test-utils
+# New in v2.x (on main turbomcp crate, not present in v1.x):
+dpop-redis = ["dpop", "turbomcp-dpop/redis-storage"]
+dpop-hsm-pkcs11 = ["dpop", "turbomcp-dpop/hsm-pkcs11"]
+dpop-hsm-yubico = ["dpop", "turbomcp-dpop/hsm-yubico"]
+dpop-test-utils = ["dpop", "turbomcp-dpop/test-utils"]
 ```
 
-**Migration:**
+### 5. Protocol Feature Flags Added (MCP 2025-11-25 Draft)
+
+v2.x added feature-gated support for MCP 2025-11-25 draft specification features on `turbomcp-protocol`:
+
 ```toml
-# Before
-turbomcp = { version = "1.x", features = ["dpop-redis"] }
-
-# After
-turbomcp = { version = "2.0.0", features = ["dpop", "redis-storage"] }
-# Note: "dpop" feature now required for DPoP features
+# Enable draft spec features in v2.x
+turbomcp-protocol = { version = "2.x", features = ["mcp-draft"] }
+# Or individually:
+turbomcp-protocol = { version = "2.x", features = ["mcp-icons", "mcp-url-elicitation"] }
 ```
 
-**Backward Compatibility:**
-- Old names still work but are deprecated
-- Will be removed in 3.0
+These became always-enabled in v3.0.
 
-### 5. Module Reorganization
+## Crate-by-Crate Migration
 
-**What Changed:**
-- Core context module split into focused submodules
-- Protocol types module split into domain-specific modules
+### turbomcp-core (Removed in v2.0)
 
-**Why:**
-- Better maintainability
-- Clearer organization
-- Easier to navigate
-
-**Migration:**
-
-Most imports are re-exported, so this should be transparent:
+Merged into `turbomcp-protocol`. Update imports:
 
 ```rust
-// Before and After (no change for most users)
-use turbomcp::prelude::*;
-
-// If you used internal modules directly:
-// Before (1.x)
-use turbomcp_core::context::*;  // 2000+ line file
-
-// After (2.0) - More specific
-use turbomcp_core::context::request::RequestContext;
-use turbomcp_core::context::capabilities::CapabilitiesContext;
-// etc.
-
-// Or use the re-exports
-use turbomcp_core::context::*;  // Still works
-```
-
-## 📦 Crate-by-Crate Migration
-
-### turbomcp-core → turbomcp-protocol (Merged in v2.0.0)
-
-**Breaking Changes:**
-- The `turbomcp-core` crate was merged into `turbomcp-protocol` in v2.0.0
-- For most users, this is transparent due to re-exports
-- Direct imports from `turbomcp_core::` need to be updated to `turbomcp_protocol::`
-
-**New Features (now in turbomcp-protocol):**
-- `ZeroCopyMessage` type for ultra-high throughput
-- Security validation utilities (`validate_path`, etc.)
-- Enhanced SIMD support
-- Unified foundation layer with protocol types
-
-**Migration:**
-```rust
-// Before (1.x) - if you directly imported from turbomcp-core
+// Before (v1.x)
 use turbomcp_core::context::RequestContext;
-use turbomcp_core::errors::McpError;
 
-// After (2.0) - import from turbomcp-protocol
+// After (v2.0)
 use turbomcp_protocol::context::RequestContext;
-use turbomcp_protocol::errors::McpError;
-
-// Or use the prelude (recommended - works in both versions)
-use turbomcp::prelude::*;
 ```
 
 ### turbomcp-protocol
 
-**Breaking Changes:**
-- Merged with `turbomcp-core` (see above)
-- Internal types module reorganized (transparent via re-exports)
-
-**Migration:**
-```rust
-// No changes needed if using prelude or high-level API
-use turbomcp::prelude::*;
-
-// Direct imports continue to work
-use turbomcp_protocol::types::*;
-```
+- Now contains everything from the former `turbomcp-core`
+- Error types: `Error`, `ErrorKind`, `Result` (v2 names)
+- Internal module reorganization is transparent via re-exports
 
 ### turbomcp-transport
 
-**Breaking Changes:**
-- None for public API
-
-**New Features:**
+- No breaking public API changes
 - Enhanced resilience with circuit breaker metrics
-- Better timeout handling
-
-**Migration:**
-```rust
-// No changes needed
-```
 
 ### turbomcp-server
 
-**Breaking Changes:**
-- RBAC middleware removed (see [RBAC Removal](#1-rbac-removal-major))
-- `authz` middleware removed (application-layer concern)
+- Default features changed from `["auth", "health-checks", "metrics", "stdio"]` to `["stdio"]`
+- New features: `middleware`, `multi-tenancy`, `security`, `input-validation`, `rate-limiting`, `sessions`
 
-**Migration:**
-```rust
-// Before (1.x)
-use turbomcp_server::middleware::rbac::RbacMiddleware;
-use turbomcp_server::middleware::authz::AuthzMiddleware;
-
-builder
-    .with_middleware(RbacMiddleware::new(policy)?)
-    .with_middleware(AuthzMiddleware::new(rules)?);
-
-// After (2.0)
-use turbomcp_server::middleware::auth::AuthMiddleware;
-
-// Implement authorization in AuthMiddleware
-builder.with_middleware(AuthMiddleware::new(|claims| {
-    // Your authorization logic
-    check_permissions(claims)
-}));
+```toml
+# Restore v1.x server defaults
+turbomcp-server = { version = "2.0", features = ["auth", "health-checks", "metrics", "stdio"] }
 ```
 
 ### turbomcp-client
 
-**Breaking Changes:**
-- None
-
-**Migration:**
-```rust
-// No changes needed
-```
+- No breaking changes
+- Re-exports `Error` and `Result` from `turbomcp-protocol`
 
 ### turbomcp-macros
 
-**Breaking Changes:**
-- None
+- No breaking changes
 
-**Migration:**
-```rust
-// No changes needed
-```
+### turbomcp-auth (NEW in v2.0)
 
-### turbomcp-cli
+New crate containing OAuth 2.1 and authentication functionality, extracted from `turbomcp-server`.
 
-**Breaking Changes:**
-- Complete rewrite (see `crates/turbomcp-cli/MIGRATION.md`)
-- New command structure
-- New output formats
-
-**Quick Migration:**
-```bash
-# Before (1.x)
-turbomcp-cli tools-list --url URL
-turbomcp-cli tools-call --url URL --name NAME --arguments ARGS
-
-# After (2.0)
-turbomcp-cli tools list --url URL
-turbomcp-cli tools call NAME --arguments ARGS
-```
-
-**Full Details:** See `crates/turbomcp-cli/MIGRATION.md`
-
-### turbomcp (root)
-
-**Breaking Changes:**
-- Default features: `["full"]` → `["stdio"]`
-- RBAC feature removed
-- Auth/DPoP now in separate crates
-
-**Migration:**
 ```toml
-# Restore 1.x behavior
-turbomcp = { version = "2.0.0", features = ["full"] }
-
-# Or be selective
-turbomcp = { version = "2.0.0", features = ["stdio", "http", "auth"] }
-```
-
-### turbomcp-auth (NEW)
-
-**This is a new crate in 2.0.0** containing all OAuth 2.1 and authentication functionality.
-
-**Usage:**
-```toml
-# Via main crate (recommended)
-turbomcp = { version = "2.0.0", features = ["auth"] }
-
-# Or directly
+turbomcp = { version = "2.0", features = ["auth"] }
+# Or directly:
 turbomcp-auth = "2.0"
 ```
 
-```rust
-use turbomcp_auth::{
-    oauth2::OAuth2Provider,
-    providers::ApiKeyProvider,
-};
-```
+### turbomcp-dpop (Existing, Updated)
 
-### turbomcp-dpop (NEW)
-
-**This is a new crate in 2.0.0** containing RFC 9449 DPoP implementation.
-
-**Usage:**
-```toml
-# Via main crate (recommended)
-turbomcp = { version = "2.0.0", features = ["dpop"] }
-
-# Or directly
-turbomcp-dpop = "2.0"
-```
-
-```rust
-use turbomcp_dpop::{
-    DPopProofBuilder,
-    storage::RedisNonceStore,
-};
-```
-
-## 🎯 Feature Flag Changes
-
-### Recommended Feature Sets
+DPoP crate updated for v2.0. Feature names changed:
 
 ```toml
-# Minimal (default) - Basic tool servers
-turbomcp = { version = "2.0.0", features = ["stdio"] }
+# Before (v1.x)
+turbomcp = { version = "1.x", features = ["dpop"] }
 
-# Full (1.x behavior) - All features
-turbomcp = { version = "2.0.0", features = ["full"] }
-
-# Network - STDIO + TCP
-turbomcp = { version = "2.0.0", features = ["network"] }
-
-# Server-only - TCP + Unix (no STDIO)
-turbomcp = { version = "2.0.0", features = ["server-only"] }
+# After (v2.0)
+turbomcp = { version = "2.0", features = ["dpop"] }
+# Redis storage:
+turbomcp-dpop = { version = "2.0", features = ["redis-storage"] }
 ```
 
-### Individual Features
+### turbomcp (Main SDK)
 
-```toml
-# Core functionality
-"schema-generation"    # JSON Schema generation
-"context-injection"    # Enhanced Context API
-"uri-templates"        # URI template matching
+- Default features: `["full", "simd"]` → `["stdio"]`
+- `McpError` enum wraps `ServerError` and protocol errors
+- Auth/DPoP now in separate crates, accessible via feature flags
 
-# Authentication & Security
-"auth"                 # OAuth 2.1, API key auth
-"dpop"                 # DPoP (RFC 9449)
-"redis-storage"        # Redis-based DPoP nonce tracking
-"dpop-hsm-pkcs11"      # PKCS#11 HSM support
-"dpop-hsm-yubico"      # YubiHSM support
+## Common Migration Patterns
 
-# Transport protocols
-"stdio"                # Standard MCP transport (default)
-"http"                 # HTTP/SSE for web apps
-"websocket"            # WebSocket bidirectional
-"tcp"                  # Raw TCP sockets
-"unix"                 # Unix domain sockets
-
-# Performance
-"simd"                 # SIMD JSON acceleration
-```
-
-### Deprecated Features
-
-```toml
-# These still work but will be removed in 3.0
-"dpop-redis"           # Use "redis-storage" instead
-"dpop-test-utils"      # Use "test-utils" instead
-```
-
-## 🔄 Common Migration Patterns
-
-### Pattern 1: Basic Server (No Changes Needed)
+### Pattern 1: Basic STDIO Server (No Changes Needed)
 
 ```rust
-// Works in both 1.x and 2.0
+// Works in both v1.x and v2.0
 use turbomcp::prelude::*;
 
 #[server]
@@ -707,191 +518,77 @@ async fn main() -> McpResult<()> {
 }
 ```
 
-### Pattern 2: HTTP Server
+### Pattern 2: HTTP Server (Enable Feature Explicitly)
 
 ```toml
-# Before (1.x) - HTTP enabled by default
+# Before (v1.x) - HTTP enabled by default via "full"
 turbomcp = "1.x"
 
-# After (2.0) - Enable HTTP explicitly
-turbomcp = { version = "2.0.0", features = ["http"] }
+# After (v2.0) - Enable HTTP explicitly
+turbomcp = { version = "2.0", features = ["http"] }
 ```
+
+### Pattern 3: Full Feature Parity with v1.x
+
+```toml
+turbomcp = { version = "2.0", features = ["full"] }
+```
+
+## Troubleshooting
+
+### "HTTP server not working"
+
+Enable the HTTP feature — it's no longer included by default:
+
+```toml
+turbomcp = { version = "2.0", features = ["http"] }
+```
+
+### "module 'dpop' not found"
+
+Enable the dpop feature:
+
+```toml
+turbomcp = { version = "2.0", features = ["dpop"] }
+```
+
+### Import errors after upgrade
+
+Use the prelude or update imports to new crate structure:
 
 ```rust
-// Code unchanged
-#[tokio::main]
-async fn main() -> McpResult<()> {
-    MyServer.run_http("0.0.0.0:3000").await
-}
-```
-
-### Pattern 3: Authentication
-
-```toml
-# Before (1.x)
-turbomcp = { version = "1.x", features = ["auth"] }
-
-# After (2.0) - Same feature name
-turbomcp = { version = "2.0.0", features = ["auth"] }
-```
-
-```rust
-// Before (1.x)
-use turbomcp::auth::*;
-
-// After (2.0) - Import from new crate location
-use turbomcp_auth::*;
-// Or use re-export (when "auth" feature enabled)
-use turbomcp::auth::*;
-```
-
-### Pattern 4: DPoP with Redis
-
-```toml
-# Before (1.x)
-turbomcp = { version = "1.x", features = ["dpop", "dpop-redis"] }
-
-# After (2.0)
-turbomcp = { version = "2.0.0", features = ["dpop", "redis-storage"] }
-```
-
-```rust
-// Before (1.x)
-use turbomcp::dpop::*;
-
-// After (2.0)
-use turbomcp_dpop::*;
-// Or use re-export
-use turbomcp::dpop::*;
-```
-
-### Pattern 5: Middleware Stack
-
-```rust
-// Before (1.x) - RBAC included
-use turbomcp::middleware::{auth::*, rate_limit::*, rbac::*};
-
-builder
-    .with_middleware(AuthMiddleware::new(auth_config))
-    .with_middleware(RbacMiddleware::new(policy)?)
-    .with_middleware(RateLimitMiddleware::new(rate_config));
-
-// After (2.0) - RBAC removed, implement in auth
-use turbomcp::middleware::{auth::*, rate_limit::*};
-
-builder
-    .with_middleware(AuthMiddleware::new_with_authz(
-        auth_config,
-        |claims, resource| {
-            // Authorization logic here (was in RBAC)
-            check_permissions(claims, resource)
-        }
-    ))
-    .with_middleware(RateLimitMiddleware::new(rate_config));
-```
-
-## 🐛 Troubleshooting
-
-### Issue: "feature 'rbac' not found"
-
-```toml
-# Solution: RBAC removed, implement in application
-# See: RBAC-REMOVAL-SUMMARY.md
-
-# Remove rbac feature
-turbomcp = { version = "2.0.0", features = ["auth"] }  # not "rbac"
-```
-
-### Issue: "HTTP server not working"
-
-```toml
-# Solution: Enable HTTP feature (not default in 2.0)
-turbomcp = { version = "2.0.0", features = ["http"] }
-```
-
-### Issue: "module 'dpop' not found"
-
-```toml
-# Solution: Enable dpop feature
-turbomcp = { version = "2.0.0", features = ["dpop"] }
-
-# Or use crate directly
-[dependencies]
-turbomcp-dpop = "2.0"
-```
-
-### Issue: "dpop-redis feature not found"
-
-```toml
-# Solution: Renamed to redis-storage
-turbomcp = { version = "2.0.0", features = ["dpop", "redis-storage"] }
-```
-
-### Issue: Import errors after upgrade
-
-```rust
-// Solution: Use prelude or updated imports
-
 // Option 1: Use prelude (recommended)
 use turbomcp::prelude::*;
 
-// Option 2: Update imports to new crate structure
-use turbomcp_auth::*;  // was: turbomcp::auth::*
-use turbomcp_dpop::*;  // was: turbomcp::dpop::*
+// Option 2: Update imports
+use turbomcp_protocol::Error;       // was: turbomcp_core::Error
+use turbomcp_protocol::ErrorKind;   // was: turbomcp_core::ErrorKind
+use turbomcp_protocol::context::RequestContext;  // was: turbomcp_core::context::RequestContext
 ```
 
-### Issue: Compilation errors in tests
+### Larger binary size than expected
 
-```rust
-// Solution: Update feature flags in dev-dependencies
-
-[dev-dependencies]
-turbomcp = { version = "2.0.0", features = ["full", "test-utils"] }
-```
-
-### Issue: Larger binary size than expected
+Use minimal features instead of "full":
 
 ```toml
-# Solution: Use minimal features, not "full"
-# Remove unused features to reduce binary size
-
 # Instead of:
-turbomcp = { version = "2.0.0", features = ["full"] }
+turbomcp = { version = "2.0", features = ["full"] }
 
 # Use only what you need:
-turbomcp = { version = "2.0.0", features = ["stdio", "tcp"] }
+turbomcp = { version = "2.0", features = ["stdio", "tcp"] }
 ```
 
-## 📚 Additional Resources
-
-- **RBAC Migration:** See `RBAC-REMOVAL-SUMMARY.md` for detailed authorization patterns
-- **CLI Migration:** See `crates/turbomcp-cli/MIGRATION.md` for CLI changes
-- **Architecture Overview:** See `2.0.0-CLEAN-ARCHITECTURE.md` for design rationale
-- **Security:** See `SECURITY-AUDIT-2.0.0.md` for security improvements
-- **Examples:** See `examples/` directory for updated 2.0 examples
-
-## 🎉 Benefits of 2.0
-
-After migration, you'll enjoy:
-
-- ✅ **Smaller binaries** - Pay only for what you use
-- ✅ **Faster compilation** - Minimal dependencies by default
-- ✅ **Better security** - Removed unmaintained dependencies
-- ✅ **Cleaner architecture** - Clear separation of concerns
-- ✅ **Production-ready** - Zero warnings, zero TODOs, zero tech debt
-- ✅ **Latest toolchain** - Rust 1.90.0 + updated dependencies
-
-## 🤝 Getting Help
-
-- **Issues:** https://github.com/Epistates/turbomcp/issues
-- **Discussions:** https://github.com/Epistates/turbomcp/discussions
-- **Examples:** See `examples/` directory
-- **Documentation:** https://docs.rs/turbomcp
-
-## 📝 Version Compatibility
+## Version Compatibility
 
 | TurboMCP Version | Rust Version | MCP Spec | Status |
 |-----------------|--------------|----------|--------|
-| 2.0.x           | 1.89.0+      | 2024-11-05 | ✅ Current |
-| 1.1.x           | 1.89.0+      | 2025-06-18 | 🟡 Maintenance |
-| 1.0.x           | 1.89.0+      | 2025-06-18 | ⚠️ EOL |
+| 2.3.x           | 1.89.0+      | 2025-06-18 | Maintenance |
+| 1.1.x           | 1.89.0+      | 2025-06-18 | EOL |
+| 1.0.x           | 1.89.0+      | 2024-11-05 | EOL |
+
+## Getting Help
+
+- **Issues:** https://github.com/Epistates/turbomcp/issues
+- **Discussions:** https://github.com/Epistates/turbomcp/discussions
+- **Examples:** See `crates/turbomcp/examples/` directory
+- **Documentation:** https://docs.rs/turbomcp
