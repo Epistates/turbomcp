@@ -48,7 +48,7 @@ TurboMCP consists of four distinct architectural layers, each with specific resp
 
 **Responsibilities:**
 - JSON-RPC 2.0 message format implementation
-- MCP protocol version 2025-06-18 compliance
+- MCP protocol version 2025-11-25 compliance
 - SIMD-accelerated JSON processing (2-3x faster than serde_json)
 - Request/response context management
 - Rich error handling with structured context

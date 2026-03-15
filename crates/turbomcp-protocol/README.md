@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/turbomcp-protocol/badge.svg)](https://docs.rs/turbomcp-protocol)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and runtime schema validation.
+Model Context Protocol (MCP) implementation for MCP `2025-11-25`, with JSON-RPC 2.0 and runtime schema validation.
 
 ## Table of Contents
 
@@ -31,13 +31,12 @@ Model Context Protocol (MCP) specification implementation with JSON-RPC 2.0 and 
 
 ### MCP Version Support
 
-TurboMCP v3.0 fully implements MCP 2025-11-25 with all specification features enabled by default.
-No feature flags needed for core protocol capabilities.
+TurboMCP v3.0 targets MCP `2025-11-25`.
+Core protocol capabilities are enabled by default, and runtime negotiation is exact-match only.
 
 | Spec Version | Status | Notes |
 |--------------|--------|-------|
-| **MCP 2025-11-25** | ✅ Full Support | Icons, URL elicitation, sampling tools, enum improvements |
-| **MCP 2025-06-18** | ✅ Compatible | Negotiated at runtime via protocol version |
+| **MCP 2025-11-25** | ✅ Full Support | Canonical v3 protocol surface |
 
 **Quick Start:**
 ```toml
@@ -57,7 +56,7 @@ turbomcp-protocol = { version = "3.0.2", features = ["experimental-tasks"] }
 - MCP specification implementation with current message types
 - Tools, resources, prompts, and capabilities support
 - Capability negotiation with feature detection and handshake
-- Version compatibility support
+- Exact-version negotiation support
 
 ### JSON-RPC 2.0 Implementation
 - Compliant message format with request, response, and notification handling
@@ -181,7 +180,7 @@ let json_data = r#"{
     "id": 1,
     "method": "initialize",
     "params": {
-        "protocolVersion": "2025-06-18",
+        "protocolVersion": "2025-11-25",
         "capabilities": {},
         "clientInfo": {"name": "test-client", "version": "2.0.0"}
     }
@@ -535,6 +534,8 @@ let result = InitializeResult {
 **Key Principle:** Clients request, servers decide. The server's response version is the negotiated protocol version for the session.
 
 ### Migration from v2.x
+
+This section is historical. v3 does not preserve the old multi-version runtime policy.
 
 TurboMCP v3.0 simplifies feature flags - all MCP 2025-11-25 features are now core:
 

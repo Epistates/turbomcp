@@ -390,7 +390,7 @@ impl ToolResultAssertions for ToolResult {
     }
 }
 
-/// Extension trait for McpResult<ToolResult> assertions.
+/// Extension trait for `McpResult<ToolResult>` assertions.
 pub trait McpToolResultAssertions {
     /// Unwrap and assert the result contains the expected text.
     fn assert_ok_text(self, expected: &str);

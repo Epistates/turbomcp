@@ -305,12 +305,12 @@ pub fn check_type_compatibility(
 
 ### Protocol Version
 
-Current MCP specification: **2025-06-18**
+Current MCP specification: **2025-11-25**
 
 Breaking changes handled through:
-- Version negotiation in Initialize
+- Exact version negotiation in Initialize
 - Feature flags for new capabilities
-- Backward compatibility shims
+- Migration guides for historical releases
 
 ## Performance
 
@@ -361,4 +361,3 @@ let response = JsonRpcResponse {
 - **[Source Code](../../../crates/turbomcp-protocol/src/lib.rs)**
 - **[Protocol Compliance](../architecture/protocol-compliance.md)** guidelines
 - **[Examples](../examples/basic.md)** using protocol APIs
-

@@ -182,7 +182,7 @@ test-integration-all:
 [group: 'test']
 test-enforce:
   @echo "Running zero-tolerance test quality enforcement..."
-  cargo test --package turbomcp --test zero_tolerance_enforcement
+  cargo test --package turbomcp --test v3_audit
   @echo "Zero-tolerance enforcement passed!"
 
 # Run all tests including zero-tolerance enforcement

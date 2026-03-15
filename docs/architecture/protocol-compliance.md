@@ -4,18 +4,18 @@ Comprehensive guide to TurboMCP's implementation of the Model Context Protocol s
 
 ## Overview
 
-TurboMCP implements the **Model Context Protocol (MCP) specification version 2025-06-18** with full compliance across all defined capabilities. The implementation:
+TurboMCP implements the **Model Context Protocol (MCP) specification version 2025-11-25** with full compliance across all defined capabilities. The implementation:
 
-- **Spec Compliant** - 100% adherence to MCP 2025-06-18 specification
+- **Spec Compliant** - 100% adherence to MCP 2025-11-25 specification
 - **JSON-RPC 2.0** - Complete JSON-RPC 2.0 protocol implementation
 - **Capability Negotiation** - Automatic feature detection and negotiation
-- **Version Management** - Backward compatibility and migration support
+- **Version Management** - Exact version negotiation with migration support
 - **Validation** - Runtime schema validation and type checking
-- **Extensibility** - Support for custom extensions and future protocol versions
+- **Extensibility** - Support for custom extensions within the current protocol surface
 
 ## Protocol Specification
 
-### MCP Version: 2025-06-18
+### MCP Version: 2025-11-25
 
 The Model Context Protocol defines how Large Language Models (LLMs) interact with external context providers (MCP servers). TurboMCP provides a complete server-side implementation.
 
@@ -93,7 +93,7 @@ Every MCP session begins with an `initialize` request:
   "jsonrpc": "2.0",
   "method": "initialize",
   "params": {
-    "protocolVersion": "2025-06-18",
+    "protocolVersion": "2025-11-25",
     "capabilities": {
       "sampling": {}
     },
@@ -109,7 +109,7 @@ Every MCP session begins with an `initialize` request:
 {
   "jsonrpc": "2.0",
   "result": {
-    "protocolVersion": "2025-06-18",
+    "protocolVersion": "2025-11-25",
     "capabilities": {
       "tools": {
         "listChanged": true
@@ -749,7 +749,7 @@ pub struct ProtocolVersion {
 
 impl ProtocolVersion {
     pub fn from_string(s: &str) -> Result<Self> {
-        // Parse "2025-06-18" format
+        // Parse "2025-11-25" format
         let parts: Vec<&str> = s.split('-').collect();
         Ok(Self {
             major: parts[0].parse()?,
@@ -789,7 +789,7 @@ impl SessionState {
 When upgrading protocol versions:
 
 ```rust
-// v2025-06-18 -> v2025-12-18 migration example
+// v2025-11-25 -> future-version migration example
 pub fn migrate_tool_schema(
     old_schema: Value,
     from_version: ProtocolVersion,
@@ -825,7 +825,7 @@ mod compliance_tests {
             "jsonrpc": "2.0",
             "method": "initialize",
             "params": {
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": "2025-11-25",
                 "capabilities": {},
                 "clientInfo": {
                     "name": "TestClient",
@@ -838,7 +838,7 @@ mod compliance_tests {
         let response = server.handle_request(request).await.unwrap();
 
         assert_eq!(response["jsonrpc"], "2.0");
-        assert!(response["result"]["protocolVersion"] == "2025-06-18");
+        assert!(response["result"]["protocolVersion"] == "2025-11-25");
         assert!(response["id"] == 1);
     }
 
@@ -942,7 +942,7 @@ pub fn negotiate_capabilities(
 ///
 /// **Protocol Extension:** `x-analytics`
 /// **Supported Since:** TurboMCP v2.1.0
-/// **MCP Spec Version:** 2025-06-18
+/// **MCP Spec Version:** 2025-11-25
 ///
 /// This extension adds analytics metadata to tool responses.
 #[tool]
@@ -966,7 +966,7 @@ pub async fn tracked_tool(
 mod tests {
     #[test]
     fn test_protocol_2025_06_18() {
-        test_with_version("2025-06-18");
+        test_with_version("2025-11-25");
     }
 
     #[test]
@@ -986,5 +986,5 @@ mod tests {
 - [System Design](./system-design.md) - Architecture overview
 - [Context Lifecycle](./context-lifecycle.md) - Request flow
 - [Dependency Injection](./dependency-injection.md) - DI system
-- [MCP Specification](https://spec.modelcontextprotocol.io/2025-06-18/) - Official spec
+- [MCP Specification](https://spec.modelcontextprotocol.io/2025-11-25/) - Official spec
 - [JSON-RPC 2.0](https://www.jsonrpc.org/specification) - JSON-RPC spec

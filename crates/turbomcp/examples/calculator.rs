@@ -80,7 +80,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use turbomcp_server::RequestContext;
+    use turbomcp::RequestContext as CoreRequestContext;
+    use turbomcp_server::RequestContext as ServerRequestContext;
 
     #[test]
     fn test_server_info() {
@@ -102,7 +103,7 @@ mod tests {
     #[tokio::test]
     async fn test_add() {
         let calc = Calculator;
-        let ctx = RequestContext::new();
+        let ctx = CoreRequestContext::stdio();
         let result = calc
             .call_tool("add", serde_json::json!({"a": 10, "b": 20}), &ctx)
             .await
@@ -114,7 +115,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_request() {
         let calc = Calculator;
-        let ctx = RequestContext::new();
+        let ctx = ServerRequestContext::new();
 
         // Test initialize (MCP spec requires clientInfo)
         let request = serde_json::json!({

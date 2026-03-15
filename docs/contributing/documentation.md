@@ -669,7 +669,7 @@ Related: [Context Lifecycle](./context-lifecycle.md)
 **External Links:**
 
 ```markdown
-See the [MCP Specification](https://spec.modelcontextprotocol.io/2025-06-18/).
+See the [MCP Specification](https://spec.modelcontextprotocol.io/2025-11-25/).
 
 Built on [JSON-RPC 2.0](https://www.jsonrpc.org/specification).
 ```

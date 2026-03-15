@@ -2,6 +2,10 @@
 
 This document covers breaking changes and migration steps specific to the `turbomcp-protocol` crate. For workspace-wide migration guidance covering transport, server, client, and macros, see the top-level [MIGRATION.md](../../MIGRATION.md).
 
+Historical note:
+- v3 targets MCP `2025-11-25` only.
+- References to v1/v2 below are archival migration notes, not active compatibility guidance.
+
 ---
 
 ## v2.x to v3.0
@@ -21,7 +25,7 @@ The foundation crate is also accessible as `turbomcp_protocol::mcp_core` for adv
 
 ### McpError is now the canonical error type
 
-In v2.x, `turbomcp_protocol::Error` was a `thiserror`-derived enum defined in this crate. In v3.0, `McpError` from `turbomcp-core` is the canonical type. The `Error` type alias is preserved for backward compatibility and points to `McpError`. `Result<T>` is an alias for `McpResult<T>`.
+In v2.x, `turbomcp_protocol::Error` was a `thiserror`-derived enum defined in this crate. In v3.0, `McpError` from `turbomcp-core` is the canonical type. `Error` and `Result<T>` remain ergonomic re-exports of the canonical core types.
 
 ```rust
 // v2.x - continues to compile in v3.0 via alias
@@ -34,7 +38,7 @@ use turbomcp_protocol::McpResult;
 
 ### Default protocol version updated to 2025-11-25
 
-`PROTOCOL_VERSION` is now `"2025-11-25"`. Servers built with v3.0 default to this version with fallback enabled. If you need to prefer `"2025-06-18"` for Claude Code compatibility, configure your server with `ProtocolVersionConfig::compatible()`. See the top-level MIGRATION.md for `ServerConfig` details.
+`PROTOCOL_VERSION` is `"2025-11-25"`. v3 runtime negotiation is exact-match only; the old fallback/multi-version policy no longer applies.
 
 ### MCP 2025-11-25 features are always enabled
 
@@ -45,7 +49,7 @@ In v2.x, the following features required explicit feature flags. In v3.0, they a
 - Tool calling in sampling requests (SEP-1577)
 - Enum schema improvements for ElicitResult (SEP-1330)
 
-Remove any feature flag entries for these. Runtime availability is determined by protocol version negotiation, not compile-time flags.
+Remove any feature flag entries for these. Runtime availability is determined by the current MCP `2025-11-25` surface, not compile-time flags.
 
 The only experimental feature flag remaining is `experimental-tasks` for the Tasks API (SEP-1686).
 

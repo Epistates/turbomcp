@@ -2,6 +2,11 @@
 
 This guide helps you migrate between major TurboMCP versions.
 
+Current v3 policy:
+- TurboMCP targets MCP `2025-11-25`.
+- Runtime protocol negotiation is exact-match only.
+- Older version notes below are historical migration reference, not active compatibility guidance.
+
 ## Table of Contents
 
 - [v3.0.0 Migration (v2.x → v3.x)](#v300-migration-v2x--v3x)

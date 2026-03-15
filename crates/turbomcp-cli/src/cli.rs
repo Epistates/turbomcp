@@ -569,7 +569,7 @@ pub struct NewArgs {
     #[arg(long, short = 't', value_enum, default_value = "minimal")]
     pub template: ProjectTemplate,
 
-    /// Output directory (default: ./<name>)
+    /// Output directory (default: `./<name>`)
     #[arg(long, short = 'o')]
     pub output: Option<PathBuf>,
 

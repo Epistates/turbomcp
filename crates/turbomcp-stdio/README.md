@@ -8,7 +8,7 @@ This crate provides the `StdioTransport` implementation for MCP communication ov
 
 ## MCP Specification Compliance
 
-This implementation is **fully compliant** with the MCP stdio transport specification (2025-06-18):
+This implementation follows the MCP stdio transport requirements used by TurboMCP v3 (`2025-11-25`):
 
 - **Newline-delimited JSON**: Uses `LinesCodec` for proper message framing
 - **No embedded newlines**: Validates messages don't contain `\n` or `\r` characters
