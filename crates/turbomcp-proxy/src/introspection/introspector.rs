@@ -5,7 +5,7 @@
 
 use tracing::{debug, info, trace};
 use turbomcp_protocol::{
-    InitializeRequest, InitializeResult,
+    InitializeRequest, InitializeResult, PROTOCOL_VERSION,
     types::{
         ClientCapabilities, Cursor, ElicitationCapabilities, Implementation, RootsCapabilities,
         SamplingCapabilities,
@@ -143,7 +143,7 @@ impl McpIntrospector {
     /// Initialize connection with the server
     async fn initialize(&self, backend: &mut dyn McpBackend) -> ProxyResult<InitializeResult> {
         let request = InitializeRequest {
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: PROTOCOL_VERSION.to_string(),
             capabilities: ClientCapabilities {
                 roots: Some(RootsCapabilities {
                     list_changed: Some(true),
@@ -282,11 +282,11 @@ impl McpIntrospector {
             // Convert protocol resources to spec resources
             for resource in result.resources {
                 all_resources.push(ResourceSpec {
-                    uri: resource.uri,
+                    uri: resource.uri.to_string(),
                     name: resource.name,
                     title: None,
                     description: resource.description,
-                    mime_type: resource.mime_type,
+                    mime_type: resource.mime_type.map(Into::into),
                     size: resource.size,
                     annotations: resource.annotations.map(|ann| Annotations {
                         fields: serde_json::from_value(

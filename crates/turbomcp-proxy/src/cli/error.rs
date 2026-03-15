@@ -35,7 +35,7 @@ pub fn format_error(error: &ProxyError) -> String {
                 "✗".red().bold(),
                 message,
                 "Suggestion:".yellow(),
-                "Ensure the server implements MCP protocol 2025-06-18 correctly"
+                "Ensure the server implements MCP protocol 2025-11-25 correctly"
             )
         }
         ProxyError::Serialization(err) => {

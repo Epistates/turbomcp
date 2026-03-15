@@ -12,8 +12,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tracing::{debug, info};
 use turbomcp_client::Client;
-use turbomcp_protocol::Error;
 use turbomcp_protocol::types::{GetPromptResult, Prompt, ReadResourceResult, Resource, Tool};
+use turbomcp_protocol::{Error, PROTOCOL_VERSION};
 use turbomcp_transport::{
     ChildProcessConfig, ChildProcessTransport, TcpTransport, Transport, UnixTransport,
     WebSocketBidirectionalConfig, WebSocketBidirectionalTransport,
@@ -418,7 +418,7 @@ impl BackendConnector {
         // Build ServerSpec
         Ok(ServerSpec {
             server_info: Self::create_server_info(),
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: PROTOCOL_VERSION.to_string(),
             capabilities: Self::create_capabilities(),
             tools: Self::convert_tools(tools),
             resources: Self::convert_resources(resources),
@@ -482,11 +482,11 @@ impl BackendConnector {
         resources
             .into_iter()
             .map(|r| ResourceSpec {
-                uri: r.uri,
+                uri: r.uri.to_string(),
                 name: r.name,
                 title: None,
                 description: r.description,
-                mime_type: r.mime_type,
+                mime_type: r.mime_type.map(Into::into),
                 size: None,
                 annotations: None,
             })
@@ -628,18 +628,18 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Requires building stdio_server example via cargo run, which can take 60+ seconds"]
+    #[ignore = "Requires building manual_server example via cargo run"]
     async fn test_backend_connector_with_echo() {
-        // This test requires the stdio_server example to be built
+        // This test requires the manual_server example to be built
         let config = BackendConfig {
             transport: BackendTransport::Stdio {
                 command: "cargo".to_string(),
                 args: vec![
                     "run".to_string(),
                     "--package".to_string(),
-                    "turbomcp".to_string(),
+                    "turbomcp-server".to_string(),
                     "--example".to_string(),
-                    "stdio_server".to_string(),
+                    "manual_server".to_string(),
                 ],
                 working_dir: Some("/Users/nickpaterno/work/turbomcp".to_string()),
             },

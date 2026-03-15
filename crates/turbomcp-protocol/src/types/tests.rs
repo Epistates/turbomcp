@@ -14,9 +14,9 @@ use crate::types::*;
 #[test]
 fn test_type_aliases() {
     let _protocol_version: ProtocolVersion = "1.0.0".to_string();
-    let _uri: Uri = "https://example.com".to_string();
-    let _mime_type: MimeType = "text/plain".to_string();
-    let _base64: Base64String = "SGVsbG8gV29ybGQ=".to_string();
+    let _uri: Uri = "https://example.com".into();
+    let _mime_type: MimeType = "text/plain".into();
+    let _base64: Base64String = "SGVsbG8gV29ybGQ=".into();
     let _cursor: Cursor = "next_page".to_string();
 }
 
@@ -470,8 +470,8 @@ fn test_content_block_serialization() {
 }
 
 #[test]
-fn test_content_alias() {
-    let text_content: Content = ContentBlock::Text(TextContent {
+fn test_content_block_type() {
+    let text_content: ContentBlock = ContentBlock::Text(TextContent {
         text: "Alias test".to_string(),
         annotations: None,
         meta: None,
@@ -1009,13 +1009,13 @@ fn test_comprehensive_serialization() {
 
 #[test]
 fn test_sampling_api_comprehensive_workflow() {
-    // Test complete CreateMessageRequest with all MCP 2025-06-18 fields
-    let sampling_message = SamplingMessage {
-        role: Role::User,
-        content: Content::Text(TextContent {
-            text: "Test message for sampling".to_string(),
-            annotations: None,
-            meta: None,
+    // Test complete CreateMessageRequest with all current MCP fields
+        let sampling_message = SamplingMessage {
+            role: Role::User,
+            content: ContentBlock::Text(TextContent {
+                text: "Test message for sampling".to_string(),
+                annotations: None,
+                meta: None,
         }),
         metadata: None,
     };
@@ -1120,7 +1120,7 @@ fn test_create_message_result_complete() {
     // Test CreateMessageResult with all fields
     let result = CreateMessageResult {
         role: Role::Assistant,
-        content: Content::Text(TextContent {
+        content: ContentBlock::Text(TextContent {
             text: "This is a test response from the model.".to_string(),
             annotations: None,
             meta: None,
@@ -1137,7 +1137,7 @@ fn test_create_message_result_complete() {
     assert_eq!(deserialized.model, "claude-3-5-sonnet-20241022".to_string());
     assert_eq!(deserialized.stop_reason, Some(StopReason::StopSequence));
 
-    if let Content::Text(text_content) = &deserialized.content {
+    if let ContentBlock::Text(text_content) = &deserialized.content {
         assert_eq!(text_content.text, "This is a test response from the model.");
     } else {
         panic!("Expected text content");
@@ -1146,7 +1146,7 @@ fn test_create_message_result_complete() {
 
 #[test]
 fn test_annotations_100_percent_compliance() {
-    // Test all MCP 2025-06-18 Annotations fields for 100% schema compliance
+    // Test all current MCP Annotations fields for 100% schema compliance
     let annotations = Annotations {
         audience: Some(vec!["user".to_string(), "assistant".to_string()]),
         priority: Some(0.8),
@@ -1176,7 +1176,7 @@ fn test_annotations_100_percent_compliance() {
 
 #[test]
 fn test_tool_annotations_100_percent_compliance() {
-    // Test all MCP 2025-06-18 ToolAnnotations fields for 100% schema compliance
+    // Test all current MCP ToolAnnotations fields for 100% schema compliance
     let tool_annotations = ToolAnnotations {
         title: Some("Advanced File System Tool".to_string()),
         audience: Some(vec!["developer".to_string()]),

@@ -68,26 +68,14 @@ pub type ProtocolVersion = String;
 /// JSON-RPC request identifier
 pub type RequestId = MessageId;
 
-/// URI string (legacy type alias)
-///
-/// **Note**: For new code, consider using the validated [`crate::types::domain::Uri`] type
-/// which provides compile-time type safety and runtime validation.
-/// This type alias is kept for backward compatibility.
-pub type Uri = String;
+/// URI string with protocol-aware typing and validation helpers.
+pub use crate::types::domain::Uri;
 
-/// MIME type (legacy type alias)
-///
-/// **Note**: For new code, consider using the validated [`crate::types::domain::MimeType`] type
-/// which provides compile-time type safety and runtime validation.
-/// This type alias is kept for backward compatibility.
-pub type MimeType = String;
+/// MIME type with protocol-aware typing and validation helpers.
+pub use crate::types::domain::MimeType;
 
-/// Base64 encoded data (legacy type alias)
-///
-/// **Note**: For new code, consider using the validated [`crate::types::domain::Base64String`] type
-/// which provides compile-time type safety and runtime validation.
-/// This type alias is kept for backward compatibility.
-pub type Base64String = String;
+/// Base64-encoded data with protocol-aware typing and validation helpers.
+pub use crate::types::domain::Base64String;
 
 /// Cursor for pagination
 pub type Cursor = String;
@@ -96,11 +84,10 @@ pub type Cursor = String;
 pub use crate::error_codes;
 
 // Re-export JsonRpcError from canonical jsonrpc module
-// This maintains backward compatibility for code importing from types::core
 pub use crate::jsonrpc::JsonRpcError;
 
 /// Base interface for metadata with name (identifier) and title (display name) properties.
-/// Per MCP specification 2025-06-18, this is the foundation for Tool, Resource, and Prompt metadata.
+/// Per the current MCP specification, this is the foundation for Tool, Resource, and Prompt metadata.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BaseMetadata {
     /// Intended for programmatic or logical use, but used as a display name in past specs or fallback (if title isn't present).
@@ -273,11 +260,11 @@ pub enum Role {
 /// This is the MCP protocol's `Result` structure, which carries optional
 /// `_meta` metadata. It is distinct from Rust's `std::result::Result<T, E>`.
 ///
-/// Per MCP 2025-06-18 specification, all result types should support
+/// Per the current MCP specification, all result types should support
 /// optional metadata in the `_meta` field.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Result {
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -309,7 +296,7 @@ impl Default for Result {
 
 /// A response that indicates success but carries no data
 ///
-/// Per MCP 2025-06-18 specification, this is simply a Result with no additional fields.
+/// Per the current MCP specification, this is simply a Result with no additional fields.
 /// This is used for operations where the success of the operation itself
 /// is the only meaningful response, such as ping responses.
 pub type EmptyResult = Result;

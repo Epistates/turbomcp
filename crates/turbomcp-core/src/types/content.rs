@@ -64,7 +64,7 @@ impl Content {
     pub fn image(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
         Self::Image {
             data: data.into(),
-            mime_type: mime_type.into(),
+            mime_type: mime_type.into().into(),
             annotations: None,
         }
     }
@@ -74,7 +74,7 @@ impl Content {
     pub fn audio(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
         Self::Audio {
             data: data.into(),
-            mime_type: mime_type.into(),
+            mime_type: mime_type.into().into(),
             annotations: None,
         }
     }

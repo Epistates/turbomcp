@@ -331,10 +331,10 @@ impl TryFrom<proto::Tool> for Tool {
 impl From<Resource> for proto::Resource {
     fn from(resource: Resource) -> Self {
         Self {
-            uri: resource.uri,
+            uri: resource.uri.to_string(),
             name: resource.name,
             description: resource.description,
-            mime_type: resource.mime_type,
+            mime_type: resource.mime_type.map(Into::into),
             annotations: resource.annotations.map(Into::into),
             icon: resource.icon.map(Into::into),
         }
@@ -346,12 +346,12 @@ impl From<proto::Resource> for Resource {
         let icon = resource.icon.and_then(|i| Icon::try_from(i).ok());
 
         Self {
-            uri: resource.uri,
+            uri: resource.uri.into(),
             name: resource.name,
             description: resource.description,
             title: None,
             icon,
-            mime_type: resource.mime_type,
+            mime_type: resource.mime_type.map(Into::into),
             size: None,
             annotations: resource.annotations.map(Into::into),
         }
@@ -364,7 +364,7 @@ impl From<ResourceTemplate> for proto::ResourceTemplate {
             uri_template: template.uri_template,
             name: template.name,
             description: template.description,
-            mime_type: template.mime_type,
+            mime_type: template.mime_type.map(Into::into),
             annotations: template.annotations.map(Into::into),
             icon: template.icon.map(Into::into),
         }
@@ -381,7 +381,7 @@ impl From<proto::ResourceTemplate> for ResourceTemplate {
             description: template.description,
             title: None,
             icon,
-            mime_type: template.mime_type,
+            mime_type: template.mime_type.map(Into::into),
             annotations: template.annotations.map(Into::into),
         }
     }
@@ -402,8 +402,8 @@ impl TryFrom<ResourceContent> for proto::ResourceContent {
         };
 
         Ok(Self {
-            uri: content.uri,
-            mime_type: content.mime_type,
+            uri: content.uri.to_string(),
+            mime_type: content.mime_type.map(Into::into),
             content: text
                 .map(proto::resource_content::Content::Text)
                 .or_else(|| blob.map(proto::resource_content::Content::Blob)),
@@ -422,8 +422,8 @@ impl From<proto::ResourceContent> for ResourceContent {
         };
 
         Self {
-            uri: content.uri,
-            mime_type: content.mime_type,
+            uri: content.uri.into(),
+            mime_type: content.mime_type.map(Into::into),
             text,
             blob,
         }
@@ -562,7 +562,10 @@ impl TryFrom<Content> for proto::Content {
                 mime_type,
                 annotations,
             } => (
-                proto::content::Content::Image(proto::ImageContent { data, mime_type }),
+                proto::content::Content::Image(proto::ImageContent {
+                    data,
+                    mime_type: mime_type.to_string(),
+                }),
                 annotations,
             ),
             Content::Audio {
@@ -570,7 +573,10 @@ impl TryFrom<Content> for proto::Content {
                 mime_type,
                 annotations,
             } => (
-                proto::content::Content::Audio(proto::AudioContent { data, mime_type }),
+                proto::content::Content::Audio(proto::AudioContent {
+                    data,
+                    mime_type: mime_type.to_string(),
+                }),
                 annotations,
             ),
             Content::Resource {
@@ -602,12 +608,12 @@ impl TryFrom<proto::Content> for Content {
             }),
             Some(proto::content::Content::Image(i)) => Ok(Content::Image {
                 data: i.data,
-                mime_type: i.mime_type,
+                mime_type: i.mime_type.into(),
                 annotations,
             }),
             Some(proto::content::Content::Audio(a)) => Ok(Content::Audio {
                 data: a.data,
-                mime_type: a.mime_type,
+                mime_type: a.mime_type.into(),
                 annotations,
             }),
             Some(proto::content::Content::Resource(r)) => Ok(Content::Resource {
@@ -705,12 +711,12 @@ mod tests {
     #[test]
     fn test_resource_conversion() {
         let resource = Resource {
-            uri: "file:///test.txt".to_string(),
+            uri: "file:///test.txt".into(),
             name: "Test File".to_string(),
             description: Some("A test file".to_string()),
             title: None,
             icon: None,
-            mime_type: Some("text/plain".to_string()),
+            mime_type: Some("text/plain".into()),
             size: None,
             annotations: None,
         };

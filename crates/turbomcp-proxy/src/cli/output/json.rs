@@ -81,7 +81,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 title: None,
             },
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: "2025-11-25".to_string(),
             capabilities: ServerCapabilities::default(),
             tools: vec![],
             resources: vec![],

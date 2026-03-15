@@ -21,7 +21,7 @@
 //!
 //! // With protocol version override
 //! let config = RouteConfig {
-//!     protocol_version: Some("2025-06-18"),
+//!     protocol_version: Some("2025-11-25"),
 //! };
 //! let response = route_request(&handler, request, &ctx, &config).await;
 //! ```
@@ -594,14 +594,14 @@ mod tests {
         let handler = TestHandler;
         let ctx = RequestContext::stdio();
         let config = RouteConfig {
-            protocol_version: Some("2025-06-18"),
+            protocol_version: Some("2025-11-25"),
         };
         let request = JsonRpcIncoming {
             jsonrpc: "2.0".to_string(),
             id: Some(serde_json::json!(1)),
             method: "initialize".to_string(),
             params: Some(serde_json::json!({
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": "2025-11-25",
                 "clientInfo": {
                     "name": "test-client",
                     "version": "1.0.0"
@@ -611,6 +611,6 @@ mod tests {
 
         let response = route_request(&handler, request, &ctx, &config).await;
         let result = response.result.unwrap();
-        assert_eq!(result["protocolVersion"], "2025-06-18");
+        assert_eq!(result["protocolVersion"], "2025-11-25");
     }
 }

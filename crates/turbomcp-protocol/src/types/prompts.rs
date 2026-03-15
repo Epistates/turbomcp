@@ -7,11 +7,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{
-    content::Content,
+    content::ContentBlock,
     core::{Cursor, Role},
 };
 
-/// Prompt definition per MCP 2025-06-18 specification
+/// Prompt definition per the current MCP specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Prompt {
     /// Prompt name (programmatic identifier)
@@ -34,7 +34,7 @@ pub struct Prompt {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-/// Prompt argument definition per MCP 2025-06-18 specification
+/// Prompt argument definition per the current MCP specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptArgument {
     /// Argument name (programmatic identifier)
@@ -64,7 +64,7 @@ pub struct ListPromptsRequest {
     /// If provided, the server should return results starting after this cursor.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -77,7 +77,7 @@ pub struct ListPromptsResult {
     /// Optional continuation token
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -90,7 +90,7 @@ pub struct GetPromptRequest {
     /// Prompt arguments
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<PromptInput>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -103,7 +103,7 @@ pub struct GetPromptResult {
     pub description: Option<String>,
     /// Prompt messages
     pub messages: Vec<PromptMessage>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -114,5 +114,5 @@ pub struct PromptMessage {
     /// Message role
     pub role: Role,
     /// Message content
-    pub content: Content,
+    pub content: ContentBlock,
 }

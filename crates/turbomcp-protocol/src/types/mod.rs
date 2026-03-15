@@ -39,11 +39,12 @@ pub mod sampling;
 pub mod tasks;
 pub mod tools;
 
-// Re-export all types for backward compatibility
+// Re-export the canonical protocol types.
 pub use capabilities::*;
 pub use completion::*;
 pub use content::*;
 pub use core::*;
+pub use domain::*;
 pub use elicitation::*;
 pub use initialization::*;
 pub use logging::*;
@@ -55,13 +56,3 @@ pub use roots::*;
 pub use sampling::{ModelHint, *};
 pub use tasks::*;
 pub use tools::*;
-
-// Re-export validated domain types (these have the same names as type aliases in core,
-// but are distinct types with validation. Core type aliases are preferred for backward compat)
-pub use domain::{
-    Base64Error,
-    MimeTypeError,
-    UriError,
-    // Note: Uri, MimeType, and Base64String from domain are NOT glob re-exported
-    // to avoid ambiguity with the type aliases in core. Access them via domain::Uri, etc.
-};

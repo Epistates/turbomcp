@@ -33,7 +33,7 @@ pub enum ContentType {
 
 /// Content block union type
 ///
-/// - MCP 2025-06-18: text, image, audio, resource_link, resource
+/// - MCP 2025-11-25: text, image, audio, resource_link, resource
 /// - MCP 2025-11-25 draft (SEP-1577): + tool_use, tool_result
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -61,36 +61,7 @@ pub enum ContentBlock {
     ToolResult(ToolResultContent),
 }
 
-/// Backward compatibility alias for `ContentBlock`.
-///
-/// The MCP specification originally named this type `Content`, but later renamed it to
-/// `ContentBlock` for clarity. This alias exists to maintain backward compatibility with
-/// code written against earlier versions of the TurboMCP SDK.
-///
-/// **For new code**, prefer using `ContentBlock` directly as it matches the current
-/// MCP specification terminology.
-///
-/// # Example
-///
-/// ```rust
-/// use turbomcp_protocol::types::{Content, ContentBlock, TextContent};
-///
-/// // Both are equivalent:
-/// let content_old: Content = ContentBlock::Text(TextContent {
-///     text: "Hello".to_string(),
-///     annotations: None,
-///     meta: None,
-/// });
-///
-/// let content_new: ContentBlock = ContentBlock::Text(TextContent {
-///     text: "Hello".to_string(),
-///     annotations: None,
-///     meta: None,
-/// });
-/// ```
-pub type Content = ContentBlock;
-
-/// Text content per MCP 2025-06-18 specification
+/// Text content per the current MCP specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextContent {
     /// The text content of the message
@@ -103,7 +74,7 @@ pub struct TextContent {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-/// Image content per MCP 2025-06-18 specification
+/// Image content per the current MCP specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageContent {
     /// The base64-encoded image data
@@ -119,7 +90,7 @@ pub struct ImageContent {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-/// Audio content per MCP 2025-06-18 specification
+/// Audio content per the current MCP specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioContent {
     /// The base64-encoded audio data
@@ -135,7 +106,7 @@ pub struct AudioContent {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-/// Resource link per MCP 2025-06-18 specification
+/// Resource link per the current MCP specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceLink {
     /// Resource name (programmatic identifier)
@@ -162,7 +133,7 @@ pub struct ResourceLink {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-/// Embedded resource content per MCP 2025-06-18 specification
+/// Embedded resource content per the current MCP specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddedResource {
     /// The embedded resource content (text or binary)

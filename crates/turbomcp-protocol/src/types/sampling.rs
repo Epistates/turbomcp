@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::{content::Content, core::Role};
+use super::{content::ContentBlock, core::Role};
 
 use super::tools::Tool;
 
@@ -29,7 +29,7 @@ pub struct SamplingMessage {
     /// Message role
     pub role: Role,
     /// Message content
-    pub content: Content,
+    pub content: ContentBlock,
     /// Optional message metadata
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, serde_json::Value>>,
@@ -131,7 +131,7 @@ pub struct CreateMessageResult {
     /// The role of the message (required by MCP specification)
     pub role: super::core::Role,
     /// The generated message content
-    pub content: Content,
+    pub content: ContentBlock,
     /// Model used for generation (required by MCP specification)
     pub model: String,
     /// Stop reason (if applicable)

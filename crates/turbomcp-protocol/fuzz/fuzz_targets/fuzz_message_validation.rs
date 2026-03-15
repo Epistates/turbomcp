@@ -52,7 +52,7 @@ fuzz_target!(|data: &[u8]| {
         let _ = serde_json::from_str::<turbomcp_protocol::types::ReadResourceResult>(s);
 
         // Try content types
-        let _ = serde_json::from_str::<turbomcp_protocol::types::Content>(s);
+        let _ = serde_json::from_str::<turbomcp_protocol::types::ContentBlock>(s);
         let _ = serde_json::from_str::<turbomcp_protocol::types::TextContent>(s);
         let _ = serde_json::from_str::<turbomcp_protocol::types::ImageContent>(s);
         let _ = serde_json::from_str::<turbomcp_protocol::types::AudioContent>(s);

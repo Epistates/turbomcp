@@ -132,7 +132,7 @@ pub struct ToolExecution {
 /// and JSON schemas for its inputs and outputs.
 ///
 /// ## Version Support
-/// - MCP 2025-06-18: name, title, description, inputSchema, outputSchema, annotations, _meta
+/// - MCP 2025-11-25: name, title, description, inputSchema, outputSchema, annotations, _meta
 /// - MCP 2025-11-25 draft (SEP-973): + icons
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tool {
@@ -412,7 +412,7 @@ pub struct ListToolsResult {
 /// A request to execute a specific tool.
 ///
 /// ## Version Support
-/// - MCP 2025-06-18: name, arguments, _meta
+/// - MCP 2025-11-25: name, arguments, _meta
 /// - MCP 2025-11-25 draft (SEP-1686): + task (optional task augmentation)
 ///
 /// ## Task Augmentation
@@ -776,8 +776,8 @@ impl From<turbomcp_core::types::content::Content> for super::ContentBlock {
                 mime_type,
                 annotations,
             } => super::ContentBlock::Image(super::ImageContent {
-                data,
-                mime_type,
+                data: data.into(),
+                mime_type: mime_type.to_string().into(),
                 annotations: annotations.map(Into::into),
                 meta: None,
             }),
@@ -786,8 +786,8 @@ impl From<turbomcp_core::types::content::Content> for super::ContentBlock {
                 mime_type,
                 annotations,
             } => super::ContentBlock::Audio(super::AudioContent {
-                data,
-                mime_type,
+                data: data.into(),
+                mime_type: mime_type.to_string().into(),
                 annotations: annotations.map(Into::into),
                 meta: None,
             }),
@@ -799,16 +799,16 @@ impl From<turbomcp_core::types::content::Content> for super::ContentBlock {
                 // Core uses a flat struct with optional text/blob, protocol uses an enum
                 let protocol_resource = if let Some(text) = resource.text {
                     super::ResourceContent::Text(super::TextResourceContents {
-                        uri: resource.uri,
-                        mime_type: resource.mime_type,
+                        uri: resource.uri.to_string().into(),
+                        mime_type: resource.mime_type.map(|mime| mime.to_string().into()),
                         text,
                         meta: None,
                     })
                 } else if let Some(blob) = resource.blob {
                     super::ResourceContent::Blob(super::BlobResourceContents {
-                        uri: resource.uri,
-                        mime_type: resource.mime_type,
-                        blob,
+                        uri: resource.uri.to_string().into(),
+                        mime_type: resource.mime_type.map(|mime| mime.to_string().into()),
+                        blob: blob.into(),
                         meta: None,
                     })
                 } else {
@@ -821,8 +821,8 @@ impl From<turbomcp_core::types::content::Content> for super::ContentBlock {
                         resource.uri
                     );
                     super::ResourceContent::Text(super::TextResourceContents {
-                        uri: resource.uri,
-                        mime_type: resource.mime_type,
+                        uri: resource.uri.to_string().into(),
+                        mime_type: resource.mime_type.map(|mime| mime.to_string().into()),
                         text: String::new(),
                         meta: None,
                     })

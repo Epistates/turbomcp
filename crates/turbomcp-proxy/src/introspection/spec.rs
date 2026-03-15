@@ -15,7 +15,7 @@ pub struct ServerSpec {
     /// Server information from initialize response
     pub server_info: ServerInfo,
 
-    /// Protocol version (e.g., "2025-06-18")
+    /// Protocol version (for example, "2025-11-25")
     pub protocol_version: String,
 
     /// Server capabilities
@@ -387,7 +387,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 title: None,
             },
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: "2025-11-25".to_string(),
             capabilities: ServerCapabilities::default(),
             tools: vec![],
             resources: vec![],
@@ -398,7 +398,7 @@ mod tests {
 
         let json = serde_json::to_string_pretty(&spec).unwrap();
         assert!(json.contains("test-server"));
-        assert!(json.contains("2025-06-18"));
+        assert!(json.contains("2025-11-25"));
     }
 
     #[test]
@@ -409,7 +409,7 @@ mod tests {
                 version: "1.0.0".to_string(),
                 title: None,
             },
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: "2025-11-25".to_string(),
             capabilities: ServerCapabilities {
                 tools: Some(ToolsCapability {
                     list_changed: Some(true),

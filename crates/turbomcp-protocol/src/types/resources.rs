@@ -11,7 +11,7 @@ use super::{
     core::{Annotations, Cursor, MimeType, Uri},
 };
 
-/// Resource definition per MCP 2025-06-18 specification
+/// Resource definition per the current MCP specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Resource {
     /// Resource name (programmatic identifier)
@@ -97,7 +97,7 @@ pub struct ListResourcesRequest {
     /// Optional cursor for pagination
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -110,7 +110,7 @@ pub struct ListResourcesResult {
     /// Optional continuation token
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -121,7 +121,7 @@ pub struct ListResourceTemplatesRequest {
     /// Optional cursor for pagination
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -135,7 +135,7 @@ pub struct ListResourceTemplatesResult {
     /// Optional continuation token
     #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -145,7 +145,7 @@ pub struct ListResourceTemplatesResult {
 pub struct ReadResourceRequest {
     /// Resource URI
     pub uri: Uri,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -155,7 +155,7 @@ pub struct ReadResourceRequest {
 pub struct ReadResourceResult {
     /// Resource contents (can be text or binary)
     pub contents: Vec<ResourceContent>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }

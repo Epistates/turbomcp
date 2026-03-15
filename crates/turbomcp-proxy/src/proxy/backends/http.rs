@@ -1,7 +1,7 @@
 //! HTTP Backend for connecting to remote HTTP MCP servers
 //!
 //! This backend uses reqwest to communicate with MCP servers over HTTP/SSE.
-//! It implements the complete MCP 2025-06-18 protocol over HTTP transport.
+//! It implements the current MCP protocol surface over HTTP transport.
 
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, trace};
 use turbomcp_protocol::{
-    InitializeRequest, InitializeResult, MessageId,
+    InitializeRequest, InitializeResult, MessageId, PROTOCOL_VERSION,
     jsonrpc::{JsonRpcRequest, JsonRpcResponse, JsonRpcResponsePayload, JsonRpcVersion},
 };
 
@@ -134,7 +134,7 @@ impl HttpBackend {
         debug!("Initializing HTTP backend connection");
 
         let request = InitializeRequest {
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: PROTOCOL_VERSION.to_string(),
             capabilities: turbomcp_protocol::types::ClientCapabilities {
                 experimental: None,
                 sampling: None,

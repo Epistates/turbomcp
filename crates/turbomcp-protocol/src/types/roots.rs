@@ -1,4 +1,4 @@
-//! Filesystem boundaries types (MCP 2025-06-18)
+//! Filesystem boundaries types for the current MCP protocol.
 //!
 //! This module contains types for filesystem boundary discovery,
 //! allowing servers to understand client filesystem access boundaries.
@@ -21,7 +21,7 @@ pub struct Root {
 /// Note: Roots do not support pagination, only metadata
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ListRootsRequest {
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
@@ -31,7 +31,7 @@ pub struct ListRootsRequest {
 pub struct ListRootsResult {
     /// Available filesystem roots
     pub roots: Vec<Root>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }

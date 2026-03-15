@@ -2,6 +2,8 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::fmt;
+use core::ops::Deref;
 use hashbrown::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,14 +16,218 @@ pub type ProtocolVersion = String;
 /// Message ID (same as RequestId)
 pub type MessageId = RequestId;
 
-/// URI string type
-pub type Uri = String;
+/// URI string type.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Uri(String);
 
-/// MIME type string
-pub type MimeType = String;
+impl Uri {
+    /// Create a URI wrapper without additional validation.
+    #[must_use]
+    pub fn new(uri: impl Into<String>) -> Self {
+        Self(uri.into())
+    }
 
-/// Base64 encoded string
-pub type Base64String = String;
+    /// Borrow the inner string.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// Consume into the underlying string.
+    #[must_use]
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl fmt::Display for Uri {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Deref for Uri {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<str> for Uri {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for Uri {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for Uri {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<Uri> for String {
+    fn from(value: Uri) -> Self {
+        value.0
+    }
+}
+
+impl PartialEq<&str> for Uri {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<Uri> for &str {
+    fn eq(&self, other: &Uri) -> bool {
+        *self == other.as_str()
+    }
+}
+
+/// MIME type string.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct MimeType(String);
+
+impl MimeType {
+    /// Create a MIME type wrapper without additional validation.
+    #[must_use]
+    pub fn new(mime_type: impl Into<String>) -> Self {
+        Self(mime_type.into())
+    }
+
+    /// Borrow the inner string.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for MimeType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Deref for MimeType {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<str> for MimeType {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for MimeType {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for MimeType {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<MimeType> for String {
+    fn from(value: MimeType) -> Self {
+        value.0
+    }
+}
+
+impl PartialEq<&str> for MimeType {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<MimeType> for &str {
+    fn eq(&self, other: &MimeType) -> bool {
+        *self == other.as_str()
+    }
+}
+
+/// Base64 encoded string.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Base64String(String);
+
+impl Base64String {
+    /// Create a Base64 wrapper without additional validation.
+    #[must_use]
+    pub fn new(data: impl Into<String>) -> Self {
+        Self(data.into())
+    }
+
+    /// Borrow the inner string.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Base64String {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Deref for Base64String {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl AsRef<str> for Base64String {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for Base64String {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for Base64String {
+    fn from(value: &str) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<Base64String> for String {
+    fn from(value: Base64String) -> Self {
+        value.0
+    }
+}
+
+impl PartialEq<&str> for Base64String {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<Base64String> for &str {
+    fn eq(&self, other: &Base64String) -> bool {
+        *self == other.as_str()
+    }
+}
 
 /// Pagination cursor
 pub type Cursor = String;

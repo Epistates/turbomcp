@@ -5,7 +5,7 @@
 //! values like URIs, MIME types, and Base64 strings.
 
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{fmt, ops::Deref};
 
 /// A validated URI string
 ///
@@ -120,6 +120,38 @@ impl AsRef<str> for Uri {
     }
 }
 
+impl Deref for Uri {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<String> for Uri {
+    fn from(uri: String) -> Self {
+        Self::new_unchecked(uri)
+    }
+}
+
+impl From<&str> for Uri {
+    fn from(uri: &str) -> Self {
+        Self::new_unchecked(uri)
+    }
+}
+
+impl PartialEq<&str> for Uri {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<Uri> for &str {
+    fn eq(&self, other: &Uri) -> bool {
+        *self == other.as_str()
+    }
+}
+
 impl From<Uri> for String {
     fn from(uri: Uri) -> Self {
         uri.0
@@ -230,6 +262,38 @@ impl AsRef<str> for MimeType {
     }
 }
 
+impl Deref for MimeType {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<String> for MimeType {
+    fn from(mime: String) -> Self {
+        Self::new_unchecked(mime)
+    }
+}
+
+impl From<&str> for MimeType {
+    fn from(mime: &str) -> Self {
+        Self::new_unchecked(mime)
+    }
+}
+
+impl PartialEq<&str> for MimeType {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<MimeType> for &str {
+    fn eq(&self, other: &MimeType) -> bool {
+        *self == other.as_str()
+    }
+}
+
 impl From<MimeType> for String {
     fn from(mime: MimeType) -> Self {
         mime.0
@@ -310,6 +374,38 @@ impl fmt::Display for Base64String {
 impl AsRef<str> for Base64String {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+impl Deref for Base64String {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<String> for Base64String {
+    fn from(data: String) -> Self {
+        Self::new_unchecked(data)
+    }
+}
+
+impl From<&str> for Base64String {
+    fn from(data: &str) -> Self {
+        Self::new_unchecked(data)
+    }
+}
+
+impl PartialEq<&str> for Base64String {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<Base64String> for &str {
+    fn eq(&self, other: &Base64String) -> bool {
+        *self == other.as_str()
     }
 }
 

@@ -135,19 +135,19 @@ pub struct CompletionData {
 /// Completion response
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompletionResponse {
-    /// Completion data per MCP 2025-06-18 specification
+    /// Completion data per the current MCP specification
     pub completion: CompletionData,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
 
-/// Server's response to a completion/complete request per MCP 2025-06-18 specification
+/// Server's response to a completion/complete request per the current MCP specification
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CompleteResult {
     /// Completion data
     pub completion: CompletionData,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }
