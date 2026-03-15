@@ -6,8 +6,13 @@
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
-use turbomcp_protocol::types::{CallToolRequest, CallToolResult, ListToolsResult, Tool};
+use turbomcp_protocol::types::{
+    CallToolRequest, CallToolResult, Cursor, ListToolsRequest, ListToolsResult, Tool,
+};
 use turbomcp_protocol::{Error, Result};
+
+/// Maximum number of pagination pages to prevent infinite loops from misbehaving servers.
+const MAX_PAGINATION_PAGES: usize = 1000;
 
 impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// List all available tools from the MCP server
@@ -43,9 +48,46 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             return Err(Error::invalid_request("Client not initialized"));
         }
 
-        // Send tools/list request
-        let response: ListToolsResult = self.inner.protocol.request("tools/list", None).await?;
-        Ok(response.tools) // Return full Tool objects with schemas
+        let mut all_tools = Vec::new();
+        let mut cursor = None;
+        for _ in 0..MAX_PAGINATION_PAGES {
+            let result = self.list_tools_paginated(cursor).await?;
+            let page_empty = result.tools.is_empty();
+            all_tools.extend(result.tools);
+            match result.next_cursor {
+                Some(c) if !page_empty => cursor = Some(c),
+                _ => break,
+            }
+        }
+        Ok(all_tools)
+    }
+
+    /// List tools with pagination support
+    ///
+    /// Returns the full `ListToolsResult` including `next_cursor` for manual
+    /// pagination control. Use `list_tools()` for automatic pagination.
+    ///
+    /// # Arguments
+    ///
+    /// * `cursor` - Optional cursor from a previous `ListToolsResult::next_cursor`
+    pub async fn list_tools_paginated(
+        &self,
+        cursor: Option<Cursor>,
+    ) -> Result<ListToolsResult> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
+            return Err(Error::invalid_request("Client not initialized"));
+        }
+
+        let request = ListToolsRequest {
+            cursor,
+            _meta: None,
+        };
+        let params = if request.cursor.is_some() {
+            Some(serde_json::to_value(&request)?)
+        } else {
+            None
+        };
+        self.inner.protocol.request("tools/list", params).await
     }
 
     /// List available tool names from the MCP server

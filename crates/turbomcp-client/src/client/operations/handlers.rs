@@ -4,8 +4,9 @@
 //! that process server-initiated operations and notifications.
 
 use crate::handlers::{
-    CancellationHandler, ElicitationHandler, LogHandler, PromptListChangedHandler,
-    ResourceListChangedHandler, ResourceUpdateHandler, RootsHandler, ToolListChangedHandler,
+    CancellationHandler, ElicitationHandler, LogHandler, ProgressHandler,
+    PromptListChangedHandler, ResourceListChangedHandler, ResourceUpdateHandler, RootsHandler,
+    ToolListChangedHandler,
 };
 use std::sync::Arc;
 
@@ -262,5 +263,24 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     #[must_use]
     pub fn has_resource_update_handler(&self) -> bool {
         self.inner.handlers.lock().has_resource_update_handler()
+    }
+
+    /// Register a progress handler for processing progress notifications
+    ///
+    /// Progress handlers receive progress notifications from the server for
+    /// long-running operations. The notification includes a progress token,
+    /// current progress, optional total, and optional message.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The progress handler implementation
+    pub fn set_progress_handler(&self, handler: Arc<dyn ProgressHandler>) {
+        self.inner.handlers.lock().set_progress_handler(handler);
+    }
+
+    /// Check if a progress handler is registered
+    #[must_use]
+    pub fn has_progress_handler(&self) -> bool {
+        self.inner.handlers.lock().has_progress_handler()
     }
 }

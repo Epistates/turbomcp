@@ -853,10 +853,26 @@ impl<T: Transport + 'static> Client<T> {
     async fn handle_notification(&self, notification: JsonRpcNotification) -> Result<()> {
         match notification.method.as_str() {
             "notifications/progress" => {
-                // Progress tracking has been removed
-                tracing::debug!(
-                    "Received progress notification - progress tracking has been removed"
-                );
+                // Route to progress handler
+                let handler_opt = self.inner.handlers.lock().get_progress_handler();
+
+                if let Some(handler) = handler_opt {
+                    let progress: crate::handlers::ProgressNotification =
+                        serde_json::from_value(
+                            notification.params.unwrap_or(serde_json::Value::Null),
+                        )
+                        .map_err(|e| {
+                            Error::internal(format!("Invalid progress notification: {}", e))
+                        })?;
+
+                    if let Err(e) = handler.handle_progress(progress).await {
+                        tracing::error!("Progress handler error: {}", e);
+                    }
+                } else {
+                    tracing::debug!(
+                        "Progress notification received (no handler registered)"
+                    );
+                }
             }
 
             "notifications/message" => {

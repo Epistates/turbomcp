@@ -6,10 +6,13 @@
 use std::sync::atomic::Ordering;
 
 use turbomcp_protocol::types::{
-    ListResourceTemplatesResult, ListResourcesResult, ReadResourceRequest, ReadResourceResult,
-    Resource,
+    Cursor, ListResourceTemplatesRequest, ListResourceTemplatesResult, ListResourcesRequest,
+    ListResourcesResult, ReadResourceRequest, ReadResourceResult, Resource,
 };
 use turbomcp_protocol::{Error, Result};
+
+/// Maximum number of pagination pages to prevent infinite loops from misbehaving servers.
+const MAX_PAGINATION_PAGES: usize = 1000;
 
 impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// List available resources from the MCP server
@@ -54,11 +57,46 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             return Err(Error::invalid_request("Client not initialized"));
         }
 
-        // Send resources/list request
-        let response: ListResourcesResult =
-            self.inner.protocol.request("resources/list", None).await?;
+        let mut all_resources = Vec::new();
+        let mut cursor = None;
+        for _ in 0..MAX_PAGINATION_PAGES {
+            let result = self.list_resources_paginated(cursor).await?;
+            let page_empty = result.resources.is_empty();
+            all_resources.extend(result.resources);
+            match result.next_cursor {
+                Some(c) if !page_empty => cursor = Some(c),
+                _ => break,
+            }
+        }
+        Ok(all_resources)
+    }
 
-        Ok(response.resources)
+    /// List resources with pagination support
+    ///
+    /// Returns the full `ListResourcesResult` including `next_cursor` for manual
+    /// pagination control. Use `list_resources()` for automatic pagination.
+    ///
+    /// # Arguments
+    ///
+    /// * `cursor` - Optional cursor from a previous `ListResourcesResult::next_cursor`
+    pub async fn list_resources_paginated(
+        &self,
+        cursor: Option<Cursor>,
+    ) -> Result<ListResourcesResult> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
+            return Err(Error::invalid_request("Client not initialized"));
+        }
+
+        let request = ListResourcesRequest {
+            cursor,
+            _meta: None,
+        };
+        let params = if request.cursor.is_some() {
+            Some(serde_json::to_value(&request)?)
+        } else {
+            None
+        };
+        self.inner.protocol.request("resources/list", params).await
     }
 
     /// Read the content of a specific resource by URI
@@ -159,17 +197,54 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             return Err(Error::invalid_request("Client not initialized"));
         }
 
-        // Send resources/templates request
-        let response: ListResourceTemplatesResult = self
-            .inner
+        let mut all_templates = Vec::new();
+        let mut cursor = None;
+        for _ in 0..MAX_PAGINATION_PAGES {
+            let result = self.list_resource_templates_paginated(cursor).await?;
+            let page_empty = result.resource_templates.is_empty();
+            all_templates.extend(
+                result
+                    .resource_templates
+                    .into_iter()
+                    .map(|t| t.uri_template),
+            );
+            match result.next_cursor {
+                Some(c) if !page_empty => cursor = Some(c),
+                _ => break,
+            }
+        }
+        Ok(all_templates)
+    }
+
+    /// List resource templates with pagination support
+    ///
+    /// Returns the full `ListResourceTemplatesResult` including `next_cursor`
+    /// for manual pagination control. Use `list_resource_templates()` for
+    /// automatic pagination.
+    ///
+    /// # Arguments
+    ///
+    /// * `cursor` - Optional cursor from a previous result's `next_cursor`
+    pub async fn list_resource_templates_paginated(
+        &self,
+        cursor: Option<Cursor>,
+    ) -> Result<ListResourceTemplatesResult> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
+            return Err(Error::invalid_request("Client not initialized"));
+        }
+
+        let request = ListResourceTemplatesRequest {
+            cursor,
+            _meta: None,
+        };
+        let params = if request.cursor.is_some() {
+            Some(serde_json::to_value(&request)?)
+        } else {
+            None
+        };
+        self.inner
             .protocol
-            .request("resources/templates", None)
-            .await?;
-        let template_uris = response
-            .resource_templates
-            .into_iter()
-            .map(|template| template.uri_template)
-            .collect();
-        Ok(template_uris)
+            .request("resources/templates", params)
+            .await
     }
 }

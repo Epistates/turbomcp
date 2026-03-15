@@ -85,6 +85,7 @@ use turbomcp_protocol::types::LogLevel;
 pub use turbomcp_protocol::types::{
     CancelledNotification,       // current MCP spec
     LoggingNotification,         // current MCP spec
+    ProgressNotification,        // current MCP spec
     ResourceUpdatedNotification, // current MCP spec
 };
 
@@ -869,6 +870,60 @@ pub trait ToolListChangedHandler: Send + Sync + std::fmt::Debug {
 }
 
 // ============================================================================
+// PROGRESS HANDLER TRAIT
+// ============================================================================
+
+/// Handler for progress notifications
+///
+/// Per the current MCP specification, `notifications/progress` is sent by the
+/// server to report progress on long-running operations. The notification
+/// includes a progress token, current progress value, optional total, and
+/// optional human-readable message.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use turbomcp_client::handlers::{ProgressHandler, ProgressNotification, HandlerResult};
+/// use std::future::Future;
+/// use std::pin::Pin;
+///
+/// #[derive(Debug)]
+/// struct MyProgressHandler;
+///
+/// impl ProgressHandler for MyProgressHandler {
+///     fn handle_progress(
+///         &self,
+///         notification: ProgressNotification,
+///     ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>> {
+///         Box::pin(async move {
+///             let pct = notification.total.map(|t| format!(" ({}/{})", notification.progress, t)).unwrap_or_default();
+///             println!("Progress [{}]{}: {}", notification.progress_token, pct,
+///                 notification.message.as_deref().unwrap_or(""));
+///             Ok(())
+///         })
+///     }
+/// }
+/// ```
+pub trait ProgressHandler: Send + Sync + std::fmt::Debug {
+    /// Handle a progress notification from the server
+    ///
+    /// This method is called when the server sends progress updates for
+    /// long-running operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `notification` - The progress notification with token, progress, total, and message
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if the notification was processed successfully.
+    fn handle_progress(
+        &self,
+        notification: ProgressNotification,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<()>> + Send + '_>>;
+}
+
+// ============================================================================
 // HANDLER REGISTRY FOR CLIENT
 // ============================================================================
 
@@ -902,6 +957,9 @@ pub struct HandlerRegistry {
 
     /// Tool list changed handler
     pub tool_list_changed: Option<Arc<dyn ToolListChangedHandler>>,
+
+    /// Progress handler for progress notifications
+    pub progress: Option<Arc<dyn ProgressHandler>>,
 }
 
 impl HandlerRegistry {
@@ -962,6 +1020,12 @@ impl HandlerRegistry {
         self.tool_list_changed = Some(handler);
     }
 
+    /// Register a progress handler
+    pub fn set_progress_handler(&mut self, handler: Arc<dyn ProgressHandler>) {
+        debug!("Registering progress handler");
+        self.progress = Some(handler);
+    }
+
     /// Check if a roots handler is registered
     #[must_use]
     pub fn has_roots_handler(&self) -> bool {
@@ -1020,6 +1084,18 @@ impl HandlerRegistry {
     #[must_use]
     pub fn get_tool_list_changed_handler(&self) -> Option<Arc<dyn ToolListChangedHandler>> {
         self.tool_list_changed.clone()
+    }
+
+    /// Check if a progress handler is registered
+    #[must_use]
+    pub fn has_progress_handler(&self) -> bool {
+        self.progress.is_some()
+    }
+
+    /// Get the progress handler if registered
+    #[must_use]
+    pub fn get_progress_handler(&self) -> Option<Arc<dyn ProgressHandler>> {
+        self.progress.clone()
     }
 
     /// Handle a roots/list request from the server

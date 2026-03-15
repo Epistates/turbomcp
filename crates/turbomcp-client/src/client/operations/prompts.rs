@@ -6,9 +6,13 @@
 use std::sync::atomic::Ordering;
 
 use turbomcp_protocol::types::{
-    GetPromptRequest, GetPromptResult, ListPromptsResult, Prompt, PromptInput,
+    Cursor, GetPromptRequest, GetPromptResult, ListPromptsRequest, ListPromptsResult, Prompt,
+    PromptInput,
 };
 use turbomcp_protocol::{Error, Result};
+
+/// Maximum number of pagination pages to prevent infinite loops from misbehaving servers.
+const MAX_PAGINATION_PAGES: usize = 1000;
 
 impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// List available prompt templates from the server
@@ -62,9 +66,46 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
             return Err(Error::invalid_request("Client not initialized"));
         }
 
-        // Send prompts/list request - return full Prompt objects per MCP spec
-        let response: ListPromptsResult = self.inner.protocol.request("prompts/list", None).await?;
-        Ok(response.prompts)
+        let mut all_prompts = Vec::new();
+        let mut cursor = None;
+        for _ in 0..MAX_PAGINATION_PAGES {
+            let result = self.list_prompts_paginated(cursor).await?;
+            let page_empty = result.prompts.is_empty();
+            all_prompts.extend(result.prompts);
+            match result.next_cursor {
+                Some(c) if !page_empty => cursor = Some(c),
+                _ => break,
+            }
+        }
+        Ok(all_prompts)
+    }
+
+    /// List prompts with pagination support
+    ///
+    /// Returns the full `ListPromptsResult` including `next_cursor` for manual
+    /// pagination control. Use `list_prompts()` for automatic pagination.
+    ///
+    /// # Arguments
+    ///
+    /// * `cursor` - Optional cursor from a previous `ListPromptsResult::next_cursor`
+    pub async fn list_prompts_paginated(
+        &self,
+        cursor: Option<Cursor>,
+    ) -> Result<ListPromptsResult> {
+        if !self.inner.initialized.load(Ordering::Relaxed) {
+            return Err(Error::invalid_request("Client not initialized"));
+        }
+
+        let request = ListPromptsRequest {
+            cursor,
+            _meta: None,
+        };
+        let params = if request.cursor.is_some() {
+            Some(serde_json::to_value(&request)?)
+        } else {
+            None
+        };
+        self.inner.protocol.request("prompts/list", params).await
     }
 
     /// Get a specific prompt template with argument support

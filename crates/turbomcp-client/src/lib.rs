@@ -198,6 +198,9 @@ pub use handlers::{
     // Logging (current MCP spec)
     LogHandler,
     LoggingNotification,
+    // Progress (current MCP spec)
+    ProgressHandler,
+    ProgressNotification,
     PromptListChangedHandler,
     // List changed handlers (current MCP spec)
     ResourceListChangedHandler,
@@ -636,6 +639,7 @@ pub struct ClientBuilder {
     elicitation_handler: Option<Arc<dyn crate::handlers::ElicitationHandler>>,
     log_handler: Option<Arc<dyn crate::handlers::LogHandler>>,
     resource_update_handler: Option<Arc<dyn crate::handlers::ResourceUpdateHandler>>,
+    progress_handler: Option<Arc<dyn crate::handlers::ProgressHandler>>,
     // Robustness configuration
     enable_resilience: bool,
     retry_config: Option<turbomcp_transport::resilience::RetryConfig>,
@@ -979,6 +983,19 @@ impl ClientBuilder {
         self
     }
 
+    /// Register a progress handler for processing progress notifications
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - The progress handler implementation
+    pub fn with_progress_handler(
+        mut self,
+        handler: Arc<dyn crate::handlers::ProgressHandler>,
+    ) -> Self {
+        self.progress_handler = Some(handler);
+        self
+    }
+
     // ============================================================================
     // BUILD METHODS
     // ============================================================================
@@ -1035,6 +1052,9 @@ impl ClientBuilder {
         }
         if let Some(handler) = self.resource_update_handler {
             client.set_resource_update_handler(handler);
+        }
+        if let Some(handler) = self.progress_handler {
+            client.set_progress_handler(handler);
         }
 
         Ok(client)
@@ -1138,6 +1158,9 @@ impl ClientBuilder {
         if let Some(handler) = self.resource_update_handler {
             client.set_resource_update_handler(handler);
         }
+        if let Some(handler) = self.progress_handler {
+            client.set_progress_handler(handler);
+        }
 
         Ok(client)
     }
@@ -1186,6 +1209,9 @@ impl ClientBuilder {
         if let Some(handler) = self.resource_update_handler {
             client.set_resource_update_handler(handler);
         }
+        if let Some(handler) = self.progress_handler {
+            client.set_progress_handler(handler);
+        }
 
         client
     }
@@ -1212,6 +1238,7 @@ impl ClientBuilder {
         self.elicitation_handler.is_some()
             || self.log_handler.is_some()
             || self.resource_update_handler.is_some()
+            || self.progress_handler.is_some()
     }
 }
 
