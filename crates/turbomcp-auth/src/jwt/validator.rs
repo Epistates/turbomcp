@@ -163,8 +163,8 @@ impl JwtValidator {
             }
         }
 
-        // Fallback: Use hardcoded pattern for non-OIDC providers
-        let fallback_uri = format!("{}/.well-known/openid-configuration/jwks", issuer);
+        // Fallback: use the conventional direct JWKS endpoint for non-OIDC providers.
+        let fallback_uri = format!("{}/.well-known/jwks.json", issuer);
         info!(
             issuer = issuer,
             jwks_uri = %fallback_uri,
@@ -190,7 +190,7 @@ impl JwtValidator {
     /// This method performs OpenID Connect Discovery to find the JWKS endpoint:
     /// 1. Fetches `{issuer}/.well-known/openid-configuration`
     /// 2. Extracts `jwks_uri` from the discovery document
-    /// 3. Falls back to `{issuer}/.well-known/openid-configuration/jwks` if discovery fails
+    /// 3. Falls back to `{issuer}/.well-known/jwks.json` if discovery fails
     ///
     /// # Example
     ///

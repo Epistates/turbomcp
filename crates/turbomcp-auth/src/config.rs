@@ -21,7 +21,7 @@ use super::dpop::DpopAlgorithm;
 ///
 /// # MCP Compliance
 ///
-/// Per MCP specification (2025-06-18), authentication is **stateless**.
+/// Per the current MCP specification, authentication is **stateless**.
 /// All authentication is token-based with validation on every request.
 /// No server-side session state is maintained.
 #[derive(Debug, Clone, Serialize, Deserialize)]

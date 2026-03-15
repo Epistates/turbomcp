@@ -12,6 +12,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::json;
+#[cfg(feature = "jwt-validation")]
+use std::collections::HashSet;
 
 use crate::axum::config::AuthConfig;
 
@@ -167,6 +169,71 @@ fn extract_kid_from_token(token: &str) -> Option<String> {
     header.kid
 }
 
+#[cfg(feature = "jwt-validation")]
+fn extract_scope_set(claims: &JwtClaims) -> HashSet<String> {
+    let mut scopes = HashSet::new();
+
+    if let Some(scope) = claims
+        .additional
+        .get("scope")
+        .and_then(serde_json::Value::as_str)
+    {
+        scopes.extend(scope.split_whitespace().map(ToOwned::to_owned));
+    }
+
+    if let Some(scp) = claims.additional.get("scp") {
+        match scp {
+            serde_json::Value::String(value) => {
+                scopes.extend(value.split_whitespace().map(ToOwned::to_owned));
+            }
+            serde_json::Value::Array(values) => {
+                scopes.extend(
+                    values
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(ToOwned::to_owned),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    scopes
+}
+
+#[cfg(feature = "jwt-validation")]
+fn validate_required_scopes(claims: &JwtClaims, required_scopes: &[String]) -> bool {
+    if required_scopes.is_empty() {
+        return true;
+    }
+
+    let granted = extract_scope_set(claims);
+    required_scopes.iter().all(|scope| granted.contains(scope))
+}
+
+#[cfg(all(feature = "jwt-validation", feature = "auth"))]
+fn validate_server_uri_audience(claims: &JwtClaims, server_uri: &str) -> Result<(), StatusCode> {
+    use turbomcp_auth::server::validate_audience;
+
+    match &claims.aud {
+        Some(serde_json::Value::String(aud)) => {
+            validate_audience(aud, server_uri).map_err(|_| StatusCode::UNAUTHORIZED)
+        }
+        Some(serde_json::Value::Array(audiences)) => {
+            if audiences
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .any(|aud| validate_audience(aud, server_uri).is_ok())
+            {
+                Ok(())
+            } else {
+                Err(StatusCode::UNAUTHORIZED)
+            }
+        }
+        _ => Err(StatusCode::UNAUTHORIZED),
+    }
+}
+
 /// Validate JWT token with proper validation (supports both symmetric and asymmetric)
 #[cfg(feature = "jwt-validation")]
 async fn validate_jwt_token(token: &str, jwt_config: &JwtConfig) -> Result<JwtClaims, StatusCode> {
@@ -268,6 +335,11 @@ pub async fn authentication_middleware(
         None
     };
 
+    if auth_config.custom_validator.is_some() {
+        tracing::error!("custom auth validators are not implemented in the axum middleware");
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
+
     // Check for JWT authentication
     #[cfg(feature = "jwt-validation")]
     if let Some(jwt_config) = &auth_config.jwt {
@@ -279,6 +351,17 @@ pub async fn authentication_middleware(
                     return AuthError::unauthorized(metadata_uri, scope.as_deref()).into_response();
                 }
             };
+
+            if !validate_required_scopes(&claims, &auth_config.required_scopes) {
+                return AuthError::unauthorized(metadata_uri, scope.as_deref()).into_response();
+            }
+
+            #[cfg(feature = "auth")]
+            if let Some(server_uri) = &jwt_config.server_uri
+                && validate_server_uri_audience(&claims, server_uri).is_err()
+            {
+                return AuthError::unauthorized(metadata_uri, scope.as_deref()).into_response();
+            }
 
             // Step 2: Optional introspection for real-time revocation checking
             #[cfg(feature = "auth")]
@@ -304,7 +387,8 @@ pub async fn authentication_middleware(
                 };
 
                 if !is_active {
-                    tracing::warn!(token = %token, "Token revoked per introspection");
+                    let token_hint = &token[..token.len().min(8)];
+                    tracing::warn!(token_prefix = %token_hint, "Token revoked per introspection");
                     return AuthError::unauthorized(metadata_uri, scope.as_deref()).into_response();
                 }
             }
@@ -319,34 +403,24 @@ pub async fn authentication_middleware(
     // Check for API key authentication
     if let Some(api_key_header) = &auth_config.api_key_header {
         if let Some(provided_key) = request.headers().get(api_key_header) {
-            // Validate API key format
+            let expected_key = match auth_config.api_key_value.as_deref() {
+                Some(value) => value,
+                None => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+
             let key_str = match provided_key.to_str() {
                 Ok(s) => s,
                 Err(_) => return AuthError::bad_request("Invalid API key header").into_response(),
             };
 
-            if key_str.is_empty() {
+            use subtle::ConstantTimeEq;
+            let keys_equal: bool = key_str.as_bytes().ct_eq(expected_key.as_bytes()).into();
+            if key_str.is_empty() || !keys_equal {
                 return AuthError::unauthorized(metadata_uri, scope.as_deref()).into_response();
             }
 
-            // Clone the key string to drop the immutable borrow before we need mutable access
             let key_string = key_str.to_string();
-
-            // IMPORTANT: This middleware performs basic format validation only.
-            //
-            // API key VERIFICATION against a store/database must be implemented by the application:
-            // - This transport layer should NOT block requests based on invalid API keys
-            //   (that is the application's responsibility)
-            // - The application handler can use turbomcp_auth::ApiKeyProvider or custom logic
-            //   to verify the key against a database/KV store
-            // - See: turbomcp_auth::providers::ApiKeyProvider for a reference implementation
-            //
-            // Rationale: Transport layer provides format validation for MCP compliance.
-            // Application layer handles business logic (which keys are valid, rate limits, etc.)
-
-            // Add API key to request extensions for application-layer validation
             request.extensions_mut().insert(key_string);
-            tracing::debug!("API key header found, delegating validation to application layer");
         } else if auth_config.enabled && auth_config.jwt.is_none() {
             // Only require API key if JWT is not configured
             return AuthError::unauthorized(metadata_uri, scope.as_deref()).into_response();

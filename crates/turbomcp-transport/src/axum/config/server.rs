@@ -141,9 +141,17 @@ impl McpServerConfig {
         self
     }
 
-    /// Builder method: Configure API key authentication
+    /// Builder method: Configure API key authentication.
+    ///
+    /// Call [`Self::with_api_key_auth_value`] to set the required secret.
     pub fn with_api_key_auth(mut self, header_name: String) -> Self {
         self.auth = Some(AuthConfig::api_key(header_name));
+        self
+    }
+
+    /// Builder method: Configure API key authentication with the required key value.
+    pub fn with_api_key_auth_value(mut self, header_name: String, value: String) -> Self {
+        self.auth = Some(AuthConfig::api_key(header_name).with_api_key_value(value));
         self
     }
 
@@ -177,7 +185,11 @@ impl McpServerConfig {
         }
 
         if let Ok(api_key_header) = std::env::var("TURBOMCP_API_KEY_HEADER") {
-            return Some(AuthConfig::api_key(api_key_header));
+            let mut auth = AuthConfig::api_key(api_key_header);
+            if let Ok(api_key_value) = std::env::var("TURBOMCP_API_KEY_VALUE") {
+                auth = auth.with_api_key_value(api_key_value);
+            }
+            return Some(auth);
         }
 
         None

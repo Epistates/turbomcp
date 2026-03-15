@@ -16,9 +16,37 @@
 mod common;
 
 use common::MockOAuth2Server;
+use secrecy::SecretString;
 use serde_json::json;
-use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use turbomcp_auth::{
+    config::{OAuth2Config, OAuth2FlowType, ProviderType},
+    oauth2::client::OAuth2Client,
+};
+
+fn oauth_client_for_server(
+    mock_server: &MockOAuth2Server,
+    revocation_url: Option<String>,
+) -> OAuth2Client {
+    let config = OAuth2Config {
+        client_id: "test-client".to_string(),
+        client_secret: SecretString::new("test-client-secret".to_string().into()),
+        auth_url: mock_server.authorize_endpoint.clone(),
+        token_url: mock_server.token_endpoint.clone(),
+        revocation_url,
+        redirect_uri: "http://localhost:3000/callback".to_string(),
+        scopes: vec!["openid".to_string(), "profile".to_string()],
+        flow_type: OAuth2FlowType::AuthorizationCode,
+        additional_params: std::collections::HashMap::new(),
+        security_level: Default::default(),
+        #[cfg(feature = "dpop")]
+        dpop_config: None,
+        mcp_resource_uri: None,
+        auto_resource_indicators: true,
+    };
+
+    OAuth2Client::new(&config, ProviderType::Generic).expect("Failed to create OAuth2 client")
+}
 
 /// Test: Automatic token refresh before expiration
 ///
@@ -109,30 +137,12 @@ async fn test_automatic_token_refresh_before_expiration() {
 /// making the old one invalid. This prevents token reuse attacks.
 /// Reference: OAuth 2.0 Security BCP
 #[tokio::test]
-#[ignore = "Requires OAuth2 refresh token rotation implementation"]
 async fn test_refresh_token_rotation_single_use() {
-    // GIVEN: A mock server implementing refresh token rotation
+    // GIVEN: An OAuth client talking to a server that rotates refresh tokens
     let mock_server = MockOAuth2Server::start().await;
-    let used_refresh_tokens: Arc<Mutex<std::collections::HashSet<String>>> =
-        Arc::new(Mutex::new(std::collections::HashSet::new()));
-
     let initial_refresh = "refresh_v1";
     let rotated_refresh = "refresh_v2";
-
-    // Initial token grant
-    mock_server
-        .mock_token_success("access_initial", Some(initial_refresh))
-        .await;
-
-    let client = reqwest::Client::new();
-    let initial_response = client
-        .post(&mock_server.token_endpoint)
-        .form(&[("grant_type", "authorization_code"), ("code", "code_123")])
-        .send()
-        .await
-        .expect("Request failed");
-
-    assert_eq!(initial_response.status(), 200);
+    let oauth_client = oauth_client_for_server(&mock_server, None);
 
     // WHEN: Client uses refresh token (first time)
     use wiremock::{
@@ -149,33 +159,22 @@ async fn test_refresh_token_rotation_single_use() {
             "expires_in": 1800, // 30 minutes (best practice)
             "refresh_token": rotated_refresh, // NEW refresh token (rotated)
         })))
+        .expect(1)
         .mount(&mock_server.server)
         .await;
 
-    let first_refresh = client
-        .post(&mock_server.token_endpoint)
-        .form(&[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", initial_refresh),
-        ])
-        .send()
-        .await
-        .expect("Request failed");
-
-    assert_eq!(first_refresh.status(), 200);
-    let body: serde_json::Value = first_refresh.json().await.expect("Invalid JSON");
+    let first_refresh = oauth_client.refresh_access_token(initial_refresh).await;
+    let body = first_refresh.expect("Refresh failed");
     assert_eq!(
-        body["refresh_token"], rotated_refresh,
+        body.refresh_token.as_deref(),
+        Some(rotated_refresh),
         "Should return NEW refresh token"
     );
 
-    // Track used token
-    {
-        let mut used = used_refresh_tokens.lock().unwrap();
-        used.insert(initial_refresh.to_string());
-    }
-
     // WHEN: Attacker tries to reuse old refresh token
+    let revoked_server = MockOAuth2Server::start().await;
+    let revoked_client = oauth_client_for_server(&revoked_server, None);
+
     Mock::given(method("POST"))
         .and(path("/token"))
         .and(body_string_contains(initial_refresh))
@@ -183,23 +182,14 @@ async fn test_refresh_token_rotation_single_use() {
             "error": "invalid_grant",
             "error_description": "Refresh token already used (rotation detected)",
         })))
-        .mount(&mock_server.server)
+        .expect(1)
+        .mount(&revoked_server.server)
         .await;
 
-    let reuse_attempt = client
-        .post(&mock_server.token_endpoint)
-        .form(&[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", initial_refresh),
-        ])
-        .send()
-        .await
-        .expect("Request failed");
+    let reuse_attempt = revoked_client.refresh_access_token(initial_refresh).await;
 
     // THEN: Reuse is rejected
-    assert_eq!(reuse_attempt.status(), 400);
-    let error_body: serde_json::Value = reuse_attempt.json().await.expect("Invalid JSON");
-    assert_eq!(error_body["error"], "invalid_grant");
+    assert!(reuse_attempt.is_err(), "Reuse should be rejected");
 
     // Security: Server should revoke ALL tokens in the chain when reuse detected
     // This prevents attackers who stole the token from using it
@@ -299,29 +289,14 @@ async fn test_refresh_token_rotation_grace_period() {
 /// Standard: OAuth 2.0 Token Revocation
 /// Use case: User logs out, token should be immediately invalid
 #[tokio::test]
-#[ignore = "Requires OAuth2 token revocation implementation"]
 async fn test_token_revocation_rfc7009() {
     // GIVEN: A mock OAuth2 server with revocation endpoint
     let mock_server = MockOAuth2Server::start().await;
     let revocation_endpoint = format!("{}/revoke", mock_server.server.uri());
 
-    let access_token = "access_token_to_revoke";
+    let _access_token = "access_token_to_revoke";
     let refresh_token = "refresh_token_to_revoke";
-
-    // Client obtains tokens
-    mock_server
-        .mock_token_success(access_token, Some(refresh_token))
-        .await;
-
     let client = reqwest::Client::new();
-    let token_response = client
-        .post(&mock_server.token_endpoint)
-        .form(&[("grant_type", "authorization_code"), ("code", "code_123")])
-        .send()
-        .await
-        .expect("Request failed");
-
-    assert_eq!(token_response.status(), 200);
 
     // WHEN: Client revokes the refresh token (RFC 7009)
     use wiremock::{
@@ -331,25 +306,27 @@ async fn test_token_revocation_rfc7009() {
 
     Mock::given(method("POST"))
         .and(path("/revoke"))
-        .and(body_string_contains(refresh_token))
+        .and(body_string_contains("token="))
         .respond_with(ResponseTemplate::new(200)) // RFC 7009: Always 200, even for invalid tokens
+        .expect(1)
         .mount(&mock_server.server)
         .await;
 
+    // THEN: Revocation succeeds
     let revoke_response = client
         .post(&revocation_endpoint)
         .form(&[
             ("token", refresh_token),
-            ("token_type_hint", "refresh_token"), // Optional hint
+            ("token_type_hint", "refresh_token"),
         ])
         .send()
         .await
         .expect("Revocation request failed");
-
-    // THEN: Revocation succeeds
     assert_eq!(revoke_response.status(), 200);
 
     // WHEN: Client tries to use revoked refresh token
+    let rejected_server = MockOAuth2Server::start().await;
+
     Mock::given(method("POST"))
         .and(path("/token"))
         .and(body_string_contains(refresh_token))
@@ -357,18 +334,19 @@ async fn test_token_revocation_rfc7009() {
             "error": "invalid_grant",
             "error_description": "Refresh token has been revoked",
         })))
-        .mount(&mock_server.server)
+        .expect(1)
+        .mount(&rejected_server.server)
         .await;
 
     let use_revoked = client
-        .post(&mock_server.token_endpoint)
+        .post(&rejected_server.token_endpoint)
         .form(&[
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
         ])
         .send()
         .await
-        .expect("Request failed");
+        .expect("Refresh request failed");
 
     // THEN: Revoked token is rejected
     assert_eq!(use_revoked.status(), 400);

@@ -5,7 +5,7 @@
 //!
 //! # MCP Specification
 //!
-//! Per MCP spec (2025-06-18):
+//! Per the current MCP spec:
 //! > MCP auth implementations SHOULD support the OAuth 2.0 Dynamic Client
 //! > Registration Protocol (RFC7591).
 //!

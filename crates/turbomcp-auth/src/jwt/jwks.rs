@@ -21,6 +21,7 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
+use url::Url;
 
 /// JWKS cache entry with metadata
 #[derive(Debug, Clone)]
@@ -95,9 +96,7 @@ impl JwksClient {
     /// ```rust
     /// use turbomcp_auth::jwt::JwksClient;
     ///
-    /// let client = JwksClient::new(
-    ///     "https://accounts.google.com/.well-known/openid-configuration/jwks".to_string()
-    /// );
+    /// let client = JwksClient::new("https://accounts.google.com/.well-known/jwks.json".to_string());
     /// ```
     pub fn new(jwks_uri: String) -> Self {
         Self {
@@ -193,9 +192,7 @@ impl JwksClient {
     async fn fetch_and_cache(&self) -> McpResult<JwkSet> {
         info!(jwks_uri = %self.jwks_uri, "Fetching JWKS from endpoint");
 
-        // Validate HTTPS in production
-        if !self.jwks_uri.starts_with("https://") && !self.jwks_uri.starts_with("http://localhost")
-        {
+        if !Self::is_allowed_jwks_uri(&self.jwks_uri) {
             return Err(McpError::invalid_params(
                 "JWKS endpoint must use HTTPS (HTTP only allowed for localhost)".to_string(),
             ));
@@ -260,6 +257,18 @@ impl JwksClient {
         &self.jwks_uri
     }
 
+    fn is_allowed_jwks_uri(jwks_uri: &str) -> bool {
+        let Ok(parsed) = Url::parse(jwks_uri) else {
+            return false;
+        };
+
+        match parsed.scheme() {
+            "https" => true,
+            "http" => matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "::1")),
+            _ => false,
+        }
+    }
+
     /// Clear the cache (for testing or manual refresh)
     pub async fn clear_cache(&self) {
         let mut cache = self.cache.write().await;
@@ -307,8 +316,8 @@ impl JwksCache {
     ///
     /// # JWKS Discovery
     ///
-    /// This method performs OpenID Connect discovery by appending
-    /// `/.well-known/openid-configuration/jwks` to the issuer URL.
+    /// This method uses the conventional direct JWKS endpoint
+    /// `/.well-known/jwks.json` when discovery metadata is not available.
     pub async fn get_client_for_issuer(&self, issuer: &str) -> Arc<JwksClient> {
         let mut clients = self.clients.write().await;
 
@@ -316,8 +325,11 @@ impl JwksCache {
             return Arc::clone(client);
         }
 
-        // Create new client with OIDC discovery
-        let jwks_uri = format!("{issuer}/.well-known/openid-configuration/jwks");
+        // Create new client with standard JWKS endpoint
+        let jwks_uri = Url::parse(issuer)
+            .and_then(|base| base.join(".well-known/jwks.json"))
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| format!("{issuer}/.well-known/jwks.json"));
         let client = Arc::new(JwksClient::new(jwks_uri));
 
         clients.insert(issuer.to_string(), Arc::clone(&client));

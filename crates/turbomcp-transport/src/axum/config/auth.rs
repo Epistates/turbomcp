@@ -96,6 +96,11 @@ pub struct AuthConfig {
     pub jwt: Option<JwtConfig>,
     /// API key header name
     pub api_key_header: Option<String>,
+    /// Exact API key value to require.
+    ///
+    /// If this is not set while API key auth is enabled, the middleware fails closed
+    /// instead of accepting any non-empty header value.
+    pub api_key_value: Option<String>,
     /// Custom authentication provider
     pub custom_validator: Option<String>,
 
@@ -115,6 +120,7 @@ impl Default for AuthConfig {
             enabled: false,
             jwt: None,
             api_key_header: Some("x-api-key".to_string()),
+            api_key_value: None,
             custom_validator: None,
             resource_metadata_uri: None,
             required_scopes: vec![],
@@ -132,6 +138,7 @@ impl AuthConfig {
                 ..Default::default()
             }),
             api_key_header: None,
+            api_key_value: None,
             custom_validator: None,
             resource_metadata_uri: None,
             required_scopes: vec![],
@@ -144,6 +151,7 @@ impl AuthConfig {
             enabled: true,
             jwt: Some(jwt_config),
             api_key_header: None,
+            api_key_value: None,
             custom_validator: None,
             resource_metadata_uri: None,
             required_scopes: vec![],
@@ -156,6 +164,7 @@ impl AuthConfig {
             enabled: true,
             jwt: None,
             api_key_header: Some(header),
+            api_key_value: None,
             custom_validator: None,
             resource_metadata_uri: None,
             required_scopes: vec![],
@@ -168,6 +177,7 @@ impl AuthConfig {
             enabled: true,
             jwt: None,
             api_key_header: None,
+            api_key_value: None,
             custom_validator: Some(validator),
             resource_metadata_uri: None,
             required_scopes: vec![],
@@ -180,6 +190,7 @@ impl AuthConfig {
             enabled: false,
             jwt: None,
             api_key_header: None,
+            api_key_value: None,
             custom_validator: None,
             resource_metadata_uri: None,
             required_scopes: vec![],
@@ -209,6 +220,12 @@ impl AuthConfig {
     /// Set required scopes (for WWW-Authenticate header)
     pub fn with_required_scopes(mut self, scopes: Vec<String>) -> Self {
         self.required_scopes = scopes;
+        self
+    }
+
+    /// Set the exact API key value required by the middleware.
+    pub fn with_api_key_value(mut self, value: impl Into<String>) -> Self {
+        self.api_key_value = Some(value.into());
         self
     }
 }

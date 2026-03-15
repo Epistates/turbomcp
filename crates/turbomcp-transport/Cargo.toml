@@ -62,6 +62,7 @@ metrics = { workspace = true, optional = true }
 turbomcp-auth = { workspace = true, optional = true }
 jsonwebtoken = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
+subtle = { workspace = true }
 
 # Utilities
 uuid = { workspace = true }
@@ -84,6 +85,7 @@ pretty_assertions = { workspace = true }
 serial_test = { workspace = true }
 tempfile = { workspace = true }
 proptest = { workspace = true }
+reqwest = { workspace = true }
 [features]
 default = ["stdio"]
 

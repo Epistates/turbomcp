@@ -4,7 +4,7 @@
 //!
 //! # MCP Compliance
 //!
-//! Per MCP specification (2025-06-18), authentication is **stateless**.
+//! Per the current MCP specification, authentication is **stateless**.
 //! Each request must include valid credentials (Bearer token in Authorization header).
 //! This manager does NOT maintain server-side session state for authentication decisions.
 //!
