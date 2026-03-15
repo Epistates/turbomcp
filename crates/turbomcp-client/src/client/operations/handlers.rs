@@ -13,7 +13,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// Register a roots handler for responding to server filesystem root requests
     ///
     /// Roots handlers respond to `roots/list` requests from servers (SERVER->CLIENT).
-    /// Per MCP 2025-06-18 specification, servers ask clients what filesystem roots
+    /// Per the current MCP specification, servers ask clients what filesystem roots
     /// they have access to. This is commonly used when servers need to understand
     /// their operating boundaries, such as which repositories or project directories
     /// they can access.
@@ -188,7 +188,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
 
     /// Register a cancellation handler for processing cancellation notifications
     ///
-    /// Per MCP 2025-06-18 specification, cancellation notifications can be sent
+    /// Per the current MCP specification, cancellation notifications can be sent
     /// by the server to indicate that a previously-issued request is being cancelled.
     ///
     /// # Arguments

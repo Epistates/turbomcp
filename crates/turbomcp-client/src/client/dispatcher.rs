@@ -206,6 +206,17 @@ impl MessageDispatcher {
         rx
     }
 
+    /// Remove a previously-registered response waiter.
+    pub fn remove_response_waiter(&self, id: &MessageId) {
+        self.response_waiters.lock().remove(id);
+        tracing::trace!("Removed response waiter for request ID: {:?}", id);
+    }
+
+    #[cfg(test)]
+    pub fn response_waiter_count(&self) -> usize {
+        self.response_waiters.lock().len()
+    }
+
     /// Signal the dispatcher to shutdown gracefully
     ///
     /// This notifies the background routing task to exit cleanly.
@@ -214,6 +225,7 @@ impl MessageDispatcher {
     /// This method is called automatically when the Client is dropped,
     /// ensuring proper cleanup of background resources.
     pub fn shutdown(&self) {
+        self.response_waiters.lock().clear();
         self.shutdown.notify_one();
         tracing::info!("Message dispatcher shutdown initiated");
     }
@@ -444,13 +456,84 @@ impl std::fmt::Debug for MessageDispatcher {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use turbomcp_transport::{
+        TransportCapabilities, TransportConfig, TransportMessage, TransportMetrics,
+        TransportResult, TransportState, TransportType,
+    };
 
-    // Note: Full integration tests with mock transport will be added
-    // in tests/bidirectional_integration.rs
+    #[derive(Debug, Default)]
+    struct NoopTransport {
+        capabilities: TransportCapabilities,
+    }
 
-    #[test]
-    fn test_dispatcher_creation() {
-        // Smoke test to ensure the module compiles and basic structures work
-        // Full testing requires a mock transport
+    impl Transport for NoopTransport {
+        fn transport_type(&self) -> TransportType {
+            TransportType::Stdio
+        }
+
+        fn capabilities(&self) -> &TransportCapabilities {
+            &self.capabilities
+        }
+
+        fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+            Box::pin(async { TransportState::Disconnected })
+        }
+
+        fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn send(
+            &self,
+            _message: TransportMessage,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn receive(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>>
+        {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+            Box::pin(async { TransportMetrics::default() })
+        }
+
+        fn configure(
+            &self,
+            _config: TransportConfig,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_dispatcher_creation() {
+        let dispatcher = MessageDispatcher::new(Arc::new(NoopTransport::default()));
+        dispatcher.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_remove_response_waiter() {
+        let dispatcher = MessageDispatcher::new(Arc::new(NoopTransport::default()));
+        let id = MessageId::from("req-123");
+
+        let _rx = dispatcher.wait_for_response(id.clone());
+        assert!(dispatcher.response_waiters.lock().contains_key(&id));
+
+        dispatcher.remove_response_waiter(&id);
+        assert!(!dispatcher.response_waiters.lock().contains_key(&id));
+
+        dispatcher.shutdown();
     }
 }

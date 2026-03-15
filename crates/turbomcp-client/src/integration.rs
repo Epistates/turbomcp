@@ -42,5 +42,5 @@ pub use turbomcp_transport::Transport;
 
 // Re-export commonly needed protocol types (already in prelude but documented here)
 pub use turbomcp_protocol::types::{
-    Content, CreateMessageRequest, CreateMessageResult, Prompt, Resource, Tool,
+    ContentBlock, CreateMessageRequest, CreateMessageResult, Prompt, Resource, Tool,
 };

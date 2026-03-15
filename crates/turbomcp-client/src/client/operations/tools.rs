@@ -105,7 +105,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// ```rust,no_run
     /// # use turbomcp_client::Client;
     /// # use turbomcp_transport::stdio::StdioTransport;
-    /// # use turbomcp_protocol::types::Content;
+    /// # use turbomcp_protocol::types::ContentBlock;
     /// # use std::collections::HashMap;
     /// # async fn example() -> turbomcp_protocol::Result<()> {
     /// let mut client = Client::new(StdioTransport::new());

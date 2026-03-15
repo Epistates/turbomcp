@@ -82,7 +82,7 @@ pub use turbomcp_protocol::types::{
 
     // Completion
     CompletionContext,
-    Content,
+    ContentBlock,
     // Messaging
     CreateMessageRequest,
     CreateMessageResult,

@@ -7,7 +7,6 @@
 //! - `protocol`: ProtocolClient for JSON-RPC communication
 //! - `dispatcher`: Message routing for bidirectional communication
 //! - `config`: Configuration types and utilities
-//! - `builder`: ClientBuilder pattern for construction
 //! - `operations`: MCP operations (tools, resources, prompts, etc.)
 //! - `systems`: Supporting systems (handlers, plugins, connection)
 //!
@@ -33,7 +32,7 @@ pub mod operations;
 // - operations: MCP operation implementations (tools, prompts, resources)
 // - protocol: Protocol-level communication
 //
-// Further decomposition (builder, shared, systems) is not currently needed.
+// Further decomposition (shared, systems) is not currently needed.
 // The current structure balances cohesion and simplicity.
 
 // Re-export main types for backwards compatibility

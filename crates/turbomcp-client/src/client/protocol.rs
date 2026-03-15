@@ -61,25 +61,9 @@ pub(super) struct ProtocolClient<T: Transport> {
 }
 
 impl<T: Transport + 'static> ProtocolClient<T> {
-    /// Create a new protocol client with message dispatcher
-    ///
-    /// This automatically starts the message routing background task.
-    pub(super) fn new(transport: T) -> Self {
-        let transport = Arc::new(transport);
-        let dispatcher = MessageDispatcher::new(transport.clone());
-
-        Self {
-            transport,
-            dispatcher,
-            next_id: AtomicU64::new(1),
-            config: TransportConfig::default(), // Use default timeout config
-        }
-    }
-
     /// Create a new protocol client with custom transport configuration
     ///
     /// This allows setting custom timeouts and limits.
-    #[allow(dead_code)] // May be used in future
     pub(super) fn with_config(transport: T, config: TransportConfig) -> Self {
         let transport = Arc::new(transport);
         let dispatcher = MessageDispatcher::new(transport.clone());
@@ -188,10 +172,10 @@ impl<T: Transport + 'static> ProtocolClient<T> {
             payload.into(),
         );
 
-        self.transport
-            .send(message)
-            .await
-            .map_err(|e| Error::transport(format!("Transport send failed: {e}")))?;
+        self.transport.send(message).await.map_err(|e| {
+            self.dispatcher.remove_response_waiter(&request_id);
+            Error::transport(format!("Transport send failed: {e}"))
+        })?;
 
         // Step 3: Wait for response via oneshot channel with request timeout
         // The dispatcher's background task will send the response when it arrives
@@ -200,6 +184,7 @@ impl<T: Transport + 'static> ProtocolClient<T> {
                 Ok(Ok(response)) => response,
                 Ok(Err(_)) => return Err(Error::transport("Response channel closed".to_string())),
                 Err(_) => {
+                    self.dispatcher.remove_response_waiter(&request_id);
                     let err = turbomcp_transport::TransportError::RequestTimeout {
                         operation: format!("{}()", method),
                         timeout: request_timeout,
@@ -255,5 +240,124 @@ impl<T: Transport + 'static> ProtocolClient<T> {
     /// with other components (like the message dispatcher).
     pub(super) fn transport(&self) -> &Arc<T> {
         &self.transport
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+    use turbomcp_transport::{
+        TransportCapabilities, TransportConfig, TransportError, TransportMetrics, TransportResult,
+        TransportState, TransportType,
+    };
+
+    #[derive(Debug)]
+    struct MockTransport {
+        capabilities: TransportCapabilities,
+        fail_send: AtomicBool,
+    }
+
+    impl MockTransport {
+        fn ok() -> Self {
+            Self {
+                capabilities: TransportCapabilities::default(),
+                fail_send: AtomicBool::new(false),
+            }
+        }
+
+        fn fail_send() -> Self {
+            Self {
+                capabilities: TransportCapabilities::default(),
+                fail_send: AtomicBool::new(true),
+            }
+        }
+    }
+
+    impl Transport for MockTransport {
+        fn transport_type(&self) -> TransportType {
+            TransportType::Stdio
+        }
+
+        fn capabilities(&self) -> &TransportCapabilities {
+            &self.capabilities
+        }
+
+        fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+            Box::pin(async { TransportState::Connected })
+        }
+
+        fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn send(
+            &self,
+            _message: TransportMessage,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            let fail = self.fail_send.load(Ordering::Relaxed);
+            Box::pin(async move {
+                if fail {
+                    Err(TransportError::SendFailed("send failed".to_string()))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+
+        fn receive(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>>
+        {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+            Box::pin(async { TransportMetrics::default() })
+        }
+
+        fn configure(
+            &self,
+            _config: TransportConfig,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_request_timeout_cleans_up_waiter() {
+        let config = TransportConfig {
+            timeouts: turbomcp_transport::config::TimeoutConfig {
+                request: Some(Duration::from_millis(10)),
+                total: Some(Duration::from_millis(25)),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let client = ProtocolClient::with_config(MockTransport::ok(), config);
+
+        let result: Result<serde_json::Value> = client.request("tools/list", None).await;
+        assert!(result.is_err());
+        assert_eq!(client.dispatcher.response_waiter_count(), 0);
+
+        client.dispatcher.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_send_failure_cleans_up_waiter() {
+        let client =
+            ProtocolClient::with_config(MockTransport::fail_send(), TransportConfig::default());
+
+        let result: Result<serde_json::Value> = client.request("tools/list", None).await;
+        assert!(result.is_err());
+        assert_eq!(client.dispatcher.response_waiter_count(), 0);
+
+        client.dispatcher.shutdown();
     }
 }

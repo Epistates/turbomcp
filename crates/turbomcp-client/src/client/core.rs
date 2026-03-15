@@ -32,7 +32,7 @@ use turbomcp_protocol::types::{
     *,
 };
 use turbomcp_protocol::{Error, PROTOCOL_VERSION, Result};
-use turbomcp_transport::{Transport, TransportMessage};
+use turbomcp_transport::{Transport, TransportConfig, TransportMessage};
 
 use super::config::InitializeResult;
 use super::protocol::ProtocolClient;
@@ -55,6 +55,9 @@ pub(super) struct ClientInner<T: Transport + 'static> {
 
     /// Initialization state (lock-free atomic boolean)
     pub(super) initialized: AtomicBool,
+
+    /// Tracks whether graceful shutdown has already been requested.
+    pub(super) shutdown_requested: AtomicBool,
 
     /// Optional sampling handler (mutex for dynamic updates)
     pub(super) sampling_handler: Arc<Mutex<Option<Arc<dyn SamplingHandler>>>>,
@@ -100,7 +103,7 @@ pub(super) struct ClientInner<T: Transport + 'static> {
 ///
 /// # Features
 ///
-/// - **Protocol Compliance**: Full MCP 2025-06-18 specification support
+/// - **Protocol Compliance**: Full current MCP specification support
 /// - **Bidirectional Communication**: Server-initiated requests and client responses
 /// - **Plugin Middleware**: Extensible request/response processing
 /// - **Handler Registry**: Callbacks for server-initiated operations
@@ -151,11 +154,13 @@ impl<T: Transport + 'static> Drop for ClientInner<T> {
         // This is a safety net, but applications SHOULD call shutdown() explicitly
 
         // Single clear warning
-        tracing::warn!(
-            "MCP Client dropped without explicit shutdown(). \
-             Call client.shutdown().await before dropping for clean resource cleanup. \
-             Background tasks (WebSocket reconnection) may continue running."
-        );
+        if !self.shutdown_requested.load(Ordering::Relaxed) {
+            tracing::warn!(
+                "MCP Client dropped without explicit shutdown(). \
+                 Call client.shutdown().await before dropping for clean resource cleanup. \
+                 Background tasks (WebSocket reconnection) may continue running."
+            );
+        }
 
         // We can shutdown the dispatcher (it's synchronous)
         self.protocol.dispatcher().shutdown();
@@ -182,12 +187,18 @@ impl<T: Transport + 'static> Client<T> {
     /// let client = Client::new(transport);
     /// ```
     pub fn new(transport: T) -> Self {
+        Self::new_with_config(transport, TransportConfig::default())
+    }
+
+    /// Create a new client with an explicit transport configuration.
+    pub fn new_with_config(transport: T, config: TransportConfig) -> Self {
         let capabilities = ClientCapabilities::default();
         let client = Self {
             inner: Arc::new(ClientInner {
-                protocol: ProtocolClient::new(transport),
+                protocol: ProtocolClient::with_config(transport, config),
                 capabilities: capabilities.clone(),
                 initialized: AtomicBool::new(false),
+                shutdown_requested: AtomicBool::new(false),
                 sampling_handler: Arc::new(Mutex::new(None)),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
@@ -225,11 +236,21 @@ impl<T: Transport + 'static> Client<T> {
     /// let client = Client::with_capabilities(transport, capabilities);
     /// ```
     pub fn with_capabilities(transport: T, capabilities: ClientCapabilities) -> Self {
+        Self::with_capabilities_and_config(transport, capabilities, TransportConfig::default())
+    }
+
+    /// Create a new client with custom capabilities and transport configuration.
+    pub fn with_capabilities_and_config(
+        transport: T,
+        capabilities: ClientCapabilities,
+        config: TransportConfig,
+    ) -> Self {
         let client = Self {
             inner: Arc::new(ClientInner {
-                protocol: ProtocolClient::new(transport),
+                protocol: ProtocolClient::with_config(transport, config),
                 capabilities: capabilities.clone(),
                 initialized: AtomicBool::new(false),
+                shutdown_requested: AtomicBool::new(false),
                 sampling_handler: Arc::new(Mutex::new(None)),
                 handlers: Arc::new(Mutex::new(HandlerRegistry::new())),
                 handler_semaphore: Arc::new(Semaphore::new(capabilities.max_concurrent_handlers)), // ✅ Configurable concurrent handlers
@@ -281,6 +302,7 @@ impl<T: Transport + 'static> Client<T> {
     /// # }
     /// ```
     pub async fn shutdown(&self) -> Result<()> {
+        self.inner.shutdown_requested.store(true, Ordering::Relaxed);
         tracing::info!("🛑 Shutting down MCP client");
 
         // 1. Shutdown message dispatcher
@@ -1155,9 +1177,7 @@ impl<T: Transport + 'static> Client<T> {
         }
 
         // Send resources/subscribe request
-        let request = SubscribeRequest {
-            uri: uri.to_string(),
-        };
+        let request = SubscribeRequest { uri: uri.into() };
 
         self.inner
             .protocol
@@ -1216,9 +1236,7 @@ impl<T: Transport + 'static> Client<T> {
         }
 
         // Send resources/unsubscribe request
-        let request = UnsubscribeRequest {
-            uri: uri.to_string(),
-        };
+        let request = UnsubscribeRequest { uri: uri.into() };
 
         self.inner
             .protocol
@@ -1393,5 +1411,94 @@ impl<T: Transport + 'static> Client<T> {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+    use turbomcp_transport::{
+        TransportCapabilities, TransportConfig, TransportMessage, TransportMetrics,
+        TransportResult, TransportState, TransportType,
+    };
+
+    #[derive(Debug, Default)]
+    struct NoopTransport {
+        capabilities: TransportCapabilities,
+    }
+
+    impl Transport for NoopTransport {
+        fn transport_type(&self) -> TransportType {
+            TransportType::Stdio
+        }
+
+        fn capabilities(&self) -> &TransportCapabilities {
+            &self.capabilities
+        }
+
+        fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+            Box::pin(async { TransportState::Disconnected })
+        }
+
+        fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn send(
+            &self,
+            _message: TransportMessage,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn receive(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>>
+        {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+            Box::pin(async { TransportMetrics::default() })
+        }
+
+        fn configure(
+            &self,
+            _config: TransportConfig,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_with_capabilities_and_config_uses_handler_limit() {
+        let capabilities = ClientCapabilities {
+            max_concurrent_handlers: 7,
+            ..Default::default()
+        };
+
+        let client = Client::with_capabilities_and_config(
+            NoopTransport::default(),
+            capabilities,
+            TransportConfig::default(),
+        );
+
+        assert_eq!(client.inner.handler_semaphore.available_permits(), 7);
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_sets_shutdown_flag() {
+        let client = Client::new(NoopTransport::default());
+        assert!(!client.inner.shutdown_requested.load(Ordering::Relaxed));
+
+        client.shutdown().await.expect("shutdown should succeed");
+
+        assert!(client.inner.shutdown_requested.load(Ordering::Relaxed));
     }
 }

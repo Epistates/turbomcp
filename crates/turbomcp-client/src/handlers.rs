@@ -83,9 +83,9 @@ use turbomcp_protocol::types::LogLevel;
 
 // Re-export MCP protocol notification types directly (MCP spec compliance)
 pub use turbomcp_protocol::types::{
-    CancelledNotification,       // MCP 2025-06-18 spec
-    LoggingNotification,         // MCP 2025-06-18 spec
-    ResourceUpdatedNotification, // MCP 2025-06-18 spec
+    CancelledNotification,       // current MCP spec
+    LoggingNotification,         // current MCP spec
+    ResourceUpdatedNotification, // current MCP spec
 };
 
 // ============================================================================
@@ -132,7 +132,7 @@ impl HandlerError {
     ///
     /// # Error Code Mapping
     ///
-    /// - **-1**: User rejected sampling request (MCP 2025-06-18 spec)
+    /// - **-1**: User rejected sampling request (current MCP spec)
     /// - **-32801**: Handler operation timed out
     /// - **-32602**: Invalid input (bad request)
     /// - **-32601**: Handler configuration error (method not found)
@@ -496,7 +496,7 @@ pub trait ElicitationHandler: Send + Sync + std::fmt::Debug {
 // ============================================================================
 
 // LoggingNotification is re-exported from protocol (see imports above)
-// This ensures MCP 2025-06-18 spec compliance
+// This ensures current MCP spec compliance
 
 /// Handler for server log messages
 ///
@@ -543,7 +543,7 @@ pub trait LogHandler: Send + Sync + std::fmt::Debug {
     ///
     /// # Arguments
     ///
-    /// * `log` - The log notification with level and data (per MCP 2025-06-18 spec)
+    /// * `log` - The log notification with level and data (per current MCP spec)
     ///
     /// # Returns
     ///
@@ -559,7 +559,7 @@ pub trait LogHandler: Send + Sync + std::fmt::Debug {
 // ============================================================================
 
 // ResourceUpdatedNotification is re-exported from protocol (see imports above)
-// This ensures MCP 2025-06-18 spec compliance
+// This ensures current MCP spec compliance
 //
 // Per MCP spec: This notification ONLY contains the URI of the changed resource.
 // Clients must call resources/read to get the updated content.
@@ -625,7 +625,7 @@ pub trait ResourceUpdateHandler: Send + Sync + std::fmt::Debug {
 
 /// Roots handler for responding to server requests for filesystem roots
 ///
-/// Per MCP 2025-06-18 specification, `roots/list` is a SERVER->CLIENT request.
+/// Per the current MCP specification, `roots/list` is a SERVER->CLIENT request.
 /// Servers ask clients what filesystem roots (directories/files) they have access to.
 /// This is commonly used when servers need to understand their operating boundaries,
 /// such as which repositories or project directories they can access.
@@ -684,7 +684,7 @@ pub trait RootsHandler: Send + Sync + std::fmt::Debug {
 
 /// Cancellation handler for processing cancellation notifications
 ///
-/// Per MCP 2025-06-18 specification, `notifications/cancelled` can be sent by
+/// Per the current MCP specification, `notifications/cancelled` can be sent by
 /// either side to indicate cancellation of a previously-issued request.
 ///
 /// When the server sends a cancellation notification, it indicates that a request
@@ -752,7 +752,7 @@ pub trait CancellationHandler: Send + Sync + std::fmt::Debug {
 
 /// Handler for resource list changes
 ///
-/// Per MCP 2025-06-18 specification, `notifications/resources/list_changed` is
+/// Per the current MCP specification, `notifications/resources/list_changed` is
 /// an optional notification from the server to the client, informing it that the
 /// list of resources it can read from has changed.
 ///
@@ -794,7 +794,7 @@ pub trait ResourceListChangedHandler: Send + Sync + std::fmt::Debug {
 
 /// Handler for prompt list changes
 ///
-/// Per MCP 2025-06-18 specification, `notifications/prompts/list_changed` is
+/// Per the current MCP specification, `notifications/prompts/list_changed` is
 /// an optional notification from the server to the client, informing it that the
 /// list of prompts it offers has changed.
 ///
@@ -832,7 +832,7 @@ pub trait PromptListChangedHandler: Send + Sync + std::fmt::Debug {
 
 /// Handler for tool list changes
 ///
-/// Per MCP 2025-06-18 specification, `notifications/tools/list_changed` is
+/// Per the current MCP specification, `notifications/tools/list_changed` is
 /// an optional notification from the server to the client, informing it that the
 /// list of tools it offers has changed.
 ///
@@ -1337,7 +1337,7 @@ mod tests {
 
         assert_eq!(
             jsonrpc_error.code, -1,
-            "User cancelled should map to -1 per MCP 2025-06-18 spec"
+            "User cancelled should map to -1 per current MCP spec"
         );
         assert!(jsonrpc_error.message.contains("User rejected"));
         assert!(jsonrpc_error.data.is_none());

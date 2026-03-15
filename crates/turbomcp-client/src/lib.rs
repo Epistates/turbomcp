@@ -88,7 +88,7 @@
 //! ```rust,no_run
 //! use turbomcp_client::Client;
 //! use turbomcp_client::sampling::SamplingHandler;
-//! use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult, Role, Content, StopReason, TextContent};
+//! use turbomcp_protocol::types::{ContentBlock, CreateMessageRequest, CreateMessageResult, Role, StopReason, TextContent};
 //! use std::future::Future;
 //! use std::pin::Pin;
 //!
@@ -110,7 +110,7 @@
 //!
 //!             Ok(CreateMessageResult {
 //!                 role: Role::Assistant,
-//!                 content: Content::Text(
+//!                 content: ContentBlock::Text(
 //!                     TextContent {
 //!                         text: "Response from LLM".to_string(),
 //!                         annotations: None,
@@ -170,6 +170,7 @@ pub mod middleware;
 pub use client::{ConnectionInfo, ConnectionState, ManagerConfig, ServerGroup, SessionManager};
 
 use std::sync::Arc;
+use std::time::Duration;
 
 // Re-export Transport trait for generic bounds in integrations
 pub use turbomcp_transport::Transport;
@@ -183,7 +184,7 @@ pub use turbomcp_protocol::{Error, Result};
 
 // Handler types (most commonly used)
 pub use handlers::{
-    // Cancellation (MCP 2025-06-18 spec compliant)
+    // Cancellation (current MCP spec)
     CancellationHandler,
     CancelledNotification,
     ElicitationAction,
@@ -194,13 +195,13 @@ pub use handlers::{
     // Error handling
     HandlerError,
     HandlerResult,
-    // Logging (MCP 2025-06-18 spec compliant)
+    // Logging (current MCP spec)
     LogHandler,
     LoggingNotification,
     PromptListChangedHandler,
-    // List changed handlers (MCP 2025-06-18 spec compliant)
+    // List changed handlers (current MCP spec)
     ResourceListChangedHandler,
-    // Resource updates (MCP 2025-06-18 spec compliant)
+    // Resource updates (current MCP spec)
     ResourceUpdateHandler,
     ResourceUpdatedNotification,
     // Roots
@@ -224,7 +225,6 @@ pub use turbomcp_protocol::types::{
     // Tool result types (for LLM integrations like rig)
     CallToolResult,
     // Core types
-    Content,
     ContentBlock,
     EmbeddedResource,
     LogLevel,
@@ -540,6 +540,31 @@ pub struct ConnectionConfig {
 
     /// Keep-alive interval in milliseconds
     pub keepalive_ms: u64,
+}
+
+fn protocol_transport_config(
+    connection_config: &ConnectionConfig,
+) -> turbomcp_transport::TransportConfig {
+    let timeout = Duration::from_millis(connection_config.timeout_ms);
+
+    turbomcp_transport::TransportConfig {
+        connect_timeout: timeout,
+        keep_alive: Some(Duration::from_millis(connection_config.keepalive_ms)),
+        timeouts: turbomcp_transport::config::TimeoutConfig {
+            connect: timeout,
+            request: Some(timeout),
+            total: Some(timeout),
+            read: Some(timeout),
+        },
+        ..Default::default()
+    }
+}
+
+fn resilience_requested(builder: &ClientBuilder) -> bool {
+    builder.enable_resilience
+        || builder.retry_config.is_some()
+        || builder.circuit_breaker_config.is_some()
+        || builder.health_check_config.is_some()
 }
 
 impl Default for ConnectionConfig {
@@ -987,8 +1012,19 @@ impl ClientBuilder {
     /// # }
     /// ```
     pub async fn build<T: Transport + 'static>(self, transport: T) -> Result<Client<T>> {
+        if resilience_requested(&self) {
+            return Err(Error::configuration(
+                "resilience settings require build_resilient(); build() would otherwise ignore them"
+                    .to_string(),
+            ));
+        }
+
         // Create base client with capabilities
-        let client = Client::with_capabilities(transport, self.capabilities);
+        let client = Client::with_capabilities_and_config(
+            transport,
+            self.capabilities,
+            protocol_transport_config(&self.connection_config),
+        );
 
         // Register handlers
         if let Some(handler) = self.elicitation_handler {
@@ -1062,9 +1098,20 @@ impl ClientBuilder {
         use turbomcp_transport::resilience::TurboTransport;
 
         // Get configurations or use defaults
-        let retry_config = self.retry_config.unwrap_or_default();
+        let retry_config =
+            self.retry_config
+                .unwrap_or_else(|| turbomcp_transport::resilience::RetryConfig {
+                    max_attempts: self.connection_config.max_retries.max(1),
+                    base_delay: Duration::from_millis(self.connection_config.retry_delay_ms),
+                    ..Default::default()
+                });
         let circuit_config = self.circuit_breaker_config.unwrap_or_default();
-        let health_config = self.health_check_config.unwrap_or_default();
+        let health_config = self.health_check_config.unwrap_or_else(|| {
+            turbomcp_transport::resilience::HealthCheckConfig {
+                timeout: Duration::from_millis(self.connection_config.timeout_ms),
+                ..Default::default()
+            }
+        });
 
         // Wrap transport in TurboTransport
         let robust_transport = TurboTransport::new(
@@ -1075,7 +1122,11 @@ impl ClientBuilder {
         );
 
         // Create client with resilient transport
-        let client = Client::with_capabilities(robust_transport, self.capabilities);
+        let client = Client::with_capabilities_and_config(
+            robust_transport,
+            self.capabilities,
+            protocol_transport_config(&self.connection_config),
+        );
 
         // Register handlers
         if let Some(handler) = self.elicitation_handler {
@@ -1114,7 +1165,16 @@ impl ClientBuilder {
     ///     .build_sync(StdioTransport::new());
     /// ```
     pub fn build_sync<T: Transport + 'static>(self, transport: T) -> Client<T> {
-        let client = Client::with_capabilities(transport, self.capabilities);
+        assert!(
+            !resilience_requested(&self),
+            "resilience settings require build_resilient(); build_sync() would otherwise ignore them"
+        );
+
+        let client = Client::with_capabilities_and_config(
+            transport,
+            self.capabilities,
+            protocol_transport_config(&self.connection_config),
+        );
 
         // Register synchronous handlers only
         if let Some(handler) = self.elicitation_handler {
@@ -1157,3 +1217,81 @@ impl ClientBuilder {
 
 // Re-export types for public API
 pub use turbomcp_protocol::types::ServerCapabilities as PublicServerCapabilities;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+    use turbomcp_transport::{
+        TransportCapabilities, TransportConfig, TransportMessage, TransportMetrics,
+        TransportResult, TransportState, TransportType,
+    };
+
+    #[derive(Debug, Default)]
+    struct NoopTransport {
+        capabilities: TransportCapabilities,
+    }
+
+    impl Transport for NoopTransport {
+        fn transport_type(&self) -> TransportType {
+            TransportType::Stdio
+        }
+
+        fn capabilities(&self) -> &TransportCapabilities {
+            &self.capabilities
+        }
+
+        fn state(&self) -> Pin<Box<dyn Future<Output = TransportState> + Send + '_>> {
+            Box::pin(async { TransportState::Disconnected })
+        }
+
+        fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn disconnect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn send(
+            &self,
+            _message: TransportMessage,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn receive(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>>
+        {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
+            Box::pin(async { TransportMetrics::default() })
+        }
+
+        fn configure(
+            &self,
+            _config: TransportConfig,
+        ) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn build_rejects_resilience_flags() {
+        let result = ClientBuilder::new()
+            .enable_resilience()
+            .build(NoopTransport::default())
+            .await;
+
+        assert!(result.is_err());
+        let err = match result {
+            Ok(_) => panic!("expected build() to reject resilience settings"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("build_resilient"));
+    }
+}

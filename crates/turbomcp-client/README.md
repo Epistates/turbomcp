@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/turbomcp-client/badge.svg)](https://docs.rs/turbomcp-client)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-MCP client with complete MCP 2025-06-18 specification support and plugin middleware system.
+MCP client for MCP `2025-11-25` with Tower-native middleware and bidirectional protocol support.
 
 ## Table of Contents
 
@@ -22,9 +22,9 @@ MCP client with complete MCP 2025-06-18 specification support and plugin middlew
 ## Overview
 
 `turbomcp-client` provides a comprehensive MCP client implementation with:
-- ✅ **Full MCP 2025-06-18 compliance** - All server and client features
+- ✅ **Full MCP 2025-11-25 support** - Current server and client features
 - ✅ **Bidirectional communication** - Server-initiated requests (sampling, elicitation)
-- ✅ **Plugin middleware** - Extensible request/response processing
+- ✅ **Tower middleware** - Extensible request/response processing
 - ✅ **Sampling protocol support** - Handle server-initiated sampling requests
 - ✅ **Transport agnostic** - Works with STDIO, TCP, Unix, WebSocket transports
 - ✅ **Thread-safe sharing** - Client is cheaply cloneable via Arc for concurrent async tasks
@@ -39,7 +39,7 @@ MCP client with complete MCP 2025-06-18 specification support and plugin middlew
 | **Unix** | ✅ Full | `unix` | Fast local IPC |
 | **WebSocket** | ✅ Full | `websocket` | Real-time bidirectional |
 
-> **Version 2.1.1**: HTTP/SSE client transport with `Client::connect_http()` convenience API, OAuth 2.1 support, and universal proxy compatibility.
+> v3 note: HTTP/SSE client transport includes `Client::connect_http()` convenience APIs and OAuth 2.1 support.
 
 ## Quick Start
 
@@ -300,7 +300,7 @@ Handle server-initiated sampling requests by implementing a custom sampling hand
 
 ```rust
 use turbomcp_client::sampling::SamplingHandler;
-use turbomcp_protocol::types::{CreateMessageRequest, CreateMessageResult, Role, Content, TextContent};
+use turbomcp_protocol::types::{ContentBlock, CreateMessageRequest, CreateMessageResult, Role, TextContent};
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -319,7 +319,7 @@ impl SamplingHandler for MySamplingHandler {
         // Return the generated response
         Ok(CreateMessageResult {
             role: Role::Assistant,
-            content: Content::Text(TextContent {
+            content: ContentBlock::Text(TextContent {
                 text: "Generated response".to_string(),
                 annotations: None,
                 meta: None,

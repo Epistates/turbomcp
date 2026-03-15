@@ -109,7 +109,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
 
         // Send read_resource request
         let request = ReadResourceRequest {
-            uri: uri.to_string(),
+            uri: uri.into(),
             _meta: None,
         };
 
