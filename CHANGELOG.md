@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.3] - 2026-03-15
+
+### Breaking Changes
+
+- **Strict single-version protocol policy** — TurboMCP v3 now targets MCP `2025-11-25` only. `SUPPORTED_VERSIONS` narrowed to a single entry; `ProtocolConfig::default()` sets `allow_fallback: false`; `Version::stable()` and `VersionCompatibility::CompatibleWithWarnings` removed.
+- **`Uri`, `MimeType`, `Base64String` promoted to newtypes** — These were `type Alias = String`; they are now `#[serde(transparent)]` newtype structs with `Deref<Target = str>`, `From<String>`, `From<&str>`, `AsRef<str>`, `Display`, and `PartialEq<&str>` impls. Wire format is unchanged.
+- **`Content` type alias removed** — Use `ContentBlock` directly. The `pub type Content = ContentBlock` alias is deleted.
+- **`ClientBuilder` consolidated** — The separate `client/builder.rs` is removed; builder logic is inlined into `turbomcp-client/src/lib.rs`. Public API is unchanged.
+- **API key auth now validates against configured value** — `AuthConfig::api_key(header)` without `api_key_value` returns HTTP 500 (fail-closed). Use `with_api_key_auth_value(header, value)` or set `TURBOMCP_API_KEY_VALUE` env var.
+
+### Security
+
+- **Constant-time API key comparison** — API key validation now uses `subtle::ConstantTimeEq` to prevent timing side-channel attacks.
+- **JWT scope enforcement** — Auth middleware validates `required_scopes` against token `scope`/`scp` claims.
+- **JWT audience validation** — Validates `aud` claim against `server_uri` per RFC 8707 to prevent cross-service token reuse.
+- **SSRF hardening with DNS resolution** — Proxy URL validation now resolves hostnames via `tokio::net::lookup_host` and validates all resolved IPs against private/loopback/metadata ranges.
+- **JWKS URI construction fixed** — Uses `Url::join()` instead of string concatenation to avoid double-slash bugs with trailing-slash issuers.
+- **Bearer token log truncation** — Revocation log now emits only an 8-character token prefix instead of the full token.
+
+### Fixed
+
+- **Response waiter memory leak** — `ProtocolClient` now cleans up response waiters on send failure and timeout, preventing `DashMap` entry leaks.
+- **Spurious shutdown warnings** — `Client::Drop` no longer warns when `shutdown()` was already called.
+- **Resilience settings silently ignored** — `ClientBuilder::build()` now returns an error (and `build_sync()` panics) if resilience settings are configured but `build_resilient()` is not used.
+- **`--all-features` compilation** — Fixed missing `dpop_config` field in auth tests and `Uri` type mismatch in WASM crate.
+
+### Changed
+
+- **Dead code removal** — Deleted `axum_integration.rs` (1847 lines, never imported).
+- **WebSocket long-running tests implemented** — Three previously-stub `#[ignore]` tests now use a real `WebSocketTestServer` harness.
+- **Token lifecycle tests implemented** — Refresh token rotation and revocation tests now use real `OAuth2Client` instead of raw HTTP.
+
 ## [3.0.2] - 2026-03-08
 
 ### Changed
