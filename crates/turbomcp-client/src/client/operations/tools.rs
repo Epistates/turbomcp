@@ -70,10 +70,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// # Arguments
     ///
     /// * `cursor` - Optional cursor from a previous `ListToolsResult::next_cursor`
-    pub async fn list_tools_paginated(
-        &self,
-        cursor: Option<Cursor>,
-    ) -> Result<ListToolsResult> {
+    pub async fn list_tools_paginated(&self, cursor: Option<Cursor>) -> Result<ListToolsResult> {
         if !self.inner.initialized.load(Ordering::Relaxed) {
             return Err(Error::invalid_request("Client not initialized"));
         }

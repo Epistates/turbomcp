@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.4] - 2026-03-15
+
+### Added
+
+- **Progress notification handler** — New `ProgressHandler` trait and `ProgressNotification` re-export in `turbomcp-client`. The client now routes `notifications/progress` to a registered handler instead of silently dropping them. Register via `ClientBuilder::with_progress_handler()` or `Client::set_progress_handler()`.
+- **Cursor-based pagination for all list operations** — `list_tools()`, `list_resources()`, `list_resource_templates()`, and `list_prompts()` now automatically follow `next_cursor` to collect all pages (capped at 1000 pages as a safety bound). New `*_paginated(cursor)` variants (`list_tools_paginated`, `list_resources_paginated`, `list_resource_templates_paginated`, `list_prompts_paginated`) expose manual pagination control with the full result type including `next_cursor`.
+
 ## [3.0.3] - 2026-03-15
 
 ### Breaking Changes

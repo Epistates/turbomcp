@@ -4,9 +4,8 @@
 //! that process server-initiated operations and notifications.
 
 use crate::handlers::{
-    CancellationHandler, ElicitationHandler, LogHandler, ProgressHandler,
-    PromptListChangedHandler, ResourceListChangedHandler, ResourceUpdateHandler, RootsHandler,
-    ToolListChangedHandler,
+    CancellationHandler, ElicitationHandler, LogHandler, ProgressHandler, PromptListChangedHandler,
+    ResourceListChangedHandler, ResourceUpdateHandler, RootsHandler, ToolListChangedHandler,
 };
 use std::sync::Arc;
 
