@@ -7,6 +7,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::tower::SessionInfo;
+use turbomcp_protocol::PROTOCOL_VERSION;
 use turbomcp_protocol::Result as McpResult;
 
 /// Core MCP service trait
@@ -37,7 +38,7 @@ pub trait McpService: Send + Sync + 'static {
     /// following the MCP protocol specification.
     fn get_capabilities(&self) -> serde_json::Value {
         serde_json::json!({
-            "protocol_version": "2025-06-18",
+            "protocol_version": PROTOCOL_VERSION,
             "capabilities": {
                 "tools": true,
                 "resources": true,

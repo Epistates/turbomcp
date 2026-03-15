@@ -10,8 +10,7 @@
 //!
 //! | Specification | Status | Notes |
 //! |---------------|--------|-------|
-//! | **MCP 2025-11-25** | ✅ Full Support | Icons, URL elicitation, sampling tools, enum improvements |
-//! | **MCP 2025-06-18** | ✅ Compatible | Negotiated at runtime via protocol version |
+//! | **MCP 2025-11-25** | ✅ Full Support | Canonical v3 protocol surface |
 //!
 //! **Quick Start:**
 //! ```toml
@@ -27,7 +26,7 @@
 //!
 //! This crate provides everything needed for MCP:
 //!
-//! - **Types**: All MCP request/response types (2025-06-18 stable + 2025-11-25 draft)
+//! - **Types**: All MCP 2025-11-25 request/response types
 //! - **Traits**: `ServerToClientRequests` for bidirectional communication
 //! - **Context**: Request and response context management with full observability
 //! - **JSON-RPC**: JSON-RPC 2.0 implementation with batching and notifications
@@ -39,14 +38,14 @@
 //!
 //! ## Features
 //!
-//! ### Core Protocol Support (MCP 2025-06-18 Stable)
-//! - Complete MCP 2025-06-18 protocol implementation
+//! ### Core Protocol Support (MCP 2025-11-25)
+//! - Complete MCP 2025-11-25 protocol implementation
 //! - JSON-RPC 2.0 support with batching and notifications
 //! - Type-safe capability negotiation and compatibility checking
-//! - Protocol versioning with backward compatibility
+//! - Strict exact-version protocol negotiation
 //! - Fast serialization with SIMD acceleration
 //!
-//! ### Advanced Protocol Features (MCP 2025-06-18 Stable)
+//! ### Advanced Protocol Features
 //! - **Elicitation Protocol** - Server-initiated user input requests with rich schema validation
 //! - **Sampling Support** - Bidirectional LLM sampling with fully-typed interfaces
 //! - **Roots Protocol** - Filesystem boundaries with `roots/list` support
@@ -82,8 +81,8 @@
 //!
 //! ## Version Selection
 //!
-//! TurboMCP v3.0 includes all MCP 2025-11-25 features by default. Runtime protocol
-//! version negotiation determines actual feature availability per session.
+//! TurboMCP v3.0 targets MCP 2025-11-25 only. Runtime negotiation is exact-match:
+//! clients and servers must agree on the current protocol version.
 //!
 //! **Typical Usage:**
 //! ```toml
@@ -105,7 +104,7 @@
 //! use turbomcp_protocol::{InitializeRequest, InitializeResult, ClientCapabilities};
 //! use turbomcp_protocol::types::{Implementation, ServerCapabilities}; // Corrected import path
 //!
-//! // Client requests draft features
+//! // Client requests the current protocol version
 //! let request = InitializeRequest {
 //!     protocol_version: "2025-11-25".into(),  // Request draft
 //!     capabilities: ClientCapabilities::default(),
@@ -118,8 +117,7 @@
 //!     _meta: None,
 //! };
 //!
-//! // Server responds with actual supported version
-//! // (may downgrade to 2025-06-18 if draft features unavailable)
+//! // Server responds with the same supported version
 //! let response = InitializeResult {
 //!     protocol_version: "2025-11-25".into(),
 //!     capabilities: ServerCapabilities::default(),
@@ -134,23 +132,8 @@
 //! };
 //! ```
 //!
-//! **Key Principle:** Clients request, servers decide. The negotiated version is the server's response.
-//!
-//! ## Migration from v1.x
-//!
-//! In v2.0.0, `turbomcp-core` was merged into `turbomcp-protocol` to eliminate circular
-//! dependencies and enable fully-typed bidirectional communication.
-//!
-//! ```rust,ignore
-//! // v1.x
-//! use turbomcp_protocol::{RequestContext, Error};
-//! use turbomcp_protocol::types::CreateMessageRequest;
-//!
-//! // v2.0.0
-//! use turbomcp_protocol::{RequestContext, Error, types::CreateMessageRequest};
-//! ```
-//!
-//! All functionality is preserved, just the import path changed!
+//! **Key Principle:** clients request the current protocol version, and servers
+//! must either accept it exactly or fail initialization.
 //!
 //! ## Architecture
 //!
@@ -296,7 +279,7 @@ pub mod codec;
 // Protocol-specific modules
 /// Capability negotiation and management.
 pub mod capabilities;
-// Old elicitation module removed - use types::elicitation instead (MCP 2025-06-18 compliant)
+// Old elicitation module removed; use types::elicitation instead.
 /// JSON-RPC 2.0 protocol implementation.
 pub mod jsonrpc;
 /// All MCP protocol types (requests, responses, and data structures).

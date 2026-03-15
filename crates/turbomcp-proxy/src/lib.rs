@@ -6,7 +6,7 @@
 //!
 //! # Features
 //!
-//! - **Universal Compatibility**: Works with any MCP 2025-06-18 compliant server
+//! - **Universal MCP Adapter**: Works with MCP servers that implement the current protocol surface
 //! - **Zero Configuration**: Discovers capabilities via introspection
 //! - **Multiple Modes**: Runtime (fast), Codegen (optimized), Schema export
 //! - **Protocol Translation**: Expose MCP as REST API, GraphQL, gRPC

@@ -40,6 +40,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
+use turbomcp_core::PROTOCOL_VERSION;
 use worker::{Headers, Request, Response};
 
 use super::context::RequestContext;
@@ -457,7 +458,7 @@ impl VisibilityLayer {
 
     async fn handle_initialize(&self, _req: &JsonRpcRequest) -> Result<serde_json::Value, String> {
         Ok(serde_json::json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": PROTOCOL_VERSION,
             "capabilities": self.inner.capabilities,
             "serverInfo": self.inner.server_info
         }))

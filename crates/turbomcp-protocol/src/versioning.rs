@@ -1,61 +1,12 @@
-//! # Protocol Versioning and Compatibility
+//! # Protocol Versioning
 //!
-//! This module provides comprehensive protocol version management and compatibility
-//! checking for MCP implementations.
-//!
-//! ## Production Guidance
-//!
-//! **For new deployments, use `Version::latest()` (2025-11-25)** - the official stable
-//! MCP specification released on November 25, 2025.
-//!
-//! **For maximum backwards compatibility**, use `Version::stable()` (2025-06-18) which
-//! is widely supported by existing MCP clients including older versions of Claude Code.
+//! TurboMCP v3 targets the latest MCP release only.
 //!
 //! ```rust
 //! use turbomcp_protocol::versioning::Version;
 //!
-//! // Recommended: Use latest() for the official 2025-11-25 spec
-//! let version = Version::latest(); // 2025-11-25 (official release)
-//!
-//! // Legacy compatibility: Use stable() for older clients
-//! let version = Version::stable(); // 2025-06-18
-//! ```
-//!
-//! ## Supported Versions
-//!
-//! TurboMCP supports multiple MCP specification versions:
-//!
-//! | Version | Constant | Status |
-//! |---------|----------|--------|
-//! | **2025-11-25** | `Version::latest()` | **Current** - Official MCP spec (Tasks, Extensions, CIMD) |
-//! | **2025-06-18** | `Version::stable()` | Stable - Widely deployed, legacy client compatibility |
-//! | 2025-03-26 | - | Legacy support |
-//! | 2024-11-05 | - | Legacy support |
-//!
-//! ## Version Selection Guidelines
-//!
-//! - **New production servers**: Use `Version::latest()` for the official 2025-11-25 spec
-//!   with Tasks API, Extensions, and modern authorization features
-//! - **Legacy compatibility**: Use `Version::stable()` if you need to support older
-//!   clients that haven't updated to the 2025-11-25 spec
-//! - **Building clients**: Support multiple versions and negotiate with the server
-//!
-//! ## Version Negotiation
-//!
-//! The MCP protocol uses a client-request, server-decide negotiation model:
-//!
-//! ```rust
-//! use turbomcp_protocol::versioning::{Version, VersionManager};
-//!
-//! // Server setup - prefers stable for production compatibility
-//! let manager = VersionManager::with_default_versions();
-//!
-//! // Client requests the latest version
-//! let client_versions = vec![Version::latest(), Version::stable()];
-//!
-//! // Server negotiates (picks highest mutually supported version)
-//! let negotiated = manager.negotiate_version(&client_versions);
-//! assert_eq!(negotiated, Some(Version::latest()));
+//! let version = Version::latest();
+//! assert_eq!(version.to_string(), "2025-11-25");
 //! ```
 //!
 //! ## Feature Flags vs Runtime Negotiation
@@ -67,20 +18,16 @@
 //! turbomcp-protocol = { version = "3.0", features = ["experimental-tasks"] }
 //! ```
 //!
-//! **Runtime negotiation** determines what protocol version is used for a session:
+//! Runtime negotiation is exact-match only:
 //! ```rust,ignore
 //! use turbomcp_protocol::{InitializeRequest, InitializeResult};
 //!
-//! // Client asks for latest spec
+//! // Client asks for the current spec
 //! let request = InitializeRequest { protocol_version: "2025-11-25".into(), ..Default::default() };
 //!
-//! // Server responds with actual version (may downgrade for compatibility)
-//! let response = InitializeResult { protocol_version: "2025-06-18".into(), ..Default::default() };
+//! // Server responds with the same version or rejects the request.
+//! let response = InitializeResult { protocol_version: "2025-11-25".into(), ..Default::default() };
 //! ```
-//!
-//! **Key Principle:** The 2025-11-25 spec is the current official release. Use it for new
-//! deployments. The 2025-06-18 version remains available for backwards compatibility with
-//! older clients. Always negotiate at runtime based on what the other party supports.
 
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -112,8 +59,6 @@ pub struct Version {
 pub enum VersionCompatibility {
     /// Versions are fully compatible
     Compatible,
-    /// Versions are compatible with warnings
-    CompatibleWithWarnings(Vec<String>),
     /// Versions are incompatible
     Incompatible(String),
 }
@@ -167,28 +112,18 @@ impl Version {
         Ok(Self { year, month, day })
     }
 
-    /// Get the stable MCP protocol version (2025-06-18)
-    ///
-    /// This version is widely compatible with MCP clients including Claude Code.
-    /// Use this as the default for maximum compatibility.
-    pub fn stable() -> Self {
-        Self {
-            year: 2025,
-            month: 6,
-            day: 18,
-        }
-    }
-
     /// Get the latest MCP protocol version (2025-11-25)
-    ///
-    /// This is the current official MCP specification version.
-    /// Note: Some clients like Claude Code may not support this version yet.
     pub fn latest() -> Self {
         Self {
             year: 2025,
             month: 11,
             day: 25,
         }
+    }
+
+    /// Get the current MCP protocol version.
+    pub fn current() -> Self {
+        Self::latest()
     }
 
     /// Check if this version is newer than another
@@ -203,9 +138,7 @@ impl Version {
 
     /// Check if this version is compatible with another
     pub fn is_compatible_with(&self, other: &Version) -> bool {
-        // For MCP, we consider versions compatible if they're the same
-        // or if the difference is minor (same year)
-        self.year == other.year
+        self == other
     }
 
     /// Get version as a date string (YYYY-MM-DD)
@@ -225,12 +158,7 @@ impl Version {
 
     /// Get all known MCP versions
     pub fn known_versions() -> Vec<Version> {
-        vec![
-            Version::new(2025, 11, 25).unwrap(), // Latest official spec
-            Version::new(2025, 6, 18).unwrap(),  // Stable (Claude Code compatible)
-            Version::new(2025, 3, 26).unwrap(),  // Previous
-            Version::new(2024, 11, 5).unwrap(),  // Legacy
-        ]
+        vec![Version::latest()]
     }
 }
 
@@ -341,15 +269,6 @@ impl VersionManager {
             return VersionCompatibility::Compatible;
         }
 
-        // Check if versions are in the same year (considered compatible)
-        if client_version.year == server_version.year {
-            let warning = format!(
-                "Version mismatch but compatible: client={client_version}, server={server_version}"
-            );
-            return VersionCompatibility::CompatibleWithWarnings(vec![warning]);
-        }
-
-        // Major version difference
         let reason =
             format!("Incompatible versions: client={client_version}, server={server_version}");
         VersionCompatibility::Incompatible(reason)
@@ -505,9 +424,6 @@ pub mod utils {
     pub fn compatibility_description(compatibility: &VersionCompatibility) -> String {
         match compatibility {
             VersionCompatibility::Compatible => "Fully compatible".to_string(),
-            VersionCompatibility::CompatibleWithWarnings(warnings) => {
-                format!("Compatible with warnings: {}", warnings.join(", "))
-            }
             VersionCompatibility::Incompatible(reason) => {
                 format!("Incompatible: {reason}")
             }
@@ -536,8 +452,8 @@ mod tests {
 
     #[test]
     fn test_version_parsing() {
-        let version: Version = "2025-06-18".parse().unwrap();
-        assert_eq!(version, Version::new(2025, 6, 18).unwrap());
+        let version: Version = "2025-11-25".parse().unwrap();
+        assert_eq!(version, Version::new(2025, 11, 25).unwrap());
 
         // Invalid format should fail
         assert!("2025/06/18".parse::<Version>().is_err());
@@ -546,9 +462,9 @@ mod tests {
 
     #[test]
     fn test_version_comparison() {
-        let v1 = Version::new(2025, 6, 18).unwrap();
+        let v1 = Version::new(2025, 11, 25).unwrap();
         let v2 = Version::new(2024, 11, 5).unwrap();
-        let v3 = Version::new(2025, 6, 18).unwrap();
+        let v3 = Version::new(2025, 11, 25).unwrap();
 
         assert!(v1 > v2);
         assert!(v1.is_newer_than(&v2));
@@ -558,18 +474,18 @@ mod tests {
 
     #[test]
     fn test_version_compatibility() {
-        let v1 = Version::new(2025, 6, 18).unwrap();
-        let v2 = Version::new(2025, 12, 1).unwrap(); // Same year
+        let v1 = Version::new(2025, 11, 25).unwrap();
+        let v2 = Version::new(2025, 12, 1).unwrap();
         let v3 = Version::new(2024, 6, 18).unwrap(); // Different year
 
-        assert!(v1.is_compatible_with(&v2));
+        assert!(!v1.is_compatible_with(&v2));
         assert!(!v1.is_compatible_with(&v3));
     }
 
     #[test]
     fn test_version_manager() {
         let versions = vec![
-            Version::new(2025, 6, 18).unwrap(),
+            Version::new(2025, 11, 25).unwrap(),
             Version::new(2024, 11, 5).unwrap(),
         ];
 
@@ -577,7 +493,7 @@ mod tests {
 
         assert_eq!(
             manager.current_version(),
-            &Version::new(2025, 6, 18).unwrap()
+            &Version::new(2025, 11, 25).unwrap()
         );
         assert!(manager.is_version_supported(&Version::new(2024, 11, 5).unwrap()));
         assert!(!manager.is_version_supported(&Version::new(2023, 1, 1).unwrap()));
@@ -589,16 +505,16 @@ mod tests {
 
         let client_versions = vec![
             Version::new(2024, 11, 5).unwrap(),
-            Version::new(2025, 6, 18).unwrap(),
+            Version::new(2025, 11, 25).unwrap(),
         ];
 
         let negotiated = manager.negotiate_version(&client_versions);
-        assert_eq!(negotiated, Some(Version::new(2025, 6, 18).unwrap()));
+        assert_eq!(negotiated, Some(Version::new(2025, 11, 25).unwrap()));
     }
 
     #[test]
     fn test_version_requirements() {
-        let version = Version::new(2025, 6, 18).unwrap();
+        let version = Version::new(2025, 11, 25).unwrap();
 
         let exact_req = VersionRequirement::exact(version.clone());
         assert!(exact_req.is_satisfied_by(&version));
@@ -614,16 +530,13 @@ mod tests {
     fn test_compatibility_checking() {
         let manager = VersionManager::default();
 
-        let v1 = Version::new(2025, 6, 18).unwrap();
+        let v1 = Version::new(2025, 11, 25).unwrap();
         let v2 = Version::new(2025, 12, 1).unwrap();
         let v3 = Version::new(2024, 1, 1).unwrap();
 
-        // Same year - compatible with warnings
+        // Exact match only
         let compat = manager.check_compatibility(&v1, &v2);
-        assert!(matches!(
-            compat,
-            VersionCompatibility::CompatibleWithWarnings(_)
-        ));
+        assert!(matches!(compat, VersionCompatibility::Incompatible(_)));
 
         // Different year - incompatible
         let compat = manager.check_compatibility(&v1, &v3);
@@ -636,11 +549,11 @@ mod tests {
 
     #[test]
     fn test_utils() {
-        let versions = utils::parse_versions(&["2025-06-18", "2024-11-05"]).unwrap();
+        let versions = utils::parse_versions(&["2025-11-25", "2024-11-05"]).unwrap();
         assert_eq!(versions.len(), 2);
 
         let newest = utils::newest_version(&versions);
-        assert_eq!(newest, Some(&Version::new(2025, 6, 18).unwrap()));
+        assert_eq!(newest, Some(&Version::new(2025, 11, 25).unwrap()));
 
         let oldest = utils::oldest_version(&versions);
         assert_eq!(oldest, Some(&Version::new(2024, 11, 5).unwrap()));

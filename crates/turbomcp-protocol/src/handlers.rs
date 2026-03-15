@@ -365,7 +365,7 @@ impl HandlerCapabilities {
 /// This separation enables:
 /// - Clean, testable handler implementations
 /// - Transport-agnostic server code
-/// - Full MCP 2025-06-18 compliance in transport layer
+/// - Full current MCP compliance in the transport layer
 /// - Compile-time dispatch optimizations in handlers
 ///
 /// # Example: Macro-Generated Implementation

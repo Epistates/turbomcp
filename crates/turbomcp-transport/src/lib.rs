@@ -65,7 +65,7 @@
 //! # }
 //! ```
 //!
-//! ### MCP 2025-06-18 Streamable HTTP (Client)
+//! ### MCP 2025-11-25 Streamable HTTP (Client)
 //!
 //! ```rust,no_run
 //! # #[cfg(feature = "http")]
@@ -83,7 +83,7 @@
 //!     };
 //!
 //!     let mut transport = StreamableHttpClientTransport::new(config);
-//!     // Full MCP 2025-06-18 compliance with SSE support
+//!     // Full MCP 2025-11-25 compliance with SSE support
 //!     Ok(())
 //! }
 //! # }
@@ -136,8 +136,8 @@ pub mod bidirectional;
 /// Core transport traits, types, and errors.
 pub mod core;
 
-// MCP 2025-06-18 Compliant Streamable HTTP Transport (Recommended)
-/// HTTP transport types and configuration for MCP 2025-06-18 specification compliance.
+// MCP 2025-11-25 Compliant Streamable HTTP Transport (Recommended)
+/// HTTP transport types and configuration for MCP 2025-11-25 specification compliance.
 ///
 /// This module provides configuration and session management types.
 /// The actual HTTP server implementation is in `turbomcp_server::runtime::http`.
@@ -174,7 +174,7 @@ pub mod tower;
 #[cfg(feature = "http")]
 pub mod axum;
 
-/// WebSocket bidirectional transport for full-duplex communication with MCP 2025-06-18 compliance.
+/// WebSocket bidirectional transport for full-duplex communication with MCP 2025-11-25 compliance.
 ///
 /// v3.0: This module re-exports from the `turbomcp-websocket` crate.
 /// The implementation has been extracted for modular builds.

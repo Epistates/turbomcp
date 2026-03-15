@@ -61,13 +61,13 @@ pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
     /// ```no_run
     /// use turbomcp_protocol::context::capabilities::ServerToClientRequests;
     /// use turbomcp_protocol::RequestContext;
-    /// # use turbomcp_protocol::types::{CreateMessageRequest, SamplingMessage, Role, Content, TextContent};
+    /// # use turbomcp_protocol::types::{ContentBlock, CreateMessageRequest, SamplingMessage, Role, TextContent};
     ///
     /// async fn example(capabilities: &dyn ServerToClientRequests) {
     ///     let request = CreateMessageRequest {
     ///         messages: vec![SamplingMessage {
     ///             role: Role::User,
-    ///             content: Content::Text(TextContent {
+    ///             content: ContentBlock::Text(TextContent {
     ///                 text: "What is 2+2?".to_string(),
     ///                 annotations: None,
     ///                 meta: None,

@@ -4,7 +4,7 @@
 //! This transport uses stdin/stdout for communication, which is the standard way
 //! MCP servers communicate with clients.
 //!
-//! ## MCP Specification Compliance (2025-06-18)
+//! ## MCP Specification Compliance
 //!
 //! This implementation is **fully compliant** with the MCP stdio transport specification:
 //!

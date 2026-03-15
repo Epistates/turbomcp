@@ -252,7 +252,7 @@ impl Default for ProtocolConfig {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
-            allow_fallback: true,
+            allow_fallback: false,
         }
     }
 }
@@ -705,10 +705,7 @@ mod tests {
     #[test]
     fn test_protocol_negotiation_fallback() {
         let config = ProtocolConfig::default();
-        assert_eq!(
-            config.negotiate(Some("unknown-version")),
-            Some("2025-11-25".to_string())
-        );
+        assert_eq!(config.negotiate(Some("unknown-version")), None);
     }
 
     #[test]

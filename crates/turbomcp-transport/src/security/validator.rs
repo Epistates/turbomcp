@@ -37,7 +37,7 @@ impl SecurityValidator {
 
     /// Validate Origin header to prevent DNS rebinding attacks
     ///
-    /// Per MCP 2025-06-18 specification:
+    /// Per the current MCP specification:
     /// "Servers MUST validate the Origin header on all incoming connections
     /// to prevent DNS rebinding attacks"
     ///

@@ -1,6 +1,6 @@
 //! Bidirectional transport implementation with server-initiated request support
 //!
-//! This module provides enhanced transport capabilities for MCP 2025-06-18 protocol
+//! This module provides enhanced transport capabilities for the current MCP protocol
 //! including server-initiated requests, message correlation, and protocol direction validation.
 
 use std::future::Future;
@@ -20,7 +20,7 @@ use crate::core::{
     TransportResult, TransportState, TransportType,
 };
 
-// v3.0: Re-export bidirectional types from traits crate for backward compatibility
+// Re-export bidirectional types from the core transport surface.
 pub use crate::core::{ConnectionState, CorrelationContext, MessageDirection};
 
 /// Enhanced bidirectional transport wrapper

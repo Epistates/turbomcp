@@ -286,7 +286,7 @@ impl From<i32> for JsonRpcErrorCode {
 
 /// JSON-RPC message type (union of request, response, notification)
 ///
-/// Per MCP 2025-06-18 specification, batch operations are not supported.
+/// Per the current MCP specification, batch operations are not supported.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum JsonRpcMessage {

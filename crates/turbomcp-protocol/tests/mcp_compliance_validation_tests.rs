@@ -1,8 +1,8 @@
-//! MCP 2025-06-18 Compliance Validation Tests
+//! MCP 2025-11-25 Compliance Validation Tests
 //!
 //! This test suite validates TurboMCP's compliance with the official MCP specification,
 //! specifically addressing the gaps identified through comprehensive dogfooding and
-//! validated against the authoritative JSON Schema (schema/2025-06-18/schema.json).
+//! validated against the current schema and protocol expectations.
 
 use serde_json::json;
 use turbomcp_protocol::types::*;
@@ -59,7 +59,7 @@ fn test_create_message_result_with_stop_reason() {
     // Test full CreateMessageResult with StopReason enum
     let result = CreateMessageResult {
         role: Role::Assistant,
-        content: Content::Text(TextContent {
+        content: ContentBlock::Text(TextContent {
             text: "The capital of France is Paris.".to_string(),
             annotations: None,
             meta: None,
@@ -581,7 +581,7 @@ fn test_full_mcp_compliance_scenario() {
     // Test CreateMessageResult with StopReason
     let message_result = CreateMessageResult {
         role: Role::Assistant,
-        content: Content::Text(TextContent {
+        content: ContentBlock::Text(TextContent {
             text: "Response text".to_string(),
             annotations: None,
             meta: None,

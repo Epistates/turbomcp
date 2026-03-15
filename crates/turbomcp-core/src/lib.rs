@@ -169,8 +169,8 @@ pub use turbomcp_types::{
 /// MCP Protocol version supported by this SDK (latest official spec)
 pub const PROTOCOL_VERSION: &str = "2025-11-25";
 
-/// Supported protocol versions in preference order (latest first)
-pub const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+/// Supported protocol versions.
+pub const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25"];
 
 /// Maximum message size in bytes (1MB)
 pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;

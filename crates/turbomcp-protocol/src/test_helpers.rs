@@ -87,9 +87,9 @@ pub fn test_resource() -> Resource {
     Resource {
         name: "test_resource".to_string(),
         title: Some("Test Resource".to_string()),
-        uri: "file://test/resource.txt".to_string(),
+        uri: "file://test/resource.txt".into(),
         description: Some("A test resource".to_string()),
-        mime_type: Some("text/plain".to_string()),
+        mime_type: Some("text/plain".into()),
         annotations: None,
         size: Some(1024),
         meta: None,
@@ -99,7 +99,7 @@ pub fn test_resource() -> Resource {
 /// Create a valid initialize request for testing
 pub fn test_initialize_request() -> InitializeRequest {
     InitializeRequest {
-        protocol_version: "2025-06-18".to_string(),
+        protocol_version: "2025-11-25".to_string(),
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
             name: "test-client".to_string(),

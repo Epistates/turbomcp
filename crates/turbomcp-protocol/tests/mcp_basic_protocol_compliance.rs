@@ -560,7 +560,7 @@ mod lifecycle_compliance {
     /// **MCP Spec Requirement**: "Otherwise, the server MUST respond with another protocol version it supports"
     #[test]
     fn test_version_negotiation_requirements() {
-        let supported_versions = vec!["2025-11-25", "2025-03-26", "2024-11-05"];
+        let supported_versions = vec!["2025-11-25"];
 
         // Test same version response
         let client_version = "2025-11-25";
@@ -575,7 +575,7 @@ mod lifecycle_compliance {
         let server_response_version = negotiate_version(unsupported_version, &supported_versions);
         assert_eq!(
             server_response_version, "2025-11-25",
-            "Server should respond with latest supported version"
+            "Server should respond with the only supported version"
         );
 
         // Test client should disconnect if server version not supported
@@ -744,11 +744,9 @@ mod protocol_version_compliance {
         // Test current protocol version is latest official spec
         assert_eq!(PROTOCOL_VERSION, "2025-11-25");
 
-        // Test supported versions include current and previous versions
+        // Strict v3 policy: only the latest protocol version is supported.
         assert!(SUPPORTED_VERSIONS.contains(&PROTOCOL_VERSION));
-        assert!(SUPPORTED_VERSIONS.contains(&"2025-06-18")); // Claude Code compatible
-        assert!(SUPPORTED_VERSIONS.contains(&"2025-03-26"));
-        assert!(SUPPORTED_VERSIONS.contains(&"2024-11-05"));
+        assert_eq!(SUPPORTED_VERSIONS, &[PROTOCOL_VERSION]);
 
         // Latest should be first in preference order
         assert_eq!(SUPPORTED_VERSIONS[0], PROTOCOL_VERSION);

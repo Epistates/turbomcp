@@ -130,11 +130,6 @@ pub use router::{
 // Re-export McpHandler from core for unified architecture
 pub use turbomcp_core::handler::McpHandler;
 
-/// Type alias for backward compatibility (use `JsonRpcIncoming` for new code).
-pub type JsonRpcRequest = JsonRpcIncoming;
-/// Type alias for backward compatibility (use `JsonRpcOutgoing` for new code).
-pub type JsonRpcResponse = JsonRpcOutgoing;
-
 /// Internal module for macro-generated code.
 #[doc(hidden)]
 pub mod __macro_support {

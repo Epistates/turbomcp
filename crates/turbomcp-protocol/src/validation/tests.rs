@@ -195,7 +195,7 @@ fn test_validate_request_with_initialize_params() {
     let mut request = create_valid_request();
     request.method = "initialize".to_string();
     request.params = Some(json!({
-        "protocolVersion": "2025-06-18",
+        "protocolVersion": "2025-11-25",
         "capabilities": {},
         "clientInfo": {
             "name": "test",
@@ -545,7 +545,7 @@ fn test_validate_resource_valid() {
 fn test_validate_resource_invalid_uri() {
     let validator = ProtocolValidator::new();
     let mut resource = create_valid_resource();
-    resource.uri = "not-a-valid-uri".to_string();
+    resource.uri = "not-a-valid-uri".into();
 
     let result = validator.validate_resource(&resource);
     assert!(result.is_invalid());
@@ -584,7 +584,7 @@ fn test_validate_resource_various_uri_formats() {
 
     for uri in valid_uris {
         let mut resource = create_valid_resource();
-        resource.uri = uri.to_string();
+        resource.uri = uri.into();
 
         let result = validator.validate_resource(&resource);
         assert!(result.is_valid(), "URI should be valid: {uri}");
@@ -594,7 +594,7 @@ fn test_validate_resource_various_uri_formats() {
 
     for uri in invalid_uris {
         let mut resource = create_valid_resource();
-        resource.uri = uri.to_string();
+        resource.uri = uri.into();
 
         let result = validator.validate_resource(&resource);
         assert!(result.is_invalid(), "URI should be invalid: {uri}");
@@ -1060,9 +1060,9 @@ fn create_valid_resource() -> Resource {
     Resource {
         name: "test_resource".to_string(),
         title: Some("Test Resource".to_string()),
-        uri: "file://test/resource.txt".to_string(),
+        uri: "file://test/resource.txt".into(),
         description: Some("A test resource".to_string()),
-        mime_type: Some("text/plain".to_string()),
+        mime_type: Some("text/plain".into()),
         annotations: None,
         size: Some(1024),
         meta: None,
@@ -1071,7 +1071,7 @@ fn create_valid_resource() -> Resource {
 
 fn create_valid_initialize_request() -> InitializeRequest {
     InitializeRequest {
-        protocol_version: "2025-06-18".to_string(),
+        protocol_version: "2025-11-25".to_string(),
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
             name: "test-client".to_string(),

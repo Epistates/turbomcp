@@ -1,7 +1,7 @@
 //! # TurboMCP WebSocket Transport
 //!
 //! WebSocket bidirectional transport implementation for the TurboMCP SDK.
-//! This crate provides full MCP 2025-06-18 protocol support with bidirectional
+//! This crate provides MCP 2025-11-25 bidirectional
 //! communication, server-initiated requests, and elicitation handling.
 //!
 //! ## Features

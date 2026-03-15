@@ -1,6 +1,6 @@
 //! Bidirectional WebSocket support for MCP transport layer
 //!
-//! This module provides full MCP 2025-06-18 bidirectional communication support
+//! This module provides full MCP bidirectional communication support
 //! over WebSocket, enabling server→client requests (sampling, elicitation, ping, roots).
 
 use std::collections::HashMap;

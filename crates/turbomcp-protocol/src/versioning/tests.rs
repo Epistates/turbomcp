@@ -165,11 +165,11 @@ fn test_version_comparison_edge_cases() {
 
 #[test]
 fn test_version_compatibility_edge_cases() {
-    // Test same year compatibility
+    // Exact-match compatibility only
     let v1 = Version::new(2025, 1, 1).unwrap();
     let v2 = Version::new(2025, 12, 31).unwrap();
-    assert!(v1.is_compatible_with(&v2));
-    assert!(v2.is_compatible_with(&v1));
+    assert!(!v1.is_compatible_with(&v2));
+    assert!(!v2.is_compatible_with(&v1));
 
     // Test different year incompatibility
     let v3 = Version::new(2024, 12, 31).unwrap();
@@ -186,25 +186,11 @@ fn test_version_compatibility_edge_cases() {
 #[test]
 fn test_known_versions_structure() {
     let known = Version::known_versions();
+    assert_eq!(known, vec![Version::latest()]);
 
-    // Should have at least the expected versions
-    assert!(!known.is_empty());
-    assert!(known.len() >= 3);
-
-    // Should be sorted newest first (after VersionManager sorts them)
     let manager = VersionManager::new(known.clone()).unwrap();
     let supported = manager.supported_versions();
-
-    for i in 1..supported.len() {
-        assert!(
-            supported[i - 1] > supported[i],
-            "Versions should be sorted newest first: {} > {}",
-            supported[i - 1],
-            supported[i]
-        );
-    }
-
-    // Should contain current version
+    assert_eq!(supported, &[Version::latest()]);
     assert!(known.contains(&Version::current()));
 }
 
@@ -212,8 +198,8 @@ fn test_known_versions_structure() {
 fn test_version_current() {
     let current = Version::current();
     assert_eq!(current.year, 2025);
-    assert_eq!(current.month, 6);
-    assert_eq!(current.day, 18);
+    assert_eq!(current.month, 11);
+    assert_eq!(current.day, 25);
 
     // Current should parse from its string representation
     let parsed: Version = current.to_string().parse().unwrap();
@@ -235,7 +221,7 @@ fn test_version_manager_empty_versions() {
 
 #[test]
 fn test_version_manager_single_version() {
-    let version = Version::new(2025, 6, 18).unwrap();
+    let version = Version::new(2025, 11, 25).unwrap();
     let manager = VersionManager::new(vec![version.clone()]).unwrap();
 
     assert_eq!(manager.current_version(), &version);
@@ -290,7 +276,7 @@ fn test_version_negotiation_empty_client_versions() {
 #[test]
 fn test_version_negotiation_prefers_newest() {
     let v1 = Version::new(2024, 11, 5).unwrap();
-    let v2 = Version::new(2025, 6, 18).unwrap();
+    let v2 = Version::new(2025, 11, 25).unwrap();
     let manager = VersionManager::new(vec![v1.clone(), v2.clone()]).unwrap();
 
     // Client supports both, should get newest
@@ -309,7 +295,7 @@ fn test_version_negotiation_prefers_newest() {
 #[test]
 fn test_compatibility_checking_identical_versions() {
     let manager = VersionManager::default();
-    let v1 = Version::new(2025, 6, 18).unwrap();
+    let v1 = Version::new(2025, 11, 25).unwrap();
 
     let compat = manager.check_compatibility(&v1, &v1);
     assert_eq!(compat, VersionCompatibility::Compatible);
@@ -323,12 +309,11 @@ fn test_compatibility_checking_same_year_different_dates() {
 
     let compat = manager.check_compatibility(&v1, &v2);
     match compat {
-        VersionCompatibility::CompatibleWithWarnings(warnings) => {
-            assert!(!warnings.is_empty());
-            assert!(warnings[0].contains("client=2025-01-01"));
-            assert!(warnings[0].contains("server=2025-12-31"));
+        VersionCompatibility::Incompatible(reason) => {
+            assert!(reason.contains("client=2025-01-01"));
+            assert!(reason.contains("server=2025-12-31"));
         }
-        _ => panic!("Expected CompatibleWithWarnings"),
+        _ => panic!("Expected Incompatible"),
     }
 }
 
@@ -336,13 +321,13 @@ fn test_compatibility_checking_same_year_different_dates() {
 fn test_compatibility_checking_different_years() {
     let manager = VersionManager::default();
     let v1 = Version::new(2024, 6, 18).unwrap();
-    let v2 = Version::new(2025, 6, 18).unwrap();
+    let v2 = Version::new(2025, 11, 25).unwrap();
 
     let compat = manager.check_compatibility(&v1, &v2);
     match compat {
         VersionCompatibility::Incompatible(reason) => {
             assert!(reason.contains("client=2024-06-18"));
-            assert!(reason.contains("server=2025-06-18"));
+            assert!(reason.contains("server=2025-11-25"));
         }
         _ => panic!("Expected Incompatible"),
     }
@@ -583,13 +568,13 @@ fn test_utils_are_all_compatible() {
     let single = vec![Version::new(2025, 6, 18).unwrap()];
     assert!(utils::are_all_compatible(&single));
 
-    // Same year versions should be compatible
+    // Same year versions are not compatible unless exact
     let same_year = vec![
         Version::new(2025, 1, 1).unwrap(),
         Version::new(2025, 6, 18).unwrap(),
         Version::new(2025, 12, 31).unwrap(),
     ];
-    assert!(utils::are_all_compatible(&same_year));
+    assert!(!utils::are_all_compatible(&same_year));
 
     // Different year versions should not be compatible
     let different_years = vec![
@@ -615,13 +600,6 @@ fn test_utils_compatibility_description() {
         utils::compatibility_description(&compatible),
         "Fully compatible"
     );
-
-    // Test CompatibleWithWarnings
-    let warnings = vec!["Warning 1".to_string(), "Warning 2".to_string()];
-    let compatible_with_warnings = VersionCompatibility::CompatibleWithWarnings(warnings);
-    let desc = utils::compatibility_description(&compatible_with_warnings);
-    assert!(desc.contains("Compatible with warnings"));
-    assert!(desc.contains("Warning 1, Warning 2"));
 
     // Test Incompatible
     let incompatible = VersionCompatibility::Incompatible("Test reason".to_string());
@@ -664,7 +642,7 @@ fn test_version_from_date_string() {
 fn test_version_manager_default() {
     let manager = VersionManager::default();
 
-    // Should contain known versions
+    // Should contain latest version only
     let known = Version::known_versions();
     assert_eq!(manager.supported_versions().len(), known.len());
 

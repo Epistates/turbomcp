@@ -27,7 +27,7 @@ pub struct PingResult {
     /// Echoed data from the request
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
-    /// Optional metadata per MCP 2025-06-18 specification
+    /// Optional metadata per the current MCP specification
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
 }

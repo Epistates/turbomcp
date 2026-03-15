@@ -1,6 +1,6 @@
-//! Comprehensive MCP 2025-06-18 Protocol Compliance Tests
+//! Comprehensive MCP 2025-11-25 Protocol Compliance Tests
 //!
-//! This test suite validates that TurboMCP fully complies with the MCP 2025-06-18 specification,
+//! This test suite validates that TurboMCP complies with the MCP 2025-11-25 specification,
 //! specifically focusing on the systematic fixes implemented for protocol compliance.
 
 use serde_json::{Value, json};
@@ -11,12 +11,12 @@ use turbomcp_protocol::types::*;
 mod mcp_compliance_tests {
     use super::*;
 
-    /// Test that all result types have the required _meta field per MCP 2025-06-18 spec
+    /// Test that all result types have the required `_meta` field.
     #[test]
     fn test_all_result_types_have_meta_field() {
         // Test InitializeResult
         let init_result = InitializeResult {
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: "2025-11-25".to_string(),
             server_info: Implementation {
                 name: "test".to_string(),
                 version: "1.0.0".to_string(),
@@ -97,7 +97,7 @@ mod mcp_compliance_tests {
         // Test CreateMessageResult
         let message_result = CreateMessageResult {
             role: Role::Assistant,
-            content: Content::Text(TextContent {
+            content: ContentBlock::Text(TextContent {
                 text: "test".to_string(),
                 annotations: None,
                 meta: None,
@@ -120,12 +120,12 @@ mod mcp_compliance_tests {
         assert!(parsed.get("_meta").is_some());
     }
 
-    /// Test that all request types support _meta field per MCP 2025-06-18 spec
+    /// Test that all request types support `_meta`.
     #[test]
     fn test_all_request_types_support_meta_field() {
         // Test InitializeRequest
         let init_request = InitializeRequest {
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: "2025-11-25".to_string(),
             capabilities: ClientCapabilities::default(),
             client_info: Implementation {
                 name: "test".to_string(),
@@ -172,7 +172,7 @@ mod mcp_compliance_tests {
 
         // Test ReadResourceRequest
         let read_request = ReadResourceRequest {
-            uri: "file://test.txt".to_string(),
+            uri: "file://test.txt".into(),
             _meta: Some(json!({"read_meta": "test"})),
         };
         let serialized = serde_json::to_string(&read_request).unwrap();
@@ -203,7 +203,7 @@ mod mcp_compliance_tests {
     fn test_meta_fields_are_optional() {
         // Test that structures work with _meta: None
         let init_result = InitializeResult {
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: "2025-11-25".to_string(),
             server_info: Implementation {
                 name: "test".to_string(),
                 version: "1.0.0".to_string(),
@@ -221,7 +221,7 @@ mod mcp_compliance_tests {
 
         // Test that structures can be deserialized without _meta field
         let json_without_meta = json!({
-            "protocolVersion": "2025-06-18",
+            "protocolVersion": "2025-11-25",
             "serverInfo": {
                 "name": "test",
                 "version": "1.0.0"

@@ -1,4 +1,4 @@
-//! MCP 2025-06-18 Compliant Streamable HTTP Transport - Types and Configuration
+//! MCP 2025-11-25 Streamable HTTP Transport - Types and Configuration
 //!
 //! This module provides configuration and session management types for HTTP transport:
 //! - `StreamableHttpConfig` - Configuration for HTTP transport

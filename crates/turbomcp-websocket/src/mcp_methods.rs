@@ -1,7 +1,7 @@
-//! MCP 2025-06-18 bidirectional methods for WebSocket transport
+//! MCP bidirectional methods for WebSocket transport
 //!
 //! This module implements server-initiated MCP methods (ping, sampling, roots)
-//! for the WebSocket bidirectional transport, following the MCP 2025-06-18 specification.
+//! for the WebSocket bidirectional transport, following the current MCP protocol surface.
 //!
 //! These methods enable servers to make requests to clients:
 //! - `ping` - Connection health checks
@@ -20,7 +20,7 @@
 //!
 //! ## MCP Compliance
 //!
-//! All methods follow MCP 2025-06-18 specification:
+//! All methods follow the current MCP protocol shape:
 //! - Correct method names (`ping`, `sampling/createMessage`, `roots/list`)
 //! - JSON-RPC 2.0 format
 //! - UUID request IDs for correlation
@@ -69,7 +69,7 @@ impl<T> PendingMcpRequest<T> {
 impl WebSocketBidirectionalTransport {
     /// Send a ping request to the client
     ///
-    /// ## MCP 2025-06-18 Spec: ping
+    /// ## MCP 2025-11-25 Spec: ping
     ///
     /// Request format:
     /// ```json
@@ -111,7 +111,7 @@ impl WebSocketBidirectionalTransport {
 
         let timeout_duration = timeout_duration.unwrap_or(Duration::from_secs(60));
 
-        // Create JSON-RPC request per MCP 2025-06-18
+        // Create JSON-RPC request for the current MCP protocol
         let json_request = json!({
             "jsonrpc": "2.0",
             "method": "ping",
@@ -182,7 +182,7 @@ impl WebSocketBidirectionalTransport {
 
     /// Send a sampling/createMessage request to the client
     ///
-    /// ## MCP 2025-06-18 Spec: sampling/createMessage
+    /// ## MCP 2025-11-25 Spec: sampling/createMessage
     ///
     /// Request format:
     /// ```json
@@ -218,7 +218,7 @@ impl WebSocketBidirectionalTransport {
 
         let timeout_duration = timeout_duration.unwrap_or(Duration::from_secs(60));
 
-        // Create JSON-RPC request per MCP 2025-06-18
+        // Create JSON-RPC request for the current MCP protocol
         let json_request = json!({
             "jsonrpc": "2.0",
             "method": "sampling/createMessage",
@@ -291,7 +291,7 @@ impl WebSocketBidirectionalTransport {
 
     /// Send a roots/list request to the client
     ///
-    /// ## MCP 2025-06-18 Spec: roots/list
+    /// ## MCP 2025-11-25 Spec: roots/list
     ///
     /// Request format:
     /// ```json
@@ -321,7 +321,7 @@ impl WebSocketBidirectionalTransport {
 
         let timeout_duration = timeout_duration.unwrap_or(Duration::from_secs(60));
 
-        // Create JSON-RPC request per MCP 2025-06-18
+        // Create JSON-RPC request for the current MCP protocol
         let json_request = json!({
             "jsonrpc": "2.0",
             "method": "roots/list",

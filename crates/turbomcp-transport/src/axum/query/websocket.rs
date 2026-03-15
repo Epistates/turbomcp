@@ -4,6 +4,7 @@
 //! supporting protocol negotiation and session management.
 
 use serde::Deserialize;
+use turbomcp_protocol::PROTOCOL_VERSION;
 
 /// Query parameters for WebSocket endpoint
 #[derive(Debug, Deserialize)]
@@ -19,7 +20,7 @@ impl Default for WebSocketQuery {
     fn default() -> Self {
         Self {
             session_id: None,
-            protocol: Some("2025-06-18".to_string()),
+            protocol: Some(PROTOCOL_VERSION.to_string()),
         }
     }
 }
@@ -29,7 +30,7 @@ impl WebSocketQuery {
     pub fn with_session(session_id: String) -> Self {
         Self {
             session_id: Some(session_id),
-            protocol: Some("2025-06-18".to_string()),
+            protocol: Some(PROTOCOL_VERSION.to_string()),
         }
     }
 
@@ -43,7 +44,7 @@ impl WebSocketQuery {
 
     /// Get the protocol version, defaulting to MCP protocol version
     pub fn get_protocol(&self) -> &str {
-        self.protocol.as_deref().unwrap_or("2025-06-18")
+        self.protocol.as_deref().unwrap_or(PROTOCOL_VERSION)
     }
 
     /// Check if this includes a session ID

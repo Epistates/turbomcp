@@ -1,12 +1,12 @@
 //! HTTP transport implementation.
 //!
-//! Provides MCP 2025-06-18 Streamable HTTP transport with:
+//! Provides MCP 2025-11-25 Streamable HTTP transport with:
 //! - POST for JSON-RPC requests
 //! - GET for SSE (Server-Sent Events) for server push
 //!
 //! # Protocol Compliance
 //!
-//! This implementation follows the MCP 2025-06-18 specification:
+//! This implementation follows the MCP 2025-11-25 streamable HTTP shape:
 //! - POST `/` or `/mcp` - JSON-RPC request/response
 //! - GET `/sse` - Server-Sent Events stream with session management
 //! - `Mcp-Session-Id` header for session correlation
@@ -103,7 +103,7 @@ impl SessionManager {
     }
 }
 
-/// Run a handler on HTTP transport with full MCP 2025-06-18 Streamable HTTP support.
+/// Run a handler on HTTP transport with full MCP Streamable HTTP support.
 ///
 /// This includes:
 /// - POST `/` and `/mcp` for JSON-RPC requests
@@ -277,7 +277,7 @@ async fn handle_json_rpc_with_rate_limit<H: McpHandler>(
 
 /// Axum handler for SSE (Server-Sent Events) connections.
 ///
-/// This implements the MCP 2025-06-18 Streamable HTTP specification:
+/// This implements the MCP Streamable HTTP specification:
 /// - Returns `text/event-stream` content type
 /// - Sets `Mcp-Session-Id` header for session correlation
 /// - Keeps connection open for server-initiated messages

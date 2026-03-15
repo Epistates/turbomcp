@@ -385,7 +385,7 @@ impl ProtocolValidator {
 
     /// Validate model preferences (priority ranges must be 0.0-1.0)
     ///
-    /// Per MCP 2025-06-18 schema (lines 1346-1370), priority values must be in range [0.0, 1.0].
+    /// Per the current MCP schema, priority values must be in range [0.0, 1.0].
     pub fn validate_model_preferences(
         &self,
         prefs: &crate::types::ModelPreferences,
@@ -419,7 +419,7 @@ impl ProtocolValidator {
 
     /// Validate elicitation result (content required for 'accept' action)
     ///
-    /// Per MCP 2025-06-18 schema (line 634), content is "only present when action is 'accept'".
+    /// Per the current MCP schema, content is only present when action is `accept`.
     pub fn validate_elicit_result(&self, result: &crate::types::ElicitResult) -> ValidationResult {
         let mut ctx = ValidationContext::new();
 
@@ -454,7 +454,7 @@ impl ProtocolValidator {
 
     /// Validate elicitation schema structure
     ///
-    /// Per MCP 2025-06-18 spec, schemas must be flat objects with primitive properties only.
+    /// Per the current MCP spec, schemas must be flat objects with primitive properties only.
     pub fn validate_elicitation_schema(
         &self,
         schema: &crate::types::ElicitationSchema,
@@ -551,7 +551,7 @@ impl ProtocolValidator {
 
     /// Validate string value against format constraints
     ///
-    /// Validates email, uri, date, and date-time formats per MCP 2025-06-18 spec.
+    /// Validates email, uri, date, and date-time formats per the current MCP spec.
     pub fn validate_string_format(value: &str, format: &str) -> std::result::Result<(), String> {
         match format {
             "email" => {

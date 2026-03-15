@@ -1,6 +1,6 @@
 //! WebSocket handler for bidirectional MCP communication
 //!
-//! This handler provides full MCP 2025-06-18 bidirectional support, enabling
+//! This handler provides full MCP bidirectional support, enabling
 //! both client→server and server→client requests over WebSocket.
 
 use std::collections::HashMap;

@@ -38,6 +38,7 @@
 
 use std::sync::Arc;
 
+use turbomcp_core::PROTOCOL_VERSION;
 use turbomcp_core::types::capabilities::ServerCapabilities;
 use turbomcp_core::types::core::Implementation;
 use worker::{Headers, Request, Response};
@@ -340,7 +341,7 @@ impl CompositeServer {
         };
 
         Ok(serde_json::json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": PROTOCOL_VERSION,
             "capabilities": capabilities,
             "serverInfo": server_info
         }))
@@ -408,7 +409,7 @@ impl CompositeServer {
         for mounted in self.mounted.iter() {
             for resource in mounted.server.resources() {
                 let mut prefixed = resource.clone();
-                prefixed.uri = Self::prefix_resource_uri(&mounted.prefix, &resource.uri);
+                prefixed.uri = Self::prefix_resource_uri(&mounted.prefix, &resource.uri).into();
                 resources.push(prefixed);
             }
         }
