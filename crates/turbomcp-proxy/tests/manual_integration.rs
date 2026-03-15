@@ -1,33 +1,69 @@
 //! Manual integration test for proxy functionality
 //!
 //! This test verifies that the proxy can:
-//! 1. Connect to the stdio_server backend
+//! 1. Connect to the manual_server backend
 //! 2. Introspect tools
 //! 3. Call tools through the proxy
 //!
 //! Run with: cargo test --package turbomcp-proxy --test manual_integration -- --ignored --nocapture
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use turbomcp_proxy::proxy::{BackendConfig, BackendConnector, BackendTransport};
 
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("workspace root")
+        .to_path_buf()
+}
+
+fn manual_server_binary() -> PathBuf {
+    workspace_root()
+        .join("target")
+        .join("debug")
+        .join("examples")
+        .join(format!("manual_server{}", std::env::consts::EXE_SUFFIX))
+}
+
+fn ensure_manual_server_built() {
+    let binary = manual_server_binary();
+    if binary.exists() {
+        return;
+    }
+
+    let status = Command::new("cargo")
+        .arg("build")
+        .arg("--package")
+        .arg("turbomcp-server")
+        .arg("--example")
+        .arg("manual_server")
+        .current_dir(workspace_root())
+        .status()
+        .expect("Failed to invoke cargo build for manual_server example");
+
+    assert!(status.success(), "Building manual_server example failed");
+}
+
 #[tokio::test]
-#[ignore = "Requires building stdio_server example (60+ seconds), run manually with --ignored"]
+#[ignore = "Requires building manual_server example, run manually with --ignored"]
 async fn test_proxy_end_to_end() {
     println!("\n🧪 Testing Proxy End-to-End Functionality");
     println!("==========================================\n");
 
     // Test 1: Create backend connector
-    println!("Test 1: Create backend connector to stdio_server...");
+    println!("Test 1: Create backend connector to manual_server...");
+    ensure_manual_server_built();
+
+    let binary = manual_server_binary();
 
     let config = BackendConfig {
         transport: BackendTransport::Stdio {
-            command: "cargo".to_string(),
-            args: vec![
-                "run".to_string(),
-                "--example".to_string(),
-                "stdio_server".to_string(),
-            ],
-            working_dir: Some("/Users/nickpaterno/work/turbomcp".to_string()),
+            command: binary.display().to_string(),
+            args: vec![],
+            working_dir: Some(workspace_root().display().to_string()),
         },
         client_name: "integration-test".to_string(),
         client_version: "1.0.0".to_string(),
@@ -59,7 +95,7 @@ async fn test_proxy_end_to_end() {
     println!();
 
     // Verify we have the expected tools
-    let expected_tools = vec!["echo", "reverse"];
+    let expected_tools = vec!["echo"];
     for expected in &expected_tools {
         assert!(
             spec.tools.iter().any(|t| &t.name == expected),
@@ -94,29 +130,6 @@ async fn test_proxy_end_to_end() {
         result_str
     );
     println!("✅ Result contains expected message\n");
-
-    // Test 4: Call 'reverse' tool
-    println!("Test 4: Call 'reverse' tool...");
-
-    let mut args = HashMap::new();
-    args.insert("text".to_string(), serde_json::json!("turbomcp"));
-
-    let result = backend
-        .call_tool("reverse", Some(args))
-        .await
-        .expect("Failed to call reverse tool");
-
-    println!("✅ Tool call successful");
-    println!("   Result: {}", result);
-
-    // Verify result is reversed
-    let result_str = result.to_string();
-    assert!(
-        result_str.contains("pcmobr"),
-        "Result is not correctly reversed: {}",
-        result_str
-    );
-    println!("✅ Result is correctly reversed\n");
 
     println!("==========================================");
     println!("🎉 All Proxy Integration Tests Passed!");

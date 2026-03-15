@@ -125,7 +125,7 @@ impl WebSocketTestServer {
                                         "jsonrpc": "2.0",
                                         "id": request.get("id"),
                                         "result": {
-                                            "protocolVersion": "2025-06-18",
+                                            "protocolVersion": "2025-11-25",
                                             "capabilities": {},
                                             "serverInfo": {"name": "test-server", "version": "1.0.0"}
                                         }

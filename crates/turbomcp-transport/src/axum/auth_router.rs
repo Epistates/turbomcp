@@ -1,7 +1,7 @@
 //! RFC 9728 Protected Resource Metadata Router
 //!
 //! MCP servers MUST implement the OAuth 2.0 Protected Resource Metadata endpoint
-//! per MCP specification (2025-06-18) and RFC 9728.
+//! per the current MCP specification and RFC 9728.
 //!
 //! This module provides a router that serves `/.well-known/oauth-protected-resource`
 //! to enable client discovery of authorization servers and resource requirements.
@@ -59,7 +59,7 @@ struct ProtectedResourceState {
 ///
 /// # MCP Specification Compliance
 ///
-/// Per MCP spec (2025-06-18):
+/// Per the current MCP spec:
 /// > MCP servers MUST implement the OAuth 2.0 Protected Resource Metadata (RFC9728)
 /// > specification to indicate the locations of authorization servers.
 ///

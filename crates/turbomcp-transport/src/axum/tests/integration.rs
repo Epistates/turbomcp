@@ -56,7 +56,7 @@ mod tests {
                 "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
             )
             .with_rate_limit(240, 60) // 4 requests per second with burst
-            .with_api_key_auth("X-MCP-API-Key".to_string())
+            .with_api_key_auth_value("X-MCP-API-Key".to_string(), "test-api-key".to_string())
             .with_tls("production.crt".to_string(), "production.key".to_string());
 
         // This should compile and create a router with all middleware applied
@@ -100,7 +100,10 @@ mod tests {
                     .with_cors_origins(vec!["https://secure.example.com".to_string()])
                     .with_custom_csp("default-src 'none'; script-src 'self'; style-src 'self'")
                     .with_rate_limit(60, 10) // Very strict rate limiting
-                    .with_api_key_auth("X-SECURE-API-KEY".to_string())
+                    .with_api_key_auth_value(
+                        "X-SECURE-API-KEY".to_string(),
+                        "secure-api-key".to_string(),
+                    )
                     .with_tls("secure.crt".to_string(), "secure.key".to_string()),
             },
         ];

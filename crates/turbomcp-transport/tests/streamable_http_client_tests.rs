@@ -1,6 +1,6 @@
 //! Comprehensive tests for StreamableHttpClientTransport
 //!
-//! Tests MCP 2025-06-18 compliant Streamable HTTP client transport including:
+//! Tests MCP 2025-11-25 streamable HTTP client transport including:
 //! - JSON response handling
 //! - SSE stream response handling
 //! - HTTP 202 Accepted handling
@@ -73,13 +73,13 @@ mod streamable_http_client_tests {
             base_url: "http://localhost:8080".to_string(),
             endpoint_path: "/mcp".to_string(),
             timeout: Duration::from_secs(30),
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: "2025-11-25".to_string(),
             ..Default::default()
         };
 
         assert_eq!(config.base_url, "http://localhost:8080");
         assert_eq!(config.endpoint_path, "/mcp");
-        assert_eq!(config.protocol_version, "2025-06-18");
+        assert_eq!(config.protocol_version, "2025-11-25");
     }
 
     // Note: RetryPolicy::delay tests are in streamable_http_client.rs module tests
@@ -95,7 +95,7 @@ mod streamable_http_client_tests {
             "jsonrpc": "2.0",
             "id": "1",
             "result": {
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": "2025-11-25",
                 "serverInfo": {
                     "name": "test-server",
                     "version": "1.0.0"
@@ -123,7 +123,7 @@ mod streamable_http_client_tests {
             endpoint_path: "/mcp".to_string(),
             timeout: Duration::from_secs(5),
             retry_policy: RetryPolicy::Never,
-            protocol_version: "2025-06-18".to_string(),
+            protocol_version: "2025-11-25".to_string(),
             ..Default::default()
         };
 
@@ -202,7 +202,7 @@ mod streamable_http_client_tests {
             "jsonrpc": "2.0",
             "id": "1",
             "result": {
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": "2025-11-25",
                 "serverInfo": {
                     "name": "TurboMCP-Test",
                     "version": "1.0.0"

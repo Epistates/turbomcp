@@ -13,7 +13,9 @@
 
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
-use turbomcp_protocol::types::{Content, CreateMessageRequest, Role, SamplingMessage, TextContent};
+use turbomcp_protocol::types::{
+    ContentBlock, CreateMessageRequest, Role, SamplingMessage, TextContent,
+};
 use turbomcp_transport::websocket_bidirectional::{
     WebSocketBidirectionalTransport, config::WebSocketBidirectionalConfig,
 };
@@ -30,7 +32,7 @@ async fn test_sampling_rejection_should_not_hang() {
     let request = CreateMessageRequest {
         messages: vec![SamplingMessage {
             role: Role::User,
-            content: Content::Text(TextContent {
+            content: ContentBlock::Text(TextContent {
                 text: "What is 2+2?".to_string(),
                 annotations: None,
                 meta: None,
@@ -206,7 +208,7 @@ async fn benchmark_sampling_rejection_hang_time() {
     let request = CreateMessageRequest {
         messages: vec![SamplingMessage {
             role: Role::User,
-            content: Content::Text(TextContent {
+            content: ContentBlock::Text(TextContent {
                 text: "Benchmark request".to_string(),
                 annotations: None,
                 meta: None,

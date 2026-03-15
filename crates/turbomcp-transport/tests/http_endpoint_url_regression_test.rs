@@ -81,7 +81,7 @@ mod http_endpoint_regression_tests {
                         "jsonrpc": "2.0",
                         "id": payload.get("id"),
                         "result": {
-                            "protocolVersion": "2025-06-18",
+                            "protocolVersion": "2025-11-25",
                             "serverInfo": {
                                 "name": "test-server",
                                 "version": "1.0.0"
@@ -219,7 +219,7 @@ mod http_endpoint_regression_tests {
             "id": "test-1",
             "method": "initialize",
             "params": {
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": "2025-11-25",
                 "capabilities": {},
                 "clientInfo": {
                     "name": "test-client",

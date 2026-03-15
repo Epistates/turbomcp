@@ -29,13 +29,25 @@
 
 #![cfg(feature = "websocket")]
 
-use futures::StreamExt;
+use bytes::Bytes;
+use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use tokio::sync::Mutex;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{Mutex, mpsc};
 use tokio::time::{sleep, timeout};
+use tokio_tungstenite::accept_async;
+use tokio_tungstenite::tungstenite::Message;
+use turbomcp_protocol::MessageId;
+use turbomcp_transport::core::{
+    Transport, TransportMessage, TransportMessageMetadata, TransportState,
+};
+use turbomcp_transport::websocket_bidirectional::{
+    ReconnectConfig, WebSocketBidirectionalConfig, WebSocketBidirectionalTransport,
+};
+use uuid::Uuid;
 
 /// Helper to find an available port
 async fn find_available_port() -> u16 {
@@ -45,6 +57,83 @@ async fn find_available_port() -> u16 {
     let port = listener.local_addr().unwrap().port();
     drop(listener);
     port
+}
+
+struct WebSocketTestServer {
+    addr: String,
+    shutdown_tx: mpsc::Sender<()>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl WebSocketTestServer {
+    async fn start() -> Result<Self, Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?.to_string();
+        Self::start_with_listener(listener, addr).await
+    }
+
+    async fn start_on(addr: String) -> Result<Self, Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind(&addr).await?;
+        let actual_addr = listener.local_addr()?.to_string();
+        Self::start_with_listener(listener, actual_addr).await
+    }
+
+    async fn start_with_listener(
+        listener: TcpListener,
+        addr: String,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    accept_result = listener.accept() => {
+                        match accept_result {
+                            Ok((stream, _)) => {
+                                tokio::spawn(async move {
+                                    let _ = Self::handle_connection(stream).await;
+                                });
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    _ = shutdown_rx.recv() => break,
+                }
+            }
+        });
+
+        Ok(Self {
+            addr,
+            shutdown_tx,
+            handle,
+        })
+    }
+
+    async fn handle_connection(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+        let ws_stream = accept_async(stream).await?;
+        let (mut writer, mut reader) = ws_stream.split();
+
+        while let Some(msg) = reader.next().await {
+            match msg? {
+                Message::Text(text) => writer.send(Message::Text(text)).await?,
+                Message::Binary(data) => writer.send(Message::Binary(data)).await?,
+                Message::Ping(data) => writer.send(Message::Pong(data)).await?,
+                Message::Close(_) => break,
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    fn url(&self) -> String {
+        format!("ws://{}", self.addr)
+    }
+
+    async fn stop(self) {
+        let _ = self.shutdown_tx.send(()).await;
+        self.handle.abort();
+    }
 }
 
 /// Test HTTP SSE connection with 5-minute duration and 30-second keep-alive
@@ -123,7 +212,7 @@ async fn test_http_sse_long_running_connection_with_keepalive() {
                 "jsonrpc": "2.0",
                 "id": payload.get("id"),
                 "result": {
-                    "protocolVersion": "2025-06-18",
+                    "protocolVersion": "2025-11-25",
                     "serverInfo": {
                         "name": "long-running-test-server",
                         "version": "1.0.0"
@@ -342,26 +431,50 @@ async fn test_http_sse_long_running_connection_with_keepalive() {
 #[ignore] // Don't run in CI - too long (5+ minutes)
 async fn test_websocket_long_running_connection_with_keepalive() {
     println!("\n🧪 Starting 5-minute WebSocket connection test...");
+    let server = WebSocketTestServer::start()
+        .await
+        .expect("Failed to start WebSocket test server");
 
-    // This test will use the turbomcp server once WebSocket initialize timeout is fixed
-    // For now, create a minimal WebSocket server
+    let config = WebSocketBidirectionalConfig::client(server.url())
+        .with_keep_alive_interval(Duration::from_secs(10))
+        .with_reconnect_config(ReconnectConfig::new().with_enabled(false));
 
-    let port = find_available_port().await;
+    let transport = WebSocketBidirectionalTransport::new(config)
+        .await
+        .expect("Failed to create transport");
 
-    println!("📡 Server would start on port {}", port);
-    println!("⚠️  Skipping test until WebSocket initialize timeout is fixed");
-    println!("   (See REMAINING_CONNECTION_ISSUES.md)");
+    transport.connect().await.expect("Failed to connect");
+    let start = Instant::now();
+    let duration = Duration::from_secs(60);
+    let mut round_trips = 0usize;
 
-    // NOTE: Test skeleton for Phase 2 - WebSocket keep-alive validation
-    // Implementation steps once WebSocket initialize is stable:
-    // 1. Start real turbomcp WebSocket server
-    // 2. Connect client
-    // 3. Send initialize (currently times out - needs fix)
-    // 4. Send periodic messages for 5 minutes
-    // 5. Verify ping/pong keep-alive
-    // 6. Assert connection stays alive
+    while start.elapsed() < duration {
+        let msg = TransportMessage {
+            id: MessageId::from(Uuid::new_v4()),
+            payload: Bytes::from(format!("keepalive-{round_trips}")),
+            metadata: TransportMessageMetadata::default(),
+        };
 
-    println!("\n⏭️  Test skipped (WebSocket needs fix first)");
+        transport.send(msg).await.expect("Failed to send message");
+        let response = timeout(Duration::from_secs(5), transport.receive())
+            .await
+            .expect("Timed out waiting for WebSocket response")
+            .expect("Receive failed");
+
+        assert!(response.is_some(), "Expected echoed message");
+        round_trips += 1;
+        sleep(Duration::from_secs(10)).await;
+    }
+
+    assert_eq!(transport.state().await, TransportState::Connected);
+    assert!(
+        round_trips >= 5,
+        "Expected at least 5 round trips during keep-alive test, got {round_trips}"
+    );
+
+    transport.disconnect().await.expect("Failed to disconnect");
+    server.stop().await;
+    println!("\n✅ Long-running WebSocket keep-alive test PASSED");
 }
 
 /// Test reconnection logic after server restart
@@ -374,18 +487,57 @@ async fn test_websocket_long_running_connection_with_keepalive() {
 #[ignore] // Don't run in CI - too long
 async fn test_reconnection_after_server_restart() {
     println!("\n🧪 Starting reconnection test...");
-    println!("⏭️  Test not implemented yet");
+    let port = find_available_port().await;
+    let addr = format!("127.0.0.1:{port}");
+    let server = WebSocketTestServer::start_on(addr.clone())
+        .await
+        .expect("Failed to start initial server");
 
-    // NOTE: Test skeleton for Phase 2 - reconnection resilience
-    // Implementation steps:
-    // 1. Start server
-    // 2. Connect client
-    // 3. Exchange messages
-    // 4. Stop server
-    // 5. Verify client detects disconnect
-    // 6. Restart server
-    // 7. Verify client reconnects
-    // 8. Resume message exchange
+    let config = WebSocketBidirectionalConfig::client(format!("ws://{addr}"))
+        .with_reconnect_config(
+            ReconnectConfig::new()
+                .with_initial_delay(Duration::from_millis(50))
+                .with_max_delay(Duration::from_millis(250))
+                .with_max_retries(5),
+        );
+
+    let transport = WebSocketBidirectionalTransport::new(config)
+        .await
+        .expect("Failed to create transport");
+
+    transport.connect().await.expect("Failed to connect");
+    server.stop().await;
+    sleep(Duration::from_millis(100)).await;
+
+    let restarted = WebSocketTestServer::start_on(addr.clone())
+        .await
+        .expect("Failed to restart server");
+
+    transport.disconnect().await.ok();
+    timeout(Duration::from_secs(10), transport.connect())
+        .await
+        .expect("Timed out waiting for reconnect")
+        .expect("Failed to reconnect");
+
+    let msg = TransportMessage {
+        id: MessageId::from(Uuid::new_v4()),
+        payload: Bytes::from_static(b"reconnected"),
+        metadata: TransportMessageMetadata::default(),
+    };
+    transport
+        .send(msg)
+        .await
+        .expect("Failed to send after reconnect");
+
+    let response = timeout(Duration::from_secs(5), transport.receive())
+        .await
+        .expect("Timed out waiting for response after reconnect")
+        .expect("Receive failed");
+    assert!(response.is_some(), "Expected response after reconnect");
+
+    transport.disconnect().await.ok();
+    restarted.stop().await;
+    println!("✅ Reconnection-after-restart test PASSED");
 }
 
 /// Test multiple concurrent clients on same server
@@ -398,14 +550,40 @@ async fn test_reconnection_after_server_restart() {
 #[ignore] // Don't run in CI - too long
 async fn test_multiple_concurrent_connections() {
     println!("\n🧪 Starting concurrent connections test...");
-    println!("⏭️  Test not implemented yet");
+    let server = WebSocketTestServer::start()
+        .await
+        .expect("Failed to start concurrent test server");
 
-    // NOTE: Test skeleton for Phase 2 - concurrent connection handling
-    // Implementation steps:
-    // 1. Start server
-    // 2. Connect 10 clients simultaneously
-    // 3. Each client sends periodic messages
-    // 4. Verify all clients receive responses
-    // 5. Verify keep-alive works for all
-    // 6. Disconnect clients in random order
+    let mut clients = Vec::new();
+    for _ in 0..3 {
+        let transport = WebSocketBidirectionalTransport::new(WebSocketBidirectionalConfig::client(
+            server.url(),
+        ))
+        .await
+        .expect("Failed to create transport");
+        transport.connect().await.expect("Failed to connect client");
+        clients.push(transport);
+    }
+
+    for round in 0..3 {
+        for (idx, client) in clients.iter_mut().enumerate() {
+            let msg = TransportMessage {
+                id: MessageId::from(Uuid::new_v4()),
+                payload: Bytes::from(format!("client-{idx}-round-{round}")),
+                metadata: TransportMessageMetadata::default(),
+            };
+            client.send(msg).await.expect("Failed to send");
+            let response = timeout(Duration::from_secs(5), client.receive())
+                .await
+                .expect("Timed out waiting for concurrent response")
+                .expect("Receive failed");
+            assert!(response.is_some(), "Expected response for client {idx}");
+        }
+    }
+
+    for client in &mut clients {
+        client.disconnect().await.ok();
+    }
+    server.stop().await;
+    println!("✅ Concurrent connection test PASSED");
 }

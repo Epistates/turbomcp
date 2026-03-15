@@ -75,7 +75,7 @@ mod tests {
             .with_cors_origins(vec!["https://example.com".to_string()])
             .with_custom_csp("default-src 'self'")
             .with_rate_limit(600, 100)
-            .with_api_key_auth("X-API-Key".to_string());
+            .with_api_key_auth_value("X-API-Key".to_string(), "test-api-key".to_string());
 
         // Verify CORS configuration
         assert!(
@@ -103,6 +103,7 @@ mod tests {
         let auth = config.auth.unwrap();
         assert!(auth.enabled);
         assert_eq!(auth.api_key_header.unwrap(), "X-API-Key");
+        assert_eq!(auth.api_key_value.unwrap(), "test-api-key");
     }
 
     #[test]

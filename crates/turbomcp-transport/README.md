@@ -27,7 +27,7 @@ Transport layer implementation for the Model Context Protocol (MCP) with support
 
 ### Multi-Protocol Support
 
-**MCP Standard Transports** (MCP 2025-06-18 Specification):
+**MCP Standard Transports** (MCP `2025-11-25`):
 - STDIO - Standard input/output for subprocess communication
 - HTTP/SSE - Streamable HTTP with Server-Sent Events for web integration
 
@@ -70,7 +70,7 @@ All transports preserve JSON-RPC message format and MCP lifecycle requirements.
 ┌─────────────────────────────────────────────┐
 │            TurboMCP Transport               │
 ├─────────────────────────────────────────────┤
-│ MCP Standard Transports (2025-06-18)      │
+│ MCP Standard Transports (2025-11-25)      │
 │ ├── STDIO (subprocess communication)       │
 │ └── HTTP/SSE (streamable HTTP)             │
 ├─────────────────────────────────────────────┤
@@ -123,7 +123,7 @@ let config = ChildProcessConfig::new()
 let child_transport = StdioTransport::with_child_process(config).await?;
 ```
 
-### MCP 2025-06-18 Streamable HTTP (Client)
+### MCP 2025-11-25 Streamable HTTP (Client)
 
 For connecting to HTTP-based MCP servers with full SSE support:
 
@@ -133,7 +133,7 @@ use turbomcp_transport::streamable_http_client::{
 };
 use std::time::Duration;
 
-// MCP 2025-06-18 compliant HTTP client with SSE
+// MCP 2025-11-25 compliant HTTP client with SSE
 let config = StreamableHttpClientConfig {
     base_url: "http://localhost:8080".to_string(),
     endpoint_path: "/mcp".to_string(),
@@ -153,14 +153,14 @@ use turbomcp_transport::websocket_bidirectional::{
     WebSocketBidirectionalTransport, WebSocketBidirectionalConfig
 };
 
-// Connect to WebSocket server with full MCP 2025-06-18 support
+// Connect to WebSocket server with full MCP 2025-11-25 support
 let config = WebSocketBidirectionalConfig {
     url: Some("wss://api.example.com/mcp".to_string()),
     ..Default::default()
 };
 let transport = WebSocketBidirectionalTransport::new(config).await?;
 
-// Full MCP 2025-06-18 features:
+// Full MCP 2025-11-25 features:
 // - Bidirectional request-response correlation
 // - Server-initiated elicitation support
 // - Automatic reconnection with exponential backoff
