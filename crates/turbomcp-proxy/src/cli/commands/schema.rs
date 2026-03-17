@@ -318,6 +318,7 @@ impl SchemaCommand {
 
                 BackendTransport::Tcp { host, port }
             }
+            #[cfg(unix)]
             Some(BackendType::Unix) => {
                 let path = self.backend.unix.as_ref().ok_or_else(|| {
                     crate::error::ProxyError::configuration(

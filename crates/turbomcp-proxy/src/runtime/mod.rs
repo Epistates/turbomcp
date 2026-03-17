@@ -223,6 +223,7 @@ impl RuntimeProxyBuilder {
     /// let builder = RuntimeProxyBuilder::new()
     ///     .with_unix_backend("/tmp/mcp.sock");
     /// ```
+    #[cfg(unix)]
     #[must_use]
     pub fn with_unix_backend(mut self, path: impl Into<String>) -> Self {
         self.backend_config = Some(BackendConfig::Unix { path: path.into() });
@@ -440,6 +441,7 @@ impl RuntimeProxyBuilder {
                 host: host.clone(),
                 port: *port,
             },
+            #[cfg(unix)]
             BackendConfig::Unix { path } => BackendTransport::Unix { path: path.clone() },
             BackendConfig::WebSocket { url } => BackendTransport::WebSocket { url: url.clone() },
         };
@@ -1338,6 +1340,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_builder_with_unix_backend() {
         let builder = RuntimeProxyBuilder::new().with_unix_backend("/tmp/mcp.sock");

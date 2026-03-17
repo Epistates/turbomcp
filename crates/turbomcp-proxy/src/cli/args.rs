@@ -34,6 +34,7 @@ pub struct BackendArgs {
     pub tcp: Option<String>,
 
     /// Unix domain socket path
+    #[cfg(unix)]
     #[arg(long, value_name = "PATH", group = "backend-type")]
     pub unix: Option<String>,
 
@@ -52,6 +53,7 @@ pub enum BackendType {
     /// TCP bidirectional communication
     Tcp,
     /// Unix domain socket
+    #[cfg(unix)]
     Unix,
     /// WebSocket bidirectional
     Websocket,
@@ -66,12 +68,16 @@ impl BackendArgs {
                 Some(BackendType::Http)
             } else if self.tcp.is_some() {
                 Some(BackendType::Tcp)
-            } else if self.unix.is_some() {
-                Some(BackendType::Unix)
-            } else if self.websocket.is_some() {
-                Some(BackendType::Websocket)
             } else {
-                None
+                #[cfg(unix)]
+                if self.unix.is_some() {
+                    return Some(BackendType::Unix);
+                }
+                if self.websocket.is_some() {
+                    Some(BackendType::Websocket)
+                } else {
+                    None
+                }
             }
         })
     }
@@ -100,6 +106,7 @@ impl BackendArgs {
                     );
                 }
             }
+            #[cfg(unix)]
             Some(BackendType::Unix) => {
                 if self.unix.is_none() && self.backend == Some(BackendType::Unix) {
                     return Err("--unix path is required for unix backend".to_string());
@@ -132,36 +139,39 @@ pub struct OutputArgs {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_backend_type_detection() {
-        let args = BackendArgs {
-            backend: Some(BackendType::Stdio),
-            cmd: Some("python".to_string()),
+    fn make_args(
+        backend: Option<BackendType>,
+        cmd: Option<String>,
+        http: Option<String>,
+        tcp: Option<String>,
+        websocket: Option<String>,
+    ) -> BackendArgs {
+        BackendArgs {
+            backend,
+            cmd,
             args: vec![],
             working_dir: None,
-            http: None,
-            tcp: None,
+            http,
+            tcp,
+            #[cfg(unix)]
             unix: None,
-            websocket: None,
-        };
+            websocket,
+        }
+    }
+
+    #[test]
+    fn test_backend_type_detection() {
+        let args = make_args(Some(BackendType::Stdio), Some("python".to_string()), None, None, None);
         assert_eq!(args.backend_type(), Some(BackendType::Stdio));
     }
 
     #[test]
     fn test_backend_type_detection_tcp() {
-        let args = BackendArgs {
-            backend: None,
-            cmd: None,
-            args: vec![],
-            working_dir: None,
-            http: None,
-            tcp: Some("localhost:5000".to_string()),
-            unix: None,
-            websocket: None,
-        };
+        let args = make_args(None, None, None, Some("localhost:5000".to_string()), None);
         assert_eq!(args.backend_type(), Some(BackendType::Tcp));
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_backend_type_detection_unix() {
         let args = BackendArgs {
@@ -179,46 +189,20 @@ mod tests {
 
     #[test]
     fn test_backend_validation_stdio() {
-        let args = BackendArgs {
-            backend: Some(BackendType::Stdio),
-            cmd: None,
-            args: vec![],
-            working_dir: None,
-            http: None,
-            tcp: None,
-            unix: None,
-            websocket: None,
-        };
+        let args = make_args(Some(BackendType::Stdio), None, None, None, None);
         assert!(args.validate().is_err());
 
-        let args = BackendArgs {
-            backend: Some(BackendType::Stdio),
-            cmd: Some("python".to_string()),
-            args: vec![],
-            working_dir: None,
-            http: None,
-            tcp: None,
-            unix: None,
-            websocket: None,
-        };
+        let args = make_args(Some(BackendType::Stdio), Some("python".to_string()), None, None, None);
         assert!(args.validate().is_ok());
     }
 
     #[test]
     fn test_backend_validation_tcp() {
-        let args = BackendArgs {
-            backend: Some(BackendType::Tcp),
-            cmd: None,
-            args: vec![],
-            working_dir: None,
-            http: None,
-            tcp: Some("localhost:5000".to_string()),
-            unix: None,
-            websocket: None,
-        };
+        let args = make_args(Some(BackendType::Tcp), None, None, Some("localhost:5000".to_string()), None);
         assert!(args.validate().is_ok());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_backend_validation_unix() {
         let args = BackendArgs {

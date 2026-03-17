@@ -7,6 +7,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -15,10 +16,12 @@ use turbomcp_client::Client;
 use turbomcp_protocol::types::{GetPromptResult, Prompt, ReadResourceResult, Resource, Tool};
 use turbomcp_protocol::{Error, PROTOCOL_VERSION};
 use turbomcp_transport::{
-    ChildProcessConfig, ChildProcessTransport, TcpTransport, Transport, UnixTransport,
+    ChildProcessConfig, ChildProcessTransport, TcpTransport, Transport,
     WebSocketBidirectionalConfig, WebSocketBidirectionalTransport,
     streamable_http_client::{StreamableHttpClientConfig, StreamableHttpClientTransport},
 };
+#[cfg(unix)]
+use turbomcp_transport::UnixTransport;
 
 use crate::error::{ProxyError, ProxyResult};
 use crate::introspection::{
@@ -141,6 +144,7 @@ pub enum BackendTransport {
         port: u16,
     },
     /// Unix domain socket
+    #[cfg(unix)]
     Unix {
         /// Socket file path
         path: String,
@@ -307,6 +311,7 @@ impl BackendConnector {
                 })
             }
 
+            #[cfg(unix)]
             BackendTransport::Unix { path } => {
                 let socket_path = PathBuf::from(path);
 

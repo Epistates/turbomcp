@@ -223,7 +223,7 @@ turbomcp-cli = { version = "3.0.4", path = "crates/turbomcp-cli" }
 turbomcp-telemetry = { version = "3.0.4", path = "crates/turbomcp-telemetry" }
 turbomcp-auth = { version = "3.0.4", path = "crates/turbomcp-auth" }
 turbomcp-dpop = { version = "3.0.4", path = "crates/turbomcp-dpop" }
-turbomcp-proxy = { version = "3.0.4", path = "crates/turbomcp-proxy" }
+turbomcp-proxy = { version = "3.0.5", path = "crates/turbomcp-proxy" }
 turbomcp-grpc = { version = "3.0.4", path = "crates/turbomcp-grpc" }
 turbomcp-openapi = { version = "3.0.4", path = "crates/turbomcp-openapi" }
 turbomcp-wire = { version = "3.0.4", path = "crates/turbomcp-wire", default-features = false }

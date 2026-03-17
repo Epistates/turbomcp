@@ -233,6 +233,7 @@ impl GenerateCommand {
             Some(BackendType::Tcp) => Err(ProxyError::configuration(
                 "TCP backend not yet implemented for code generation".to_string(),
             )),
+            #[cfg(unix)]
             Some(BackendType::Unix) => Err(ProxyError::configuration(
                 "Unix socket backend not yet implemented for code generation".to_string(),
             )),
@@ -268,6 +269,7 @@ impl GenerateCommand {
             Some(CliBackendType::Tcp) => Err(ProxyError::configuration(
                 "TCP backend not yet implemented for code generation".to_string(),
             )),
+            #[cfg(unix)]
             Some(CliBackendType::Unix) => Err(ProxyError::configuration(
                 "Unix socket backend not yet implemented for code generation".to_string(),
             )),
@@ -362,6 +364,7 @@ mod tests {
                 working_dir: None,
                 http: None,
                 tcp: None,
+                #[cfg(unix)]
                 unix: None,
                 websocket: None,
             },
@@ -391,6 +394,7 @@ mod tests {
                 working_dir: None,
                 http: None,
                 tcp: None,
+                #[cfg(unix)]
                 unix: None,
                 websocket: None,
             },

@@ -385,6 +385,7 @@ impl ServeCommand {
 
                 BackendTransport::Tcp { host, port }
             }
+            #[cfg(unix)]
             Some(BackendType::Unix) => {
                 let path = self.backend.unix.as_ref().ok_or_else(|| {
                     ProxyError::configuration("Unix socket path not specified".to_string())
@@ -429,6 +430,7 @@ mod tests {
                 working_dir: None,
                 http: None,
                 tcp: None,
+                #[cfg(unix)]
                 unix: None,
                 websocket: None,
             },
@@ -465,6 +467,7 @@ mod tests {
                 working_dir: None,
                 http: None,
                 tcp: Some("localhost:5000".to_string()),
+                #[cfg(unix)]
                 unix: None,
                 websocket: None,
             },
@@ -487,6 +490,7 @@ mod tests {
         assert!(config.is_ok());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_unix_backend_config() {
         let cmd = ServeCommand {

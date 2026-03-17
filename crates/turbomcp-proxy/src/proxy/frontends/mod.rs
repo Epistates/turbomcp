@@ -5,8 +5,10 @@
 
 pub mod stdio;
 pub mod tcp;
+#[cfg(unix)]
 pub mod unix;
 
 pub use stdio::StdioFrontend;
 pub use tcp::{TcpFrontend, TcpFrontendConfig};
+#[cfg(unix)]
 pub use unix::{UnixFrontend, UnixFrontendConfig};

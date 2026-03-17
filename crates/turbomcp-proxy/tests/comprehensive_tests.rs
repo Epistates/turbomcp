@@ -34,6 +34,7 @@ fn test_all_backend_transport_variants_constructible() {
     };
 
     // Unix socket backend
+    #[cfg(unix)]
     let _unix = BackendTransport::Unix {
         path: "/tmp/mcp.sock".to_string(),
     };
@@ -73,6 +74,7 @@ fn test_builder_with_tcp_backend() {
         .with_stdio_frontend();
 }
 
+#[cfg(unix)]
 #[test]
 fn test_builder_with_unix_backend() {
     let _builder = RuntimeProxyBuilder::new()
@@ -344,6 +346,7 @@ fn test_backend_config_tcp_variant() {
     assert!(matches!(cfg.transport, BackendTransport::Tcp { .. }));
 }
 
+#[cfg(unix)]
 #[test]
 fn test_backend_config_unix_variant() {
     let cfg = BackendConfig {
@@ -549,6 +552,7 @@ fn test_all_transport_combinations_compile() {
         .with_http_frontend("127.0.0.1:3000");
 
     // Unix ↔ HTTP
+    #[cfg(unix)]
     let _ = RuntimeProxyBuilder::new()
         .with_unix_backend("/tmp/mcp.sock")
         .with_http_frontend("127.0.0.1:3000");
@@ -559,6 +563,7 @@ fn test_all_transport_combinations_compile() {
         .with_stdio_frontend();
 
     // Unix ↔ STDIO
+    #[cfg(unix)]
     let _ = RuntimeProxyBuilder::new()
         .with_unix_backend("/tmp/mcp.sock")
         .with_stdio_frontend();

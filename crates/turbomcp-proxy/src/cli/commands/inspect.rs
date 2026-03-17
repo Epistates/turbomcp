@@ -115,6 +115,7 @@ impl InspectCommand {
                     "TCP backend not yet implemented for inspect command".to_string(),
                 ))
             }
+            #[cfg(unix)]
             Some(BackendType::Unix) => {
                 // NOTE: Phase 2 - Unix socket backend support
                 Err(ProxyError::configuration(
@@ -185,6 +186,7 @@ mod tests {
                 working_dir: None,
                 http: None,
                 tcp: None,
+                #[cfg(unix)]
                 unix: None,
                 websocket: None,
             },
@@ -209,6 +211,7 @@ mod tests {
                 working_dir: None,
                 http: None,
                 tcp: None,
+                #[cfg(unix)]
                 unix: None,
                 websocket: None,
             },

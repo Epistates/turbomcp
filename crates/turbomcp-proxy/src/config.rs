@@ -71,6 +71,7 @@ pub enum BackendConfig {
         port: u16,
     },
     /// Unix domain socket backend
+    #[cfg(unix)]
     Unix {
         /// Socket file path
         path: String,

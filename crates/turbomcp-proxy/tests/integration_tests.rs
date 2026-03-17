@@ -59,6 +59,7 @@ fn test_backend_transport_types() {
         port: 5000,
     };
 
+    #[cfg(unix)]
     let _unix = BackendTransport::Unix {
         path: "/tmp/mcp.sock".to_string(),
     };
