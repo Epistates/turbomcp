@@ -3,13 +3,11 @@
 //! Implements the AuthProvider trait for OAuth 2.1 authorization flows.
 
 use std::future::Future;
-use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use lru::LruCache;
-use tokio::sync::RwLock;
+use moka::future::Cache;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
@@ -31,8 +29,8 @@ pub struct OAuth2Provider {
     resource_uri: String,
     /// HTTP client for userinfo endpoint
     http_client: reqwest::Client,
-    /// Token cache with LRU eviction (capacity: 10,000 entries)
-    token_cache: Arc<RwLock<LruCache<String, CachedToken>>>,
+    /// Token cache with LRU eviction (capacity: 10,000 entries, TTL: 300s)
+    token_cache: Cache<String, CachedToken>,
     /// Optional introspection client for revocation checking
     introspection_client: Option<Arc<IntrospectionClient>>,
 }
@@ -45,7 +43,7 @@ impl std::fmt::Debug for OAuth2Provider {
             .field("client", &self.client)
             .field("resource_uri", &self.resource_uri)
             .field("http_client", &"<reqwest::Client>")
-            .field("token_cache", &"<LruCache>")
+            .field("token_cache", &"<moka::Cache>")
             .field(
                 "introspection_client",
                 &self
@@ -85,9 +83,10 @@ impl OAuth2Provider {
             client,
             resource_uri,
             http_client: reqwest::Client::new(),
-            token_cache: Arc::new(RwLock::new(LruCache::new(
-                NonZeroUsize::new(10_000).expect("10,000 is non-zero"),
-            ))),
+            token_cache: Cache::builder()
+                .max_capacity(10_000)
+                .time_to_live(std::time::Duration::from_secs(300))
+                .build(),
             introspection_client: None,
         }
     }
@@ -120,9 +119,10 @@ impl OAuth2Provider {
             client,
             resource_uri,
             http_client: reqwest::Client::new(),
-            token_cache: Arc::new(RwLock::new(LruCache::new(
-                NonZeroUsize::new(10_000).expect("10,000 is non-zero"),
-            ))),
+            token_cache: Cache::builder()
+                .max_capacity(10_000)
+                .time_to_live(std::time::Duration::from_secs(300))
+                .build(),
             introspection_client: Some(introspection_client),
         }
     }
@@ -247,84 +247,71 @@ impl AuthProvider for OAuth2Provider {
     ) -> Pin<Box<dyn Future<Output = McpResult<AuthContext>> + Send + '_>> {
         let token = token.to_string();
         Box::pin(async move {
-            // Check cache first (with reduced TTL from 300s to 60s)
-            {
-                let mut cache = self.token_cache.write().await;
-                if let Some(cached) = cache.get(&token) {
-                    let elapsed = cached
-                        .cached_at
-                        .elapsed()
-                        .unwrap_or(std::time::Duration::from_secs(0));
-                    // Cache for 60 seconds (reduced from 300s for better revocation detection)
-                    if elapsed < std::time::Duration::from_secs(60) {
-                        // If introspection is configured, check if token is still active
-                        if let Some(ref introspection_client) = self.introspection_client {
-                            match introspection_client.is_token_active(&token).await {
-                                Ok(false) => {
-                                    // Token was revoked - remove from cache
-                                    debug!(
-                                        "Token revoked according to introspection, removing from cache"
-                                    );
-                                    cache.pop(&token);
-                                    return Err(McpError::invalid_params(
-                                        "Token has been revoked".to_string(),
-                                    ));
-                                }
-                                Ok(true) => {
-                                    // Token is still active, continue with cached result
-                                    debug!("Token confirmed active via introspection");
-                                }
-                                Err(e) => {
-                                    // Introspection failed - log warning but fall through to cached result
-                                    // This is best-effort: we don't break auth if introspection is temporarily down
-                                    warn!(
-                                        error = %e,
-                                        "Introspection check failed, falling back to cached result"
-                                    );
-                                }
+            // Check moka cache first — thread-safe, no lock required
+            if let Some(cached) = self.token_cache.get(&token).await {
+                let elapsed = cached
+                    .cached_at
+                    .elapsed()
+                    .unwrap_or(std::time::Duration::from_secs(0));
+                // Honor a 60-second inner TTL for revocation detection (shorter than
+                // the moka cache TTL of 300s set at construction time)
+                if elapsed < std::time::Duration::from_secs(60) {
+                    // If introspection is configured, check if token is still active
+                    if let Some(ref introspection_client) = self.introspection_client {
+                        match introspection_client.is_token_active(&token).await {
+                            Ok(false) => {
+                                // Token was revoked - remove from cache
+                                debug!(
+                                    "Token revoked according to introspection, removing from cache"
+                                );
+                                self.token_cache.invalidate(&token).await;
+                                return Err(McpError::invalid_params(
+                                    "Token has been revoked".to_string(),
+                                ));
+                            }
+                            Ok(true) => {
+                                // Token is still active, continue with cached result
+                                debug!("Token confirmed active via introspection");
+                            }
+                            Err(e) => {
+                                // Introspection failed - log warning but fall through to cached result
+                                // This is best-effort: we don't break auth if introspection is temporarily down
+                                warn!(
+                                    error = %e,
+                                    "Introspection check failed, falling back to cached result"
+                                );
                             }
                         }
-
-                        // Build context from cached token
-                        drop(cache); // Release write lock before async operations
-                        let user_info = self.fetch_user_info(&token).await?;
-                        let request_id = Uuid::new_v4().to_string();
-                        let cached_token = {
-                            // Re-acquire lock to read cached token
-                            let cache = self.token_cache.read().await;
-                            cache
-                                .peek(&token)
-                                .ok_or_else(|| {
-                                    McpError::internal("Token removed from cache".to_string())
-                                })?
-                                .token
-                                .clone()
-                        };
-
-                        let mut builder = AuthContext::builder()
-                            .subject(user_info.id.clone())
-                            .user(user_info)
-                            .roles(vec!["oauth_user".to_string()])
-                            .permissions(vec!["api_access".to_string()])
-                            .request_id(request_id)
-                            .token(cached_token.clone())
-                            .provider(self.name.clone())
-                            .authenticated_at(SystemTime::now());
-
-                        if let Some(secs) = cached_token.expires_in {
-                            builder = builder.expires_at(
-                                SystemTime::now() + std::time::Duration::from_secs(secs),
-                            );
-                        }
-
-                        return builder
-                            .build()
-                            .map_err(|e| McpError::internal(e.to_string()));
                     }
+
+                    // Build context from cached token
+                    let user_info = self.fetch_user_info(&token).await?;
+                    let request_id = Uuid::new_v4().to_string();
+                    // Re-read from cache — moka returns owned values, so cached above is still valid
+                    let cached_token = cached.token.clone();
+
+                    let mut builder = AuthContext::builder()
+                        .subject(user_info.id.clone())
+                        .user(user_info)
+                        .roles(vec!["oauth_user".to_string()])
+                        .permissions(vec!["api_access".to_string()])
+                        .request_id(request_id)
+                        .token(cached_token.clone())
+                        .provider(self.name.clone())
+                        .authenticated_at(SystemTime::now());
+
+                    if let Some(secs) = cached_token.expires_in {
+                        builder = builder
+                            .expires_at(SystemTime::now() + std::time::Duration::from_secs(secs));
+                    }
+
+                    return builder
+                        .build()
+                        .map_err(|e| McpError::internal(e.to_string()));
                 }
             }
 
-            // Token not in cache or cache expired - fetch user info to validate
+            // Token not in cache or inner TTL expired - fetch user info to validate
             let user_info = self.fetch_user_info(&token).await?;
             let request_id = Uuid::new_v4().to_string();
 
@@ -359,8 +346,9 @@ impl AuthProvider for OAuth2Provider {
     ) -> Pin<Box<dyn Future<Output = McpResult<()>> + Send + '_>> {
         let token = token.to_string();
         Box::pin(async move {
-            // Remove from cache first (LRU cache uses pop instead of remove)
-            let cached_token = self.token_cache.write().await.pop(&token);
+            // Remove from moka cache and retrieve the cached entry if present
+            let cached_token = self.token_cache.get(&token).await;
+            self.token_cache.invalidate(&token).await;
 
             // If we have the full token info, revoke it at the provider (RFC 7009)
             if let Some(cached) = cached_token {

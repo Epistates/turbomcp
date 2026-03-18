@@ -77,6 +77,8 @@ pub struct JwksClient {
     min_refresh_interval: Duration,
     /// Last refresh attempt
     last_refresh: Arc<RwLock<Option<SystemTime>>>,
+    /// Optional SSRF validator applied before fetching the JWKS URI
+    ssrf_validator: Option<Arc<crate::ssrf::SsrfValidator>>,
 }
 
 impl JwksClient {
@@ -109,7 +111,21 @@ impl JwksClient {
             cache_ttl: Duration::from_secs(600), // 10 minutes (industry standard)
             min_refresh_interval: Duration::from_secs(5), // Rate limiting
             last_refresh: Arc::new(RwLock::new(None)),
+            ssrf_validator: None,
         }
+    }
+
+    /// Create a JWKS client with SSRF protection
+    ///
+    /// The SSRF validator is applied to the JWKS URI before each fetch attempt,
+    /// preventing server-side request forgery via user-controlled JWKS endpoints.
+    pub fn with_ssrf_validator(
+        jwks_uri: String,
+        ssrf_validator: Arc<crate::ssrf::SsrfValidator>,
+    ) -> Self {
+        let mut client = Self::new(jwks_uri);
+        client.ssrf_validator = Some(ssrf_validator);
+        client
     }
 
     /// Create a JWKS client with custom cache TTL
@@ -198,6 +214,13 @@ impl JwksClient {
             ));
         }
 
+        // Validate URI against SSRF policy before fetching
+        if let Some(ref validator) = self.ssrf_validator {
+            validator.validate_url(&self.jwks_uri).map_err(|e| {
+                McpError::authentication(format!("SSRF validation failed for JWKS URI: {e}"))
+            })?;
+        }
+
         // Fetch JWKS
         let response = self
             .http_client
@@ -221,8 +244,26 @@ impl JwksClient {
             )));
         }
 
-        // Parse JWKS
-        let jwks: JwkSet = response.json().await.map_err(|e| {
+        // Read response with size limit to prevent memory exhaustion
+        const MAX_JWKS_RESPONSE_SIZE: usize = 65_536; // 64 KB — sufficient for hundreds of keys
+        let bytes = response.bytes().await.map_err(|e| {
+            error!(jwks_uri = %self.jwks_uri, error = %e, "Failed to read JWKS response body");
+            McpError::internal(format!("Failed to read JWKS response: {e}"))
+        })?;
+        if bytes.len() > MAX_JWKS_RESPONSE_SIZE {
+            error!(
+                jwks_uri = %self.jwks_uri,
+                size = bytes.len(),
+                max = MAX_JWKS_RESPONSE_SIZE,
+                "JWKS response exceeds size limit"
+            );
+            return Err(McpError::internal(format!(
+                "JWKS response too large: {} bytes (max: {} bytes)",
+                bytes.len(),
+                MAX_JWKS_RESPONSE_SIZE
+            )));
+        }
+        let jwks: JwkSet = serde_json::from_slice(&bytes).map_err(|e| {
             error!(jwks_uri = %self.jwks_uri, error = %e, "Failed to parse JWKS JSON");
             McpError::internal(format!("Invalid JWKS format: {e}"))
         })?;
@@ -298,6 +339,8 @@ impl JwksClient {
 pub struct JwksCache {
     /// Map of issuer -> JWKS client
     clients: Arc<RwLock<std::collections::HashMap<String, Arc<JwksClient>>>>,
+    /// Optional SSRF validator applied when creating new clients
+    ssrf_validator: Option<Arc<crate::ssrf::SsrfValidator>>,
 }
 
 impl JwksCache {
@@ -305,6 +348,18 @@ impl JwksCache {
     pub fn new() -> Self {
         Self {
             clients: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            ssrf_validator: None,
+        }
+    }
+
+    /// Create a new JWKS cache with SSRF protection
+    ///
+    /// All JWKS clients created by this cache will validate the JWKS URI against
+    /// the provided SSRF policy before fetching.
+    pub fn with_ssrf_validator(ssrf_validator: Arc<crate::ssrf::SsrfValidator>) -> Self {
+        Self {
+            clients: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            ssrf_validator: Some(ssrf_validator),
         }
     }
 
@@ -330,7 +385,12 @@ impl JwksCache {
             .and_then(|base| base.join(".well-known/jwks.json"))
             .map(|u| u.to_string())
             .unwrap_or_else(|_| format!("{issuer}/.well-known/jwks.json"));
-        let client = Arc::new(JwksClient::new(jwks_uri));
+
+        let client = Arc::new(if let Some(ref validator) = self.ssrf_validator {
+            JwksClient::with_ssrf_validator(jwks_uri, Arc::clone(validator))
+        } else {
+            JwksClient::new(jwks_uri)
+        });
 
         clients.insert(issuer.to_string(), Arc::clone(&client));
 

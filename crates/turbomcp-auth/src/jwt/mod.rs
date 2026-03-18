@@ -44,12 +44,18 @@ pub use jwks::{JwksCache, JwksClient};
 pub use validator::{JwtValidationResult, JwtValidator};
 
 use serde::{Deserialize, Serialize};
+use serde_with::{OneOrMany, formats::PreferOne, serde_as};
 use std::collections::HashMap;
 
 /// Standard JWT claims per RFC 7519
 ///
 /// This struct represents the registered claims defined in RFC 7519 Section 4.1.
 /// Additional claims can be stored in the `additional` field.
+///
+/// The `aud` field accepts both a single string and an array of strings per
+/// RFC 7519 §4.1.3, using `serde_with::OneOrMany` to handle both formats.
+/// Enterprise IdPs (Google, Azure, Okta) commonly serialize `aud` as an array.
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StandardClaims {
     /// Issuer (iss) - identifies who issued the token
@@ -60,9 +66,13 @@ pub struct StandardClaims {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sub: Option<String>,
 
-    /// Audience (aud) - identifies the recipients
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub aud: Option<String>,
+    /// Audience (aud) - identifies the recipients (RFC 7519 §4.1.3)
+    ///
+    /// Accepts both `"aud": "single"` and `"aud": ["one", "two"]` formats.
+    /// Always deserialized as `Vec<String>` for uniform handling.
+    #[serde_as(as = "Option<OneOrMany<_, PreferOne>>")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub aud: Option<Vec<String>>,
 
     /// Expiration Time (exp) - Unix timestamp
     #[serde(skip_serializing_if = "Option::is_none")]

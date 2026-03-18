@@ -124,9 +124,10 @@ pub mod types;
 #[cfg_attr(docsrs, doc(cfg(feature = "middleware")))]
 pub mod tower;
 
+// SSRF protection - always available for JWT/JWKS validation security
+pub mod ssrf;
+
 // MCP 2025-11-25 Draft Specification modules
-#[cfg(feature = "mcp-ssrf")]
-pub mod ssrf; // SSRF protection for HTTP fetching (used by CIMD and Discovery)
 
 #[cfg(feature = "mcp-cimd")]
 pub mod cimd; // Client ID Metadata Documents (SEP-991)

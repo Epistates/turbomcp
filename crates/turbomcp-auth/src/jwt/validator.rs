@@ -85,6 +85,8 @@ pub struct JwtValidator {
     allowed_algorithms: Vec<Algorithm>,
     /// Discovered JWKS URI (cached after first discovery)
     discovered_jwks_uri: OnceCell<String>,
+    /// Optional SSRF validator for discovery URL validation
+    ssrf_validator: Option<Arc<crate::ssrf::SsrfValidator>>,
 }
 
 // Manual Debug impl to prevent discovered_jwks_uri from exposing internal state
@@ -100,6 +102,10 @@ impl std::fmt::Debug for JwtValidator {
                 "discovered_jwks_uri",
                 &self.discovered_jwks_uri.get().map(|_| "<cached>"),
             )
+            .field(
+                "ssrf_validator",
+                &self.ssrf_validator.as_ref().map(|_| "<SsrfValidator>"),
+            )
             .finish()
     }
 }
@@ -109,15 +115,19 @@ impl JwtValidator {
     ///
     /// # Discovery Process
     ///
-    /// 1. Fetch `{issuer}/.well-known/openid-configuration`
-    /// 2. Parse the discovery document
-    /// 3. Extract `jwks_uri` field
-    /// 4. If discovery fails, fall back to hardcoded pattern
+    /// 1. Validate the discovery URL against SSRF policy (if validator present)
+    /// 2. Fetch `{issuer}/.well-known/openid-configuration` with a hardened client
+    /// 3. Parse the discovery document
+    /// 4. Extract `jwks_uri` field
+    /// 5. If discovery fails, fall back to hardcoded pattern
     ///
     /// # Errors
     ///
-    /// Returns error if both discovery and fallback fail
-    async fn discover_jwks_uri(issuer: &str) -> McpResult<String> {
+    /// Returns error if SSRF validation fails or both discovery and fallback fail
+    async fn discover_jwks_uri(
+        issuer: &str,
+        ssrf_validator: Option<&crate::ssrf::SsrfValidator>,
+    ) -> McpResult<String> {
         let discovery_url = format!("{}/.well-known/openid-configuration", issuer);
 
         debug!(
@@ -126,8 +136,22 @@ impl JwtValidator {
             "Attempting RFC 8414 OIDC discovery"
         );
 
+        // Validate URL against SSRF policy before fetching
+        if let Some(validator) = ssrf_validator {
+            validator.validate_url(&discovery_url).map_err(|e| {
+                McpError::authentication(format!("SSRF validation failed for discovery URL: {e}"))
+            })?;
+        }
+
+        // Use a restrictive HTTP client for discovery (short timeout, no redirects)
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| McpError::internal(format!("Failed to build HTTP client: {e}")))?;
+
         // Try RFC 8414 discovery first
-        match reqwest::get(&discovery_url).await {
+        match client.get(&discovery_url).send().await {
             Ok(response) if response.status().is_success() => {
                 match response.json::<OidcDiscoveryDocument>().await {
                     Ok(doc) => {
@@ -206,8 +230,8 @@ impl JwtValidator {
     /// # });
     /// ```
     pub async fn new(expected_issuer: String, expected_audience: String) -> McpResult<Self> {
-        // Perform RFC 8414 discovery to get JWKS URI
-        let jwks_uri = Self::discover_jwks_uri(&expected_issuer).await?;
+        // Perform RFC 8414 discovery to get JWKS URI (no SSRF validator by default)
+        let jwks_uri = Self::discover_jwks_uri(&expected_issuer, None).await?;
         let jwks_client = Arc::new(JwksClient::new(jwks_uri.clone()));
 
         Ok(Self {
@@ -221,6 +245,38 @@ impl JwtValidator {
                 Algorithm::PS256, // RSA-PSS (modern RSA)
             ],
             discovered_jwks_uri: OnceCell::new_with(Some(jwks_uri)),
+            ssrf_validator: None,
+        })
+    }
+
+    /// Create a new JWT validator with RFC 8414 discovery and SSRF protection
+    ///
+    /// This variant enforces SSRF policy on the discovery URL before fetching
+    /// the OIDC configuration document. Use this in production environments
+    /// where the issuer URL is user-supplied or untrusted.
+    ///
+    /// # Arguments
+    ///
+    /// * `expected_issuer` - The expected iss claim
+    /// * `expected_audience` - The expected aud claim
+    /// * `ssrf_validator` - SSRF validator applied to the discovery URL
+    pub async fn new_with_ssrf(
+        expected_issuer: String,
+        expected_audience: String,
+        ssrf_validator: Arc<crate::ssrf::SsrfValidator>,
+    ) -> McpResult<Self> {
+        let jwks_uri =
+            Self::discover_jwks_uri(&expected_issuer, Some(ssrf_validator.as_ref())).await?;
+        let jwks_client = Arc::new(JwksClient::new(jwks_uri.clone()));
+
+        Ok(Self {
+            expected_issuer,
+            expected_audience,
+            jwks_client,
+            clock_skew_leeway: Duration::from_secs(60),
+            allowed_algorithms: vec![Algorithm::ES256, Algorithm::RS256, Algorithm::PS256],
+            discovered_jwks_uri: OnceCell::new_with(Some(jwks_uri)),
+            ssrf_validator: Some(ssrf_validator),
         })
     }
 
@@ -253,6 +309,7 @@ impl JwtValidator {
             clock_skew_leeway: Duration::from_secs(60),
             allowed_algorithms: vec![Algorithm::ES256, Algorithm::RS256, Algorithm::PS256],
             discovered_jwks_uri: OnceCell::new_with(Some(jwks_uri)),
+            ssrf_validator: None,
         }
     }
 
@@ -272,7 +329,18 @@ impl JwtValidator {
             clock_skew_leeway: Duration::from_secs(60),
             allowed_algorithms: vec![Algorithm::ES256, Algorithm::RS256, Algorithm::PS256],
             discovered_jwks_uri: OnceCell::new(), // No discovery performed in this constructor
+            ssrf_validator: None,
         }
+    }
+
+    /// Attach an SSRF validator to this validator instance
+    ///
+    /// The SSRF validator will be applied to any discovery URLs fetched during
+    /// dynamic issuer discovery. Call this on an existing validator to add
+    /// SSRF protection after construction.
+    pub fn with_ssrf_validator(mut self, ssrf_validator: Arc<crate::ssrf::SsrfValidator>) -> Self {
+        self.ssrf_validator = Some(ssrf_validator);
+        self
     }
 
     /// Set custom clock skew tolerance
@@ -531,8 +599,8 @@ impl MultiIssuerValidator {
     /// # });
     /// ```
     pub async fn add_issuer(&mut self, issuer: String) -> McpResult<()> {
-        // Use RFC 8414 discovery to find JWKS URI
-        let jwks_uri = JwtValidator::discover_jwks_uri(&issuer).await?;
+        // Use RFC 8414 discovery to find JWKS URI (no SSRF validator; use add_issuer_with_ssrf for production)
+        let jwks_uri = JwtValidator::discover_jwks_uri(&issuer, None).await?;
         let jwks_client = Arc::new(JwksClient::new(jwks_uri));
 
         let validator = Arc::new(JwtValidator::with_jwks_client(
@@ -540,6 +608,32 @@ impl MultiIssuerValidator {
             self.expected_audience.clone(),
             jwks_client,
         ));
+
+        self.validators.insert(issuer, validator);
+        Ok(())
+    }
+
+    /// Add a supported issuer with RFC 8414 discovery and SSRF protection
+    ///
+    /// This variant validates the discovery URL against the provided SSRF policy
+    /// before fetching the OIDC configuration document.
+    pub async fn add_issuer_with_ssrf(
+        &mut self,
+        issuer: String,
+        ssrf_validator: Arc<crate::ssrf::SsrfValidator>,
+    ) -> McpResult<()> {
+        let jwks_uri =
+            JwtValidator::discover_jwks_uri(&issuer, Some(ssrf_validator.as_ref())).await?;
+        let jwks_client = Arc::new(JwksClient::new(jwks_uri));
+
+        let validator = Arc::new(
+            JwtValidator::with_jwks_client(
+                issuer.clone(),
+                self.expected_audience.clone(),
+                jwks_client,
+            )
+            .with_ssrf_validator(ssrf_validator),
+        );
 
         self.validators.insert(issuer, validator);
         Ok(())
