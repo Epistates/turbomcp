@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-wasm"
-version = "3.0.5"
+version = "3.0.6"
 edition = "2024"
 rust-version = "1.89.0"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -53,6 +53,9 @@ serde_json = { workspace = true }
 
 # Base64 decoding for JWT parsing (pure Rust, works on WASM)
 base64 = { workspace = true }
+
+# Constant-time comparison for cryptographic values (timing attack prevention)
+subtle = { workspace = true }
 
 # Browser dependencies (optional)
 wasm-bindgen = { version = "0.2.108", optional = true }

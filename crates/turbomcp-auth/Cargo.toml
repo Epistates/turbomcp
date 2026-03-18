@@ -1,7 +1,7 @@
 [package]
 name = "turbomcp-auth"
 
-version = "3.0.5"
+version = "3.0.6"
 
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -56,8 +56,11 @@ secrecy = { version = "0.10", features = ["serde"] }
 subtle = "2.6"
 blake3 = "1.5"
 
-# LRU cache for token validation
-lru = "0.13"
+# Token validation cache (replaces lru due to RUSTSEC-2026-0002 unsoundness)
+moka = { workspace = true }
+
+# Serde extensions (OneOrMany for JWT aud field)
+serde_with = { workspace = true }
 
 # HTTP client for OAuth flows
 reqwest = { workspace = true }
