@@ -76,18 +76,16 @@ impl DpopProofGenerator {
 
     /// Generate a DPoP proof with all parameters
     ///
-    /// Extended version that accepts nonce parameter for server-provided nonces.
+    /// Extended version that accepts nonce parameter for server-provided nonces (RFC 9449 §8).
     pub async fn generate_proof_with_params(
         &self,
         method: &str,
         uri: &str,
         access_token: Option<&str>,
-        _nonce: Option<&str>,
+        nonce: Option<&str>,
         key_pair: Option<&DpopKeyPair>,
     ) -> Result<DpopProof> {
-        // For now, delegate to existing method (nonce will be auto-generated)
-        // Full nonce support can be added later if needed
-        self.generate_proof_with_key(method, uri, access_token, key_pair)
+        self.generate_proof_with_key_and_nonce(method, uri, access_token, key_pair, nonce)
             .await
     }
 
@@ -109,6 +107,23 @@ impl DpopProofGenerator {
         uri: &str,
         access_token: Option<&str>,
         key_pair: Option<&DpopKeyPair>,
+    ) -> Result<DpopProof> {
+        self.generate_proof_with_key_and_nonce(method, uri, access_token, key_pair, None)
+            .await
+    }
+
+    /// Generate a DPoP proof using a specific key pair and optional server-provided nonce
+    ///
+    /// Per RFC 9449 §8, when the authorization server provides a nonce via the
+    /// `DPoP-Nonce` response header, the client must include it as the `"nonce"`
+    /// claim in the next DPoP proof for that server.
+    async fn generate_proof_with_key_and_nonce(
+        &self,
+        method: &str,
+        uri: &str,
+        access_token: Option<&str>,
+        key_pair: Option<&DpopKeyPair>,
+        server_nonce: Option<&str>,
     ) -> Result<DpopProof> {
         // Get or generate key pair
         let key_pair = match key_pair {
@@ -140,7 +155,7 @@ impl DpopProofGenerator {
             htu: clean_uri,
             iat: now,
             ath: None,
-            nonce: None,
+            nonce: server_nonce.map(|n| n.to_string()),
         };
 
         // Add access token hash if provided

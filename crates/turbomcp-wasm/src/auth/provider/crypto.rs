@@ -135,7 +135,7 @@ pub async fn hash_token(token: &str) -> CryptoResult<String> {
 ///
 /// * `code_verifier` - The verifier sent by the client
 /// * `code_challenge` - The challenge stored during authorization
-/// * `method` - The challenge method ("S256" or "plain")
+/// * `method` - The challenge method ("S256" only; "plain" is rejected per RFC 7636 §4.2)
 ///
 /// # Returns
 ///
@@ -151,10 +151,9 @@ pub async fn verify_pkce(
             let verifier_challenge = generate_code_challenge(code_verifier).await?;
             Ok(constant_time_compare(&verifier_challenge, code_challenge))
         }
-        "plain" => {
-            // Direct comparison (not recommended, but supported for compatibility)
-            Ok(constant_time_compare(code_verifier, code_challenge))
-        }
+        "plain" => Err(CryptoError::HashError(
+            "PKCE 'plain' method is not supported; use 'S256' (RFC 7636 §4.2)".to_string(),
+        )),
         _ => Err(CryptoError::HashError(format!(
             "Unknown PKCE method: {}",
             method
@@ -196,47 +195,13 @@ pub async fn generate_code_challenge(code_verifier: &str) -> CryptoResult<String
 
 /// Constant-time string comparison to prevent timing attacks.
 ///
-/// Returns `true` if the strings are equal, `false` otherwise.
-/// Takes constant time regardless of where the strings differ or their lengths.
-///
-/// # Security
-///
-/// This function is designed to prevent timing attacks by:
-/// - Using branchless bitwise operations for length comparison
-/// - Always iterating over the maximum length of both strings
-/// - Using bitwise OR to accumulate differences without short-circuiting
-///
-/// # Implementation Note
-///
-/// The length difference check uses `(len_diff | len_diff.wrapping_neg()) >> (BITS-1)`
-/// which extracts the sign bit without branching. This is a standard constant-time
-/// idiom for checking if a value is non-zero.
+/// Uses the `subtle` crate which is specifically designed to resist
+/// compiler optimizations that could break constant-time guarantees.
 pub fn constant_time_compare(a: &str, b: &str) -> bool {
-    let a_bytes = a.as_bytes();
-    let b_bytes = b.as_bytes();
-
-    // Compute length difference using wrapping arithmetic
-    let len_diff = (a_bytes.len() as isize).wrapping_sub(b_bytes.len() as isize);
-
-    // Convert non-zero to 1 without branching:
-    // For any non-zero value x: (x | -x) has its sign bit set
-    // Arithmetic right shift by (BITS-1) gives all 1s (-1) or all 0s (0)
-    // We want 1 for non-zero, 0 for zero, so we negate and mask
-    let len_ne = ((len_diff | len_diff.wrapping_neg()) >> (isize::BITS - 1)) as u8;
-    let mut result = len_ne & 1;
-
-    // Always iterate over the maximum length to maintain constant time
-    let max_len = a_bytes.len().max(b_bytes.len());
-
-    for i in 0..max_len {
-        // Use get() to safely handle out-of-bounds, defaulting to 0
-        // The XOR with default 0 will contribute to result if lengths differ
-        let x = a_bytes.get(i).copied().unwrap_or(0);
-        let y = b_bytes.get(i).copied().unwrap_or(0);
-        result |= x ^ y;
-    }
-
-    result == 0
+    use subtle::ConstantTimeEq;
+    // subtle's ct_eq on slices returns false immediately for different lengths,
+    // which is acceptable since length is not secret for PKCE challenges
+    a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 
 /// Validate a PKCE code verifier format.
