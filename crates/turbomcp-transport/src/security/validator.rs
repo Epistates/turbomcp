@@ -189,6 +189,7 @@ mod tests {
                 max_requests: 2,
                 window: Duration::from_secs(1),
                 enabled: true,
+                ..RateLimitConfig::default()
             }),
         );
         let mut headers = HashMap::new();
@@ -222,6 +223,7 @@ mod tests {
                 max_requests: 100,
                 window: Duration::from_secs(60),
                 enabled: true,
+                ..RateLimitConfig::default()
             }),
         );
 
@@ -253,6 +255,7 @@ mod tests {
                 max_requests: 100,
                 window: Duration::from_secs(60),
                 enabled: true,
+                ..RateLimitConfig::default()
             }),
         );
 
@@ -282,6 +285,7 @@ mod tests {
                 max_requests: 2,
                 window: Duration::from_secs(1),
                 enabled: true,
+                ..RateLimitConfig::default()
             }),
         );
         let mut headers = HashMap::new();
@@ -320,6 +324,7 @@ mod tests {
                 max_requests: 2,
                 window: Duration::from_secs(1),
                 enabled: true,
+                ..RateLimitConfig::default()
             }),
         );
         let mut headers = HashMap::new();
@@ -354,6 +359,7 @@ mod tests {
                 max_requests: 2,
                 window: Duration::from_secs(1),
                 enabled: true,
+                ..RateLimitConfig::default()
             }),
         );
         let client_ip = "127.0.0.1".parse().unwrap();

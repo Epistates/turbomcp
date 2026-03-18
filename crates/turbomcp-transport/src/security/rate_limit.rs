@@ -20,6 +20,13 @@ pub struct RateLimitConfig {
     pub window: Duration,
     /// Whether rate limiting is enabled
     pub enabled: bool,
+    /// Maximum number of unique IPs tracked simultaneously.
+    ///
+    /// Prevents unbounded HashMap growth under IP spoofing attacks. When the
+    /// table is full, expired entries are evicted first. If the table is still
+    /// at capacity after eviction, new IPs are rejected with a rate-limit error.
+    /// Defaults to 100,000.
+    pub max_tracked_ips: usize,
 }
 
 impl Default for RateLimitConfig {
@@ -28,6 +35,7 @@ impl Default for RateLimitConfig {
             max_requests: 100,
             window: Duration::from_secs(60),
             enabled: true,
+            max_tracked_ips: 100_000,
         }
     }
 }
@@ -95,6 +103,32 @@ impl RateLimiter {
 
         let mut state = self.state.lock();
         let now = Instant::now();
+
+        // Cap the number of tracked IPs to prevent unbounded memory growth under IP spoofing.
+        if !state.requests.contains_key(&client_ip)
+            && state.requests.len() >= self.config.max_tracked_ips
+        {
+            // Evict expired entries first to reclaim space
+            state.requests.retain(|_, requests| {
+                requests.retain(|&time| now.duration_since(time) < self.config.window);
+                !requests.is_empty()
+            });
+
+            // If still at capacity after eviction, reject the new IP
+            if state.requests.len() >= self.config.max_tracked_ips {
+                tracing::warn!(
+                    client_ip = %client_ip,
+                    tracked_ips = state.requests.len(),
+                    limit = self.config.max_tracked_ips,
+                    "Rate limiter IP tracking table full, rejecting new client"
+                );
+                return Err(SecurityError::RateLimitExceeded {
+                    client: client_ip.to_string(),
+                    current: 0,
+                    limit: self.config.max_requests,
+                });
+            }
+        }
 
         let requests = state.requests.entry(client_ip).or_default();
 
@@ -229,6 +263,7 @@ mod tests {
             max_requests: 2,
             window: Duration::from_secs(60),
             enabled: true,
+            ..RateLimitConfig::default()
         };
         let rate_limiter = RateLimiter::new(config);
         let client_ip = "127.0.0.1".parse().unwrap();
@@ -244,6 +279,7 @@ mod tests {
             max_requests: 2,
             window: Duration::from_secs(60),
             enabled: true,
+            ..RateLimitConfig::default()
         };
         let rate_limiter = RateLimiter::new(config);
         let client_ip = "127.0.0.1".parse().unwrap();
@@ -262,6 +298,7 @@ mod tests {
             max_requests: 1,
             window: Duration::from_secs(60),
             enabled: false,
+            ..RateLimitConfig::default()
         };
         let rate_limiter = RateLimiter::new(config);
         let client_ip = "127.0.0.1".parse().unwrap();
@@ -278,6 +315,7 @@ mod tests {
             max_requests: 2,
             window: Duration::from_millis(100),
             enabled: true,
+            ..RateLimitConfig::default()
         };
         let rate_limiter = RateLimiter::new(config);
         let client_ip = "127.0.0.1".parse().unwrap();
@@ -300,6 +338,7 @@ mod tests {
             max_requests: 1,
             window: Duration::from_secs(60),
             enabled: true,
+            ..RateLimitConfig::default()
         };
         let rate_limiter = RateLimiter::new(config);
         let ip1: IpAddr = "127.0.0.1".parse().unwrap();
@@ -320,6 +359,7 @@ mod tests {
             max_requests: 2,
             window: Duration::from_secs(1),
             enabled: true,
+            ..RateLimitConfig::default()
         };
         let rate_limiter = RateLimiter::new(config);
         let client_ip = "127.0.0.1".parse().unwrap();
@@ -339,6 +379,7 @@ mod tests {
             max_requests: 3,
             window: Duration::from_secs(60),
             enabled: true,
+            ..RateLimitConfig::default()
         };
         let rate_limiter = RateLimiter::new(config);
         let client_ip = "127.0.0.1".parse().unwrap();
@@ -358,6 +399,7 @@ mod tests {
             max_requests: 5,
             window: Duration::from_millis(50),
             enabled: true,
+            ..RateLimitConfig::default()
         };
         let rate_limiter = RateLimiter::new(config);
         let client_ip = "127.0.0.1".parse().unwrap();

@@ -373,20 +373,6 @@ fn extract_correlation_id(message: &TransportMessage) -> Option<String> {
     }
 }
 
-/// Detect server-initiated request type
-#[allow(dead_code)]
-fn detect_server_initiated_type(message: &TransportMessage) -> Option<ServerInitiatedType> {
-    let message_type = extract_message_type(message);
-
-    match message_type.as_str() {
-        "sampling/createMessage" => Some(ServerInitiatedType::Sampling),
-        "roots/list" => Some(ServerInitiatedType::Roots),
-        "elicitation/create" => Some(ServerInitiatedType::Elicitation),
-        "ping" => Some(ServerInitiatedType::Ping),
-        _ => None,
-    }
-}
-
 // Implement Transport trait for the wrapper
 impl<T: Transport> Transport for BidirectionalTransportWrapper<T> {
     fn transport_type(&self) -> TransportType {

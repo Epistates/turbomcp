@@ -89,6 +89,7 @@ impl SecurityConfigBuilder {
             max_requests,
             window,
             enabled: true,
+            ..RateLimitConfig::default()
         });
         self
     }

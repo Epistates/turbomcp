@@ -48,6 +48,7 @@
 //!         max_requests: 100,
 //!         window: Duration::from_secs(60),
 //!         enabled: true,
+//!         ..RateLimitConfig::default()
 //!     }),
 //! );
 //!

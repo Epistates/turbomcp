@@ -5,7 +5,7 @@ use axum::{
     extract::{Extension, State},
     http::StatusCode,
 };
-use tracing::{error, trace};
+use tracing::trace;
 
 use crate::axum::service::McpAppState;
 use crate::axum::types::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
@@ -61,8 +61,11 @@ pub async fn json_rpc_handler(
             }))
         }
         Err(e) => {
-            error!("MCP service error: {}", e);
+            // Log the full error server-side with a correlation ID
+            let error_id = uuid::Uuid::new_v4();
+            tracing::error!(error_id = %error_id, error = %e, "JSON-RPC handler error");
 
+            // Return only an opaque error ID to the client to prevent internal detail leakage
             Ok(Json(JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 id: request.id,
@@ -70,9 +73,7 @@ pub async fn json_rpc_handler(
                 error: Some(JsonRpcError {
                     code: -32603,
                     message: "Internal error".to_string(),
-                    data: Some(serde_json::json!({
-                        "reason": e.to_string()
-                    })),
+                    data: Some(serde_json::json!({ "error_id": error_id.to_string() })),
                 }),
             }))
         }
