@@ -47,7 +47,7 @@ const MAX_PENDING_REQUESTS: usize = 64;
 pub struct ChannelTransport {
     tx: mpsc::Sender<TransportMessage>,
     rx: tokio::sync::Mutex<mpsc::Receiver<TransportMessage>>,
-    state: std::sync::Mutex<TransportState>,
+    state: parking_lot::Mutex<TransportState>,
     capabilities: TransportCapabilities,
 }
 
@@ -56,7 +56,7 @@ impl ChannelTransport {
         Self {
             tx,
             rx: tokio::sync::Mutex::new(rx),
-            state: std::sync::Mutex::new(TransportState::Connected),
+            state: parking_lot::Mutex::new(TransportState::Connected),
             capabilities: TransportCapabilities {
                 max_message_size: Some(MAX_MESSAGE_SIZE),
                 supports_compression: false,
@@ -82,14 +82,14 @@ impl Transport for ChannelTransport {
     fn state(
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = TransportState> + Send + '_>> {
-        Box::pin(async move { self.state.lock().unwrap().clone() })
+        Box::pin(async move { self.state.lock().clone() })
     }
 
     fn connect(
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = TransportResult<()>> + Send + '_>> {
         Box::pin(async move {
-            *self.state.lock().unwrap() = TransportState::Connected;
+            *self.state.lock() = TransportState::Connected;
             Ok(())
         })
     }
@@ -98,7 +98,7 @@ impl Transport for ChannelTransport {
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = TransportResult<()>> + Send + '_>> {
         Box::pin(async move {
-            *self.state.lock().unwrap() = TransportState::Disconnected;
+            *self.state.lock() = TransportState::Disconnected;
             Ok(())
         })
     }

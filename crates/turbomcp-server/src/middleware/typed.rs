@@ -258,7 +258,6 @@ impl<'a> Next<'a> {
 }
 
 /// Internal trait for type-erased handler access.
-#[allow(dead_code)]
 trait DynHandler: Send + Sync {
     fn dyn_server_info(&self) -> ServerInfo;
     fn dyn_list_tools(&self) -> Vec<Tool>;

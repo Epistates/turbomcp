@@ -255,6 +255,8 @@ impl MessageDispatcher {
 
             loop {
                 tokio::select! {
+                    biased;
+
                     // Graceful shutdown
                     _ = shutdown.notified() => {
                         tracing::info!("Message dispatcher routing task shutting down");

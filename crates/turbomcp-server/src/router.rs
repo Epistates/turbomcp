@@ -75,7 +75,14 @@ pub async fn route_request_with_config<H: McpHandler>(
 
     // For initialize requests, apply native-specific validation
     if request.method == "initialize" {
-        let params = request.params.clone().unwrap_or_default();
+        let params_owned;
+        let params = match request.params.as_ref() {
+            Some(p) => p,
+            None => {
+                params_owned = serde_json::Value::default();
+                &params_owned
+            }
+        };
 
         // Validate clientInfo is present (MCP spec requirement)
         let Some(client_info) = params.get("clientInfo") else {
@@ -131,7 +138,7 @@ pub async fn route_request_with_config<H: McpHandler>(
 
         // Parse and validate client capabilities if required
         if let Some(cfg) = config {
-            let client_caps = ClientCapabilities::from_params(&params);
+            let client_caps = ClientCapabilities::from_params(params);
             let validation = cfg.required_capabilities.validate(&client_caps);
 
             if let Some(missing) = validation.missing() {

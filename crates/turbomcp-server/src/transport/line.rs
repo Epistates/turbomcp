@@ -130,6 +130,8 @@ impl<H: McpHandler> LineTransportRunner<H> {
 
         loop {
             tokio::select! {
+                biased;
+
                 // Incoming from client
                 res = reader.read_line(&mut line) => {
                     let bytes_read = res.map_err(|e| McpError::internal(format!("Failed to read line: {e}")))?;

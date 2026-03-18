@@ -31,7 +31,12 @@ use crate::config::{RateLimiter, ServerConfig};
 use crate::context::RequestContext;
 use crate::router::{self, JsonRpcIncoming, JsonRpcOutgoing};
 
-/// Maximum request body size (10MB).
+/// Maximum HTTP request body size for MCP requests.
+///
+/// This is intentionally larger than the core `MAX_MESSAGE_SIZE` (1MB) because
+/// HTTP transport may need to handle larger payloads (e.g., base64-encoded images
+/// in tool responses or large resource uploads). Individual message validation
+/// still applies the core limit after decompression where applicable.
 const MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
 
 /// SSE keep-alive interval.
@@ -76,8 +81,8 @@ impl SessionManager {
     }
 
     /// Send a message to a specific session.
-    #[allow(dead_code)]
-    pub async fn send_to_session(&self, session_id: &str, message: &str) -> bool {
+    #[allow(dead_code)] // Reserved for server-initiated push (not yet wired)
+    pub(crate) async fn send_to_session(&self, session_id: &str, message: &str) -> bool {
         if let Some(tx) = self.sessions.read().await.get(session_id) {
             tx.send(message.to_string()).is_ok()
         } else {
@@ -86,8 +91,8 @@ impl SessionManager {
     }
 
     /// Broadcast a message to all sessions.
-    #[allow(dead_code)]
-    pub async fn broadcast(&self, message: &str) {
+    #[allow(dead_code)] // Reserved for server-initiated push (not yet wired)
+    pub(crate) async fn broadcast(&self, message: &str) {
         let sessions = self.sessions.read().await;
         for (session_id, tx) in sessions.iter() {
             if tx.send(message.to_string()).is_err() {
@@ -97,8 +102,8 @@ impl SessionManager {
     }
 
     /// Get the number of active sessions.
-    #[allow(dead_code)]
-    pub async fn session_count(&self) -> usize {
+    #[allow(dead_code)] // Reserved for server-initiated push (not yet wired)
+    pub(crate) async fn session_count(&self) -> usize {
         self.sessions.read().await.len()
     }
 }
@@ -335,7 +340,11 @@ async fn handle_sse<H: McpHandler>(
     (
         [(
             axum::http::header::HeaderName::from_static("mcp-session-id"),
-            axum::http::header::HeaderValue::from_str(&session_id_for_header).unwrap(),
+            // Session IDs are UUIDs (hex + hyphens) which are always valid header values,
+            // but we handle the error gracefully rather than panicking.
+            axum::http::header::HeaderValue::from_str(&session_id_for_header).unwrap_or_else(
+                |_| axum::http::header::HeaderValue::from_static("invalid-session"),
+            ),
         )],
         sse,
     )
