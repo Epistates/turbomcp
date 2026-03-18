@@ -15,13 +15,13 @@ use tracing::{debug, info};
 use turbomcp_client::Client;
 use turbomcp_protocol::types::{GetPromptResult, Prompt, ReadResourceResult, Resource, Tool};
 use turbomcp_protocol::{Error, PROTOCOL_VERSION};
+#[cfg(unix)]
+use turbomcp_transport::UnixTransport;
 use turbomcp_transport::{
     ChildProcessConfig, ChildProcessTransport, TcpTransport, Transport,
     WebSocketBidirectionalConfig, WebSocketBidirectionalTransport,
     streamable_http_client::{StreamableHttpClientConfig, StreamableHttpClientTransport},
 };
-#[cfg(unix)]
-use turbomcp_transport::UnixTransport;
 
 use crate::error::{ProxyError, ProxyResult};
 use crate::introspection::{

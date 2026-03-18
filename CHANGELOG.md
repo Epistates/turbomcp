@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.6] - 2026-03-18
+
+### Security
+
+- **SSRF bypass in JWT OIDC discovery** — `JwtValidator::discover_jwks_uri` and `JwksCache::get_client_for_issuer` now accept an optional `SsrfValidator` that validates URLs before any network I/O. Previously, `reqwest::get()` was called directly on user-controlled issuer claims, allowing SSRF against internal services. New constructors `JwtValidator::new_with_ssrf()` and `JwksClient::with_ssrf_validator()` enable SSRF-protected operation. The `ssrf` module is now unconditionally available (was previously gated behind `mcp-ssrf` feature).
+- **JWT audience field RFC 7519 compliance** — `StandardClaims.aud` changed from `Option<String>` to `Option<Vec<String>>` using `serde_with::OneOrMany`, correctly handling both `"aud": "single"` and `"aud": ["one", "two"]` formats per RFC 7519 §4.1.3. Previously, tokens from enterprise IdPs (Google, Azure AD, Okta) using the array format would fail deserialization.
+- **JWKS response size limit** — `JwksClient::fetch_and_cache` now enforces a 64KB response body limit before JSON parsing, preventing memory exhaustion from malicious JWKS endpoints.
+- **DPoP server nonce implementation** — `generate_proof_with_params` now embeds server-provided nonces as the `"nonce"` claim in DPoP proofs per RFC 9449 §8. Previously, the nonce parameter was silently discarded.
+- **PKCE `plain` method removed in WASM** — `verify_pkce` in the WASM auth provider now rejects the `"plain"` method, enforcing `"S256"` per RFC 7636 §4.2.
+- **Constant-time comparison hardened in WASM** — Replaced hand-rolled branchless comparison with `subtle::ConstantTimeEq` to resist LLVM optimizer constant-time assumption violations.
+- **Internal error leakage in JSON-RPC responses** — Error handler now generates an opaque UUID error ID for clients and logs the full internal error server-side, preventing reconnaissance via error messages.
+- **Unbounded rate limiter memory** — Added `max_tracked_ips` (default: 100,000) to `RateLimitConfig` with automatic eviction of expired entries when capacity is reached, preventing OOM under IP spoofing attacks.
+- **`lz4_flex` upgraded to 0.11.6** — Fixes RUSTSEC-2026-0041 (HIGH 8.2): information leak from uninitialized memory during decompression of invalid data.
+- **`quinn-proto` upgraded to 0.11.14** — Fixes RUSTSEC-2026-0037 (HIGH 8.7): denial of service in Quinn endpoints via malformed QUIC packets.
+- **`lru` replaced with `moka`** — Resolves RUSTSEC-2026-0002 (unsound `IterMut`). OAuth2 token cache now uses `moka::future::Cache` (thread-safe, lock-free, with TTL support).
+
+### Fixed
+
+- **`no_std` compliance in `turbomcp-types`** — Added `#![cfg_attr(not(feature = "std"), no_std)]` and cfg-conditional `HashMap`/`BTreeMap` imports in `content.rs`, `results.rs`, `protocol.rs`. Changed `std::fmt` to `core::fmt` in `traits.rs` and `protocol.rs`. Layer 1 crates now correctly support `no_std + alloc`.
+- **`biased` added to shutdown-critical `select!` blocks** — `tokio::select!` in the line transport main loop and client message dispatcher now uses `biased;` to ensure shutdown signals are always checked first.
+- **Production `unwrap()` removed from HTTP transport** — `HeaderValue::from_str().unwrap()` on session IDs replaced with graceful fallback.
+- **Mutex poisoning risk eliminated** — `std::sync::Mutex` in channel transport replaced with `parking_lot::Mutex` (never poisons).
+- **Unnecessary allocation in router** — `request.params.clone().unwrap_or_default()` replaced with borrow pattern in the initialize handler.
+- **Dead code cleanup** — Removed unused `detect_server_initiated_type` function. Changed unused `SessionManager` methods to `pub(crate)`.
+- **Workspace dependency consistency** — `turbomcp-grpc` now uses `{ workspace = true }` for internal deps instead of inline path specifications.
+- **License compliance** — Added `OpenSSL` and `Zlib` to `deny.toml` allowlist. Added advisory ignores for compile-time-only crates (`paste`, `proc-macro-error`).
+
+### Changed
+
+- **Fraudulent security tests replaced** — Three tests in `security_attack_scenarios.rs` that asserted on test data (not SDK behavior) were rewritten with meaningful assertions against actual crate behavior.
+- **Vacuous tests fixed** — `test_dispatcher_smoke` (zero assertions) replaced with `test_bidirectional_types_compile` with real assertions. `test_oauth2_expired_authorization` (sleep with no assertion) marked `#[ignore]` with documented implementation path.
+- **Trybuild test documentation** — Disabled trybuild tests now have precise reason strings and documented TODO items for v3 compile-fail scenarios.
+
+## [3.0.5] - 2026-03-17
+
+### Fixed
+
+- **Cross-platform compilation in `turbomcp-proxy`** — All Unix domain socket code (`BackendTransport::Unix`, `BackendConfig::Unix`, `UnixFrontend`, `with_unix_backend()`, `UnixTransport` import, `std::path::PathBuf` import) is now gated behind `#[cfg(unix)]`. This allows `turbomcp-proxy` to compile cleanly on Windows, where Unix sockets are unavailable. Unix-specific CLI branches (`BackendType::Unix` match arms) and tests are similarly gated. The `prelude` re-export of `UnixFrontend`/`UnixFrontendConfig` is now also conditional.
+
 ## [3.0.4] - 2026-03-15
 
 ### Added

@@ -161,7 +161,13 @@ mod tests {
 
     #[test]
     fn test_backend_type_detection() {
-        let args = make_args(Some(BackendType::Stdio), Some("python".to_string()), None, None, None);
+        let args = make_args(
+            Some(BackendType::Stdio),
+            Some("python".to_string()),
+            None,
+            None,
+            None,
+        );
         assert_eq!(args.backend_type(), Some(BackendType::Stdio));
     }
 
@@ -192,13 +198,25 @@ mod tests {
         let args = make_args(Some(BackendType::Stdio), None, None, None, None);
         assert!(args.validate().is_err());
 
-        let args = make_args(Some(BackendType::Stdio), Some("python".to_string()), None, None, None);
+        let args = make_args(
+            Some(BackendType::Stdio),
+            Some("python".to_string()),
+            None,
+            None,
+            None,
+        );
         assert!(args.validate().is_ok());
     }
 
     #[test]
     fn test_backend_validation_tcp() {
-        let args = make_args(Some(BackendType::Tcp), None, None, Some("localhost:5000".to_string()), None);
+        let args = make_args(
+            Some(BackendType::Tcp),
+            None,
+            None,
+            Some("localhost:5000".to_string()),
+            None,
+        );
         assert!(args.validate().is_ok());
     }
 
