@@ -10,6 +10,10 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap as HashMap;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
 
 /// Role in a conversation or prompt message.
@@ -23,8 +27,8 @@ pub enum Role {
     Assistant,
 }
 
-impl std::fmt::Display for Role {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for Role {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::User => f.write_str("user"),
             Self::Assistant => f.write_str("assistant"),
@@ -453,7 +457,7 @@ pub struct ResourceLink {
     pub size: Option<u64>,
     /// Extension metadata
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<std::collections::HashMap<String, Value>>,
+    pub meta: Option<HashMap<String, Value>>,
 }
 
 /// Embedded resource content in a message.

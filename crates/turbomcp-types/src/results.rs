@@ -7,6 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap as HashMap;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
 
 use crate::content::{

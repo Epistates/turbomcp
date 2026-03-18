@@ -15,7 +15,7 @@
 //! fn returns_tool_result() -> impl IntoToolResult { ToolResult::text("Direct") }
 //! ```
 
-use std::fmt::Display;
+use core::fmt::Display;
 
 use serde::Serialize;
 

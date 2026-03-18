@@ -5,6 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+#[cfg(not(feature = "std"))]
+use alloc::collections::BTreeMap as HashMap;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
 
 use crate::content::{Role, SamplingContent, SamplingContentBlock};
@@ -62,8 +66,8 @@ pub enum TaskStatus {
     Working,
 }
 
-impl std::fmt::Display for TaskStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Cancelled => f.write_str("cancelled"),
             Self::Completed => f.write_str("completed"),
@@ -228,8 +232,8 @@ pub enum ElicitAction {
     Cancel,
 }
 
-impl std::fmt::Display for ElicitAction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ElicitAction {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Accept => f.write_str("accept"),
             Self::Decline => f.write_str("decline"),
@@ -360,8 +364,8 @@ pub struct ModelHint {
     pub name: Option<String>,
 }
 
-impl std::fmt::Display for IncludeContext {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for IncludeContext {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::AllServers => f.write_str("allServers"),
             Self::ThisServer => f.write_str("thisServer"),
@@ -408,8 +412,8 @@ pub enum ToolChoiceMode {
     Required,
 }
 
-impl std::fmt::Display for ToolChoiceMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ToolChoiceMode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Auto => f.write_str("auto"),
             Self::None => f.write_str("none"),
