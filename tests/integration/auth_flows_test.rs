@@ -100,28 +100,22 @@ async fn test_oauth2_state_validation() {
 }
 
 #[tokio::test]
+#[ignore = "TODO: OAuth2Provider does not expose pending authorization expiry via public API. \
+    Requires either: (a) a time-injection hook on OAuth2Provider for deterministic testing, \
+    or (b) a get_pending_authorization_count() method to verify expired entries are purged. \
+    Until then this test cannot make meaningful assertions about expiration behavior."]
 async fn test_oauth2_expired_authorization() {
-    let config = OAuth2Config {
-        client_id: "test".to_string(),
-        client_secret: "secret".to_string(),
-        auth_url: "https://auth.example.com".to_string(),
-        token_url: "https://token.example.com".to_string(),
-        redirect_uri: "https://app.example.com".to_string(),
-        scopes: vec![],
-        flow_type: OAuth2FlowType::AuthorizationCode,
-        additional_params: HashMap::new(),
-    };
-
-    let mut provider = OAuth2Provider::new("test".to_string(), config);
-    
-    // Manually expire the authorization by manipulating internal state
-    let auth_result = provider.start_authorization().await.unwrap();
-    
-    // Simulate time passing beyond expiration
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    
-    // Manually set expired time in pending auths (this requires access to internals)
-    // Note: This test would need provider refactoring to be fully testable
+    // This test is blocked on OAuth2Provider exposing testable expiry hooks.
+    // The intended scenario:
+    //   1. Start an authorization flow (generates state + PKCE verifier)
+    //   2. Advance time past the authorization expiry window
+    //   3. Assert that exchange_code() returns an error indicating the
+    //      authorization has expired (not "invalid state")
+    //
+    // To implement: add a clock abstraction or `with_expiry_duration(Duration)`
+    // to OAuth2Provider so tests can set a very short expiry (e.g. 1ms) and
+    // verify behavior without sleeping for the real timeout.
+    unimplemented!("See ignore reason above");
 }
 
 #[tokio::test]

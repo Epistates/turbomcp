@@ -17,36 +17,60 @@
 #[cfg(test)]
 mod bidirectional_tests {
 
-    /// Basic smoke test for the dispatcher architecture
+    /// Compile-time check for bidirectional dispatcher types
     ///
-    /// This test validates that:
-    /// 1. Client can be created without errors
-    /// 2. Dispatcher is initialized automatically
-    /// 3. Handlers can be registered
+    /// This test validates that the core bidirectional types used by the
+    /// MessageDispatcher architecture are present and correctly structured:
+    /// - ElicitationRequest wrapper type exists with expected accessor methods
+    /// - MessageId implements Display for use in handler routing
+    /// - ElicitRequestParams is constructible for form-mode elicitation
     ///
-    /// ## Future Work
-    ///
-    /// A full integration test would require:
-    /// - Mock transport that simulates server behavior
-    /// - Sending elicitation/create requests interleaved with responses
-    /// - Validating that handlers receive requests
-    /// - Validating that request() receives correct responses
-    ///
-    /// This is left for future implementation since it requires significant
-    /// mock infrastructure.
-    #[tokio::test]
-    async fn test_dispatcher_smoke() {
-        // This test validates basic compilation and structure
-        // Full integration testing requires mock transport infrastructure
+    /// A full behavioral integration test of the dispatcher's routing logic
+    /// (ensuring elicitation requests are not delivered to waiting request()
+    /// calls) requires a mock transport and is tracked separately.
+    #[test]
+    fn test_bidirectional_types_compile() {
+        use turbomcp_protocol::MessageId;
+        use turbomcp_protocol::types::{ElicitRequest, ElicitRequestParams, ElicitationSchema};
 
-        // The key achievement: the code compiles and the architecture is correct!
-        // The MessageDispatcher:
-        // - Runs a background task that reads from transport
-        // - Routes responses to oneshot channels
-        // - Routes requests to registered handlers
-        //
-        // This eliminates the race condition where ProtocolClient::request()
-        // and Client::process_message() were both calling transport.receive()
+        // Verify MessageId::String can be constructed and displayed
+        let id = MessageId::String("test-id".to_string());
+        assert_eq!(id.to_string(), "test-id", "MessageId::String Display impl");
+
+        // Verify MessageId::Number variant
+        let id_num = MessageId::Number(42);
+        assert_eq!(id_num.to_string(), "42", "MessageId::Number Display impl");
+
+        // Verify ElicitRequestParams::form constructor is callable
+        let schema = ElicitationSchema::new().add_string_property(
+            "field".to_string(),
+            true,
+            Some("A field".to_string()),
+        );
+        let params = ElicitRequestParams::form("Enter details".to_string(), schema, None, None);
+
+        // Verify the ElicitRequest wrapper is constructible
+        let req = ElicitRequest {
+            params,
+            task: None,
+            _meta: None,
+        };
+
+        // Verify ElicitationRequest handler wrapper round-trips the id and message
+        let handler_req = turbomcp_client::handlers::ElicitationRequest::new(
+            MessageId::String("dispatch-test".to_string()),
+            req,
+        );
+        assert_eq!(
+            handler_req.id().to_string(),
+            "dispatch-test",
+            "ElicitationRequest preserves id from JSON-RPC envelope"
+        );
+        assert_eq!(
+            handler_req.message(),
+            "Enter details",
+            "ElicitationRequest exposes message via accessor"
+        );
     }
 
     /// Documentation test: How bidirectional flow works
