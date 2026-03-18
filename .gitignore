@@ -3,10 +3,6 @@
 **/*.rs.bk
 *.pdb
 
-# Cargo files
-Cargo.lock
-Cargo.toml.orig
-
 # IDE and Editors
 .vscode/
 .idea/
