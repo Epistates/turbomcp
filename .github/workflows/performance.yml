@@ -37,7 +37,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         # Full history for baseline comparison
         fetch-depth: 0
@@ -48,7 +48,7 @@ jobs:
         toolchain: stable
 
     - name: Cache cargo registry
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: |
           ~/.cargo/registry
@@ -58,7 +58,7 @@ jobs:
           ${{ runner.os }}-cargo-registry-
 
     - name: Cache cargo build
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: target
         key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
@@ -82,7 +82,7 @@ jobs:
         mkdir -p benches/results/baselines
 
     - name: Restore performance baselines
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: benches/results/baselines
         key: performance-baselines-${{ runner.os }}-v1
@@ -107,13 +107,13 @@ jobs:
 
     - name: Save performance baselines
       if: github.event_name == 'schedule' || github.event.inputs.update_baselines == 'true'
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v5
       with:
         path: benches/results/baselines
         key: performance-baselines-${{ runner.os }}-v1-${{ github.sha }}
 
     - name: Upload benchmark results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: benchmark-results-${{ github.sha }}
         path: |
@@ -131,7 +131,7 @@ jobs:
 
     - name: Comment PR with performance results
       if: github.event_name == 'pull_request'
-      uses: actions/github-script@v7
+      uses: actions/github-script@v8
       with:
         script: |
           const fs = require('fs');
@@ -180,7 +180,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -191,7 +191,7 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y valgrind protobuf-compiler
 
     - name: Cache cargo build
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: target
         key: ${{ runner.os }}-cargo-memory-${{ hashFiles('**/Cargo.lock') }}
@@ -208,7 +208,7 @@ jobs:
         valgrind --tool=massif --stacks=yes cargo bench --package turbomcp-core --bench rkyv_zero_copy_benchmark --features turbomcp-core/zero-copy -- --test || true
 
     - name: Upload memory analysis
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: memory-analysis-${{ github.sha }}
         path: |
@@ -227,7 +227,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -235,7 +235,7 @@ jobs:
         toolchain: stable
 
     - name: Cache cargo build
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: target
         key: ${{ runner.os }}-cargo-platform-${{ hashFiles('**/Cargo.lock') }}
@@ -250,7 +250,7 @@ jobs:
 
     - name: Install protoc (Windows)
       if: runner.os == 'Windows'
-      uses: arduino/setup-protoc@v3
+      run: choco install protoc -y
 
     - name: Setup platform-specific environment
       shell: bash
@@ -281,7 +281,7 @@ jobs:
         fi
 
     - name: Upload platform results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: platform-benchmarks-${{ matrix.os }}-${{ github.sha }}
         path: target/criterion/
@@ -295,10 +295,10 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Download all benchmark artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v7
       with:
         path: benchmark-artifacts
 
@@ -317,7 +317,7 @@ jobs:
         ls -la benchmark-artifacts/ >> benchmark_report.md 2>/dev/null || echo "No artifacts found" >> benchmark_report.md
 
     - name: Upload comprehensive report
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: comprehensive-benchmark-report-${{ github.sha }}
         path: |
@@ -327,7 +327,7 @@ jobs:
 
     - name: Create GitHub Release (for scheduled runs)
       if: github.event_name == 'schedule'
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: performance-baseline-${{ github.run_number }}
         name: Performance Baseline ${{ github.run_number }}
