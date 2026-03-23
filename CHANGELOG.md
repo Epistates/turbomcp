@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.7] - 2026-03-23
+
+### Fixed
+
+- **`#[description]` attribute not stripped from macro output** — `strip_handler_attributes` in the `#[server]` proc macro now removes `#[description("...")]` from function parameter attributes after extracting their values for JSON schema generation. Previously, these attributes survived into the compiler output, triggering the `description` proc_macro_attribute's `compile_error!` fallback. Any server using `#[description]` on tool/resource/prompt parameters would fail to compile.
+
 ## [3.0.6] - 2026-03-18
 
 ### Security

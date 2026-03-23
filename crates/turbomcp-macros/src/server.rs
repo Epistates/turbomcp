@@ -441,6 +441,16 @@ fn strip_handler_attributes(impl_block: &ItemImpl) -> ItemImpl {
                     && !attr.path().is_ident("resource")
                     && !attr.path().is_ident("prompt")
             });
+            // Strip #[description] from parameter attributes — the macro has already
+            // extracted their values for schema generation, so they must not survive
+            // into the compiler output where they'd trigger compile_error!().
+            for input in &mut method.sig.inputs {
+                if let syn::FnArg::Typed(pat_type) = input {
+                    pat_type
+                        .attrs
+                        .retain(|attr| !attr.path().is_ident("description"));
+                }
+            }
         }
     }
     stripped
