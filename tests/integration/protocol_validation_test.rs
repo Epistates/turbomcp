@@ -506,7 +506,7 @@ async fn test_initialize_request_validation() {
     
     // Valid initialize request
     let valid_request = InitializeRequest {
-        protocol_version: "2025-11-25".to_string(),
+        protocol_version: "2025-11-25".into(),
         capabilities: ClientCapabilities {
             roots: Some(RootsCapability {
                 list_changed: Some(true),

@@ -360,6 +360,7 @@ pub use capabilities::{
     },
 };
 
+pub use versioning::adapter::{VersionAdapter, adapter_for_version};
 pub use versioning::{VersionCompatibility, VersionManager, VersionRequirement};
 
 // Re-export constants from core (single source of truth - DRY)
@@ -376,8 +377,11 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(PROTOCOL_VERSION, "2025-11-25");
         assert!(SUPPORTED_VERSIONS.contains(&PROTOCOL_VERSION));
-        // Latest should be first in supported versions
-        assert_eq!(SUPPORTED_VERSIONS[0], PROTOCOL_VERSION);
+        // Latest should be last in supported versions (oldest to newest)
+        assert_eq!(
+            SUPPORTED_VERSIONS[SUPPORTED_VERSIONS.len() - 1],
+            PROTOCOL_VERSION
+        );
     }
 
     #[test]

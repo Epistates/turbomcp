@@ -744,20 +744,22 @@ mod protocol_version_compliance {
         // Test current protocol version is latest official spec
         assert_eq!(PROTOCOL_VERSION, "2025-11-25");
 
-        // Strict v3 policy: only the latest protocol version is supported.
+        // Multi-version support: all known versions are present
         assert!(SUPPORTED_VERSIONS.contains(&PROTOCOL_VERSION));
-        assert_eq!(SUPPORTED_VERSIONS, &[PROTOCOL_VERSION]);
+        assert!(SUPPORTED_VERSIONS.contains(&"2025-06-18"));
 
-        // Latest should be first in preference order
-        assert_eq!(SUPPORTED_VERSIONS[0], PROTOCOL_VERSION);
+        // Latest should be last in ascending order
+        assert_eq!(
+            SUPPORTED_VERSIONS[SUPPORTED_VERSIONS.len() - 1],
+            PROTOCOL_VERSION
+        );
 
-        // Ensure versions are in descending order (latest first)
+        // Ensure versions are in ascending order (oldest first)
         let versions = SUPPORTED_VERSIONS;
         for i in 0..versions.len() - 1 {
-            // This is a simplified check - in reality we'd need proper version comparison
             assert!(
-                versions[i] >= versions[i + 1],
-                "Versions should be in descending order"
+                versions[i] <= versions[i + 1],
+                "Versions should be in ascending order"
             );
         }
     }

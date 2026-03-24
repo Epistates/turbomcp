@@ -714,7 +714,7 @@ impl MessageMetadata {
     pub fn new(content_type: ContentType, size: usize) -> Self {
         Self {
             created_at: Timestamp::now(),
-            protocol_version: crate::PROTOCOL_VERSION.to_string(),
+            protocol_version: ProtocolVersion::LATEST.clone(),
             encoding: None,
             content_type,
             size,

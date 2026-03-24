@@ -99,7 +99,7 @@ pub fn test_resource() -> Resource {
 /// Create a valid initialize request for testing
 pub fn test_initialize_request() -> InitializeRequest {
     InitializeRequest {
-        protocol_version: "2025-11-25".to_string(),
+        protocol_version: ProtocolVersion::V2025_11_25,
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
             name: "test-client".to_string(),

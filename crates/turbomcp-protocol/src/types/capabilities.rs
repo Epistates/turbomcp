@@ -89,23 +89,78 @@ pub struct ServerCapabilities {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SamplingCapabilities {}
 
+/// Form mode elicitation capabilities
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ElicitationFormCapabilities {}
+
+/// URL mode elicitation capabilities
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ElicitationUrlCapabilities {}
+
 /// Elicitation capabilities per MCP 2025-11-25 specification
+///
+/// Supports two modes:
+/// - `form`: In-band structured data collection (default if empty object)
+/// - `url`: Out-of-band interactions (OAuth, credentials, payments)
+///
+/// Per spec, an empty capabilities object (`{}`) is equivalent to declaring
+/// support for `form` mode only.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct ElicitationCapabilities {
-    /// Whether the client performs JSON schema validation on elicitation responses
-    /// If true, the client validates user input against the provided schema before sending
+    /// Form mode elicitation support.
+    /// Per spec, an empty capabilities object defaults to form support.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub form: Option<ElicitationFormCapabilities>,
+
+    /// URL mode elicitation support (MCP 2025-11-25).
+    /// For sensitive interactions (OAuth, credentials, payments).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<ElicitationUrlCapabilities>,
+
+    /// Whether the client performs JSON schema validation on elicitation responses.
+    /// If true, the client validates user input against the provided schema before sending.
+    /// (TurboMCP extension — not part of the MCP specification.)
     #[serde(rename = "schemaValidation", skip_serializing_if = "Option::is_none")]
     pub schema_validation: Option<bool>,
 }
 
 impl ElicitationCapabilities {
-    /// Create elicitation capabilities with schema validation enabled
+    /// Create with both form and URL mode support (full capabilities)
+    pub fn full() -> Self {
+        Self {
+            form: Some(ElicitationFormCapabilities {}),
+            url: Some(ElicitationUrlCapabilities {}),
+            schema_validation: None,
+        }
+    }
+
+    /// Create with form mode only
+    pub fn form_only() -> Self {
+        Self {
+            form: Some(ElicitationFormCapabilities {}),
+            url: None,
+            schema_validation: None,
+        }
+    }
+
+    /// Whether this client supports form mode elicitation.
+    /// Per spec: empty capabilities object defaults to form support.
+    pub fn supports_form(&self) -> bool {
+        self.form.is_some() || (self.form.is_none() && self.url.is_none())
+    }
+
+    /// Whether this client supports URL mode elicitation.
+    pub fn supports_url(&self) -> bool {
+        self.url.is_some()
+    }
+
+    /// Enable schema validation (TurboMCP extension)
     pub fn with_schema_validation(mut self) -> Self {
         self.schema_validation = Some(true);
         self
     }
 
-    /// Create elicitation capabilities with schema validation disabled
+    /// Disable schema validation (TurboMCP extension)
     pub fn without_schema_validation(mut self) -> Self {
         self.schema_validation = Some(false);
         self

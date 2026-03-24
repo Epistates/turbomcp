@@ -153,7 +153,7 @@ impl McpClient {
         self.initialized = true;
         self.server_info = Some(result.server_info.clone());
         self.server_capabilities = Some(result.capabilities.clone());
-        self.protocol_version = result.protocol_version.clone();
+        self.protocol_version = result.protocol_version.to_string();
 
         // Send initialized notification
         self.transport

@@ -12,8 +12,17 @@ use crate::types::*;
 // ============================================================================
 
 #[test]
-fn test_type_aliases() {
-    let _protocol_version: ProtocolVersion = "1.0.0".to_string();
+fn test_protocol_version_construction() {
+    let known: ProtocolVersion = "2025-11-25".into();
+    assert_eq!(known, ProtocolVersion::V2025_11_25);
+
+    let unknown: ProtocolVersion = "1.0.0".into();
+    assert!(matches!(unknown, ProtocolVersion::Unknown(_)));
+    assert_eq!(unknown.as_str(), "1.0.0");
+}
+
+#[test]
+fn test_domain_types() {
     let _uri: Uri = "https://example.com".into();
     let _mime_type: MimeType = "text/plain".into();
     let _base64: Base64String = "SGVsbG8gV29ybGQ=".into();

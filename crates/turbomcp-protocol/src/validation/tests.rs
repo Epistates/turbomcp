@@ -616,7 +616,7 @@ fn test_validate_initialize_request_valid() {
 fn test_validate_initialize_request_unsupported_version() {
     let validator = ProtocolValidator::new();
     let mut request = create_valid_initialize_request();
-    request.protocol_version = "2020-01-01".to_string();
+    request.protocol_version = "2020-01-01".into();
 
     let result = validator.validate_initialize_request(&request);
     assert!(result.is_valid()); // Valid but with warnings
@@ -1071,7 +1071,7 @@ fn create_valid_resource() -> Resource {
 
 fn create_valid_initialize_request() -> InitializeRequest {
     InitializeRequest {
-        protocol_version: "2025-11-25".to_string(),
+        protocol_version: ProtocolVersion::V2025_11_25,
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
             name: "test-client".to_string(),

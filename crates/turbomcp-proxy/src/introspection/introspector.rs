@@ -120,7 +120,7 @@ impl McpIntrospector {
         // Build final ServerSpec
         let spec = ServerSpec {
             server_info,
-            protocol_version: init_result.protocol_version.clone(),
+            protocol_version: init_result.protocol_version.to_string(),
             capabilities,
             tools,
             resources,
@@ -143,15 +143,13 @@ impl McpIntrospector {
     /// Initialize connection with the server
     async fn initialize(&self, backend: &mut dyn McpBackend) -> ProxyResult<InitializeResult> {
         let request = InitializeRequest {
-            protocol_version: PROTOCOL_VERSION.to_string(),
+            protocol_version: PROTOCOL_VERSION.into(),
             capabilities: ClientCapabilities {
                 roots: Some(RootsCapabilities {
                     list_changed: Some(true),
                 }),
                 sampling: Some(SamplingCapabilities {}),
-                elicitation: Some(ElicitationCapabilities {
-                    schema_validation: None,
-                }),
+                elicitation: Some(ElicitationCapabilities::full()),
                 experimental: None,
                 #[cfg(feature = "experimental-tasks")]
                 tasks: None,

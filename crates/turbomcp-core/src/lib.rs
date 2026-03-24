@@ -166,11 +166,16 @@ pub use turbomcp_types::{
     ToolResult,
 };
 
-/// MCP Protocol version supported by this SDK (latest official spec)
+/// MCP Protocol version supported by this SDK (latest official spec).
+///
+/// This is the canonical version string. For typed usage, see
+/// [`types::core::ProtocolVersion::LATEST`].
 pub const PROTOCOL_VERSION: &str = "2025-11-25";
 
-/// Supported protocol versions.
-pub const SUPPORTED_VERSIONS: &[&str] = &["2025-11-25"];
+/// Supported protocol version strings.
+///
+/// For typed usage, see [`types::core::ProtocolVersion::STABLE`].
+pub const SUPPORTED_VERSIONS: &[&str] = &["2025-06-18", "2025-11-25"];
 
 /// Maximum message size in bytes (1MB)
 pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
@@ -301,7 +306,11 @@ mod tests {
     fn test_version_constants() {
         assert_eq!(PROTOCOL_VERSION, "2025-11-25");
         assert!(SUPPORTED_VERSIONS.contains(&PROTOCOL_VERSION));
-        assert_eq!(SUPPORTED_VERSIONS[0], PROTOCOL_VERSION);
+        // Latest version is last in the list (oldest to newest)
+        assert_eq!(
+            SUPPORTED_VERSIONS[SUPPORTED_VERSIONS.len() - 1],
+            PROTOCOL_VERSION
+        );
     }
 
     #[test]

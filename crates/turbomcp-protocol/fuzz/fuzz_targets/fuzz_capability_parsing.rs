@@ -199,9 +199,9 @@ fn build_client_capabilities(input: &CapabilityFuzzInput) -> ClientCapabilities 
     };
 
     let elicitation = if input.has_elicitation {
-        Some(ElicitationCapabilities {
-            schema_validation: Some(input.elicitation_schema_validation),
-        })
+        let mut caps = ElicitationCapabilities::full();
+        caps.schema_validation = Some(input.elicitation_schema_validation);
+        Some(caps)
     } else {
         None
     };

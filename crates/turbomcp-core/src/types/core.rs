@@ -5,13 +5,167 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::ops::Deref;
 use hashbrown::HashMap;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 use crate::jsonrpc::RequestId;
 
-/// Protocol version string
-pub type ProtocolVersion = String;
+/// MCP protocol version.
+///
+/// Represents a known or unknown MCP specification version. Known versions get
+/// first-class enum variants; unknown version strings are preserved via
+/// [`Unknown`](ProtocolVersion::Unknown) for forward compatibility (e.g. proxies
+/// and protocol analyzers that handle arbitrary versions).
+///
+/// # Ordering
+///
+/// Known versions are ordered by specification release date. [`Unknown`](ProtocolVersion::Unknown)
+/// sorts after all known versions.
+///
+/// # Serialization
+///
+/// Serializes to/from the canonical version string (e.g. `"2025-11-25"`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub enum ProtocolVersion {
+    /// MCP specification 2025-06-18
+    V2025_06_18,
+    /// MCP specification 2025-11-25 (current stable)
+    #[default]
+    V2025_11_25,
+    /// Draft specification (DRAFT-2026-v1)
+    Draft,
+    /// Unknown/future protocol version (preserved for forward compatibility)
+    Unknown(String),
+}
+
+impl ProtocolVersion {
+    /// The latest stable protocol version.
+    pub const LATEST: Self = Self::V2025_11_25;
+
+    /// All stable (released) protocol versions, oldest to newest.
+    /// Does not include [`Draft`](Self::Draft) or [`Unknown`](Self::Unknown).
+    pub const STABLE: &[Self] = &[Self::V2025_06_18, Self::V2025_11_25];
+
+    /// The canonical version string for this protocol version.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::V2025_06_18 => "2025-06-18",
+            Self::V2025_11_25 => "2025-11-25",
+            Self::Draft => "DRAFT-2026-v1",
+            Self::Unknown(s) => s.as_str(),
+        }
+    }
+
+    /// Whether this is a named (non-Unknown) protocol version.
+    /// Returns `true` for all variants except [`Unknown`](Self::Unknown).
+    #[must_use]
+    pub fn is_known(&self) -> bool {
+        !matches!(self, Self::Unknown(_))
+    }
+
+    /// Whether this is a stable (released) protocol version.
+    /// Returns `false` for [`Draft`](Self::Draft) and [`Unknown`](Self::Unknown).
+    #[must_use]
+    pub fn is_stable(&self) -> bool {
+        matches!(self, Self::V2025_06_18 | Self::V2025_11_25)
+    }
+
+    /// Whether this is the draft specification.
+    #[must_use]
+    pub fn is_draft(&self) -> bool {
+        matches!(self, Self::Draft)
+    }
+
+    /// Ordinal for comparison (known versions ordered by release date).
+    fn ordinal(&self) -> u32 {
+        match self {
+            Self::V2025_06_18 => 1,
+            Self::V2025_11_25 => 2,
+            Self::Draft => 3,
+            Self::Unknown(_) => u32::MAX,
+        }
+    }
+}
+
+impl fmt::Display for ProtocolVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl PartialOrd for ProtocolVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ProtocolVersion {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        match (self, other) {
+            // Two Unknown variants: compare by inner string for consistency with PartialEq
+            (Self::Unknown(a), Self::Unknown(b)) => a.cmp(b),
+            // Otherwise compare by ordinal (release date order)
+            _ => self.ordinal().cmp(&other.ordinal()),
+        }
+    }
+}
+
+impl From<&str> for ProtocolVersion {
+    fn from(s: &str) -> Self {
+        match s {
+            "2025-06-18" => Self::V2025_06_18,
+            "2025-11-25" => Self::V2025_11_25,
+            "DRAFT-2026-v1" => Self::Draft,
+            other => Self::Unknown(other.into()),
+        }
+    }
+}
+
+impl From<String> for ProtocolVersion {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "2025-06-18" => Self::V2025_06_18,
+            "2025-11-25" => Self::V2025_11_25,
+            "DRAFT-2026-v1" => Self::Draft,
+            _ => Self::Unknown(s),
+        }
+    }
+}
+
+impl From<ProtocolVersion> for String {
+    fn from(v: ProtocolVersion) -> Self {
+        match v {
+            ProtocolVersion::Unknown(s) => s,
+            other => other.as_str().into(),
+        }
+    }
+}
+
+impl Serialize for ProtocolVersion {
+    fn serialize<S: Serializer>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ProtocolVersion {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> core::result::Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(ProtocolVersion::from(s))
+    }
+}
+
+impl PartialEq<&str> for ProtocolVersion {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<ProtocolVersion> for &str {
+    fn eq(&self, other: &ProtocolVersion) -> bool {
+        *self == other.as_str()
+    }
+}
 
 /// Message ID (same as RequestId)
 pub type MessageId = RequestId;

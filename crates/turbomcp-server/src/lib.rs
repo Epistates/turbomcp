@@ -117,14 +117,15 @@ pub use middleware::{McpMiddleware, MiddlewareStack, Next};
 pub use builder::{McpServerExt, ServerBuilder, Transport};
 pub use config::{
     CapabilityValidation, ClientCapabilities, ConfigValidationError, ConnectionCounter,
-    ConnectionGuard, ConnectionLimits, ProtocolConfig, RateLimitConfig, RateLimiter,
-    RequiredCapabilities, SUPPORTED_PROTOCOL_VERSIONS, ServerConfig, ServerConfigBuilder,
+    ConnectionGuard, ConnectionLimits, ProtocolConfig, ProtocolVersion, RateLimitConfig,
+    RateLimiter, RequiredCapabilities, SUPPORTED_PROTOCOL_VERSIONS, ServerConfig,
+    ServerConfigBuilder,
 };
 pub use context::{RequestContext, TransportType};
 pub use handler::McpHandlerExt;
 pub use router::{
-    JsonRpcIncoming, JsonRpcOutgoing, parse_request, route_request, route_request_with_config,
-    serialize_response,
+    JsonRpcIncoming, JsonRpcOutgoing, apply_adapter_to_response, parse_request, route_request,
+    route_request_versioned, route_request_with_config, serialize_response,
 };
 
 // Re-export McpHandler from core for unified architecture

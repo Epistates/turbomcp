@@ -26,7 +26,7 @@ pub struct InitializeRequest {
 impl Default for InitializeRequest {
     fn default() -> Self {
         Self {
-            protocol_version: crate::PROTOCOL_VERSION.into(),
+            protocol_version: ProtocolVersion::LATEST.clone(),
             capabilities: ClientCapabilities::default(),
             client_info: Implementation::default(),
             _meta: None,
@@ -39,7 +39,7 @@ impl InitializeRequest {
     #[must_use]
     pub fn new(client_info: Implementation) -> Self {
         Self {
-            protocol_version: crate::PROTOCOL_VERSION.into(),
+            protocol_version: ProtocolVersion::LATEST.clone(),
             capabilities: ClientCapabilities::default(),
             client_info,
             _meta: None,
@@ -55,7 +55,7 @@ impl InitializeRequest {
 
     /// Set protocol version
     #[must_use]
-    pub fn with_protocol_version(mut self, version: impl Into<String>) -> Self {
+    pub fn with_protocol_version(mut self, version: impl Into<ProtocolVersion>) -> Self {
         self.protocol_version = version.into();
         self
     }
@@ -83,7 +83,7 @@ pub struct InitializeResult {
 impl Default for InitializeResult {
     fn default() -> Self {
         Self {
-            protocol_version: crate::PROTOCOL_VERSION.into(),
+            protocol_version: ProtocolVersion::LATEST.clone(),
             capabilities: ServerCapabilities::default(),
             server_info: Implementation::default(),
             instructions: None,
@@ -97,7 +97,7 @@ impl InitializeResult {
     #[must_use]
     pub fn new(server_info: Implementation) -> Self {
         Self {
-            protocol_version: crate::PROTOCOL_VERSION.into(),
+            protocol_version: ProtocolVersion::LATEST.clone(),
             capabilities: ServerCapabilities::default(),
             server_info,
             instructions: None,

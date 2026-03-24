@@ -21,6 +21,7 @@ use super::config::{ClientCapabilities, ServerConfig};
 use turbomcp_core::context::RequestContext;
 use turbomcp_core::error::McpError;
 use turbomcp_core::handler::McpHandler;
+use turbomcp_protocol::versioning::adapter::{VersionAdapter, adapter_for_version};
 
 // Re-export canonical JSON-RPC types from turbomcp-core
 pub use turbomcp_core::jsonrpc::{JsonRpcIncoming, JsonRpcOutgoing};
@@ -153,15 +154,83 @@ pub async fn route_request_with_config<H: McpHandler>(
         }
 
         // Use core router with negotiated version
+        let version_str = negotiated_version.as_str();
         let core_config = turbomcp_core::router::RouteConfig {
-            protocol_version: Some(&negotiated_version),
+            protocol_version: Some(version_str),
         };
-        return turbomcp_core::router::route_request(handler, request, ctx, &core_config).await;
+        let response =
+            turbomcp_core::router::route_request(handler, request, ctx, &core_config).await;
+
+        // Apply version adapter to the initialize response
+        let adapter = adapter_for_version(&negotiated_version);
+        return apply_adapter_to_response(&*adapter, "initialize", response);
     }
 
-    // For all other methods, delegate to core router
+    // For all other methods, delegate to core router (no adapter — caller
+    // must use route_request_versioned for post-initialize adapter filtering)
     let core_config = turbomcp_core::router::RouteConfig::default();
     turbomcp_core::router::route_request(handler, request, ctx, &core_config).await
+}
+
+/// Route a JSON-RPC request with version-aware adapter filtering.
+///
+/// This is the recommended entry point for post-initialize requests when the
+/// session has a negotiated protocol version. It:
+/// 1. Validates the method is available in the negotiated version
+/// 2. Delegates to the core router
+/// 3. Applies the version adapter to filter the response
+///
+/// Transport layers should store the negotiated [`ProtocolVersion`] from
+/// the initialize handshake and pass it here for all subsequent requests.
+pub async fn route_request_versioned<H: McpHandler>(
+    handler: &H,
+    request: JsonRpcIncoming,
+    ctx: &RequestContext,
+    negotiated_version: &turbomcp_core::types::core::ProtocolVersion,
+) -> JsonRpcOutgoing {
+    let adapter = adapter_for_version(negotiated_version);
+    let method = request.method.clone();
+
+    // Validate that the method exists in the negotiated version
+    if let Err(reason) = adapter.validate_method(&method) {
+        return JsonRpcOutgoing::error(request.id.clone(), McpError::method_not_found(reason));
+    }
+
+    // Route through core
+    let core_config = turbomcp_core::router::RouteConfig::default();
+    let response = turbomcp_core::router::route_request(handler, request, ctx, &core_config).await;
+
+    // Apply version adapter to filter the response
+    apply_adapter_to_response(&*adapter, &method, response)
+}
+
+/// Apply a version adapter to a JSON-RPC response.
+///
+/// This filters the result value through the adapter's `filter_result` method,
+/// stripping fields that don't exist in the target spec version.
+///
+/// Transport layers should call this on outgoing responses when the session
+/// has a negotiated version different from the latest.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use turbomcp_server::router::apply_adapter_to_response;
+/// use turbomcp_protocol::versioning::adapter::adapter_for_version;
+///
+/// let adapter = adapter_for_version(&negotiated_version);
+/// let filtered = apply_adapter_to_response(&*adapter, "tools/list", response);
+/// ```
+pub fn apply_adapter_to_response(
+    adapter: &dyn VersionAdapter,
+    method: &str,
+    mut response: JsonRpcOutgoing,
+) -> JsonRpcOutgoing {
+    // Only filter successful responses (errors pass through unchanged)
+    if let Some(result) = response.result.take() {
+        response.result = Some(adapter.filter_result(method, result));
+    }
+    response
 }
 
 #[cfg(test)]

@@ -1110,7 +1110,7 @@ impl<T: Transport + 'static> Client<T> {
 
         // Send MCP initialization request
         let request = InitializeRequest {
-            protocol_version: PROTOCOL_VERSION.to_string(),
+            protocol_version: PROTOCOL_VERSION.into(),
             capabilities: client_caps,
             client_info: turbomcp_protocol::types::Implementation {
                 name: "turbomcp-client".to_string(),

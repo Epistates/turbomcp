@@ -1164,7 +1164,7 @@ pub mod builders {
                 experimental: Some(HashMap::new()),
                 roots: Some(RootsCapabilities::default()),
                 sampling: Some(SamplingCapabilities {}),
-                elicitation: Some(ElicitationCapabilities::default()),
+                elicitation: Some(ElicitationCapabilities::full()),
                 #[cfg(feature = "experimental-tasks")]
                 tasks: Some(ClientTasksCapabilities::default()),
                 negotiator: None,
@@ -1379,7 +1379,7 @@ pub mod builders {
     impl<const X: bool, const R: bool, const S: bool>
         ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, S, false>>
     {
-        /// Enable elicitation capabilities
+        /// Enable elicitation capabilities (form + URL modes)
         pub fn enable_elicitation(
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, S, true>> {
@@ -1387,7 +1387,7 @@ pub mod builders {
                 experimental: self.experimental,
                 roots: self.roots,
                 sampling: self.sampling,
-                elicitation: Some(ElicitationCapabilities::default()),
+                elicitation: Some(ElicitationCapabilities::full()),
                 #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
@@ -1396,7 +1396,24 @@ pub mod builders {
             }
         }
 
-        /// Enable elicitation with schema validation
+        /// Enable elicitation with form mode only
+        pub fn enable_elicitation_form_only(
+            self,
+        ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, S, true>> {
+            ClientCapabilitiesBuilder {
+                experimental: self.experimental,
+                roots: self.roots,
+                sampling: self.sampling,
+                elicitation: Some(ElicitationCapabilities::form_only()),
+                #[cfg(feature = "experimental-tasks")]
+                tasks: self.tasks,
+                negotiator: self.negotiator,
+                strict_validation: self.strict_validation,
+                _state: PhantomData,
+            }
+        }
+
+        /// Enable elicitation with schema validation (TurboMCP extension)
         pub fn enable_elicitation_with_schema_validation(
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, S, true>> {
@@ -1404,7 +1421,7 @@ pub mod builders {
                 experimental: self.experimental,
                 roots: self.roots,
                 sampling: self.sampling,
-                elicitation: Some(ElicitationCapabilities::default().with_schema_validation()),
+                elicitation: Some(ElicitationCapabilities::full().with_schema_validation()),
                 #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,

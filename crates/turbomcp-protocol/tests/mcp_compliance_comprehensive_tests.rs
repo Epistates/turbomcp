@@ -16,7 +16,7 @@ mod mcp_compliance_tests {
     fn test_all_result_types_have_meta_field() {
         // Test InitializeResult
         let init_result = InitializeResult {
-            protocol_version: "2025-11-25".to_string(),
+            protocol_version: "2025-11-25".into(),
             server_info: Implementation {
                 name: "test".to_string(),
                 version: "1.0.0".to_string(),
@@ -125,7 +125,7 @@ mod mcp_compliance_tests {
     fn test_all_request_types_support_meta_field() {
         // Test InitializeRequest
         let init_request = InitializeRequest {
-            protocol_version: "2025-11-25".to_string(),
+            protocol_version: "2025-11-25".into(),
             capabilities: ClientCapabilities::default(),
             client_info: Implementation {
                 name: "test".to_string(),
@@ -203,7 +203,7 @@ mod mcp_compliance_tests {
     fn test_meta_fields_are_optional() {
         // Test that structures work with _meta: None
         let init_result = InitializeResult {
-            protocol_version: "2025-11-25".to_string(),
+            protocol_version: "2025-11-25".into(),
             server_info: Implementation {
                 name: "test".to_string(),
                 version: "1.0.0".to_string(),

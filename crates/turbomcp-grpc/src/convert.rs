@@ -71,7 +71,7 @@ impl TryFrom<InitializeRequest> for proto::InitializeRequest {
 
     fn try_from(req: InitializeRequest) -> GrpcResult<Self> {
         Ok(Self {
-            protocol_version: req.protocol_version,
+            protocol_version: req.protocol_version.to_string(),
             capabilities: Some(req.capabilities.into()),
             client_info: Some(req.client_info.into()),
         })
@@ -83,7 +83,7 @@ impl TryFrom<proto::InitializeRequest> for InitializeRequest {
 
     fn try_from(req: proto::InitializeRequest) -> GrpcResult<Self> {
         Ok(Self {
-            protocol_version: req.protocol_version,
+            protocol_version: req.protocol_version.into(),
             capabilities: req.capabilities.map(Into::into).unwrap_or_default(),
             client_info: req
                 .client_info
@@ -97,7 +97,7 @@ impl TryFrom<proto::InitializeRequest> for InitializeRequest {
 impl From<InitializeResult> for proto::InitializeResult {
     fn from(res: InitializeResult) -> Self {
         Self {
-            protocol_version: res.protocol_version,
+            protocol_version: res.protocol_version.to_string(),
             capabilities: Some(res.capabilities.into()),
             server_info: Some(res.server_info.into()),
             instructions: res.instructions,
@@ -110,7 +110,7 @@ impl TryFrom<proto::InitializeResult> for InitializeResult {
 
     fn try_from(res: proto::InitializeResult) -> GrpcResult<Self> {
         Ok(Self {
-            protocol_version: res.protocol_version,
+            protocol_version: res.protocol_version.into(),
             capabilities: res.capabilities.map(Into::into).unwrap_or_default(),
             server_info: res
                 .server_info

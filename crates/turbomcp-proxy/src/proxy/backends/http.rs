@@ -134,7 +134,7 @@ impl HttpBackend {
         debug!("Initializing HTTP backend connection");
 
         let request = InitializeRequest {
-            protocol_version: PROTOCOL_VERSION.to_string(),
+            protocol_version: PROTOCOL_VERSION.into(),
             capabilities: turbomcp_protocol::types::ClientCapabilities {
                 experimental: None,
                 sampling: None,

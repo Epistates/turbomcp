@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 // Re-export from core (single source of truth - DRY)
 pub use turbomcp_core::SUPPORTED_VERSIONS as SUPPORTED_PROTOCOL_VERSIONS;
+pub use turbomcp_core::types::core::ProtocolVersion;
 
 /// Default maximum connections for TCP transport.
 pub const DEFAULT_MAX_CONNECTIONS: usize = 1000;
@@ -237,9 +238,9 @@ pub enum ConfigValidationError {
 #[derive(Debug, Clone)]
 pub struct ProtocolConfig {
     /// Preferred protocol version.
-    pub preferred_version: String,
+    pub preferred_version: ProtocolVersion,
     /// Supported protocol versions.
-    pub supported_versions: Vec<String>,
+    pub supported_versions: Vec<ProtocolVersion>,
     /// Allow fallback to server's preferred version if client's is unsupported.
     pub allow_fallback: bool,
 }
@@ -247,11 +248,8 @@ pub struct ProtocolConfig {
 impl Default for ProtocolConfig {
     fn default() -> Self {
         Self {
-            preferred_version: SUPPORTED_PROTOCOL_VERSIONS[0].to_string(),
-            supported_versions: SUPPORTED_PROTOCOL_VERSIONS
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            preferred_version: ProtocolVersion::LATEST.clone(),
+            supported_versions: vec![ProtocolVersion::LATEST.clone()],
             allow_fallback: false,
         }
     }
@@ -260,29 +258,50 @@ impl Default for ProtocolConfig {
 impl ProtocolConfig {
     /// Create a strict configuration that only accepts the specified version.
     #[must_use]
-    pub fn strict(version: &str) -> Self {
+    pub fn strict(version: impl Into<ProtocolVersion>) -> Self {
+        let v = version.into();
         Self {
-            preferred_version: version.to_string(),
-            supported_versions: vec![version.to_string()],
+            preferred_version: v.clone(),
+            supported_versions: vec![v],
+            allow_fallback: false,
+        }
+    }
+
+    /// Create a multi-version configuration that accepts all stable versions.
+    ///
+    /// The preferred version is the latest stable. Older clients are accepted
+    /// and responses are filtered through the appropriate version adapter.
+    #[must_use]
+    pub fn multi_version() -> Self {
+        Self {
+            preferred_version: ProtocolVersion::LATEST.clone(),
+            supported_versions: ProtocolVersion::STABLE.to_vec(),
             allow_fallback: false,
         }
     }
 
     /// Check if a protocol version is supported.
     #[must_use]
-    pub fn is_supported(&self, version: &str) -> bool {
-        self.supported_versions.iter().any(|v| v == version)
+    pub fn is_supported(&self, version: &ProtocolVersion) -> bool {
+        self.supported_versions.contains(version)
     }
 
     /// Negotiate protocol version with client.
     ///
     /// Returns the negotiated version or None if no compatible version found.
     #[must_use]
-    pub fn negotiate(&self, client_version: Option<&str>) -> Option<String> {
+    pub fn negotiate(&self, client_version: Option<&str>) -> Option<ProtocolVersion> {
         match client_version {
-            Some(version) if self.is_supported(version) => Some(version.to_string()),
-            Some(_) if self.allow_fallback => Some(self.preferred_version.clone()),
-            Some(_) => None,
+            Some(version_str) => {
+                let version = ProtocolVersion::from(version_str);
+                if self.is_supported(&version) {
+                    Some(version)
+                } else if self.allow_fallback {
+                    Some(self.preferred_version.clone())
+                } else {
+                    None
+                }
+            }
             None => Some(self.preferred_version.clone()),
         }
     }
@@ -698,12 +717,38 @@ mod tests {
         let config = ProtocolConfig::default();
         assert_eq!(
             config.negotiate(Some("2025-11-25")),
-            Some("2025-11-25".to_string())
+            Some(ProtocolVersion::V2025_11_25)
         );
     }
 
     #[test]
-    fn test_protocol_negotiation_fallback() {
+    fn test_protocol_negotiation_default_rejects_older_version() {
+        // Default config is strict latest-only
+        let config = ProtocolConfig::default();
+        assert_eq!(config.negotiate(Some("2025-06-18")), None);
+    }
+
+    #[test]
+    fn test_protocol_negotiation_multi_version_accepts_older() {
+        let config = ProtocolConfig::multi_version();
+        assert_eq!(
+            config.negotiate(Some("2025-06-18")),
+            Some(ProtocolVersion::V2025_06_18)
+        );
+        assert_eq!(
+            config.negotiate(Some("2025-11-25")),
+            Some(ProtocolVersion::V2025_11_25)
+        );
+    }
+
+    #[test]
+    fn test_protocol_negotiation_none_returns_preferred() {
+        let config = ProtocolConfig::default();
+        assert_eq!(config.negotiate(None), Some(ProtocolVersion::V2025_11_25));
+    }
+
+    #[test]
+    fn test_protocol_negotiation_unknown_version() {
         let config = ProtocolConfig::default();
         assert_eq!(config.negotiate(Some("unknown-version")), None);
     }

@@ -29,6 +29,8 @@
 //! let response = InitializeResult { protocol_version: "2025-11-25".into(), ..Default::default() };
 //! ```
 
+pub mod adapter;
+
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;

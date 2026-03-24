@@ -62,8 +62,8 @@ impl From<DateTime<Utc>> for Timestamp {
     }
 }
 
-/// Protocol version string
-pub type ProtocolVersion = String;
+/// Re-export protocol version enum from core.
+pub use turbomcp_core::types::core::ProtocolVersion;
 
 /// JSON-RPC request identifier
 pub type RequestId = MessageId;
