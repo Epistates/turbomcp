@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.8] - 2026-03-24
+
+### Added
+
+- **Multi-version MCP protocol support** — TurboMCP can now negotiate and serve multiple MCP specification versions from a single server. The version adapter system transparently filters outgoing responses to match the client's negotiated protocol version.
+
+- **`ProtocolVersion` enum** — Replaced `type ProtocolVersion = String` alias with a proper enum (`V2025_06_18`, `V2025_11_25`, `Draft`, `Unknown(String)`). Provides `Serialize`/`Deserialize` (round-trips to canonical version strings), `Ord` (by release date), `Display`, `From<&str>`, `From<String>`, `PartialEq<&str>`, `is_stable()`, `is_known()`, and `is_draft()`. Constants: `ProtocolVersion::LATEST` and `ProtocolVersion::STABLE`.
+
+- **Version adapter layer** (`turbomcp_protocol::versioning::adapter`) — `VersionAdapter` trait with `filter_capabilities()`, `filter_result()`, `validate_method()`, and `supported_methods()`. Factory function `adapter_for_version()` returns the appropriate adapter. Three implementations:
+  - `V2025_06_18Adapter` — strips icons, execution, outputSchema from tools; icons from prompts/resources; description/icons/websiteUrl from serverInfo; tasks capability; elicitation.url sub-capability; sampling.tools sub-capability. Rejects tasks/* methods.
+  - `V2025_11_25Adapter` — pass-through (current stable).
+  - `DraftAdapter` — pass-through (superset of 2025-11-25).
+
+- **`route_request_versioned()`** — New server router entry point for post-initialize requests. Validates incoming methods against the negotiated version and filters outgoing responses through the version adapter. Transport layers store the negotiated version from init and call this for subsequent requests.
+
+- **`ProtocolConfig::multi_version()`** — Opt-in constructor that accepts all stable MCP versions. The default remains strict latest-only (matching prior behavior).
+
+- **`ElicitationCapabilities` spec compliance** — Added `form` and `url` sub-capability structs per MCP 2025-11-25 specification. Empty capabilities object (`{}`) defaults to form-only support via `supports_form()`/`supports_url()` helpers. Builder defaults to full (form + URL). `schema_validation` retained as TurboMCP extension.
+
+- **39 new version adapter tests** — Comprehensive coverage: serde round-trips, ordering consistency, adapter filtering for every response type, method validation, elicitation backward compat, end-to-end initialize response filtering.
+
+### Fixed
+
+- **`Ord`/`PartialEq` inconsistency on `ProtocolVersion::Unknown`** — Two distinct `Unknown` variants were `Ord::Equal` but `PartialEq` not-equal, violating Rust's trait contract and causing undefined behavior in `BTreeMap`/`BTreeSet`/sort. `Unknown` variants now compare lexicographically by inner string.
+
+- **`ElicitationCapabilities` missing `form`/`url` sub-fields** — The 2025-11-25 spec requires `{ "form": {}, "url": {} }` structure in elicitation capabilities. Previously only had `schema_validation`.
+
+### Changed
+
+- **`SUPPORTED_VERSIONS` expanded** — Now includes both `"2025-06-18"` and `"2025-11-25"` (previously only `"2025-11-25"`). The default `ProtocolConfig` still only accepts the latest version; use `ProtocolConfig::multi_version()` to accept older clients.
+
+- **`ProtocolConfig` uses `ProtocolVersion` enum** — `preferred_version` and `supported_versions` fields are now typed `ProtocolVersion` instead of `String`. `negotiate()` returns `Option<ProtocolVersion>`.
+
 ## [3.0.7] - 2026-03-23
 
 ### Fixed

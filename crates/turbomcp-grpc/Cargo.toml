@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-grpc"
-version = "3.0.7"
+version = "3.0.8"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "gRPC transport for TurboMCP - high-performance MCP over HTTP/2"
