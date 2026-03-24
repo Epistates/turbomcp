@@ -79,7 +79,7 @@ fuzz_target!(|data: &[u8]| {
 
         // Test full initialize flow
         let init_request = InitializeRequest {
-            protocol_version: "2025-11-25".to_string(),
+            protocol_version: "2025-11-25".into(),
             capabilities: client_caps.clone(),
             client_info: Implementation {
                 name: "fuzz-client".to_string(),
@@ -97,7 +97,7 @@ fuzz_target!(|data: &[u8]| {
         }
 
         let init_result = InitializeResult {
-            protocol_version: "2025-11-25".to_string(),
+            protocol_version: "2025-11-25".into(),
             capabilities: server_caps.clone(),
             server_info: Implementation {
                 name: "fuzz-server".to_string(),

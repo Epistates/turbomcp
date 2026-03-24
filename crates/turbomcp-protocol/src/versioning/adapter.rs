@@ -111,12 +111,15 @@ impl VersionAdapter for V2025_06_18Adapter {
         &ProtocolVersion::V2025_06_18
     }
 
-    fn filter_capabilities(&self, mut caps: ServerCapabilities) -> ServerCapabilities {
+    fn filter_capabilities(&self, caps: ServerCapabilities) -> ServerCapabilities {
         // Tasks didn't exist in 2025-06-18
         #[cfg(feature = "experimental-tasks")]
         {
+            let mut caps = caps;
             caps.tasks = None;
+            caps
         }
+        #[cfg(not(feature = "experimental-tasks"))]
         caps
     }
 
