@@ -9,7 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  CARGO_TARGET_DIR: /tmp/cargo-target
   CARGO_NET_RETRY: 2
   CARGO_NET_TIMEOUT: 10
 
@@ -17,6 +16,8 @@ jobs:
   test:
     name: Lint & Test
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: /tmp/cargo-target
 
     steps:
     - uses: actions/checkout@v6
