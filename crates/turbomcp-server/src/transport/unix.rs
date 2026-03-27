@@ -156,6 +156,7 @@ pub async fn run_with_shutdown<H: McpHandler>(
 
                 // Spawn handler task
                 let handler = handler.clone();
+                let conn_config = config.clone();
                 tokio::spawn(async move {
                     // Guard dropped when task completes, releasing connection slot
                     let _guard = guard;
@@ -163,7 +164,7 @@ pub async fn run_with_shutdown<H: McpHandler>(
                     let (reader, writer) = stream.into_split();
                     let reader = BufReader::new(reader);
 
-                    let runner = LineTransportRunner::new(handler);
+                    let runner = LineTransportRunner::with_config(handler, conn_config);
                     if let Err(e) = runner.run(reader, writer, RequestContext::unix).await {
                         tracing::error!("Unix socket connection error: {}", e);
                     }

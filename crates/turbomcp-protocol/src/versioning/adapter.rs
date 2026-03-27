@@ -216,16 +216,22 @@ impl VersionAdapter for DraftAdapter {
 // Adapter Registry
 // =============================================================================
 
+// Static adapter instances — zero-sized types with no state, so these are
+// trivially const-constructible and eliminate per-request heap allocation.
+static ADAPTER_V2025_06_18: V2025_06_18Adapter = V2025_06_18Adapter;
+static ADAPTER_V2025_11_25: V2025_11_25Adapter = V2025_11_25Adapter;
+static ADAPTER_DRAFT: DraftAdapter = DraftAdapter;
+
 /// Get the appropriate version adapter for a protocol version.
 ///
-/// Returns a boxed adapter for the given version. Unknown versions
-/// fall back to the latest stable adapter.
-pub fn adapter_for_version(version: &ProtocolVersion) -> Box<dyn VersionAdapter> {
+/// Returns a static reference to the adapter for the given version.
+/// Unknown versions fall back to the latest stable adapter.
+pub fn adapter_for_version(version: &ProtocolVersion) -> &'static dyn VersionAdapter {
     match version {
-        ProtocolVersion::V2025_06_18 => Box::new(V2025_06_18Adapter),
-        ProtocolVersion::V2025_11_25 => Box::new(V2025_11_25Adapter),
-        ProtocolVersion::Draft => Box::new(DraftAdapter),
-        ProtocolVersion::Unknown(_) => Box::new(V2025_11_25Adapter), // fallback
+        ProtocolVersion::V2025_06_18 => &ADAPTER_V2025_06_18,
+        ProtocolVersion::V2025_11_25 => &ADAPTER_V2025_11_25,
+        ProtocolVersion::Draft => &ADAPTER_DRAFT,
+        ProtocolVersion::Unknown(_) => &ADAPTER_V2025_11_25, // fallback
     }
 }
 

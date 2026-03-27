@@ -10,6 +10,14 @@
 //! - POST `/` or `/mcp` - JSON-RPC request/response
 //! - GET `/sse` - Server-Sent Events stream with session management
 //! - `Mcp-Session-Id` header for session correlation
+//!
+//! # Version-Aware Routing
+//!
+//! Per-session version-aware routing is active. After a successful `initialize`
+//! handshake, the negotiated [`ProtocolVersion`] is stored in [`SessionManager`]
+//! keyed by `Mcp-Session-Id`. All subsequent requests for that session are
+//! dispatched through [`router::route_request_versioned`], ensuring correct
+//! adapter filtering and method availability for the negotiated spec version.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -25,6 +33,7 @@ use futures::stream::Stream;
 use tokio::sync::{RwLock, broadcast};
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
+use turbomcp_core::types::core::ProtocolVersion;
 use uuid::Uuid;
 
 use crate::config::{RateLimiter, ServerConfig};
@@ -42,11 +51,20 @@ const MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
 /// SSE keep-alive interval.
 const SSE_KEEP_ALIVE_SECS: u64 = 30;
 
+/// Per-session data tracked by SessionManager.
+#[derive(Debug, Clone)]
+struct SessionData {
+    /// Broadcast channel for SSE push.
+    tx: broadcast::Sender<String>,
+    /// Negotiated protocol version (set after successful initialize).
+    protocol_version: Option<ProtocolVersion>,
+}
+
 /// Session manager for SSE connections.
 #[derive(Clone, Debug)]
 pub struct SessionManager {
-    /// Map of session ID to broadcast sender for pushing events
-    sessions: Arc<RwLock<HashMap<String, broadcast::Sender<String>>>>,
+    /// Map of session ID to per-session data.
+    sessions: Arc<RwLock<HashMap<String, SessionData>>>,
 }
 
 impl Default for SessionManager {
@@ -68,7 +86,13 @@ impl SessionManager {
         let session_id = Uuid::new_v4().to_string();
         let (tx, rx) = broadcast::channel(100);
 
-        self.sessions.write().await.insert(session_id.clone(), tx);
+        self.sessions.write().await.insert(
+            session_id.clone(),
+            SessionData {
+                tx,
+                protocol_version: None,
+            },
+        );
 
         tracing::debug!("Created SSE session: {}", session_id);
         (session_id, rx)
@@ -83,8 +107,8 @@ impl SessionManager {
     /// Send a message to a specific session.
     #[allow(dead_code)] // Reserved for server-initiated push (not yet wired)
     pub(crate) async fn send_to_session(&self, session_id: &str, message: &str) -> bool {
-        if let Some(tx) = self.sessions.read().await.get(session_id) {
-            tx.send(message.to_string()).is_ok()
+        if let Some(data) = self.sessions.read().await.get(session_id) {
+            data.tx.send(message.to_string()).is_ok()
         } else {
             false
         }
@@ -94,8 +118,8 @@ impl SessionManager {
     #[allow(dead_code)] // Reserved for server-initiated push (not yet wired)
     pub(crate) async fn broadcast(&self, message: &str) {
         let sessions = self.sessions.read().await;
-        for (session_id, tx) in sessions.iter() {
-            if tx.send(message.to_string()).is_err() {
+        for (session_id, data) in sessions.iter() {
+            if data.tx.send(message.to_string()).is_err() {
                 tracing::warn!("Failed to send to session {}", session_id);
             }
         }
@@ -105,6 +129,22 @@ impl SessionManager {
     #[allow(dead_code)] // Reserved for server-initiated push (not yet wired)
     pub(crate) async fn session_count(&self) -> usize {
         self.sessions.read().await.len()
+    }
+
+    /// Store the negotiated protocol version for a session.
+    pub(crate) async fn set_protocol_version(&self, session_id: &str, version: ProtocolVersion) {
+        if let Some(data) = self.sessions.write().await.get_mut(session_id) {
+            data.protocol_version = Some(version);
+        }
+    }
+
+    /// Retrieve the negotiated protocol version for a session.
+    pub(crate) async fn get_protocol_version(&self, session_id: &str) -> Option<ProtocolVersion> {
+        self.sessions
+            .read()
+            .await
+            .get(session_id)
+            .and_then(|data| data.protocol_version.clone())
     }
 }
 
@@ -136,6 +176,7 @@ pub async fn run<H: McpHandler>(handler: &H, addr: &str) -> McpResult<()> {
         handler: handler.clone(),
         session_manager: session_manager.clone(),
         rate_limiter: None,
+        config: None,
     };
 
     let app = Router::new()
@@ -193,6 +234,7 @@ pub async fn run_with_config<H: McpHandler>(
         handler: handler.clone(),
         session_manager: session_manager.clone(),
         rate_limiter,
+        config: Some(config.clone()),
     };
 
     let app = Router::new()
@@ -246,16 +288,81 @@ struct SseState<H: McpHandler> {
     handler: H,
     session_manager: SessionManager,
     rate_limiter: Option<Arc<RateLimiter>>,
+    config: Option<ServerConfig>,
+}
+
+/// Route a request with per-session version tracking.
+///
+/// On `initialize`:
+/// - Routes through `route_request_with_config` for protocol negotiation.
+/// - On success, extracts the negotiated `protocolVersion` from the response
+///   and stores it in the session manager for subsequent requests.
+///
+/// On all other methods when the session has a stored version:
+/// - Routes through `route_request_versioned` for adapter-filtered dispatch.
+///
+/// On all other cases (pre-init or no session):
+/// - Routes through `route_request_with_config` which handles validation.
+async fn route_with_version_tracking<H: McpHandler>(
+    handler: &H,
+    request: router::JsonRpcIncoming,
+    session_manager: &SessionManager,
+    config: Option<&ServerConfig>,
+    session_id: Option<&str>,
+) -> router::JsonRpcOutgoing {
+    let ctx = RequestContext::http();
+    let core_ctx = ctx.to_core_context();
+
+    if request.method == "initialize" {
+        let response = router::route_request_with_config(handler, request, &core_ctx, config).await;
+
+        // If successful and we have a session, extract and store the negotiated version.
+        if let (Some(sid), Some(result)) = (session_id, response.result.as_ref())
+            && let Some(version_str) = result.get("protocolVersion").and_then(|v| v.as_str())
+        {
+            let version = ProtocolVersion::from(version_str);
+            session_manager.set_protocol_version(sid, version).await;
+            tracing::debug!(
+                session_id = sid,
+                protocol_version = version_str,
+                "Stored negotiated protocol version for session"
+            );
+        }
+
+        return response;
+    }
+
+    // For post-initialize requests: use versioned routing if session has a stored version.
+    if let Some(sid) = session_id
+        && let Some(version) = session_manager.get_protocol_version(sid).await
+    {
+        return router::route_request_versioned(handler, request, &core_ctx, &version).await;
+    }
+
+    // Pre-initialize or sessionless: route with config for proper validation.
+    router::route_request_with_config(handler, request, &core_ctx, config).await
 }
 
 /// Axum handler for JSON-RPC requests (simple mode).
 async fn handle_json_rpc<H: McpHandler>(
     axum::extract::State(state): axum::extract::State<SseState<H>>,
+    headers: axum::http::HeaderMap,
     axum::Json(request): axum::Json<JsonRpcIncoming>,
 ) -> axum::Json<JsonRpcOutgoing> {
-    let ctx = RequestContext::http();
-    let core_ctx = ctx.to_core_context();
-    let response = router::route_request(&state.handler, request, &core_ctx).await;
+    let session_id = headers
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+
+    let response = route_with_version_tracking(
+        &state.handler,
+        request,
+        &state.session_manager,
+        state.config.as_ref(),
+        session_id.as_deref(),
+    )
+    .await;
+
     axum::Json(response)
 }
 
@@ -263,9 +370,10 @@ async fn handle_json_rpc<H: McpHandler>(
 async fn handle_json_rpc_with_rate_limit<H: McpHandler>(
     axum::extract::State(state): axum::extract::State<SseState<H>>,
     axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<SocketAddr>,
+    headers: axum::http::HeaderMap,
     axum::Json(request): axum::Json<JsonRpcIncoming>,
 ) -> Result<axum::Json<JsonRpcOutgoing>, axum::http::StatusCode> {
-    // Check rate limit if configured
+    // Check rate limit if configured.
     if let Some(ref limiter) = state.rate_limiter {
         let client_id = addr.ip().to_string();
         if !limiter.check(Some(&client_id)) {
@@ -274,9 +382,20 @@ async fn handle_json_rpc_with_rate_limit<H: McpHandler>(
         }
     }
 
-    let ctx = RequestContext::http();
-    let core_ctx = ctx.to_core_context();
-    let response = router::route_request(&state.handler, request, &core_ctx).await;
+    let session_id = headers
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+
+    let response = route_with_version_tracking(
+        &state.handler,
+        request,
+        &state.session_manager,
+        state.config.as_ref(),
+        session_id.as_deref(),
+    )
+    .await;
+
     Ok(axum::Json(response))
 }
 

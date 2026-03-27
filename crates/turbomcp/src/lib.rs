@@ -159,6 +159,11 @@ pub use turbomcp_server::McpServerExt;
 /// Builder for configuring and launching MCP servers with transports
 pub use turbomcp_server::ServerBuilder;
 
+/// Protocol version negotiation configuration
+///
+/// Use `ProtocolConfig::multi_version()` to accept older MCP clients.
+pub use turbomcp_server::ProtocolConfig;
+
 /// Configuration for MCP server behavior, timeouts, and protocol versions
 pub use turbomcp_server::ServerConfig;
 
@@ -302,8 +307,8 @@ pub mod prelude {
 
     // Core traits and types
     pub use super::{
-        McpError, McpHandler, McpHandlerExt, McpResult, McpServerExt, ServerBuilder, ServerConfig,
-        ServerConfigBuilder, Transport,
+        McpError, McpHandler, McpHandlerExt, McpResult, McpServerExt, ProtocolConfig,
+        ServerBuilder, ServerConfig, ServerConfigBuilder, Transport,
     };
 
     // Result types for handlers

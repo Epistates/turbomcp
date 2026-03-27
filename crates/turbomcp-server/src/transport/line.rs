@@ -15,11 +15,13 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use turbomcp_core::error::{ErrorKind, McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
+use turbomcp_core::types::core::ProtocolVersion;
 
+use crate::config::ServerConfig;
 use crate::context::{McpSession, RequestContext};
 use crate::router;
 
-use super::MAX_MESSAGE_SIZE;
+use super::{MAX_MESSAGE_SIZE, SessionState};
 
 /// Maximum number of in-flight server-to-client requests before back-pressure.
 const MAX_PENDING_REQUESTS: usize = 64;
@@ -88,12 +90,29 @@ type HandlerResponse = router::JsonRpcOutgoing;
 #[derive(Debug)]
 pub struct LineTransportRunner<H: McpHandler> {
     handler: H,
+    config: Option<ServerConfig>,
 }
 
 impl<H: McpHandler> LineTransportRunner<H> {
-    /// Create a new line transport runner.
+    /// Create a new line transport runner with default configuration.
+    ///
+    /// Uses strict latest-version-only protocol negotiation.
     pub fn new(handler: H) -> Self {
-        Self { handler }
+        Self {
+            handler,
+            config: None,
+        }
+    }
+
+    /// Create a line transport runner with custom server configuration.
+    ///
+    /// Use `ServerConfig` with `ProtocolConfig::multi_version()` to accept
+    /// clients requesting older MCP specification versions (e.g. 2025-06-18).
+    pub fn with_config(handler: H, config: ServerConfig) -> Self {
+        Self {
+            handler,
+            config: Some(config),
+        }
     }
 
     /// Run the transport loop.
@@ -125,6 +144,10 @@ impl<H: McpHandler> LineTransportRunner<H> {
             HashMap::<serde_json::Value, oneshot::Sender<McpResult<serde_json::Value>>>::new();
         // Use string-prefixed IDs to avoid collision with client-originated integer IDs
         let mut next_request_id = 1u64;
+
+        // MCP session lifecycle state. Enforces that `initialize` succeeds
+        // before any other requests are processed, and prevents duplicate init.
+        let mut session_state = SessionState::Uninitialized;
 
         let mut line = String::new();
 
@@ -182,22 +205,115 @@ impl<H: McpHandler> LineTransportRunner<H> {
                             tracing::warn!(id = %id, "Received response for unknown request ID");
                         }
                     } else {
-                        // It's a request or notification from the client.
-                        // Spawn handler on a separate task to prevent deadlocks when
-                        // the handler uses session.call() for sampling/elicitation.
                         match router::parse_request(trimmed) {
                             Ok(request) => {
-                                let handler = self.handler.clone();
-                                let session = session_handle.clone();
-                                let resp_tx = response_tx.clone();
-                                let ctx = ctx_factory().with_session(session);
-                                let core_ctx = ctx.to_core_context();
+                                if request.method == "initialize" {
+                                    // Reject duplicate initialize per MCP spec.
+                                    if matches!(session_state, SessionState::Initialized(_)) {
+                                        self.send_error(
+                                            &mut writer,
+                                            request.id.clone(),
+                                            McpError::invalid_request(
+                                                "Session already initialized",
+                                            ),
+                                        )
+                                        .await?;
+                                        line.clear();
+                                        continue;
+                                    }
 
-                                tokio::spawn(async move {
-                                    let response = router::route_request(&handler, request, &core_ctx).await;
-                                    // If channel is closed the transport loop has exited; ignore.
-                                    let _ = resp_tx.send(response).await;
-                                });
+                                    // Handle initialize inline (not spawned) so we can
+                                    // capture the negotiated protocol version. Per the
+                                    // MCP spec, initialize is always the first request
+                                    // and the client waits for the response, so there
+                                    // is no deadlock risk from blocking the loop here.
+                                    //
+                                    // NOTE: Handlers MUST NOT call session.call() during
+                                    // initialize dispatch — the transport loop is blocked
+                                    // here and cannot process the server-to-client
+                                    // request, which would deadlock.
+                                    let ctx = ctx_factory().with_session(session_handle.clone());
+                                    let core_ctx = ctx.to_core_context();
+                                    let response = router::route_request_with_config(
+                                        &self.handler,
+                                        request,
+                                        &core_ctx,
+                                        self.config.as_ref(),
+                                    )
+                                    .await;
+
+                                    // Extract the negotiated version from a successful
+                                    // response. On failure (error response), session
+                                    // stays Uninitialized and subsequent non-init
+                                    // requests will be rejected.
+                                    if let Some(ref result) = response.result
+                                        && let Some(v) =
+                                            result.get("protocolVersion").and_then(|v| v.as_str())
+                                    {
+                                        let version = ProtocolVersion::from(v);
+                                        tracing::info!(
+                                            version = %version,
+                                            "Protocol version negotiated"
+                                        );
+                                        session_state = SessionState::Initialized(version);
+                                    }
+
+                                    if response.should_send() {
+                                        self.send_response(&mut writer, &response).await?;
+                                    }
+                                } else if request.method == "notifications/initialized"
+                                    || request.method == "notifications/cancelled"
+                                {
+                                    // Allow lifecycle notifications through regardless
+                                    // of init state (they have no response).
+                                    let handler = self.handler.clone();
+                                    let resp_tx = response_tx.clone();
+                                    let ctx = ctx_factory().with_session(session_handle.clone());
+                                    let core_ctx = ctx.to_core_context();
+
+                                    tokio::spawn(async move {
+                                        let response = router::route_request(
+                                            &handler, request, &core_ctx,
+                                        )
+                                        .await;
+                                        let _ = resp_tx.send(response).await;
+                                    });
+                                } else {
+                                    // All other requests require a successful initialize.
+                                    let version = match &session_state {
+                                        SessionState::Initialized(v) => v.clone(),
+                                        SessionState::Uninitialized => {
+                                            self.send_error(
+                                                &mut writer,
+                                                request.id.clone(),
+                                                McpError::invalid_request(
+                                                    "Server not initialized. Send 'initialize' first.",
+                                                ),
+                                            )
+                                            .await?;
+                                            line.clear();
+                                            continue;
+                                        }
+                                    };
+
+                                    // Spawn handler on a separate task to prevent
+                                    // deadlocks when the handler uses session.call()
+                                    // for sampling/elicitation.
+                                    let handler = self.handler.clone();
+                                    let session = session_handle.clone();
+                                    let resp_tx = response_tx.clone();
+                                    let ctx = ctx_factory().with_session(session);
+                                    let core_ctx = ctx.to_core_context();
+
+                                    tokio::spawn(async move {
+                                        let response = router::route_request_versioned(
+                                            &handler, request, &core_ctx, &version,
+                                        )
+                                        .await;
+                                        // If channel is closed the transport loop has exited; ignore.
+                                        let _ = resp_tx.send(response).await;
+                                    });
+                                }
                             }
                             Err(e) => {
                                 self.send_error(&mut writer, None, e).await?;
@@ -390,11 +506,60 @@ mod tests {
         }
     }
 
+    /// Helper: build an initialize request line followed by notifications/initialized.
+    fn init_handshake() -> String {
+        let init = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "clientInfo": { "name": "test-client", "version": "1.0.0" },
+                "capabilities": {}
+            }
+        });
+        let notif = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        });
+        format!("{}\n{}\n", init, notif)
+    }
+
     #[tokio::test]
-    async fn test_line_transport_ping() {
+    async fn test_line_transport_ping_after_init() {
         let handler = TestHandler;
         let runner = LineTransportRunner::new(handler);
 
+        let ping = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let input = format!("{}{}\n", init_handshake(), ping);
+        let reader = BufReader::new(Cursor::new(input));
+        let mut output = Vec::new();
+
+        runner
+            .run(reader, &mut output, RequestContext::stdio)
+            .await
+            .unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("\"id\":1"), "Should have ping response");
+        // Ping response should be a success (no error)
+        let lines: Vec<&str> = output_str.trim().lines().collect();
+        let ping_line = lines
+            .iter()
+            .find(|l| l.contains("\"id\":1"))
+            .expect("ping response line");
+        assert!(
+            ping_line.contains("\"result\""),
+            "Ping should succeed after init"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_line_transport_rejects_before_init() {
+        let handler = TestHandler;
+        let runner = LineTransportRunner::new(handler);
+
+        // Send ping without initialize first
         let input = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
         let reader = BufReader::new(Cursor::new(format!("{}\n", input)));
         let mut output = Vec::new();
@@ -405,8 +570,62 @@ mod tests {
             .unwrap();
 
         let output_str = String::from_utf8(output).unwrap();
-        assert!(output_str.contains("\"jsonrpc\":\"2.0\""));
-        assert!(output_str.contains("\"id\":1"));
+        assert!(
+            output_str.contains("\"error\""),
+            "Should reject ping before init"
+        );
+        assert!(
+            output_str.contains("not initialized"),
+            "Error should mention initialization"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_line_transport_rejects_duplicate_init() {
+        let handler = TestHandler;
+        let runner = LineTransportRunner::new(handler);
+
+        // Send two initialize requests
+        let init1 = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "clientInfo": { "name": "test", "version": "1.0.0" },
+                "capabilities": {}
+            }
+        });
+        let init2 = serde_json::json!({
+            "jsonrpc": "2.0", "id": 2, "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "clientInfo": { "name": "test", "version": "1.0.0" },
+                "capabilities": {}
+            }
+        });
+        let input = format!("{}\n{}\n", init1, init2);
+        let reader = BufReader::new(Cursor::new(input));
+        let mut output = Vec::new();
+
+        runner
+            .run(reader, &mut output, RequestContext::stdio)
+            .await
+            .unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        let lines: Vec<&str> = output_str.trim().lines().collect();
+        assert_eq!(lines.len(), 2, "Should have two responses");
+
+        // First init should succeed
+        assert!(lines[0].contains("\"result\""), "First init should succeed");
+        // Second init should be rejected
+        assert!(
+            lines[1].contains("\"error\""),
+            "Duplicate init should be rejected"
+        );
+        assert!(
+            lines[1].contains("already initialized"),
+            "Error should mention already initialized"
+        );
     }
 
     #[tokio::test]
@@ -414,6 +633,7 @@ mod tests {
         let handler = TestHandler;
         let runner = LineTransportRunner::new(handler);
 
+        // Empty lines followed by a ping (without init, so we get an error)
         let input = "\n\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}\n\n";
         let reader = BufReader::new(Cursor::new(input));
         let mut output = Vec::new();
@@ -424,7 +644,7 @@ mod tests {
             .unwrap();
 
         let output_str = String::from_utf8(output).unwrap();
-        // Should only have one response (for the ping)
+        // Should only have one response (error for uninitialized ping)
         assert_eq!(output_str.matches("jsonrpc").count(), 1);
     }
 
@@ -439,7 +659,7 @@ mod tests {
             "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\",\"padding\":\"{}\"}}\n",
             "x".repeat(super::MAX_MESSAGE_SIZE + 1)
         );
-        // Follow with a valid request to prove the loop continues
+        // Follow with another request to prove the loop continues
         let valid = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n";
         let input = format!("{}{}", oversized, valid);
         let reader = BufReader::new(Cursor::new(input));
@@ -451,7 +671,7 @@ mod tests {
             .unwrap();
 
         let output_str = String::from_utf8(output).unwrap();
-        // Should have an error response for oversized and a success for valid
+        // Should have error responses (oversized + uninitialized)
         assert!(
             output_str.contains("\"error\""),
             "Should contain error for oversized message"
@@ -478,11 +698,8 @@ mod tests {
             .unwrap();
 
         let output_str = String::from_utf8(output).unwrap();
-        // Should have a parse error and then a valid response
-        assert!(
-            output_str.contains("\"error\""),
-            "Should contain parse error"
-        );
+        // Should have a parse error and then an uninitialized error
+        assert!(output_str.contains("\"error\""), "Should contain error");
         assert!(
             output_str.contains("\"id\":1"),
             "Should continue processing after parse error"

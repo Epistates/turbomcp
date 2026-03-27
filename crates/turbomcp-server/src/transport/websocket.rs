@@ -1,6 +1,15 @@
 //! WebSocket transport implementation.
 //!
 //! Provides bidirectional JSON-RPC over WebSocket using Axum.
+//!
+//! # Per-Connection Version-Aware Routing
+//!
+//! Each WebSocket connection maintains its own `SessionState`, mirroring the
+//! lifecycle enforcement already present in the STDIO, TCP, and Unix transports:
+//! - `initialize` must succeed before any other method is accepted.
+//! - Duplicate `initialize` requests are rejected.
+//! - Post-initialize requests are routed through `route_request_versioned`,
+//!   which applies the negotiated `ProtocolVersion` adapter for response filtering.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -11,7 +20,9 @@ use axum::routing::get;
 use futures::{SinkExt, StreamExt};
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
+use turbomcp_core::types::core::ProtocolVersion;
 
+use super::SessionState;
 use crate::config::{ConnectionCounter, RateLimiter, ServerConfig};
 use crate::context::RequestContext;
 use crate::router::{self, JsonRpcOutgoing};
@@ -64,6 +75,7 @@ pub async fn run_with_config<H: McpHandler>(
         handler: handler.clone(),
         rate_limiter,
         connection_counter: connection_counter.clone(),
+        config: Some(config.clone()),
     };
 
     let app = Router::new()
@@ -116,6 +128,7 @@ struct WebSocketState<H: McpHandler> {
     handler: H,
     rate_limiter: Option<Arc<RateLimiter>>,
     connection_counter: Arc<ConnectionCounter>,
+    config: Option<ServerConfig>,
 }
 
 /// Axum handler for WebSocket upgrade.
@@ -156,23 +169,33 @@ async fn ws_upgrade_handler<H: McpHandler>(
 
     let handler = state.handler.clone();
     let rate_limiter = state.rate_limiter.clone();
+    let config = state.config.clone();
     let client_addr = addr;
 
     Ok(ws.on_upgrade(move |socket| {
-        handle_websocket(socket, handler, rate_limiter, client_addr, guard)
+        handle_websocket(socket, handler, rate_limiter, client_addr, guard, config)
     }))
 }
 
-/// Handle a WebSocket connection.
+/// Handle a WebSocket connection with per-connection MCP session lifecycle enforcement.
+///
+/// Each connection starts `Uninitialized`. The client must send `initialize`
+/// before any other method. On success the negotiated `ProtocolVersion` is
+/// stored and subsequent requests are routed through `route_request_versioned`
+/// so the version adapter filters responses appropriately.
 async fn handle_websocket<H: McpHandler>(
     socket: WebSocket,
     handler: H,
     rate_limiter: Option<Arc<RateLimiter>>,
     client_addr: SocketAddr,
     _connection_guard: crate::config::ConnectionGuard,
+    config: Option<ServerConfig>,
 ) {
     let client_id = client_addr.ip().to_string();
     let (mut sender, mut receiver) = socket.split();
+
+    // Per-connection MCP session lifecycle state.
+    let mut session_state = SessionState::Uninitialized;
 
     while let Some(msg) = receiver.next().await {
         let msg = match msg {
@@ -214,13 +237,70 @@ async fn handle_websocket<H: McpHandler>(
             continue;
         }
 
-        // Parse and route
+        // Parse and route with lifecycle-aware dispatch.
         let ctx = RequestContext::websocket();
         let core_ctx = ctx.to_core_context();
 
         match router::parse_request(&text) {
             Ok(request) => {
-                let response = router::route_request(&handler, request, &core_ctx).await;
+                let response = if request.method == "initialize" {
+                    // Reject duplicate initialize per MCP spec.
+                    if matches!(session_state, SessionState::Initialized(_)) {
+                        JsonRpcOutgoing::error(
+                            request.id.clone(),
+                            McpError::invalid_request("Session already initialized"),
+                        )
+                    } else {
+                        // Route initialize through config-aware handler so protocol
+                        // negotiation and capability validation are applied.
+                        let resp = router::route_request_with_config(
+                            &handler,
+                            request,
+                            &core_ctx,
+                            config.as_ref(),
+                        )
+                        .await;
+
+                        // Extract the negotiated version from a successful response.
+                        // On failure (error response) the session stays Uninitialized
+                        // and subsequent non-init requests will be rejected.
+                        if let Some(ref result) = resp.result
+                            && let Some(v) = result.get("protocolVersion").and_then(|v| v.as_str())
+                        {
+                            let version = ProtocolVersion::from(v);
+                            tracing::info!(
+                                version = %version,
+                                client = %client_addr,
+                                "Protocol version negotiated"
+                            );
+                            session_state = SessionState::Initialized(version);
+                        }
+
+                        resp
+                    }
+                } else if request.method == "notifications/initialized"
+                    || request.method == "notifications/cancelled"
+                {
+                    // Lifecycle notifications pass through unconditionally —
+                    // they carry no id and produce no sendable response.
+                    router::route_request(&handler, request, &core_ctx).await
+                } else {
+                    // All other requests require a completed initialize handshake.
+                    match &session_state {
+                        SessionState::Initialized(version) => {
+                            let version = version.clone();
+                            router::route_request_versioned(&handler, request, &core_ctx, &version)
+                                .await
+                        }
+                        SessionState::Uninitialized => JsonRpcOutgoing::error(
+                            request.id.clone(),
+                            McpError::invalid_request(
+                                "Server not initialized. Send 'initialize' first.",
+                            ),
+                        ),
+                    }
+                };
+
                 if response.should_send()
                     && let Ok(response_str) = router::serialize_response(&response)
                     && sender

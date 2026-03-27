@@ -163,7 +163,7 @@ pub async fn route_request_with_config<H: McpHandler>(
 
         // Apply version adapter to the initialize response
         let adapter = adapter_for_version(&negotiated_version);
-        return apply_adapter_to_response(&*adapter, "initialize", response);
+        return apply_adapter_to_response(adapter, "initialize", response);
     }
 
     // For all other methods, delegate to core router (no adapter — caller
@@ -201,7 +201,7 @@ pub async fn route_request_versioned<H: McpHandler>(
     let response = turbomcp_core::router::route_request(handler, request, ctx, &core_config).await;
 
     // Apply version adapter to filter the response
-    apply_adapter_to_response(&*adapter, &method, response)
+    apply_adapter_to_response(adapter, &method, response)
 }
 
 /// Apply a version adapter to a JSON-RPC response.
@@ -219,7 +219,7 @@ pub async fn route_request_versioned<H: McpHandler>(
 /// use turbomcp_protocol::versioning::adapter::adapter_for_version;
 ///
 /// let adapter = adapter_for_version(&negotiated_version);
-/// let filtered = apply_adapter_to_response(&*adapter, "tools/list", response);
+/// let filtered = apply_adapter_to_response(adapter, "tools/list", response);
 /// ```
 pub fn apply_adapter_to_response(
     adapter: &dyn VersionAdapter,

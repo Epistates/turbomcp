@@ -18,6 +18,23 @@
 
 mod line;
 
+/// MCP session lifecycle state for per-connection/session version tracking.
+///
+/// Enforces the MCP spec initialization lifecycle:
+/// 1. Client sends `initialize` → server responds with negotiated version
+/// 2. Client sends `notifications/initialized`
+/// 3. Normal operation begins
+///
+/// Requests arriving before successful initialization are rejected.
+/// Duplicate `initialize` requests after a successful handshake are rejected.
+#[derive(Debug, Clone)]
+pub(crate) enum SessionState {
+    /// No successful `initialize` has been received yet.
+    Uninitialized,
+    /// `initialize` succeeded; the negotiated version is stored.
+    Initialized(turbomcp_core::types::core::ProtocolVersion),
+}
+
 #[cfg(feature = "stdio")]
 pub mod stdio;
 
