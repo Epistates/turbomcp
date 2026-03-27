@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.9] - 2026-03-26
+
+### Added
+
+- **Session-level protocol version tracking across all transports** — Every transport (STDIO, HTTP, TCP, Unix, WebSocket) now stores the negotiated `ProtocolVersion` after a successful `initialize` handshake and routes all subsequent requests through `route_request_versioned`, applying the correct version adapter for response filtering. Previously, version-aware routing was only available at the protocol layer; transports bypassed it.
+
+- **MCP initialization lifecycle enforcement** — `SessionState` enum (`Uninitialized` / `Initialized(ProtocolVersion)`) enforces the MCP spec requirement that `initialize` must succeed before any other method is accepted. Pre-init requests are rejected with a clear error. Duplicate `initialize` requests are rejected. Lifecycle notifications (`notifications/initialized`, `notifications/cancelled`) pass through unconditionally.
+
+- **`ServerBuilder::with_protocol()`** — New builder method to configure protocol version negotiation (e.g., `ProtocolConfig::multi_version()`) through the high-level builder API.
+
+- **`ProtocolConfig` re-exported from prelude** — `turbomcp::prelude::ProtocolConfig` is now available for ergonomic multi-version server setup.
+
+- **`stdio::run_with_config()`** — New entry point for STDIO transport that accepts `ServerConfig`, enabling multi-version protocol support for STDIO-based servers.
+
+- **3 new transport-layer tests** — `test_line_transport_ping_after_init` (verifies requests succeed after init), `test_line_transport_rejects_before_init` (verifies pre-init rejection), `test_line_transport_rejects_duplicate_init` (verifies duplicate init rejection).
+
+### Changed
+
+- **`adapter_for_version()` returns `&'static dyn VersionAdapter`** — Replaced `Box<dyn VersionAdapter>` with static references to zero-sized adapter instances, eliminating per-request heap allocation.
+
+- **HTTP `SessionManager` stores per-session protocol version** — `SessionData` struct replaces bare `broadcast::Sender`, bundling the SSE channel with an optional `ProtocolVersion`. New `set_protocol_version()` / `get_protocol_version()` methods on `SessionManager`.
+
+- **TCP and Unix transports propagate `ServerConfig`** — Per-connection `LineTransportRunner` instances now receive the server config via `with_config()`, enabling version-aware routing on connection-oriented transports.
+
+- **BYO Axum router (`into_axum_router`) gains version tracking** — `AppState` now carries `config`, `session_manager`, and `session_versions` map. The `handle_json_rpc` handler extracts `mcp-session-id` headers and performs per-session versioned routing.
+
+### Removed
+
+- **CI performance benchmarks workflow** — Removed standalone `performance.yml` workflow and consolidated test infrastructure into a single `test.yml` workflow.
+
 ## [3.0.8] - 2026-03-24
 
 ### Added
