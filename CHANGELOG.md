@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.10] - 2026-03-26
+
+### Fixed
+
+- **3.0.9 publish was missing changes** — Re-publish includes all session-level version tracking, `ServerBuilder::with_protocol()`, `ProtocolConfig` prelude re-export, `stdio::run_with_config()`, `SessionState` lifecycle enforcement, and versioned routing across all transports.
+
 ## [3.0.9] - 2026-03-26
 
 ### Added
