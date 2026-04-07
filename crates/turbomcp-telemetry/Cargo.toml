@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-telemetry"
-version = "3.0.10"
+version = "3.0.11"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT"

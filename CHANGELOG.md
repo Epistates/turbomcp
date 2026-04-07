@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.11] - 2026-04-02
+
+### Added
+
+- **`RequestContext::notify_client()`** — New method on the server-side request context for sending JSON-RPC notifications to connected clients. Enables server handlers to push `notifications/tools/list_changed`, progress events, and other fire-and-forget messages over bidirectional transports (channel, WebSocket, SSE). Accepts `impl AsRef<str>` for ergonomic method names.
+
+- **`Client::trigger_tool_list_changed()`** — Programmatically invokes the registered `ToolListChangedHandler`, returning `HandlerResult<()>` so callers can observe failures. Designed for testing and external notification integration scenarios.
+
+- **`Client::has_tool_list_changed_handler()`** — Check whether a tool list changed handler is registered, consistent with existing `has_roots_handler()`, `has_elicitation_handler()`, etc.
+
+- **`HandlerRegistry::has_tool_list_changed_handler()`** — Proper `has_*` predicate on the registry, avoiding unnecessary `Arc` clone through `get_*().is_some()`.
+
 ## [3.0.10] - 2026-03-26
 
 ### Fixed

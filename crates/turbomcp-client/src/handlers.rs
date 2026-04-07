@@ -1080,6 +1080,12 @@ impl HandlerRegistry {
         self.prompt_list_changed.clone()
     }
 
+    /// Check if a tool list changed handler is registered
+    #[must_use]
+    pub fn has_tool_list_changed_handler(&self) -> bool {
+        self.tool_list_changed.is_some()
+    }
+
     /// Get the tool list changed handler if registered
     #[must_use]
     pub fn get_tool_list_changed_handler(&self) -> Option<Arc<dyn ToolListChangedHandler>> {

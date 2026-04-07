@@ -160,6 +160,37 @@ impl RequestContext {
         })
     }
 
+    /// Send a notification to the connected client.
+    ///
+    /// This sends a JSON-RPC notification (no response expected) from the server
+    /// to the client. Useful for notifying the client about state changes such as
+    /// tool list updates, resource changes, or progress events.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the transport doesn't support bidirectional communication
+    /// (e.g., stateless HTTP) or if the session is unavailable.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Inside a tool handler, notify the client that the tool list changed
+    /// ctx.notify_client("notifications/tools/list_changed", serde_json::json!({})).await?;
+    /// ```
+    pub async fn notify_client(
+        &self,
+        method: impl AsRef<str>,
+        params: serde_json::Value,
+    ) -> McpResult<()> {
+        let session = self.session.as_ref().ok_or_else(|| {
+            turbomcp_core::error::McpError::capability_not_supported(
+                "Server-to-client notifications not available on this transport",
+            )
+        })?;
+
+        session.notify(method.as_ref(), params).await
+    }
+
     /// Create a new request context for STDIO transport.
     #[must_use]
     pub fn stdio() -> Self {

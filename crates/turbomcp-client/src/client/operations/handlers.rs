@@ -282,4 +282,35 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     pub fn has_progress_handler(&self) -> bool {
         self.inner.handlers.lock().has_progress_handler()
     }
+
+    /// Check if a tool list changed handler is registered
+    #[must_use]
+    pub fn has_tool_list_changed_handler(&self) -> bool {
+        self.inner.handlers.lock().has_tool_list_changed_handler()
+    }
+
+    /// Trigger the tool list changed handler, if one is registered.
+    ///
+    /// This programmatically invokes the same handler that would be called when
+    /// the server sends a `notifications/tools/list_changed` notification.
+    /// Useful for testing and for integration scenarios where notifications
+    /// are received through an external mechanism.
+    ///
+    /// The handler will typically re-fetch the tool list from the server and
+    /// update any downstream consumers. Returns `Ok(())` if the handler
+    /// completed successfully or if no handler was registered.
+    ///
+    /// Note: the mutex on the handler registry is released before the handler
+    /// is awaited, so the handler must not re-acquire the registry lock (e.g.
+    /// by calling `set_tool_list_changed_handler`) or it will deadlock.
+    pub async fn trigger_tool_list_changed(&self) -> crate::handlers::HandlerResult<()> {
+        let handler_opt = self.inner.handlers.lock().get_tool_list_changed_handler();
+
+        if let Some(handler) = handler_opt {
+            handler.handle_tool_list_changed().await
+        } else {
+            tracing::debug!("trigger_tool_list_changed called but no handler registered");
+            Ok(())
+        }
+    }
 }
