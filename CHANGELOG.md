@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.12] - 2026-04-13
+
+### Added
+
+- **Draft `extensions` capability** — Both `ClientCapabilities` and `ServerCapabilities` now carry an optional `extensions: HashMap<String, Value>` map for opt-in key/value capability settings, available across `turbomcp-types`, `turbomcp-core`, and `turbomcp-protocol`. New builder helpers (`with_extensions`, `add_extension`) plus a `completions` server capability round out the stable 2025-11-25 shape. `CapabilityMatcher` treats extensions as mutually opt-in: negotiation requires both sides to declare an extension and silently disables mismatches rather than failing the session.
+
+- **Handler-driven `initialize` response** — New `McpHandler::server_capabilities()` trait method with a default that derives tools/resources/prompts from existing listings, letting handlers override to advertise tasks, logging, completions, or draft extensions without forking the router. `build_initialize_result` now serializes the handler's full `ServerCapabilities` and `ServerInfo` via `serde_json::to_value`, so `description`, `title`, `websiteUrl`, and `icons` survive the initialize response instead of being silently dropped.
+
+- **`Client::initialize_with_request()`** — New entry point that accepts a caller-built `InitializeRequest`, giving applications a stable way to opt into draft protocol versions or explicit capability shapes. The ergonomic `Client::initialize()` default path and auto-connect logic now share the same implementation.
+
+- **`RequiredCapabilities` / `ClientCapabilities` extensions field** (`turbomcp-server::config`) — New `extensions: HashSet<String>` field with builder, validation, and `from_params` parsing, letting deployments require specific draft extensions from clients.
+
+- **MCP 2025-11-25 icons plural migration in `turbomcp-core`** (SEP-973) — Replaces `icon: Option<Icon>` with `icons: Option<Vec<Icon>>` on `Implementation`, `Tool`, `Resource`, `ResourceTemplate`, and `Prompt`. Adds `description` and `website_url` to `Implementation` with builder helpers. `turbomcp-types` and `turbomcp-protocol` already carried the plural shape; this catches `turbomcp-core`'s parallel types and every literal constructor across `turbomcp-grpc` and `turbomcp-wasm` up to the spec.
+
+- **gRPC capability + metadata parity** — `mcp.proto` gains `EmptyCapability`, elicitation, client/server task capability trees, `CompletionCapability`, and `ExtensionsCapabilities` messages, wired into `ClientCapabilities` and `ServerCapabilities`. `repeated Icon icons` replaces singular `icon` on `Implementation`, `Tool`, `Resource`, `ResourceTemplate`, and `Prompt`, with new `title`, `description`, `website_url`, and `size` fields per spec. `convert.rs` bidirectional conversions preserve extensions, elicitation, tasks, completions, and experimental capabilities via new `encode_json_map` / `decode_json_map` / `empty_capability_from_map` helpers, covered by round-trip tests for `Implementation` metadata and extensions + task tools.
+
+### Changed
+
+- **Version adapters strip draft `extensions`** — `V2025_11_25Adapter` and `V2025_06_18Adapter` now strip the draft `extensions` field from `filter_capabilities` and from `initialize` results; `DraftAdapter` passes it through. Regression tests cover both stripping and draft passthrough.
+
+### Fixed
+
+- **`wasm-server` feature compiles again** — The `wasm-server`-gated files `turbomcp-wasm/src/wasm_server/server.rs` and `composite.rs` carried two latent build breaks introduced during the icons + extensions work (they are skipped by default `cargo check --workspace --all-targets`). Removes spurious `website_url: None` from eight `Tool`/`Resource`/`ResourceTemplate`/`Prompt` literals (only `Implementation` carries `website_url`), and adds `completions: None` + `extensions: None` to the two `ServerCapabilities` constructors to match the new core shape. Verified with `cargo check`, `cargo clippy -- -D warnings`, and `cargo test --lib -p turbomcp-wasm --features wasm-server` (119 tests passing).
+
+- **Stdio backend spawn tests no longer depend on Python** (`turbomcp-proxy`) — Tests hardcoded `python server.py` / `python -c '...'`, which fail on systems where only `python3` is on `PATH` (current macOS default) and race because `python -c` exits before `wait_for_ready` can observe a running child. Replaced with `/bin/cat`, gated `#[cfg(unix)]` since Windows handles subprocess spawning differently.
+
+- **Workspace internal dep versions unified at 3.0.11** — `turbomcp-macros`, `turbomcp-proxy`, `turbomcp-server`, and `turbomcp-telemetry` still pinned internal deps to the stale 3.0.7 version while the rest of the tree had moved on. Switched to `workspace = true` so they inherit the workspace-declared version in one place; `turbomcp`'s remaining explicit path deps (which must keep `default-features = false`) bumped to match.
+
 ## [3.0.11] - 2026-04-02
 
 ### Added

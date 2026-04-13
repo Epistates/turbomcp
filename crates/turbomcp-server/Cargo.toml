@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-server"
-version = "3.0.11"
+version = "3.0.12"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Production-ready MCP server with zero-boilerplate macros and transport-agnostic design"
