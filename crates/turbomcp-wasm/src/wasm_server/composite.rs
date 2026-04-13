@@ -540,8 +540,10 @@ impl CompositeServer {
         let has_prompts = self.mounted.iter().any(|m| !m.server.prompts.is_empty());
 
         ServerCapabilities {
+            extensions: None,
             experimental: None,
             logging: None,
+            completions: None,
             tasks: None,
             prompts: if has_prompts {
                 Some(turbomcp_core::types::capabilities::PromptsCapability {

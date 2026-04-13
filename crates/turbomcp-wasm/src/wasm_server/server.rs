@@ -282,7 +282,6 @@ impl McpServerBuilder {
             description: Some(description),
             title: None,
             icons: None,
-            website_url: None,
             input_schema: ToolInputSchema {
                 schema_type: "object".to_string(),
                 properties,
@@ -365,7 +364,6 @@ impl McpServerBuilder {
             description: Some(description),
             title: None,
             icons: None,
-            website_url: None,
             input_schema: ToolInputSchema {
                 schema_type: "object".to_string(),
                 properties,
@@ -535,7 +533,6 @@ impl McpServerBuilder {
             description: Some(description),
             title: None,
             icons: None,
-            website_url: None,
             mime_type: None,
             size: None,
             annotations: None,
@@ -588,7 +585,6 @@ impl McpServerBuilder {
             description: Some(description),
             title: None,
             icons: None,
-            website_url: None,
             mime_type: None,
             size: None,
             annotations: None,
@@ -641,7 +637,6 @@ impl McpServerBuilder {
             description: Some(description),
             title: None,
             icons: None,
-            website_url: None,
             mime_type: None,
             annotations: None,
         };
@@ -696,7 +691,6 @@ impl McpServerBuilder {
             description: Some(description),
             title: None,
             icons: None,
-            website_url: None,
             mime_type: None,
             annotations: None,
         };
@@ -755,7 +749,6 @@ impl McpServerBuilder {
             description: Some(description),
             title: None,
             icons: None,
-            website_url: None,
             arguments: if arguments.is_empty() {
                 None
             } else {
@@ -814,7 +807,6 @@ impl McpServerBuilder {
             description: Some(description),
             title: None,
             icons: None,
-            website_url: None,
             arguments: if arguments.is_empty() {
                 None
             } else {
@@ -894,8 +886,10 @@ impl McpServerBuilder {
     /// Build the MCP server
     pub fn build(self) -> McpServer {
         let capabilities = ServerCapabilities {
+            extensions: None,
             experimental: None,
             logging: None,
+            completions: None,
             tasks: None,
             prompts: if self.prompts.is_empty() {
                 None
