@@ -201,17 +201,21 @@ mod tests {
         assert!(cmd.backend.validate().is_err());
     }
 
+    /// `/bin/cat` is POSIX-mandated on every Unix (macOS, Linux, *BSD). It reads
+    /// stdin and stays alive until EOF, which lets the underlying
+    /// `ChildProcessTransport` observe a running subprocess during spawn —
+    /// without depending on a runtime like `python` or `node` being installed.
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_stdio_backend_creation() {
         let cmd = InspectCommand {
             backend: BackendArgs {
                 backend: Some(crate::cli::args::BackendType::Stdio),
-                cmd: Some("python".to_string()),
-                args: vec!["-c".to_string(), "print('test')".to_string()],
+                cmd: Some("/bin/cat".to_string()),
+                args: vec![],
                 working_dir: None,
                 http: None,
                 tcp: None,
-                #[cfg(unix)]
                 unix: None,
                 websocket: None,
             },
@@ -223,8 +227,7 @@ mod tests {
             client_version: "1.0.0".to_string(),
         };
 
-        // Should successfully create backend (python command is in allowlist)
         let backend = cmd.create_backend().await;
-        assert!(backend.is_ok());
+        assert!(backend.is_ok(), "backend should spawn: {:?}", backend.err());
     }
 }

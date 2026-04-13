@@ -258,24 +258,26 @@ impl McpBackend for StdioBackend {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
+    // `/bin/cat` is POSIX-mandated on every Unix (macOS, Linux, *BSD), making it
+    // a deterministic subprocess for spawn tests. It reads stdin and stays alive
+    // until EOF, which lets `ChildProcessTransport::wait_for_ready` observe a
+    // running process without needing a real MCP server binary on PATH.
+    const TEST_SUBPROCESS: &str = "/bin/cat";
+
     #[tokio::test]
     async fn test_stdio_backend_creation() {
-        let backend = StdioBackend::new("python", vec!["server.py".to_string()]).await;
-        assert!(backend.is_ok());
+        let backend = StdioBackend::new(TEST_SUBPROCESS, Vec::new()).await;
+        assert!(backend.is_ok(), "backend should spawn: {:?}", backend.err());
     }
 
     #[tokio::test]
     async fn test_stdio_backend_with_working_dir() {
-        let backend = StdioBackend::with_working_dir(
-            "python",
-            vec!["server.py".to_string()],
-            "/tmp".to_string(),
-        )
-        .await;
-        assert!(backend.is_ok());
+        let backend =
+            StdioBackend::with_working_dir(TEST_SUBPROCESS, Vec::new(), "/tmp".to_string()).await;
+        assert!(backend.is_ok(), "backend should spawn: {:?}", backend.err());
     }
 }
