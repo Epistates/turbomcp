@@ -174,6 +174,7 @@ fn build_server_capabilities(input: &CapabilityFuzzInput) -> ServerCapabilities 
     };
 
     ServerCapabilities {
+        extensions: None,
         experimental,
         logging,
         completions,
@@ -224,6 +225,7 @@ fn build_client_capabilities(input: &CapabilityFuzzInput) -> ClientCapabilities 
     };
 
     ClientCapabilities {
+        extensions: None,
         roots,
         sampling,
         elicitation,
