@@ -14,11 +14,11 @@ rust-version = "1.89.0"
 
 [dependencies]
 # Core v3 dependencies
-turbomcp-core = { version = "3.0.7", path = "../turbomcp-core" }
-turbomcp-types = { version = "3.0.7", path = "../turbomcp-types" }
-turbomcp-protocol = { version = "3.0.7", path = "../turbomcp-protocol" }
-turbomcp-transport = { version = "3.0.7", path = "../turbomcp-transport", optional = true }
-turbomcp-macros = { version = "3.0.7", path = "../turbomcp-macros" }
+turbomcp-core = { workspace = true }
+turbomcp-types = { workspace = true }
+turbomcp-protocol = { workspace = true }
+turbomcp-transport = { workspace = true, optional = true }
+turbomcp-macros = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true }

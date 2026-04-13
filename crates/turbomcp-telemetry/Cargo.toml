@@ -14,7 +14,7 @@ readme = "README.md"
 
 [dependencies]
 # Core dependencies
-turbomcp-protocol = { version = "3.0.7", path = "../turbomcp-protocol" }
+turbomcp-protocol = { workspace = true }
 
 # Tracing foundation (always required)
 tracing = "0.1"

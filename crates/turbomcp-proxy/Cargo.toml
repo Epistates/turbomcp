@@ -21,15 +21,15 @@ workspace = true
 [dependencies]
 # TurboMCP (consumer-only - we only depend ON these, nothing depends on us)
 
-turbomcp-protocol = { path = "../turbomcp-protocol", version = "3.0.7" }
-turbomcp-transport = { path = "../turbomcp-transport", version = "3.0.7", features = ["http", "tcp", "websocket"] }
-turbomcp-client = { path = "../turbomcp-client", version = "3.0.7" }
-turbomcp-server = { path = "../turbomcp-server", version = "3.0.7", optional = true }
-turbomcp-auth = { path = "../turbomcp-auth", version = "3.0.7", optional = true }
+turbomcp-protocol = { workspace = true }
+turbomcp-transport = { workspace = true, features = ["http", "tcp", "websocket"] }
+turbomcp-client = { workspace = true }
+turbomcp-server = { workspace = true, optional = true }
+turbomcp-auth = { workspace = true, optional = true }
 
 # Unix domain socket transport — only on Unix platforms (macOS, Linux)
 [target.'cfg(unix)'.dependencies]
-turbomcp-transport = { path = "../turbomcp-transport", version = "3.0.7", features = ["unix"] }
+turbomcp-transport = { workspace = true, features = ["unix"] }
 
 # Async runtime
 tokio = { workspace = true }
