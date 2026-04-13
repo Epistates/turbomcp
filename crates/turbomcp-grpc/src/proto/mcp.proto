@@ -80,6 +80,10 @@ message RequestId {
 message Implementation {
   string name = 1;
   string version = 2;
+  optional string title = 3;
+  optional string description = 4;
+  repeated Icon icons = 5;
+  optional string website_url = 6;
 }
 
 // Role enum
@@ -185,7 +189,8 @@ message Tool {
   optional string description = 2;
   bytes input_schema = 3;  // JSON Schema as bytes
   optional Annotations annotations = 4;
-  optional Icon icon = 5;
+  repeated Icon icons = 5;
+  optional string title = 6;
 }
 
 message CallToolRequest {
@@ -217,7 +222,9 @@ message Resource {
   optional string description = 3;
   optional string mime_type = 4;
   optional Annotations annotations = 5;
-  optional Icon icon = 6;
+  repeated Icon icons = 6;
+  optional string title = 7;
+  optional uint64 size = 8;
 }
 
 message ListResourceTemplatesRequest {
@@ -235,7 +242,8 @@ message ResourceTemplate {
   optional string description = 3;
   optional string mime_type = 4;
   optional Annotations annotations = 5;
-  optional Icon icon = 6;
+  repeated Icon icons = 6;
+  optional string title = 7;
 }
 
 message ReadResourceRequest {
@@ -272,7 +280,8 @@ message Prompt {
   string name = 1;
   optional string description = 2;
   repeated PromptArgument arguments = 3;
-  optional Icon icon = 4;
+  repeated Icon icons = 4;
+  optional string title = 5;
 }
 
 message PromptArgument {

@@ -337,7 +337,8 @@ impl CompositeServer {
             title: None,
             description: self.description.clone(),
             version: self.version.clone(),
-            icon: None,
+            icons: None,
+            website_url: None,
         };
 
         Ok(serde_json::json!({

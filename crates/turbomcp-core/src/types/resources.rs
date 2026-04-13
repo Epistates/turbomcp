@@ -21,9 +21,9 @@ pub struct Resource {
     /// Optional display title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Optional icon (MCP 2025-11-25)
+    /// Optional icons (MCP 2025-11-25)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<Icon>,
+    pub icons: Option<Vec<Icon>>,
     /// Optional MIME type
     #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<MimeType>,
@@ -63,7 +63,7 @@ impl Resource {
     /// Set icon (MCP 2025-11-25)
     #[must_use]
     pub fn with_icon(mut self, icon: Icon) -> Self {
-        self.icon = Some(icon);
+        self.icons.get_or_insert_with(Vec::new).push(icon);
         self
     }
 }
@@ -82,9 +82,9 @@ pub struct ResourceTemplate {
     /// Optional display title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Optional icon (MCP 2025-11-25)
+    /// Optional icons (MCP 2025-11-25)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<Icon>,
+    pub icons: Option<Vec<Icon>>,
     /// Optional MIME type
     #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<MimeType>,
@@ -102,7 +102,7 @@ impl ResourceTemplate {
             name: name.into(),
             description: None,
             title: None,
-            icon: None,
+            icons: None,
             mime_type: None,
             annotations: None,
         }
@@ -111,7 +111,7 @@ impl ResourceTemplate {
     /// Set icon (MCP 2025-11-25)
     #[must_use]
     pub fn with_icon(mut self, icon: Icon) -> Self {
-        self.icon = Some(icon);
+        self.icons.get_or_insert_with(Vec::new).push(icon);
         self
     }
 }

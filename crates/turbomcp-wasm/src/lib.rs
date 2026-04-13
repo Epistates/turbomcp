@@ -287,7 +287,8 @@ mod tests {
             title: None,
             description: None,
             version: "1.0.0".to_string(),
-            icon: None,
+            icons: None,
+            website_url: None,
         };
 
         let _caps = ClientCapabilities::default();

@@ -23,9 +23,9 @@ pub struct Tool {
     /// Optional display title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Optional icon (MCP 2025-11-25)
+    /// Optional icons (MCP 2025-11-25)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<Icon>,
+    pub icons: Option<Vec<Icon>>,
     /// Tool annotations (hints)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
@@ -58,7 +58,7 @@ impl Tool {
     /// Set the icon (MCP 2025-11-25)
     #[must_use]
     pub fn with_icon(mut self, icon: Icon) -> Self {
-        self.icon = Some(icon);
+        self.icons.get_or_insert_with(Vec::new).push(icon);
         self
     }
 }

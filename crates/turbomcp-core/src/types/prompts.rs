@@ -19,9 +19,9 @@ pub struct Prompt {
     /// Optional display title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// Optional icon (MCP 2025-11-25)
+    /// Optional icons (MCP 2025-11-25)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<Icon>,
+    pub icons: Option<Vec<Icon>>,
     /// Prompt arguments
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Vec<PromptArgument>>,
@@ -54,7 +54,7 @@ impl Prompt {
     /// Set icon (MCP 2025-11-25)
     #[must_use]
     pub fn with_icon(mut self, icon: Icon) -> Self {
-        self.icon = Some(icon);
+        self.icons.get_or_insert_with(Vec::new).push(icon);
         self
     }
 }

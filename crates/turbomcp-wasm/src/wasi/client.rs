@@ -144,7 +144,8 @@ impl McpClient {
                 title: Some("TurboMCP WASI Client".to_string()),
                 description: Some("MCP client running in WASI Preview 2 environment".to_string()),
                 version: env!("CARGO_PKG_VERSION").to_string(),
-                icon: None,
+                icons: None,
+                website_url: None,
             },
         };
 

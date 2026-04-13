@@ -486,9 +486,12 @@ pub struct Implementation {
     pub description: Option<String>,
     /// Implementation version
     pub version: String,
-    /// Optional icon for the implementation (MCP 2025-11-25)
+    /// Optional icons for the implementation (MCP 2025-11-25)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<Icon>,
+    pub icons: Option<Vec<Icon>>,
+    /// Optional website URL for the implementation (MCP 2025-11-25)
+    #[serde(rename = "websiteUrl", skip_serializing_if = "Option::is_none")]
+    pub website_url: Option<String>,
 }
 
 impl Default for Implementation {
@@ -498,7 +501,8 @@ impl Default for Implementation {
             title: None,
             description: None,
             version: "0.0.0".into(),
-            icon: None,
+            icons: None,
+            website_url: None,
         }
     }
 }
@@ -512,7 +516,8 @@ impl Implementation {
             title: None,
             description: None,
             version: version.into(),
-            icon: None,
+            icons: None,
+            website_url: None,
         }
     }
 
@@ -533,7 +538,14 @@ impl Implementation {
     /// Set the icon (MCP 2025-11-25)
     #[must_use]
     pub fn with_icon(mut self, icon: Icon) -> Self {
-        self.icon = Some(icon);
+        self.icons.get_or_insert_with(Vec::new).push(icon);
+        self
+    }
+
+    /// Set the website URL (MCP 2025-11-25)
+    #[must_use]
+    pub fn with_website_url(mut self, website_url: impl Into<String>) -> Self {
+        self.website_url = Some(website_url.into());
         self
     }
 }
@@ -660,8 +672,8 @@ mod tests {
     fn test_implementation_with_icon() {
         let impl_info = Implementation::new("test", "1.0.0")
             .with_icon(Icon::url("https://example.com/icon.svg"));
-        assert!(impl_info.icon.is_some());
-        assert!(impl_info.icon.as_ref().unwrap().is_url());
+        assert_eq!(impl_info.icons.as_ref().map(Vec::len), Some(1));
+        assert!(impl_info.icons.as_ref().unwrap()[0].is_url());
     }
 
     #[test]

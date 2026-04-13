@@ -24,6 +24,8 @@ pub struct McpGrpcClient {
     client: McpServiceClient<Channel>,
     /// Client implementation info
     client_info: Implementation,
+    /// Client capabilities to advertise during initialization
+    client_capabilities: ClientCapabilities,
     /// Server info after initialization
     server_info: Option<Implementation>,
     /// Server capabilities after initialization
@@ -109,8 +111,10 @@ impl McpGrpcClient {
                 title: None,
                 description: None,
                 version: config.version,
-                icon: None,
+                icons: None,
+                website_url: None,
             },
+            client_capabilities: config.capabilities,
             server_info: None,
             server_capabilities: None,
             protocol_version: config.protocol_version,
@@ -126,7 +130,7 @@ impl McpGrpcClient {
     pub async fn initialize(&mut self) -> GrpcResult<InitializeResult> {
         let request = proto::InitializeRequest {
             protocol_version: self.protocol_version.clone(),
-            capabilities: Some(ClientCapabilities::default().into()),
+            capabilities: Some(self.client_capabilities.clone().into()),
             client_info: Some(self.client_info.clone().into()),
         };
 

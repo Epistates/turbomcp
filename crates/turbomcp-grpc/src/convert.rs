@@ -15,6 +15,22 @@ use turbomcp_core::types::{
     tools::{CallToolResult, Tool, ToolInputSchema},
 };
 
+fn icons_to_proto(icons: Option<Vec<Icon>>) -> Vec<proto::Icon> {
+    icons
+        .unwrap_or_default()
+        .into_iter()
+        .map(Into::into)
+        .collect()
+}
+
+fn proto_icons_to_option(icons: Vec<proto::Icon>) -> Option<Vec<Icon>> {
+    let icons: Vec<_> = icons
+        .into_iter()
+        .filter_map(|icon| Icon::try_from(icon).ok())
+        .collect();
+    if icons.is_empty() { None } else { Some(icons) }
+}
+
 // =============================================================================
 // Implementation
 // =============================================================================
@@ -24,6 +40,10 @@ impl From<Implementation> for proto::Implementation {
         Self {
             name: impl_.name,
             version: impl_.version,
+            title: impl_.title,
+            description: impl_.description,
+            icons: icons_to_proto(impl_.icons),
+            website_url: impl_.website_url,
         }
     }
 }
@@ -32,10 +52,11 @@ impl From<proto::Implementation> for Implementation {
     fn from(impl_: proto::Implementation) -> Self {
         Self {
             name: impl_.name,
-            title: None,
-            description: None,
+            title: impl_.title,
+            description: impl_.description,
             version: impl_.version,
-            icon: None,
+            icons: proto_icons_to_option(impl_.icons),
+            website_url: impl_.website_url,
         }
     }
 }
@@ -293,7 +314,8 @@ impl TryFrom<Tool> for proto::Tool {
             description: tool.description,
             input_schema,
             annotations: None, // ToolAnnotations doesn't map to proto::Annotations
-            icon: tool.icon.map(Into::into),
+            icons: icons_to_proto(tool.icons),
+            title: tool.title,
         })
     }
 }
@@ -308,8 +330,6 @@ impl TryFrom<proto::Tool> for Tool {
             serde_json::from_slice(&tool.input_schema)?
         };
 
-        let icon = tool.icon.and_then(|i| Icon::try_from(i).ok());
-
         // Note: proto::Annotations has audience/priority which are base Annotations fields,
         // not ToolAnnotations fields. The MCP Tool type expects ToolAnnotations, so we
         // would need a separate proto message to properly support tool hints.
@@ -317,8 +337,8 @@ impl TryFrom<proto::Tool> for Tool {
             name: tool.name,
             description: tool.description,
             input_schema,
-            title: None,
-            icon,
+            title: tool.title,
+            icons: proto_icons_to_option(tool.icons),
             annotations: None, // proto::Annotations doesn't map to ToolAnnotations
         })
     }
@@ -334,25 +354,25 @@ impl From<Resource> for proto::Resource {
             uri: resource.uri.to_string(),
             name: resource.name,
             description: resource.description,
+            title: resource.title,
             mime_type: resource.mime_type.map(Into::into),
             annotations: resource.annotations.map(Into::into),
-            icon: resource.icon.map(Into::into),
+            icons: icons_to_proto(resource.icons),
+            size: resource.size,
         }
     }
 }
 
 impl From<proto::Resource> for Resource {
     fn from(resource: proto::Resource) -> Self {
-        let icon = resource.icon.and_then(|i| Icon::try_from(i).ok());
-
         Self {
             uri: resource.uri.into(),
             name: resource.name,
             description: resource.description,
-            title: None,
-            icon,
+            title: resource.title,
+            icons: proto_icons_to_option(resource.icons),
             mime_type: resource.mime_type.map(Into::into),
-            size: None,
+            size: resource.size,
             annotations: resource.annotations.map(Into::into),
         }
     }
@@ -364,23 +384,22 @@ impl From<ResourceTemplate> for proto::ResourceTemplate {
             uri_template: template.uri_template,
             name: template.name,
             description: template.description,
+            title: template.title,
             mime_type: template.mime_type.map(Into::into),
             annotations: template.annotations.map(Into::into),
-            icon: template.icon.map(Into::into),
+            icons: icons_to_proto(template.icons),
         }
     }
 }
 
 impl From<proto::ResourceTemplate> for ResourceTemplate {
     fn from(template: proto::ResourceTemplate) -> Self {
-        let icon = template.icon.and_then(|i| Icon::try_from(i).ok());
-
         Self {
             uri_template: template.uri_template,
             name: template.name,
             description: template.description,
-            title: None,
-            icon,
+            title: template.title,
+            icons: proto_icons_to_option(template.icons),
             mime_type: template.mime_type.map(Into::into),
             annotations: template.annotations.map(Into::into),
         }
@@ -439,26 +458,25 @@ impl From<Prompt> for proto::Prompt {
         Self {
             name: prompt.name,
             description: prompt.description,
+            title: prompt.title,
             arguments: prompt
                 .arguments
                 .unwrap_or_default()
                 .into_iter()
                 .map(Into::into)
                 .collect(),
-            icon: prompt.icon.map(Into::into),
+            icons: icons_to_proto(prompt.icons),
         }
     }
 }
 
 impl From<proto::Prompt> for Prompt {
     fn from(prompt: proto::Prompt) -> Self {
-        let icon = prompt.icon.and_then(|i| Icon::try_from(i).ok());
-
         Self {
             name: prompt.name,
             description: prompt.description,
-            title: None,
-            icon,
+            title: prompt.title,
+            icons: proto_icons_to_option(prompt.icons),
             arguments: if prompt.arguments.is_empty() {
                 None
             } else {
@@ -666,19 +684,31 @@ mod tests {
     fn test_implementation_conversion() {
         let impl_ = Implementation {
             name: "test".to_string(),
-            title: None,
-            description: None,
+            title: Some("Test".to_string()),
+            description: Some("grpc metadata".to_string()),
             version: "1.0.0".to_string(),
-            icon: None,
+            icons: Some(vec![Icon::url("https://example.com/icon.svg")]),
+            website_url: Some("https://example.com".to_string()),
         };
 
         let proto_impl: proto::Implementation = impl_.clone().into();
         assert_eq!(proto_impl.name, "test");
         assert_eq!(proto_impl.version, "1.0.0");
+        assert_eq!(proto_impl.title.as_deref(), Some("Test"));
+        assert_eq!(proto_impl.description.as_deref(), Some("grpc metadata"));
+        assert_eq!(proto_impl.icons.len(), 1);
+        assert_eq!(
+            proto_impl.website_url.as_deref(),
+            Some("https://example.com")
+        );
 
         let back: Implementation = proto_impl.into();
         assert_eq!(back.name, impl_.name);
         assert_eq!(back.version, impl_.version);
+        assert_eq!(back.title, impl_.title);
+        assert_eq!(back.description, impl_.description);
+        assert_eq!(back.website_url, impl_.website_url);
+        assert_eq!(back.icons.as_ref().map(Vec::len), Some(1));
     }
 
     #[test]
@@ -696,7 +726,7 @@ mod tests {
             description: Some("Does math".to_string()),
             input_schema: ToolInputSchema::default(),
             title: None,
-            icon: None,
+            icons: None,
             annotations: None,
         };
 
@@ -715,7 +745,7 @@ mod tests {
             name: "Test File".to_string(),
             description: Some("A test file".to_string()),
             title: None,
-            icon: None,
+            icons: None,
             mime_type: Some("text/plain".into()),
             size: None,
             annotations: None,
@@ -735,7 +765,7 @@ mod tests {
             name: "greeting".to_string(),
             description: Some("A greeting prompt".to_string()),
             title: None,
-            icon: None,
+            icons: None,
             arguments: Some(vec![PromptArgument {
                 name: "name".to_string(),
                 description: Some("The name to greet".to_string()),

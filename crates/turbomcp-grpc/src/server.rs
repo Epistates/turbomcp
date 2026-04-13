@@ -207,7 +207,8 @@ impl McpGrpcServerBuilder {
                 title: None,
                 description: None,
                 version: env!("CARGO_PKG_VERSION").to_string(),
-                icon: None,
+                icons: None,
+                website_url: None,
             },
             capabilities: ServerCapabilities::default(),
             protocol_version: "2025-11-25".to_string(),
@@ -230,7 +231,8 @@ impl McpGrpcServerBuilder {
             title: None,
             description: None,
             version: version.into(),
-            icon: None,
+            icons: None,
+            website_url: None,
         };
         self
     }
@@ -684,7 +686,7 @@ mod tests {
                 description: Some("A test tool".to_string()),
                 input_schema: turbomcp_core::types::tools::ToolInputSchema::default(),
                 title: None,
-                icon: None,
+                icons: None,
                 annotations: None,
             })
             .build();

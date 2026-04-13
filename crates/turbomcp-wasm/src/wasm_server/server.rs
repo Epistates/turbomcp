@@ -281,7 +281,8 @@ impl McpServerBuilder {
             name: name.clone(),
             description: Some(description),
             title: None,
-            icon: None,
+            icons: None,
+            website_url: None,
             input_schema: ToolInputSchema {
                 schema_type: "object".to_string(),
                 properties,
@@ -363,7 +364,8 @@ impl McpServerBuilder {
             name: name.clone(),
             description: Some(description),
             title: None,
-            icon: None,
+            icons: None,
+            website_url: None,
             input_schema: ToolInputSchema {
                 schema_type: "object".to_string(),
                 properties,
@@ -532,7 +534,8 @@ impl McpServerBuilder {
             name,
             description: Some(description),
             title: None,
-            icon: None,
+            icons: None,
+            website_url: None,
             mime_type: None,
             size: None,
             annotations: None,
@@ -584,7 +587,8 @@ impl McpServerBuilder {
             name,
             description: Some(description),
             title: None,
-            icon: None,
+            icons: None,
+            website_url: None,
             mime_type: None,
             size: None,
             annotations: None,
@@ -636,7 +640,8 @@ impl McpServerBuilder {
             name,
             description: Some(description),
             title: None,
-            icon: None,
+            icons: None,
+            website_url: None,
             mime_type: None,
             annotations: None,
         };
@@ -690,7 +695,8 @@ impl McpServerBuilder {
             name,
             description: Some(description),
             title: None,
-            icon: None,
+            icons: None,
+            website_url: None,
             mime_type: None,
             annotations: None,
         };
@@ -748,7 +754,8 @@ impl McpServerBuilder {
             name: name.clone(),
             description: Some(description),
             title: None,
-            icon: None,
+            icons: None,
+            website_url: None,
             arguments: if arguments.is_empty() {
                 None
             } else {
@@ -806,7 +813,8 @@ impl McpServerBuilder {
             name: name.clone(),
             description: Some(description),
             title: None,
-            icon: None,
+            icons: None,
+            website_url: None,
             arguments: if arguments.is_empty() {
                 None
             } else {
@@ -918,7 +926,8 @@ impl McpServerBuilder {
             title: None,
             description: self.description,
             version: self.version,
-            icon: None,
+            icons: None,
+            website_url: None,
         };
 
         McpServer {

@@ -78,7 +78,8 @@ impl McpClient {
                 title: Some("TurboMCP WASM Client".to_string()),
                 description: None,
                 version: env!("CARGO_PKG_VERSION").to_string(),
-                icon: None,
+                icons: None,
+                website_url: None,
             },
         };
 
