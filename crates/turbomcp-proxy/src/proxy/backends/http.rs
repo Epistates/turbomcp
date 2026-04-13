@@ -136,6 +136,7 @@ impl HttpBackend {
         let request = InitializeRequest {
             protocol_version: PROTOCOL_VERSION.into(),
             capabilities: turbomcp_protocol::types::ClientCapabilities {
+                extensions: None,
                 experimental: None,
                 sampling: None,
                 roots: None,

@@ -15,6 +15,36 @@ use turbomcp_core::types::{
     tools::{CallToolResult, Tool, ToolInputSchema},
 };
 
+fn encode_json_map(
+    map: std::collections::HashMap<String, serde_json::Value>,
+) -> std::collections::HashMap<String, Vec<u8>> {
+    map.into_iter()
+        .map(|(key, value)| {
+            (
+                key,
+                serde_json::to_vec(&value)
+                    .expect("serializing serde_json::Value for gRPC capabilities should succeed"),
+            )
+        })
+        .collect()
+}
+
+fn decode_json_map(
+    map: std::collections::HashMap<String, Vec<u8>>,
+) -> std::collections::HashMap<String, serde_json::Value> {
+    map.into_iter()
+        .filter_map(|(key, value)| {
+            serde_json::from_slice(&value)
+                .ok()
+                .map(|value| (key, value))
+        })
+        .collect()
+}
+
+fn empty_capability_from_map<T>(map: Option<T>) -> Option<proto::EmptyCapability> {
+    map.map(|_| proto::EmptyCapability {})
+}
+
 fn icons_to_proto(icons: Option<Vec<Icon>>) -> Vec<proto::Icon> {
     icons
         .unwrap_or_default()
@@ -154,11 +184,43 @@ impl From<ClientCapabilities> for proto::ClientCapabilities {
                 list_changed: r.list_changed.unwrap_or(false),
             }),
             sampling: caps.sampling.map(|_| proto::SamplingCapability {}),
-            experimental: None,
+            experimental: caps
+                .experimental
+                .map(|map| proto::ExperimentalCapabilities {
+                    capabilities: encode_json_map(map.into_iter().collect()),
+                }),
+            elicitation: caps
+                .elicitation
+                .map(|elicitation| proto::ElicitationCapability {
+                    form: empty_capability_from_map(elicitation.form),
+                    url: empty_capability_from_map(elicitation.url),
+                }),
+            tasks: caps.tasks.map(|tasks| proto::ClientTasksCapability {
+                list: empty_capability_from_map(tasks.list),
+                cancel: empty_capability_from_map(tasks.cancel),
+                requests: tasks
+                    .requests
+                    .map(|requests| proto::ClientTaskRequestsCapability {
+                        sampling: requests.sampling.map(|sampling| {
+                            proto::ClientTaskSamplingCapability {
+                                create_message: empty_capability_from_map(sampling.create_message),
+                            }
+                        }),
+                        elicitation: requests.elicitation.map(|elicitation| {
+                            proto::ClientTaskElicitationCapability {
+                                create: empty_capability_from_map(elicitation.create),
+                            }
+                        }),
+                    }),
+            }),
+            extensions: caps.extensions.map(|map| proto::ExtensionsCapabilities {
+                capabilities: encode_json_map(map.into_iter().collect()),
+            }),
         }
     }
 }
 
+#[allow(clippy::default_trait_access)]
 impl From<proto::ClientCapabilities> for ClientCapabilities {
     fn from(caps: proto::ClientCapabilities) -> Self {
         Self {
@@ -170,9 +232,45 @@ impl From<proto::ClientCapabilities> for ClientCapabilities {
             sampling: caps
                 .sampling
                 .map(|_| turbomcp_core::types::capabilities::SamplingCapability {}),
-            elicitation: None,
-            tasks: None,
-            experimental: None,
+            elicitation: caps.elicitation.map(|elicitation| {
+                turbomcp_core::types::capabilities::ElicitationCapability {
+                    form: elicitation.form.map(|_| Default::default()),
+                    url: elicitation.url.map(|_| Default::default()),
+                }
+            }),
+            tasks: caps.tasks.map(
+                |tasks| turbomcp_core::types::capabilities::TasksCapability {
+                    list: tasks.list.map(|_| Default::default()),
+                    cancel: tasks.cancel.map(|_| Default::default()),
+                    requests: tasks.requests.map(|requests| {
+                        turbomcp_core::types::capabilities::TaskRequestsCapability {
+                            tools: None,
+                            sampling: requests.sampling.map(|sampling| {
+                                turbomcp_core::types::capabilities::TaskSamplingCapability {
+                                    create_message: sampling
+                                        .create_message
+                                        .map(|_| Default::default()),
+                                }
+                            }),
+                            elicitation: requests.elicitation.map(|elicitation| {
+                                turbomcp_core::types::capabilities::TaskElicitationCapability {
+                                    create: elicitation.create.map(|_| Default::default()),
+                                }
+                            }),
+                        }
+                    }),
+                },
+            ),
+            extensions: caps.extensions.map(|extensions| {
+                decode_json_map(extensions.capabilities)
+                    .into_iter()
+                    .collect()
+            }),
+            experimental: caps.experimental.map(|experimental| {
+                decode_json_map(experimental.capabilities)
+                    .into_iter()
+                    .collect()
+            }),
         }
     }
 }
@@ -191,11 +289,33 @@ impl From<ServerCapabilities> for proto::ServerCapabilities {
                 list_changed: t.list_changed.unwrap_or(false),
             }),
             logging: caps.logging.map(|_| proto::LoggingCapability {}),
-            experimental: None,
+            experimental: caps
+                .experimental
+                .map(|map| proto::ExperimentalCapabilities {
+                    capabilities: encode_json_map(map.into_iter().collect()),
+                }),
+            completions: caps.completions.map(|_| proto::CompletionCapability {}),
+            tasks: caps.tasks.map(|tasks| proto::ServerTasksCapability {
+                list: empty_capability_from_map(tasks.list),
+                cancel: empty_capability_from_map(tasks.cancel),
+                requests: tasks
+                    .requests
+                    .map(|requests| proto::ServerTaskRequestsCapability {
+                        tools: requests
+                            .tools
+                            .map(|tools| proto::ServerTaskToolsCapability {
+                                call: empty_capability_from_map(tools.call),
+                            }),
+                    }),
+            }),
+            extensions: caps.extensions.map(|map| proto::ExtensionsCapabilities {
+                capabilities: encode_json_map(map.into_iter().collect()),
+            }),
         }
     }
 }
 
+#[allow(clippy::default_trait_access)]
 impl From<proto::ServerCapabilities> for ServerCapabilities {
     fn from(caps: proto::ServerCapabilities) -> Self {
         Self {
@@ -218,8 +338,36 @@ impl From<proto::ServerCapabilities> for ServerCapabilities {
             logging: caps
                 .logging
                 .map(|_| turbomcp_core::types::capabilities::LoggingCapability {}),
-            tasks: None,
-            experimental: None,
+            completions: caps
+                .completions
+                .map(|_| turbomcp_core::types::capabilities::CompletionCapability {}),
+            tasks: caps.tasks.map(
+                |tasks| turbomcp_core::types::capabilities::TasksCapability {
+                    list: tasks.list.map(|_| Default::default()),
+                    cancel: tasks.cancel.map(|_| Default::default()),
+                    requests: tasks.requests.map(|requests| {
+                        turbomcp_core::types::capabilities::TaskRequestsCapability {
+                            tools: requests.tools.map(|tools| {
+                                turbomcp_core::types::capabilities::TaskToolsCapability {
+                                    call: tools.call.map(|_| Default::default()),
+                                }
+                            }),
+                            sampling: None,
+                            elicitation: None,
+                        }
+                    }),
+                },
+            ),
+            extensions: caps.extensions.map(|extensions| {
+                decode_json_map(extensions.capabilities)
+                    .into_iter()
+                    .collect()
+            }),
+            experimental: caps.experimental.map(|experimental| {
+                decode_json_map(experimental.capabilities)
+                    .into_iter()
+                    .collect()
+            }),
         }
     }
 }
@@ -779,5 +927,52 @@ mod tests {
 
         let back: Prompt = proto_prompt.into();
         assert_eq!(back.name, prompt.name);
+    }
+
+    #[test]
+    #[allow(clippy::default_trait_access)]
+    fn test_server_capabilities_conversion_preserves_extensions_and_tasks() {
+        let caps = ServerCapabilities {
+            extensions: Some(
+                [("trace".to_string(), serde_json::json!({"version": "1"}))]
+                    .into_iter()
+                    .collect(),
+            ),
+            tasks: Some(turbomcp_core::types::capabilities::TasksCapability {
+                list: Some(Default::default()),
+                cancel: Some(Default::default()),
+                requests: Some(turbomcp_core::types::capabilities::TaskRequestsCapability {
+                    tools: Some(turbomcp_core::types::capabilities::TaskToolsCapability {
+                        call: Some(Default::default()),
+                    }),
+                    sampling: None,
+                    elicitation: None,
+                }),
+            }),
+            ..Default::default()
+        };
+
+        let proto_caps: proto::ServerCapabilities = caps.clone().into();
+        assert!(proto_caps.extensions.is_some());
+        assert!(proto_caps.tasks.is_some());
+
+        let back: ServerCapabilities = proto_caps.into();
+        assert_eq!(
+            back.extensions
+                .as_ref()
+                .and_then(|m| m.get("trace"))
+                .and_then(|v| v.get("version"))
+                .and_then(serde_json::Value::as_str),
+            Some("1")
+        );
+        assert!(back.tasks.is_some());
+        assert!(
+            back.tasks
+                .as_ref()
+                .and_then(|t| t.requests.as_ref())
+                .and_then(|r| r.tools.as_ref())
+                .and_then(|t| t.call.as_ref())
+                .is_some()
+        );
     }
 }

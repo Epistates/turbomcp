@@ -114,6 +114,10 @@ async fn test_calculator_server_info() {
     let info = calc.server_info();
     assert_eq!(info.name, "calculator");
     assert_eq!(info.version, "1.0.0");
+    assert_eq!(
+        info.description.as_deref(),
+        Some("A simple calculator server")
+    );
 }
 
 #[tokio::test]
@@ -181,6 +185,10 @@ async fn test_handle_request_initialize() {
     assert_eq!(response["jsonrpc"], "2.0");
     assert_eq!(response["id"], 1);
     assert_eq!(response["result"]["serverInfo"]["name"], "calculator");
+    assert_eq!(
+        response["result"]["serverInfo"]["description"],
+        "A simple calculator server"
+    );
     assert!(response["result"]["capabilities"]["tools"].is_object());
 }
 

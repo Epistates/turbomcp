@@ -128,6 +128,9 @@ message ClientCapabilities {
   optional RootsCapability roots = 1;
   optional SamplingCapability sampling = 2;
   optional ExperimentalCapabilities experimental = 3;
+  optional ElicitationCapability elicitation = 4;
+  optional ClientTasksCapability tasks = 5;
+  optional ExtensionsCapabilities extensions = 6;
 }
 
 message ServerCapabilities {
@@ -136,13 +139,23 @@ message ServerCapabilities {
   optional ToolsCapability tools = 3;
   optional LoggingCapability logging = 4;
   optional ExperimentalCapabilities experimental = 5;
+  optional CompletionCapability completions = 6;
+  optional ServerTasksCapability tasks = 7;
+  optional ExtensionsCapabilities extensions = 8;
 }
+
+message EmptyCapability {}
 
 message RootsCapability {
   bool list_changed = 1;
 }
 
 message SamplingCapability {}
+
+message ElicitationCapability {
+  optional EmptyCapability form = 1;
+  optional EmptyCapability url = 2;
+}
 
 message PromptsCapability {
   bool list_changed = 1;
@@ -159,8 +172,47 @@ message ToolsCapability {
 
 message LoggingCapability {}
 
+message CompletionCapability {}
+
 message ExperimentalCapabilities {
   map<string, bytes> capabilities = 1;  // JSON-encoded capability data
+}
+
+message ExtensionsCapabilities {
+  map<string, bytes> capabilities = 1;  // JSON-encoded extension data
+}
+
+message ClientTasksCapability {
+  optional EmptyCapability list = 1;
+  optional EmptyCapability cancel = 2;
+  optional ClientTaskRequestsCapability requests = 3;
+}
+
+message ClientTaskRequestsCapability {
+  optional ClientTaskSamplingCapability sampling = 1;
+  optional ClientTaskElicitationCapability elicitation = 2;
+}
+
+message ClientTaskSamplingCapability {
+  optional EmptyCapability create_message = 1;
+}
+
+message ClientTaskElicitationCapability {
+  optional EmptyCapability create = 1;
+}
+
+message ServerTasksCapability {
+  optional EmptyCapability list = 1;
+  optional EmptyCapability cancel = 2;
+  optional ServerTaskRequestsCapability requests = 3;
+}
+
+message ServerTaskRequestsCapability {
+  optional ServerTaskToolsCapability tools = 1;
+}
+
+message ServerTaskToolsCapability {
+  optional EmptyCapability call = 1;
 }
 
 // =============================================================================

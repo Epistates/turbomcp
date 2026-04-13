@@ -293,50 +293,22 @@ fn build_initialize_result<H: McpHandler>(
     handler: &H,
     protocol_version: &str,
 ) -> Value {
-    let has_tools = !handler.list_tools().is_empty();
-    let has_resources = !handler.list_resources().is_empty();
-    let has_prompts = !handler.list_prompts().is_empty();
+    let capabilities = match serde_json::to_value(handler.server_capabilities()) {
+        Ok(Value::Object(map)) => map,
+        Ok(_) | Err(_) => serde_json::Map::new(),
+    };
 
-    // Build capabilities object per MCP spec
-    let mut capabilities = serde_json::Map::new();
-
-    if has_tools {
-        capabilities.insert(
-            "tools".to_string(),
-            serde_json::json!({ "listChanged": true }),
-        );
-    }
-
-    if has_resources {
-        capabilities.insert(
-            "resources".to_string(),
-            serde_json::json!({ "listChanged": true }),
-        );
-    }
-
-    if has_prompts {
-        capabilities.insert(
-            "prompts".to_string(),
-            serde_json::json!({ "listChanged": true }),
-        );
-    }
-
-    // NOTE: Per MCP 2025-11-25, `elicitation` and `sampling` are CLIENT
-    // capabilities, not server capabilities. Servers do NOT advertise them.
-    //
-    // Task capabilities are only advertised if the handler actually supports
-    // them (default trait impl returns CapabilityNotSupported). The tasks
-    // capability follows the spec structure:
-    //   { list?: object, cancel?: object, requests?: { tools?: { call?: object } } }
-    //
-    // Task capability advertising is unconditional for now. Handlers that don't
-    // support tasks return CapabilityNotSupported at runtime. Conditional
-    // advertisement via handler opt-in is tracked for a future release.
-
-    // Build server info
-    let mut server_info = serde_json::Map::new();
-    server_info.insert("name".to_string(), serde_json::json!(info.name));
-    server_info.insert("version".to_string(), serde_json::json!(info.version));
+    // Preserve the full ServerInfo payload so initialize responses stay aligned
+    // with the shared MCP type definitions as metadata fields evolve.
+    let server_info = match serde_json::to_value(info) {
+        Ok(Value::Object(map)) => map,
+        Ok(_) | Err(_) => {
+            let mut fallback = serde_json::Map::new();
+            fallback.insert("name".to_string(), serde_json::json!(info.name));
+            fallback.insert("version".to_string(), serde_json::json!(info.version));
+            fallback
+        }
+    };
 
     // Build final result
     let mut result = serde_json::Map::new();
@@ -372,7 +344,11 @@ mod tests {
     use crate::error::McpResult;
     use crate::marker::MaybeSend;
     use core::future::Future;
-    use turbomcp_types::{Prompt, PromptResult, Resource, ResourceResult, Tool, ToolResult};
+    use std::collections::HashMap;
+    use turbomcp_types::{
+        Prompt, PromptResult, Resource, ResourceResult, ServerCapabilities, ServerTaskCapabilities,
+        ServerTaskRequests, ServerTaskToolRequests, Tool, ToolResult,
+    };
 
     #[derive(Clone)]
     struct TestHandler;
@@ -475,6 +451,188 @@ mod tests {
         assert_eq!(result["serverInfo"]["name"], "test-router");
         assert!(result["capabilities"]["tools"].is_object());
         assert_eq!(result["capabilities"]["tools"]["listChanged"], true);
+    }
+
+    #[tokio::test]
+    async fn test_route_initialize_preserves_server_info_metadata() {
+        #[derive(Clone)]
+        struct MetadataHandler;
+
+        #[allow(clippy::manual_async_fn)]
+        impl McpHandler for MetadataHandler {
+            fn server_info(&self) -> ServerInfo {
+                ServerInfo::new("test-router", "1.0.0")
+                    .with_title("Test Router")
+                    .with_description("Initialize metadata should survive serialization")
+                    .with_website_url("https://example.com")
+                    .with_icon(
+                        turbomcp_types::Icon::new("https://example.com/icon.png")
+                            .with_mime_type("image/png"),
+                    )
+            }
+
+            fn list_tools(&self) -> Vec<Tool> {
+                vec![]
+            }
+
+            fn list_resources(&self) -> Vec<Resource> {
+                vec![]
+            }
+
+            fn list_prompts(&self) -> Vec<Prompt> {
+                vec![]
+            }
+
+            fn call_tool<'a>(
+                &'a self,
+                _name: &'a str,
+                _args: Value,
+                _ctx: &'a RequestContext,
+            ) -> impl Future<Output = McpResult<ToolResult>> + MaybeSend + 'a {
+                async move { unreachable!("tool calls are not used in this test") }
+            }
+
+            fn read_resource<'a>(
+                &'a self,
+                _uri: &'a str,
+                _ctx: &'a RequestContext,
+            ) -> impl Future<Output = McpResult<ResourceResult>> + MaybeSend + 'a {
+                async move { unreachable!("resource reads are not used in this test") }
+            }
+
+            fn get_prompt<'a>(
+                &'a self,
+                _name: &'a str,
+                _args: Option<Value>,
+                _ctx: &'a RequestContext,
+            ) -> impl Future<Output = McpResult<PromptResult>> + MaybeSend + 'a {
+                async move { unreachable!("prompt reads are not used in this test") }
+            }
+        }
+
+        let handler = MetadataHandler;
+        let ctx = RequestContext::stdio();
+        let config = RouteConfig::default();
+        let request = JsonRpcIncoming {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "initialize".to_string(),
+            params: Some(serde_json::json!({
+                "protocolVersion": "2025-11-25",
+                "clientInfo": {
+                    "name": "test-client",
+                    "version": "1.0.0"
+                },
+                "capabilities": {}
+            })),
+        };
+
+        let response = route_request(&handler, request, &ctx, &config).await;
+        let result = response.result.expect("initialize should succeed");
+        assert_eq!(result["serverInfo"]["title"], "Test Router");
+        assert_eq!(
+            result["serverInfo"]["description"],
+            "Initialize metadata should survive serialization"
+        );
+        assert_eq!(result["serverInfo"]["websiteUrl"], "https://example.com");
+        assert_eq!(
+            result["serverInfo"]["icons"][0]["src"],
+            "https://example.com/icon.png"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_route_initialize_uses_handler_capabilities() {
+        #[derive(Clone)]
+        struct CapabilityHandler;
+
+        #[allow(clippy::manual_async_fn)]
+        impl McpHandler for CapabilityHandler {
+            fn server_info(&self) -> ServerInfo {
+                ServerInfo::new("capability-router", "1.0.0")
+            }
+
+            fn server_capabilities(&self) -> ServerCapabilities {
+                ServerCapabilities {
+                    tasks: Some(ServerTaskCapabilities {
+                        list: Some(HashMap::new()),
+                        cancel: Some(HashMap::new()),
+                        requests: Some(ServerTaskRequests {
+                            tools: Some(ServerTaskToolRequests {
+                                call: Some(HashMap::new()),
+                            }),
+                        }),
+                    }),
+                    extensions: Some(HashMap::from([(
+                        "trace".to_string(),
+                        serde_json::json!({"version": "1"}),
+                    )])),
+                    ..Default::default()
+                }
+            }
+
+            fn list_tools(&self) -> Vec<Tool> {
+                vec![]
+            }
+
+            fn list_resources(&self) -> Vec<Resource> {
+                vec![]
+            }
+
+            fn list_prompts(&self) -> Vec<Prompt> {
+                vec![]
+            }
+
+            fn call_tool<'a>(
+                &'a self,
+                _name: &'a str,
+                _args: Value,
+                _ctx: &'a RequestContext,
+            ) -> impl Future<Output = McpResult<ToolResult>> + MaybeSend + 'a {
+                async move { unreachable!("tool calls are not used in this test") }
+            }
+
+            fn read_resource<'a>(
+                &'a self,
+                _uri: &'a str,
+                _ctx: &'a RequestContext,
+            ) -> impl Future<Output = McpResult<ResourceResult>> + MaybeSend + 'a {
+                async move { unreachable!("resource reads are not used in this test") }
+            }
+
+            fn get_prompt<'a>(
+                &'a self,
+                _name: &'a str,
+                _args: Option<Value>,
+                _ctx: &'a RequestContext,
+            ) -> impl Future<Output = McpResult<PromptResult>> + MaybeSend + 'a {
+                async move { unreachable!("prompt reads are not used in this test") }
+            }
+        }
+
+        let handler = CapabilityHandler;
+        let ctx = RequestContext::stdio();
+        let request = JsonRpcIncoming {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!(1)),
+            method: "initialize".to_string(),
+            params: Some(serde_json::json!({
+                "protocolVersion": "DRAFT-2026-v1",
+                "clientInfo": {
+                    "name": "test-client",
+                    "version": "1.0.0"
+                },
+                "capabilities": {}
+            })),
+        };
+
+        let response = route_request(&handler, request, &ctx, &RouteConfig::default()).await;
+        let result = response.result.expect("initialize should succeed");
+        assert!(result["capabilities"]["tasks"]["requests"]["tools"]["call"].is_object());
+        assert_eq!(
+            result["capabilities"]["extensions"]["trace"]["version"],
+            "1"
+        );
     }
 
     #[tokio::test]

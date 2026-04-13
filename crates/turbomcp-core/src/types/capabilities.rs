@@ -8,6 +8,9 @@ use serde_json::Value;
 /// Client capabilities for MCP
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClientCapabilities {
+    /// Draft extensions capability
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<HashMap<String, Value>>,
     /// Sampling capability
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sampling: Option<SamplingCapability>,
@@ -30,6 +33,13 @@ impl ClientCapabilities {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Enable draft extensions capability
+    #[must_use]
+    pub fn with_extensions(mut self, extensions: HashMap<String, Value>) -> Self {
+        self.extensions = Some(extensions);
+        self
     }
 
     /// Enable sampling capability
@@ -73,6 +83,9 @@ impl ClientCapabilities {
 /// Server capabilities for MCP
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ServerCapabilities {
+    /// Draft extensions capability
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<HashMap<String, Value>>,
     /// Prompts capability
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompts: Option<PromptsCapability>,
@@ -82,6 +95,9 @@ pub struct ServerCapabilities {
     /// Tools capability
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<ToolsCapability>,
+    /// Completions capability
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completions: Option<CompletionCapability>,
     /// Logging capability
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logging: Option<LoggingCapability>,
@@ -98,6 +114,13 @@ impl ServerCapabilities {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Enable draft extensions capability
+    #[must_use]
+    pub fn with_extensions(mut self, extensions: HashMap<String, Value>) -> Self {
+        self.extensions = Some(extensions);
+        self
     }
 
     /// Enable tools capability
@@ -132,6 +155,13 @@ impl ServerCapabilities {
     #[must_use]
     pub fn with_logging(mut self) -> Self {
         self.logging = Some(LoggingCapability::default());
+        self
+    }
+
+    /// Enable completions capability
+    #[must_use]
+    pub fn with_completions(mut self) -> Self {
+        self.completions = Some(CompletionCapability::default());
         self
     }
 
@@ -173,6 +203,10 @@ pub struct PromptsCapability {
 /// Logging capability
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LoggingCapability {}
+
+/// Completion capability
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CompletionCapability {}
 
 /// Sampling capability (client)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

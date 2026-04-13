@@ -20,6 +20,10 @@ use std::collections::HashMap;
 /// - MCP 2025-11-25 draft (SEP-1686): + tasks
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClientCapabilities {
+    /// Draft extensions supported by the client
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<HashMap<String, serde_json::Value>>,
+
     /// Experimental, non-standard capabilities that the client supports
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<HashMap<String, serde_json::Value>>,
@@ -52,6 +56,10 @@ pub struct ClientCapabilities {
 /// - MCP 2025-11-25 draft (SEP-1686): + tasks
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ServerCapabilities {
+    /// Draft extensions supported by the server
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<HashMap<String, serde_json::Value>>,
+
     /// Experimental, non-standard capabilities that the server supports
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<HashMap<String, serde_json::Value>>,

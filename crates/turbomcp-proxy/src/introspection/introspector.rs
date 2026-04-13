@@ -145,6 +145,7 @@ impl McpIntrospector {
         let request = InitializeRequest {
             protocol_version: PROTOCOL_VERSION.into(),
             capabilities: ClientCapabilities {
+                extensions: None,
                 roots: Some(RootsCapabilities {
                     list_changed: Some(true),
                 }),

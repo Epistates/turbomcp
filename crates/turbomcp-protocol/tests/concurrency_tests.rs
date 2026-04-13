@@ -322,6 +322,7 @@ fn test_concurrent_batch_processing() {
 #[test]
 fn test_concurrent_type_cloning() {
     let original = Arc::new(ServerCapabilities {
+        extensions: None,
         tools: Some(ToolsCapabilities {
             list_changed: Some(true),
         }),

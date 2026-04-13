@@ -137,9 +137,16 @@ impl CapabilityMatcher {
     ) -> bool {
         self.compatibility_rules.get(feature).map_or_else(
             || {
-                // Unknown feature - check if either side supports it
-                Self::client_has_feature(feature, client)
-                    || Self::server_has_feature(feature, server)
+                if Self::client_has_extension(feature, client)
+                    || Self::server_has_extension(feature, server)
+                {
+                    Self::client_has_extension(feature, client)
+                        && Self::server_has_extension(feature, server)
+                } else {
+                    // Unknown non-extension feature - check if either side supports it
+                    Self::client_has_feature(feature, client)
+                        || Self::server_has_feature(feature, server)
+                }
             },
             |rule| match rule {
                 CompatibilityRule::RequireBoth => {
@@ -169,6 +176,13 @@ impl CapabilityMatcher {
         }
     }
 
+    fn client_has_extension(feature: &str, client: &ClientCapabilities) -> bool {
+        client
+            .extensions
+            .as_ref()
+            .is_some_and(|extensions| extensions.contains_key(feature))
+    }
+
     /// Check if server has a specific feature
     fn server_has_feature(feature: &str, server: &ServerCapabilities) -> bool {
         match feature {
@@ -184,6 +198,13 @@ impl CapabilityMatcher {
                     .is_some_and(|experimental| experimental.contains_key(feature))
             }
         }
+    }
+
+    fn server_has_extension(feature: &str, server: &ServerCapabilities) -> bool {
+        server
+            .extensions
+            .as_ref()
+            .is_some_and(|extensions| extensions.contains_key(feature))
     }
 
     /// Get all features from both client and server
@@ -220,8 +241,14 @@ impl CapabilityMatcher {
         if let Some(experimental) = &client.experimental {
             features.extend(experimental.keys().cloned());
         }
+        if let Some(extensions) = &client.extensions {
+            features.extend(extensions.keys().cloned());
+        }
         if let Some(experimental) = &server.experimental {
             features.extend(experimental.keys().cloned());
+        }
+        if let Some(extensions) = &server.extensions {
+            features.extend(extensions.keys().cloned());
         }
 
         // Add default features
@@ -248,6 +275,12 @@ impl CapabilityMatcher {
         for feature in &all_features {
             if self.is_compatible(feature, client, server) {
                 enabled_features.insert(feature.clone());
+            } else if Self::client_has_extension(feature, client)
+                || Self::server_has_extension(feature, server)
+            {
+                // Draft extensions are opt-in on both sides. If one side omits an
+                // extension, negotiation should quietly leave it disabled rather
+                // than failing the entire session.
             } else {
                 incompatible_features.push(feature.clone());
             }
@@ -487,6 +520,7 @@ pub mod utils {
     /// Create a full-featured client capability set
     pub fn full_client_capabilities() -> ClientCapabilities {
         ClientCapabilities {
+            extensions: None,
             sampling: Some(Default::default()),
             roots: Some(Default::default()),
             elicitation: Some(Default::default()),
@@ -499,6 +533,7 @@ pub mod utils {
     /// Create a full-featured server capability set
     pub fn full_server_capabilities() -> ServerCapabilities {
         ServerCapabilities {
+            extensions: None,
             tools: Some(Default::default()),
             prompts: Some(Default::default()),
             resources: Some(Default::default()),
@@ -527,6 +562,7 @@ mod tests {
         let matcher = CapabilityMatcher::new();
 
         let client = ClientCapabilities {
+            extensions: None,
             sampling: Some(SamplingCapabilities {}),
             roots: None,
             elicitation: None,
@@ -536,6 +572,7 @@ mod tests {
         };
 
         let server = ServerCapabilities {
+            extensions: None,
             tools: Some(ToolsCapabilities::default()),
             prompts: None,
             resources: None,
@@ -641,6 +678,7 @@ pub mod builders {
     /// with compile-time validation.
     #[derive(Debug, Clone)]
     pub struct ServerCapabilitiesBuilder<S = ServerCapabilitiesBuilderState> {
+        extensions: Option<HashMap<String, serde_json::Value>>,
         experimental: Option<HashMap<String, serde_json::Value>>,
         logging: Option<LoggingCapabilities>,
         completions: Option<CompletionCapabilities>,
@@ -677,6 +715,7 @@ pub mod builders {
         /// Create a new ServerCapabilities builder
         pub fn new() -> Self {
             Self {
+                extensions: None,
                 experimental: None,
                 logging: None,
                 completions: None,
@@ -700,6 +739,7 @@ pub mod builders {
         /// All compile-time validations have been enforced during building.
         pub fn build(self) -> ServerCapabilities {
             ServerCapabilities {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 logging: self.logging,
                 completions: self.completions,
@@ -782,6 +822,9 @@ pub mod builders {
         /// Returns a human-readable summary of which capabilities are enabled.
         pub fn summary(&self) -> String {
             let mut capabilities = Vec::new();
+            if self.extensions.is_some() {
+                capabilities.push("extensions");
+            }
             if self.experimental.is_some() {
                 capabilities.push("experimental");
             }
@@ -807,6 +850,24 @@ pub mod builders {
                 format!("Enabled capabilities: {}", capabilities.join(", "))
             }
         }
+
+        /// Set draft extensions directly.
+        pub fn with_extensions(mut self, extensions: HashMap<String, serde_json::Value>) -> Self {
+            self.extensions = Some(extensions);
+            self
+        }
+
+        /// Add a single draft extension.
+        pub fn add_extension<K, V>(mut self, key: K, value: V) -> Self
+        where
+            K: Into<String>,
+            V: Into<serde_json::Value>,
+        {
+            self.extensions
+                .get_or_insert_with(HashMap::new)
+                .insert(key.into(), value.into());
+            self
+        }
     }
 
     // ========================================================================
@@ -826,6 +887,7 @@ pub mod builders {
         ) -> ServerCapabilitiesBuilder<ServerCapabilitiesBuilderState<true, L, C, P, R, T>>
         {
             ServerCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: Some(HashMap::new()),
                 logging: self.logging,
                 completions: self.completions,
@@ -847,6 +909,7 @@ pub mod builders {
         ) -> ServerCapabilitiesBuilder<ServerCapabilitiesBuilderState<true, L, C, P, R, T>>
         {
             ServerCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: Some(experimental),
                 logging: self.logging,
                 completions: self.completions,
@@ -872,6 +935,7 @@ pub mod builders {
         ) -> ServerCapabilitiesBuilder<ServerCapabilitiesBuilderState<E, true, C, P, R, T>>
         {
             ServerCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 logging: Some(LoggingCapabilities {}),
                 completions: self.completions,
@@ -897,6 +961,7 @@ pub mod builders {
         ) -> ServerCapabilitiesBuilder<ServerCapabilitiesBuilderState<E, L, true, P, R, T>>
         {
             ServerCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 logging: self.logging,
                 completions: Some(CompletionCapabilities {}),
@@ -922,6 +987,7 @@ pub mod builders {
         ) -> ServerCapabilitiesBuilder<ServerCapabilitiesBuilderState<E, L, C, true, R, T>>
         {
             ServerCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 logging: self.logging,
                 completions: self.completions,
@@ -947,6 +1013,7 @@ pub mod builders {
         ) -> ServerCapabilitiesBuilder<ServerCapabilitiesBuilderState<E, L, C, P, true, T>>
         {
             ServerCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 logging: self.logging,
                 completions: self.completions,
@@ -975,6 +1042,7 @@ pub mod builders {
         ) -> ServerCapabilitiesBuilder<ServerCapabilitiesBuilderState<E, L, C, P, R, true>>
         {
             ServerCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 logging: self.logging,
                 completions: self.completions,
@@ -1115,6 +1183,7 @@ pub mod builders {
     /// with comprehensive compile-time validation.
     #[derive(Debug, Clone)]
     pub struct ClientCapabilitiesBuilder<S = ClientCapabilitiesBuilderState> {
+        extensions: Option<HashMap<String, serde_json::Value>>,
         experimental: Option<HashMap<String, serde_json::Value>>,
         roots: Option<RootsCapabilities>,
         sampling: Option<SamplingCapabilities>,
@@ -1161,6 +1230,7 @@ pub mod builders {
         /// For clients that need explicit opt-in behavior, use `ClientCapabilitiesBuilder::minimal()`.
         pub fn new() -> Self {
             Self {
+                extensions: None,
                 experimental: Some(HashMap::new()),
                 roots: Some(RootsCapabilities::default()),
                 sampling: Some(SamplingCapabilities {}),
@@ -1189,6 +1259,7 @@ pub mod builders {
         /// - You want to minimize the attack surface
         pub fn minimal() -> Self {
             Self {
+                extensions: None,
                 experimental: None,
                 roots: None,
                 sampling: None,
@@ -1210,6 +1281,7 @@ pub mod builders {
         /// All compile-time validations have been enforced during building.
         pub fn build(self) -> ClientCapabilities {
             ClientCapabilities {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 roots: self.roots,
                 sampling: self.sampling,
@@ -1263,6 +1335,9 @@ pub mod builders {
         /// Returns a human-readable summary of which capabilities are enabled.
         pub fn summary(&self) -> String {
             let mut capabilities = Vec::new();
+            if self.extensions.is_some() {
+                capabilities.push("extensions");
+            }
             if self.experimental.is_some() {
                 capabilities.push("experimental");
             }
@@ -1282,6 +1357,24 @@ pub mod builders {
                 format!("Enabled capabilities: {}", capabilities.join(", "))
             }
         }
+
+        /// Set draft extensions directly.
+        pub fn with_extensions(mut self, extensions: HashMap<String, serde_json::Value>) -> Self {
+            self.extensions = Some(extensions);
+            self
+        }
+
+        /// Add a single draft extension.
+        pub fn add_extension<K, V>(mut self, key: K, value: V) -> Self
+        where
+            K: Into<String>,
+            V: Into<serde_json::Value>,
+        {
+            self.extensions
+                .get_or_insert_with(HashMap::new)
+                .insert(key.into(), value.into());
+            self
+        }
     }
 
     // ========================================================================
@@ -1300,6 +1393,7 @@ pub mod builders {
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, R, S, E>> {
             ClientCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: Some(HashMap::new()),
                 roots: self.roots,
                 sampling: self.sampling,
@@ -1318,6 +1412,7 @@ pub mod builders {
             experimental: HashMap<String, serde_json::Value>,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, R, S, E>> {
             ClientCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: Some(experimental),
                 roots: self.roots,
                 sampling: self.sampling,
@@ -1340,6 +1435,7 @@ pub mod builders {
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, true, S, E>> {
             ClientCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 roots: Some(RootsCapabilities { list_changed: None }),
                 sampling: self.sampling,
@@ -1362,6 +1458,7 @@ pub mod builders {
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, true, E>> {
             ClientCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 roots: self.roots,
                 sampling: Some(SamplingCapabilities {}),
@@ -1384,6 +1481,7 @@ pub mod builders {
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, S, true>> {
             ClientCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 roots: self.roots,
                 sampling: self.sampling,
@@ -1401,6 +1499,7 @@ pub mod builders {
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, S, true>> {
             ClientCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 roots: self.roots,
                 sampling: self.sampling,
@@ -1418,6 +1517,7 @@ pub mod builders {
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, S, true>> {
             ClientCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 roots: self.roots,
                 sampling: self.sampling,
@@ -1467,6 +1567,7 @@ pub mod builders {
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<false, R, S, E>> {
             ClientCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: None,
                 roots: self.roots,
                 sampling: self.sampling,
@@ -1492,6 +1593,7 @@ pub mod builders {
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, false, S, E>> {
             ClientCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 roots: None,
                 sampling: self.sampling,
@@ -1517,6 +1619,7 @@ pub mod builders {
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, false, E>> {
             ClientCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 roots: self.roots,
                 sampling: None,
@@ -1542,6 +1645,7 @@ pub mod builders {
             self,
         ) -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<X, R, S, false>> {
             ClientCapabilitiesBuilder {
+                extensions: self.extensions,
                 experimental: self.experimental,
                 roots: self.roots,
                 sampling: self.sampling,
@@ -1755,6 +1859,48 @@ pub mod builders {
             } else {
                 panic!("Expected experimental capabilities to be set");
             }
+        }
+
+        #[test]
+        fn test_draft_extensions_round_trip() {
+            let client_caps = ClientCapabilities::builder()
+                .add_extension("trace", serde_json::json!({"version": "1"}))
+                .build();
+            let server_caps = ServerCapabilities::builder()
+                .add_extension("trace", serde_json::json!({"version": "1"}))
+                .build();
+
+            let negotiated = crate::CapabilityMatcher::new()
+                .negotiate(&client_caps, &server_caps)
+                .expect("extensions should negotiate");
+
+            assert!(negotiated.has_feature("trace"));
+            let extensions = negotiated
+                .client_capabilities
+                .extensions
+                .as_ref()
+                .expect("extensions should be preserved");
+            assert_eq!(
+                extensions
+                    .get("trace")
+                    .and_then(|v| v.get("version"))
+                    .and_then(serde_json::Value::as_str),
+                Some("1")
+            );
+        }
+
+        #[test]
+        fn test_draft_extensions_require_both_sides() {
+            let client_caps = ClientCapabilities::builder()
+                .add_extension("trace", serde_json::json!({"version": "1"}))
+                .build();
+            let server_caps = ServerCapabilities::builder().build();
+
+            let negotiated = crate::CapabilityMatcher::new()
+                .negotiate(&client_caps, &server_caps)
+                .expect("negotiation should succeed with extension disabled");
+
+            assert!(!negotiated.has_feature("trace"));
         }
 
         #[test]

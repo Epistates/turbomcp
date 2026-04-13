@@ -63,8 +63,7 @@ pub trait VersionAdapter: Send + Sync + std::fmt::Debug {
 
 /// Adapter for MCP 2025-11-25 (current stable spec).
 ///
-/// This is a pass-through — no filtering is needed since the codebase
-/// natively targets this version.
+/// Strips draft-only fields such as capability `extensions`.
 #[derive(Debug)]
 pub struct V2025_11_25Adapter;
 
@@ -74,11 +73,18 @@ impl VersionAdapter for V2025_11_25Adapter {
     }
 
     fn filter_capabilities(&self, caps: ServerCapabilities) -> ServerCapabilities {
-        caps // pass-through
+        let mut caps = caps;
+        caps.extensions = None;
+        caps
     }
 
-    fn filter_result(&self, _method: &str, result: Value) -> Value {
-        result // pass-through
+    fn filter_result(&self, method: &str, mut result: Value) -> Value {
+        if method == "initialize"
+            && let Some(caps) = result.get_mut("capabilities")
+        {
+            strip_keys(caps, &["extensions"]);
+        }
+        result
     }
 
     fn validate_method(&self, _method: &str) -> Result<(), String> {
@@ -112,14 +118,13 @@ impl VersionAdapter for V2025_06_18Adapter {
     }
 
     fn filter_capabilities(&self, caps: ServerCapabilities) -> ServerCapabilities {
+        let mut caps = caps;
+        caps.extensions = None;
         // Tasks didn't exist in 2025-06-18
         #[cfg(feature = "experimental-tasks")]
         {
-            let mut caps = caps;
             caps.tasks = None;
-            caps
         }
-        #[cfg(not(feature = "experimental-tasks"))]
         caps
     }
 
@@ -132,7 +137,7 @@ impl VersionAdapter for V2025_06_18Adapter {
                 }
                 if let Some(caps) = result.get_mut("capabilities") {
                     // Strip tasks capability (new in 2025-11-25)
-                    strip_keys(caps, &["tasks"]);
+                    strip_keys(caps, &["tasks", "extensions"]);
                     // Strip url sub-capability from elicitation (new in 2025-11-25)
                     if let Some(elicitation) = caps.get_mut("elicitation") {
                         strip_keys(elicitation, &["url"]);
@@ -350,6 +355,66 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&filtered).unwrap(),
             serde_json::to_string(&caps).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_v2025_11_25_strips_draft_extensions() {
+        use std::collections::HashMap;
+
+        let adapter = V2025_11_25Adapter;
+
+        let mut extensions = HashMap::new();
+        extensions.insert(
+            "io.modelcontextprotocol/trace".to_string(),
+            serde_json::json!({"version": "1"}),
+        );
+        let caps = ServerCapabilities {
+            extensions: Some(extensions),
+            ..Default::default()
+        };
+        let filtered = adapter.filter_capabilities(caps);
+        assert!(
+            filtered.extensions.is_none(),
+            "extensions field should be stripped for stable 2025-11-25"
+        );
+
+        let result = json!({
+            "capabilities": {
+                "tools": { "listChanged": true },
+                "extensions": { "io.modelcontextprotocol/trace": { "version": "1" } }
+            }
+        });
+        let filtered = adapter.filter_result("initialize", result);
+        assert!(filtered["capabilities"]["tools"].is_object());
+        assert!(
+            filtered["capabilities"].get("extensions").is_none(),
+            "extensions key should be stripped from initialize result"
+        );
+    }
+
+    #[test]
+    fn test_draft_preserves_extensions() {
+        use std::collections::HashMap;
+
+        let adapter = DraftAdapter;
+
+        let mut extensions = HashMap::new();
+        extensions.insert(
+            "io.modelcontextprotocol/trace".to_string(),
+            serde_json::json!({"version": "1"}),
+        );
+        let caps = ServerCapabilities {
+            extensions: Some(extensions),
+            ..Default::default()
+        };
+        let filtered = adapter.filter_capabilities(caps);
+        assert!(
+            filtered
+                .extensions
+                .as_ref()
+                .is_some_and(|m| m.contains_key("io.modelcontextprotocol/trace")),
+            "draft adapter must preserve extensions"
         );
     }
 

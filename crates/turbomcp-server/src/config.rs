@@ -395,6 +395,9 @@ pub struct RequiredCapabilities {
     /// Require sampling capability.
     #[serde(default)]
     pub sampling: bool,
+    /// Require draft extensions.
+    #[serde(default)]
+    pub extensions: HashSet<String>,
     /// Require experimental capabilities.
     #[serde(default)]
     pub experimental: HashSet<String>,
@@ -421,6 +424,13 @@ impl RequiredCapabilities {
         self
     }
 
+    /// Require a draft extension.
+    #[must_use]
+    pub fn with_extension(mut self, name: impl Into<String>) -> Self {
+        self.extensions.insert(name.into());
+        self
+    }
+
     /// Require an experimental capability.
     #[must_use]
     pub fn with_experimental(mut self, name: impl Into<String>) -> Self {
@@ -439,6 +449,12 @@ impl RequiredCapabilities {
 
         if self.sampling && !client_caps.sampling {
             missing.push("sampling".to_string());
+        }
+
+        for extension in &self.extensions {
+            if !client_caps.extensions.contains(extension) {
+                missing.push(format!("extensions/{}", extension));
+            }
         }
 
         for exp in &self.experimental {
@@ -464,6 +480,9 @@ pub struct ClientCapabilities {
     /// Client supports sampling.
     #[serde(default)]
     pub sampling: bool,
+    /// Client draft extensions.
+    #[serde(default)]
+    pub extensions: HashSet<String>,
     /// Client experimental capabilities.
     #[serde(default)]
     pub experimental: HashSet<String>,
@@ -478,6 +497,11 @@ impl ClientCapabilities {
         Self {
             roots: caps.get("roots").map(|v| !v.is_null()).unwrap_or(false),
             sampling: caps.get("sampling").map(|v| !v.is_null()).unwrap_or(false),
+            extensions: caps
+                .get("extensions")
+                .and_then(|v| v.as_object())
+                .map(|obj| obj.keys().cloned().collect())
+                .unwrap_or_default(),
             experimental: caps
                 .get("experimental")
                 .and_then(|v| v.as_object())
@@ -770,6 +794,40 @@ mod tests {
 
         let client_missing = ClientCapabilities::default();
         assert!(!required.validate(&client_missing).is_valid());
+    }
+
+    #[test]
+    fn test_extension_capability_validation() {
+        let required = RequiredCapabilities::none().with_extension("trace");
+        let client = ClientCapabilities {
+            extensions: ["trace".to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        assert!(required.validate(&client).is_valid());
+
+        let missing = ClientCapabilities::default();
+        let validation = required.validate(&missing);
+        assert!(!validation.is_valid());
+        assert_eq!(
+            validation.missing(),
+            Some(&["extensions/trace".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn test_client_capabilities_parse_extensions() {
+        let params = serde_json::json!({
+            "capabilities": {
+                "extensions": {
+                    "trace": {"version": "1"},
+                    "handoff": {}
+                }
+            }
+        });
+
+        let caps = ClientCapabilities::from_params(&params);
+        assert!(caps.extensions.contains("trace"));
+        assert!(caps.extensions.contains("handoff"));
     }
 
     #[test]

@@ -55,7 +55,8 @@ use crate::context::RequestContext;
 use crate::error::McpResult;
 use crate::marker::{MaybeSend, MaybeSync};
 use turbomcp_types::{
-    Prompt, PromptResult, Resource, ResourceResult, ServerInfo, Tool, ToolResult,
+    Prompt, PromptCapabilities, PromptResult, Resource, ResourceCapabilities, ResourceResult,
+    ServerCapabilities, ServerInfo, Tool, ToolCapabilities, ToolResult,
 };
 
 /// The unified MCP handler trait.
@@ -206,6 +207,36 @@ pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
     /// This is called during the MCP `initialize` handshake to provide
     /// server metadata to the client.
     fn server_info(&self) -> ServerInfo;
+
+    /// Returns the server capabilities advertised during initialization.
+    ///
+    /// Override this when the server supports capabilities that cannot be
+    /// inferred from the static tool/resource/prompt listings, such as draft
+    /// `extensions`, logging, completions, or task endpoints.
+    fn server_capabilities(&self) -> ServerCapabilities {
+        let mut capabilities = ServerCapabilities::default();
+
+        if !self.list_tools().is_empty() {
+            capabilities.tools = Some(ToolCapabilities {
+                list_changed: Some(true),
+            });
+        }
+
+        if !self.list_resources().is_empty() {
+            capabilities.resources = Some(ResourceCapabilities {
+                subscribe: None,
+                list_changed: Some(true),
+            });
+        }
+
+        if !self.list_prompts().is_empty() {
+            capabilities.prompts = Some(PromptCapabilities {
+                list_changed: Some(true),
+            });
+        }
+
+        capabilities
+    }
 
     // ===== Capability Listings =====
 

@@ -461,6 +461,9 @@ pub struct ClientCapabilities {
     /// Support for tasks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tasks: Option<ClientTaskCapabilities>,
+    /// Draft extensions supported by the client.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<HashMap<String, Value>>,
     /// Experimental capabilities.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<HashMap<String, Value>>,
@@ -561,6 +564,9 @@ pub struct ServerCapabilities {
     /// Support for task-augmented requests (experimental in 2025-11-25).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tasks: Option<ServerTaskCapabilities>,
+    /// Draft extensions supported by the server.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<HashMap<String, Value>>,
     /// Experimental capabilities.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<HashMap<String, Value>>,
@@ -735,12 +741,17 @@ mod tests {
                     }),
                 }),
             }),
+            extensions: Some(HashMap::from([(
+                "trace".to_string(),
+                serde_json::json!({"version": "1"}),
+            )])),
             ..Default::default()
         };
         let json = serde_json::to_string(&caps).unwrap();
         let v: Value = serde_json::from_str(&json).unwrap();
         // Verify nested structure matches spec
         assert!(v["tasks"]["requests"]["tools"]["call"].is_object());
+        assert!(v["extensions"]["trace"].is_object());
     }
 
     // C-3: ElicitAction and ElicitResult serde
@@ -807,11 +818,16 @@ mod tests {
             logging: Some(HashMap::new()),
             completions: Some(HashMap::new()),
             tasks: Some(ServerTaskCapabilities::default()),
+            extensions: Some(HashMap::from([(
+                "trace".to_string(),
+                serde_json::json!({"version": "1"}),
+            )])),
             experimental: Some(HashMap::new()),
         };
         let json = serde_json::to_string(&caps).unwrap();
         assert!(!json.contains("elicitation"));
         assert!(!json.contains("sampling"));
+        assert!(json.contains("extensions"));
     }
 
     // H-8: SamplingMessage array content round-trip preserves array

@@ -1071,25 +1071,6 @@ impl<T: Transport + 'static> Client<T> {
     /// # }
     /// ```
     pub async fn initialize(&self) -> Result<InitializeResult> {
-        // Auto-connect transport if not already connected
-        // This provides consistent DX across all transports (Stdio, TCP, HTTP, WebSocket, Unix)
-        let transport = self.inner.protocol.transport();
-        let transport_state = transport.state().await;
-        if !matches!(
-            transport_state,
-            turbomcp_transport::TransportState::Connected
-        ) {
-            tracing::debug!(
-                "Auto-connecting transport (current state: {:?})",
-                transport_state
-            );
-            transport
-                .connect()
-                .await
-                .map_err(|e| Error::transport(format!("Failed to connect transport: {}", e)))?;
-            tracing::info!("Transport connected successfully");
-        }
-
         // Build client capabilities based on registered handlers (automatic detection)
         let mut client_caps = ProtocolClientCapabilities::default();
 
@@ -1108,7 +1089,6 @@ impl<T: Transport + 'static> Client<T> {
             client_caps.roots = Some(roots_caps);
         }
 
-        // Send MCP initialization request
         let request = InitializeRequest {
             protocol_version: PROTOCOL_VERSION.into(),
             capabilities: client_caps,
@@ -1120,6 +1100,36 @@ impl<T: Transport + 'static> Client<T> {
             },
             _meta: None,
         };
+
+        self.initialize_with_request(request).await
+    }
+
+    /// Initialize the MCP session with an explicit initialize request.
+    ///
+    /// This is the opt-in path for draft protocol versions and capability
+    /// fields such as official MCP `extensions`.
+    pub async fn initialize_with_request(
+        &self,
+        request: InitializeRequest,
+    ) -> Result<InitializeResult> {
+        // Auto-connect transport if not already connected
+        // This provides consistent DX across all transports (Stdio, TCP, HTTP, WebSocket, Unix)
+        let transport = self.inner.protocol.transport();
+        let transport_state = transport.state().await;
+        if !matches!(
+            transport_state,
+            turbomcp_transport::TransportState::Connected
+        ) {
+            tracing::debug!(
+                "Auto-connecting transport (current state: {:?})",
+                transport_state
+            );
+            transport
+                .connect()
+                .await
+                .map_err(|e| Error::transport(format!("Failed to connect transport: {}", e)))?;
+            tracing::info!("Transport connected successfully");
+        }
 
         let protocol_response: ProtocolInitializeResult = self
             .inner

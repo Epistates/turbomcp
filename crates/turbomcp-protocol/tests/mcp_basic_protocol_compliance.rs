@@ -628,6 +628,7 @@ mod capability_negotiation_compliance {
     #[test]
     fn test_standard_capability_structure() {
         let client_caps = ClientCapabilities {
+            extensions: None,
             roots: Some(RootsCapabilities {
                 list_changed: Some(true),
             }),
@@ -643,6 +644,7 @@ mod capability_negotiation_compliance {
         };
 
         let server_caps = ServerCapabilities {
+            extensions: None,
             prompts: Some(PromptsCapabilities {
                 list_changed: Some(true),
             }),
@@ -680,6 +682,7 @@ mod capability_negotiation_compliance {
     #[test]
     fn test_capability_enforcement() {
         let client_caps = ClientCapabilities {
+            extensions: None,
             roots: Some(RootsCapabilities {
                 list_changed: Some(true),
             }),
@@ -691,6 +694,7 @@ mod capability_negotiation_compliance {
         };
 
         let server_caps = ServerCapabilities {
+            extensions: None,
             tools: Some(ToolsCapabilities {
                 list_changed: Some(true),
             }),
