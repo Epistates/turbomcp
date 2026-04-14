@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.13] - 2026-04-14
+
+### Added
+
+- **MCP 2025-11-25 streamable HTTP transport, full lifecycle** — `crates/turbomcp-server/src/transport/http.rs` now implements the complete spec shape: `POST /` + `POST /mcp` for JSON-RPC requests, `GET /` + `GET /mcp` + `GET /sse` for Server-Sent Events, and `DELETE /` + `DELETE /mcp` for explicit session termination. `handle_json_rpc` emits `202 Accepted` for client JSON-RPC responses and notifications per §4, validates the `MCP-Protocol-Version` header against the per-session negotiated version, rejects `initialize` requests that already carry a session id with `400`, and returns `404` for terminated sessions. A new `build_router()` helper backs both the standalone `http::run{,_with_config}` entry points and `ServerBuilder::into_axum_router` / `into_service`, so BYO-Axum deployments pick up the same spec coverage.
+
+- **JSON Schema draft-2020-12 support in `ToolInputSchema` / `ToolOutputSchema`** — Across `turbomcp-types`, `turbomcp-core`, and `turbomcp-protocol`, `schema_type` is now `Option<Value>` (accepts `"object"` or `["object", "null"]`), `additional_properties` is now `Option<Value>` (accepts `false` or a sub-schema like `{"type": "string"}`), and a new `#[serde(flatten)] extra_keywords: HashMap<String, Value>` field preserves arbitrary JSON Schema keywords (`oneOf`, `$schema`, `$defs`, `description`, ...) losslessly through round-trip. Covered by `test_tool_schema_preserves_arbitrary_json_schema_keywords`. Macros (`turbomcp-macros/src/tool.rs`), `turbomcp-openapi` handler, `turbomcp-wasm` registrations, `turbomcp-server/examples/manual_server.rs`, and `turbomcp-protocol` test helpers all updated to the new shape.
+
+- **HTTP origin validation** — New `OriginValidationConfig` struct on `turbomcp-server::config` with `allowed_origins: HashSet<String>`, `allow_localhost: bool` (default `true`), and `allow_any: bool` (default `false`). Exposed on `ServerConfigBuilder` (`origin_validation`, `allow_origin`, `allow_origins`, `allow_localhost_origins`, `allow_any_origin`) and on `ServerBuilder` (`with_origin_validation`, `with_allowed_origin`, `allow_localhost_origins`, `allow_any_origin`). The HTTP transport threads the config into every POST / GET / DELETE handler via `validate_origin`, which also extracts the client IP from `ConnectInfo` or forwarded headers. Covers the MCP "Servers MUST validate the Origin header" DNS-rebinding mitigation.
+
+- **Request ID deduplication per session** — New shared `InitializedSessionState` in `turbomcp-server/src/transport/mod.rs` tracks `seen_request_ids: HashSet<String>`, enforcing the MCP spec requirement that "The request ID MUST NOT have been previously used by the requestor within the same session." HTTP, channel, line (stdio/tcp/unix), and WebSocket transports all wire duplicate requests to a `-32600 Invalid Request` error. Notifications (id=None) bypass the dedup check.
+
+- **Channel transport initialization lifecycle** — `turbomcp-server/src/transport/channel.rs` now enforces the same `SessionState` / `InitializedSessionState` lifecycle already present in line and WebSocket transports: rejects non-lifecycle requests before `initialize`, rejects duplicate `initialize`, and routes post-init requests through `route_request_versioned` with the negotiated `ProtocolVersion`.
+
+- **SSE primer event for resumability** — `handle_sse` now yields an initial `Event::default().id("<session>-0").data("")` before draining the per-subscriber channel, satisfying the MCP spec's "server SHOULD immediately send an SSE event consisting of an event ID and an empty data field in order to prime the client to reconnect (using that event ID as Last-Event-ID)."
+
+- **`RESERVED_METHOD_NAME` validation error** — `ProtocolValidator::validate_request` and `validate_notification` now emit the dedicated `RESERVED_METHOD_NAME` error code for methods starting with `rpc.`, per JSON-RPC 2.0 §6 ("Method names that begin with the word rpc followed by a period character are reserved for rpc-internal methods and extensions"). Both request and notification paths covered by new tests.
+
+- **Comprehensive HTTP spec-compliance integration tests** — New `crates/turbomcp-server/tests/http_transport_spec.rs` covers session-id handshake, `notifications/initialized` → `202`, client JSON-RPC response POST → `202`, GET/DELETE session termination on the same endpoint, untrusted origin rejection, configured origin allowance, duplicate request-id rejection, `413 Payload Too Large` for oversized bodies (raw-TCP test, race-free), and SSE primer event emission. Nine tests, all green.
+
+- **Channel transport duplicate request-id and silent-notification tests** (`test_channel_transport_rejects_duplicate_request_ids`, `test_channel_transport_silent_on_notification_before_init`) plus line transport silent-notification test (`test_line_transport_silent_on_notification_before_init`).
+
+### Changed
+
+- **`SessionManager` routes SSE messages to a single subscriber per session** — Previously backed by `tokio::sync::broadcast`, which delivered every outbound message to every active subscriber for a session. That violated MCP Streamable HTTP §Multiple Connections ("The server MUST send each of its JSON-RPC messages on only one of the connected streams; that is, it MUST NOT broadcast the same message across multiple streams"). `SessionData` now carries `subscribers: Vec<mpsc::UnboundedSender<String>>`, and `send_to_session` / `broadcast` route each message to exactly one live subscriber per session, dropping dead senders as they go. `subscribe_session` returns a dedicated `mpsc::UnboundedReceiver<String>`. Verified by the new `send_to_session_routes_to_single_subscriber` unit test.
+
+- **`ServerBuilder::into_axum_router` / `into_service` delegate to `transport::http::build_router`** — Removed 180+ lines of duplicated `handle_json_rpc` logic from `crates/turbomcp-server/src/builder.rs`. BYO-Axum integrations now automatically inherit the full streamable HTTP spec coverage (session management, origin validation, request-id dedup, 413/413 body limits, SSE primer) rather than running a reduced fork.
+
+- **Protocol method-name regex relaxed** — From `^[a-zA-Z][a-zA-Z0-9_/]*$` to `^[^\s\x00-\x1F]+$`, matching MCP's "just a string" rule and allowing extension-friendly names like `namespace.v1/tool-name`. The dedicated `RESERVED_METHOD_NAME` check still catches `rpc.*`.
+
+- **HTTP client treats `405 Method Not Allowed` on GET `/sse` as "no standalone SSE"** — `crates/turbomcp-http/src/transport.rs` SSE connection task now logs and breaks its reconnection loop when the server replies 405, matching MCP spec-compliant servers that do not offer a standalone SSE stream.
+
+- **Oversized HTTP bodies return `413 Payload Too Large`** — `build_router` now adds a `tower_http::limit::RequestBodyLimitLayer` at the middleware layer, and `handle_json_rpc` also performs an early Content-Length check and inspects the `to_bytes` error chain for `http_body_util::LengthLimitError` as a fallback. Previously mapped to `400 Bad Request`.
+
+### Fixed
+
+- **JSON-RPC 2.0 §4.1: transports no longer respond to notifications with errors** — Line (stdio/tcp/unix), channel, and WebSocket transports previously emitted a JSON-RPC error back to the peer when a notification was rejected (uninitialized session, duplicate request id, ...). Per spec, "Notifications are not confirmable by definition, since they do not have a Response object to be returned." The rejection paths now gate on `request.id.is_some()` for line and channel transports and use `JsonRpcOutgoing::notification_ack()` (dropped by `should_send`) for WebSocket, leaving the wire silent for notifications.
+
+- **`turbomcp-wasm wasm_server/server.rs` compile failure under `--features wasm-server`** — Two `Tool` registrations in `tool()` / `tool_with_ctx()` initialized `extra_keywords: std::collections::HashMap::new()`, but the underlying `turbomcp-core::types::tools::ToolInputSchema::extra_keywords` field is typed `hashbrown::HashMap<String, Value>` (because the crate is `no_std + alloc`). Replaced with `HashMap::new()` so the already-imported `hashbrown` alias applies. Caught by `cargo check --workspace --all-features`.
+
+- **`turbomcp-proxy::proxy::backend::convert_tools` compile failure** — The introspection `ToolSpec`'s `ToolInputSchema` carries a plain `schema_type: String` and flattened `additional: HashMap<String, Value>`, while `turbomcp-protocol::types::tools::ToolInputSchema` migrated to `Option<Value>` for both `schema_type` and `additional_properties`. `convert_tools` now extracts the schema-type string with an `"object"` fallback, copies `additional_properties` straight into `additional`, and propagates `extra_keywords` so arbitrary JSON Schema keywords survive proxy introspection.
+
 ## [3.0.12] - 2026-04-13
 
 ### Added
