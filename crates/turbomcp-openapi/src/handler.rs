@@ -89,7 +89,7 @@ impl OpenApiHandler {
         }
 
         ToolInputSchema {
-            schema_type: "object".to_string(),
+            schema_type: Some("object".into()),
             properties: Some(Value::Object(properties)),
             required: if required.is_empty() {
                 None
@@ -97,6 +97,7 @@ impl OpenApiHandler {
                 Some(required)
             },
             additional_properties: None,
+            extra_keywords: std::collections::HashMap::new(),
         }
     }
 

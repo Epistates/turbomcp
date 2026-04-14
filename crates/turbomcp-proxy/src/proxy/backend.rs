@@ -461,17 +461,23 @@ impl BackendConnector {
             .map(|t| {
                 let mut additional = HashMap::new();
                 if let Some(additional_props) = t.input_schema.additional_properties {
-                    additional.insert(
-                        "additionalProperties".to_string(),
-                        Value::Bool(additional_props),
-                    );
+                    additional.insert("additionalProperties".to_string(), additional_props);
                 }
+                for (key, value) in t.input_schema.extra_keywords {
+                    additional.insert(key, value);
+                }
+                let schema_type = t
+                    .input_schema
+                    .schema_type
+                    .as_ref()
+                    .and_then(|value| value.as_str().map(str::to_owned))
+                    .unwrap_or_else(|| "object".to_string());
                 ToolSpec {
                     name: t.name,
                     title: None,
                     description: t.description,
                     input_schema: ToolInputSchema {
-                        schema_type: t.input_schema.schema_type,
+                        schema_type,
                         properties: t.input_schema.properties,
                         required: t.input_schema.required,
                         additional,

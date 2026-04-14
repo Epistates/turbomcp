@@ -4,12 +4,13 @@ use turbomcp_types::{ServerInfo, Tool, ToolInputSchema, ToolResult};
 #[test]
 fn test_tool_serialization() {
     let schema = ToolInputSchema {
-        schema_type: "object".to_string(),
+        schema_type: Some("object".into()),
         properties: Some(json!({
             "arg": { "type": "string" }
         })),
         required: None,
         additional_properties: None,
+        extra_keywords: std::collections::HashMap::new(),
     };
 
     let tool = Tool::new("test-tool", "A test tool").with_schema(schema);

@@ -22,12 +22,13 @@ impl McpHandler for ManualServer {
 
     fn list_tools(&self) -> Vec<Tool> {
         let schema = ToolInputSchema {
-            schema_type: "object".to_string(),
+            schema_type: Some("object".into()),
             properties: Some(json!({
                 "message": { "type": "string" }
             })),
             required: Some(vec!["message".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(false.into()),
+            extra_keywords: std::collections::HashMap::new(),
         };
 
         vec![Tool::new("echo", "Echo back the input").with_schema(schema)]

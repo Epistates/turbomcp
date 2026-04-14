@@ -18,6 +18,11 @@
 
 mod line;
 
+use std::collections::HashSet;
+
+use serde_json::Value;
+use turbomcp_core::types::core::ProtocolVersion;
+
 /// MCP session lifecycle state for per-connection/session version tracking.
 ///
 /// Enforces the MCP spec initialization lifecycle:
@@ -31,8 +36,47 @@ mod line;
 pub(crate) enum SessionState {
     /// No successful `initialize` has been received yet.
     Uninitialized,
-    /// `initialize` succeeded; the negotiated version is stored.
-    Initialized(turbomcp_core::types::core::ProtocolVersion),
+    /// `initialize` succeeded; the negotiated version and used request IDs are stored.
+    Initialized(InitializedSessionState),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct InitializedSessionState {
+    protocol_version: ProtocolVersion,
+    seen_request_ids: HashSet<String>,
+}
+
+impl InitializedSessionState {
+    pub(crate) fn new(
+        protocol_version: ProtocolVersion,
+        initialize_request_id: Option<&Value>,
+    ) -> Self {
+        let mut seen_request_ids = HashSet::new();
+        if let Some(request_id) = initialize_request_id.and_then(request_id_key) {
+            seen_request_ids.insert(request_id);
+        }
+
+        Self {
+            protocol_version,
+            seen_request_ids,
+        }
+    }
+
+    pub(crate) fn protocol_version(&self) -> &ProtocolVersion {
+        &self.protocol_version
+    }
+
+    pub(crate) fn register_request_id(&mut self, request_id: Option<&Value>) -> bool {
+        let Some(request_id) = request_id.and_then(request_id_key) else {
+            return true;
+        };
+
+        self.seen_request_ids.insert(request_id)
+    }
+}
+
+pub(crate) fn request_id_key(id: &Value) -> Option<String> {
+    serde_json::to_string(id).ok()
 }
 
 #[cfg(feature = "stdio")]

@@ -432,10 +432,11 @@ pub fn generate_schema_code(parameters: &[ParameterInfo], krate: &TokenStream) -
             let required: Vec<String> = vec![#(#required_names.to_string()),*];
 
             #krate::__macro_support::turbomcp_types::ToolInputSchema {
-                schema_type: "object".to_string(),
+                schema_type: Some("object".into()),
                 properties: Some(#krate::__macro_support::serde_json::Value::Object(properties)),
                 required: if required.is_empty() { None } else { Some(required) },
-                additional_properties: Some(false),
+                additional_properties: Some(false.into()),
+                extra_keywords: std::collections::HashMap::new(),
             }
         }
     }

@@ -270,31 +270,35 @@ impl Tool {
 /// Defines the structure of the arguments a tool accepts, as a JSON Schema object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolInputSchema {
-    /// The type of the schema, which must be "object" for tool inputs.
-    #[serde(rename = "type")]
-    pub schema_type: String,
+    /// The schema type declaration. This may be a string or an array of strings.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub schema_type: Option<serde_json::Value>,
     /// A map defining the properties (parameters) the tool accepts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, serde_json::Value>>,
     /// A list of property names that are required.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
-    /// Whether additional, unspecified properties are allowed.
+    /// Whether additional, unspecified properties are allowed, or a schema constraining them.
     #[serde(
         rename = "additionalProperties",
         skip_serializing_if = "Option::is_none"
     )]
-    pub additional_properties: Option<bool>,
+    pub additional_properties: Option<serde_json::Value>,
+    /// Additional JSON Schema keywords preserved losslessly.
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra_keywords: HashMap<String, serde_json::Value>,
 }
 
 impl Default for ToolInputSchema {
     /// Creates a default `ToolInputSchema` that accepts an empty object.
     fn default() -> Self {
         Self {
-            schema_type: "object".to_string(),
+            schema_type: Some(serde_json::Value::String("object".to_string())),
             properties: None,
             required: None,
             additional_properties: None,
+            extra_keywords: HashMap::new(),
         }
     }
 }
@@ -308,10 +312,11 @@ impl ToolInputSchema {
     /// Creates a new schema with a given set of properties.
     pub fn with_properties(properties: HashMap<String, serde_json::Value>) -> Self {
         Self {
-            schema_type: "object".to_string(),
+            schema_type: Some(serde_json::Value::String("object".to_string())),
             properties: Some(properties),
             required: None,
             additional_properties: None,
+            extra_keywords: HashMap::new(),
         }
     }
 
@@ -321,10 +326,11 @@ impl ToolInputSchema {
         required: Vec<String>,
     ) -> Self {
         Self {
-            schema_type: "object".to_string(),
+            schema_type: Some(serde_json::Value::String("object".to_string())),
             properties: Some(properties),
             required: Some(required),
-            additional_properties: Some(false),
+            additional_properties: Some(serde_json::Value::Bool(false)),
+            extra_keywords: HashMap::new(),
         }
     }
 
@@ -366,21 +372,24 @@ impl ToolInputSchema {
 /// Defines the structure of a tool's successful output, as a JSON Schema object.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolOutputSchema {
-    /// The type of the schema, which must be "object" for tool outputs.
-    #[serde(rename = "type")]
-    pub schema_type: String,
+    /// The schema type declaration. This may be a string or an array of strings.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub schema_type: Option<serde_json::Value>,
     /// A map defining the properties of the output object.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, serde_json::Value>>,
     /// A list of property names in the output that are required.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
-    /// Whether additional, unspecified properties are allowed in the output.
+    /// Whether additional, unspecified properties are allowed in the output, or a schema constraining them.
     #[serde(
         rename = "additionalProperties",
         skip_serializing_if = "Option::is_none"
     )]
-    pub additional_properties: Option<bool>,
+    pub additional_properties: Option<serde_json::Value>,
+    /// Additional JSON Schema keywords preserved losslessly.
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra_keywords: HashMap<String, serde_json::Value>,
 }
 
 /// A request to list the available tools on a server.

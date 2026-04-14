@@ -20,10 +20,11 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use turbomcp_core::error::{ErrorKind, McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
+use turbomcp_core::types::core::ProtocolVersion;
 
 use crate::context::{McpSession, RequestContext};
 use crate::router;
-use crate::transport::MAX_MESSAGE_SIZE;
+use crate::transport::{MAX_MESSAGE_SIZE, SessionState};
 
 use turbomcp_transport::{
     Transport, TransportCapabilities, TransportError, TransportMessage, TransportMetrics,
@@ -259,6 +260,7 @@ async fn run_server_loop<H: McpHandler>(
     let mut pending_requests =
         HashMap::<serde_json::Value, oneshot::Sender<McpResult<serde_json::Value>>>::new();
     let mut next_request_id = 1u64;
+    let mut session_state = SessionState::Uninitialized;
 
     loop {
         tokio::select! {
@@ -307,16 +309,102 @@ async fn run_server_loop<H: McpHandler>(
                     // (avoids re-serializing to string then re-parsing like LineTransportRunner does)
                     match serde_json::from_value::<turbomcp_core::jsonrpc::JsonRpcIncoming>(value) {
                         Ok(request) => {
-                            let h = handler.clone();
-                            let session = session_handle.clone();
-                            let resp_tx = response_tx.clone();
-                            let ctx = RequestContext::channel().with_session(session);
-                            let core_ctx = ctx.to_core_context();
+                            if request.method == "initialize" {
+                                if matches!(session_state, SessionState::Initialized(_)) {
+                                    send_error_msg(
+                                        &outgoing,
+                                        request.id.clone(),
+                                        McpError::invalid_request("Session already initialized"),
+                                    )
+                                    .await?;
+                                    continue;
+                                }
 
-                            tokio::spawn(async move {
-                                let response = router::route_request(&h, request, &core_ctx).await;
-                                let _ = resp_tx.send(response).await;
-                            });
+                                let initialize_request_id = request.id.clone();
+                                let ctx =
+                                    RequestContext::channel().with_session(session_handle.clone());
+                                let core_ctx = ctx.to_core_context();
+                                let response = router::route_request_with_config(
+                                    &handler,
+                                    request,
+                                    &core_ctx,
+                                    None,
+                                )
+                                .await;
+
+                                if let Some(ref result) = response.result
+                                    && let Some(v) =
+                                        result.get("protocolVersion").and_then(|v| v.as_str())
+                                {
+                                    let version = ProtocolVersion::from(v);
+                                    session_state = SessionState::Initialized(
+                                        super::InitializedSessionState::new(
+                                            version,
+                                            initialize_request_id.as_ref(),
+                                        ),
+                                    );
+                                }
+
+                                if response.should_send() {
+                                    send_response_msg(&outgoing, &response).await?;
+                                }
+                            } else if request.method == "notifications/initialized"
+                                || request.method == "notifications/cancelled"
+                            {
+                                let h = handler.clone();
+                                let session = session_handle.clone();
+                                let resp_tx = response_tx.clone();
+                                let ctx = RequestContext::channel().with_session(session);
+                                let core_ctx = ctx.to_core_context();
+
+                                tokio::spawn(async move {
+                                    let response = router::route_request(&h, request, &core_ctx).await;
+                                    let _ = resp_tx.send(response).await;
+                                });
+                            } else {
+                                let version = match &mut session_state {
+                                    SessionState::Initialized(session) => {
+                                        if !session.register_request_id(request.id.as_ref()) {
+                                            send_error_msg(
+                                                &outgoing,
+                                                request.id.clone(),
+                                                McpError::invalid_request(
+                                                    "Request ID already used in this session",
+                                                ),
+                                            )
+                                            .await?;
+                                            continue;
+                                        }
+
+                                        session.protocol_version().clone()
+                                    }
+                                    SessionState::Uninitialized => {
+                                        send_error_msg(
+                                            &outgoing,
+                                            request.id.clone(),
+                                            McpError::invalid_request(
+                                                "Server not initialized. Send 'initialize' first.",
+                                            ),
+                                        )
+                                        .await?;
+                                        continue;
+                                    }
+                                };
+
+                                let h = handler.clone();
+                                let session = session_handle.clone();
+                                let resp_tx = response_tx.clone();
+                                let ctx = RequestContext::channel().with_session(session);
+                                let core_ctx = ctx.to_core_context();
+
+                                tokio::spawn(async move {
+                                    let response = router::route_request_versioned(
+                                        &h, request, &core_ctx, &version,
+                                    )
+                                    .await;
+                                    let _ = resp_tx.send(response).await;
+                                });
+                            }
                         }
                         Err(e) => {
                             send_error_msg(&outgoing, None, McpError::parse_error(e.to_string())).await?;
@@ -537,6 +625,70 @@ mod tests {
         assert!(value.get("result").is_some());
 
         // Cleanup
+        drop(transport);
+        let _ = server_handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_channel_transport_rejects_duplicate_request_ids() {
+        let handler = TestHandler;
+        let (transport, server_handle) = run_in_process(&handler).await.unwrap();
+
+        let init_request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "clientInfo": { "name": "test", "version": "1.0.0" },
+                "capabilities": {}
+            }
+        });
+        let init_payload = serde_json::to_vec(&init_request).unwrap();
+        transport
+            .send(TransportMessage::new(
+                turbomcp_protocol::MessageId::from("1"),
+                init_payload.into(),
+            ))
+            .await
+            .unwrap();
+        let _ = transport.receive().await.unwrap().unwrap();
+
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list"
+        });
+        let payload = serde_json::to_vec(&request).unwrap();
+
+        transport
+            .send(TransportMessage::new(
+                turbomcp_protocol::MessageId::from("2-first"),
+                payload.clone().into(),
+            ))
+            .await
+            .unwrap();
+        let first = transport.receive().await.unwrap().unwrap();
+        let first_value: serde_json::Value = serde_json::from_slice(&first.payload).unwrap();
+        assert!(first_value.get("result").is_some());
+
+        transport
+            .send(TransportMessage::new(
+                turbomcp_protocol::MessageId::from("2-duplicate"),
+                payload.into(),
+            ))
+            .await
+            .unwrap();
+        let duplicate = transport.receive().await.unwrap().unwrap();
+        let duplicate_value: serde_json::Value =
+            serde_json::from_slice(&duplicate.payload).unwrap();
+        assert_eq!(duplicate_value["error"]["code"], -32600);
+        assert!(
+            duplicate_value["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("already used"))
+        );
+
         drop(transport);
         let _ = server_handle.await;
     }

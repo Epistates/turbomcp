@@ -5634,6 +5634,7 @@ dependencies = [
  "http",
  "parking_lot",
  "proptest",
+ "reqwest 0.13.2",
  "schemars 1.2.1",
  "serde",
  "serde_json",

@@ -53,6 +53,7 @@ schemars = { version = "1.0", features = ["chrono04", "uuid1"] }
 [dev-dependencies]
 criterion = { workspace = true, features = ["async_tokio"] }
 proptest = "1.5"
+reqwest = { workspace = true }
 
 [features]
 default = ["stdio"]

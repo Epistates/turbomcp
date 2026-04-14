@@ -253,6 +253,7 @@ async fn handle_websocket<H: McpHandler>(
                     } else {
                         // Route initialize through config-aware handler so protocol
                         // negotiation and capability validation are applied.
+                        let initialize_request_id = request.id.clone();
                         let resp = router::route_request_with_config(
                             &handler,
                             request,
@@ -273,7 +274,11 @@ async fn handle_websocket<H: McpHandler>(
                                 client = %client_addr,
                                 "Protocol version negotiated"
                             );
-                            session_state = SessionState::Initialized(version);
+                            session_state =
+                                SessionState::Initialized(super::InitializedSessionState::new(
+                                    version,
+                                    initialize_request_id.as_ref(),
+                                ));
                         }
 
                         resp
@@ -286,11 +291,22 @@ async fn handle_websocket<H: McpHandler>(
                     router::route_request(&handler, request, &core_ctx).await
                 } else {
                     // All other requests require a completed initialize handshake.
-                    match &session_state {
-                        SessionState::Initialized(version) => {
-                            let version = version.clone();
-                            router::route_request_versioned(&handler, request, &core_ctx, &version)
+                    match &mut session_state {
+                        SessionState::Initialized(session) => {
+                            if !session.register_request_id(request.id.as_ref()) {
+                                JsonRpcOutgoing::error(
+                                    request.id.clone(),
+                                    McpError::invalid_request(
+                                        "Request ID already used in this session",
+                                    ),
+                                )
+                            } else {
+                                let version = session.protocol_version().clone();
+                                router::route_request_versioned(
+                                    &handler, request, &core_ctx, &version,
+                                )
                                 .await
+                            }
                         }
                         SessionState::Uninitialized => JsonRpcOutgoing::error(
                             request.id.clone(),

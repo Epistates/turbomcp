@@ -90,7 +90,8 @@ use turbomcp_core::error::McpResult;
 use turbomcp_core::handler::McpHandler;
 
 use super::config::{
-    ConnectionLimits, ProtocolConfig, RateLimitConfig, ServerConfig, ServerConfigBuilder,
+    ConnectionLimits, OriginValidationConfig, ProtocolConfig, RateLimitConfig, ServerConfig,
+    ServerConfigBuilder,
 };
 
 /// Transport configuration for the server.
@@ -266,6 +267,34 @@ impl<H: McpHandler> ServerBuilder<H> {
         self
     }
 
+    /// Allow a specific HTTP origin.
+    #[must_use]
+    pub fn with_allowed_origin(mut self, origin: impl Into<String>) -> Self {
+        self.config = self.config.allow_origin(origin);
+        self
+    }
+
+    /// Configure HTTP origin validation explicitly.
+    #[must_use]
+    pub fn with_origin_validation(mut self, config: OriginValidationConfig) -> Self {
+        self.config = self.config.origin_validation(config);
+        self
+    }
+
+    /// Control whether localhost origins are accepted for HTTP transports.
+    #[must_use]
+    pub fn allow_localhost_origins(mut self, allow: bool) -> Self {
+        self.config = self.config.allow_localhost_origins(allow);
+        self
+    }
+
+    /// Disable HTTP origin validation entirely.
+    #[must_use]
+    pub fn allow_any_origin(mut self, allow: bool) -> Self {
+        self.config = self.config.allow_any_origin(allow);
+        self
+    }
+
     /// Configure maximum concurrent connections.
     ///
     /// This limit applies to TCP, HTTP, WebSocket, and Unix transports.
@@ -363,7 +392,8 @@ impl<H: McpHandler> ServerBuilder<H> {
             .protocol(config.protocol)
             .connection_limits(config.connection_limits)
             .required_capabilities(config.required_capabilities)
-            .max_message_size(config.max_message_size);
+            .max_message_size(config.max_message_size)
+            .origin_validation(config.origin_validation);
 
         if let Some(rate_limit) = config.rate_limit {
             builder = builder.rate_limit(rate_limit);
@@ -468,31 +498,15 @@ impl<H: McpHandler> ServerBuilder<H> {
     /// ```
     #[cfg(feature = "http")]
     pub fn into_axum_router(self) -> axum::Router {
-        use axum::{Router, routing::post};
         use std::sync::Arc;
 
         let config = self.config.build();
-        let handler = Arc::new(self.handler);
         let rate_limiter = config
             .rate_limit
             .as_ref()
             .map(|cfg| Arc::new(crate::config::RateLimiter::new(cfg.clone())));
-        let session_manager = crate::transport::http::SessionManager::new();
-        let session_versions = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::<
-            String,
-            turbomcp_core::types::core::ProtocolVersion,
-        >::new()));
 
-        Router::new()
-            .route("/", post(handle_json_rpc::<H>))
-            .route("/mcp", post(handle_json_rpc::<H>))
-            .with_state(AppState {
-                handler,
-                rate_limiter,
-                config: Some(config),
-                session_manager,
-                session_versions,
-            })
+        crate::transport::http::build_router(self.handler, rate_limiter, Some(config))
     }
 
     /// Convert to a Tower service for custom server integration.
@@ -535,186 +549,6 @@ impl<H: McpHandler> ServerBuilder<H> {
         self.into_axum_router()
             .into_service()
             .map_err(|e| match e {})
-    }
-}
-
-/// State for the Axum handler.
-#[cfg(feature = "http")]
-#[derive(Clone)]
-struct AppState<H: McpHandler> {
-    handler: std::sync::Arc<H>,
-    rate_limiter: Option<std::sync::Arc<crate::config::RateLimiter>>,
-    config: Option<crate::config::ServerConfig>,
-    /// Session manager for SSE infrastructure. Held here so that BYO Axum
-    /// callers can extend the router with SSE routes using the same manager
-    /// instance. Not used by the POST handler itself.
-    #[allow(dead_code)]
-    session_manager: crate::transport::http::SessionManager,
-    /// Per-session negotiated protocol version, keyed by mcp-session-id header value.
-    session_versions: std::sync::Arc<
-        tokio::sync::RwLock<
-            std::collections::HashMap<String, turbomcp_core::types::core::ProtocolVersion>,
-        >,
-    >,
-}
-
-/// JSON-RPC request handler for Axum with version-aware routing.
-///
-/// Note: Rate limiting uses global rate limiting when used via `into_axum_router()`.
-/// For per-client rate limiting based on IP, use the full transport which includes
-/// `ConnectInfo` extraction.
-///
-/// Version-aware routing:
-/// - `initialize` requests are routed with config-based protocol negotiation, and the
-///   negotiated version is stored per session ID (from the `mcp-session-id` header).
-/// - Subsequent requests with a known session ID use the stored negotiated version via
-///   `route_request_versioned`, enabling per-version response filtering.
-/// - Requests without a session ID fall back to config-based routing.
-#[cfg(feature = "http")]
-async fn handle_json_rpc<H: McpHandler>(
-    axum::extract::State(state): axum::extract::State<AppState<H>>,
-    headers: axum::http::HeaderMap,
-    axum::Json(request): axum::Json<serde_json::Value>,
-) -> impl axum::response::IntoResponse {
-    use super::context::RequestContext;
-    use super::router::{
-        parse_request, route_request_versioned, route_request_with_config, serialize_response,
-    };
-
-    // Check rate limit if configured (uses global rate limiting for BYO server)
-    if let Some(ref limiter) = state.rate_limiter
-        && !limiter.check(None)
-    {
-        return (
-            axum::http::StatusCode::TOO_MANY_REQUESTS,
-            axum::Json(serde_json::json!({
-                "jsonrpc": "2.0",
-                "error": {
-                    "code": -32000,
-                    "message": "Rate limit exceeded"
-                },
-                "id": null
-            })),
-        );
-    }
-
-    // Extract optional session ID from headers for per-session version tracking.
-    let session_id = headers
-        .get("mcp-session-id")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-
-    let request_str = match serde_json::to_string(&request) {
-        Ok(s) => s,
-        Err(e) => {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                axum::Json(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "error": {
-                        "code": -32700,
-                        "message": format!("Parse error: {}", e)
-                    },
-                    "id": null
-                })),
-            );
-        }
-    };
-
-    let parsed = match parse_request(&request_str) {
-        Ok(p) => p,
-        Err(e) => {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                axum::Json(serde_json::json!({
-                    "jsonrpc": "2.0",
-                    "error": {
-                        "code": -32700,
-                        "message": format!("Parse error: {}", e)
-                    },
-                    "id": null
-                })),
-            );
-        }
-    };
-
-    let ctx = RequestContext::http();
-    let core_ctx = ctx.to_core_context();
-
-    let response = if parsed.method == "initialize" {
-        // Run config-aware routing for initialize so protocol negotiation fires.
-        let resp =
-            route_request_with_config(&*state.handler, parsed, &core_ctx, state.config.as_ref())
-                .await;
-
-        // On success, extract the negotiated protocolVersion from the response
-        // and store it under the session ID so subsequent requests can use versioned routing.
-        if resp.result.is_some() {
-            let negotiated: Option<turbomcp_core::types::core::ProtocolVersion> = resp
-                .result
-                .as_ref()
-                .and_then(|r| r.get("protocolVersion"))
-                .and_then(|v| v.as_str())
-                .map(turbomcp_core::types::core::ProtocolVersion::from);
-
-            if let (Some(sid), Some(version)) = (session_id.as_deref(), negotiated) {
-                state
-                    .session_versions
-                    .write()
-                    .await
-                    .insert(sid.to_owned(), version);
-                tracing::debug!(
-                    session_id = sid,
-                    "Stored negotiated protocol version for BYO Axum session"
-                );
-            }
-        }
-
-        resp
-    } else {
-        // For non-initialize requests: look up the stored negotiated version for this session.
-        let stored_version = match session_id.as_deref() {
-            Some(sid) => state.session_versions.read().await.get(sid).cloned(),
-            None => None,
-        };
-
-        match stored_version {
-            Some(version) => {
-                // Versioned routing applies the correct response adapter for the
-                // protocol version negotiated during the initialize handshake.
-                route_request_versioned(&*state.handler, parsed, &core_ctx, &version).await
-            }
-            None => {
-                // No session context — use config-aware routing as a fallback.
-                route_request_with_config(&*state.handler, parsed, &core_ctx, state.config.as_ref())
-                    .await
-            }
-        }
-    };
-
-    if !response.should_send() {
-        return (
-            axum::http::StatusCode::NO_CONTENT,
-            axum::Json(serde_json::json!(null)),
-        );
-    }
-
-    match serialize_response(&response) {
-        Ok(json_str) => {
-            let value: serde_json::Value = serde_json::from_str(&json_str).unwrap_or_default();
-            (axum::http::StatusCode::OK, axum::Json(value))
-        }
-        Err(e) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(serde_json::json!({
-                "jsonrpc": "2.0",
-                "error": {
-                    "code": -32603,
-                    "message": format!("Internal error: {}", e)
-                },
-                "id": null
-            })),
-        ),
     }
 }
 

@@ -30,6 +30,35 @@ pub const DEFAULT_RATE_LIMIT_WINDOW: Duration = Duration::from_secs(1);
 /// Default maximum message size (10MB).
 pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 
+/// Origin validation configuration for HTTP transports.
+#[derive(Debug, Clone)]
+pub struct OriginValidationConfig {
+    /// Explicitly allowed origins.
+    pub allowed_origins: HashSet<String>,
+    /// Whether to allow localhost/browser-dev origins.
+    pub allow_localhost: bool,
+    /// Whether to disable origin checks entirely.
+    pub allow_any: bool,
+}
+
+impl Default for OriginValidationConfig {
+    fn default() -> Self {
+        Self {
+            allowed_origins: HashSet::new(),
+            allow_localhost: true,
+            allow_any: false,
+        }
+    }
+}
+
+impl OriginValidationConfig {
+    /// Create a new origin validation configuration.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 /// Server configuration.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
@@ -43,6 +72,8 @@ pub struct ServerConfig {
     pub required_capabilities: RequiredCapabilities,
     /// Maximum message size in bytes (default: 10MB).
     pub max_message_size: usize,
+    /// HTTP origin validation policy.
+    pub origin_validation: OriginValidationConfig,
 }
 
 impl Default for ServerConfig {
@@ -53,6 +84,7 @@ impl Default for ServerConfig {
             connection_limits: ConnectionLimits::default(),
             required_capabilities: RequiredCapabilities::default(),
             max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
+            origin_validation: OriginValidationConfig::default(),
         }
     }
 }
@@ -79,6 +111,7 @@ pub struct ServerConfigBuilder {
     connection_limits: Option<ConnectionLimits>,
     required_capabilities: Option<RequiredCapabilities>,
     max_message_size: Option<usize>,
+    origin_validation: Option<OriginValidationConfig>,
 }
 
 impl ServerConfigBuilder {
@@ -120,6 +153,57 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Set HTTP origin validation configuration.
+    #[must_use]
+    pub fn origin_validation(mut self, config: OriginValidationConfig) -> Self {
+        self.origin_validation = Some(config);
+        self
+    }
+
+    /// Add a single allowed origin for HTTP transports.
+    #[must_use]
+    pub fn allow_origin(mut self, origin: impl Into<String>) -> Self {
+        self.origin_validation
+            .get_or_insert_with(OriginValidationConfig::default)
+            .allowed_origins
+            .insert(origin.into());
+        self
+    }
+
+    /// Add multiple allowed origins for HTTP transports.
+    #[must_use]
+    pub fn allow_origins<I, S>(mut self, origins: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let config = self
+            .origin_validation
+            .get_or_insert_with(OriginValidationConfig::default);
+        config
+            .allowed_origins
+            .extend(origins.into_iter().map(Into::into));
+        self
+    }
+
+    /// Control whether localhost origins are accepted.
+    #[must_use]
+    pub fn allow_localhost_origins(mut self, allow: bool) -> Self {
+        self.origin_validation
+            .get_or_insert_with(OriginValidationConfig::default)
+            .allow_localhost = allow;
+        self
+    }
+
+    /// Disable origin checks entirely.
+    #[must_use]
+    pub fn allow_any_origin(mut self, allow: bool) -> Self {
+        self.origin_validation
+            .get_or_insert_with(OriginValidationConfig::default)
+            .allow_any = allow;
+        self
+    }
+
     /// Build the server configuration with sensible defaults.
     ///
     /// This method always succeeds and uses defaults for any unset fields.
@@ -132,6 +216,7 @@ impl ServerConfigBuilder {
             connection_limits: self.connection_limits.unwrap_or_default(),
             required_capabilities: self.required_capabilities.unwrap_or_default(),
             max_message_size: self.max_message_size.unwrap_or(DEFAULT_MAX_MESSAGE_SIZE),
+            origin_validation: self.origin_validation.unwrap_or_default(),
         }
     }
 
@@ -203,6 +288,7 @@ impl ServerConfigBuilder {
             connection_limits,
             required_capabilities: self.required_capabilities.unwrap_or_default(),
             max_message_size,
+            origin_validation: self.origin_validation.unwrap_or_default(),
         })
     }
 }
@@ -871,6 +957,24 @@ mod tests {
         // Default configuration should always succeed
         let config = ServerConfig::builder().build();
         assert_eq!(config.max_message_size, DEFAULT_MAX_MESSAGE_SIZE);
+        assert!(config.origin_validation.allow_localhost);
+        assert!(config.origin_validation.allowed_origins.is_empty());
+    }
+
+    #[test]
+    fn test_builder_origin_validation_overrides() {
+        let config = ServerConfig::builder()
+            .allow_origin("https://app.example.com")
+            .allow_localhost_origins(false)
+            .build();
+
+        assert!(!config.origin_validation.allow_localhost);
+        assert!(
+            config
+                .origin_validation
+                .allowed_origins
+                .contains("https://app.example.com")
+        );
     }
 
     #[test]

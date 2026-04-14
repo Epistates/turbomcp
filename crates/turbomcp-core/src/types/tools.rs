@@ -64,23 +64,38 @@ impl Tool {
 }
 
 /// JSON Schema for tool input
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolInputSchema {
-    /// Schema type (always "object")
-    #[serde(rename = "type")]
-    pub schema_type: String,
+    /// Schema type declaration. This may be a string or an array of strings.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub schema_type: Option<Value>,
     /// Property definitions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<HashMap<String, Value>>,
     /// Required properties
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
-    /// Additional properties allowed
+    /// Additional properties allowed, or a schema constraining them.
     #[serde(
         rename = "additionalProperties",
         skip_serializing_if = "Option::is_none"
     )]
-    pub additional_properties: Option<bool>,
+    pub additional_properties: Option<Value>,
+    /// Additional JSON Schema keywords preserved losslessly.
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra_keywords: HashMap<String, Value>,
+}
+
+impl Default for ToolInputSchema {
+    fn default() -> Self {
+        Self {
+            schema_type: Some(Value::String("object".into())),
+            properties: None,
+            required: None,
+            additional_properties: None,
+            extra_keywords: HashMap::new(),
+        }
+    }
 }
 
 impl ToolInputSchema {
@@ -88,10 +103,11 @@ impl ToolInputSchema {
     #[must_use]
     pub fn object() -> Self {
         Self {
-            schema_type: "object".into(),
+            schema_type: Some(Value::String("object".into())),
             properties: Some(HashMap::new()),
             required: None,
-            additional_properties: Some(false),
+            additional_properties: Some(Value::Bool(false)),
+            extra_keywords: HashMap::new(),
         }
     }
 

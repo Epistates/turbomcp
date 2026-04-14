@@ -265,30 +265,38 @@ impl std::fmt::Display for TaskSupportLevel {
 /// JSON Schema for tool input parameters.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolInputSchema {
-    /// Schema type (always "object" for MCP tools)
-    #[serde(rename = "type")]
-    pub schema_type: String,
+    /// Schema type declaration. This may be a string or an array of strings.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub schema_type: Option<Value>,
     /// Property definitions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<Value>,
     /// Required property names
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
-    /// Whether additional properties are allowed
+    /// Whether additional properties are allowed, or a schema constraining them.
     #[serde(
         rename = "additionalProperties",
         skip_serializing_if = "Option::is_none"
     )]
-    pub additional_properties: Option<bool>,
+    pub additional_properties: Option<Value>,
+    /// Additional JSON Schema keywords preserved losslessly.
+    #[serde(
+        flatten,
+        default,
+        skip_serializing_if = "std::collections::HashMap::is_empty"
+    )]
+    pub extra_keywords: std::collections::HashMap<String, Value>,
 }
 
 impl Default for ToolInputSchema {
     fn default() -> Self {
         Self {
-            schema_type: "object".into(),
+            schema_type: Some(Value::String("object".into())),
             properties: None,
             required: None,
-            additional_properties: Some(false),
+            additional_properties: Some(Value::Bool(false)),
+            extra_keywords: std::collections::HashMap::new(),
         }
     }
 }

@@ -117,8 +117,8 @@ pub use middleware::{McpMiddleware, MiddlewareStack, Next};
 pub use builder::{McpServerExt, ServerBuilder, Transport};
 pub use config::{
     CapabilityValidation, ClientCapabilities, ConfigValidationError, ConnectionCounter,
-    ConnectionGuard, ConnectionLimits, ProtocolConfig, ProtocolVersion, RateLimitConfig,
-    RateLimiter, RequiredCapabilities, SUPPORTED_PROTOCOL_VERSIONS, ServerConfig,
+    ConnectionGuard, ConnectionLimits, OriginValidationConfig, ProtocolConfig, ProtocolVersion,
+    RateLimitConfig, RateLimiter, RequiredCapabilities, SUPPORTED_PROTOCOL_VERSIONS, ServerConfig,
     ServerConfigBuilder,
 };
 pub use context::{RequestContext, TransportType};
@@ -185,8 +185,8 @@ pub mod prelude {
 
     // Configuration types
     pub use super::{
-        ConnectionLimits, ProtocolConfig, RateLimitConfig, RateLimiter, RequiredCapabilities,
-        ServerConfig, ServerConfigBuilder,
+        ConnectionLimits, OriginValidationConfig, ProtocolConfig, RateLimitConfig, RateLimiter,
+        RequiredCapabilities, ServerConfig, ServerConfigBuilder,
     };
 
     // Re-export error types from turbomcp-core (unified error handling)

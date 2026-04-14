@@ -16,9 +16,12 @@ static URI_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-zA-Z][a-zA-Z0-9+.-]*:").expect("Invalid URI regex pattern"));
 
 /// Cached regex for method name validation (compiled once)
-static METHOD_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[a-zA-Z][a-zA-Z0-9_/]*$").expect("Invalid method name regex pattern")
-});
+///
+/// MCP only requires a JSON-RPC method to be a string. We reject control
+/// characters and whitespace for transport safety, but otherwise allow dots,
+/// hyphens, slashes, and other extension-friendly punctuation.
+static METHOD_NAME_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[^\s\x00-\x1F]+$").expect("Invalid method name regex pattern"));
 
 /// Protocol message validator
 #[derive(Debug, Clone)]
@@ -781,10 +784,15 @@ impl ProtocolValidator {
         ctx.push_path("inputSchema".to_string());
 
         // Validate schema type
-        if input.schema_type != "object" {
+        if let Some(schema_type) = input.schema_type.as_ref()
+            && !schema_declares_type(schema_type, "object")
+        {
             ctx.add_warning(
                 "NON_OBJECT_SCHEMA",
-                "Tool input schema should typically be 'object'".to_string(),
+                format!(
+                    "Tool input schema should typically be 'object', got {}",
+                    describe_schema_type(schema_type)
+                ),
                 Some("type".to_string()),
             );
         }
@@ -910,6 +918,21 @@ impl Default for ProtocolValidator {
     }
 }
 
+fn schema_declares_type(schema_type: &Value, expected: &str) -> bool {
+    match schema_type {
+        Value::String(value) => value == expected,
+        Value::Array(values) => values.iter().any(|value| value.as_str() == Some(expected)),
+        _ => false,
+    }
+}
+
+fn describe_schema_type(schema_type: &Value) -> String {
+    match schema_type {
+        Value::String(value) => format!("'{value}'"),
+        other => other.to_string(),
+    }
+}
+
 impl ValidationContext {
     fn new() -> Self {
         Self {
@@ -1027,9 +1050,11 @@ pub mod utils {
 
     /// Check if a string is a valid method name
     pub fn is_valid_method_name(method: &str) -> bool {
-        ValidationRules::default()
-            .method_name_regex()
-            .is_match(method)
+        !method.is_empty()
+            && !method.starts_with("rpc.")
+            && ValidationRules::default()
+                .method_name_regex()
+                .is_match(method)
     }
 }
 

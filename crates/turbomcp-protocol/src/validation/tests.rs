@@ -94,7 +94,8 @@ fn test_validation_rules_default() {
 
     assert!(rules.method_name_regex().is_match("tools/list"));
     assert!(rules.method_name_regex().is_match("initialize"));
-    assert!(!rules.method_name_regex().is_match("invalid-method!"));
+    assert!(rules.method_name_regex().is_match("namespace.v1/tool-name"));
+    assert!(!rules.method_name_regex().is_match("invalid method"));
 
     // Test required fields
     assert!(rules.required_fields.contains_key("request"));
@@ -178,7 +179,7 @@ fn test_validate_request_empty_method() {
 fn test_validate_request_invalid_method_name() {
     let validator = ProtocolValidator::new();
     let mut request = create_valid_request();
-    request.method = "invalid-method!@#".to_string();
+    request.method = "invalid method".to_string();
 
     let result = validator.validate_request(&request);
     assert!(result.is_invalid());
@@ -186,7 +187,7 @@ fn test_validate_request_invalid_method_name() {
     let errors = result.errors();
     assert_eq!(errors.len(), 1);
     assert_eq!(errors[0].code, "INVALID_METHOD_NAME");
-    assert!(errors[0].message.contains("invalid-method!@#"));
+    assert!(errors[0].message.contains("invalid method"));
 }
 
 #[test]
@@ -393,7 +394,7 @@ fn test_validate_notification_invalid_method() {
     let validator = ProtocolValidator::new();
     let notification = JsonRpcNotification {
         jsonrpc: JsonRpcVersion,
-        method: "invalid-method!".to_string(),
+        method: "invalid method".to_string(),
         params: None,
     };
 
@@ -463,7 +464,7 @@ fn test_validate_tool_name_too_long() {
 fn test_validate_tool_non_object_schema() {
     let validator = ProtocolValidator::new();
     let mut tool = create_valid_tool();
-    tool.input_schema.schema_type = "string".to_string();
+    tool.input_schema.schema_type = Some("string".into());
 
     let result = validator.validate_tool(&tool);
     assert!(result.is_valid()); // Valid but with warnings
@@ -916,15 +917,13 @@ fn test_utils_is_valid_method_name() {
     assert!(utils::is_valid_method_name("tools/call"));
     assert!(utils::is_valid_method_name("custom_method"));
     assert!(utils::is_valid_method_name("namespace/method_name"));
+    assert!(utils::is_valid_method_name("namespace.v1/tool-name"));
     assert!(utils::is_valid_method_name("a"));
     assert!(utils::is_valid_method_name("test123"));
 
     // Invalid method names
     assert!(!utils::is_valid_method_name(""));
-    assert!(!utils::is_valid_method_name("123invalid"));
-    assert!(!utils::is_valid_method_name("invalid-method"));
-    assert!(!utils::is_valid_method_name("invalid.method"));
-    assert!(!utils::is_valid_method_name("invalid!method"));
+    assert!(!utils::is_valid_method_name("rpc.internal"));
     assert!(!utils::is_valid_method_name("invalid method"));
 }
 
@@ -1018,10 +1017,11 @@ fn create_valid_tool() -> Tool {
         title: Some("Test Tool".to_string()),
         description: Some("A test tool for validation".to_string()),
         input_schema: ToolInputSchema {
-            schema_type: "object".to_string(),
+            schema_type: Some("object".into()),
             properties: None,
             required: None,
             additional_properties: None,
+            extra_keywords: std::collections::HashMap::new(),
         },
         output_schema: None,
         execution: None,

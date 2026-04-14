@@ -48,10 +48,11 @@ pub fn test_tool() -> Tool {
         title: Some("Test Tool".to_string()),
         description: Some("A test tool for validation".to_string()),
         input_schema: ToolInputSchema {
-            schema_type: "object".to_string(),
+            schema_type: Some("object".into()),
             properties: None,
             required: None,
             additional_properties: None,
+            extra_keywords: std::collections::HashMap::new(),
         },
         output_schema: None,
         execution: None,

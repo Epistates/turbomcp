@@ -232,6 +232,7 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                     // initialize dispatch — the transport loop is blocked
                                     // here and cannot process the server-to-client
                                     // request, which would deadlock.
+                                    let initialize_request_id = request.id.clone();
                                     let ctx = ctx_factory().with_session(session_handle.clone());
                                     let core_ctx = ctx.to_core_context();
                                     let response = router::route_request_with_config(
@@ -255,7 +256,12 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                             version = %version,
                                             "Protocol version negotiated"
                                         );
-                                        session_state = SessionState::Initialized(version);
+                                        session_state = SessionState::Initialized(
+                                            super::InitializedSessionState::new(
+                                                version,
+                                                initialize_request_id.as_ref(),
+                                            ),
+                                        );
                                     }
 
                                     if response.should_send() {
@@ -280,8 +286,23 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                     });
                                 } else {
                                     // All other requests require a successful initialize.
-                                    let version = match &session_state {
-                                        SessionState::Initialized(v) => v.clone(),
+                                    let version = match &mut session_state {
+                                        SessionState::Initialized(session) => {
+                                            if !session.register_request_id(request.id.as_ref()) {
+                                                self.send_error(
+                                                    &mut writer,
+                                                    request.id.clone(),
+                                                    McpError::invalid_request(
+                                                        "Request ID already used in this session",
+                                                    ),
+                                                )
+                                                .await?;
+                                                line.clear();
+                                                continue;
+                                            }
+
+                                            session.protocol_version().clone()
+                                        }
                                         SessionState::Uninitialized => {
                                             self.send_error(
                                                 &mut writer,

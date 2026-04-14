@@ -684,10 +684,11 @@ fn test_tool() {
         title: Some("Calculator Tool".to_string()),
         description: Some("Performs calculations".to_string()),
         input_schema: ToolInputSchema {
-            schema_type: "object".to_string(),
+            schema_type: Some("object".into()),
             properties: None,
             required: None,
             additional_properties: None,
+            extra_keywords: HashMap::new(),
         },
         output_schema: None,
         execution: None,
@@ -697,7 +698,7 @@ fn test_tool() {
 
     assert_eq!(tool.name, "calculator");
     assert_eq!(tool.title, Some("Calculator Tool".to_string()));
-    assert_eq!(tool.input_schema.schema_type, "object");
+    assert_eq!(tool.input_schema.schema_type, Some("object".into()));
 }
 
 #[test]
@@ -715,10 +716,11 @@ fn test_tool_with_annotations() {
         title: None,
         description: None,
         input_schema: ToolInputSchema {
-            schema_type: "object".to_string(),
+            schema_type: Some("object".into()),
             properties: None,
             required: None,
             additional_properties: None,
+            extra_keywords: HashMap::new(),
         },
         output_schema: None,
         annotations: Some(annotations),
@@ -737,16 +739,17 @@ fn test_tool_input_schema() {
     properties.insert("param1".to_string(), json!({"type": "string"}));
 
     let schema = ToolInputSchema {
-        schema_type: "object".to_string(),
+        schema_type: Some("object".into()),
         properties: Some(properties),
         required: Some(vec!["param1".to_string()]),
-        additional_properties: Some(false),
+        additional_properties: Some(false.into()),
+        extra_keywords: HashMap::new(),
     };
 
-    assert_eq!(schema.schema_type, "object");
+    assert_eq!(schema.schema_type, Some("object".into()));
     assert!(schema.properties.is_some());
     assert_eq!(schema.required, Some(vec!["param1".to_string()]));
-    assert_eq!(schema.additional_properties, Some(false));
+    assert_eq!(schema.additional_properties, Some(false.into()));
 }
 
 #[test]
@@ -756,10 +759,11 @@ fn test_tool_serialization() {
         title: None,
         description: None,
         input_schema: ToolInputSchema {
-            schema_type: "object".to_string(),
+            schema_type: Some("object".into()),
             properties: None,
             required: None,
             additional_properties: None,
+            extra_keywords: HashMap::new(),
         },
         output_schema: None,
         execution: None,
@@ -966,7 +970,7 @@ fn test_comprehensive_serialization() {
         title: Some("Complex Tool".to_string()),
         description: Some("A complex tool for testing".to_string()),
         input_schema: ToolInputSchema {
-            schema_type: "object".to_string(),
+            schema_type: Some("object".into()),
             properties: Some({
                 let mut props = HashMap::new();
                 props.insert(
@@ -980,17 +984,19 @@ fn test_comprehensive_serialization() {
                 props
             }),
             required: Some(vec!["param1".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(false.into()),
+            extra_keywords: HashMap::new(),
         },
         output_schema: Some(ToolOutputSchema {
-            schema_type: "object".to_string(),
+            schema_type: Some("object".into()),
             properties: Some({
                 let mut props = HashMap::new();
                 props.insert("result".to_string(), json!({"type": "string"}));
                 props
             }),
             required: Some(vec!["result".to_string()]),
-            additional_properties: Some(false),
+            additional_properties: Some(false.into()),
+            extra_keywords: HashMap::new(),
         }),
         annotations: Some(ToolAnnotations {
             title: Some("Annotated Complex Tool".to_string()),
@@ -1243,7 +1249,7 @@ fn test_tool_with_complete_annotations_integration() {
         title: Some("File Manager Pro".to_string()),
         description: Some("Advanced file management operations".to_string()),
         input_schema: ToolInputSchema {
-            schema_type: "object".to_string(),
+            schema_type: Some("object".into()),
             properties: Some({
                 let mut props = HashMap::new();
                 props.insert(
@@ -1255,9 +1261,10 @@ fn test_tool_with_complete_annotations_integration() {
             }),
             required: Some(vec!["path".to_string(), "operation".to_string()]),
             additional_properties: None,
+            extra_keywords: HashMap::new(),
         },
         output_schema: Some(ToolOutputSchema {
-            schema_type: "object".to_string(),
+            schema_type: Some("object".into()),
             properties: Some({
                 let mut props = HashMap::new();
                 props.insert(
@@ -1269,6 +1276,7 @@ fn test_tool_with_complete_annotations_integration() {
             }),
             required: None,
             additional_properties: None,
+            extra_keywords: HashMap::new(),
         }),
         annotations: Some(ToolAnnotations {
             title: Some("File Manager with Full Annotations".to_string()),
@@ -1325,7 +1333,7 @@ fn test_clean_tool_creation() {
     let tool = Tool::new("test_tool");
 
     assert_eq!(tool.name, "test_tool");
-    assert_eq!(tool.input_schema.schema_type, "object");
+    assert_eq!(tool.input_schema.schema_type, Some("object".into()));
     assert!(tool.description.is_none());
     assert!(tool.title.is_none());
     assert!(tool.annotations.is_none());
@@ -1369,7 +1377,7 @@ fn test_turbomcp_tool_definition_conversion_no_description() {
 fn test_input_schema_defaults() {
     let schema = ToolInputSchema::default();
 
-    assert_eq!(schema.schema_type, "object");
+    assert_eq!(schema.schema_type, Some("object".into()));
     assert!(schema.properties.is_none());
     assert!(schema.required.is_none());
     assert!(schema.additional_properties.is_none());
@@ -1379,7 +1387,7 @@ fn test_input_schema_defaults() {
 fn test_input_schema_builder_methods() {
     // Test helper methods for common patterns
     let empty_schema = ToolInputSchema::empty();
-    assert_eq!(empty_schema.schema_type, "object");
+    assert_eq!(empty_schema.schema_type, Some("object".into()));
 
     let props = HashMap::from([
         ("x".to_string(), json!({"type": "number"})),
@@ -1397,6 +1405,66 @@ fn test_input_schema_builder_methods() {
     assert_eq!(
         required_schema.required,
         Some(vec!["x".to_string(), "y".to_string()])
+    );
+}
+
+#[test]
+fn test_tool_schema_preserves_arbitrary_json_schema_keywords() {
+    let tool: Tool = serde_json::from_value(json!({
+        "name": "schema_tool",
+        "inputSchema": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "description": "Choose one of two mutually exclusive argument sets",
+            "oneOf": [
+                { "required": ["foo"] },
+                { "required": ["bar"] }
+            ]
+        },
+        "outputSchema": {
+            "type": ["object", "null"],
+            "additionalProperties": { "type": "string" }
+        }
+    }))
+    .unwrap();
+
+    assert!(tool.input_schema.schema_type.is_none());
+    assert_eq!(
+        tool.input_schema
+            .extra_keywords
+            .get("$schema")
+            .and_then(|value| value.as_str()),
+        Some("https://json-schema.org/draft/2020-12/schema")
+    );
+    assert!(tool
+        .input_schema
+        .extra_keywords
+        .get("oneOf")
+        .is_some_and(|value| value.is_array()));
+    assert_eq!(
+        tool.output_schema
+            .as_ref()
+            .and_then(|schema| schema.schema_type.as_ref())
+            .cloned(),
+        Some(json!(["object", "null"]))
+    );
+    assert_eq!(
+        tool.output_schema
+            .as_ref()
+            .and_then(|schema| schema.additional_properties.as_ref())
+            .and_then(|value| value.get("type"))
+            .and_then(|value| value.as_str()),
+        Some("string")
+    );
+
+    let serialized = serde_json::to_value(&tool).unwrap();
+    assert!(serialized["inputSchema"].get("type").is_none());
+    assert_eq!(
+        serialized["inputSchema"]["description"],
+        "Choose one of two mutually exclusive argument sets"
+    );
+    assert_eq!(
+        serialized["outputSchema"]["additionalProperties"]["type"],
+        "string"
     );
 }
 

@@ -483,6 +483,14 @@ impl StreamableHttpClientTransport {
             // Connect to SSE endpoint
             match http_client.get(&endpoint_url).headers(headers).send().await {
                 Ok(response) => {
+                    if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+                        info!(
+                            "Server returned HTTP 405 for GET {}. Continuing without standalone SSE polling.",
+                            endpoint_url
+                        );
+                        break;
+                    }
+
                     if !response.status().is_success() {
                         error!("SSE connection failed: {}", response.status());
                         attempt += 1;

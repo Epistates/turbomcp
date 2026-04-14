@@ -283,10 +283,11 @@ impl McpServerBuilder {
             title: None,
             icons: None,
             input_schema: ToolInputSchema {
-                schema_type: "object".to_string(),
+                schema_type: Some("object".into()),
                 properties,
                 required,
                 additional_properties: None,
+                extra_keywords: HashMap::new(),
             },
             annotations: None,
         };
@@ -365,10 +366,11 @@ impl McpServerBuilder {
             title: None,
             icons: None,
             input_schema: ToolInputSchema {
-                schema_type: "object".to_string(),
+                schema_type: Some("object".into()),
                 properties,
                 required,
                 additional_properties: None,
+                extra_keywords: HashMap::new(),
             },
             annotations: None,
         };
