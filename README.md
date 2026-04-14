@@ -451,13 +451,3 @@ just test
 ## License
 
 [MIT](./LICENSE)
-
----
-
-## Status
-
-TurboMCP 3.0.2 — Stable release with full MCP 2025-11-25 specification compliance, 25-crate modular architecture, `no_std` WASM support, and comprehensive authentication stack.
-
-- Rust 1.89.0+ / Edition 2024
-- Zero known runtime vulnerabilities
-- Active development with regular updates
