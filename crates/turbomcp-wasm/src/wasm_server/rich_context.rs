@@ -574,24 +574,27 @@ fn clear_all_session_state() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
-    fn cleanup_test_sessions() {
-        cleanup_session_state("test-session-1");
-        cleanup_session_state("test-session-2");
-        cleanup_session_state("session-iso-1");
-        cleanup_session_state("session-iso-2");
-        cleanup_session_state("complex-session-1");
-        cleanup_session_state("guard-test-session");
-        cleanup_session_state("error-test-session");
-        cleanup_session_state("logging-test");
-        cleanup_session_state("progress-test");
+    // Per-test-binary unique session id generator. Two parallel tests in the
+    // same process previously shared a blanket `cleanup_test_sessions()` that
+    // wiped *every* known test session, so one test would clobber another
+    // test's live state mid-run. Each test now derives a unique id from this
+    // counter and only touches its own session.
+    static SESSION_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn unique_session_id(prefix: &str) -> String {
+        format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            SESSION_SEQ.fetch_add(1, Ordering::Relaxed)
+        )
     }
 
     #[test]
     fn test_get_set_state() {
-        cleanup_test_sessions();
-
-        let ctx = RequestContext::new().with_session_id("test-session-1");
+        let session_id = unique_session_id("test-session");
+        let ctx = RequestContext::new().with_session_id(&session_id);
 
         // Set state
         assert!(ctx.set_state("counter", &42i32));
@@ -615,8 +618,7 @@ mod tests {
         ctx.clear_state();
         assert_eq!(ctx.get_state::<String>("name"), None);
 
-        // Cleanup
-        cleanup_session_state("test-session-1");
+        cleanup_session_state(&session_id);
     }
 
     #[test]
@@ -641,10 +643,10 @@ mod tests {
 
     #[test]
     fn test_state_isolation() {
-        cleanup_test_sessions();
-
-        let ctx1 = RequestContext::new().with_session_id("session-iso-1");
-        let ctx2 = RequestContext::new().with_session_id("session-iso-2");
+        let session1 = unique_session_id("session-iso");
+        let session2 = unique_session_id("session-iso");
+        let ctx1 = RequestContext::new().with_session_id(&session1);
+        let ctx2 = RequestContext::new().with_session_id(&session2);
 
         // Set different values in different sessions
         ctx1.set_state("value", &1i32);
@@ -654,16 +656,14 @@ mod tests {
         assert_eq!(ctx1.get_state::<i32>("value"), Some(1));
         assert_eq!(ctx2.get_state::<i32>("value"), Some(2));
 
-        // Cleanup
-        cleanup_session_state("session-iso-1");
-        cleanup_session_state("session-iso-2");
+        cleanup_session_state(&session1);
+        cleanup_session_state(&session2);
     }
 
     #[test]
     fn test_complex_types() {
-        cleanup_test_sessions();
-
-        let ctx = RequestContext::new().with_session_id("complex-session-1");
+        let session_id = unique_session_id("complex-session");
+        let ctx = RequestContext::new().with_session_id(&session_id);
 
         #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
         struct MyData {
@@ -680,18 +680,16 @@ mod tests {
         let retrieved: Option<MyData> = ctx.get_state("data");
         assert_eq!(retrieved, Some(data));
 
-        cleanup_session_state("complex-session-1");
+        cleanup_session_state(&session_id);
     }
 
     #[test]
     fn test_session_state_guard() {
-        cleanup_test_sessions();
-
-        let session_id = "guard-test-session";
+        let session_id = unique_session_id("guard-test-session");
 
         {
-            let _guard = SessionStateGuard::new(session_id);
-            let ctx = RequestContext::new().with_session_id(session_id);
+            let _guard = SessionStateGuard::new(&session_id);
+            let ctx = RequestContext::new().with_session_id(&session_id);
 
             ctx.set_state("key", &"value");
             assert_eq!(ctx.get_state::<String>("key"), Some("value".to_string()));
@@ -701,22 +699,21 @@ mod tests {
         }
 
         // After guard drops, state should be cleaned up
-        let ctx = RequestContext::new().with_session_id(session_id);
+        let ctx = RequestContext::new().with_session_id(&session_id);
         assert_eq!(ctx.get_state::<String>("key"), None);
     }
 
     #[test]
     fn test_try_get_state_errors() {
-        cleanup_test_sessions();
-
-        let ctx = RequestContext::new().with_session_id("error-test-session");
+        let session_id = unique_session_id("error-test-session");
+        let ctx = RequestContext::new().with_session_id(&session_id);
         ctx.set_state("number", &42i32);
 
         // Type mismatch returns deserialization error
         let result: Result<Option<String>, StateError> = ctx.try_get_state("number");
         assert!(matches!(result, Err(StateError::DeserializationFailed(_))));
 
-        cleanup_session_state("error-test-session");
+        cleanup_session_state(&session_id);
     }
 
     #[test]
