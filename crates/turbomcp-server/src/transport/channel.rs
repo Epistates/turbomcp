@@ -362,31 +362,38 @@ async fn run_server_loop<H: McpHandler>(
                                     let _ = resp_tx.send(response).await;
                                 });
                             } else {
+                                // Notifications (id=None) MUST NOT receive responses per
+                                // JSON-RPC 2.0, so rejection paths stay silent for them.
+                                let is_notification = request.id.is_none();
                                 let version = match &mut session_state {
                                     SessionState::Initialized(session) => {
                                         if !session.register_request_id(request.id.as_ref()) {
-                                            send_error_msg(
-                                                &outgoing,
-                                                request.id.clone(),
-                                                McpError::invalid_request(
-                                                    "Request ID already used in this session",
-                                                ),
-                                            )
-                                            .await?;
+                                            if !is_notification {
+                                                send_error_msg(
+                                                    &outgoing,
+                                                    request.id.clone(),
+                                                    McpError::invalid_request(
+                                                        "Request ID already used in this session",
+                                                    ),
+                                                )
+                                                .await?;
+                                            }
                                             continue;
                                         }
 
                                         session.protocol_version().clone()
                                     }
                                     SessionState::Uninitialized => {
-                                        send_error_msg(
-                                            &outgoing,
-                                            request.id.clone(),
-                                            McpError::invalid_request(
-                                                "Server not initialized. Send 'initialize' first.",
-                                            ),
-                                        )
-                                        .await?;
+                                        if !is_notification {
+                                            send_error_msg(
+                                                &outgoing,
+                                                request.id.clone(),
+                                                McpError::invalid_request(
+                                                    "Server not initialized. Send 'initialize' first.",
+                                                ),
+                                            )
+                                            .await?;
+                                        }
                                         continue;
                                     }
                                 };
@@ -625,6 +632,38 @@ mod tests {
         assert!(value.get("result").is_some());
 
         // Cleanup
+        drop(transport);
+        let _ = server_handle.await;
+    }
+
+    // JSON-RPC 2.0: notifications (no id) must not receive responses.
+    // Rejecting a pre-init notification with an error over the channel
+    // is a spec violation.
+    #[tokio::test]
+    async fn test_channel_transport_silent_on_notification_before_init() {
+        let handler = TestHandler;
+        let (transport, server_handle) = run_in_process(&handler).await.unwrap();
+
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "tools/list"
+        });
+        let payload = serde_json::to_vec(&notification).unwrap();
+        transport
+            .send(TransportMessage::new(
+                turbomcp_protocol::MessageId::from("n1"),
+                payload.into(),
+            ))
+            .await
+            .unwrap();
+
+        let received =
+            tokio::time::timeout(std::time::Duration::from_millis(200), transport.receive()).await;
+        assert!(
+            received.is_err(),
+            "notifications must not receive a response, got: {received:?}"
+        );
+
         drop(transport);
         let _ = server_handle.await;
     }

@@ -291,15 +291,23 @@ async fn handle_websocket<H: McpHandler>(
                     router::route_request(&handler, request, &core_ctx).await
                 } else {
                     // All other requests require a completed initialize handshake.
+                    // Notifications (id=None) MUST NOT receive responses per
+                    // JSON-RPC 2.0, so synthesize a drop-able ack instead of
+                    // an error that would get serialized to the peer.
+                    let is_notification = request.id.is_none();
                     match &mut session_state {
                         SessionState::Initialized(session) => {
                             if !session.register_request_id(request.id.as_ref()) {
-                                JsonRpcOutgoing::error(
-                                    request.id.clone(),
-                                    McpError::invalid_request(
-                                        "Request ID already used in this session",
-                                    ),
-                                )
+                                if is_notification {
+                                    JsonRpcOutgoing::notification_ack()
+                                } else {
+                                    JsonRpcOutgoing::error(
+                                        request.id.clone(),
+                                        McpError::invalid_request(
+                                            "Request ID already used in this session",
+                                        ),
+                                    )
+                                }
                             } else {
                                 let version = session.protocol_version().clone();
                                 router::route_request_versioned(
@@ -308,12 +316,18 @@ async fn handle_websocket<H: McpHandler>(
                                 .await
                             }
                         }
-                        SessionState::Uninitialized => JsonRpcOutgoing::error(
-                            request.id.clone(),
-                            McpError::invalid_request(
-                                "Server not initialized. Send 'initialize' first.",
-                            ),
-                        ),
+                        SessionState::Uninitialized => {
+                            if is_notification {
+                                JsonRpcOutgoing::notification_ack()
+                            } else {
+                                JsonRpcOutgoing::error(
+                                    request.id.clone(),
+                                    McpError::invalid_request(
+                                        "Server not initialized. Send 'initialize' first.",
+                                    ),
+                                )
+                            }
+                        }
                     }
                 };
 

@@ -191,6 +191,44 @@ fn test_validate_request_invalid_method_name() {
 }
 
 #[test]
+fn test_validate_request_rejects_rpc_prefix() {
+    // JSON-RPC 2.0 section 6: "Method names that begin with the word rpc
+    // followed by a period character are reserved for rpc-internal methods
+    // and extensions and MUST NOT be used for anything else."
+    let validator = ProtocolValidator::new();
+    let mut request = create_valid_request();
+    request.method = "rpc.internal".to_string();
+
+    let result = validator.validate_request(&request);
+    assert!(result.is_invalid());
+
+    let errors = result.errors();
+    assert!(
+        errors.iter().any(|e| e.code == "RESERVED_METHOD_NAME"),
+        "expected RESERVED_METHOD_NAME error, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_validate_notification_rejects_rpc_prefix() {
+    let validator = ProtocolValidator::new();
+    let notification = JsonRpcNotification {
+        jsonrpc: JsonRpcVersion,
+        method: "rpc.discover".to_string(),
+        params: None,
+    };
+
+    let result = validator.validate_notification(&notification);
+    assert!(result.is_invalid());
+
+    let errors = result.errors();
+    assert!(
+        errors.iter().any(|e| e.code == "RESERVED_METHOD_NAME"),
+        "expected RESERVED_METHOD_NAME error, got: {errors:?}"
+    );
+}
+
+#[test]
 fn test_validate_request_with_initialize_params() {
     let validator = ProtocolValidator::new();
     let mut request = create_valid_request();

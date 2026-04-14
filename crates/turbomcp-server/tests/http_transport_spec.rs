@@ -1,5 +1,6 @@
 #![cfg(feature = "http")]
 
+use futures::StreamExt;
 use reqwest::{Client, StatusCode, header};
 use serde_json::json;
 use std::future::Future;
@@ -200,6 +201,72 @@ async fn client_jsonrpc_response_post_returns_202() {
 }
 
 #[tokio::test]
+async fn sse_sends_primer_event_with_id() {
+    use tokio::io::AsyncReadExt;
+
+    let (base_url, handle) = spawn_server().await;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let response = client
+        .get(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Read just enough bytes to see the first event (up to the second
+    // blank line). An SSE primer event has an `id:` line and an empty
+    // `data:` line followed by the record-terminating blank line.
+    let mut stream = tokio_util::io::StreamReader::new(
+        response
+            .bytes_stream()
+            .map(|r| r.map_err(std::io::Error::other)),
+    );
+    let mut buf = vec![0u8; 512];
+    let mut collected = String::new();
+    for _ in 0..8 {
+        let n = tokio::time::timeout(Duration::from_secs(1), stream.read(&mut buf))
+            .await
+            .expect("read timed out")
+            .expect("read error");
+        if n == 0 {
+            break;
+        }
+        collected.push_str(std::str::from_utf8(&buf[..n]).unwrap());
+        if collected.contains("\n\n") {
+            break;
+        }
+    }
+
+    // Per SSE spec, a valid primer event carries only an `id:` line and no
+    // `data:` line (equivalent to an empty data field). axum's Sse writer
+    // drops `data:` lines when the payload is empty, so we require the id
+    // and require the event to carry no non-empty data line.
+    let first_event = collected.split("\n\n").next().unwrap_or("");
+    assert!(
+        first_event.lines().any(|line| line.starts_with("id:")),
+        "first SSE event should carry an id for Last-Event-ID resume, got: {collected:?}"
+    );
+    assert!(
+        first_event
+            .lines()
+            .all(|line| !line.starts_with("data:")
+                || line.trim_start_matches("data:").trim().is_empty()),
+        "primer event should have no non-empty data field, got: {collected:?}"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
 async fn get_and_delete_use_same_endpoint_session() {
     let (base_url, handle) = spawn_server().await;
     let client = Client::builder()
@@ -290,6 +357,52 @@ async fn allows_configured_origin() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn oversized_body_returns_413() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let (base_url, handle) = spawn_server().await;
+    // Strip scheme so we can raw-socket connect.
+    let host_port = base_url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+    let addr: std::net::SocketAddr = host_port.parse().unwrap();
+
+    // Advertise a huge Content-Length but only upload a few hundred bytes
+    // so reqwest's "write the whole body before reading the response" race
+    // doesn't apply. We use a raw TCP stream so the server can reject via
+    // headers alone (tower-http's RequestBodyLimitLayer will 413 without
+    // waiting for the full body, since it consults the declared length).
+    let declared_len = (11 * 1024 * 1024) as usize;
+    let request = format!(
+        "POST /mcp HTTP/1.1\r\n\
+         Host: {host_port}\r\n\
+         Accept: application/json, text/event-stream\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {declared_len}\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}}"
+    );
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    // Best-effort close the write half so the server doesn't block waiting
+    // for more body. Ignore errors — the server may already have 413'd us.
+    let _ = stream.shutdown().await;
+
+    let mut buf = Vec::with_capacity(1024);
+    let _ = tokio::time::timeout(Duration::from_secs(2), stream.read_to_end(&mut buf)).await;
+
+    let response_head = String::from_utf8_lossy(&buf);
+    assert!(
+        response_head.starts_with("HTTP/1.1 413") || response_head.starts_with("HTTP/1.0 413"),
+        "expected 413 Payload Too Large, got: {response_head:?}"
+    );
 
     handle.abort();
 }

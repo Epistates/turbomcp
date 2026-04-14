@@ -32,7 +32,8 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{RwLock, mpsc};
+use tower_http::limit::RequestBodyLimitLayer;
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
 use turbomcp_core::jsonrpc::JsonRpcResponse as CoreJsonRpcResponse;
@@ -58,10 +59,16 @@ const MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
 const SSE_KEEP_ALIVE_SECS: u64 = 30;
 
 /// Per-session data tracked by SessionManager.
-#[derive(Debug, Clone)]
+///
+/// The MCP 2025-11-25 spec (§Multiple Connections) says a server "MUST send
+/// each of its JSON-RPC messages on only one of the connected streams; that
+/// is, it MUST NOT broadcast the same message across multiple streams."
+/// We therefore track subscribers as a list of mpsc senders and route each
+/// outbound message to exactly one of them, dropping dead senders as we go.
+#[derive(Debug)]
 struct SessionData {
-    /// Broadcast channel for SSE push.
-    tx: broadcast::Sender<String>,
+    /// Ordered list of active SSE subscribers (newest last).
+    subscribers: Vec<mpsc::UnboundedSender<String>>,
     /// Negotiated protocol version (set after successful initialize).
     protocol_version: Option<ProtocolVersion>,
     /// Request IDs already used by the client within this session.
@@ -95,7 +102,6 @@ impl SessionManager {
         initialize_request_id: Option<&serde_json::Value>,
     ) -> String {
         let session_id = Uuid::new_v4().to_string();
-        let (tx, _) = broadcast::channel(100);
         let mut seen_request_ids = HashSet::new();
         if let Some(request_id) = initialize_request_id.and_then(super::request_id_key) {
             seen_request_ids.insert(request_id);
@@ -104,7 +110,7 @@ impl SessionManager {
         self.sessions.write().await.insert(
             session_id.clone(),
             SessionData {
-                tx,
+                subscribers: Vec::new(),
                 protocol_version: None,
                 seen_request_ids,
             },
@@ -124,12 +130,18 @@ impl SessionManager {
     }
 
     /// Subscribe to an existing session's SSE stream.
-    pub async fn subscribe_session(&self, session_id: &str) -> Option<broadcast::Receiver<String>> {
-        self.sessions
-            .read()
-            .await
-            .get(session_id)
-            .map(|data| data.tx.subscribe())
+    ///
+    /// Each subscribe returns a dedicated [`mpsc::UnboundedReceiver`] that
+    /// only receives messages routed to this subscriber — never broadcasts.
+    pub async fn subscribe_session(
+        &self,
+        session_id: &str,
+    ) -> Option<mpsc::UnboundedReceiver<String>> {
+        let mut sessions = self.sessions.write().await;
+        let data = sessions.get_mut(session_id)?;
+        let (tx, rx) = mpsc::unbounded_channel();
+        data.subscribers.push(tx);
+        Some(rx)
     }
 
     /// Check whether a session exists.
@@ -137,23 +149,58 @@ impl SessionManager {
         self.sessions.read().await.contains_key(session_id)
     }
 
-    /// Send a message to a specific session.
+    /// Send a message to one subscriber for the given session.
+    ///
+    /// Per the MCP Multiple Connections rule, this routes the message to
+    /// exactly one of the session's currently connected streams (the most
+    /// recently subscribed live one), dropping any closed senders along the
+    /// way. Returns `true` if the message was delivered.
     #[allow(dead_code)] // Reserved for server-initiated push (not yet wired)
     pub(crate) async fn send_to_session(&self, session_id: &str, message: &str) -> bool {
-        if let Some(data) = self.sessions.read().await.get(session_id) {
-            data.tx.send(message.to_string()).is_ok()
-        } else {
-            false
+        let mut sessions = self.sessions.write().await;
+        let Some(data) = sessions.get_mut(session_id) else {
+            return false;
+        };
+        // Drain dead senders from the newest end forward until we find a
+        // live one that accepts the message. This gives new SSE connections
+        // priority over stale ones without closing streams that are idle.
+        while let Some(tx) = data.subscribers.last() {
+            if tx.is_closed() {
+                data.subscribers.pop();
+                continue;
+            }
+            if tx.send(message.to_string()).is_ok() {
+                return true;
+            }
+            // Send only fails here if the receiver was dropped between the
+            // is_closed check and send; pop and retry.
+            data.subscribers.pop();
         }
+        false
     }
 
-    /// Broadcast a message to all sessions.
+    /// Broadcast a message to one subscriber per session.
+    ///
+    /// Iterates every session and routes to a single live subscriber
+    /// following the same per-session rule as [`Self::send_to_session`].
     #[allow(dead_code)] // Reserved for server-initiated push (not yet wired)
     pub(crate) async fn broadcast(&self, message: &str) {
-        let sessions = self.sessions.read().await;
-        for (session_id, data) in sessions.iter() {
-            if data.tx.send(message.to_string()).is_err() {
-                tracing::warn!("Failed to send to session {}", session_id);
+        let mut sessions = self.sessions.write().await;
+        for (session_id, data) in sessions.iter_mut() {
+            let mut delivered = false;
+            while let Some(tx) = data.subscribers.last() {
+                if tx.is_closed() {
+                    data.subscribers.pop();
+                    continue;
+                }
+                if tx.send(message.to_string()).is_ok() {
+                    delivered = true;
+                    break;
+                }
+                data.subscribers.pop();
+            }
+            if !delivered {
+                tracing::warn!("No live subscriber for session {}", session_id);
             }
         }
     }
@@ -341,7 +388,12 @@ pub(crate) fn build_router<H: McpHandler>(
                 .delete(handle_delete_session::<H>),
         )
         .route("/sse", get(handle_sse::<H>))
+        // DefaultBodyLimit sets the extractor hint for Json<T>/Bytes, while
+        // RequestBodyLimitLayer enforces the cap at the middleware layer so
+        // oversized bodies are rejected with 413 Payload Too Large before
+        // our handler (which takes Request<Body>) ever reads the stream.
         .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
+        .layer(RequestBodyLimitLayer::new(MAX_BODY_SIZE))
         .with_state(state)
 }
 
@@ -402,6 +454,23 @@ fn parse_session_id(headers: &HeaderMap) -> Option<String> {
         .get("mcp-session-id")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned)
+}
+
+/// Walk the error source chain looking for `http_body_util::LengthLimitError`.
+///
+/// `axum::body::to_bytes` wraps the body in `http_body_util::Limited` which
+/// emits a `LengthLimitError` with the documented `"length limit exceeded"`
+/// display form when the payload exceeds the configured limit. We match on
+/// the display string to avoid a direct dependency on `http-body-util`.
+fn is_length_limit_error(err: &axum::Error) -> bool {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(current) = source {
+        if current.to_string() == "length limit exceeded" {
+            return true;
+        }
+        source = current.source();
+    }
+    false
 }
 
 fn session_header_value(session_id: &str) -> HeaderValue {
@@ -541,12 +610,32 @@ async fn handle_json_rpc<H: McpHandler>(
         }
     }
 
+    // Reject oversized bodies with 413 Payload Too Large rather than 400 so
+    // clients can tell "body is malformed" from "body too big to accept".
+    // Prefer the Content-Length header as a fast, stream-free check, then
+    // fall back to inspecting the to_bytes error chain for chunked bodies.
+    if let Some(declared_len) = headers
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<usize>().ok())
+        && declared_len > MAX_BODY_SIZE
+    {
+        return empty_response(StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
     let payload = match to_bytes(body, MAX_BODY_SIZE).await {
         Ok(body) => match serde_json::from_slice::<serde_json::Value>(&body) {
             Ok(payload) => payload,
             Err(_) => return empty_response(StatusCode::BAD_REQUEST),
         },
-        Err(_) => return empty_response(StatusCode::BAD_REQUEST),
+        Err(err) => {
+            let status = if is_length_limit_error(&err) {
+                StatusCode::PAYLOAD_TOO_LARGE
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            return empty_response(status);
+        }
     };
 
     let request = match serde_json::from_value::<JsonRpcIncoming>(payload.clone()) {
@@ -651,22 +740,29 @@ async fn handle_sse<H: McpHandler>(
         return empty_response(StatusCode::NOT_FOUND);
     };
 
-    // Create the SSE stream
+    // Create the SSE stream. Per MCP spec:
+    //   "The server SHOULD immediately send an SSE event consisting of an
+    //    event ID and an empty data field in order to prime the client to
+    //    reconnect (using that event ID as Last-Event-ID)."
+    let primer_id = format!("{}-0", session_id);
     let stream = async_stream::stream! {
-        // Listen for messages from the broadcast channel
+        yield Ok::<_, std::convert::Infallible>(
+            Event::default().id(primer_id).data(""),
+        );
+
+        // Drain messages routed to this specific subscriber. Per spec we
+        // only see messages that the server explicitly chose to send to
+        // this stream; other concurrent streams on the same session have
+        // their own receivers.
         loop {
             match rx.recv().await {
-                Ok(message) => {
+                Some(message) => {
                     yield Ok::<_, std::convert::Infallible>(
                         Event::default().event("message").data(message),
                     );
                 }
-                Err(broadcast::error::RecvError::Lagged(n)) => {
-                    tracing::warn!("SSE client lagged, missed {} messages", n);
-                    continue;
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    tracing::debug!("SSE broadcast channel closed");
+                None => {
+                    tracing::debug!("SSE subscriber channel closed");
                     break;
                 }
             }
@@ -723,5 +819,43 @@ async fn handle_delete_session<H: McpHandler>(
 
 #[cfg(test)]
 mod tests {
-    // HTTP tests are in /tests/ as they require network access
+    use super::*;
+
+    // MCP 2025-11-25 §Multiple Connections:
+    //   "The server MUST send each of its JSON-RPC messages on only one of
+    //    the connected streams; that is, it MUST NOT broadcast the same
+    //    message across multiple streams."
+    //
+    // The SessionManager must therefore keep every message on exactly one
+    // of the session's subscribers even when multiple SSE streams are open
+    // for that session.
+    #[tokio::test]
+    async fn send_to_session_routes_to_single_subscriber() {
+        let manager = SessionManager::new();
+        let session_id = manager.create_session(None).await;
+
+        let mut rx1 = manager
+            .subscribe_session(&session_id)
+            .await
+            .expect("first subscribe");
+        let mut rx2 = manager
+            .subscribe_session(&session_id)
+            .await
+            .expect("second subscribe");
+
+        assert!(manager.send_to_session(&session_id, "hello").await);
+
+        let first = tokio::time::timeout(std::time::Duration::from_millis(100), rx1.recv()).await;
+        let second = tokio::time::timeout(std::time::Duration::from_millis(100), rx2.recv()).await;
+
+        let first_got = matches!(first, Ok(Some(ref s)) if s == "hello");
+        let second_got = matches!(second, Ok(Some(ref s)) if s == "hello");
+
+        assert!(
+            first_got ^ second_got,
+            "message must reach exactly one subscriber, got first={first:?}, second={second:?}"
+        );
+    }
+
+    // HTTP route-level tests live in /tests/ because they need a bound port.
 }

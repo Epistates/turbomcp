@@ -634,6 +634,15 @@ impl ProtocolValidator {
                 ),
                 Some("method".to_string()),
             );
+        } else if request.method.starts_with("rpc.") {
+            ctx.add_error(
+                "RESERVED_METHOD_NAME",
+                format!(
+                    "Method name '{}' uses reserved 'rpc.' prefix",
+                    request.method
+                ),
+                Some("method".to_string()),
+            );
         } else if !utils::is_valid_method_name(&request.method) {
             ctx.add_error(
                 "INVALID_METHOD_NAME",
@@ -697,6 +706,15 @@ impl ProtocolValidator {
                 ),
                 Some("method".to_string()),
             );
+        } else if notification.method.starts_with("rpc.") {
+            ctx.add_error(
+                "RESERVED_METHOD_NAME",
+                format!(
+                    "Method name '{}' uses reserved 'rpc.' prefix",
+                    notification.method
+                ),
+                Some("method".to_string()),
+            );
         } else if !utils::is_valid_method_name(&notification.method) {
             ctx.add_error(
                 "INVALID_METHOD_NAME",
@@ -741,6 +759,17 @@ impl ProtocolValidator {
             ctx.add_error(
                 "EMPTY_METHOD_NAME",
                 "Method name cannot be empty".to_string(),
+                Some("method".to_string()),
+            );
+            return;
+        }
+
+        // JSON-RPC 2.0 reserves the `rpc.` prefix for protocol extensions and
+        // rpc-internal methods; application methods MUST NOT use it.
+        if method.starts_with("rpc.") {
+            ctx.add_error(
+                "RESERVED_METHOD_NAME",
+                format!("Method name '{method}' uses reserved 'rpc.' prefix"),
                 Some("method".to_string()),
             );
             return;

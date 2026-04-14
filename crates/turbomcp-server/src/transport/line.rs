@@ -286,17 +286,22 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                     });
                                 } else {
                                     // All other requests require a successful initialize.
+                                    // Notifications (id=None) MUST NOT receive responses
+                                    // per JSON-RPC 2.0, so rejection paths stay silent.
+                                    let is_notification = request.id.is_none();
                                     let version = match &mut session_state {
                                         SessionState::Initialized(session) => {
                                             if !session.register_request_id(request.id.as_ref()) {
-                                                self.send_error(
-                                                    &mut writer,
-                                                    request.id.clone(),
-                                                    McpError::invalid_request(
-                                                        "Request ID already used in this session",
-                                                    ),
-                                                )
-                                                .await?;
+                                                if !is_notification {
+                                                    self.send_error(
+                                                        &mut writer,
+                                                        request.id.clone(),
+                                                        McpError::invalid_request(
+                                                            "Request ID already used in this session",
+                                                        ),
+                                                    )
+                                                    .await?;
+                                                }
                                                 line.clear();
                                                 continue;
                                             }
@@ -304,14 +309,16 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                             session.protocol_version().clone()
                                         }
                                         SessionState::Uninitialized => {
-                                            self.send_error(
-                                                &mut writer,
-                                                request.id.clone(),
-                                                McpError::invalid_request(
-                                                    "Server not initialized. Send 'initialize' first.",
-                                                ),
-                                            )
-                                            .await?;
+                                            if !is_notification {
+                                                self.send_error(
+                                                    &mut writer,
+                                                    request.id.clone(),
+                                                    McpError::invalid_request(
+                                                        "Server not initialized. Send 'initialize' first.",
+                                                    ),
+                                                )
+                                                .await?;
+                                            }
                                             line.clear();
                                             continue;
                                         }
@@ -598,6 +605,30 @@ mod tests {
         assert!(
             output_str.contains("not initialized"),
             "Error should mention initialization"
+        );
+    }
+
+    // JSON-RPC 2.0: notifications (no `id`) MUST NOT receive responses.
+    // The uninitialized-session rejection path must stay silent for
+    // notifications even though requests with the same shape get an error.
+    #[tokio::test]
+    async fn test_line_transport_silent_on_notification_before_init() {
+        let handler = TestHandler;
+        let runner = LineTransportRunner::new(handler);
+
+        let notif = r#"{"jsonrpc":"2.0","method":"tools/list"}"#;
+        let reader = BufReader::new(Cursor::new(format!("{}\n", notif)));
+        let mut output = Vec::new();
+
+        runner
+            .run(reader, &mut output, RequestContext::stdio)
+            .await
+            .unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(
+            output_str.is_empty(),
+            "notifications must not receive responses, got: {output_str}"
         );
     }
 
