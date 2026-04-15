@@ -171,8 +171,8 @@ pub enum InputValidationError {
         /// Maximum allowed
         max: usize,
     },
-    /// Invalid URI scheme
-    InvalidUriScheme {
+    /// URI scheme is on the dangerous denylist (e.g. `javascript:`, `vbscript:`)
+    DangerousUriScheme {
         /// The scheme that was rejected
         scheme: String,
     },
@@ -197,28 +197,34 @@ impl core::fmt::Display for InputValidationError {
             Self::TooManyParams { actual, max } => {
                 write!(f, "Too many parameters: {} (max: {})", actual, max)
             }
-            Self::InvalidUriScheme { scheme } => {
-                write!(f, "Invalid URI scheme: {}", scheme)
+            Self::DangerousUriScheme { scheme } => {
+                write!(f, "URI scheme is blocked for security: {}", scheme)
             }
         }
     }
 }
 
-/// Allowed URI schemes for resource access.
+/// URI schemes that are always rejected for safety.
 ///
-/// Only these schemes are permitted by default:
-/// - `file` - Local file access
-/// - `http` / `https` - Web resources
-/// - `data` - Data URIs
-/// - `mcp` - MCP-specific resources
-pub const ALLOWED_URI_SCHEMES: &[&str] = &["file", "http", "https", "data", "mcp"];
+/// The MCP spec (2025-11-25, server/resources) explicitly permits custom URI
+/// schemes, so TurboMCP does **not** enforce an allowlist. This denylist is a
+/// minimal XSS guard covering schemes that are dangerous if a client ever
+/// renders or follows the URI. SSRF protection for URIs that the SDK itself
+/// dereferences (e.g. HTTP fetches in `turbomcp-proxy`) lives in those layers
+/// with per-deployment allowlists.
+pub const DANGEROUS_URI_SCHEMES: &[&str] = &["javascript", "vbscript"];
 
-/// Validate a URI scheme against the allowlist.
+/// Reject URIs whose scheme is on the dangerous denylist.
 ///
-/// Returns the scheme if valid, or an error if not allowed.
-/// Handles both standard URIs (scheme://...) and data URIs (data:...).
-pub fn validate_uri_scheme(uri: &str) -> Result<&str, InputValidationError> {
-    // Extract scheme - handle both "scheme://..." and "scheme:..." (for data URIs)
+/// Accepts any RFC 3986–shaped scheme that is not explicitly dangerous,
+/// including custom schemes such as `apple-doc://`, `notion://`, or `mcp://`.
+/// Returns the normalized (lowercased) scheme on success, or
+/// [`InputValidationError::DangerousUriScheme`] if the scheme is blocked.
+///
+/// Scheme extraction handles both `scheme://authority/...` and
+/// `scheme:opaque` forms (RFC 3986 §3.1). Schemes are compared case
+/// insensitively because URI schemes are canonically lowercase.
+pub fn check_uri_scheme_safety(uri: &str) -> Result<String, InputValidationError> {
     let scheme = if let Some(pos) = uri.find("://") {
         &uri[..pos]
     } else if let Some(pos) = uri.find(':') {
@@ -227,13 +233,13 @@ pub fn validate_uri_scheme(uri: &str) -> Result<&str, InputValidationError> {
         ""
     };
 
-    if scheme.is_empty() || !ALLOWED_URI_SCHEMES.contains(&scheme) {
-        return Err(InputValidationError::InvalidUriScheme {
-            scheme: String::from(scheme),
-        });
+    let normalized: String = scheme.chars().map(|c| c.to_ascii_lowercase()).collect();
+
+    if DANGEROUS_URI_SCHEMES.contains(&normalized.as_str()) {
+        return Err(InputValidationError::DangerousUriScheme { scheme: normalized });
     }
 
-    Ok(scheme)
+    Ok(normalized)
 }
 
 /// Sanitize an error message by redacting sensitive information.
@@ -620,11 +626,60 @@ mod tests {
     }
 
     #[test]
-    fn test_uri_scheme_validation() {
-        assert!(validate_uri_scheme("file:///etc/passwd").is_ok());
-        assert!(validate_uri_scheme("https://example.com").is_ok());
-        assert!(validate_uri_scheme("javascript:alert(1)").is_err());
-        assert!(validate_uri_scheme("data:text/html,hello").is_ok());
+    fn test_uri_scheme_safety_accepts_standard_schemes() {
+        assert!(check_uri_scheme_safety("file:///etc/passwd").is_ok());
+        assert!(check_uri_scheme_safety("https://example.com").is_ok());
+        assert!(check_uri_scheme_safety("data:text/html,hello").is_ok());
+        assert!(check_uri_scheme_safety("mcp://server/resource").is_ok());
+    }
+
+    #[test]
+    fn test_uri_scheme_safety_accepts_custom_schemes() {
+        // Per MCP spec (2025-11-25), implementations MUST allow custom schemes.
+        assert_eq!(
+            check_uri_scheme_safety("apple-doc://swift/StringProtocol").unwrap(),
+            "apple-doc"
+        );
+        assert_eq!(
+            check_uri_scheme_safety("notion://workspace/page/abc123").unwrap(),
+            "notion"
+        );
+        assert_eq!(
+            check_uri_scheme_safety("slack://workspace/C01234567").unwrap(),
+            "slack"
+        );
+        assert_eq!(
+            check_uri_scheme_safety("weather://api/current").unwrap(),
+            "weather"
+        );
+        assert_eq!(
+            check_uri_scheme_safety("custom+scheme://data").unwrap(),
+            "custom+scheme"
+        );
+    }
+
+    #[test]
+    fn test_uri_scheme_safety_rejects_dangerous_schemes() {
+        assert!(matches!(
+            check_uri_scheme_safety("javascript:alert(1)"),
+            Err(InputValidationError::DangerousUriScheme { .. })
+        ));
+        assert!(matches!(
+            check_uri_scheme_safety("vbscript:msgbox(\"xss\")"),
+            Err(InputValidationError::DangerousUriScheme { .. })
+        ));
+    }
+
+    #[test]
+    fn test_uri_scheme_safety_is_case_insensitive() {
+        // RFC 3986 §3.1: schemes are case-insensitive, canonical form is lowercase.
+        assert!(check_uri_scheme_safety("JavaScript:alert(1)").is_err());
+        assert!(check_uri_scheme_safety("JAVASCRIPT:alert(1)").is_err());
+        assert!(check_uri_scheme_safety("VBScript:msgbox(1)").is_err());
+        assert_eq!(
+            check_uri_scheme_safety("HTTPS://example.com").unwrap(),
+            "https"
+        );
     }
 
     #[test]

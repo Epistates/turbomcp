@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.14] - 2026-04-15
+
+### Fixed
+
+- **Custom URI schemes now reach registered resource handlers** — `crates/turbomcp-core/src/security.rs` previously enforced a hardcoded allowlist `["file", "http", "https", "data", "mcp"]` via `validate_uri_scheme`, and the `#[server]` macro injected that check into every generated `read_resource` before dispatch. This violated the MCP 2025-11-25 spec (`server/resources.mdx`): "The protocol defines several standard URI schemes. This list is not exhaustive — implementations are always free to use additional, custom URI schemes." In practice the allowlist silently rejected legitimate custom schemes like `apple-doc://`, `notion://`, and `slack://` before they ever reached the user's `#[resource("...")]` handler. Replaced with a narrow denylist: new `DANGEROUS_URI_SCHEMES = ["javascript", "vbscript"]` constant and `check_uri_scheme_safety` function in `turbomcp-core` (case-insensitive per RFC 3986 §3.1, returns the normalized scheme), wired through `crates/turbomcp-macros/src/server.rs` at the `read_resource` dispatch site. `InputValidationError::InvalidUriScheme` is renamed to `DangerousUriScheme`, and the public re-exports in `turbomcp-core/src/lib.rs` now expose `DANGEROUS_URI_SCHEMES` + `check_uri_scheme_safety` in place of the removed `ALLOWED_URI_SCHEMES` + `validate_uri_scheme`. SSRF protection for URIs the SDK itself dereferences remains enforced by `turbomcp-proxy`'s per-deployment scheme config, and `turbomcp-protocol`'s icon-URI check (separate MCP spec requirement mandating `https:` / `data:` only) is untouched. New regression tests in `crates/turbomcp-core/src/security.rs` cover acceptance of `apple-doc://`, `notion://`, `slack://`, `weather://`, and `custom+scheme://`, plus denylist + case-insensitive rejection of `JavaScript:` / `VBScript:`. New end-to-end tests in `crates/turbomcp/tests/v3_audit.rs` (`custom_uri_schemes_reach_registered_handlers`, `dangerous_uri_schemes_are_still_rejected`) exercise a `#[server]` with `#[resource("apple-doc://{topic}")]` and `#[resource("notion://{page}")]` handlers through the macro-generated dispatch path.
+
 ## [3.0.13] - 2026-04-14
 
 ### Added

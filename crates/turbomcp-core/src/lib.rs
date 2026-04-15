@@ -120,8 +120,8 @@ pub use jsonrpc::{
 };
 pub use response::{Image, IntoToolError, IntoToolResponse, Json, Text, ToolError};
 pub use security::{
-    ALLOWED_URI_SCHEMES, DEFAULT_MAX_STRING_LENGTH, DEFAULT_MAX_URI_LENGTH, InputLimits,
-    InputValidationError, sanitize_error_message, validate_uri_scheme,
+    DANGEROUS_URI_SCHEMES, DEFAULT_MAX_STRING_LENGTH, DEFAULT_MAX_URI_LENGTH, InputLimits,
+    InputValidationError, check_uri_scheme_safety, sanitize_error_message,
 };
 
 // Re-export unified v3 architecture types

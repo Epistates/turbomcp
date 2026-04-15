@@ -772,10 +772,11 @@ pub fn generate_mcp_handler(info: &ServerInfo, impl_block: &ItemImpl) -> TokenSt
                         ));
                     }
 
-                    // Security: Validate URI scheme against allowlist
-                    if let Err(e) = #turbomcp::__macro_support::turbomcp_core::validate_uri_scheme(&uri) {
+                    // Security: reject only schemes on the dangerous denylist
+                    // (javascript:, vbscript:). Per MCP spec, custom schemes are allowed.
+                    if let Err(e) = #turbomcp::__macro_support::turbomcp_core::check_uri_scheme_safety(&uri) {
                         return Err(#turbomcp::__macro_support::turbomcp_core::error::McpError::security(
-                            format!("URI scheme validation failed: {}", e)
+                            format!("URI scheme rejected: {}", e)
                         ));
                     }
 
