@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-04-17
+
+This release lands the remediation pass from the v3.0.13 audit
+(`.strategy/AUDIT_v3.0.13_ACTION_PLAN.md`). Five categories of fix: security
+correctness, transport correctness, protocol/macro correctness, CI/test
+coverage, extension-crate honesty markers.
+
+### Security
+
+- **`is_token_expired` is no longer a no-op** — `crates/turbomcp-auth/src/oauth2/client.rs:626`. Pre-3.1 the check `expires_in == 0` treated a relative duration as a countdown clock; it never returned `true`, so OAuth callers silently forwarded expired bearer tokens forever. `TokenInfo` now carries `issued_at: Option<SystemTime>` (serde-default for back-compat with cached v3.0 token entries), populated by `OAuth2Client::token_response_to_token_info`. New `TokenInfo::expires_at`, `is_expired`, and `is_expired_with_skew(Duration)` helpers; `is_token_expired` delegates to them with a 60s clock skew.
+
+- **DPoP `ath` claim is now enforced at the resource server (RFC 9449 §4.3)** — `crates/turbomcp-dpop/src/proof.rs`. New public `ProofContext { TokenEndpoint, ResourceServer }` enum threaded through `validate_proof` / `parse_and_validate_jwt` (BREAKING — see Migration). At a resource server, presenting an access token alongside a proof without `ath` now returns `DpopError::AccessTokenHashFailed`. Pre-3.1 a stolen DPoP proof could be paired with a separately-issued access token, defeating sender-constraint binding. New regression test `test_resource_server_requires_ath_when_token_present`.
+
+- **TLS certificate validation CVEs resolved** — `Cargo.lock` updates for `aws-lc-sys 0.38.0 → 0.40.0` (RUSTSEC-2026-0044, RUSTSEC-2026-0048) and `rustls-webpki 0.103.9 → 0.103.12` (RUSTSEC-2026-0049, RUSTSEC-2026-0098, RUSTSEC-2026-0099). Affected every outbound HTTPS in `turbomcp-auth` (OIDC discovery, JWKS), `turbomcp-transport`, and `turbomcp-client`. `cargo audit` now reports zero open advisories beyond the documented `paste` (compile-time-only) / `proc-macro-error` / `rand` low-impact entries.
+
+- **`JwtValidator::new` and `MultiIssuerValidator::add_issuer` now apply SSRF protection by default** — `crates/turbomcp-auth/src/jwt/validator.rs`. Pre-3.1 these constructors performed unguarded HTTP fetches to the issuer-derived OIDC discovery URL. In multi-issuer setups where the issuer string comes from an attacker-controllable JWT payload, that was an SSRF. The default constructors now wrap an `SsrfValidator::default()` policy (blocks loopback, RFC 1918, link-local, cloud metadata). New `new_unchecked` / `add_issuer_unchecked` opt-outs for test/dev against private OIDC providers.
+
+- **DPoP nonce tracker has a bounded capacity and inline cleanup** — `crates/turbomcp-dpop/src/proof.rs`. `MemoryNonceTracker` now supports `with_capacity(usize)` (default 1,000,000) with time-ordered eviction triggered at 80% high-water inside `track_nonce`. Pre-3.1 the map was unbounded with no automatic cleanup, and `is_nonce_used` did an O(n) constant-time scan — both compound CPU+memory DoS vectors via unique-JTI flooding. The lookup is now O(1) hashed (server-generated nonces have no per-character secret to leak through hashmap timing).
+
+- **OAuth redirect URI no longer accepts `0.0.0.0`** — `crates/turbomcp-auth/src/oauth2/client.rs` and `crates/turbomcp-auth/src/oauth2/resource.rs`. `0.0.0.0` is the bind-all unspecified address, not loopback, so a callback sent to it can be intercepted by any process on any interface (RFC 8252 §7.3 violation). Allowed loopback hosts are now exactly `127.0.0.1`, `[::1]`, and `localhost`.
+
+- **API keys are no longer stored plaintext in memory** — `crates/turbomcp-auth/src/providers/api_key.rs`. `ApiKeyProvider` now stores BLAKE3 digests as the map key; plaintext values are dropped at the end of `add_api_key` and never retained. Lookup is O(1) over digests with constant-time hashing of the input. `add_api_key` now returns `McpResult<()>` and rejects keys shorter than `MIN_API_KEY_LENGTH` at insertion. `list_api_keys` removed (digests can't be inverted to plaintext); replaced by `api_key_count()`.
+
+- **PKCE verifier returned as `secrecy::SecretString`** — `crates/turbomcp-auth/src/oauth2/client.rs:425`. `authorization_code_flow` now returns `(String, SecretString)` instead of `(String, String)` so the verifier zeroes on drop and won't leak through `Debug` / log accidentally. (BREAKING — see Migration.)
+
+- **OAuth `state` validation no longer leaks length through timing** — `crates/turbomcp-auth/src/oauth2/validation.rs`. `validate_oauth_state` now compares fixed-length SHA-256 digests with `subtle::ConstantTimeEq`. Pre-3.1 raw strings were compared, and `ct_eq` short-circuits on length mismatch — a small length oracle.
+
+### Transport
+
+- **HTTP server has graceful shutdown** — `crates/turbomcp-server/src/transport/http.rs`. New `run_with_shutdown(handler, addr, config, graceful_shutdown)` entry point; `axum::serve(...).with_graceful_shutdown(shutdown_signal(...))` waits for SIGINT and, on Unix, SIGTERM, then drains in-flight requests up to the configured timeout (max 60s). `ServerBuilder::with_graceful_shutdown(Duration)` is now actually wired through; pre-3.1 it was a stored-but-ignored knob and SIGTERM aborted in-flight responses.
+
+- **HTTP client constructor returns `Result` instead of panicking** — `crates/turbomcp-http/src/transport.rs:303`. `StreamableHttpClientTransport::new` now returns `TransportResult<Self>`, propagating the underlying `reqwest::Client::build()` failure. (BREAKING — see Migration.) Pre-3.1 a bad TLS configuration (e.g., a malformed custom CA cert byte slice) would panic the calling process.
+
+- **HTTP endpoint discovery synchronizes via `oneshot` instead of a 500 ms `sleep`** — `crates/turbomcp-http/src/transport.rs`. `connect()` now awaits an `endpoint_ready` oneshot fired by the SSE task on the first `endpoint` event, with a timeout bounded by `config.timeout`. Pre-3.1 a fixed 500 ms wait raced on slow networks / cold caches and the first `send()` could be routed to a stale endpoint.
+
+- **WebSocket outbound channels are bounded (DoS fix)** — `crates/turbomcp-transport/src/axum/handlers/websocket.rs`, `axum/websocket_factory.rs`. New `WS_OUTBOUND_CAPACITY = 1024` constant; both handler paths use `mpsc::channel(...)` instead of `mpsc::unbounded_channel()`. A slow / hostile client can no longer drive the server out of memory by reading slower than messages arrive. The bidirectional dispatcher (`websocket_bidirectional.rs::WebSocketDispatcher`) takes a bounded `Sender` and `await`s `send`. Pong replies use `try_send` so a saturated buffer closes the connection rather than stalling the receive loop.
+
+- **STDIO no longer silently drops messages under backpressure** — `crates/turbomcp-stdio/src/transport.rs:476`. The reader task now `send().await`s on the bounded message channel rather than `try_send`-and-drop-on-full. Pre-3.1 a slow consumer caused silent message loss with only a `warn!` log; request/response correlation broke under load.
+
+- **TCP connections set `TCP_NODELAY` after accept and connect** — `crates/turbomcp-tcp/src/transport.rs`. MCP messages are typically small and latency-sensitive; without disabling Nagle, each frame could wait up to 200 ms for coalescing.
+
+- **HTTP client exposes async `recv_async()`** — `crates/turbomcp-http/src/transport.rs`. New inherent method that awaits on both the POST response queue and the SSE stream via `tokio::select!` (biased toward responses). Complements `Transport::receive`, which is non-blocking by contract; `receive` docs now call this out explicitly so client code picks the right primitive.
+
+- **SSE chunk reads are timeout-guarded** — `crates/turbomcp-http/src/transport.rs`. `StreamableHttpClientConfig::sse_read_timeout` (default 5 minutes) wraps each `stream.next()` in `tokio::time::timeout` so a silent TCP half-open breaks the SSE task and lets the reconnect loop take over instead of stalling forever.
+
+### Protocol
+
+- **`ProtocolConfig::default()` is now multi-version** — `crates/turbomcp-server/src/config.rs`. The default `supported_versions` is now `ProtocolVersion::STABLE.to_vec()` instead of `[LATEST]`. Older clients (e.g. on 2025-06-18) are accepted and routed through the existing `VersionAdapter` infrastructure. Use `ProtocolConfig::strict(version)` to restore exact-match behavior. Pre-3.1 the default rejected every client not on the latest spec, even though the adapters existed.
+
+- **JSON-RPC error code range validated** — `crates/turbomcp-protocol/src/jsonrpc.rs`. `JsonRpcError::new` now logs a `tracing::warn!` for codes outside the JSON-RPC 2.0 server-error range (`-32099..=-32000`) and the standardized codes (`-32700, -32600, -32601, -32602, -32603`). New `JsonRpcError::with_validated_code` constructor returns `Err` for out-of-range codes. Pre-3.1 any `i32` was silently accepted, risking collision with future spec assignments.
+
+- **`URLElicitationRequiredError` type added** — `crates/turbomcp-protocol/src/types/elicitation.rs`. Carries `url`, `description`, `elicitation_id` and a constant `ERROR_CODE = -32001`. Servers that need URL-mode elicitation but receive a form-mode request can now signal it spec-conformantly.
+
+- **`ResourceTemplate::new(name, uri_template)` validates RFC 6570 structure at construction** — `crates/turbomcp-protocol/src/types/resources.rs`. New `validate_uri_template` helper rejects unbalanced braces and nested `{...}`. The public `uri_template` field stays writable so wire-format deserialization still round-trips, but server-side construction now catches typos at build-time.
+
+- **`VersionManager::with_default_versions()` no longer hides an `unwrap()`** — `crates/turbomcp-protocol/src/versioning.rs:235`. Replaced with an `expect("known_versions is non-empty by const construction")` that names the contract.
+
+- **`CompositeHandler` prefix matching no longer mis-splits prefixes containing `_` or `://`** — `crates/turbomcp-server/src/composite.rs`. `parse_prefixed_tool` / `parse_prefixed_uri` / `parse_prefixed_prompt` now look up the matching mounted prefix (longest-first) instead of `split_once('_')`. Pre-3.1 a prefix like `my_weather` mounted with tool `get_forecast` would fail to route because the joined name `my_weather_get_forecast` split as `("my", "weather_get_forecast")`.
+
+- **`CompositeHandler::mount` vs `try_mount` clarified** — `crates/turbomcp-server/src/composite.rs`. Rustdoc now steers new code at `try_mount` (returns `Result` on duplicate prefix) and flags `mount` as a candidate for v4 deprecation, while keeping it ergonomic for static setups (tests, examples, small servers with compile-time-known prefix sets).
+
+### Macros
+
+- **`#[tool]` schema fallback no longer collapses scalar parameter types to `{"type":"object"}`** — `crates/turbomcp-macros/src/tool.rs:384`. When `schemars::schema_for!` emits a non-object root schema (e.g., `{"type":"boolean"}` for `bool`, `{"anyOf":[..., {"type":"null"}]}` for `Option<T>`), the fragment is now wrapped under `allOf` so it correctly describes the property instead of being silently replaced by a generic object schema. Pre-3.1, scalar-typed parameters appeared as opaque `object`s in the tool input schema, and LLM clients sent wrong-typed values.
+
+- **`#[tool]` optional-parameter parsing distinguishes "absent" from "present-but-malformed"** — `crates/turbomcp-macros/src/tool.rs:496`. The previous `.transpose().map_err(...)?.flatten()` chain mishandled the `Option<Option<T>>` shape. Replaced with explicit `match args.get(name)`.
+
+- **`#[prompt]` arguments now surface `#[description("...")]`** — `crates/turbomcp-macros/src/server.rs`. Parameter descriptions are pulled from the `#[description]` attribute (mirroring the `#[tool]` extraction) and emitted into `PromptArgument.description`. Pre-3.1 prompts always emitted `description: None`.
+
+### CI / Tests / Observability
+
+- **Integration tests now run in CI** — `.github/workflows/test.yml`. New `Integration tests` and `Doc tests` steps run `cargo test --workspace --all-features --tests` and `--doc` alongside the existing `--lib --bins`. Pre-3.1 ~600 integration / compliance / fault-injection tests in `tests/` and per-crate `tests/` were never executed in CI.
+
+- **MSRV (1.89.0) verified in CI** — new `msrv` job using `dtolnay/rust-toolchain@1.89.0` runs `cargo check --workspace --all-features`. Catches use of post-1.89 features that would break downstream consumers pinned to the declared MSRV.
+
+- **Phantom-API tests removed** — deleted `tests/coverage_tests.rs` and `tests/external_dependency_integration.rs`. Both referenced types and methods (`StateManager`, `TransportType`, `ErrorKind::Transport`, `ctx.info()`, `into_mcp_router()`, `get_tools_metadata()`) that no longer exist in the v3 API. Once `--tests` runs in CI they would fail to compile; equivalent coverage is in the current MCP compliance suites.
+
+- **Telemetry has a behavioral test** — new `crates/turbomcp-telemetry/tests/behavioral.rs`. Drives `TelemetryService::call` end-to-end through a tower service stack and asserts that an `mcp.request` span fires with the expected `mcp.method` field. Pre-3.1 the only telemetry tests asserted on the constant strings used as field names — they passed even when no spans were ever recorded.
+
+- **`OriginConfig` default documented as dev-only** — `crates/turbomcp-transport/src/security/origin.rs`. `Default` returns `allow_localhost: true` for development convenience; the doc comments now state explicitly that production deployments must override this.
+
+- **Fuzz workflow re-enabled** — `.github/workflows/fuzz.yml`. All four fuzz targets (`fuzz_jsonrpc_parsing`, `fuzz_tool_deserialization`, `fuzz_message_validation`, `fuzz_capability_parsing`) verified to compile against current types. Workflow runs on `turbomcp-protocol`-touching PRs (60 s per target) and nightly at 03:00 UTC (600 s per target), with corpus caching and crash artifact upload. Pre-3.1 the workflow was fully commented out because the targets had drifted.
+
+- **WASM macros have a `trybuild` compile-fail harness** — `crates/turbomcp-wasm-macros/tests/`. New `trybuild` dev-dependency plus compile-fail snapshots for `#[server]` placed on non-impl syntactic shapes. Gives the crate a test harness that downstream integration tests can extend without requiring a full `turbomcp-wasm` dependency closure.
+
+### Extension Crates
+
+- **OpenAPI `$ref` references are resolved and inlined** — `crates/turbomcp-openapi/src/provider.rs`. `schema_to_json` now walks the converted schema and recursively expands `#/components/schemas/*` pointers into the emitted MCP tool / resource input schemas, with cycle detection that preserves the innermost `$ref` so self-referential schemas stay finite. `allOf`, `oneOf`, `anyOf`, `discriminator`, and `nullable` round-trip through the serialization path as JSON Schema keywords that MCP clients speaking JSON Schema 2020-12 consume directly. README's former "Known Limitations" section is replaced with a positive description of what's supported. New tests: `test_ref_resolution_inlines_components`, `test_ref_resolution_handles_cycles`.
+
+- **Proxy `graphql` feature removed from `adapters` bundle** — `crates/turbomcp-proxy/Cargo.toml`. The `graphql` adapter was Phase 6 scaffolding with no `async-graphql` deps actually pinned; enabling the feature did not produce a working GraphQL adapter. Kept as a placeholder feature flag (so existing references don't break) but no longer included in `features = ["adapters"]` or `["full"]`.
+
+- **WASM WASI completeness clarified** — `crates/turbomcp-wasm/README.md`. New section noting WASI bindings cover stdio + HTTP only (no streaming, no WASI sockets), and that the browser target is the more mature one.
+
+### Breaking changes
+
+See `MIGRATION.md` for `3.0.x → 3.1.0` upgrade notes. Summary:
+
+- `TokenInfo` gains `issued_at: Option<SystemTime>` (serde default; on-disk back-compat preserved).
+- `DpopProofGenerator::validate_proof` and `parse_and_validate_jwt` take a new `ProofContext` parameter.
+- `StreamableHttpClientTransport::new` returns `TransportResult<Self>` instead of `Self`.
+- `OAuth2Client::authorization_code_flow` returns `(String, secrecy::SecretString)` instead of `(String, String)`.
+- `ApiKeyProvider::add_api_key` returns `McpResult<()>` and enforces `MIN_API_KEY_LENGTH` at insert time. `ApiKeyProvider::list_api_keys` removed (no plaintext available); use `api_key_count()`.
+- `JwtValidator::new` / `MultiIssuerValidator::add_issuer` now apply a default SSRF policy. Use `new_unchecked` / `add_issuer_unchecked` for test/dev against private OIDC providers.
+- `ProtocolConfig::default()` is now multi-version. Use `ProtocolConfig::strict(LATEST)` to restore the v3.0 single-version default.
+- OAuth loopback redirect URIs no longer accept `0.0.0.0`. Use `127.0.0.1`, `[::1]`, or `localhost`.
+
 ## [3.0.14] - 2026-04-15
 
 ### Fixed

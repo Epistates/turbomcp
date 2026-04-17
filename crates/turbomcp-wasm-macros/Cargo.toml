@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-wasm-macros"
-version = "3.0.14"
+version = "3.1.0"
 edition = "2024"
 rust-version = "1.89.0"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -26,3 +26,6 @@ default = []
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "parsing", "extra-traits"] }
+
+[dev-dependencies]
+trybuild = "1.0"

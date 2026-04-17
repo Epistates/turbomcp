@@ -1,7 +1,7 @@
 [package]
 name = "turbomcp-proxy"
 
-version = "3.0.14"
+version = "3.1.0"
 
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -109,8 +109,14 @@ auth = ["dep:turbomcp-auth", "dep:jsonwebtoken", "turbomcp-transport/auth", "tur
 
 # Adapters (Phase 6)
 rest = ["utoipa", "utoipa-swagger-ui", "axum", "tower", "tower-http"]
-graphql = ["axum", "tower", "tower-http"]  # async-graphql dependencies optional for now
-adapters = ["rest", "graphql"]
+# NOTE (audit-v3.0.13 #38): The `graphql` feature is a Phase 6 placeholder. The
+# scaffolded `adapters/graphql.rs` exists but no `async-graphql` deps are pinned,
+# so enabling this feature does not produce a working GraphQL adapter — the gated
+# code is incomplete scaffolding only. Removed from `adapters` in v3.1 so users
+# don't get a false "GraphQL works" signal from `features = ["adapters"]`.
+# Tracked in .strategy/AUDIT_v3.0.13_ACTION_PLAN.md (#38) for follow-up.
+graphql = []  # placeholder — enabling alone produces no usable adapter
+adapters = ["rest"]
 
 # Experimental features (pass-through to turbomcp-protocol)
 experimental-tasks = ["turbomcp-protocol/experimental-tasks"]

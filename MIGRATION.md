@@ -4,13 +4,135 @@ This guide helps you migrate between major TurboMCP versions.
 
 Current v3 policy:
 - TurboMCP targets MCP `2025-11-25`.
-- Runtime protocol negotiation is exact-match only.
+- As of v3.1.0, the default `ProtocolConfig` accepts every stable version (with
+  per-version adapters); use `ProtocolConfig::strict(...)` for exact-match.
 - Older version notes below are historical migration reference, not active compatibility guidance.
 
 ## Table of Contents
 
+- [v3.1.0 Migration (v3.0.x → v3.1.0)](#v310-migration-v30x--v310)
 - [v3.0.0 Migration (v2.x → v3.x)](#v300-migration-v2x--v3x)
 - [v2.0.0 Migration (v1.x → v2.x)](#v200-migration-v1x--v2x)
+
+---
+
+# v3.1.0 Migration (v3.0.x → v3.1.0)
+
+v3.1.0 lands the audit-remediation pass tracked in
+`.strategy/AUDIT_v3.0.13_ACTION_PLAN.md`. Several breaking changes; most are
+small ergonomic updates at compile sites. The full per-item context is in the
+v3.1.0 entry of `CHANGELOG.md`.
+
+## TokenInfo gains `issued_at`
+
+`TokenInfo` now has an additional public field. The new field is
+`#[serde(default)]`, so on-disk caches written by v3.0.x deserialize cleanly as
+`issued_at: None`. Construction sites that build `TokenInfo` literally must add
+the new field:
+
+```rust
+// v3.0.x
+let token = TokenInfo {
+    access_token, token_type, refresh_token, expires_in, scope,
+};
+
+// v3.1.0
+let token = TokenInfo {
+    access_token, token_type, refresh_token, expires_in,
+    issued_at: Some(SystemTime::now()),
+    scope,
+};
+```
+
+`TokenInfo::is_expired()` and `TokenInfo::expires_at()` are new convenience
+helpers. `OAuth2Client::is_token_expired(...)` now actually returns `true` for
+expired tokens (it didn't before — see CHANGELOG).
+
+## DPoP `validate_proof` / `parse_and_validate_jwt` take `ProofContext`
+
+```rust
+// v3.0.x
+gen.validate_proof(&proof, "POST", uri, Some(token)).await?;
+
+// v3.1.0
+use turbomcp_dpop::ProofContext;
+gen.validate_proof(&proof, "POST", uri, Some(token), ProofContext::ResourceServer).await?;
+```
+
+For proofs validated at the OAuth token endpoint, pass
+`ProofContext::TokenEndpoint`. At a resource server with an access token, the
+proof must now carry an `ath` claim — see RFC 9449 §4.3.
+
+## `StreamableHttpClientTransport::new` returns `Result`
+
+```rust
+// v3.0.x
+let transport = StreamableHttpClientTransport::new(config);
+
+// v3.1.0
+let transport = StreamableHttpClientTransport::new(config)?;
+```
+
+The error path triggers on bad TLS configuration; pre-3.1 this was an
+`expect()` that panicked the calling process.
+
+## `OAuth2Client::authorization_code_flow` returns `SecretString`
+
+```rust
+// v3.0.x
+let (auth_url, code_verifier): (String, String) =
+    client.authorization_code_flow(scopes, state);
+
+// v3.1.0
+use secrecy::ExposeSecret;
+let (auth_url, code_verifier) = client.authorization_code_flow(scopes, state);
+// code_verifier: secrecy::SecretString
+let verifier_str = code_verifier.expose_secret();
+```
+
+## `ApiKeyProvider` API changes
+
+- `add_api_key` now returns `McpResult<()>` and rejects keys shorter than
+  `MIN_API_KEY_LENGTH` (32 chars).
+- `list_api_keys` is removed — keys are stored as digests at rest, so plaintext
+  listing is not possible. Use `api_key_count()` for count.
+
+```rust
+// v3.0.x
+provider.add_api_key(key, user_info).await;
+let all = provider.list_api_keys().await;
+
+// v3.1.0
+provider.add_api_key(key, user_info).await?;
+let n = provider.api_key_count().await;
+```
+
+## `JwtValidator::new` applies SSRF protection by default
+
+`JwtValidator::new(issuer, audience)` now wraps `SsrfValidator::default()`,
+which blocks loopback / RFC 1918 / link-local / cloud metadata addresses on
+the OIDC discovery fetch. For tests against private OIDC providers, switch to
+`JwtValidator::new_unchecked(...)` (or supply a custom `SsrfValidator` via
+`new_with_ssrf`). Same change for `MultiIssuerValidator::add_issuer`
+(opt-out: `add_issuer_unchecked`).
+
+## `ProtocolConfig::default()` is multi-version
+
+The default now accepts all `ProtocolVersion::STABLE` versions instead of
+`[LATEST]` only. Older clients are routed through the existing version
+adapters. To restore exact-match behavior:
+
+```rust
+let cfg = ServerConfig::builder()
+    .protocol(ProtocolConfig::strict(ProtocolVersion::LATEST.clone()))
+    .build();
+```
+
+## OAuth loopback redirect URIs
+
+`http://0.0.0.0:PORT/callback` is no longer accepted as a loopback redirect.
+Use `http://127.0.0.1:PORT/callback`, `http://[::1]:PORT/callback`, or
+`http://localhost:PORT/callback`.
 
 ---
 

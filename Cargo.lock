@@ -288,9 +288,9 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.16.1"
+version = "1.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94bffc006df10ac2a68c83692d734a465f8ee6c5b384d8545a636f81d858f4bf"
+checksum = "0ec6fb3fe69024a75fa7e1bfb48aa6cf59706a101658ea01bfd33b2b248a038f"
 dependencies = [
  "aws-lc-sys",
  "untrusted 0.7.1",
@@ -299,9 +299,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.38.0"
+version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4321e568ed89bb5a7d291a7f37997c2c0df89809d7b6d12062c81ddb54aa782e"
+checksum = "f50037ee5e1e41e7b8f9d161680a725bd1626cb6f8c7e901f91f942850852fe7"
 dependencies = [
  "cc",
  "cmake",
@@ -3939,9 +3939,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.37"
+version = "0.23.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "758025cb5fccfd3bc2fd74708fd4682be41d99e5dff73c377c0646c6012c73a4"
+checksum = "69f9466fb2c14ea04357e91413efb882e2a6d4a406e625449bc0a5d360d53a21"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -4004,9 +4004,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.9"
+version = "0.103.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7df23109aa6c1567d1c575b9952556388da57401e4ace1d15f79eedad0d8f53"
+checksum = "8279bb85272c9f10811ae6a6c547ff594d6a7f3c6c6b02ee9726d1d0dcfcdd06"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -5254,7 +5254,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "axum 0.8.8",
  "chrono",
@@ -5285,7 +5285,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-auth"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "base64",
  "blake3",
@@ -5324,7 +5324,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-cli"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -5350,7 +5350,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-client"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -5376,7 +5376,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-core"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "base64",
  "chrono",
@@ -5395,7 +5395,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-demo"
-version = "3.0.8"
+version = "3.1.0"
 dependencies = [
  "chrono",
  "tokio",
@@ -5404,7 +5404,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-dpop"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "asn1",
  "base64",
@@ -5442,7 +5442,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-grpc"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "async-stream",
  "bytes",
@@ -5473,7 +5473,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-http"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "bytes",
  "futures",
@@ -5490,7 +5490,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-macros"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "axum 0.8.8",
  "proc-macro-crate",
@@ -5508,7 +5508,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-openapi"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "ipnetwork",
  "openapiv3",
@@ -5529,7 +5529,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-protocol"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "ahash",
  "arc-swap",
@@ -5575,7 +5575,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-proxy"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "axum 0.8.8",
  "bytes",
@@ -5622,7 +5622,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-server"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -5654,7 +5654,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-stdio"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "bytes",
  "futures",
@@ -5672,7 +5672,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-tcp"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "bytes",
  "futures",
@@ -5689,7 +5689,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-telemetry"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "futures-util",
  "http",
@@ -5715,7 +5715,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "ahash",
  "anyhow",
@@ -5771,7 +5771,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport-streamable"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "base64",
  "getrandom 0.2.17",
@@ -5783,7 +5783,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-transport-traits"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "bytes",
  "futures",
@@ -5797,7 +5797,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-types"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "schemars 1.2.1",
  "serde",
@@ -5806,7 +5806,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-unix"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "bytes",
  "futures",
@@ -5825,7 +5825,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-wasm"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "base64",
  "console_error_panic_hook",
@@ -5857,16 +5857,17 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-wasm-macros"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+ "trybuild",
 ]
 
 [[package]]
 name = "turbomcp-websocket"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -5886,7 +5887,7 @@ dependencies = [
 
 [[package]]
 name = "turbomcp-wire"
-version = "3.0.14"
+version = "3.1.0"
 dependencies = [
  "rmp-serde",
  "serde",
