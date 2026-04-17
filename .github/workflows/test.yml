@@ -61,9 +61,54 @@ jobs:
     - name: Unit tests
       run: cargo test --workspace --all-features --lib --bins
 
+    # Workspace-level integration / compliance tests live in `tests/` and per-crate
+    # `tests/` directories. Pre-3.1 these were never executed in CI — only `--lib
+    # --bins` ran, so ~600 integration tests across compliance, fault-injection,
+    # transport conformance, and performance silently never ran.
+    - name: Integration tests
+      run: cargo test --workspace --all-features --tests
+
+    - name: Doc tests
+      run: cargo test --workspace --all-features --doc
+
     - name: Cleanup
       if: always()
       run: cargo clean 2>/dev/null || true
+
+  msrv:
+    name: MSRV (1.89.0)
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Free up disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
+        sudo rm -rf /usr/local/.ghcup /usr/local/lib/android
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+    # All crates in this workspace declare `rust-version = "1.89.0"`. The other
+    # CI jobs use `stable`, so an MSRV regression (e.g. an `&raw const` use,
+    # let-else in a const context) would pass CI and break downstream consumers
+    # pinned to 1.89. This job catches that.
+    - name: Install Rust 1.89.0
+      uses: dtolnay/rust-toolchain@1.89.0
+
+    - name: Cache cargo registry
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+        key: ${{ runner.os }}-cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: ${{ runner.os }}-cargo-msrv-
+
+    - name: cargo check at MSRV
+      run: cargo check --workspace --all-features
 
   wasm:
     name: WASM
