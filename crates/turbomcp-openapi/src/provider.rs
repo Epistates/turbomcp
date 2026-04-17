@@ -322,11 +322,84 @@ impl OpenApiProvider {
         }
     }
 
-    /// Convert an OpenAPI schema to a JSON Schema value.
+    /// Convert an OpenAPI schema to a JSON Schema value, inlining `$ref`s
+    /// against `components.schemas`.
+    ///
+    /// OpenAPI lets schemas reference each other through
+    /// `{"$ref": "#/components/schemas/Foo"}`. MCP tool-input schemas have
+    /// no cross-operation component dictionary to share, so we resolve those
+    /// refs inline. Cycles are broken by leaving the first re-visited
+    /// reference as a `$ref` literal rather than expanding it forever.
     fn schema_to_json(&self, schema: &ReferenceOr<Schema>) -> Option<Value> {
-        match schema {
-            ReferenceOr::Item(s) => Some(serde_json::to_value(s).ok()?),
-            ReferenceOr::Reference { reference } => Some(json!({ "$ref": reference })),
+        let initial = match schema {
+            ReferenceOr::Item(s) => serde_json::to_value(s).ok()?,
+            ReferenceOr::Reference { reference } => {
+                json!({ "$ref": reference })
+            }
+        };
+        let mut visited = std::collections::HashSet::new();
+        Some(self.resolve_refs(initial, &mut visited))
+    }
+
+    /// Recursively inline `$ref` pointers that target `components.schemas`.
+    ///
+    /// `visited` tracks the ref path currently being expanded; re-encountering
+    /// the same pointer during expansion leaves the `$ref` in place so the
+    /// output stays finite on self-referential schemas (the default interpretation
+    /// consumers do — most JSON Schema validators understand internal `$ref`).
+    fn resolve_refs(&self, value: Value, visited: &mut std::collections::HashSet<String>) -> Value {
+        match value {
+            Value::Object(mut map) => {
+                if let Some(Value::String(reference)) = map.get("$ref").cloned()
+                    && map.len() == 1
+                {
+                    if !visited.insert(reference.clone()) {
+                        map.insert("$ref".to_string(), Value::String(reference));
+                        return Value::Object(map);
+                    }
+                    let expanded = self.lookup_ref(&reference).map(|target| {
+                        let target_json = serde_json::to_value(target).unwrap_or(Value::Null);
+                        self.resolve_refs(target_json, visited)
+                    });
+                    visited.remove(&reference);
+                    return expanded.unwrap_or(Value::Object({
+                        let mut fallback = serde_json::Map::new();
+                        fallback.insert("$ref".to_string(), Value::String(reference));
+                        fallback
+                    }));
+                }
+                let resolved = map
+                    .into_iter()
+                    .map(|(k, v)| (k, self.resolve_refs(v, visited)))
+                    .collect();
+                Value::Object(resolved)
+            }
+            Value::Array(items) => Value::Array(
+                items
+                    .into_iter()
+                    .map(|v| self.resolve_refs(v, visited))
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+
+    /// Look up a `#/components/schemas/Name` reference in the parsed spec.
+    fn lookup_ref(&self, reference: &str) -> Option<&Schema> {
+        const PREFIX: &str = "#/components/schemas/";
+        let name = reference.strip_prefix(PREFIX)?;
+        let components = self.spec.components.as_ref()?;
+        let entry = components.schemas.get(name)?;
+        match entry {
+            ReferenceOr::Item(schema) => Some(schema),
+            ReferenceOr::Reference { reference } => {
+                // Single level of indirection; avoid unbounded recursion.
+                let nested_name = reference.strip_prefix(PREFIX)?;
+                match components.schemas.get(nested_name)? {
+                    ReferenceOr::Item(schema) => Some(schema),
+                    ReferenceOr::Reference { .. } => None,
+                }
+            }
         }
     }
 
@@ -509,6 +582,111 @@ mod tests {
 
         let url = provider.build_url(get_user, &args).unwrap();
         assert_eq!(url.as_str(), "https://api.example.com/users/123");
+    }
+
+    #[test]
+    fn test_ref_resolution_inlines_components() {
+        const REF_SPEC: &str = r##"{
+            "openapi": "3.0.0",
+            "info": { "title": "T", "version": "1.0.0" },
+            "paths": {
+                "/pets": {
+                    "post": {
+                        "operationId": "createPet",
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/Pet" }
+                                }
+                            }
+                        },
+                        "responses": { "201": { "description": "ok" } }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "Pet": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "owner": { "$ref": "#/components/schemas/Owner" }
+                        }
+                    },
+                    "Owner": {
+                        "type": "object",
+                        "properties": {
+                            "email": { "type": "string" }
+                        }
+                    }
+                }
+            }
+        }"##;
+
+        let provider = OpenApiProvider::from_string(REF_SPEC).unwrap();
+        let op = provider
+            .operations()
+            .iter()
+            .find(|o| o.operation_id.as_deref() == Some("createPet"))
+            .expect("createPet operation");
+        let body = op.request_body_schema.as_ref().expect("body schema");
+        let props = body.get("properties").expect("properties");
+        let owner = props.get("owner").expect("owner property");
+        // The owner $ref must have been replaced by the inlined Owner schema.
+        assert!(
+            owner.get("$ref").is_none(),
+            "owner $ref was not inlined: {owner}"
+        );
+        let owner_props = owner.get("properties").expect("owner inlined properties");
+        assert!(owner_props.get("email").is_some());
+    }
+
+    #[test]
+    fn test_ref_resolution_handles_cycles() {
+        const CYCLE_SPEC: &str = r##"{
+            "openapi": "3.0.0",
+            "info": { "title": "T", "version": "1.0.0" },
+            "paths": {
+                "/n": {
+                    "post": {
+                        "operationId": "makeNode",
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/Node" }
+                                }
+                            }
+                        },
+                        "responses": { "201": { "description": "ok" } }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "Node": {
+                        "type": "object",
+                        "properties": {
+                            "next": { "$ref": "#/components/schemas/Node" }
+                        }
+                    }
+                }
+            }
+        }"##;
+
+        let provider = OpenApiProvider::from_string(CYCLE_SPEC).unwrap();
+        let op = provider
+            .operations()
+            .iter()
+            .find(|o| o.operation_id.as_deref() == Some("makeNode"))
+            .unwrap();
+        // Must not infinite-loop or panic — resolver should have returned a finite value
+        // with the inner cycle preserved as a $ref.
+        let body = op.request_body_schema.as_ref().unwrap();
+        let next = body.pointer("/properties/next").expect("next property");
+        assert_eq!(
+            next.get("$ref").and_then(|v| v.as_str()),
+            Some("#/components/schemas/Node")
+        );
     }
 
     #[test]

@@ -395,15 +395,33 @@ fn extract_prompt_arguments(sig: &syn::Signature) -> Vec<PromptArgumentInfo> {
                 false
             };
 
+            // Pull description from `#[description("...")]` attribute on the
+            // parameter, mirroring how #[tool] surfaces param docs to clients.
+            // Pre-3.1 prompts always emitted `description: None`, leaving LLM
+            // clients without per-argument docs.
+            let description = extract_param_description(&pat_type.attrs);
+
             args.push(PromptArgumentInfo {
                 name,
-                description: None, // Could extract from doc comments if needed
+                description,
                 required: !is_option,
             });
         }
     }
 
     args
+}
+
+/// Extract the string from `#[description("...")]` on a function parameter.
+fn extract_param_description(attrs: &[syn::Attribute]) -> Option<String> {
+    for attr in attrs {
+        if attr.path().is_ident("description")
+            && let Ok(s) = attr.parse_args::<syn::LitStr>()
+        {
+            return Some(s.value());
+        }
+    }
+    None
 }
 
 /// Extract doc comments from attributes.

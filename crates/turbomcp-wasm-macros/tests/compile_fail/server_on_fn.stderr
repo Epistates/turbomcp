@@ -1,0 +1,5 @@
+error: expected `impl`
+ --> tests/compile_fail/server_on_fn.rs:6:1
+  |
+6 | fn not_an_impl() {}
+  | ^^

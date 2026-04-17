@@ -233,6 +233,21 @@ The handler exposes:
 cargo run -p turbomcp-openapi --example petstore
 ```
 
+## Schema Handling Notes
+
+- **`$ref` resolution**: references into `components.schemas` are resolved
+  recursively and inlined into the emitted MCP tool/resource schemas, so
+  consumers never see dangling pointers. Self-referential schemas are
+  handled — the expander detects cycles and preserves the innermost `$ref`
+  unchanged so output stays finite.
+- **Schema composition**: `allOf`, `oneOf`, `anyOf`, `discriminator`, and
+  `nullable` round-trip through `serde_json` as JSON Schema keywords, which
+  downstream MCP clients that speak JSON Schema 2020-12 can consume directly.
+- **Parameter `content`**: only `schema`-form parameters are extracted; the
+  content-type variant form is not yet converted.
+- **Security schemes**: declared schemes are recognized but not automatically
+  applied to outgoing requests; callers supply auth headers manually.
+
 ## License
 
 MIT

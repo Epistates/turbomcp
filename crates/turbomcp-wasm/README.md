@@ -743,6 +743,14 @@ WASI Preview 2 support for running in server-side WASM runtimes:
 - WasmEdge
 - Wasmer
 
+### WASI Completeness (v3.1)
+
+WASI bindings currently cover **stdio and HTTP transports only**. Streaming I/O,
+WASI sockets, and the full WASI Preview 2 surface are not yet wired through.
+Browser builds (`wasm32-unknown-unknown`) are the more mature target. WASI is
+intentionally minimal — see `.strategy/AUDIT_v3.0.13_ACTION_PLAN.md` (item #39)
+for the follow-up scope.
+
 ## License
 
 MIT

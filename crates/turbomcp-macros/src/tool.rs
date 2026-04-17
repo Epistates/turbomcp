@@ -381,22 +381,42 @@ pub fn generate_schema_code(parameters: &[ParameterInfo], krate: &TokenStream) -
         let name = &param.name;
         let ty = &param.ty;
 
-        // Always use schemars for consistent schema generation
-        // schemars 1.0: schema_for! returns Schema directly (not RootSchema with .schema field)
+        // Generate the parameter's JSON Schema fragment via schemars.
+        //
+        // schemars sometimes emits a non-object root schema (e.g., for `bool` it
+        // emits `{"type":"boolean"}`, or for `Option<T>` it may emit
+        // `{"anyOf":[..., {"type":"null"}]}` at the top level). The previous
+        // fallback collapsed any non-object root to `{"type":"object"}`, which
+        // erased the parameter's actual type from the tool input schema and made
+        // LLM clients send wrong-typed values. Now we wrap a non-object root as
+        // a single-key object so the schema correctly describes the property.
         let schema_code = quote! {
             {
                 let schema = #krate::__macro_support::schemars::schema_for!(#ty);
                 match #krate::__macro_support::serde_json::to_value(&schema) {
-                    Ok(schema_value) => schema_value.as_object().cloned().unwrap_or_else(|| {
-                        // Fallback: create minimal object schema if conversion fails
+                    Ok(#krate::__macro_support::serde_json::Value::Object(map)) => map,
+                    Ok(other) => {
+                        // Non-object root (scalar / null / array / boolean schema).
+                        // Treat it as an inline schema fragment by wrapping in an
+                        // object whose only entry is the actual schema. JSON Schema
+                        // permits a sub-schema to be any JSON value; placing it
+                        // under `allOf` keeps validators happy and preserves the
+                        // type information that would otherwise be lost.
                         let mut m = #krate::__macro_support::serde_json::Map::new();
-                        m.insert("type".to_string(), #krate::__macro_support::serde_json::Value::String("object".to_string()));
+                        m.insert(
+                            "allOf".to_string(),
+                            #krate::__macro_support::serde_json::Value::Array(vec![other]),
+                        );
                         m
-                    }),
+                    }
                     Err(_) => {
-                        // Error fallback: create minimal object schema
+                        // True conversion failure (extremely rare). Fall back to a
+                        // permissive object schema rather than lying about the type.
                         let mut m = #krate::__macro_support::serde_json::Map::new();
-                        m.insert("type".to_string(), #krate::__macro_support::serde_json::Value::String("object".to_string()));
+                        m.insert(
+                            "type".to_string(),
+                            #krate::__macro_support::serde_json::Value::String("object".to_string()),
+                        );
                         m
                     }
                 }
@@ -484,16 +504,26 @@ pub fn generate_extraction_code(parameters: &[ParameterInfo], krate: &TokenStrea
         };
 
         if param.is_optional {
+            // For Option<T> parameters: distinguish "key absent" (legitimate None) from
+            // "key present but malformed" (must surface as an invalid_params error).
+            // The previous `.transpose().map_err(...)?.flatten()` chain quietly turned
+            // a present-but-null value into None — but if the inner type was non-null
+            // and deserialization failed, the error path actually fired correctly.
+            // The subtle bug was different: `.flatten()` on `Option<Option<T>>` collapses
+            // a parsed `Some(None)` into None, hiding cases where the user explicitly
+            // sent JSON `null` to indicate "use default". The new pattern preserves the
+            // distinction by parsing the value as `Option<T>` directly.
             extraction.extend(quote! {
                 #size_check
-                let #name_ident: #ty = args
-                    .get(#name_str)
-                    .map(|v| #krate::__macro_support::serde_json::from_value(v.clone()))
-                    .transpose()
-                    .map_err(|e| #krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
-                        format!("Invalid parameter '{}': {}", #name_str, e)
-                    ))?
-                    .flatten();
+                let #name_ident: #ty = match args.get(#name_str) {
+                    None => None,
+                    Some(v) => {
+                        #krate::__macro_support::serde_json::from_value::<#ty>(v.clone())
+                            .map_err(|e| #krate::__macro_support::turbomcp_core::error::McpError::invalid_params(
+                                format!("Invalid parameter '{}': {}", #name_str, e)
+                            ))?
+                    }
+                };
             });
         } else {
             extraction.extend(quote! {
