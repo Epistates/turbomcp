@@ -269,19 +269,21 @@ impl OAuth2Client {
         // Security: Validate scheme
         match parsed.scheme() {
             "http" => {
-                // Only allow http for localhost/127.0.0.1/0.0.0.0 in development
+                // Only allow http for true loopback hosts in development. RFC 8252 §7.3
+                // says loopback redirects MUST use 127.0.0.1, ::1, or `localhost`.
+                // 0.0.0.0 is the unspecified bind-all address, NOT loopback — a callback
+                // sent there can be intercepted by any process on any network interface.
                 if let Some(host) = parsed.host_str() {
-                    // Allow localhost, 127.0.0.1, 0.0.0.0 (bind all interfaces)
-                    let is_localhost = host == "localhost"
+                    let is_loopback = host == "localhost"
                         || host.starts_with("localhost:")
                         || host == "127.0.0.1"
                         || host.starts_with("127.0.0.1:")
-                        || host == "0.0.0.0"
-                        || host.starts_with("0.0.0.0:");
+                        || host == "[::1]"
+                        || host.starts_with("[::1]:");
 
-                    if !is_localhost {
+                    if !is_loopback {
                         return Err(McpError::invalid_params(
-                            "HTTP redirect URIs only allowed for localhost in development"
+                            "HTTP redirect URIs only allowed for loopback (127.0.0.1, ::1, localhost) in development"
                                 .to_string(),
                         ));
                     }
@@ -407,22 +409,33 @@ impl OAuth2Client {
     /// * `state` - CSRF protection state parameter (use cryptographically random value)
     ///
     /// # Returns
-    /// Tuple of (authorization_url, PKCE code_verifier for secure storage)
+    /// Tuple of (authorization_url, PKCE code_verifier wrapped in `SecretString` for secure storage)
+    ///
+    /// The verifier is wrapped in [`secrecy::SecretString`] so it zeroes on drop and won't
+    /// appear in `Debug` / `Display` output. Call `verifier.expose_secret()` only at the
+    /// exchange site; do not log, return over the wire, or store it unencrypted.
     ///
     /// # Example
     /// ```ignore
+    /// use secrecy::ExposeSecret;
     /// // Server-side web app (RECOMMENDED)
     /// let state = generate_csrf_token();  // Cryptographically random
     /// let (auth_url, code_verifier) = client.authorization_code_flow(scopes, state.clone());
     ///
     /// // Store securely server-side
     /// session.insert("oauth_state", state);
-    /// session.insert("pkce_verifier", code_verifier);  // Encrypted session
+    /// session.insert("pkce_verifier", code_verifier.expose_secret().to_string());  // Encrypted session
     ///
     /// // Redirect user
     /// redirect_to(auth_url);
     /// ```
-    pub fn authorization_code_flow(&self, scopes: Vec<String>, state: String) -> (String, String) {
+    pub fn authorization_code_flow(
+        &self,
+        scopes: Vec<String>,
+        state: String,
+    ) -> (String, secrecy::SecretString) {
+        use secrecy::SecretString;
+
         // Generate PKCE challenge
         let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
 
@@ -434,7 +447,10 @@ impl OAuth2Client {
             .set_pkce_challenge(pkce_challenge)
             .url();
 
-        (auth_url.to_string(), pkce_verifier.secret().to_string())
+        (
+            auth_url.to_string(),
+            SecretString::from(pkce_verifier.secret().to_string()),
+        )
     }
 
     /// Exchange authorization code for access token
@@ -556,6 +572,7 @@ impl OAuth2Client {
             token_type: format!("{:?}", response.token_type()),
             refresh_token: response.refresh_token().map(|t| t.secret().clone()),
             expires_in,
+            issued_at: Some(std::time::SystemTime::now()),
             scope: response.scopes().map(|scopes| {
                 scopes
                     .iter()
@@ -619,17 +636,17 @@ impl OAuth2Client {
         Ok(())
     }
 
-    /// Validate that an access token is still valid
+    /// Validate that an access token is still valid (client-side check only).
     ///
-    /// This checks if a token has expired based on expiration time.
-    /// Note: This is a client-side check only; servers may have revoked the token.
+    /// Computes `now >= issued_at + expires_in - 60s` (one-minute clock skew).
+    /// Returns `false` for tokens missing `issued_at` (legacy v3.0.x cache entries) or
+    /// `expires_in` — callers that want conservative behavior should treat unknown as expired
+    /// before calling, or use [`TokenInfo::is_expired_with_skew`] directly.
+    ///
+    /// Note: this only catches expiry-by-time. Servers may revoke tokens early.
+    #[must_use]
     pub fn is_token_expired(&self, token: &TokenInfo) -> bool {
-        if let Some(expires_in) = token.expires_in {
-            // Assume token was valid "now" - in production, store issued_at timestamp
-            expires_in == 0
-        } else {
-            false
-        }
+        token.is_expired()
     }
 }
 

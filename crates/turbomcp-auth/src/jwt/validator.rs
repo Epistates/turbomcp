@@ -216,6 +216,14 @@ impl JwtValidator {
     /// 2. Extracts `jwks_uri` from the discovery document
     /// 3. Falls back to `{issuer}/.well-known/jwks.json` if discovery fails
     ///
+    /// # SSRF Protection (default-on since v3.1)
+    ///
+    /// The discovery URL is validated through [`SsrfValidator::default`], which blocks
+    /// loopback, RFC 1918, link-local, and cloud-metadata addresses. If you legitimately
+    /// need to reach a private issuer (test environments, internal-only OIDC providers),
+    /// pass an explicit [`SsrfValidator`] via [`Self::new_with_ssrf`] or use
+    /// [`Self::new_unchecked`] to opt out entirely (not recommended in production).
+    ///
     /// # Example
     ///
     /// ```rust,no_run
@@ -230,7 +238,22 @@ impl JwtValidator {
     /// # });
     /// ```
     pub async fn new(expected_issuer: String, expected_audience: String) -> McpResult<Self> {
-        // Perform RFC 8414 discovery to get JWKS URI (no SSRF validator by default)
+        // SSRF protection on by default in v3.1 — discovery URLs derived from issuer
+        // values are an SSRF vector when the issuer is attacker-controlled (multi-issuer
+        // setups, JWT-driven discovery). This was opt-in in v3.0; flipped here.
+        let ssrf_validator = Arc::new(crate::ssrf::SsrfValidator::default());
+        Self::new_with_ssrf(expected_issuer, expected_audience, ssrf_validator).await
+    }
+
+    /// Create a JWT validator with SSRF protection explicitly disabled.
+    ///
+    /// Use only in test/dev environments where the issuer points at a loopback or
+    /// private-network OIDC provider. In production, prefer [`Self::new`] (which now
+    /// applies a default SSRF policy) or [`Self::new_with_ssrf`] with a tailored policy.
+    pub async fn new_unchecked(
+        expected_issuer: String,
+        expected_audience: String,
+    ) -> McpResult<Self> {
         let jwks_uri = Self::discover_jwks_uri(&expected_issuer, None).await?;
         let jwks_client = Arc::new(JwksClient::new(jwks_uri.clone()));
 
@@ -238,12 +261,8 @@ impl JwtValidator {
             expected_issuer,
             expected_audience,
             jwks_client,
-            clock_skew_leeway: Duration::from_secs(60), // MCP spec: 60s leeway
-            allowed_algorithms: vec![
-                Algorithm::ES256, // ECDSA P-256 (recommended)
-                Algorithm::RS256, // RSA-SHA256 (widely supported)
-                Algorithm::PS256, // RSA-PSS (modern RSA)
-            ],
+            clock_skew_leeway: Duration::from_secs(60),
+            allowed_algorithms: vec![Algorithm::ES256, Algorithm::RS256, Algorithm::PS256],
             discovered_jwks_uri: OnceCell::new_with(Some(jwks_uri)),
             ssrf_validator: None,
         })
@@ -599,7 +618,15 @@ impl MultiIssuerValidator {
     /// # });
     /// ```
     pub async fn add_issuer(&mut self, issuer: String) -> McpResult<()> {
-        // Use RFC 8414 discovery to find JWKS URI (no SSRF validator; use add_issuer_with_ssrf for production)
+        // SSRF protection on by default in v3.1 — see JwtValidator::new for rationale.
+        // Use `add_issuer_with_ssrf` to supply a custom policy or `add_issuer_unchecked`
+        // to opt out (test/dev only).
+        let ssrf_validator = Arc::new(crate::ssrf::SsrfValidator::default());
+        self.add_issuer_with_ssrf(issuer, ssrf_validator).await
+    }
+
+    /// Add an issuer with SSRF protection explicitly disabled (test/dev only).
+    pub async fn add_issuer_unchecked(&mut self, issuer: String) -> McpResult<()> {
         let jwks_uri = JwtValidator::discover_jwks_uri(&issuer, None).await?;
         let jwks_client = Arc::new(JwksClient::new(jwks_uri));
 

@@ -50,8 +50,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("1. Authorization URL (open in browser):");
     println!("   {}\n", auth_url);
-    println!("2. Code Verifier (save for token exchange):");
-    println!("   {}\n", code_verifier);
+    println!("2. Code Verifier (save for token exchange — keep secret):");
+    println!(
+        "   {}\n",
+        secrecy::ExposeSecret::expose_secret(&code_verifier)
+    );
 
     // Step 4: Simulate user authorizing and redirect with code
     // In a real application, the user would click the authorization URL,
@@ -69,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("4. To exchange code for token, call:");
     println!(
         "   oauth_client.exchange_code_for_token(code, \"{}\").await?",
-        code_verifier
+        secrecy::ExposeSecret::expose_secret(&code_verifier)
     );
     println!("\nThis returns TokenInfo with:");
     println!("   - access_token: Bearer token for API requests");

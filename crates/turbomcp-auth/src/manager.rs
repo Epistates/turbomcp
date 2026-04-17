@@ -351,7 +351,8 @@ mod tests {
         let test_key = "test_key_abcdefghijklmnopqrstuvwxyz12";
         provider
             .add_api_key(test_key.to_string(), user_info.clone())
-            .await;
+            .await
+            .expect("test key meets minimum length");
 
         let credentials = AuthCredentials::ApiKey {
             key: test_key.to_string(),

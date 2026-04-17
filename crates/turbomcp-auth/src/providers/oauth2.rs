@@ -360,6 +360,7 @@ impl AuthProvider for OAuth2Provider {
                     token_type: "Bearer".to_string(),
                     refresh_token: None,
                     expires_in: None,
+                    issued_at: None,
                     scope: None,
                 };
                 self.client.revoke_token(&token_info).await?;

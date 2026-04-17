@@ -42,10 +42,50 @@ pub struct TokenInfo {
     pub token_type: String,
     /// Refresh token
     pub refresh_token: Option<String>,
-    /// Token expiry in seconds
+    /// Token lifetime in seconds, as returned by the authorization server (RFC 6749 §5.1).
     pub expires_in: Option<u64>,
     /// Token scope
     pub scope: Option<String>,
+    /// Wall-clock instant the token was issued.
+    ///
+    /// Combined with `expires_in`, this is what makes expiry checks meaningful —
+    /// `expires_in` alone is a relative duration at issuance time, not a clock.
+    /// `#[serde(default)]` keeps on-disk back-compat with v3.0.x token caches that
+    /// did not record this; older entries are treated as "expiry unknown".
+    #[serde(default, with = "system_time_millis")]
+    pub issued_at: Option<SystemTime>,
+}
+
+impl TokenInfo {
+    /// Wall-clock instant the token expires, if both `issued_at` and `expires_in` are known.
+    #[must_use]
+    pub fn expires_at(&self) -> Option<SystemTime> {
+        let issued = self.issued_at?;
+        let lifetime = self.expires_in?;
+        issued.checked_add(std::time::Duration::from_secs(lifetime))
+    }
+
+    /// Whether the token is past its expiry, accounting for the supplied clock skew.
+    ///
+    /// Returns `false` when expiry cannot be determined (legacy tokens missing `issued_at`,
+    /// or no `expires_in` from the AS). Callers that need conservative behavior should
+    /// pre-check `expires_at().is_some()` and treat unknown as expired.
+    #[must_use]
+    pub fn is_expired_with_skew(&self, skew: std::time::Duration) -> bool {
+        match self.expires_at() {
+            Some(expiry) => match expiry.checked_sub(skew) {
+                Some(threshold) => SystemTime::now() >= threshold,
+                None => true,
+            },
+            None => false,
+        }
+    }
+
+    /// Convenience wrapper around [`Self::is_expired_with_skew`] with a 60-second skew.
+    #[must_use]
+    pub fn is_expired(&self) -> bool {
+        self.is_expired_with_skew(std::time::Duration::from_secs(60))
+    }
 }
 
 // Manual Debug impl to prevent token exposure in logs (Sprint 3.6)
@@ -59,8 +99,33 @@ impl std::fmt::Debug for TokenInfo {
                 &self.refresh_token.as_ref().map(|_| "[REDACTED]"),
             )
             .field("expires_in", &self.expires_in)
+            .field("issued_at", &self.issued_at)
             .field("scope", &self.scope)
             .finish()
+    }
+}
+
+mod system_time_millis {
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(value: &Option<SystemTime>, ser: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(t) => {
+                let millis = t
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(serde::ser::Error::custom)?
+                    .as_millis() as u64;
+                ser.serialize_some(&millis)
+            }
+            None => ser.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<Option<SystemTime>, D::Error> {
+        Option::<u64>::deserialize(de)
+            .map(|opt| opt.map(|millis| UNIX_EPOCH + Duration::from_millis(millis)))
     }
 }
 

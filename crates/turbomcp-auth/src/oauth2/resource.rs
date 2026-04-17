@@ -88,12 +88,10 @@ pub fn validate_resource_uri(uri: &str) -> McpResult<String> {
     match url.scheme() {
         "https" => {}
         "http" => {
-            // Only allow http for localhost/127.0.0.1 (development only)
+            // Only allow http for true loopback (development only). 0.0.0.0 is bind-all,
+            // not loopback — see RFC 8252 §7.3 and oauth2/client.rs validate_redirect_uri.
             if let Some(host) = url.host_str() {
-                let is_localhost = host == "localhost"
-                    || host == "127.0.0.1"
-                    || host == "0.0.0.0"
-                    || host == "[::1]"; // IPv6 localhost
+                let is_localhost = host == "localhost" || host == "127.0.0.1" || host == "[::1]"; // IPv6 localhost
 
                 if !is_localhost {
                     return Err(McpError::invalid_params(
@@ -217,7 +215,6 @@ mod tests {
         let uris = vec![
             "http://localhost/mcp",
             "http://127.0.0.1/mcp",
-            "http://0.0.0.0/mcp",
             "http://[::1]/mcp",
         ];
 
@@ -225,6 +222,9 @@ mod tests {
             let result = validate_resource_uri(uri);
             assert!(result.is_ok(), "Should allow http for {uri}");
         }
+
+        // 0.0.0.0 is bind-all, not loopback — must be rejected.
+        assert!(validate_resource_uri("http://0.0.0.0/mcp").is_err());
     }
 
     #[test]

@@ -112,6 +112,7 @@ pub fn validate_canonical_resource_uri(uri: &str) -> McpResult<()> {
 /// validate_oauth_state(&stored_state, &callback_state)?;
 /// ```
 pub fn validate_oauth_state(expected_state: &str, received_state: &str) -> McpResult<()> {
+    use sha2::{Digest, Sha256};
     use subtle::ConstantTimeEq;
 
     // Validate state is not empty (security requirement)
@@ -121,8 +122,13 @@ pub fn validate_oauth_state(expected_state: &str, received_state: &str) -> McpRe
         ));
     }
 
-    // Constant-time comparison to prevent timing attacks
-    let is_equal = expected_state.as_bytes().ct_eq(received_state.as_bytes());
+    // Hash both inputs to fixed length before comparing. `ct_eq` short-circuits
+    // when input lengths differ — comparing raw strings would leak the expected
+    // state's length through timing. Comparing 32-byte SHA-256 digests gives a
+    // truly constant-time comparison regardless of input length.
+    let expected_hash = Sha256::digest(expected_state.as_bytes());
+    let received_hash = Sha256::digest(received_state.as_bytes());
+    let is_equal = expected_hash.ct_eq(&received_hash);
 
     if bool::from(is_equal) {
         Ok(())

@@ -4,8 +4,13 @@
 //!
 //! ## Security
 //!
-//! This provider uses constant-time comparison to prevent timing attacks on API keys.
-//! See [`crate::api_key_validation`] for implementation details.
+//! Plaintext API keys never appear in this provider's storage. On insert, the key is
+//! hashed with BLAKE3 (cryptographic, fast, fixed 32-byte digest); only the digest is
+//! retained. On validation, the input is hashed and the digest is looked up — same
+//! constant-time hash on every input regardless of correctness, no plaintext-comparison
+//! oracle, and no plaintext to leak via panic/serialization/memory inspection.
+//!
+//! See [`crate::api_key_validation`] for the underlying primitives.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -14,19 +19,27 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
-use super::super::api_key_validation::validate_api_key;
+use super::super::api_key_validation::MIN_API_KEY_LENGTH;
 use super::super::config::AuthProviderType;
 use super::super::context::AuthContext;
 use super::super::types::{AuthCredentials, AuthProvider, TokenInfo, UserInfo};
 use turbomcp_protocol::{Error as McpError, Result as McpResult};
+
+/// 32-byte BLAKE3 digest of an API key. Used as the at-rest storage form.
+type KeyHash = [u8; 32];
+
+#[inline]
+fn hash_api_key(key: &str) -> KeyHash {
+    blake3::hash(key.as_bytes()).into()
+}
 
 /// API Key authentication provider
 #[derive(Debug)]
 pub struct ApiKeyProvider {
     /// Provider name
     name: String,
-    /// Valid API keys with associated user info
-    api_keys: Arc<RwLock<HashMap<String, UserInfo>>>,
+    /// BLAKE3-hashed API keys → user info. Plaintext keys are never stored here.
+    api_keys: Arc<RwLock<HashMap<KeyHash, UserInfo>>>,
 }
 
 impl ApiKeyProvider {
@@ -39,19 +52,31 @@ impl ApiKeyProvider {
         }
     }
 
-    /// Add an API key
-    pub async fn add_api_key(&self, key: String, user_info: UserInfo) {
-        self.api_keys.write().await.insert(key, user_info);
+    /// Add an API key. The plaintext is hashed with BLAKE3 before storage; the original
+    /// `key` value passed in is dropped at the end of this call and is never retained.
+    ///
+    /// Returns an error if the key is shorter than [`MIN_API_KEY_LENGTH`].
+    pub async fn add_api_key(&self, key: String, user_info: UserInfo) -> McpResult<()> {
+        if key.len() < MIN_API_KEY_LENGTH {
+            return Err(McpError::invalid_params(format!(
+                "API key must be at least {MIN_API_KEY_LENGTH} characters"
+            )));
+        }
+        let hash = hash_api_key(&key);
+        self.api_keys.write().await.insert(hash, user_info);
+        Ok(())
     }
 
-    /// Remove an API key
+    /// Remove an API key by its plaintext value (the key is hashed internally).
     pub async fn remove_api_key(&self, key: &str) -> bool {
-        self.api_keys.write().await.remove(key).is_some()
+        let hash = hash_api_key(key);
+        self.api_keys.write().await.remove(&hash).is_some()
     }
 
-    /// List all API keys (returns keys only, not full info for security)
-    pub async fn list_api_keys(&self) -> Vec<String> {
-        self.api_keys.read().await.keys().cloned().collect()
+    /// Return how many API keys are stored. Plaintext key listing is intentionally
+    /// not exposed — once hashed, the originals cannot be recovered.
+    pub async fn api_key_count(&self) -> usize {
+        self.api_keys.read().await.len()
     }
 }
 
@@ -71,26 +96,25 @@ impl AuthProvider for ApiKeyProvider {
         Box::pin(async move {
             match credentials {
                 AuthCredentials::ApiKey { key } => {
-                    let api_keys = self.api_keys.read().await;
-
-                    // Use constant-time comparison to prevent timing attacks
-                    // Instead of HashMap::get (which uses string equality), we iterate
-                    // and use secure comparison for each key
-                    let mut matched_user_info: Option<UserInfo> = None;
-
-                    for (stored_key, user_info) in api_keys.iter() {
-                        if validate_api_key(&key, stored_key) {
-                            matched_user_info = Some(user_info.clone());
-                            break;
-                        }
+                    if key.len() < MIN_API_KEY_LENGTH {
+                        return Err(McpError::internal("Invalid API key".to_string()));
                     }
+                    // Hash the input once (constant-time on input length) and look up the
+                    // digest. Plaintext keys are never stored, so neither side of the
+                    // comparison sees them.
+                    let hash = hash_api_key(&key);
+                    let user_info = {
+                        let api_keys = self.api_keys.read().await;
+                        api_keys.get(&hash).cloned()
+                    };
 
-                    if let Some(user_info) = matched_user_info {
+                    if let Some(user_info) = user_info {
                         let token = TokenInfo {
                             access_token: key,
                             token_type: "ApiKey".to_string(),
                             refresh_token: None,
                             expires_in: None,
+                            issued_at: Some(std::time::SystemTime::now()),
                             scope: None,
                         };
 
@@ -158,16 +182,15 @@ impl AuthProvider for ApiKeyProvider {
     ) -> Pin<Box<dyn Future<Output = McpResult<UserInfo>> + Send + '_>> {
         let token = token.to_string();
         Box::pin(async move {
-            let api_keys = self.api_keys.read().await;
-
-            // Use constant-time comparison to prevent timing attacks
-            for (stored_key, user_info) in api_keys.iter() {
-                if validate_api_key(&token, stored_key) {
-                    return Ok(user_info.clone());
-                }
+            if token.len() < MIN_API_KEY_LENGTH {
+                return Err(McpError::internal("Invalid API key".to_string()));
             }
-
-            Err(McpError::internal("Invalid API key".to_string()))
+            let hash = hash_api_key(&token);
+            let api_keys = self.api_keys.read().await;
+            api_keys
+                .get(&hash)
+                .cloned()
+                .ok_or_else(|| McpError::internal("Invalid API key".to_string()))
         })
     }
 }
