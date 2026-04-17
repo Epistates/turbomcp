@@ -193,10 +193,7 @@ impl McpGrpcClient {
         let result = response.into_inner();
         let tools: Result<Vec<_>, _> = result.tools.into_iter().map(TryInto::try_into).collect();
 
-        debug!(
-            count = tools.as_ref().map(Vec::len).unwrap_or(0),
-            "Listed tools"
-        );
+        debug!(count = tools.as_ref().map_or(0, Vec::len), "Listed tools");
         tools
     }
 

@@ -385,11 +385,11 @@ impl SessionManager {
             }
 
             let mut top_clients: Vec<(String, usize)> = client_requests.into_iter().collect();
-            top_clients.sort_by(|a, b| b.1.cmp(&a.1));
+            top_clients.sort_by_key(|entry| std::cmp::Reverse(entry.1));
             top_clients.truncate(10);
 
             let mut top_methods: Vec<(String, usize)> = method_requests.into_iter().collect();
-            top_methods.sort_by(|a, b| b.1.cmp(&a.1));
+            top_methods.sort_by_key(|entry| std::cmp::Reverse(entry.1));
             top_methods.truncate(10);
 
             // Calculate request rate (requests per minute over last hour)

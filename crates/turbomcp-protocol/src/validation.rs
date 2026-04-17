@@ -567,11 +567,9 @@ impl ProtocolValidator {
                     return Err(format!("Invalid email format: {}", value));
                 }
             }
-            "uri" => {
-                // Basic URI validation - must have a scheme
-                if !value.contains("://") && !value.starts_with('/') {
-                    return Err(format!("Invalid URI format: {}", value));
-                }
+            // Basic URI validation - must have a scheme
+            "uri" if !value.contains("://") && !value.starts_with('/') => {
+                return Err(format!("Invalid URI format: {}", value));
             }
             "date" => {
                 // ISO 8601 date format: YYYY-MM-DD
@@ -876,17 +874,15 @@ impl ProtocolValidator {
                     ctx.pop_path();
                 }
             }
-            Value::String(s) => {
-                if s.len() > self.rules.max_string_length {
-                    ctx.add_error(
-                        "STRING_TOO_LONG",
-                        format!(
-                            "String exceeds maximum length of {}",
-                            self.rules.max_string_length
-                        ),
-                        None,
-                    );
-                }
+            Value::String(s) if s.len() > self.rules.max_string_length => {
+                ctx.add_error(
+                    "STRING_TOO_LONG",
+                    format!(
+                        "String exceeds maximum length of {}",
+                        self.rules.max_string_length
+                    ),
+                    None,
+                );
             }
             _ => {} // Other types are fine
         }
@@ -898,18 +894,16 @@ impl ProtocolValidator {
 
         // Additional parameter-specific validation
         match params {
-            Value::Array(arr) => {
-                // Validate array parameters length
-                if arr.len() > self.rules.max_array_length {
-                    ctx.add_error(
-                        "PARAMS_ARRAY_TOO_LONG",
-                        format!(
-                            "Parameter array exceeds maximum length of {}",
-                            self.rules.max_array_length
-                        ),
-                        Some("params".to_string()),
-                    );
-                }
+            // Validate array parameters length
+            Value::Array(arr) if arr.len() > self.rules.max_array_length => {
+                ctx.add_error(
+                    "PARAMS_ARRAY_TOO_LONG",
+                    format!(
+                        "Parameter array exceeds maximum length of {}",
+                        self.rules.max_array_length
+                    ),
+                    Some("params".to_string()),
+                );
             }
             _ => {
                 // Other parameter types are acceptable

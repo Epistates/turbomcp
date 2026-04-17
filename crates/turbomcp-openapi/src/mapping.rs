@@ -167,7 +167,7 @@ impl RouteMapping {
     pub fn get_mcp_type(&self, method: &str, path: &str) -> McpType {
         // Sort rules by priority (highest first)
         let mut sorted_rules: Vec<_> = self.rules.iter().collect();
-        sorted_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        sorted_rules.sort_by_key(|rule| std::cmp::Reverse(rule.priority));
 
         for rule in sorted_rules {
             if rule.matches(method, path) {

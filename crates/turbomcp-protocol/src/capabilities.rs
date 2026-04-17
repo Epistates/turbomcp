@@ -798,13 +798,9 @@ pub mod builders {
                                         return Err(format!("Invalid SIMD level: {}", level));
                                     }
                                 }
-                                "turbomcp_enterprise_security" => {
-                                    if !value.is_boolean() {
-                                        return Err(
-                                            "turbomcp_enterprise_security must be a boolean"
-                                                .to_string(),
-                                        );
-                                    }
+                                "turbomcp_enterprise_security" if !value.is_boolean() => {
+                                    return Err("turbomcp_enterprise_security must be a boolean"
+                                        .to_string());
                                 }
                                 _ => {
                                     // Allow other TurboMCP experimental features
