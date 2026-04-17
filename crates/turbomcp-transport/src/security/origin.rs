@@ -8,18 +8,32 @@ use super::errors::SecurityError;
 use crate::security::SecurityHeaders;
 use std::collections::HashSet;
 
-/// Origin validation configuration
+/// Origin validation configuration.
+///
+/// # Production deployments must override the default
+///
+/// `Default` is **dev-only**: it sets `allow_localhost = true`. In production,
+/// always supply an explicit `OriginConfig` with `allow_localhost: false` and an
+/// explicit `allowed_origins` allowlist (the public origins the browser-facing
+/// client will use). Behind a reverse proxy, also ensure your `client_ip`
+/// extraction reflects the *real* client and not the proxy hop, otherwise the
+/// loopback heuristic can be satisfied by the proxy's local connection.
 #[derive(Clone, Debug)]
 pub struct OriginConfig {
     /// Allowed origins for CORS
     pub allowed_origins: HashSet<String>,
-    /// Whether to allow localhost origins (for development)
+    /// Whether to allow localhost origins (for development).
+    ///
+    /// **Production should set this to `false`** and rely on `allowed_origins`.
     pub allow_localhost: bool,
     /// Whether to allow any origin (DANGEROUS - only for testing)
     pub allow_any: bool,
 }
 
 impl Default for OriginConfig {
+    /// Returns a development-friendly configuration: `allow_localhost = true`,
+    /// no public origins allowlisted. **Do not use this directly in production**
+    /// — provide an explicit allowlist instead.
     fn default() -> Self {
         Self {
             allowed_origins: HashSet::new(),

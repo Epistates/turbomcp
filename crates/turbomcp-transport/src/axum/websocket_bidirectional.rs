@@ -37,18 +37,16 @@ type PendingRequests = Arc<Mutex<HashMap<String, oneshot::Sender<JsonRpcResponse
 /// - Implements timeout and error handling for server→client requests
 #[derive(Clone, Debug)]
 pub struct WebSocketDispatcher {
-    /// Channel to send messages to the WebSocket send loop
-    sender: mpsc::UnboundedSender<WsMessage>,
+    /// Channel to send messages to the WebSocket send loop. Bounded for backpressure
+    /// — see WS_OUTBOUND_CAPACITY at the WebSocket handler.
+    sender: mpsc::Sender<WsMessage>,
     /// Pending server-initiated requests
     pending_requests: PendingRequests,
 }
 
 impl WebSocketDispatcher {
     /// Create a new WebSocket dispatcher
-    pub fn new(
-        sender: mpsc::UnboundedSender<WsMessage>,
-        pending_requests: PendingRequests,
-    ) -> Self {
+    pub fn new(sender: mpsc::Sender<WsMessage>, pending_requests: PendingRequests) -> Self {
         Self {
             sender,
             pending_requests,
@@ -105,6 +103,7 @@ impl WebSocketDispatcher {
 
         self.sender
             .send(WsMessage::Text(request_json.into()))
+            .await
             .map_err(|e| {
                 // Clean up pending request since send failed
                 let pending = self.pending_requests.clone();

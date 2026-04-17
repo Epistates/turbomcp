@@ -332,10 +332,18 @@ pub struct ProtocolConfig {
 }
 
 impl Default for ProtocolConfig {
+    /// Multi-version by default in v3.1.
+    ///
+    /// Pre-3.1 the default was exact-match against `LATEST`, which silently
+    /// rejected clients on older stable spec versions even though we ship
+    /// version adapters for them. The spec permits the server to choose a
+    /// different version than the client requested; defaulting to the full
+    /// stable set unblocks older clients while still preferring the newest.
+    /// Use [`Self::strict`] to restore the old single-version behavior.
     fn default() -> Self {
         Self {
             preferred_version: ProtocolVersion::LATEST.clone(),
-            supported_versions: vec![ProtocolVersion::LATEST.clone()],
+            supported_versions: ProtocolVersion::STABLE.to_vec(),
             allow_fallback: false,
         }
     }
@@ -832,9 +840,20 @@ mod tests {
     }
 
     #[test]
-    fn test_protocol_negotiation_default_rejects_older_version() {
-        // Default config is strict latest-only
+    fn test_protocol_negotiation_default_accepts_stable_versions() {
+        // v3.1: default is multi-version (all stable versions). Older spec
+        // versions are accepted; older clients route through version adapters.
+        // Use ProtocolConfig::strict(LATEST) to restore exact-match behavior.
         let config = ProtocolConfig::default();
+        assert_eq!(
+            config.negotiate(Some("2025-06-18")),
+            Some(ProtocolVersion::V2025_06_18)
+        );
+    }
+
+    #[test]
+    fn test_protocol_negotiation_strict_rejects_older_version() {
+        let config = ProtocolConfig::strict(ProtocolVersion::LATEST.clone());
         assert_eq!(config.negotiate(Some("2025-06-18")), None);
     }
 

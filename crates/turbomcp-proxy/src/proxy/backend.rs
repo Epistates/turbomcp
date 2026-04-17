@@ -261,7 +261,9 @@ impl BackendConnector {
                     ..Default::default()
                 };
 
-                let transport = StreamableHttpClientTransport::new(http_config);
+                let transport = StreamableHttpClientTransport::new(http_config).map_err(|e| {
+                    ProxyError::backend(format!("Failed to build HTTP transport: {e}"))
+                })?;
 
                 // Connect the transport
                 transport.connect().await.map_err(|e| {

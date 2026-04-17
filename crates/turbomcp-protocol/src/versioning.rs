@@ -230,9 +230,14 @@ impl VersionManager {
         })
     }
 
-    /// Create a version manager with default MCP versions
+    /// Create a version manager populated with every MCP version known to this build.
+    ///
+    /// `Version::known_versions()` is a const-built list maintained in this crate; an
+    /// empty result would be a programming error in this crate, not a runtime
+    /// condition, so the panic message identifies that as the contract.
     pub fn with_default_versions() -> Self {
-        Self::new(Version::known_versions()).unwrap()
+        Self::new(Version::known_versions())
+            .expect("Version::known_versions() is non-empty by const construction")
     }
     /// Get the current version
     pub fn current_version(&self) -> &Version {

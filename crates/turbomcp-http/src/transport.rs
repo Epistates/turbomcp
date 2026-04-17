@@ -151,6 +151,14 @@ pub struct StreamableHttpClientConfig {
 
     /// TLS/HTTPS configuration (v2.2.0+)
     pub tls: TlsConfig,
+
+    /// Idle timeout between SSE chunks.
+    ///
+    /// Guards against a silent TCP half-open where the server stops writing
+    /// without closing the connection. If no chunk arrives within this window,
+    /// the SSE task breaks and the reconnect loop takes over. Set generously —
+    /// the SSE protocol tolerates long idle periods between events. Default: 5 minutes.
+    pub sse_read_timeout: Duration,
 }
 
 impl Default for StreamableHttpClientConfig {
@@ -166,6 +174,7 @@ impl Default for StreamableHttpClientConfig {
             protocol_version: "2025-11-25".to_string(),
             limits: LimitsConfig::default(),
             tls: TlsConfig::default(),
+            sse_read_timeout: Duration::from_secs(300),
         }
     }
 }
@@ -198,6 +207,14 @@ pub struct StreamableHttpClientTransport {
 
     /// SSE connection task handle
     sse_task_handle: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+
+    /// Oneshot signal that the SSE task has discovered the message endpoint, so
+    /// `connect()` can synchronize before the first `send()`. Pre-3.1 this used a
+    /// 500 ms `sleep` and races on slow networks / cold caches.
+    /// Held as `(Sender, Receiver)` Option pair: the sender is moved into the SSE
+    /// task on `start_sse_connection`, the receiver is awaited in `connect`.
+    endpoint_ready_tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<()>>>>,
+    endpoint_ready_rx: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<()>>>>,
 }
 
 impl std::fmt::Debug for StreamableHttpClientTransport {
@@ -210,11 +227,17 @@ impl std::fmt::Debug for StreamableHttpClientTransport {
 }
 
 impl StreamableHttpClientTransport {
-    /// Create new streamable HTTP client transport
-    pub fn new(config: StreamableHttpClientConfig) -> Self {
+    /// Create a new streamable HTTP client transport.
+    ///
+    /// Returns an error if the underlying HTTP client cannot be built — most often a
+    /// bad TLS configuration (e.g., custom CA certificates that won't load against the
+    /// platform verifier). Pre-3.1 this was an `expect` and would panic the calling
+    /// process; v3.1 propagates it instead.
+    pub fn new(config: StreamableHttpClientConfig) -> TransportResult<Self> {
         let (sse_tx, sse_rx) = mpsc::channel(1000);
         let (response_tx, response_rx) = mpsc::channel(100);
         let (event_emitter, _) = TransportEventEmitter::new();
+        let (endpoint_ready_tx, endpoint_ready_rx) = tokio::sync::oneshot::channel();
 
         // Emit insecurity warning if certificate validation is disabled
         if config.tls.is_insecure() {
@@ -300,9 +323,13 @@ impl StreamableHttpClientTransport {
             }
         }
 
-        let http_client = client_builder.build().expect("Failed to build HTTP client");
+        let http_client = client_builder.build().map_err(|e| {
+            TransportError::ConfigurationError(format!(
+                "Failed to build HTTP client (likely bad TLS configuration): {e}"
+            ))
+        })?;
 
-        Self {
+        Ok(Self {
             config,
             http_client,
             state: Arc::new(RwLock::new(TransportState::Disconnected)),
@@ -325,7 +352,9 @@ impl StreamableHttpClientTransport {
             response_receiver: Arc::new(Mutex::new(response_rx)),
             response_sender: response_tx,
             sse_task_handle: Arc::new(Mutex::new(None)),
-        }
+            endpoint_ready_tx: Arc::new(Mutex::new(Some(endpoint_ready_tx))),
+            endpoint_ready_rx: Arc::new(Mutex::new(Some(endpoint_ready_rx))),
+        })
     }
 
     /// Get full endpoint URL
@@ -404,6 +433,9 @@ impl StreamableHttpClientTransport {
         let session_id = Arc::clone(&self.session_id);
         let last_event_id = Arc::clone(&self.last_event_id);
         let message_endpoint = Arc::clone(&self.message_endpoint);
+        // Take the oneshot sender — `connect()` awaits the matching receiver.
+        // After the first SSE event sets the endpoint we drop the sender, signalling.
+        let endpoint_ready_tx = self.endpoint_ready_tx.lock().await.take();
 
         let task = tokio::spawn(async move {
             Self::sse_connection_task(
@@ -415,6 +447,7 @@ impl StreamableHttpClientTransport {
                 session_id,
                 last_event_id,
                 message_endpoint,
+                endpoint_ready_tx,
             )
             .await;
         });
@@ -435,6 +468,7 @@ impl StreamableHttpClientTransport {
         session_id: Arc<RwLock<Option<String>>>,
         last_event_id: Arc<RwLock<Option<String>>>,
         message_endpoint: Arc<RwLock<Option<String>>>,
+        mut endpoint_ready_tx: Option<tokio::sync::oneshot::Sender<()>>,
     ) {
         let mut attempt = 0u32;
 
@@ -514,8 +548,21 @@ impl StreamableHttpClientTransport {
                     // Process SSE stream
                     let mut stream = response.bytes_stream();
                     let mut buffer = String::new();
+                    let read_timeout = config.sse_read_timeout;
 
-                    while let Some(chunk_result) = stream.next().await {
+                    loop {
+                        let chunk_result =
+                            match tokio::time::timeout(read_timeout, stream.next()).await {
+                                Ok(Some(r)) => r,
+                                Ok(None) => break,
+                                Err(_) => {
+                                    warn!(
+                                        "SSE read idle for {:?}; closing stream to reconnect",
+                                        read_timeout
+                                    );
+                                    break;
+                                }
+                            };
                         match chunk_result {
                             Ok(chunk) => {
                                 let chunk_str = String::from_utf8_lossy(&chunk);
@@ -531,6 +578,7 @@ impl StreamableHttpClientTransport {
                                         &sse_sender,
                                         &last_event_id,
                                         &message_endpoint,
+                                        &mut endpoint_ready_tx,
                                     )
                                     .await
                                     {
@@ -556,12 +604,17 @@ impl StreamableHttpClientTransport {
         }
     }
 
-    /// Process SSE event
+    /// Process SSE event.
+    ///
+    /// `endpoint_ready_tx` is `Some` until the first `endpoint` event is processed —
+    /// at that point we drop the sender, which signals `connect()` that endpoint
+    /// discovery is complete and `send()` is now safe.
     async fn process_sse_event(
         event_str: &str,
         sse_sender: &mpsc::Sender<TransportMessage>,
         last_event_id: &Arc<RwLock<Option<String>>>,
         message_endpoint: &Arc<RwLock<Option<String>>>,
+        endpoint_ready_tx: &mut Option<tokio::sync::oneshot::Sender<()>>,
     ) -> TransportResult<()> {
         let lines: Vec<&str> = event_str.lines().collect();
         let mut event_type: Option<String> = None;
@@ -628,6 +681,12 @@ impl StreamableHttpClientTransport {
 
                 info!("Discovered message endpoint: {}", endpoint_uri);
                 *message_endpoint.write().await = Some(endpoint_uri);
+                // Signal `connect()` that the endpoint is now usable. `send` returns
+                // `Err` only if the receiver was already dropped (connect timed out
+                // or was abandoned) — safe to ignore.
+                if let Some(tx) = endpoint_ready_tx.take() {
+                    let _ = tx.send(());
+                }
                 Ok(())
             }
             Some("message") | None => {
@@ -732,6 +791,34 @@ impl StreamableHttpClientTransport {
             String::from_utf8_lossy(&message.payload)
         );
         Ok(())
+    }
+
+    /// Await the next inbound message.
+    ///
+    /// Unlike [`Transport::receive`] — which is non-blocking by contract and
+    /// returns `None` immediately when no message is queued — this inherent
+    /// method awaits on both the response and SSE channels and returns when
+    /// one produces a message. This is the ergonomic choice for client code
+    /// that wants a blocking `recv` without building a select loop around
+    /// `receive().await`.
+    pub async fn recv_async(&self) -> TransportResult<TransportMessage> {
+        let mut response_receiver = self.response_receiver.lock().await;
+        let mut sse_receiver = self.sse_receiver.lock().await;
+        let message = tokio::select! {
+            biased;
+            // Prefer the response queue so synchronous POST replies land before
+            // server-push SSE messages when both are ready simultaneously.
+            msg = response_receiver.recv() => msg.ok_or_else(|| {
+                TransportError::ConnectionLost("Response channel disconnected".to_string())
+            })?,
+            msg = sse_receiver.recv() => msg.ok_or_else(|| {
+                TransportError::ConnectionLost("SSE channel disconnected".to_string())
+            })?,
+        };
+        let mut metrics = self.metrics.write().await;
+        metrics.messages_received += 1;
+        metrics.bytes_received += message.payload.len() as u64;
+        Ok(message)
     }
 }
 
@@ -879,6 +966,12 @@ impl Transport for StreamableHttpClientTransport {
         })
     }
 
+    /// Non-blocking receive.
+    ///
+    /// Returns `Ok(None)` immediately when no message is queued. This is the
+    /// `Transport` trait contract (polled from a select loop); it does **not**
+    /// wait for the next message. Use [`Self::recv_async`] when you want to
+    /// await the next message.
     fn receive(
         &self,
     ) -> Pin<Box<dyn Future<Output = TransportResult<Option<TransportMessage>>> + Send + '_>> {
@@ -955,8 +1048,27 @@ impl Transport for StreamableHttpClientTransport {
             // Start SSE connection task
             self.start_sse_connection().await?;
 
-            // Wait a bit for endpoint discovery
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            // Wait for the SSE task to discover the message endpoint instead of relying
+            // on a fixed sleep. Pre-3.1 used `sleep(500ms)`, which races on slow
+            // networks / cold caches and the first `send()` could be routed to a stale
+            // endpoint. The SSE task drops `endpoint_ready_tx` once it processes the
+            // `endpoint` event, which closes this receiver.
+            let rx = self.endpoint_ready_rx.lock().await.take();
+            if let Some(rx) = rx {
+                match tokio::time::timeout(self.config.timeout, rx).await {
+                    Ok(_) => {
+                        // Either Ok(()) (sender fired) or Err (sender dropped without
+                        // firing — task crashed before discovery). Either way connect
+                        // shouldn't block further; the next send() will surface failure.
+                    }
+                    Err(_) => {
+                        return Err(TransportError::ConnectionFailed(format!(
+                            "SSE endpoint discovery timed out after {:?}",
+                            self.config.timeout
+                        )));
+                    }
+                }
+            }
 
             *self.state.write().await = TransportState::Connected;
 
@@ -1042,7 +1154,7 @@ mod tests {
     #[tokio::test]
     async fn test_client_creation() {
         let config = StreamableHttpClientConfig::default();
-        let client = StreamableHttpClientTransport::new(config);
+        let client = StreamableHttpClientTransport::new(config).expect("default config builds");
 
         assert_eq!(client.transport_type(), TransportType::Http);
         assert!(client.capabilities().supports_streaming);

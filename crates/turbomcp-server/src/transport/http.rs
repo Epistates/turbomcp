@@ -286,12 +286,49 @@ pub async fn run<H: McpHandler>(handler: &H, addr: &str) -> McpResult<()> {
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
+    .with_graceful_shutdown(shutdown_signal(None))
     .await
     .map_err(|e| McpError::internal(format!("Server error: {}", e)))?;
 
     // Call shutdown hook
     handler.on_shutdown().await?;
     Ok(())
+}
+
+/// Wait for SIGINT (Ctrl-C) and, on Unix, SIGTERM. Returns when either fires.
+///
+/// On signal, axum stops accepting new connections and gives in-flight requests up
+/// to `drain` to complete. Pre-3.1 the HTTP transport had no shutdown hook at all
+/// — SIGTERM aborted in-flight requests mid-response.
+async fn shutdown_signal(drain: Option<Duration>) {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        if let Ok(mut sig) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            sig.recv().await;
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("Shutdown signal received, draining HTTP server");
+    if let Some(drain) = drain {
+        // Give the runtime a chance to land the signal before axum starts dropping
+        // listeners; the actual drain happens inside axum::serve once this future
+        // resolves. We bound the wait so a stuck request can't block exit forever.
+        tokio::time::sleep(drain.min(Duration::from_secs(60))).await;
+    }
 }
 
 /// Run a handler on HTTP transport with custom configuration.
@@ -305,6 +342,18 @@ pub async fn run_with_config<H: McpHandler>(
     handler: &H,
     addr: &str,
     config: &ServerConfig,
+) -> McpResult<()> {
+    run_with_shutdown(handler, addr, config, None).await
+}
+
+/// Variant of [`run_with_config`] that accepts an explicit graceful-shutdown drain
+/// timeout. Used by the server builder to thread `with_graceful_shutdown(...)` all
+/// the way down to axum.
+pub async fn run_with_shutdown<H: McpHandler>(
+    handler: &H,
+    addr: &str,
+    config: &ServerConfig,
+    graceful_shutdown: Option<Duration>,
 ) -> McpResult<()> {
     // Call lifecycle hooks
     handler.on_initialize().await?;
@@ -345,6 +394,7 @@ pub async fn run_with_config<H: McpHandler>(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
+    .with_graceful_shutdown(shutdown_signal(graceful_shutdown))
     .await
     .map_err(|e| McpError::internal(format!("Server error: {}", e)))?;
 

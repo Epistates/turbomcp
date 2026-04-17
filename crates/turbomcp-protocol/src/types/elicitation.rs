@@ -670,6 +670,52 @@ pub struct ElicitationCompleteParams {
     pub elicitation_id: String,
 }
 
+/// Error returned when a server requires URL-mode elicitation but the client
+/// requested form-mode (or vice versa). Carries the URL the client should open
+/// out-of-band to satisfy the elicitation, per MCP 2025-11-25 / SEP-1036.
+///
+/// Servers should map this to a JSON-RPC error response with `data` populated:
+/// ```json
+/// { "code": -32001, "message": "URL elicitation required", "data": { "url": "https://..." } }
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct URLElicitationRequiredError {
+    /// The URL the client must open out-of-band to satisfy the elicitation.
+    pub url: String,
+    /// Optional human-readable description of what the user is being asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Optional `elicitationId` the client should reference when polling/awaiting completion.
+    #[serde(rename = "elicitationId", skip_serializing_if = "Option::is_none")]
+    pub elicitation_id: Option<String>,
+}
+
+impl URLElicitationRequiredError {
+    /// Create a new URL-elicitation-required error.
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            description: None,
+            elicitation_id: None,
+        }
+    }
+
+    /// Attach a human-readable description.
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Attach an elicitation ID for completion correlation.
+    pub fn with_elicitation_id(mut self, id: impl Into<String>) -> Self {
+        self.elicitation_id = Some(id.into());
+        self
+    }
+
+    /// Suggested JSON-RPC error code for this condition (server-error range).
+    pub const ERROR_CODE: i32 = -32001;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

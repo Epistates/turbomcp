@@ -528,7 +528,11 @@ async fn create_http_transport(conn: &Connection) -> CliResult<StreamableHttpCli
         ..Default::default()
     };
 
-    Ok(StreamableHttpClientTransport::new(config))
+    StreamableHttpClientTransport::new(config).map_err(|e| {
+        crate::CliError::Transport(turbomcp_protocol::Error::transport(format!(
+            "Failed to build HTTP transport: {e}"
+        )))
+    })
 }
 
 /// Create WebSocket transport from connection

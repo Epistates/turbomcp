@@ -438,7 +438,13 @@ impl<H: McpHandler> ServerBuilder<H> {
 
             #[cfg(feature = "http")]
             Transport::Http { addr } => {
-                super::transport::http::run_with_config(&self.handler, &addr, &config).await
+                super::transport::http::run_with_shutdown(
+                    &self.handler,
+                    &addr,
+                    &config,
+                    self.graceful_shutdown,
+                )
+                .await
             }
 
             #[cfg(feature = "websocket")]

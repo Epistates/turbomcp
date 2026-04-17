@@ -33,7 +33,7 @@
 //!         ..Default::default()
 //!     };
 //!
-//!     let transport = StreamableHttpClientTransport::new(config);
+//!     let transport = StreamableHttpClientTransport::new(config)?;
 //!     transport.connect().await?;
 //!
 //!     // Transport is ready for MCP communication

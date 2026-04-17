@@ -470,21 +470,19 @@ impl StdioTransport {
                                     // Emit event
                                     event_emitter.emit_message_received(message.id.clone(), size);
 
-                                    // Use try_send with backpressure handling
-                                    match sender.try_send(message) {
-                                        Ok(()) => {}
-                                        Err(mpsc::error::TrySendError::Full(_)) => {
-                                            warn!(
-                                                message_size = size,
-                                                "STDIO message channel full, applying backpressure - message dropped"
-                                            );
-                                            // Apply backpressure by dropping this message
-                                            continue;
-                                        }
-                                        Err(mpsc::error::TrySendError::Closed(_)) => {
-                                            debug!("Receive channel closed, stopping reader task");
-                                            break;
-                                        }
+                                    // Real backpressure: pause the reader rather than
+                                    // silently dropping. Pre-3.1 we logged a warn and
+                                    // `continue`d, which dropped the message; the peer
+                                    // never learned and request/response correlation
+                                    // broke under load. `send().await` parks until the
+                                    // consumer drains — STDIO is a single-peer transport
+                                    // so this naturally backpressures the producer.
+                                    if let Err(e) = sender.send(message).await {
+                                        debug!(
+                                            error = %e,
+                                            "Receive channel closed, stopping reader task"
+                                        );
+                                        break;
                                     }
                                 }
                                 Err(e) => {

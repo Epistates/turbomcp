@@ -21,6 +21,14 @@ use crate::axum::websocket_bidirectional::{
 };
 use crate::tower::SessionInfo;
 
+/// Outbound channel capacity per WebSocket connection.
+///
+/// Bounded so a slow/hostile reader can't drive the server out of memory. At ~1 KiB
+/// average MCP message size this is roughly 1 MiB per connection of slack — enough
+/// to absorb normal bursts without backpressuring tools. Override at the transport
+/// layer if specific deployments need different sizing.
+pub(crate) const WS_OUTBOUND_CAPACITY: usize = 1024;
+
 /// WebSocket handler for upgrade requests
 pub async fn websocket_handler(
     ws: WebSocketUpgrade,
@@ -43,8 +51,12 @@ async fn handle_websocket_bidirectional(
 
     info!("WebSocket connected for session: {}", session.id);
 
-    // Create channels for bidirectional communication
-    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
+    // Bounded outbound channel — an unbounded channel here is a memory-exhaustion DoS:
+    // a slow or malicious client can read slower than messages arrive, growing the queue
+    // without bound. 1024 keeps per-connection memory in the low MB even with large
+    // payloads while leaving plenty of slack for normal bursty traffic. On `try_send`
+    // saturation we close the connection (see send_response / receive_loop).
+    let (outbound_tx, outbound_rx) = mpsc::channel(WS_OUTBOUND_CAPACITY);
     let pending_requests = Arc::new(Mutex::new(HashMap::new()));
 
     // Create WebSocket dispatcher for server→client requests
@@ -63,7 +75,10 @@ async fn handle_websocket_bidirectional(
         }
     });
 
-    if let Err(e) = outbound_tx.send(axum::extract::ws::Message::Text(welcome.to_string().into())) {
+    if let Err(e) = outbound_tx
+        .send(axum::extract::ws::Message::Text(welcome.to_string().into()))
+        .await
+    {
         error!("Failed to queue WebSocket welcome message: {}", e);
         return;
     }
@@ -103,7 +118,7 @@ async fn handle_websocket_bidirectional(
 /// Send loop: forwards messages from channel to WebSocket
 async fn send_loop(
     mut sender: futures::stream::SplitSink<WebSocket, axum::extract::ws::Message>,
-    mut outbound_rx: mpsc::UnboundedReceiver<axum::extract::ws::Message>,
+    mut outbound_rx: mpsc::Receiver<axum::extract::ws::Message>,
 ) {
     while let Some(message) = outbound_rx.recv().await {
         // Send message to buffer
@@ -130,7 +145,7 @@ async fn receive_loop(
     mut receiver: futures::stream::SplitStream<WebSocket>,
     app_state: McpAppState,
     session: SessionInfo,
-    outbound_tx: mpsc::UnboundedSender<axum::extract::ws::Message>,
+    outbound_tx: mpsc::Sender<axum::extract::ws::Message>,
     pending_requests: Arc<
         Mutex<
             HashMap<
@@ -194,7 +209,10 @@ async fn receive_loop(
                 break;
             }
             Ok(axum::extract::ws::Message::Ping(data)) => {
-                if let Err(e) = outbound_tx.send(axum::extract::ws::Message::Pong(data)) {
+                // Try-send so a saturated outbound buffer (slow client) closes the
+                // connection instead of stalling the receive loop and accumulating
+                // unsent pongs in memory.
+                if let Err(e) = outbound_tx.try_send(axum::extract::ws::Message::Pong(data)) {
                     error!("Failed to queue WebSocket pong: {}", e);
                     break;
                 }
@@ -216,7 +234,7 @@ async fn handle_client_request(
     request: JsonRpcRequest,
     app_state: &McpAppState,
     session: &SessionInfo,
-    outbound_tx: &mpsc::UnboundedSender<axum::extract::ws::Message>,
+    outbound_tx: &mpsc::Sender<axum::extract::ws::Message>,
 ) {
     let method = request.method.clone();
     let request_id = request.id.clone();
@@ -268,7 +286,7 @@ async fn handle_client_request(
 
 /// Send a JSON-RPC response
 async fn send_response(
-    outbound_tx: &mpsc::UnboundedSender<axum::extract::ws::Message>,
+    outbound_tx: &mpsc::Sender<axum::extract::ws::Message>,
     response: JsonRpcResponse,
 ) {
     let response_text = match serde_json::to_string(&response) {
@@ -279,14 +297,17 @@ async fn send_response(
         }
     };
 
-    if let Err(e) = outbound_tx.send(axum::extract::ws::Message::Text(response_text.into())) {
+    if let Err(e) = outbound_tx
+        .send(axum::extract::ws::Message::Text(response_text.into()))
+        .await
+    {
         error!("Failed to queue WebSocket response: {}", e);
     }
 }
 
 /// Send a parse error response
 async fn send_parse_error(
-    outbound_tx: &mpsc::UnboundedSender<axum::extract::ws::Message>,
+    outbound_tx: &mpsc::Sender<axum::extract::ws::Message>,
     id: Option<serde_json::Value>,
 ) {
     let error_response = JsonRpcResponse {

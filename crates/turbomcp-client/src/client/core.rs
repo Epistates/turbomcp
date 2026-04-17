@@ -393,7 +393,9 @@ impl Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTran
             ..Default::default()
         };
 
-        let transport = StreamableHttpClientTransport::new(config);
+        let transport = StreamableHttpClientTransport::new(config).map_err(|e| {
+            turbomcp_protocol::Error::transport(format!("Failed to build HTTP transport: {e}"))
+        })?;
         let client = Self::new(transport);
 
         // Initialize connection immediately
@@ -440,7 +442,9 @@ impl Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTran
 
         config_fn(&mut config);
 
-        let transport = StreamableHttpClientTransport::new(config);
+        let transport = StreamableHttpClientTransport::new(config).map_err(|e| {
+            turbomcp_protocol::Error::transport(format!("Failed to build HTTP transport: {e}"))
+        })?;
         let client = Self::new(transport);
 
         client.initialize().await?;

@@ -119,8 +119,10 @@ async fn handle_websocket_with_factory(
         session.id
     );
 
-    // Create channels for bidirectional communication
-    let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
+    // Bounded outbound channel — see crate::axum::handlers::websocket::WS_OUTBOUND_CAPACITY
+    // for rationale. Same DoS profile as the non-factory handler.
+    let (outbound_tx, outbound_rx) =
+        mpsc::channel(crate::axum::handlers::websocket::WS_OUTBOUND_CAPACITY);
     let pending_requests = Arc::new(Mutex::new(HashMap::new()));
 
     // Create WebSocket dispatcher for server→client requests
@@ -173,7 +175,7 @@ async fn handle_websocket_with_factory(
 /// Send loop: forwards messages from channel to WebSocket
 async fn send_loop(
     mut sender: futures::stream::SplitSink<WebSocket, axum::extract::ws::Message>,
-    mut outbound_rx: mpsc::UnboundedReceiver<axum::extract::ws::Message>,
+    mut outbound_rx: mpsc::Receiver<axum::extract::ws::Message>,
 ) {
     while let Some(message) = outbound_rx.recv().await {
         // Send message to buffer
@@ -196,7 +198,7 @@ async fn receive_loop_with_handler(
     mut receiver: futures::stream::SplitStream<WebSocket>,
     handler: Arc<dyn JsonRpcHandler>,
     session: SessionInfo,
-    outbound_tx: mpsc::UnboundedSender<axum::extract::ws::Message>,
+    outbound_tx: mpsc::Sender<axum::extract::ws::Message>,
     pending_requests: Arc<
         Mutex<
             HashMap<
@@ -263,8 +265,9 @@ async fn receive_loop_with_handler(
                     }
                 };
 
-                if let Err(e) =
-                    outbound_tx.send(axum::extract::ws::Message::Text(response_json.into()))
+                if let Err(e) = outbound_tx
+                    .send(axum::extract::ws::Message::Text(response_json.into()))
+                    .await
                 {
                     error!("Failed to queue WebSocket response: {}", e);
                     break;
@@ -275,7 +278,9 @@ async fn receive_loop_with_handler(
                 break;
             }
             Ok(axum::extract::ws::Message::Ping(data)) => {
-                if let Err(e) = outbound_tx.send(axum::extract::ws::Message::Pong(data)) {
+                // try_send: closing a slow connection is the right answer when the
+                // outbound buffer is saturated (see WS_OUTBOUND_CAPACITY).
+                if let Err(e) = outbound_tx.try_send(axum::extract::ws::Message::Pong(data)) {
                     error!("Failed to queue WebSocket pong: {}", e);
                     break;
                 }

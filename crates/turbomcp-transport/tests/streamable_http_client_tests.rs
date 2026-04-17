@@ -127,7 +127,7 @@ mod streamable_http_client_tests {
             ..Default::default()
         };
 
-        let transport = StreamableHttpClientTransport::new(config);
+        let transport = StreamableHttpClientTransport::new(config).expect("test config builds");
 
         // Send initialize request
         let request = create_jsonrpc_request("1", "initialize");
@@ -168,7 +168,7 @@ mod streamable_http_client_tests {
             ..Default::default()
         };
 
-        let transport = StreamableHttpClientTransport::new(config);
+        let transport = StreamableHttpClientTransport::new(config).expect("test config builds");
 
         // Send notification
         let notification = create_jsonrpc_notification("initialized");
@@ -287,7 +287,7 @@ mod streamable_http_client_tests {
             ..Default::default()
         };
 
-        let mut transport = StreamableHttpClientTransport::new(config);
+        let mut transport = StreamableHttpClientTransport::new(config).expect("test config builds");
 
         // Step 1: Send initialize and receive response
         let init_request = create_jsonrpc_request("1", "initialize");
@@ -380,7 +380,7 @@ mod streamable_http_client_tests {
             ..Default::default()
         };
 
-        let mut transport = StreamableHttpClientTransport::new(config);
+        let mut transport = StreamableHttpClientTransport::new(config).expect("test config builds");
 
         let request = create_jsonrpc_request("1", "test");
         transport.send(request).await.unwrap();
@@ -410,7 +410,7 @@ mod streamable_http_client_tests {
             ..Default::default()
         };
 
-        let transport = StreamableHttpClientTransport::new(config);
+        let transport = StreamableHttpClientTransport::new(config).expect("test config builds");
 
         // Receive without sending anything should return None
         let result = transport.receive().await.unwrap();

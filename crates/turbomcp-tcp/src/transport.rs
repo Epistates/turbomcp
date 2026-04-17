@@ -166,6 +166,14 @@ impl TcpTransport {
                                     continue;
                                 }
 
+                                // MCP messages are typically small (request/response
+                                // JSON) and latency-sensitive. Disable Nagle so each
+                                // frame goes out immediately rather than waiting up to
+                                // 200 ms for coalescing. Errors here are non-fatal.
+                                if let Err(e) = stream.set_nodelay(true) {
+                                    debug!(error = %e, addr = %addr, "set_nodelay failed");
+                                }
+
                                 info!("Accepted TCP connection from {}", addr);
                                 let incoming_sender = tx.clone();
                                 let connections_ref = connections.clone();
@@ -224,8 +232,14 @@ impl TcpTransport {
             *self.state.lock() = TransportState::Failed {
                 reason: format!("Failed to connect: {e}"),
             };
-            TransportError::ConnectionFailed(format!("Failed to connect to TCP server: {e}"))
+            TransportError::ConnectionFailed(format!("Failed to connect: {e}"))
         })?;
+
+        // Same rationale as the server-side accept path: small, latency-sensitive
+        // MCP frames don't benefit from Nagle's coalescing. Errors are non-fatal.
+        if let Err(e) = stream.set_nodelay(true) {
+            debug!(error = %e, addr = %remote_addr, "set_nodelay failed on client connect");
+        }
 
         let (tx, rx) = mpsc::channel(1000); // Bounded channel for backpressure control
         *self.sender.lock().await = Some(tx.clone());

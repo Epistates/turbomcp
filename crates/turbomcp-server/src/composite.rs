@@ -228,10 +228,17 @@ impl CompositeHandler {
         self
     }
 
-    /// Mount a handler with the given prefix.
+    /// Mount a handler with the given prefix (panicking variant).
     ///
     /// All tools, resources, and prompts from the handler will be namespaced
-    /// with the prefix.
+    /// with the prefix. Prefer [`try_mount`](Self::try_mount) in production
+    /// code — it returns a `Result` instead of panicking on duplicate prefixes,
+    /// which is easier to reason about under dynamic configuration.
+    ///
+    /// This method is retained for builder-chain ergonomics in static setups
+    /// (tests, examples, small servers where the prefix set is known at compile
+    /// time). It may be deprecated in a future major version — new code should
+    /// prefer `try_mount`.
     ///
     /// # Panics
     ///
@@ -268,8 +275,10 @@ impl CompositeHandler {
 
     /// Try to mount a handler with the given prefix, returning an error on duplicate.
     ///
-    /// This is the fallible version of [`mount`](Self::mount) for cases where
-    /// you want to handle duplicate prefixes gracefully rather than panicking.
+    /// This is the fallible version of [`mount`](Self::mount) and the
+    /// recommended entry point for production code — duplicate prefixes
+    /// become a recoverable error instead of a panic, which matters for
+    /// servers that register handlers from user configuration.
     ///
     /// # Errors
     ///
@@ -324,18 +333,41 @@ impl CompositeHandler {
     }
 
     /// Parse a prefixed tool name into (prefix, original_name).
-    fn parse_prefixed_tool(name: &str) -> Option<(&str, &str)> {
-        name.split_once('_')
+    ///
+    /// Pre-3.1 used `split_once('_')` which mis-split prefixes containing `_`
+    /// (e.g., prefix `my_weather` + tool `get_forecast` → joined `my_weather_get_forecast`
+    /// would split as `("my", "weather_get_forecast")`). The fix is to look up the
+    /// matching mounted prefix using the registered handler list, longest-first so
+    /// nested prefixes route correctly.
+    fn parse_prefixed_tool<'a>(&self, name: &'a str) -> Option<(&'a str, &'a str)> {
+        self.match_prefix(name, "_")
     }
 
     /// Parse a prefixed resource URI into (prefix, original_uri).
-    fn parse_prefixed_uri(uri: &str) -> Option<(&str, &str)> {
-        uri.split_once("://")
+    fn parse_prefixed_uri<'a>(&self, uri: &'a str) -> Option<(&'a str, &'a str)> {
+        self.match_prefix(uri, "://")
     }
 
     /// Parse a prefixed prompt name into (prefix, original_name).
-    fn parse_prefixed_prompt(name: &str) -> Option<(&str, &str)> {
-        name.split_once('_')
+    fn parse_prefixed_prompt<'a>(&self, name: &'a str) -> Option<(&'a str, &'a str)> {
+        self.match_prefix(name, "_")
+    }
+
+    /// Find a registered prefix that `s` starts with, followed by the given separator.
+    /// Returns `(prefix, remainder)`. Longest prefix wins to handle nested mount points.
+    fn match_prefix<'a>(&self, s: &'a str, sep: &str) -> Option<(&'a str, &'a str)> {
+        let mut best: Option<(&str, &'a str)> = None;
+        for h in self.handlers.iter() {
+            let with_sep = format!("{}{}", h.prefix, sep);
+            if let Some(rest) = s.strip_prefix(&with_sep) {
+                let prefix_slice = &s[..h.prefix.len()];
+                match best {
+                    Some((p, _)) if p.len() >= h.prefix.len() => {}
+                    _ => best = Some((prefix_slice, rest)),
+                }
+            }
+        }
+        best
     }
 
     /// Find a handler by prefix.
@@ -395,8 +427,9 @@ impl McpHandler for CompositeHandler {
     ) -> impl std::future::Future<Output = McpResult<ToolResult>> + turbomcp_core::marker::MaybeSend + 'a
     {
         async move {
-            let (prefix, original_name) =
-                Self::parse_prefixed_tool(name).ok_or_else(|| McpError::tool_not_found(name))?;
+            let (prefix, original_name) = self
+                .parse_prefixed_tool(name)
+                .ok_or_else(|| McpError::tool_not_found(name))?;
 
             let handler = self
                 .find_handler(prefix)
@@ -417,8 +450,9 @@ impl McpHandler for CompositeHandler {
     + turbomcp_core::marker::MaybeSend
     + 'a {
         async move {
-            let (prefix, original_uri) =
-                Self::parse_prefixed_uri(uri).ok_or_else(|| McpError::resource_not_found(uri))?;
+            let (prefix, original_uri) = self
+                .parse_prefixed_uri(uri)
+                .ok_or_else(|| McpError::resource_not_found(uri))?;
 
             let handler = self
                 .find_handler(prefix)
@@ -436,7 +470,8 @@ impl McpHandler for CompositeHandler {
     ) -> impl std::future::Future<Output = McpResult<PromptResult>> + turbomcp_core::marker::MaybeSend + 'a
     {
         async move {
-            let (prefix, original_name) = Self::parse_prefixed_prompt(name)
+            let (prefix, original_name) = self
+                .parse_prefixed_prompt(name)
                 .ok_or_else(|| McpError::prompt_not_found(name))?;
 
             let handler = self

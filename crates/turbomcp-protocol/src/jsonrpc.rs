@@ -135,8 +135,31 @@ pub struct JsonRpcError {
 }
 
 impl JsonRpcError {
-    /// Create a new JSON-RPC error
+    /// JSON-RPC 2.0 §5.1 reserves -32768..-32000 (the "Server error" range goes from
+    /// -32099 to -32000 inclusive). Custom server errors must fall in that range;
+    /// other application-level errors should be conveyed via `data`, not via codes
+    /// outside the reserved space, to avoid colliding with future spec assignments.
+    const SERVER_ERROR_RANGE: std::ops::RangeInclusive<i32> = -32099..=-32000;
+    /// Reserved codes already standardized (parse/invalid request/method not
+    /// found/invalid params/internal error). Outside the server-error range but
+    /// always allowed because they're spec-mandated.
+    const STANDARD_CODES: &'static [i32] = &[-32700, -32600, -32601, -32602, -32603];
+
+    /// Create a new JSON-RPC error.
+    ///
+    /// Custom application errors should use codes in `-32099..=-32000` (the server
+    /// error range). Codes outside that range and outside the well-known standard
+    /// codes are accepted but logged at WARN — they may collide with future spec
+    /// assignments. Use [`Self::with_validated_code`] to fail-fast instead.
     pub fn new(code: i32, message: impl Into<String>) -> Self {
+        if !Self::is_valid_code(code) {
+            tracing::warn!(
+                code,
+                "JSON-RPC error code outside reserved server-error range -32099..=-32000 \
+                 and not a standardized JSON-RPC 2.0 code; this risks colliding with \
+                 future spec assignments"
+            );
+        }
         Self {
             code,
             message: message.into(),
@@ -144,8 +167,36 @@ impl JsonRpcError {
         }
     }
 
+    /// Like [`Self::new`] but returns `Err` instead of warning when the code is out
+    /// of the JSON-RPC 2.0 reserved or standardized ranges.
+    pub fn with_validated_code(
+        code: i32,
+        message: impl Into<String>,
+    ) -> Result<Self, &'static str> {
+        if !Self::is_valid_code(code) {
+            return Err(
+                "JSON-RPC error code must be a standardized code or in the -32099..=-32000 server-error range",
+            );
+        }
+        Ok(Self {
+            code,
+            message: message.into(),
+            data: None,
+        })
+    }
+
+    fn is_valid_code(code: i32) -> bool {
+        Self::SERVER_ERROR_RANGE.contains(&code) || Self::STANDARD_CODES.contains(&code)
+    }
+
     /// Create a new JSON-RPC error with additional data
     pub fn with_data(code: i32, message: impl Into<String>, data: Value) -> Self {
+        if !Self::is_valid_code(code) {
+            tracing::warn!(
+                code,
+                "JSON-RPC error code outside reserved server-error range -32099..=-32000"
+            );
+        }
         Self {
             code,
             message: message.into(),
