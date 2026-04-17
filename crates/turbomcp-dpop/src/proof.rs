@@ -29,6 +29,23 @@ use super::{
 #[cfg(feature = "redis-storage")]
 use super::{redis_storage::RedisNonceStorage, types::NonceStorage};
 
+/// Where a DPoP proof is being validated.
+///
+/// RFC 9449 §4.3 places different requirements on proofs depending on whether they're
+/// presented at the authorization server's token endpoint (no `ath` required) or at a
+/// resource server (`ath` required when an access token is present, to bind the proof
+/// to that specific token). Without distinguishing these cases, a proof intercepted
+/// before the access token was issued can be replayed against any later access token
+/// — defeating the whole point of DPoP at the resource server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProofContext {
+    /// Validation at the AS token endpoint. `ath` is not required.
+    TokenEndpoint,
+    /// Validation at a resource server. If an access token accompanies the proof,
+    /// the proof MUST carry a matching `ath` claim per RFC 9449 §4.3.
+    ResourceServer,
+}
+
 /// DPoP proof generator with security features
 #[derive(Debug)]
 pub struct DpopProofGenerator {
@@ -247,21 +264,28 @@ impl DpopProofGenerator {
         method: &str,
         uri: &str,
         access_token: Option<&str>,
+        context: ProofContext,
     ) -> Result<DpopValidationResult> {
         // Parse the JWT string into a DPoP proof
         let proof = DpopProof::from_jwt_string(jwt_string)?;
 
         // Validate the parsed proof
-        self.validate_proof(&proof, method, uri, access_token).await
+        self.validate_proof(&proof, method, uri, access_token, context)
+            .await
     }
 
-    /// Validate a DPoP proof
+    /// Validate a DPoP proof.
+    ///
+    /// `context` selects the spec-mandated rules for this proof's location: at the
+    /// AS token endpoint (`ath` optional) vs. at a resource server (`ath` required
+    /// when an access token is provided). See [`ProofContext`].
     pub async fn validate_proof(
         &self,
         proof: &DpopProof,
         method: &str,
         uri: &str,
         access_token: Option<&str>,
+        context: ProofContext,
     ) -> Result<DpopValidationResult> {
         // Basic structure validation
         proof.validate_structure()?;
@@ -276,18 +300,28 @@ impl DpopProofGenerator {
         self.validate_nonce(proof).await?;
 
         // Validate access token hash logic
-        match (access_token, &proof.payload.ath) {
-            (Some(token), _) => {
-                // Access token provided, validate if there's a hash
+        match (access_token, &proof.payload.ath, context) {
+            (Some(_), None, ProofContext::ResourceServer) => {
+                // RFC 9449 §4.3: at a resource server, an accompanying access token
+                // requires a matching `ath` claim. Without it, a proof captured before
+                // the access token was issued could be replayed against any subsequent
+                // token, defeating sender-constraint.
+                return Err(DpopError::AccessTokenHashFailed {
+                    reason: "DPoP proof at resource server is missing required `ath` claim binding it to the access token (RFC 9449 §4.3)".to_string(),
+                });
+            }
+            (Some(token), _, _) => {
+                // Either the proof carries a hash (validated below) or we're at the
+                // token endpoint where `ath` is optional. If it's present, it must match.
                 self.validate_access_token_hash(proof, token)?;
             }
-            (None, Some(_)) => {
+            (None, Some(_), _) => {
                 // Proof has token hash but no access token provided
                 return Err(DpopError::AccessTokenHashFailed {
                     reason: "Proof contains access token hash but no access token provided for validation".to_string(),
                 });
             }
-            (None, None) => {
+            (None, None, _) => {
                 // No access token and no hash - OK
             }
         }
@@ -597,22 +631,43 @@ pub trait NonceTracker: Send + Sync + std::fmt::Debug {
     fn cleanup_expired_nonces(&self) -> Pin<Box<dyn Future<Output = Result<usize>> + Send + '_>>;
 }
 
-/// In-memory nonce tracker for development and testing
+/// Default upper bound on entries in the in-memory nonce tracker.
+///
+/// At ~120 bytes per entry this caps the tracker at roughly 120 MiB before evictions
+/// kick in. Tune via [`MemoryNonceTracker::with_capacity`]. The cap is the load-bearing
+/// defense against unique-JTI flooding (each DPoP proof has a fresh UUID `jti`); without
+/// it, an attacker can grow the map unboundedly and exhaust memory or stall lookups.
+pub const DEFAULT_NONCE_CAPACITY: usize = 1_000_000;
+
+/// In-memory nonce tracker for development and testing.
+///
+/// Implements time-ordered eviction with a hard capacity cap. Inline cleanup runs when
+/// the map crosses 80 % of capacity so steady-state load doesn't accumulate expired
+/// entries. For multi-process deployments, prefer the Redis-backed tracker.
 #[derive(Debug)]
 pub struct MemoryNonceTracker {
     /// Set of used nonces with their timestamps
     used_nonces: Arc<RwLock<HashMap<String, i64>>>,
     /// Maximum age for nonces (after which they can be cleaned up)
     max_nonce_age: Duration,
+    /// Hard cap on resident entries — prevents memory exhaustion via unique-JTI flooding.
+    capacity: usize,
 }
 
 impl MemoryNonceTracker {
-    /// Create a new memory nonce tracker
+    /// Create a new memory nonce tracker with default capacity.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_capacity(DEFAULT_NONCE_CAPACITY)
+    }
+
+    /// Create a new memory nonce tracker with an explicit capacity.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            used_nonces: Arc::new(RwLock::new(HashMap::new())),
+            used_nonces: Arc::new(RwLock::new(HashMap::with_capacity(capacity.min(64 * 1024)))),
             max_nonce_age: Duration::from_secs(600), // 10 minutes
+            capacity: capacity.max(1),
         }
     }
 }
@@ -624,8 +679,37 @@ impl NonceTracker for MemoryNonceTracker {
         issued_at: i64,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         let nonce = nonce.to_string();
+        let max_nonce_age = self.max_nonce_age;
+        let capacity = self.capacity;
         Box::pin(async move {
-            self.used_nonces.write().await.insert(nonce, issued_at);
+            let mut nonces = self.used_nonces.write().await;
+
+            // High-water cleanup at 80% so steady-state insertions amortize the work
+            // across many calls instead of stalling at the boundary.
+            if nonces.len() * 5 >= capacity * 4 {
+                let now_secs = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|_| DpopError::InternalError {
+                        reason: "System clock before Unix epoch".to_string(),
+                    })?
+                    .as_secs() as i64;
+                let cutoff = now_secs - max_nonce_age.as_secs() as i64;
+                nonces.retain(|_, &mut ts| ts > cutoff);
+
+                // Still over capacity after age-based eviction? Drop oldest entries.
+                // Worst case (every entry within max_nonce_age) we trim down to the cap.
+                if nonces.len() >= capacity {
+                    let to_drop = nonces.len() - capacity + 1;
+                    let mut entries: Vec<(String, i64)> =
+                        nonces.iter().map(|(k, v)| (k.clone(), *v)).collect();
+                    entries.sort_by_key(|(_, ts)| *ts);
+                    for (key, _) in entries.into_iter().take(to_drop) {
+                        nonces.remove(&key);
+                    }
+                }
+            }
+
+            nonces.insert(nonce, issued_at);
             Ok(())
         })
     }
@@ -636,20 +720,11 @@ impl NonceTracker for MemoryNonceTracker {
     ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + '_>> {
         let nonce = nonce.to_string();
         Box::pin(async move {
-            use subtle::{Choice, ConstantTimeEq};
-
-            // Constant-time nonce lookup to prevent timing attacks
-            // Iterate through all nonces and use constant-time comparison
-            let nonces = self.used_nonces.read().await;
-            let mut found = Choice::from(0u8);
-
-            for (stored_nonce, _) in nonces.iter() {
-                // Constant-time comparison of nonce strings
-                let is_match = stored_nonce.as_bytes().ct_eq(nonce.as_bytes());
-                found |= is_match;
-            }
-
-            Ok(bool::from(found))
+            // O(1) hashed lookup: nonces are server-generated (UUIDs in our generator,
+            // server-supplied opaque strings otherwise) — there is no per-character
+            // secret to leak through `HashMap::get` timing here. The previous O(n)
+            // constant-time scan was a CPU-amplification vector under unique-JTI floods.
+            Ok(self.used_nonces.read().await.contains_key(&nonce))
         })
     }
 
@@ -968,7 +1043,13 @@ mod tests {
 
         // Validate the proof
         let result = proof_gen
-            .validate_proof(&proof, "POST", "https://api.example.com/token", None)
+            .validate_proof(
+                &proof,
+                "POST",
+                "https://api.example.com/token",
+                None,
+                ProofContext::TokenEndpoint,
+            )
             .await
             .unwrap();
 
@@ -1000,6 +1081,7 @@ mod tests {
                 "GET",
                 "https://api.example.com/protected",
                 Some(access_token),
+                ProofContext::ResourceServer,
             )
             .await
             .unwrap();
@@ -1013,10 +1095,44 @@ mod tests {
                 "GET",
                 "https://api.example.com/protected",
                 Some("wrong-token"),
+                ProofContext::ResourceServer,
             )
             .await;
 
         assert!(wrong_result.is_err());
+    }
+
+    /// Regression test: at the resource server, a proof without `ath` must be
+    /// rejected when an access token is also presented (RFC 9449 §4.3).
+    /// The same proof must be acceptable at the token endpoint, where `ath` is
+    /// optional. Pre-3.1 this was silently accepted in both contexts.
+    #[tokio::test]
+    async fn test_resource_server_requires_ath_when_token_present() {
+        let key_manager = Arc::new(DpopKeyManager::new_memory().await.unwrap());
+        let proof_gen = DpopProofGenerator::new(key_manager);
+
+        // Proof generated WITHOUT an access token → no `ath` claim.
+        let proof = proof_gen
+            .generate_proof("POST", "https://rs.example.com/api", None)
+            .await
+            .unwrap();
+        assert!(proof.payload.ath.is_none());
+
+        // At a resource server, presenting that proof alongside an access token
+        // must fail — without `ath`, the proof isn't bound to the token.
+        let result = proof_gen
+            .validate_proof(
+                &proof,
+                "POST",
+                "https://rs.example.com/api",
+                Some("some-bearer-token"),
+                ProofContext::ResourceServer,
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(DpopError::AccessTokenHashFailed { .. })
+        ));
     }
 
     #[tokio::test]
@@ -1032,19 +1148,21 @@ mod tests {
 
         // First validation should succeed
         let result1 = proof_gen
-            .validate_proof(&proof1, "POST", uri, None)
+            .validate_proof(&proof1, "POST", uri, None, ProofContext::TokenEndpoint)
             .await
             .unwrap();
         assert!(result1.valid);
 
         // Second validation of same proof should fail (replay attack)
-        let result2 = proof_gen.validate_proof(&proof1, "POST", uri, None).await;
+        let result2 = proof_gen
+            .validate_proof(&proof1, "POST", uri, None, ProofContext::TokenEndpoint)
+            .await;
         assert!(result2.is_err());
 
         // Generate new proof should succeed
         let proof2 = proof_gen.generate_proof("POST", uri, None).await.unwrap();
         let result3 = proof_gen
-            .validate_proof(&proof2, "POST", uri, None)
+            .validate_proof(&proof2, "POST", uri, None, ProofContext::TokenEndpoint)
             .await
             .unwrap();
         assert!(result3.valid);
@@ -1063,13 +1181,25 @@ mod tests {
 
         // Validate with wrong method should fail
         let wrong_method = proof_gen
-            .validate_proof(&proof, "GET", "https://api.example.com/token", None)
+            .validate_proof(
+                &proof,
+                "GET",
+                "https://api.example.com/token",
+                None,
+                ProofContext::TokenEndpoint,
+            )
             .await;
         assert!(wrong_method.is_err());
 
         // Validate with wrong URI should fail
         let wrong_uri = proof_gen
-            .validate_proof(&proof, "POST", "https://api.example.com/other", None)
+            .validate_proof(
+                &proof,
+                "POST",
+                "https://api.example.com/other",
+                None,
+                ProofContext::TokenEndpoint,
+            )
             .await;
         assert!(wrong_uri.is_err());
     }
