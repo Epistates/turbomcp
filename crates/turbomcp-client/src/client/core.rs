@@ -377,7 +377,8 @@ impl Client<turbomcp_transport::streamable_http_client::StreamableHttpClientTran
     ///     base_url: "http://localhost:8080".to_string(),
     ///     ..Default::default()
     /// };
-    /// let transport = StreamableHttpClientTransport::new(config);
+    /// let transport = StreamableHttpClientTransport::new(config)
+    ///     .map_err(|e| turbomcp_protocol::Error::transport(e.to_string()))?;
     /// let client = Client::new(transport);
     /// client.initialize().await?;
     /// # Ok(())
