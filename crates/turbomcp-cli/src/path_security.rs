@@ -108,9 +108,8 @@ pub fn validate_output_path(base_dir: &Path, requested_path: &str) -> CliResult<
     }
 
     // File doesn't exist - we need to validate it's safe to create
-    // Since we already checked for ".." and absolute paths, the path is safe
-    // However, we need to return a path that's consistent with base_canonical
-    // Build the path relative to the canonical base
+    // We must resolve symlinks in any existing ancestor directories to detect
+    // symlink-based escapes (e.g., "symlink_to_outside/file.json")
     let relative_to_base =
         full_path
             .strip_prefix(base_dir)
@@ -119,6 +118,42 @@ pub fn validate_output_path(base_dir: &Path, requested_path: &str) -> CliResult<
                 details: "Path validation failed unexpectedly".to_string(),
             })?;
 
+    // Walk up the path to find the deepest existing ancestor and canonicalize it
+    // This catches symlinks that point outside the base directory
+    let mut existing_ancestor = full_path.to_path_buf();
+    let mut remaining_components: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if existing_ancestor.exists() {
+            let canonical_ancestor = existing_ancestor.canonicalize().map_err(CliError::Io)?;
+            if !canonical_ancestor.starts_with(&base_canonical) {
+                return Err(CliError::SecurityViolation {
+                    reason: format!(
+                        "Path escapes output directory via symlink: '{}'",
+                        requested_path
+                    ),
+                    details: format!(
+                        "Resolved ancestor '{}' is outside base directory '{}'",
+                        canonical_ancestor.display(),
+                        base_canonical.display()
+                    ),
+                });
+            }
+            // Reconstruct the final path using canonical ancestor + remaining
+            let mut result = canonical_ancestor;
+            for component in remaining_components.into_iter().rev() {
+                result = result.join(component);
+            }
+            return Ok(result);
+        }
+        if let Some(file_name) = existing_ancestor.file_name() {
+            remaining_components.push(file_name.to_os_string());
+        }
+        if !existing_ancestor.pop() {
+            break;
+        }
+    }
+
+    // Fallback: no ancestor exists (shouldn't happen since base_dir exists)
     Ok(base_canonical.join(relative_to_base))
 }
 
