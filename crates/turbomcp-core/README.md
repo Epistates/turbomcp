@@ -28,7 +28,7 @@ turbomcp-core = { version = "3.0", default-features = false }
 ## Example
 
 ```rust
-use turbomcp_core::types::{Tool, ToolInputSchema};
+use turbomcp_core::{Tool, ToolInputSchema};
 use turbomcp_core::error::{McpError, ErrorKind, McpResult};
 
 // Create a tool definition

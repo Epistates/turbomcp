@@ -148,7 +148,7 @@ impl McpIntrospector {
                 roots: Some(RootsCapabilities {
                     list_changed: Some(true),
                 }),
-                sampling: Some(SamplingCapabilities {}),
+                sampling: Some(SamplingCapabilities::default()),
                 elicitation: Some(ElicitationCapabilities::full()),
                 ..Default::default()
             },

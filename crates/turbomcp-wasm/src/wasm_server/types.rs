@@ -1,32 +1,22 @@
-//! Types for Cloudflare Workers MCP handlers
+//! Types for Cloudflare Workers MCP handlers.
 //!
-//! This module re-exports canonical types from `turbomcp-types` to ensure
-//! a single source of truth across the TurboMCP ecosystem.
+//! Re-exports canonical types from [`turbomcp_types`] to keep a single source
+//! of truth across the TurboMCP ecosystem.
 //!
-//! ## DRY Architecture
+//! ## Note on `ToolResult`
 //!
-//! Result types (`ResourceResult`, `PromptResult`) are re-exported from
-//! `turbomcp-types` rather than duplicated. This ensures:
-//! - Consistent behavior across native and WASM targets
-//! - Single point of maintenance for type definitions
-//! - Type compatibility between crates
-//!
-//! ## Note on ToolResult
-//!
-//! `ToolResult` is aliased from `turbomcp_core::types::tools::CallToolResult`
-//! because the WASM handler machinery uses `IntoToolResponse` which returns
-//! the core-layer `CallToolResult` (no_std-friendly). Users can treat it
-//! identically to `turbomcp_types::ToolResult` for common operations.
-//!
-//! This remains core-sourced pending a v4 consolidation of `IntoToolResponse`.
+//! `ToolResult` is aliased from [`turbomcp_types::CallToolResult`] because the
+//! WASM handler machinery uses `IntoToolResponse`, which returns
+//! `CallToolResult`. Users can treat it identically to
+//! [`turbomcp_types::ToolResult`] for common operations.
 
 use serde::{Deserialize, Serialize};
 
-// Re-export result types from turbomcp-types (single source of truth)
+// Re-export result types from turbomcp-types (single source of truth).
 pub use turbomcp_types::{PromptResult, ResourceResult};
 
-// ToolResult is aliased from core's CallToolResult for IntoToolResponse compat.
-pub use turbomcp_core::types::tools::CallToolResult as ToolResult;
+// ToolResult is aliased from CallToolResult for IntoToolResponse compat.
+pub use turbomcp_types::CallToolResult as ToolResult;
 
 /// JSON-RPC request structure
 #[derive(Debug, Clone, Deserialize)]

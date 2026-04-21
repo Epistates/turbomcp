@@ -503,40 +503,122 @@ pub struct CreateMessageResult {
 // =============================================================================
 
 /// Capabilities supported by a client.
+///
+/// Per MCP 2025-11-25: `roots`, `sampling`, `elicitation`, `tasks`, `experimental`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ClientCapabilities {
+    /// Support for listing roots.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roots: Option<RootsCapabilities>,
+    /// Support for LLM sampling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sampling: Option<SamplingCapabilities>,
     /// Support for elicitation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub elicitation: Option<ElicitationCapabilities>,
-    /// Support for sampling.
+    /// Support for the Tasks API (MCP 2025-11-25 draft, SEP-1686).
+    ///
+    /// When present, indicates the client can receive task-augmented requests
+    /// (e.g. `sampling/createMessage`, `elicitation/create`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sampling: Option<SamplingCapabilities>,
-    /// Support for roots.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub roots: Option<RootsCapabilities>,
-    /// Support for tasks.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tasks: Option<ClientTaskCapabilities>,
+    pub tasks: Option<ClientTasksCapabilities>,
     /// Draft extensions supported by the client.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extensions: Option<HashMap<String, Value>>,
-    /// Experimental capabilities.
+    /// Experimental, non-standard capabilities.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<HashMap<String, Value>>,
 }
 
-/// Elicitation capabilities for a client.
+/// Elicitation capabilities per MCP 2025-11-25.
+///
+/// Supports two modes:
+/// - `form`: in-band structured data collection (default if empty object).
+/// - `url`: out-of-band interactions (OAuth, credentials, payments).
+///
+/// Per spec, an empty object (`{}`) is equivalent to declaring support for
+/// `form` mode only.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ElicitationCapabilities {
-    /// Support for form-based elicitation.
+    /// Form-mode elicitation support.
+    ///
+    /// Per spec, an empty capabilities object defaults to form support.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub form: Option<HashMap<String, Value>>,
-    /// Support for URL-based elicitation (new in 2025-11-25).
+    pub form: Option<ElicitationFormCapabilities>,
+    /// URL-mode elicitation support (MCP 2025-11-25).
+    ///
+    /// For sensitive interactions (OAuth, credentials, payments).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub url: Option<HashMap<String, Value>>,
+    pub url: Option<ElicitationUrlCapabilities>,
+    /// Whether the client performs JSON schema validation on elicitation responses.
+    ///
+    /// When `true`, the client validates user input against the provided schema
+    /// before sending. (TurboMCP extension — not part of the MCP specification.)
+    #[serde(rename = "schemaValidation", skip_serializing_if = "Option::is_none")]
+    pub schema_validation: Option<bool>,
 }
 
+impl ElicitationCapabilities {
+    /// Both form and URL support.
+    #[must_use]
+    pub fn full() -> Self {
+        Self {
+            form: Some(ElicitationFormCapabilities {}),
+            url: Some(ElicitationUrlCapabilities {}),
+            schema_validation: None,
+        }
+    }
+
+    /// Form-mode support only.
+    #[must_use]
+    pub fn form_only() -> Self {
+        Self {
+            form: Some(ElicitationFormCapabilities {}),
+            url: None,
+            schema_validation: None,
+        }
+    }
+
+    /// Whether form-mode elicitation is supported.
+    ///
+    /// Per spec, an empty capabilities object defaults to form support.
+    #[must_use]
+    pub fn supports_form(&self) -> bool {
+        self.form.is_some() || (self.form.is_none() && self.url.is_none())
+    }
+
+    /// Whether URL-mode elicitation is supported.
+    #[must_use]
+    pub fn supports_url(&self) -> bool {
+        self.url.is_some()
+    }
+
+    /// Enable schema validation (TurboMCP extension).
+    #[must_use]
+    pub fn with_schema_validation(mut self) -> Self {
+        self.schema_validation = Some(true);
+        self
+    }
+
+    /// Disable schema validation (TurboMCP extension).
+    #[must_use]
+    pub fn without_schema_validation(mut self) -> Self {
+        self.schema_validation = Some(false);
+        self
+    }
+}
+
+/// Form-mode elicitation support.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ElicitationFormCapabilities {}
+
+/// URL-mode elicitation support.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct ElicitationUrlCapabilities {}
+
 /// Sampling capabilities for a client.
+///
+/// Per MCP 2025-11-25: `{ context?: {}, tools?: {} }`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct SamplingCapabilities {
     /// Support for context inclusion (soft-deprecated).
@@ -550,144 +632,175 @@ pub struct SamplingCapabilities {
 /// Roots capabilities for a client.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct RootsCapabilities {
-    /// Support for roots/list_changed notifications.
+    /// Support for `roots/list_changed` notifications.
     #[serde(rename = "listChanged", skip_serializing_if = "Option::is_none")]
     pub list_changed: Option<bool>,
 }
 
-/// Task capabilities for a client.
+/// Client-side Tasks capabilities (MCP 2025-11-25 draft, SEP-1686).
+///
+/// Indicates which task operations and request types the client supports.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ClientTaskCapabilities {
-    /// Support for tasks/list.
+pub struct ClientTasksCapabilities {
+    /// Support for `tasks/list`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub list: Option<HashMap<String, Value>>,
-    /// Support for tasks/cancel.
+    pub list: Option<TasksListCapabilities>,
+    /// Support for `tasks/cancel`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cancel: Option<HashMap<String, Value>>,
-    /// Requests that can be augmented with tasks.
+    pub cancel: Option<TasksCancelCapabilities>,
+    /// Support for task-augmented requests.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub requests: Option<ClientTaskRequests>,
+    pub requests: Option<ClientTasksRequestsCapabilities>,
 }
 
 /// Client-side task-augmented request capabilities.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ClientTaskRequests {
-    /// Support for task-augmented sampling.
+pub struct ClientTasksRequestsCapabilities {
+    /// Support for task-augmented `sampling/createMessage`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sampling: Option<ClientTaskSamplingRequests>,
-    /// Support for task-augmented elicitation.
+    pub sampling: Option<TasksSamplingCapabilities>,
+    /// Support for task-augmented `elicitation/create`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub elicitation: Option<ClientTaskElicitationRequests>,
+    pub elicitation: Option<TasksElicitationCapabilities>,
 }
 
-/// Client task-augmented sampling request capabilities.
+/// Task-augmented sampling request capabilities.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ClientTaskSamplingRequests {
-    /// Support for task-augmented sampling/createMessage.
+pub struct TasksSamplingCapabilities {
+    /// Support for task-augmented `sampling/createMessage`.
     #[serde(rename = "createMessage", skip_serializing_if = "Option::is_none")]
-    pub create_message: Option<HashMap<String, Value>>,
+    pub create_message: Option<TasksSamplingCreateMessageCapabilities>,
 }
 
-/// Client task-augmented elicitation request capabilities.
+/// Task-augmented `sampling/createMessage` capability marker.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ClientTaskElicitationRequests {
-    /// Support for task-augmented elicitation/create.
+pub struct TasksSamplingCreateMessageCapabilities {}
+
+/// Task-augmented elicitation request capabilities.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TasksElicitationCapabilities {
+    /// Support for task-augmented `elicitation/create`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub create: Option<HashMap<String, Value>>,
+    pub create: Option<TasksElicitationCreateCapabilities>,
 }
+
+/// Task-augmented `elicitation/create` capability marker.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TasksElicitationCreateCapabilities {}
 
 /// Capabilities supported by a server.
 ///
-/// Per MCP 2025-11-25, server capabilities are:
-/// `tools`, `resources`, `prompts`, `logging`, `completions`, `tasks`, `experimental`
+/// Per MCP 2025-11-25: `tools`, `resources`, `prompts`, `logging`, `completions`,
+/// `tasks`, `experimental`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ServerCapabilities {
     /// Support for tools.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<ToolCapabilities>,
+    pub tools: Option<ToolsCapabilities>,
     /// Support for resources.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub resources: Option<ResourceCapabilities>,
+    pub resources: Option<ResourcesCapabilities>,
     /// Support for prompts.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompts: Option<PromptCapabilities>,
+    pub prompts: Option<PromptsCapabilities>,
     /// Support for logging.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub logging: Option<HashMap<String, Value>>,
+    pub logging: Option<LoggingCapabilities>,
     /// Support for argument autocompletion.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub completions: Option<HashMap<String, Value>>,
-    /// Support for task-augmented requests (experimental in 2025-11-25).
+    pub completions: Option<CompletionCapabilities>,
+    /// Support for the Tasks API (MCP 2025-11-25 draft, SEP-1686).
+    ///
+    /// When present, indicates the server can receive task-augmented requests
+    /// (e.g. `tools/call`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tasks: Option<ServerTaskCapabilities>,
+    pub tasks: Option<ServerTasksCapabilities>,
     /// Draft extensions supported by the server.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extensions: Option<HashMap<String, Value>>,
-    /// Experimental capabilities.
+    /// Experimental, non-standard capabilities.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental: Option<HashMap<String, Value>>,
 }
 
-/// Tool capabilities for a server.
+/// Tools capabilities for a server.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ToolCapabilities {
-    /// Support for tools/list_changed notifications.
+pub struct ToolsCapabilities {
+    /// Support for `tools/list_changed` notifications.
     #[serde(rename = "listChanged", skip_serializing_if = "Option::is_none")]
     pub list_changed: Option<bool>,
 }
 
-/// Resource capabilities for a server.
+/// Resources capabilities for a server.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ResourceCapabilities {
-    /// Support for resources/subscribe and notifications/resources/updated.
+pub struct ResourcesCapabilities {
+    /// Support for `resources/subscribe` and `notifications/resources/updated`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub subscribe: Option<bool>,
-    /// Support for resources/list_changed notifications.
+    /// Support for `resources/list_changed` notifications.
     #[serde(rename = "listChanged", skip_serializing_if = "Option::is_none")]
     pub list_changed: Option<bool>,
 }
 
-/// Prompt capabilities for a server.
+/// Prompts capabilities for a server.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct PromptCapabilities {
-    /// Support for prompts/list_changed notifications.
+pub struct PromptsCapabilities {
+    /// Support for `prompts/list_changed` notifications.
     #[serde(rename = "listChanged", skip_serializing_if = "Option::is_none")]
     pub list_changed: Option<bool>,
 }
 
-/// Server-side task capabilities.
+/// Logging capability marker.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct LoggingCapabilities {}
+
+/// Argument autocompletion capability marker.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CompletionCapabilities {}
+
+/// Server-side Tasks capabilities (MCP 2025-11-25 draft, SEP-1686).
 ///
-/// Per MCP 2025-11-25: `{ list?: object, cancel?: object, requests?: { tools?: { call?: object } } }`
+/// Indicates which task operations and request types the server supports.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ServerTaskCapabilities {
-    /// Support for tasks/list.
+pub struct ServerTasksCapabilities {
+    /// Support for `tasks/list`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub list: Option<HashMap<String, Value>>,
-    /// Support for tasks/cancel.
+    pub list: Option<TasksListCapabilities>,
+    /// Support for `tasks/cancel`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cancel: Option<HashMap<String, Value>>,
-    /// Request types that can be augmented with tasks.
+    pub cancel: Option<TasksCancelCapabilities>,
+    /// Support for task-augmented requests.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub requests: Option<ServerTaskRequests>,
+    pub requests: Option<ServerTasksRequestsCapabilities>,
 }
 
 /// Server-side task-augmented request capabilities.
-///
-/// Per spec: `{ tools?: { call?: object } }`
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ServerTaskRequests {
-    /// Task support for tool-related requests.
+pub struct ServerTasksRequestsCapabilities {
+    /// Support for task-augmented `tools/call`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<ServerTaskToolRequests>,
+    pub tools: Option<TasksToolsCapabilities>,
 }
 
-/// Server task-augmented tool request capabilities.
+/// Task-augmented tools capabilities.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ServerTaskToolRequests {
-    /// Whether the server supports task-augmented tools/call requests.
+pub struct TasksToolsCapabilities {
+    /// Support for task-augmented `tools/call`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub call: Option<HashMap<String, Value>>,
+    pub call: Option<TasksToolsCallCapabilities>,
 }
+
+/// Task-augmented `tools/call` capability marker.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TasksToolsCallCapabilities {}
+
+/// `tasks/list` capability marker.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TasksListCapabilities {}
+
+/// `tasks/cancel` capability marker.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct TasksCancelCapabilities {}
 
 // =============================================================================
 // Tests
@@ -788,12 +901,12 @@ mod tests {
     #[test]
     fn test_server_capabilities_structure() {
         let caps = ServerCapabilities {
-            tasks: Some(ServerTaskCapabilities {
-                list: Some(HashMap::new()),
-                cancel: Some(HashMap::new()),
-                requests: Some(ServerTaskRequests {
-                    tools: Some(ServerTaskToolRequests {
-                        call: Some(HashMap::new()),
+            tasks: Some(ServerTasksCapabilities {
+                list: Some(TasksListCapabilities {}),
+                cancel: Some(TasksCancelCapabilities {}),
+                requests: Some(ServerTasksRequestsCapabilities {
+                    tools: Some(TasksToolsCapabilities {
+                        call: Some(TasksToolsCallCapabilities {}),
                     }),
                 }),
             }),
@@ -861,19 +974,19 @@ mod tests {
 
         // Even fully populated
         let caps = ServerCapabilities {
-            tools: Some(ToolCapabilities {
+            tools: Some(ToolsCapabilities {
                 list_changed: Some(true),
             }),
-            resources: Some(ResourceCapabilities {
+            resources: Some(ResourcesCapabilities {
                 subscribe: Some(true),
                 list_changed: Some(true),
             }),
-            prompts: Some(PromptCapabilities {
+            prompts: Some(PromptsCapabilities {
                 list_changed: Some(true),
             }),
-            logging: Some(HashMap::new()),
-            completions: Some(HashMap::new()),
-            tasks: Some(ServerTaskCapabilities::default()),
+            logging: Some(LoggingCapabilities {}),
+            completions: Some(CompletionCapabilities {}),
+            tasks: Some(ServerTasksCapabilities::default()),
             extensions: Some(HashMap::from([(
                 "trace".to_string(),
                 serde_json::json!({"version": "1"}),

@@ -40,8 +40,7 @@ use core::fmt::Display;
 
 use serde::Serialize;
 
-use crate::types::content::Content;
-use crate::types::tools::CallToolResult;
+use turbomcp_types::{CallToolResult, Content};
 
 /// Trait for types that can be converted into a tool response.
 ///
@@ -105,11 +104,7 @@ impl IntoToolResponse for &str {
 impl IntoToolResponse for () {
     #[inline]
     fn into_tool_response(self) -> CallToolResult {
-        CallToolResult {
-            content: vec![],
-            is_error: None,
-            _meta: None,
-        }
+        CallToolResult::default()
     }
 }
 
@@ -143,8 +138,7 @@ impl IntoToolResponse for Content {
     fn into_tool_response(self) -> CallToolResult {
         CallToolResult {
             content: vec![self],
-            is_error: None,
-            _meta: None,
+            ..Default::default()
         }
     }
 }
@@ -154,8 +148,7 @@ impl IntoToolResponse for Vec<Content> {
     fn into_tool_response(self) -> CallToolResult {
         CallToolResult {
             content: self,
-            is_error: None,
-            _meta: None,
+            ..Default::default()
         }
     }
 }
@@ -296,8 +289,7 @@ impl<D: Into<String>, M: Into<String>> IntoToolResponse for Image<D, M> {
     fn into_tool_response(self) -> CallToolResult {
         CallToolResult {
             content: vec![Content::image(self.data, self.mime_type)],
-            is_error: None,
-            _meta: None,
+            ..Default::default()
         }
     }
 }
@@ -528,7 +520,7 @@ where
         CallToolResult {
             content,
             is_error: a.is_error.or(b.is_error),
-            _meta: None,
+            ..Default::default()
         }
     }
 }
@@ -658,9 +650,9 @@ mod tests {
         assert_eq!(response.content.len(), 1);
 
         // Verify error message mentions size limit
-        if let Content::Text { text, .. } = &response.content[0] {
-            assert!(text.contains("too large"));
-            assert!(text.contains("byte limit"));
+        if let Content::Text(text) = &response.content[0] {
+            assert!(text.text.contains("too large"));
+            assert!(text.text.contains("byte limit"));
         } else {
             panic!("Expected text content in error response");
         }

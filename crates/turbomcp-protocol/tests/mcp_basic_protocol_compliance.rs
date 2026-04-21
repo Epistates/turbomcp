@@ -631,23 +631,20 @@ mod capability_negotiation_compliance {
     #[test]
     fn test_standard_capability_structure() {
         let client_caps = ClientCapabilities {
-            extensions: None,
             roots: Some(RootsCapabilities {
                 list_changed: Some(true),
             }),
-            sampling: Some(SamplingCapabilities {}),
+            sampling: Some(SamplingCapabilities::default()),
             elicitation: Some(ElicitationCapabilities::default()),
             experimental: Some({
                 let mut exp = std::collections::HashMap::new();
                 exp.insert("custom_feature".to_string(), json!({"enabled": true}));
                 exp
             }),
-            #[cfg(feature = "experimental-tasks")]
-            tasks: None,
+            ..Default::default()
         };
 
         let server_caps = ServerCapabilities {
-            extensions: None,
             prompts: Some(PromptsCapabilities {
                 list_changed: Some(true),
             }),
@@ -658,15 +655,14 @@ mod capability_negotiation_compliance {
             tools: Some(ToolsCapabilities {
                 list_changed: Some(true),
             }),
-            logging: Some(LoggingCapabilities {}),
-            completions: Some(types::CompletionCapabilities {}),
+            logging: Some(LoggingCapabilities::default()),
+            completions: Some(types::CompletionCapabilities::default()),
             experimental: Some({
                 let mut exp = std::collections::HashMap::new();
                 exp.insert("advanced_tools".to_string(), json!({"version": "2.0"}));
                 exp
             }),
-            #[cfg(feature = "experimental-tasks")]
-            tasks: None,
+            ..Default::default()
         };
 
         // Validate serialization matches MCP spec structure

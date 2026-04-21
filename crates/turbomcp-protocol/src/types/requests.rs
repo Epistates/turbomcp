@@ -24,6 +24,7 @@ use super::{
 /// Client-initiated request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "method")]
+#[allow(clippy::large_enum_variant)] // InitializeRequest is the MCP handshake payload; boxing would change wire API.
 pub enum ClientRequest {
     /// Initialize the connection
     #[serde(rename = "initialize")]

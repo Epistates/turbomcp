@@ -25,7 +25,7 @@ turbomcp-grpc = "3.0.0-alpha.1"
 
 ```rust
 use turbomcp_grpc::server::McpGrpcServer;
-use turbomcp_core::types::tools::Tool;
+use turbomcp_types::Tool;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

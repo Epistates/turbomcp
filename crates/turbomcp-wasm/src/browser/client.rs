@@ -3,14 +3,9 @@
 use super::transport::FetchTransport;
 use serde::{Deserialize, Serialize};
 use serde_wasm_bindgen::{from_value, to_value};
-use turbomcp_core::types::{
-    capabilities::{ClientCapabilities, ServerCapabilities},
-    content::ResourceContent,
-    core::Implementation,
-    initialization::InitializeResult,
-    prompts::{GetPromptResult, Prompt},
-    resources::{Resource, ResourceTemplate},
-    tools::{CallToolResult, Tool},
+use turbomcp_types::{
+    CallToolResult, ClientCapabilities, GetPromptResult, Implementation, InitializeResult, Prompt,
+    Resource, ResourceContent, ResourceTemplate, ServerCapabilities, Tool,
 };
 use wasm_bindgen::prelude::*;
 

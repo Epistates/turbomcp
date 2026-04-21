@@ -55,6 +55,7 @@ pub mod protocol;
 pub mod protocol_schemas;
 pub mod results;
 pub mod traits;
+pub mod wire;
 
 // Re-export everything at the crate root for convenience
 pub use component::*;
@@ -65,6 +66,7 @@ pub use protocol::*;
 pub use protocol_schemas::*;
 pub use results::*;
 pub use traits::*;
+pub use wire::*;
 
 /// Version of the TurboMCP types crate
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -111,8 +111,8 @@ The `turbomcp-core` crate was absorbed into `turbomcp-protocol` in v2.0. Any imp
 // Before (v1.x) - if depending on turbomcp-core directly
 use turbomcp_core::types::Tool;
 
-// After (v2.x+)
-use turbomcp_protocol::types::Tool;
+// After (v3.x) - canonical home is turbomcp-types
+use turbomcp_types::Tool;
 // or, preferred:
 use turbomcp_server::prelude::*;
 ```

@@ -7,14 +7,9 @@ use super::http::HttpTransport;
 use super::stdio::StdioTransport;
 use super::transport::{Transport, TransportError};
 use serde::{Deserialize, Serialize};
-use turbomcp_core::types::{
-    capabilities::{ClientCapabilities, ServerCapabilities},
-    content::ResourceContent,
-    core::Implementation,
-    initialization::InitializeResult,
-    prompts::{GetPromptResult, Prompt},
-    resources::{Resource, ResourceTemplate},
-    tools::{CallToolResult, Tool},
+use turbomcp_types::{
+    CallToolResult, ClientCapabilities, GetPromptResult, Implementation, InitializeResult, Prompt,
+    Resource, ResourceContent, ResourceTemplate, ServerCapabilities, Tool,
 };
 
 /// Transport type for the MCP client

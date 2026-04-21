@@ -205,14 +205,10 @@
 
 // Re-export core types for WASM consumers
 pub use turbomcp_core::error::{ErrorKind, McpError};
-pub use turbomcp_core::types::{
-    capabilities::{ClientCapabilities, ServerCapabilities},
-    content::{Content, ResourceContent},
-    core::{Implementation, Role},
-    initialization::{InitializeRequest, InitializeResult},
-    prompts::{GetPromptResult, Prompt, PromptArgument},
-    resources::{Resource, ResourceTemplate},
-    tools::{CallToolResult, Tool, ToolInputSchema},
+pub use turbomcp_types::{
+    CallToolResult, ClientCapabilities, Content, GetPromptResult, Implementation,
+    InitializeRequest, InitializeResult, Prompt, PromptArgument, Resource, ResourceContent,
+    ResourceTemplate, Role, ServerCapabilities, Tool, ToolInputSchema,
 };
 
 #[cfg(feature = "browser")]
@@ -292,9 +288,6 @@ mod tests {
         };
 
         let _caps = ClientCapabilities::default();
-        let _content = Content::Text {
-            text: "hello".to_string(),
-            annotations: None,
-        };
+        let _content = Content::text("hello");
     }
 }

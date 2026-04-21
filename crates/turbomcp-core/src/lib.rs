@@ -51,14 +51,16 @@
 //! - [`handler`]: Unified MCP handler trait
 //! - [`context`]: Request context types
 //! - [`marker`]: Platform-adaptive marker traits
-//! - [`types`]: Core MCP protocol types (tools, resources, prompts, etc.)
 //! - [`error`]: Error types and handling
 //! - [`jsonrpc`]: JSON-RPC 2.0 types
+//!
+//! MCP protocol types (tools, resources, prompts, capabilities, etc.) live in
+//! [`turbomcp_types`] and are re-exported from this crate's root.
 //!
 //! ## Example
 //!
 //! ```rust
-//! use turbomcp_core::types::{Tool, ToolInputSchema};
+//! use turbomcp_core::{Tool, ToolInputSchema};
 //! use turbomcp_core::error::{McpError, ErrorKind};
 //!
 //! // Create a tool definition
@@ -92,7 +94,6 @@ pub mod response;
 pub mod router;
 pub mod security;
 pub mod session;
-pub mod types;
 
 /// Zero-copy message types using rkyv serialization.
 ///

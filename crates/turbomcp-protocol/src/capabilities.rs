@@ -520,28 +520,26 @@ pub mod utils {
     /// Create a full-featured client capability set
     pub fn full_client_capabilities() -> ClientCapabilities {
         ClientCapabilities {
-            extensions: None,
             sampling: Some(Default::default()),
             roots: Some(Default::default()),
             elicitation: Some(Default::default()),
-            experimental: None,
-            #[cfg(feature = "experimental-tasks")]
             tasks: Some(Default::default()),
+            extensions: None,
+            experimental: None,
         }
     }
 
     /// Create a full-featured server capability set
     pub fn full_server_capabilities() -> ServerCapabilities {
         ServerCapabilities {
-            extensions: None,
             tools: Some(Default::default()),
             prompts: Some(Default::default()),
             resources: Some(Default::default()),
             completions: Some(Default::default()),
             logging: Some(Default::default()),
-            experimental: None,
-            #[cfg(feature = "experimental-tasks")]
             tasks: Some(Default::default()),
+            extensions: None,
+            experimental: None,
         }
     }
 
@@ -562,25 +560,13 @@ mod tests {
         let matcher = CapabilityMatcher::new();
 
         let client = ClientCapabilities {
-            extensions: None,
-            sampling: Some(SamplingCapabilities {}),
-            roots: None,
-            elicitation: None,
-            experimental: None,
-            #[cfg(feature = "experimental-tasks")]
-            tasks: None,
+            sampling: Some(SamplingCapabilities::default()),
+            ..Default::default()
         };
 
         let server = ServerCapabilities {
-            extensions: None,
             tools: Some(ToolsCapabilities::default()),
-            prompts: None,
-            resources: None,
-            logging: None,
-            completions: None,
-            experimental: None,
-            #[cfg(feature = "experimental-tasks")]
-            tasks: None,
+            ..Default::default()
         };
 
         assert!(matcher.is_compatible("sampling", &client, &server));
@@ -638,15 +624,47 @@ mod tests {
 /// and advanced compile-time safety features.
 pub mod builders {
     use crate::types::{
-        ClientCapabilities, CompletionCapabilities, ElicitationCapabilities, LoggingCapabilities,
-        PromptsCapabilities, ResourcesCapabilities, RootsCapabilities, SamplingCapabilities,
-        ServerCapabilities, ToolsCapabilities,
+        ClientCapabilities, ClientTasksCapabilities, CompletionCapabilities,
+        ElicitationCapabilities, LoggingCapabilities, PromptsCapabilities, ResourcesCapabilities,
+        RootsCapabilities, SamplingCapabilities, ServerCapabilities, ServerTasksCapabilities,
+        ToolsCapabilities,
     };
-    #[cfg(feature = "experimental-tasks")]
-    use crate::types::{ClientTasksCapabilities, ServerTasksCapabilities};
     use serde_json;
     use std::collections::HashMap;
     use std::marker::PhantomData;
+
+    /// Extension trait that adds `ServerCapabilities::builder()`.
+    ///
+    /// `ServerCapabilities` lives in [`turbomcp_types`], so the inherent `impl`
+    /// has to be reached through this trait (Rust's orphan rules).
+    pub trait ServerCapabilitiesBuilderExt {
+        /// Create a new [`ServerCapabilitiesBuilder`] with type-state validation.
+        fn builder() -> ServerCapabilitiesBuilder;
+    }
+
+    impl ServerCapabilitiesBuilderExt for ServerCapabilities {
+        fn builder() -> ServerCapabilitiesBuilder {
+            ServerCapabilitiesBuilder::new()
+        }
+    }
+
+    /// Extension trait that adds `ClientCapabilities::builder()`.
+    ///
+    /// `ClientCapabilities` lives in [`turbomcp_types`], so the inherent `impl`
+    /// has to be reached through this trait (Rust's orphan rules).
+    pub trait ClientCapabilitiesBuilderExt {
+        /// Create a new [`ClientCapabilitiesBuilder`] with all capabilities enabled (opt-out model).
+        fn builder()
+        -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, true, true, true>>;
+    }
+
+    impl ClientCapabilitiesBuilderExt for ClientCapabilities {
+        fn builder()
+        -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, true, true, true>>
+        {
+            ClientCapabilitiesBuilder::new()
+        }
+    }
 
     // ========================================================================
     // SERVER CAPABILITIES BUILDER - TYPE-STATE SYSTEM
@@ -685,7 +703,6 @@ pub mod builders {
         prompts: Option<PromptsCapabilities>,
         resources: Option<ResourcesCapabilities>,
         tools: Option<ToolsCapabilities>,
-        #[cfg(feature = "experimental-tasks")]
         tasks: Option<ServerTasksCapabilities>,
 
         // TurboMCP Extensions
@@ -693,16 +710,6 @@ pub mod builders {
         strict_validation: bool,
 
         _state: PhantomData<S>,
-    }
-
-    impl ServerCapabilities {
-        /// Create a new ServerCapabilities builder with type-state validation
-        ///
-        /// Returns a builder that ensures capabilities are configured correctly
-        /// at compile time, preventing runtime configuration errors.
-        pub fn builder() -> ServerCapabilitiesBuilder {
-            ServerCapabilitiesBuilder::new()
-        }
     }
 
     impl Default for ServerCapabilitiesBuilder {
@@ -722,7 +729,6 @@ pub mod builders {
                 prompts: None,
                 resources: None,
                 tools: None,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: None,
                 negotiator: None,
                 strict_validation: false,
@@ -746,7 +752,6 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: self.tools,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
             }
         }
@@ -890,7 +895,6 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: self.tools,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -912,7 +916,6 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: self.tools,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -938,7 +941,6 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: self.tools,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -964,7 +966,6 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: self.tools,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -990,7 +991,6 @@ pub mod builders {
                 prompts: Some(PromptsCapabilities { list_changed: None }),
                 resources: self.resources,
                 tools: self.tools,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1019,7 +1019,6 @@ pub mod builders {
                     list_changed: None,
                 }),
                 tools: self.tools,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1045,7 +1044,6 @@ pub mod builders {
                 prompts: self.prompts,
                 resources: self.resources,
                 tools: Some(ToolsCapabilities { list_changed: None }),
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1184,7 +1182,6 @@ pub mod builders {
         roots: Option<RootsCapabilities>,
         sampling: Option<SamplingCapabilities>,
         elicitation: Option<ElicitationCapabilities>,
-        #[cfg(feature = "experimental-tasks")]
         tasks: Option<ClientTasksCapabilities>,
 
         // TurboMCP Extensions
@@ -1192,20 +1189,6 @@ pub mod builders {
         strict_validation: bool,
 
         _state: PhantomData<S>,
-    }
-
-    impl ClientCapabilities {
-        /// Create a new ClientCapabilities builder with type-state validation
-        ///
-        /// Returns a builder that ensures capabilities are configured correctly
-        /// at compile time, preventing runtime configuration errors.
-        ///
-        /// By default, all capabilities are enabled (opt-out model).
-        pub fn builder()
-        -> ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, true, true, true>>
-        {
-            ClientCapabilitiesBuilder::new()
-        }
     }
 
     impl Default for ClientCapabilitiesBuilder<ClientCapabilitiesBuilderState<true, true, true, true>> {
@@ -1229,9 +1212,8 @@ pub mod builders {
                 extensions: None,
                 experimental: Some(HashMap::new()),
                 roots: Some(RootsCapabilities::default()),
-                sampling: Some(SamplingCapabilities {}),
+                sampling: Some(SamplingCapabilities::default()),
                 elicitation: Some(ElicitationCapabilities::full()),
-                #[cfg(feature = "experimental-tasks")]
                 tasks: Some(ClientTasksCapabilities::default()),
                 negotiator: None,
                 strict_validation: false,
@@ -1260,7 +1242,6 @@ pub mod builders {
                 roots: None,
                 sampling: None,
                 elicitation: None,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: None,
                 negotiator: None,
                 strict_validation: false,
@@ -1282,7 +1263,6 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: self.elicitation,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
             }
         }
@@ -1394,7 +1374,6 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: self.elicitation,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1413,7 +1392,6 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: self.elicitation,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1436,7 +1414,6 @@ pub mod builders {
                 roots: Some(RootsCapabilities { list_changed: None }),
                 sampling: self.sampling,
                 elicitation: self.elicitation,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1457,9 +1434,8 @@ pub mod builders {
                 extensions: self.extensions,
                 experimental: self.experimental,
                 roots: self.roots,
-                sampling: Some(SamplingCapabilities {}),
+                sampling: Some(SamplingCapabilities::default()),
                 elicitation: self.elicitation,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1482,7 +1458,6 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: Some(ElicitationCapabilities::full()),
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1500,7 +1475,6 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: Some(ElicitationCapabilities::form_only()),
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1518,7 +1492,6 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: Some(ElicitationCapabilities::full().with_schema_validation()),
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1568,7 +1541,6 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: self.elicitation,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1594,7 +1566,6 @@ pub mod builders {
                 roots: None,
                 sampling: self.sampling,
                 elicitation: self.elicitation,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1620,7 +1591,6 @@ pub mod builders {
                 roots: self.roots,
                 sampling: None,
                 elicitation: self.elicitation,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,
@@ -1646,7 +1616,6 @@ pub mod builders {
                 roots: self.roots,
                 sampling: self.sampling,
                 elicitation: None,
-                #[cfg(feature = "experimental-tasks")]
                 tasks: self.tasks,
                 negotiator: self.negotiator,
                 strict_validation: self.strict_validation,

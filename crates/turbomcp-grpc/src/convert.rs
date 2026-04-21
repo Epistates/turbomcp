@@ -247,7 +247,7 @@ impl From<proto::ClientCapabilities> for ClientCapabilities {
             roots: caps.roots.map(|r| RootsCapabilities {
                 list_changed: Some(r.list_changed),
             }),
-            sampling: caps.sampling.map(|_| SamplingCapabilities {}),
+            sampling: caps.sampling.map(|_| SamplingCapabilities::default()),
             elicitation: caps.elicitation.map(|elicitation| ElicitationCapabilities {
                 form: elicitation.form.map(|_| Default::default()),
                 url: elicitation.url.map(|_| Default::default()),

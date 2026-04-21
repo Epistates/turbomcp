@@ -487,6 +487,9 @@ pub enum ResourceContents {
     Blob(BlobResourceContents),
 }
 
+/// Backward-compatibility alias — canonical name is [`ResourceContents`].
+pub type ResourceContent = ResourceContents;
+
 impl ResourceContents {
     /// Get the URI of this resource content.
     #[must_use]

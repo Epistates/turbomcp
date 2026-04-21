@@ -55,8 +55,8 @@ use crate::context::RequestContext;
 use crate::error::McpResult;
 use crate::marker::{MaybeSend, MaybeSync};
 use turbomcp_types::{
-    Prompt, PromptCapabilities, PromptResult, Resource, ResourceCapabilities, ResourceResult,
-    ServerCapabilities, ServerInfo, Tool, ToolCapabilities, ToolResult,
+    Prompt, PromptResult, PromptsCapabilities, Resource, ResourceResult, ResourcesCapabilities,
+    ServerCapabilities, ServerInfo, Tool, ToolResult, ToolsCapabilities,
 };
 
 /// The unified MCP handler trait.
@@ -217,20 +217,20 @@ pub trait McpHandler: Clone + MaybeSend + MaybeSync + 'static {
         let mut capabilities = ServerCapabilities::default();
 
         if !self.list_tools().is_empty() {
-            capabilities.tools = Some(ToolCapabilities {
+            capabilities.tools = Some(ToolsCapabilities {
                 list_changed: Some(true),
             });
         }
 
         if !self.list_resources().is_empty() {
-            capabilities.resources = Some(ResourceCapabilities {
+            capabilities.resources = Some(ResourcesCapabilities {
                 subscribe: None,
                 list_changed: Some(true),
             });
         }
 
         if !self.list_prompts().is_empty() {
-            capabilities.prompts = Some(PromptCapabilities {
+            capabilities.prompts = Some(PromptsCapabilities {
                 list_changed: Some(true),
             });
         }

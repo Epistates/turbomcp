@@ -346,8 +346,10 @@ mod tests {
     use core::future::Future;
     use std::collections::HashMap;
     use turbomcp_types::{
-        Prompt, PromptResult, Resource, ResourceResult, ServerCapabilities, ServerTaskCapabilities,
-        ServerTaskRequests, ServerTaskToolRequests, Tool, ToolResult,
+        Prompt, PromptResult, Resource, ResourceResult, ServerCapabilities,
+        ServerTasksCapabilities, ServerTasksRequestsCapabilities, TasksCancelCapabilities,
+        TasksListCapabilities, TasksToolsCallCapabilities, TasksToolsCapabilities, Tool,
+        ToolResult,
     };
 
     #[derive(Clone)]
@@ -554,12 +556,12 @@ mod tests {
 
             fn server_capabilities(&self) -> ServerCapabilities {
                 ServerCapabilities {
-                    tasks: Some(ServerTaskCapabilities {
-                        list: Some(HashMap::new()),
-                        cancel: Some(HashMap::new()),
-                        requests: Some(ServerTaskRequests {
-                            tools: Some(ServerTaskToolRequests {
-                                call: Some(HashMap::new()),
+                    tasks: Some(ServerTasksCapabilities {
+                        list: Some(TasksListCapabilities {}),
+                        cancel: Some(TasksCancelCapabilities {}),
+                        requests: Some(ServerTasksRequestsCapabilities {
+                            tools: Some(TasksToolsCapabilities {
+                                call: Some(TasksToolsCallCapabilities {}),
                             }),
                         }),
                     }),

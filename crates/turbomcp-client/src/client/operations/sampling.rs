@@ -80,7 +80,7 @@ impl<T: turbomcp_transport::Transport + 'static> super::super::core::Client<T> {
     /// if sampling is enabled.
     pub(crate) fn get_sampling_capabilities(&self) -> Option<SamplingCapabilities> {
         if self.inner.sampling_handler.lock().is_some() {
-            Some(SamplingCapabilities {})
+            Some(SamplingCapabilities::default())
         } else {
             None
         }
