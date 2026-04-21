@@ -541,7 +541,7 @@ impl McpServerBuilder {
         let description = description.into();
 
         let resource = Resource {
-            uri: uri.clone().into(),
+            uri: uri.clone(),
             name,
             description: Some(description),
             title: None,
@@ -594,7 +594,7 @@ impl McpServerBuilder {
         let description = description.into();
 
         let resource = Resource {
-            uri: uri.clone().into(),
+            uri: uri.clone(),
             name,
             description: Some(description),
             title: None,

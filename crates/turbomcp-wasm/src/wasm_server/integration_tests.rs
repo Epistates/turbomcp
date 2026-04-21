@@ -165,8 +165,11 @@ mod tests {
         let tool = &server.tools()[0];
         // Schema should be empty object
         assert!(
-            tool.input_schema.properties.is_none()
-                || tool.input_schema.properties.as_ref().unwrap().is_empty()
+            tool.input_schema
+                .properties
+                .as_ref()
+                .and_then(|v| v.as_object())
+                .is_none_or(|o| o.is_empty())
         );
     }
 
@@ -306,7 +309,12 @@ mod tests {
             .build();
 
         let tool = &server.tools()[0];
-        let props = tool.input_schema.properties.as_ref().unwrap();
+        let props = tool
+            .input_schema
+            .properties
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .unwrap();
 
         // Should have all properties
         assert!(props.contains_key("name"));

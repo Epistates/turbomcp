@@ -412,7 +412,7 @@ impl CompositeServer {
         for mounted in self.mounted.iter() {
             for resource in mounted.server.resources() {
                 let mut prefixed = resource.clone();
-                prefixed.uri = Self::prefix_resource_uri(&mounted.prefix, &resource.uri).into();
+                prefixed.uri = Self::prefix_resource_uri(&mounted.prefix, &resource.uri);
                 resources.push(prefixed);
             }
         }

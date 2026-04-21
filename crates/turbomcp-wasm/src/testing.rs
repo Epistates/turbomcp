@@ -412,8 +412,11 @@ impl ToolResultAssertions for ToolResult {
 
     fn assert_text(&self, expected: &str) {
         let actual = self.first_text();
+        // Note: as_deref() converts Option<String> to Option<&str> for comparison
+        #[allow(clippy::needless_option_as_deref)]
+        let actual_str = actual.as_deref();
         assert_eq!(
-            actual.as_deref(),
+            actual_str,
             Some(expected),
             "Expected tool result text '{}', got {:?}",
             expected,
