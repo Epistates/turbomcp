@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-04-21
+
+Patch release consolidating canonical types, hardening filesystem path handling,
+and cleaning up deprecated surfaces left over from 3.1.0.
+
+### Security
+
+- **Symlink-based path escapes rejected at file creation** — `crates/turbomcp-cli/src/path_security.rs`. The CLI's write path now canonicalizes each ancestor of a target before creating a file, so a symlink planted inside an allowed root that points outside it is caught instead of being followed. Pre-3.1.1 only the final component was checked, leaving a TOCTOU-adjacent escape for CLI-driven writes.
+
+### Types / Context
+
+- **`turbomcp-types` is now the sole canonical home for MCP types** — completes the consolidation started in 3.1.0. Duplicate definitions previously living in `turbomcp-protocol` and `turbomcp-core` have been removed; downstream crates re-export from `turbomcp-types`. No behavior change for consumers using the `turbomcp` prelude.
+- **`RequestContext` unified with bidirectional session state** — `crates/turbomcp-types` / `turbomcp-core`. Server-initiated requests (elicitation, sampling, roots) and inbound request handling now share one context type instead of two parallel shapes.
+
+### Fixes
+
+- **`StreamableHttpClientTransport` doc example handles initialization errors** — `crates/turbomcp-http/src/transport.rs`. The rustdoc example now propagates the `Result` returned by `new()` (the 3.1.0 API change) instead of `.unwrap()`-ing.
+- **WASM cleanup** — `crates/turbomcp-wasm`. Removed unnecessary `.into()` calls and tightened test assertions.
+
+### Chore
+
+- **`MemoryTokenStore` deprecation removed** — the deprecation attribute and migration shim are gone; the store is a first-class in-memory backend again. Callers that were silencing the deprecation warning can drop the `#[allow(deprecated)]` annotations.
+- **Dependency audit configuration updated** — `deny.toml` narrowed to the advisories still applicable post-3.1.0 TLS CVE fixes.
+- **Clippy cleanup** across the workspace.
+
 ## [3.1.0] - 2026-04-17
 
 This release lands the remediation pass from the v3.0.13 audit

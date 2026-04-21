@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp"
-version = "3.1.0"
+version = "3.1.1"
 edition = "2024"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
 description = "Rust SDK for Model Context Protocol (MCP) with zero-boilerplate macros and WASM support"
