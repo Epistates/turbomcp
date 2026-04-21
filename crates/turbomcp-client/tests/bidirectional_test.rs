@@ -31,7 +31,7 @@ mod bidirectional_tests {
     #[test]
     fn test_bidirectional_types_compile() {
         use turbomcp_protocol::MessageId;
-        use turbomcp_protocol::types::{ElicitRequest, ElicitRequestParams, ElicitationSchema};
+        use turbomcp_protocol::types::{ElicitRequestParams, ElicitationSchema};
 
         // Verify MessageId::String can be constructed and displayed
         let id = MessageId::String("test-id".to_string());
@@ -47,19 +47,15 @@ mod bidirectional_tests {
             true,
             Some("A field".to_string()),
         );
-        let params = ElicitRequestParams::form("Enter details".to_string(), schema, None, None);
-
-        // Verify the ElicitRequest wrapper is constructible
-        let req = ElicitRequest {
-            params,
-            task: None,
-            _meta: None,
-        };
+        let params = ElicitRequestParams::form(
+            "Enter details",
+            serde_json::to_value(&schema).expect("schema serializes"),
+        );
 
         // Verify ElicitationRequest handler wrapper round-trips the id and message
         let handler_req = turbomcp_client::handlers::ElicitationRequest::new(
             MessageId::String("dispatch-test".to_string()),
-            req,
+            params,
         );
         assert_eq!(
             handler_req.id().to_string(),
@@ -103,39 +99,33 @@ mod bidirectional_tests {
 
     /// Test that elicitation type conversion works correctly
     ///
-    /// This test validates the fix for the type mismatch bug where:
-    /// - Server sends MCP protocol type (ElicitRequest)
-    /// - Client must convert to handler type (ElicitationRequest)
-    /// - The `id` field comes from JSON-RPC envelope, not params
+    /// Validates the round-trip from canonical `ElicitRequestParams` through
+    /// JSON and back into the handler wrapper, confirming the wrapper exposes
+    /// the message, schema, and (wire-level) raw schema correctly.
     #[tokio::test]
     async fn test_elicitation_type_conversion() {
         use turbomcp_protocol::MessageId;
         use turbomcp_protocol::jsonrpc::{JsonRpcRequest, JsonRpcVersion};
-        use turbomcp_protocol::types::{ElicitRequest, ElicitRequestParams, ElicitationSchema};
+        use turbomcp_protocol::types::{ElicitRequestParams, ElicitationSchema};
 
         // Simulate what the server sends (MCP protocol format)
-        let mcp_request = ElicitRequest {
-            params: ElicitRequestParams::form(
-                "Please enter your configuration".to_string(),
-                ElicitationSchema::new()
-                    .add_string_property(
-                        "username".to_string(),
-                        true,
-                        Some("Your username".to_string()),
-                    )
-                    .add_number_property(
-                        "age".to_string(),
-                        false,
-                        Some("Your age".to_string()),
-                        Some(0.0),
-                        Some(150.0),
-                    ),
-                Some(30000), // 30 seconds in milliseconds
-                Some(true),
-            ),
-            task: None,
-            _meta: None,
-        };
+        let schema = ElicitationSchema::new()
+            .add_string_property(
+                "username".to_string(),
+                true,
+                Some("Your username".to_string()),
+            )
+            .add_number_property(
+                "age".to_string(),
+                false,
+                Some("Your age".to_string()),
+                Some(0.0),
+                Some(150.0),
+            );
+        let mcp_request = ElicitRequestParams::form(
+            "Please enter your configuration",
+            serde_json::to_value(&schema).expect("schema serializes"),
+        );
 
         // Serialize to JSON (what dispatcher receives)
         let params_json = serde_json::to_value(&mcp_request).unwrap();
@@ -151,7 +141,7 @@ mod bidirectional_tests {
         // Now simulate what the client does: convert MCP type to handler type
 
         // 1. Parse as MCP protocol type
-        let parsed_mcp: ElicitRequest =
+        let parsed_mcp: ElicitRequestParams =
             serde_json::from_value(jsonrpc_request.params.clone().unwrap())
                 .expect("Should parse as MCP protocol type");
 
@@ -172,39 +162,28 @@ mod bidirectional_tests {
             "Please enter your configuration",
             "Message accessible via getter"
         );
-        assert_eq!(
-            handler_request.timeout(),
-            Some(std::time::Duration::from_millis(30000)),
-            "Timeout should be available as Duration"
+
+        // Validate raw wire-level requested_schema is present
+        assert!(
+            handler_request.requested_schema().is_some(),
+            "requestedSchema should be present for form mode"
         );
 
-        // Validate schema is TYPED (not serde_json::Value!)
-        let schema = handler_request
+        // Validate typed schema is reconstructible
+        let typed_schema = handler_request
             .schema()
-            .expect("Schema should be present for form mode");
+            .expect("Schema should be reconstructible for form mode");
         assert_eq!(
-            schema.schema_type, "object",
+            typed_schema.schema_type, "object",
             "Schema type should be 'object'"
         );
         assert!(
-            schema.properties.contains_key("username"),
+            typed_schema.properties.contains_key("username"),
             "Schema should contain username property"
         );
         assert!(
-            schema.properties.contains_key("age"),
+            typed_schema.properties.contains_key("age"),
             "Schema should contain age property"
-        );
-
-        println!("✅ Wrapper preserves type safety!");
-        println!(
-            "   - ID extracted from JSON-RPC envelope: {:?}",
-            handler_request.id()
-        );
-        println!("   - Message accessible: {}", handler_request.message());
-        println!("   - Timeout as Duration: {:?}", handler_request.timeout());
-        println!(
-            "   - Schema is TYPED (ElicitationSchema) with {} properties",
-            schema.properties.len()
         );
     }
 }

@@ -380,7 +380,7 @@ pub trait IntoPromptHandler<T, M>: Clone + MaybeSend + MaybeSync + 'static {
     fn into_handler(self) -> BoxedPromptHandler;
 
     /// Get the prompt arguments schema
-    fn arguments() -> Vec<turbomcp_core::types::prompts::PromptArgument>;
+    fn arguments() -> Vec<turbomcp_types::PromptArgument>;
 }
 
 /// Marker for typed prompt arguments
@@ -408,7 +408,7 @@ where
         })
     }
 
-    fn arguments() -> Vec<turbomcp_core::types::prompts::PromptArgument> {
+    fn arguments() -> Vec<turbomcp_types::PromptArgument> {
         // Extract argument info from schema
         let schema = schemars::schema_for!(A);
         let schema_value = serde_json::to_value(&schema).unwrap_or_default();
@@ -432,8 +432,9 @@ where
                     .and_then(|d| d.as_str())
                     .map(String::from);
 
-                arguments.push(turbomcp_core::types::prompts::PromptArgument {
+                arguments.push(turbomcp_types::PromptArgument {
                     name: name.clone(),
+                    title: None,
                     description,
                     required: Some(required.contains(name)),
                 });
@@ -460,7 +461,7 @@ where
         })
     }
 
-    fn arguments() -> Vec<turbomcp_core::types::prompts::PromptArgument> {
+    fn arguments() -> Vec<turbomcp_types::PromptArgument> {
         vec![]
     }
 }
@@ -480,7 +481,7 @@ pub trait IntoPromptHandlerWithCtx<T, M>: Clone + MaybeSend + MaybeSync + 'stati
     fn into_handler_with_ctx(self) -> BoxedPromptHandlerWithCtx;
 
     /// Get the prompt arguments schema
-    fn arguments() -> Vec<turbomcp_core::types::prompts::PromptArgument>;
+    fn arguments() -> Vec<turbomcp_types::PromptArgument>;
 }
 
 /// Marker for typed prompt arguments with context
@@ -511,7 +512,7 @@ where
         )
     }
 
-    fn arguments() -> Vec<turbomcp_core::types::prompts::PromptArgument> {
+    fn arguments() -> Vec<turbomcp_types::PromptArgument> {
         // Extract argument info from schema
         let schema = schemars::schema_for!(A);
         let schema_value = serde_json::to_value(&schema).unwrap_or_default();
@@ -535,8 +536,9 @@ where
                     .and_then(|d| d.as_str())
                     .map(String::from);
 
-                arguments.push(turbomcp_core::types::prompts::PromptArgument {
+                arguments.push(turbomcp_types::PromptArgument {
                     name: name.clone(),
+                    title: None,
                     description,
                     required: Some(required.contains(name)),
                 });
@@ -565,7 +567,7 @@ where
         )
     }
 
-    fn arguments() -> Vec<turbomcp_core::types::prompts::PromptArgument> {
+    fn arguments() -> Vec<turbomcp_types::PromptArgument> {
         vec![]
     }
 }
@@ -634,10 +636,11 @@ mod tests {
 
     #[test]
     fn test_request_context_creation() {
-        // Test that RequestContext can be created and used
-        let ctx = RequestContext::new();
+        // Test that RequestContext can be created and used. Prefer the
+        // wasm-specific factory so the transport is wired correctly.
+        let ctx = super::super::context::new_wasm_context();
         assert!(!ctx.request_id().is_empty());
-        assert_eq!(ctx.transport(), Some("wasm-worker"));
+        assert_eq!(ctx.transport(), turbomcp_core::context::TransportType::Wasm);
     }
 
     #[test]

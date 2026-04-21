@@ -1,396 +1,20 @@
 //! Types for the MCP tool-calling system.
 //!
-//! This module defines the data structures for defining tools, their input/output schemas,
-//! and the requests and responses used to list and execute them, as specified by the MCP standard.
+//! Tool definition, schema, annotation, and execution types are canonically
+//! defined in [`turbomcp_types`] and re-exported here. This module contains
+//! only the protocol-level wire wrappers (`ListToolsRequest`, `ListToolsResult`,
+//! `CallToolRequest`, `CallToolResult`) plus helpers on them.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use super::{content::ContentBlock, core::Cursor};
 
-/// Optional metadata hints about a tool's behavior.
-///
-/// **Critical Warning** (from MCP spec):
-/// > "All properties in ToolAnnotations are **hints**. They are not guaranteed to
-/// > provide a faithful description of tool behavior. **Clients should never make
-/// > tool use decisions based on ToolAnnotations received from untrusted servers.**"
-///
-/// These fields are useful for UI display and general guidance, but should never
-/// be trusted for security decisions or behavioral assumptions.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ToolAnnotations {
-    /// A user-friendly title for display in UIs (hint only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// Role-based audience hint. Per spec, should be `"user"` or `"assistant"` (hint only).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub audience: Option<Vec<String>>,
-    /// Subjective priority for UI sorting (hint only, often ignored).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub priority: Option<f64>,
-    /// **Hint** that the tool may perform destructive actions (e.g., deleting data).
-    ///
-    /// Do not trust this for security decisions. Default: `true` if not specified.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "destructiveHint")]
-    pub destructive_hint: Option<bool>,
-    /// **Hint** that repeated calls with same args have no additional effects.
-    ///
-    /// Useful for retry logic, but verify actual behavior. Default: `false` if not specified.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "idempotentHint")]
-    pub idempotent_hint: Option<bool>,
-    /// **Hint** that the tool may interact with external systems or the real world.
-    ///
-    /// Do not trust this for sandboxing decisions. Default: `true` if not specified.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "openWorldHint")]
-    pub open_world_hint: Option<bool>,
-    /// **Hint** that the tool does not modify state (read-only).
-    ///
-    /// Do not trust this for security decisions. Default: `false` if not specified.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "readOnlyHint")]
-    pub read_only_hint: Option<bool>,
-
-    /// **Hint** for task augmentation support (MCP 2025-11-25 draft, SEP-1686)
-    ///
-    /// Indicates whether this tool supports task-augmented invocation:
-    /// - `never` (default): Tool MUST NOT be invoked as a task
-    /// - `optional`: Tool MAY be invoked as a task or normal request
-    /// - `always`: Tool SHOULD be invoked as a task (server may reject non-task calls)
-    ///
-    /// This is a **hint** and does not guarantee behavioral conformance.
-    ///
-    /// ## Capability Requirements
-    ///
-    /// If `tasks.requests.tools.call` capability is false, clients MUST ignore this hint.
-    /// If capability is true:
-    /// - `taskHint` absent or `"never"`: MUST NOT invoke as task
-    /// - `taskHint: "optional"`: MAY invoke as task
-    /// - `taskHint: "always"`: SHOULD invoke as task
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "taskHint")]
-    pub task_hint: Option<TaskHint>,
-
-    /// Custom application-specific hints.
-    #[serde(flatten)]
-    pub custom: HashMap<String, serde_json::Value>,
-}
-
-/// Task hint for tool invocation (MCP 2025-11-25 draft, SEP-1686)
-///
-/// Indicates how a tool should be invoked with respect to task augmentation.
-/// Note: This is kept for backward compatibility. The newer API uses
-/// `ToolExecution.task_support` with `TaskSupportMode`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
-#[serde(rename_all = "lowercase")]
-pub enum TaskHint {
-    /// Tool MUST NOT be invoked as a task (default behavior)
-    Never,
-    /// Tool MAY be invoked as either a task or normal request
-    Optional,
-    /// Tool SHOULD be invoked as a task (server may reject non-task calls)
-    Always,
-}
-
-/// Task support mode for tool execution (MCP 2025-11-25)
-///
-/// Indicates whether this tool supports task-augmented execution.
-/// This allows clients to handle long-running operations through polling
-/// the task system.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum TaskSupportMode {
-    /// Tool does not support task-augmented execution (default when absent)
-    #[default]
-    Forbidden,
-    /// Tool may support task-augmented execution
-    Optional,
-    /// Tool requires task-augmented execution
-    Required,
-}
-
-/// Execution-related properties for a tool (MCP 2025-11-25)
-///
-/// Contains execution configuration hints for tools, particularly around
-/// task-augmented execution support.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ToolExecution {
-    /// Indicates whether this tool supports task-augmented execution.
-    ///
-    /// - `forbidden` (default): Tool does not support task-augmented execution
-    /// - `optional`: Tool may support task-augmented execution
-    /// - `required`: Tool requires task-augmented execution
-    #[serde(rename = "taskSupport", skip_serializing_if = "Option::is_none")]
-    pub task_support: Option<TaskSupportMode>,
-}
-
-/// Represents a tool that can be executed by an MCP server
-///
-/// A `Tool` definition includes its programmatic name, a human-readable description,
-/// and JSON schemas for its inputs and outputs.
-///
-/// ## Version Support
-/// - MCP 2025-11-25: name, title, description, inputSchema, outputSchema, annotations, _meta
-/// - MCP 2025-11-25 draft (SEP-973): + icons
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Tool {
-    /// The programmatic name of the tool, used to identify it in `CallToolRequest`.
-    pub name: String,
-
-    /// An optional, user-friendly title for the tool. Display name precedence is: `title`, `annotations.title`, then `name`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-
-    /// A human-readable description of what the tool does, which can be used by clients or LLMs.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-
-    /// The JSON Schema object defining the parameters the tool accepts.
-    #[serde(rename = "inputSchema")]
-    pub input_schema: ToolInputSchema,
-
-    /// An optional JSON Schema object defining the structure of the tool's successful output.
-    #[serde(rename = "outputSchema", skip_serializing_if = "Option::is_none")]
-    pub output_schema: Option<ToolOutputSchema>,
-
-    /// Execution-related properties for this tool (MCP 2025-11-25)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub execution: Option<ToolExecution>,
-
-    /// Optional, additional metadata providing hints about the tool's behavior.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub annotations: Option<ToolAnnotations>,
-
-    /// Optional set of icons for UI display (MCP 2025-11-25 draft, SEP-973)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub icons: Option<Vec<super::core::Icon>>,
-
-    /// A general-purpose metadata field for custom data.
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<HashMap<String, serde_json::Value>>,
-}
-
-impl Default for Tool {
-    fn default() -> Self {
-        Self {
-            name: "unnamed_tool".to_string(), // Must have a valid name for MCP compliance
-            title: None,
-            description: None,
-            input_schema: ToolInputSchema::default(),
-            output_schema: None,
-            execution: None,
-            annotations: None,
-            icons: None,
-            meta: None,
-        }
-    }
-}
-
-impl Tool {
-    /// Creates a new `Tool` with a given name.
-    ///
-    /// # Panics
-    /// Panics if the name is empty or contains only whitespace.
-    pub fn new(name: impl Into<String>) -> Self {
-        let name = name.into();
-        assert!(!name.trim().is_empty(), "Tool name cannot be empty");
-        Self {
-            name,
-            title: None,
-            description: None,
-            input_schema: ToolInputSchema::default(),
-            output_schema: None,
-            execution: None,
-            annotations: None,
-            icons: None,
-            meta: None,
-        }
-    }
-
-    /// Creates a new `Tool` with a name and a description.
-    ///
-    /// # Panics
-    /// Panics if the name is empty or contains only whitespace.
-    pub fn with_description(name: impl Into<String>, description: impl Into<String>) -> Self {
-        let name = name.into();
-        assert!(!name.trim().is_empty(), "Tool name cannot be empty");
-        Self {
-            name,
-            title: None,
-            description: Some(description.into()),
-            input_schema: ToolInputSchema::default(),
-            output_schema: None,
-            execution: None,
-            annotations: None,
-            icons: None,
-            meta: None,
-        }
-    }
-
-    /// Sets the execution properties for this tool.
-    pub fn with_execution(mut self, execution: ToolExecution) -> Self {
-        self.execution = Some(execution);
-        self
-    }
-
-    /// Sets the input schema for this tool.
-    ///
-    /// # Example
-    /// ```
-    /// # use turbomcp_protocol::types::{Tool, ToolInputSchema};
-    /// let schema = ToolInputSchema::empty();
-    /// let tool = Tool::new("my_tool").with_input_schema(schema);
-    /// ```
-    pub fn with_input_schema(mut self, schema: ToolInputSchema) -> Self {
-        self.input_schema = schema;
-        self
-    }
-
-    /// Sets the output schema for this tool.
-    pub fn with_output_schema(mut self, schema: ToolOutputSchema) -> Self {
-        self.output_schema = Some(schema);
-        self
-    }
-
-    /// Sets the user-friendly title for this tool.
-    pub fn with_title(mut self, title: impl Into<String>) -> Self {
-        self.title = Some(title.into());
-        self
-    }
-
-    /// Sets the annotations for this tool.
-    pub fn with_annotations(mut self, annotations: ToolAnnotations) -> Self {
-        self.annotations = Some(annotations);
-        self
-    }
-}
-
-/// Defines the structure of the arguments a tool accepts, as a JSON Schema object.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolInputSchema {
-    /// The schema type declaration. This may be a string or an array of strings.
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub schema_type: Option<serde_json::Value>,
-    /// A map defining the properties (parameters) the tool accepts.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub properties: Option<HashMap<String, serde_json::Value>>,
-    /// A list of property names that are required.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub required: Option<Vec<String>>,
-    /// Whether additional, unspecified properties are allowed, or a schema constraining them.
-    #[serde(
-        rename = "additionalProperties",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub additional_properties: Option<serde_json::Value>,
-    /// Additional JSON Schema keywords preserved losslessly.
-    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
-    pub extra_keywords: HashMap<String, serde_json::Value>,
-}
-
-impl Default for ToolInputSchema {
-    /// Creates a default `ToolInputSchema` that accepts an empty object.
-    fn default() -> Self {
-        Self {
-            schema_type: Some(serde_json::Value::String("object".to_string())),
-            properties: None,
-            required: None,
-            additional_properties: None,
-            extra_keywords: HashMap::new(),
-        }
-    }
-}
-
-impl ToolInputSchema {
-    /// Creates a new, empty input schema that accepts no parameters.
-    pub fn empty() -> Self {
-        Self::default()
-    }
-
-    /// Creates a new schema with a given set of properties.
-    pub fn with_properties(properties: HashMap<String, serde_json::Value>) -> Self {
-        Self {
-            schema_type: Some(serde_json::Value::String("object".to_string())),
-            properties: Some(properties),
-            required: None,
-            additional_properties: None,
-            extra_keywords: HashMap::new(),
-        }
-    }
-
-    /// Creates a new schema with a given set of properties and a list of required properties.
-    pub fn with_required_properties(
-        properties: HashMap<String, serde_json::Value>,
-        required: Vec<String>,
-    ) -> Self {
-        Self {
-            schema_type: Some(serde_json::Value::String("object".to_string())),
-            properties: Some(properties),
-            required: Some(required),
-            additional_properties: Some(serde_json::Value::Bool(false)),
-            extra_keywords: HashMap::new(),
-        }
-    }
-
-    /// Adds a property to the schema using a builder pattern.
-    ///
-    /// # Example
-    /// ```
-    /// # use turbomcp_protocol::types::ToolInputSchema;
-    /// # use serde_json::json;
-    /// let schema = ToolInputSchema::empty()
-    ///     .add_property("name".to_string(), json!({ "type": "string" }));
-    /// ```
-    pub fn add_property(mut self, name: String, property: serde_json::Value) -> Self {
-        self.properties
-            .get_or_insert_with(HashMap::new)
-            .insert(name, property);
-        self
-    }
-
-    /// Marks a property as required using a builder pattern.
-    ///
-    /// # Example
-    /// ```
-    /// # use turbomcp_protocol::types::ToolInputSchema;
-    /// # use serde_json::json;
-    /// let schema = ToolInputSchema::empty()
-    ///     .add_property("name".to_string(), json!({ "type": "string" }))
-    ///     .require_property("name".to_string());
-    /// ```
-    pub fn require_property(mut self, name: String) -> Self {
-        let required = self.required.get_or_insert_with(Vec::new);
-        if !required.contains(&name) {
-            required.push(name);
-        }
-        self
-    }
-}
-
-/// Defines the structure of a tool's successful output, as a JSON Schema object.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolOutputSchema {
-    /// The schema type declaration. This may be a string or an array of strings.
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub schema_type: Option<serde_json::Value>,
-    /// A map defining the properties of the output object.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub properties: Option<HashMap<String, serde_json::Value>>,
-    /// A list of property names in the output that are required.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub required: Option<Vec<String>>,
-    /// Whether additional, unspecified properties are allowed in the output, or a schema constraining them.
-    #[serde(
-        rename = "additionalProperties",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub additional_properties: Option<serde_json::Value>,
-    /// Additional JSON Schema keywords preserved losslessly.
-    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
-    pub extra_keywords: HashMap<String, serde_json::Value>,
-}
+/// Re-exports of the canonical tool-definition types from [`turbomcp_types`].
+pub use turbomcp_types::{
+    TaskSupportLevel as TaskSupportMode, Tool, ToolAnnotations, ToolExecution, ToolInputSchema,
+    ToolOutputSchema,
+};
 
 /// A request to list the available tools on a server.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -504,6 +128,38 @@ pub struct CallToolResult {
 }
 
 impl CallToolResult {
+    /// Create a successful result with a single text content block.
+    #[must_use]
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            content: vec![ContentBlock::Text(turbomcp_types::TextContent {
+                text: text.into(),
+                annotations: None,
+                meta: None,
+            })],
+            is_error: None,
+            structured_content: None,
+            _meta: None,
+            task_id: None,
+        }
+    }
+
+    /// Create an error result with a single text content block and `is_error = true`.
+    #[must_use]
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            content: vec![ContentBlock::Text(turbomcp_types::TextContent {
+                text: message.into(),
+                annotations: None,
+                meta: None,
+            })],
+            is_error: Some(true),
+            structured_content: None,
+            _meta: None,
+            task_id: None,
+        }
+    }
+
     /// Extracts and concatenates all text content from the result.
     ///
     /// This is useful for simple text-only tools or when you want to present
@@ -708,23 +364,6 @@ impl CallToolResult {
                 ContentBlock::Resource(_resource) => {
                     parts.push(format!("[Embedded Resource #{}]", i + 1));
                 }
-                ContentBlock::ToolUse(tool_use) => {
-                    parts.push(format!(
-                        "[Tool Use: {} (id: {})]",
-                        tool_use.name, tool_use.id
-                    ));
-                }
-                ContentBlock::ToolResult(tool_result) => {
-                    parts.push(format!(
-                        "[Tool Result for: {}{}]",
-                        tool_result.tool_use_id,
-                        if tool_result.is_error.unwrap_or(false) {
-                            " (ERROR)"
-                        } else {
-                            ""
-                        }
-                    ));
-                }
             }
         }
 
@@ -734,224 +373,5 @@ impl CallToolResult {
         }
 
         parts.join("\n")
-    }
-}
-
-// =============================================================================
-// Conversions from turbomcp-core types (for unified handler support)
-// =============================================================================
-//
-// These conversions enable the unified IntoToolResponse pattern, allowing
-// handlers to return core types that are automatically converted to protocol types.
-//
-// IMPORTANT NOTES:
-// - HashMap conversion: O(n) overhead due to hashbrown→std HashMap conversion
-// - Lossy conversion: Protocol's `structured_content` and `task_id` fields are
-//   NOT present in core types, so round-trip (protocol→core→protocol) loses them
-// - Resource fallback: Empty text is used if ResourceContent has neither text nor blob
-
-/// Convert core Annotations to protocol Annotations.
-///
-/// Note: Incurs O(n) conversion overhead from `hashbrown::HashMap` to `std::collections::HashMap`.
-impl From<turbomcp_core::types::core::Annotations> for super::Annotations {
-    fn from(core_ann: turbomcp_core::types::core::Annotations) -> Self {
-        // Convert hashbrown::HashMap to std::collections::HashMap
-        // Both implementations guarantee unique keys, so no data loss occurs
-        let custom: std::collections::HashMap<String, serde_json::Value> =
-            core_ann.custom.into_iter().collect();
-        Self {
-            audience: core_ann.audience,
-            priority: core_ann.priority,
-            last_modified: core_ann.last_modified,
-            custom,
-        }
-    }
-}
-
-/// Convert core Content to protocol ContentBlock
-impl From<turbomcp_core::types::content::Content> for super::ContentBlock {
-    fn from(content: turbomcp_core::types::content::Content) -> Self {
-        use turbomcp_core::types::content::Content as CoreContent;
-        match content {
-            CoreContent::Text { text, annotations } => {
-                super::ContentBlock::Text(super::TextContent {
-                    text,
-                    annotations: annotations.map(Into::into),
-                    meta: None,
-                })
-            }
-            CoreContent::Image {
-                data,
-                mime_type,
-                annotations,
-            } => super::ContentBlock::Image(super::ImageContent {
-                data: data.into(),
-                mime_type: mime_type.to_string().into(),
-                annotations: annotations.map(Into::into),
-                meta: None,
-            }),
-            CoreContent::Audio {
-                data,
-                mime_type,
-                annotations,
-            } => super::ContentBlock::Audio(super::AudioContent {
-                data: data.into(),
-                mime_type: mime_type.to_string().into(),
-                annotations: annotations.map(Into::into),
-                meta: None,
-            }),
-            CoreContent::Resource {
-                resource,
-                annotations,
-            } => {
-                // Convert core ResourceContent to protocol EmbeddedResource
-                // Core uses a flat struct with optional text/blob, protocol uses an enum
-                let protocol_resource = if let Some(text) = resource.text {
-                    super::ResourceContent::Text(super::TextResourceContents {
-                        uri: resource.uri.to_string().into(),
-                        mime_type: resource.mime_type.map(|mime| mime.to_string().into()),
-                        text,
-                        meta: None,
-                    })
-                } else if let Some(blob) = resource.blob {
-                    super::ResourceContent::Blob(super::BlobResourceContents {
-                        uri: resource.uri.to_string().into(),
-                        mime_type: resource.mime_type.map(|mime| mime.to_string().into()),
-                        blob: blob.into(),
-                        meta: None,
-                    })
-                } else {
-                    // Default to empty text if neither is set.
-                    // NOTE: This is a fallback for malformed core resources - callers should
-                    // ensure ResourceContent has either text or blob set.
-                    #[cfg(feature = "std")]
-                    eprintln!(
-                        "[turbomcp-protocol] WARNING: Resource '{}' has neither text nor blob content",
-                        resource.uri
-                    );
-                    super::ResourceContent::Text(super::TextResourceContents {
-                        uri: resource.uri.to_string().into(),
-                        mime_type: resource.mime_type.map(|mime| mime.to_string().into()),
-                        text: String::new(),
-                        meta: None,
-                    })
-                };
-                super::ContentBlock::Resource(super::EmbeddedResource {
-                    resource: protocol_resource,
-                    annotations: annotations.map(Into::into),
-                    meta: None,
-                })
-            }
-        }
-    }
-}
-
-/// Convert core CallToolResult to protocol CallToolResult
-///
-/// This enables the unified IntoToolResponse pattern for native handlers.
-///
-/// **Note**: `structured_content` and `task_id` fields are set to `None` since
-/// core types don't have these fields. Round-trip conversion (protocol→core→protocol)
-/// will lose these values.
-impl From<turbomcp_core::types::tools::CallToolResult> for CallToolResult {
-    fn from(core_result: turbomcp_core::types::tools::CallToolResult) -> Self {
-        Self {
-            content: core_result.content.into_iter().map(Into::into).collect(),
-            is_error: core_result.is_error,
-            structured_content: None,
-            _meta: core_result._meta,
-            task_id: None,
-        }
-    }
-}
-
-#[cfg(test)]
-mod conversion_tests {
-    use super::*;
-    use turbomcp_core::types::content::Content as CoreContent;
-    use turbomcp_core::types::tools::CallToolResult as CoreCallToolResult;
-
-    #[test]
-    fn test_core_content_to_protocol_text() {
-        let core = CoreContent::text("hello world");
-        let protocol: ContentBlock = core.into();
-
-        match protocol {
-            ContentBlock::Text(text) => {
-                assert_eq!(text.text, "hello world");
-                assert!(text.annotations.is_none());
-            }
-            _ => panic!("Expected Text variant"),
-        }
-    }
-
-    #[test]
-    fn test_core_content_to_protocol_image() {
-        let core = CoreContent::image("base64data", "image/png");
-        let protocol: ContentBlock = core.into();
-
-        match protocol {
-            ContentBlock::Image(img) => {
-                assert_eq!(img.data, "base64data");
-                assert_eq!(img.mime_type, "image/png");
-            }
-            _ => panic!("Expected Image variant"),
-        }
-    }
-
-    #[test]
-    fn test_core_call_tool_result_to_protocol() {
-        let core = CoreCallToolResult::text("success");
-        let protocol: CallToolResult = core.into();
-
-        assert_eq!(protocol.content.len(), 1);
-        assert!(protocol.is_error.is_none());
-        assert!(protocol.structured_content.is_none());
-        assert!(protocol.task_id.is_none());
-
-        match &protocol.content[0] {
-            ContentBlock::Text(text) => assert_eq!(text.text, "success"),
-            _ => panic!("Expected Text content"),
-        }
-    }
-
-    #[test]
-    fn test_core_call_tool_result_error_preserved() {
-        let core = CoreCallToolResult::error("something failed");
-        let protocol: CallToolResult = core.into();
-
-        assert_eq!(protocol.is_error, Some(true));
-        match &protocol.content[0] {
-            ContentBlock::Text(text) => assert_eq!(text.text, "something failed"),
-            _ => panic!("Expected Text content"),
-        }
-    }
-
-    #[test]
-    fn test_annotations_conversion() {
-        use crate::types::Annotations;
-        use turbomcp_core::types::core::Annotations as CoreAnnotations;
-
-        // Create core annotations (custom field uses Default for simplicity)
-        let core = CoreAnnotations {
-            audience: Some(vec!["user".to_string(), "assistant".to_string()]),
-            priority: Some(0.75),
-            last_modified: Some("2025-01-13T12:00:00Z".to_string()),
-            custom: Default::default(),
-        };
-
-        let protocol: Annotations = core.into();
-
-        // Verify all fields are correctly converted
-        assert_eq!(
-            protocol.audience,
-            Some(vec!["user".to_string(), "assistant".to_string()])
-        );
-        assert_eq!(protocol.priority, Some(0.75));
-        assert_eq!(
-            protocol.last_modified,
-            Some("2025-01-13T12:00:00Z".to_string())
-        );
-        assert!(protocol.custom.is_empty());
     }
 }

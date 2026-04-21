@@ -1,57 +1,19 @@
-//! Prompt template types
+//! Prompt template types.
 //!
-//! This module contains types for the MCP prompt template system,
-//! including prompt definitions, arguments, and prompt requests/responses.
+//! `Prompt`, `PromptArgument`, and `PromptMessage` are canonically defined in
+//! [`turbomcp_types`]. This module re-exports them plus protocol-local wire
+//! wrappers for `prompts/list` and `prompts/get`.
+//!
+//! Note: types' `PromptMessage.content` is `Content` (the 5-variant MCP
+//! `ContentBlock` union). Since protocol's `ContentBlock` has the same five
+//! variants, the wire format matches.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::{
-    content::ContentBlock,
-    core::{Cursor, Role},
-};
+pub use turbomcp_types::{Prompt, PromptArgument, PromptMessage};
 
-/// Prompt definition per the current MCP specification
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Prompt {
-    /// Prompt name (programmatic identifier)
-    pub name: String,
-
-    /// Display title for UI contexts (optional, falls back to name if not provided)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-
-    /// An optional description of what this prompt provides
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-
-    /// A list of arguments to use for templating the prompt
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub arguments: Option<Vec<PromptArgument>>,
-
-    /// General metadata field for extensions and custom data
-    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<HashMap<String, serde_json::Value>>,
-}
-
-/// Prompt argument definition per the current MCP specification
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PromptArgument {
-    /// Argument name (programmatic identifier)
-    pub name: String,
-
-    /// Display title for UI contexts (optional, falls back to name if not provided)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-
-    /// A human-readable description of the argument
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-
-    /// Whether this argument must be provided
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub required: Option<bool>,
-}
+use super::core::Cursor;
 
 /// Prompt input parameters
 pub type PromptInput = HashMap<String, serde_json::Value>;
@@ -59,9 +21,7 @@ pub type PromptInput = HashMap<String, serde_json::Value>;
 /// List prompts request with optional pagination
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ListPromptsRequest {
-    /// Optional cursor for pagination
-    /// An opaque token representing the current pagination position.
-    /// If provided, the server should return results starting after this cursor.
+    /// Optional cursor for pagination.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<Cursor>,
     /// Optional metadata per the current MCP specification
@@ -106,13 +66,4 @@ pub struct GetPromptResult {
     /// Optional metadata per the current MCP specification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub _meta: Option<serde_json::Value>,
-}
-
-/// Prompt message
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PromptMessage {
-    /// Message role
-    pub role: Role,
-    /// Message content
-    pub content: ContentBlock,
 }

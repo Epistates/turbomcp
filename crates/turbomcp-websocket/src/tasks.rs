@@ -380,7 +380,7 @@ impl WebSocketBidirectionalTransport {
                                 let result = ElicitResult {
                                     action: ElicitationAction::Cancel,
                                     content: None,
-                                    _meta: None,
+                                    meta: None,
                                 };
 
                                 // Send timeout result to waiting caller

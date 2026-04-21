@@ -790,15 +790,15 @@ impl<T: Transport + 'static> Client<T> {
                 let handler_opt = self.inner.handlers.lock().elicitation.clone();
                 if let Some(handler) = handler_opt {
                     // Parse elicitation request params as MCP protocol type
-                    let proto_request: turbomcp_protocol::types::ElicitRequest =
+                    let proto_params: turbomcp_protocol::types::ElicitRequestParams =
                         serde_json::from_value(request.params.unwrap_or(serde_json::Value::Null))
                             .map_err(|e| {
                             Error::internal(format!("Invalid elicitation params: {}", e))
                         })?;
 
-                    // Wrap protocol request with ID for handler (preserves type safety!)
+                    // Wrap protocol params with ID for handler (preserves type safety!)
                     let handler_request =
-                        crate::handlers::ElicitationRequest::new(request.id.clone(), proto_request);
+                        crate::handlers::ElicitationRequest::new(request.id.clone(), proto_params);
 
                     // Call the registered elicitation handler
                     match handler.handle_elicitation(handler_request).await {

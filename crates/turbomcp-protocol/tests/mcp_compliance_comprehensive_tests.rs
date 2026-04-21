@@ -95,16 +95,14 @@ mod mcp_compliance_tests {
         assert!(parsed.get("_meta").is_some());
 
         // Test CreateMessageResult
+        let mut message_meta = HashMap::new();
+        message_meta.insert("message_meta".to_string(), json!("test"));
         let message_result = CreateMessageResult {
             role: Role::Assistant,
-            content: ContentBlock::Text(TextContent {
-                text: "test".to_string(),
-                annotations: None,
-                meta: None,
-            }),
+            content: SamplingContent::text("test").into(),
             model: "test-model".to_string(),
             stop_reason: None,
-            _meta: Some(json!({"message_meta": "test"})),
+            meta: Some(message_meta),
         };
         let serialized = serde_json::to_string(&message_result).unwrap();
         let parsed: Value = serde_json::from_str(&serialized).unwrap();
@@ -180,6 +178,8 @@ mod mcp_compliance_tests {
         assert!(parsed.get("_meta").is_some());
 
         // Test CreateMessageRequest
+        let mut message_meta = HashMap::new();
+        message_meta.insert("message_meta".to_string(), json!("test"));
         let message_request = CreateMessageRequest {
             messages: vec![],
             model_preferences: None,
@@ -191,7 +191,8 @@ mod mcp_compliance_tests {
             tools: None,
             tool_choice: None,
             task: None,
-            _meta: Some(json!({"message_meta": "test"})),
+            metadata: None,
+            meta: Some(message_meta),
         };
         let serialized = serde_json::to_string(&message_request).unwrap();
         let parsed: Value = serde_json::from_str(&serialized).unwrap();
@@ -275,10 +276,8 @@ mod mcp_compliance_tests {
     fn test_parameter_structures_support_meta() {
         // Test ElicitRequestParams
         let elicit_params = ElicitRequestParams::form(
-            "Please provide input".to_string(),
-            ElicitationSchema::new(),
-            None,
-            None,
+            "Please provide input",
+            serde_json::to_value(ElicitationSchema::new()).unwrap(),
         );
         let serialized = serde_json::to_string(&elicit_params).unwrap();
         let parsed: Value = serde_json::from_str(&serialized).unwrap();

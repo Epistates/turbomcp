@@ -74,7 +74,6 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, error, info, warn};
 use turbomcp_protocol::MessageId;
@@ -212,23 +211,18 @@ pub type HandlerResult<T> = Result<T, HandlerError>;
 ///     // Access message
 ///     println!("Message: {}", request.message());
 ///
-///     // Access typed schema (not Value!)
+///     // Access typed schema (deserialized from the wire-level requestedSchema)
 ///     if let Some(schema) = request.schema() {
 ///         for (name, property) in &schema.properties {
 ///             println!("Field: {}", name);
 ///         }
-///     }
-///
-///     // Access timeout as Duration
-///     if let Some(timeout) = request.timeout() {
-///         println!("Timeout: {:?}", timeout);
 ///     }
 /// }
 /// ```
 #[derive(Debug, Clone)]
 pub struct ElicitationRequest {
     id: MessageId,
-    inner: turbomcp_protocol::types::ElicitRequest,
+    inner: turbomcp_protocol::types::ElicitRequestParams,
 }
 
 impl ElicitationRequest {
@@ -237,10 +231,10 @@ impl ElicitationRequest {
     /// # Arguments
     ///
     /// * `id` - Request ID from JSON-RPC envelope
-    /// * `request` - Protocol-level elicit request
+    /// * `params` - Protocol-level elicit request parameters
     #[must_use]
-    pub fn new(id: MessageId, request: turbomcp_protocol::types::ElicitRequest) -> Self {
-        Self { id, inner: request }
+    pub fn new(id: MessageId, params: turbomcp_protocol::types::ElicitRequestParams) -> Self {
+        Self { id, inner: params }
     }
 
     /// Get request ID from JSON-RPC envelope
@@ -254,87 +248,45 @@ impl ElicitationRequest {
     /// This is the primary prompt/question being asked of the user.
     #[must_use]
     pub fn message(&self) -> &str {
-        self.inner.params.message()
+        self.inner.message()
     }
 
-    /// Get schema defining expected response structure
+    /// Get the raw JSON Schema for the requested form input.
     ///
-    /// Returns the typed `ElicitationSchema` which provides:
-    /// - Type-safe access to properties
-    /// - Required field information
-    /// - Validation constraints
+    /// Returns `None` for URL-mode elicitations (data is collected out-of-band).
     ///
-    /// # Note
-    ///
-    /// This returns a TYPED schema, not `serde_json::Value`.
-    /// You can inspect the schema structure type-safely:
-    ///
-    /// ```rust,no_run
-    /// # use turbomcp_client::handlers::ElicitationRequest;
-    /// # use turbomcp_protocol::types::PrimitiveSchemaDefinition;
-    /// # async fn example(request: ElicitationRequest) {
-    /// if let Some(schema) = request.schema() {
-    ///     for (name, definition) in &schema.properties {
-    ///         match definition {
-    ///             PrimitiveSchemaDefinition::String { description, .. } => {
-    ///                 println!("String field: {}", name);
-    ///             }
-    ///             PrimitiveSchemaDefinition::Number { minimum, maximum, .. } => {
-    ///                 println!("Number field: {} ({:?}-{:?})", name, minimum, maximum);
-    ///             }
-    ///             _ => {}
-    ///         }
-    ///     }
-    /// }
-    /// # }
-    /// ```
+    /// Per MCP 2025-11-25, `requestedSchema` is a raw JSON Schema value. If you
+    /// need typed access, deserialize into [`ElicitationSchema`](turbomcp_protocol::types::ElicitationSchema).
     #[must_use]
-    pub fn schema(&self) -> Option<&turbomcp_protocol::types::ElicitationSchema> {
-        #[allow(unreachable_patterns)]
-        match &self.inner.params {
-            turbomcp_protocol::types::ElicitRequestParams::Form(form) => Some(&form.schema),
-            _ => None, // URL elicitation doesn't have this field
-        }
-    }
-
-    /// Get optional timeout as Duration
-    ///
-    /// Converts milliseconds from the protocol to ergonomic `Duration` type.
-    /// No data loss occurs (unlike converting to integer seconds).
-    #[must_use]
-    pub fn timeout(&self) -> Option<Duration> {
-        #[allow(unreachable_patterns)]
-        match &self.inner.params {
+    pub fn requested_schema(&self) -> Option<&serde_json::Value> {
+        match &self.inner {
             turbomcp_protocol::types::ElicitRequestParams::Form(form) => {
-                form.timeout_ms.map(|ms| Duration::from_millis(ms as u64))
+                Some(&form.requested_schema)
             }
-            _ => None, // URL elicitation doesn't have this field
+            turbomcp_protocol::types::ElicitRequestParams::Url(_) => None,
         }
     }
 
-    /// Check if request can be cancelled by the user
+    /// Deserialize the requested schema into a typed [`ElicitationSchema`].
+    ///
+    /// Returns `None` for URL-mode elicitations or on deserialization failure.
     #[must_use]
-    pub fn is_cancellable(&self) -> bool {
-        #[allow(unreachable_patterns)]
-        match &self.inner.params {
-            turbomcp_protocol::types::ElicitRequestParams::Form(form) => {
-                form.cancellable.unwrap_or(false)
-            }
-            _ => false, // URL elicitation doesn't have this field
-        }
+    pub fn schema(&self) -> Option<turbomcp_protocol::types::ElicitationSchema> {
+        let raw = self.requested_schema()?;
+        serde_json::from_value(raw.clone()).ok()
     }
 
-    /// Get access to underlying protocol request if needed
+    /// Get access to underlying protocol parameters if needed
     ///
     /// For advanced use cases where you need the raw protocol type.
     #[must_use]
-    pub fn as_protocol(&self) -> &turbomcp_protocol::types::ElicitRequest {
+    pub fn as_protocol(&self) -> &turbomcp_protocol::types::ElicitRequestParams {
         &self.inner
     }
 
-    /// Consume wrapper and return protocol request
+    /// Consume wrapper and return protocol parameters
     #[must_use]
-    pub fn into_protocol(self) -> turbomcp_protocol::types::ElicitRequest {
+    pub fn into_protocol(self) -> turbomcp_protocol::types::ElicitRequestParams {
         self.inner
     }
 }
@@ -376,11 +328,27 @@ impl ElicitationResponse {
     /// * `content` - User-submitted data conforming to the request schema
     #[must_use]
     pub fn accept(content: HashMap<String, serde_json::Value>) -> Self {
+        let object = serde_json::Value::Object(content.into_iter().collect());
+        Self {
+            inner: turbomcp_protocol::types::ElicitResult {
+                action: ElicitationAction::Accept,
+                content: Some(object),
+                meta: None,
+            },
+        }
+    }
+
+    /// Create response with accept action using a JSON value directly.
+    ///
+    /// Use this when you already have a `serde_json::Value` (object) — avoids the
+    /// `HashMap` conversion round-trip done by [`ElicitationResponse::accept`].
+    #[must_use]
+    pub fn accept_value(content: serde_json::Value) -> Self {
         Self {
             inner: turbomcp_protocol::types::ElicitResult {
                 action: ElicitationAction::Accept,
                 content: Some(content),
-                _meta: None,
+                meta: None,
             },
         }
     }
@@ -392,7 +360,7 @@ impl ElicitationResponse {
             inner: turbomcp_protocol::types::ElicitResult {
                 action: ElicitationAction::Decline,
                 content: None,
-                _meta: None,
+                meta: None,
             },
         }
     }
@@ -404,7 +372,7 @@ impl ElicitationResponse {
             inner: turbomcp_protocol::types::ElicitResult {
                 action: ElicitationAction::Cancel,
                 content: None,
-                _meta: None,
+                meta: None,
             },
         }
     }
@@ -415,9 +383,12 @@ impl ElicitationResponse {
         self.inner.action
     }
 
-    /// Get the content from this response
+    /// Get the accepted form content, if any.
+    ///
+    /// Per MCP 2025-11-25 the wire shape is `serde_json::Value` (an object).
+    /// Use `value.as_object()` for map-like access.
     #[must_use]
-    pub fn content(&self) -> Option<&HashMap<String, serde_json::Value>> {
+    pub fn content(&self) -> Option<&serde_json::Value> {
         self.inner.content.as_ref()
     }
 
@@ -1348,22 +1319,15 @@ mod tests {
         let handler = Arc::new(TestElicitationHandler);
         registry.set_elicitation_handler(handler);
 
-        // Create protocol request
-        let proto_request = turbomcp_protocol::types::ElicitRequest {
-            params: turbomcp_protocol::types::ElicitRequestParams::form(
-                "Test prompt".to_string(),
-                turbomcp_protocol::types::ElicitationSchema::new(),
-                None,
-                None,
-            ),
-            task: None,
-            _meta: None,
-        };
+        // Create protocol request parameters
+        let schema =
+            serde_json::to_value(turbomcp_protocol::types::ElicitationSchema::new()).unwrap();
+        let params = turbomcp_protocol::types::ElicitRequestParams::form("Test prompt", schema);
 
         // Wrap for handler
         let request = ElicitationRequest::new(
             turbomcp_protocol::MessageId::String("test-123".to_string()),
-            proto_request,
+            params,
         );
 
         let response = registry.handle_elicitation(request).await.unwrap();
@@ -1375,22 +1339,15 @@ mod tests {
     async fn test_default_handlers() {
         let decline_handler = DeclineElicitationHandler;
 
-        // Create protocol request
-        let proto_request = turbomcp_protocol::types::ElicitRequest {
-            params: turbomcp_protocol::types::ElicitRequestParams::form(
-                "Test".to_string(),
-                turbomcp_protocol::types::ElicitationSchema::new(),
-                None,
-                None,
-            ),
-            task: None,
-            _meta: None,
-        };
+        // Create protocol request parameters
+        let schema =
+            serde_json::to_value(turbomcp_protocol::types::ElicitationSchema::new()).unwrap();
+        let params = turbomcp_protocol::types::ElicitRequestParams::form("Test", schema);
 
         // Wrap for handler
         let request = ElicitationRequest::new(
             turbomcp_protocol::MessageId::String("test".to_string()),
-            proto_request,
+            params,
         );
 
         let response = decline_handler.handle_elicitation(request).await.unwrap();

@@ -4,8 +4,8 @@
 //! negotiation, and backward compatibility.
 
 use serde_json::{Value, json};
-use turbomcp_core::types::core::ProtocolVersion;
 use turbomcp_protocol::versioning::adapter::*;
+use turbomcp_types::ProtocolVersion;
 
 // =============================================================================
 // ProtocolVersion Serde Round-Trip Tests

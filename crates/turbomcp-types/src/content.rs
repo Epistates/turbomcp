@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[cfg(not(feature = "std"))]
-use alloc::collections::BTreeMap as HashMap;
+use alloc::{collections::BTreeMap as HashMap, string::String, vec, vec::Vec};
 #[cfg(feature = "std")]
 use std::collections::HashMap;
 
@@ -664,6 +664,12 @@ impl Message {
         self.role == Role::Assistant
     }
 }
+
+/// Spec-aligned alias for [`Message`].
+///
+/// MCP 2025-11-25 calls this `PromptMessage`. The Rust name `Message` is
+/// shorter; this alias makes both names available.
+pub type PromptMessage = Message;
 
 #[cfg(test)]
 mod tests {

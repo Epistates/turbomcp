@@ -39,8 +39,10 @@
 use std::sync::Arc;
 
 use turbomcp_core::PROTOCOL_VERSION;
-use turbomcp_core::types::capabilities::ServerCapabilities;
-use turbomcp_core::types::core::Implementation;
+use turbomcp_protocol::types::{
+    PromptsCapabilities, ResourcesCapabilities, ServerCapabilities, ToolsCapabilities,
+};
+use turbomcp_types::Implementation;
 use worker::{Headers, Request, Response};
 
 use super::context::RequestContext;
@@ -546,14 +548,14 @@ impl CompositeServer {
             completions: None,
             tasks: None,
             prompts: if has_prompts {
-                Some(turbomcp_core::types::capabilities::PromptsCapability {
+                Some(PromptsCapabilities {
                     list_changed: Some(false),
                 })
             } else {
                 None
             },
             resources: if has_resources {
-                Some(turbomcp_core::types::capabilities::ResourcesCapability {
+                Some(ResourcesCapabilities {
                     subscribe: Some(false),
                     list_changed: Some(false),
                 })
@@ -561,7 +563,7 @@ impl CompositeServer {
                 None
             },
             tools: if has_tools {
-                Some(turbomcp_core::types::capabilities::ToolsCapability {
+                Some(ToolsCapabilities {
                     list_changed: Some(false),
                 })
             } else {

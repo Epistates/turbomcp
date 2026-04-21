@@ -13,9 +13,7 @@
 
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
-use turbomcp_protocol::types::{
-    ContentBlock, CreateMessageRequest, Role, SamplingMessage, TextContent,
-};
+use turbomcp_protocol::types::{CreateMessageRequest, Role, SamplingContent, SamplingMessage};
 use turbomcp_transport::websocket_bidirectional::{
     WebSocketBidirectionalTransport, config::WebSocketBidirectionalConfig,
 };
@@ -32,12 +30,8 @@ async fn test_sampling_rejection_should_not_hang() {
     let request = CreateMessageRequest {
         messages: vec![SamplingMessage {
             role: Role::User,
-            content: ContentBlock::Text(TextContent {
-                text: "What is 2+2?".to_string(),
-                annotations: None,
-                meta: None,
-            }),
-            metadata: None,
+            content: SamplingContent::text("What is 2+2?").into(),
+            meta: None,
         }],
         model_preferences: None,
         system_prompt: None,
@@ -48,7 +42,8 @@ async fn test_sampling_rejection_should_not_hang() {
         tools: None,
         tool_choice: None,
         task: None,
-        _meta: None,
+        metadata: None,
+        meta: None,
     };
 
     // Measure how long the rejection takes
@@ -208,12 +203,8 @@ async fn benchmark_sampling_rejection_hang_time() {
     let request = CreateMessageRequest {
         messages: vec![SamplingMessage {
             role: Role::User,
-            content: ContentBlock::Text(TextContent {
-                text: "Benchmark request".to_string(),
-                annotations: None,
-                meta: None,
-            }),
-            metadata: None,
+            content: SamplingContent::text("Benchmark request").into(),
+            meta: None,
         }],
         model_preferences: None,
         system_prompt: None,
@@ -224,7 +215,8 @@ async fn benchmark_sampling_rejection_hang_time() {
         tools: None,
         tool_choice: None,
         task: None,
-        _meta: None,
+        metadata: None,
+        meta: None,
     };
 
     println!("Verifying sampling rejection hang bug is FIXED...");

@@ -20,7 +20,7 @@ use axum::routing::get;
 use futures::{SinkExt, StreamExt};
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
-use turbomcp_core::types::core::ProtocolVersion;
+use turbomcp_types::ProtocolVersion;
 
 use super::SessionState;
 use crate::config::{ConnectionCounter, RateLimiter, ServerConfig};
@@ -239,7 +239,6 @@ async fn handle_websocket<H: McpHandler>(
 
         // Parse and route with lifecycle-aware dispatch.
         let ctx = RequestContext::websocket();
-        let core_ctx = ctx.to_core_context();
 
         match router::parse_request(&text) {
             Ok(request) => {
@@ -257,7 +256,7 @@ async fn handle_websocket<H: McpHandler>(
                         let resp = router::route_request_with_config(
                             &handler,
                             request,
-                            &core_ctx,
+                            &ctx,
                             config.as_ref(),
                         )
                         .await;
@@ -288,7 +287,7 @@ async fn handle_websocket<H: McpHandler>(
                 {
                     // Lifecycle notifications pass through unconditionally —
                     // they carry no id and produce no sendable response.
-                    router::route_request(&handler, request, &core_ctx).await
+                    router::route_request(&handler, request, &ctx).await
                 } else {
                     // All other requests require a completed initialize handshake.
                     // Notifications (id=None) MUST NOT receive responses per
@@ -310,10 +309,8 @@ async fn handle_websocket<H: McpHandler>(
                                 }
                             } else {
                                 let version = session.protocol_version().clone();
-                                router::route_request_versioned(
-                                    &handler, request, &core_ctx, &version,
-                                )
-                                .await
+                                router::route_request_versioned(&handler, request, &ctx, &version)
+                                    .await
                             }
                         }
                         SessionState::Uninitialized => {

@@ -29,7 +29,8 @@ futures = "0.3"
 
 # Internal dependencies
 turbomcp-core = { workspace = true, features = ["std"] }
-turbomcp-protocol = { workspace = true }
+turbomcp-types = { workspace = true, features = ["experimental-tasks"] }
+turbomcp-protocol = { workspace = true, features = ["experimental-tasks"] }
 turbomcp-transport-traits = { workspace = true }
 
 # Tower integration

@@ -211,8 +211,7 @@ impl<T: McpHandler> McpHandlerExt for T {
                 .map_err(|e| McpError::internal(format!("Failed to serialize request: {e}")))?;
 
             let parsed = super::router::parse_request(&request_str)?;
-            let core_ctx = ctx.to_core_context();
-            let response = super::router::route_request(&handler, parsed, &core_ctx).await;
+            let response = super::router::route_request(&handler, parsed, &ctx).await;
 
             serde_json::to_value(&response)
                 .map_err(|e| McpError::internal(format!("Failed to serialize response: {e}")))

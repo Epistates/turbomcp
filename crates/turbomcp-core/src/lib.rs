@@ -91,6 +91,7 @@ pub mod marker;
 pub mod response;
 pub mod router;
 pub mod security;
+pub mod session;
 pub mod types;
 
 /// Zero-copy message types using rkyv serialization.
@@ -132,6 +133,7 @@ pub use auth::{
 pub use context::{RequestContext, TransportType};
 pub use handler::McpHandler;
 pub use marker::{MaybeSend, MaybeSync};
+pub use session::{Cancellable, McpSession, SessionFuture};
 
 // Re-export types from turbomcp-types for convenience
 pub use turbomcp_types::{

@@ -7,7 +7,6 @@
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use std::collections::HashMap;
 use turbomcp_protocol::types::*;
 
 /// Arbitrary input for tool fuzzing with structured generation
@@ -75,14 +74,10 @@ fuzz_target!(|data: &[u8]| {
         let annotations = if input.has_annotations {
             Some(ToolAnnotations {
                 title: None,
-                audience: Some(vec!["assistant".to_string()]),
-                priority: Some(0.5),
                 destructive_hint: Some(false),
                 idempotent_hint: Some(true),
                 open_world_hint: Some(false),
                 read_only_hint: Some(true),
-                task_hint: None,
-                custom: HashMap::new(),
             })
         } else {
             None

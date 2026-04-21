@@ -15,10 +15,10 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use turbomcp_core::error::{ErrorKind, McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
-use turbomcp_core::types::core::ProtocolVersion;
+use turbomcp_types::ProtocolVersion;
 
 use crate::config::ServerConfig;
-use crate::context::{McpSession, RequestContext};
+use crate::context::{McpSession, RequestContext, SessionFuture};
 use crate::router;
 
 use super::{MAX_MESSAGE_SIZE, SessionState};
@@ -53,33 +53,40 @@ enum SessionCommand {
     },
 }
 
-#[async_trait::async_trait]
 impl McpSession for SessionHandle {
-    async fn call(&self, method: &str, params: serde_json::Value) -> McpResult<serde_json::Value> {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.request_tx
-            .send(SessionCommand::Request {
-                method: method.to_string(),
-                params,
-                response_tx,
-            })
-            .await
-            .map_err(|_| McpError::internal("Session closed"))?;
+    fn call<'a>(
+        &'a self,
+        method: &'a str,
+        params: serde_json::Value,
+    ) -> SessionFuture<'a, serde_json::Value> {
+        Box::pin(async move {
+            let (response_tx, response_rx) = oneshot::channel();
+            self.request_tx
+                .send(SessionCommand::Request {
+                    method: method.to_string(),
+                    params,
+                    response_tx,
+                })
+                .await
+                .map_err(|_| McpError::internal("Session closed"))?;
 
-        response_rx
-            .await
-            .map_err(|_| McpError::internal("Response channel closed"))?
+            response_rx
+                .await
+                .map_err(|_| McpError::internal("Response channel closed"))?
+        })
     }
 
-    async fn notify(&self, method: &str, params: serde_json::Value) -> McpResult<()> {
-        self.request_tx
-            .send(SessionCommand::Notify {
-                method: method.to_string(),
-                params,
-            })
-            .await
-            .map_err(|_| McpError::internal("Session closed"))?;
-        Ok(())
+    fn notify<'a>(&'a self, method: &'a str, params: serde_json::Value) -> SessionFuture<'a, ()> {
+        Box::pin(async move {
+            self.request_tx
+                .send(SessionCommand::Notify {
+                    method: method.to_string(),
+                    params,
+                })
+                .await
+                .map_err(|_| McpError::internal("Session closed"))?;
+            Ok(())
+        })
     }
 }
 
@@ -234,11 +241,10 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                     // request, which would deadlock.
                                     let initialize_request_id = request.id.clone();
                                     let ctx = ctx_factory().with_session(session_handle.clone());
-                                    let core_ctx = ctx.to_core_context();
                                     let response = router::route_request_with_config(
                                         &self.handler,
                                         request,
-                                        &core_ctx,
+                                        &ctx,
                                         self.config.as_ref(),
                                     )
                                     .await;
@@ -275,11 +281,10 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                     let handler = self.handler.clone();
                                     let resp_tx = response_tx.clone();
                                     let ctx = ctx_factory().with_session(session_handle.clone());
-                                    let core_ctx = ctx.to_core_context();
 
                                     tokio::spawn(async move {
                                         let response = router::route_request(
-                                            &handler, request, &core_ctx,
+                                            &handler, request, &ctx,
                                         )
                                         .await;
                                         let _ = resp_tx.send(response).await;
@@ -331,11 +336,10 @@ impl<H: McpHandler> LineTransportRunner<H> {
                                     let session = session_handle.clone();
                                     let resp_tx = response_tx.clone();
                                     let ctx = ctx_factory().with_session(session);
-                                    let core_ctx = ctx.to_core_context();
 
                                     tokio::spawn(async move {
                                         let response = router::route_request_versioned(
-                                            &handler, request, &core_ctx, &version,
+                                            &handler, request, &ctx, &version,
                                         )
                                         .await;
                                         // If channel is closed the transport loop has exited; ignore.

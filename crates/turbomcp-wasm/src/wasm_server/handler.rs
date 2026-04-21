@@ -49,9 +49,8 @@ use super::context::RequestContext;
 use super::server::{McpServer, PromptHandlerKind, ResourceHandlerKind, ToolHandlerKind};
 use super::types::{JsonRpcRequest, JsonRpcResponse, error_codes};
 use turbomcp_core::PROTOCOL_VERSION;
-use turbomcp_core::types::capabilities::ClientCapabilities;
-use turbomcp_core::types::core::Implementation;
-use turbomcp_core::types::initialization::InitializeResult;
+use turbomcp_protocol::types::{ClientCapabilities, InitializeResult};
+use turbomcp_types::Implementation;
 
 /// Maximum request body size (1MB) to prevent DoS
 const MAX_BODY_SIZE: usize = 1024 * 1024;
@@ -105,7 +104,7 @@ impl<'a> McpHandler<'a> {
         // Extract request ID from headers or generate one
         let request_id = headers.get("x-request-id").cloned();
 
-        RequestContext::from_worker_request(request_id, session_id, headers)
+        super::context::from_worker_request(request_id, session_id, headers)
     }
 
     /// Handle an incoming request

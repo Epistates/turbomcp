@@ -55,7 +55,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::McpError;
-use crate::types::{LogLevel, LoggingNotification, ProgressNotification, ServerNotification};
+use crate::types::LogLevel;
 
 use super::request::RequestContext;
 
@@ -370,18 +370,20 @@ impl RichContextExt for RequestContext {
         message: impl Into<String> + Send,
         logger: Option<String>,
     ) -> Result<(), McpError> {
-        // If no server_to_client available, this is a no-op (not an error)
-        let Some(s2c) = self.server_to_client() else {
+        // If no bidirectional session is attached, silently succeed (no-op).
+        if !self.has_session() {
             return Ok(());
-        };
+        }
 
-        let notification = ServerNotification::Message(LoggingNotification {
-            level,
-            data: serde_json::Value::String(message.into()),
-            logger,
+        let mut params = serde_json::json!({
+            "level": level,
+            "data": message.into(),
         });
+        if let Some(logger) = logger {
+            params["logger"] = serde_json::Value::String(logger);
+        }
 
-        s2c.send_notification(notification).await
+        self.notify_client("notifications/message", params).await
     }
 
     // ===== Progress Reporting =====
@@ -404,19 +406,22 @@ impl RichContextExt for RequestContext {
         total: Option<u64>,
         message: Option<&str>,
     ) -> Result<(), McpError> {
-        // If no server_to_client available, this is a no-op (not an error)
-        let Some(s2c) = self.server_to_client() else {
+        if !self.has_session() {
             return Ok(());
-        };
+        }
 
-        let notification = ServerNotification::Progress(ProgressNotification {
-            progress_token: token.into(),
-            progress: current,
-            total,
-            message: message.map(ToString::to_string),
+        let mut params = serde_json::json!({
+            "progressToken": token.into(),
+            "progress": current,
         });
+        if let Some(total) = total {
+            params["total"] = serde_json::json!(total);
+        }
+        if let Some(message) = message {
+            params["message"] = serde_json::Value::String(message.to_string());
+        }
 
-        s2c.send_notification(notification).await
+        self.notify_client("notifications/progress", params).await
     }
 }
 

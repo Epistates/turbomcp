@@ -5389,6 +5389,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "tokio",
+ "tokio-util",
  "turbomcp-types",
  "uuid",
 ]
@@ -5468,6 +5469,7 @@ dependencies = [
  "turbomcp-core",
  "turbomcp-protocol",
  "turbomcp-transport-traits",
+ "turbomcp-types",
  "uuid",
 ]
 
@@ -5568,6 +5570,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "turbomcp-core",
+ "turbomcp-types",
  "turbomcp-wire",
  "url",
  "uuid",
@@ -5842,6 +5845,7 @@ dependencies = [
  "tokio",
  "turbomcp",
  "turbomcp-core",
+ "turbomcp-protocol",
  "turbomcp-transport-streamable",
  "turbomcp-types",
  "turbomcp-wasm-macros",

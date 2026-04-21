@@ -251,40 +251,35 @@ fn test_annotations_default() {
     let annotations = Annotations::default();
     assert!(annotations.audience.is_none());
     assert!(annotations.priority.is_none());
-    assert!(annotations.custom.is_empty());
+    assert!(annotations.last_modified.is_none());
 }
 
 #[test]
 fn test_annotations_with_values() {
-    let mut custom = HashMap::new();
-    custom.insert("key1".to_string(), json!("value1"));
-    custom.insert("key2".to_string(), json!(42));
-
+    // Per MCP 2025-11-25, audience is Vec<Role> (strictly "user" or "assistant").
     let annotations = Annotations {
-        audience: Some(vec!["developers".to_string(), "users".to_string()]),
+        audience: Some(vec![Role::User, Role::Assistant]),
         priority: Some(1.5),
-        custom,
-        ..Default::default()
+        last_modified: Some("2025-11-06T10:00:00Z".to_string()),
     };
 
     assert_eq!(
         annotations.audience,
-        Some(vec!["developers".to_string(), "users".to_string()])
+        Some(vec![Role::User, Role::Assistant])
     );
     assert_eq!(annotations.priority, Some(1.5));
-    assert_eq!(annotations.custom.len(), 2);
+    assert_eq!(
+        annotations.last_modified.as_deref(),
+        Some("2025-11-06T10:00:00Z")
+    );
 }
 
 #[test]
 fn test_annotations_serialization() {
-    let mut custom = HashMap::new();
-    custom.insert("test".to_string(), json!("value"));
-
     let annotations = Annotations {
-        audience: Some(vec!["test".to_string()]),
+        audience: Some(vec![Role::Assistant]),
         priority: Some(2.0),
-        custom,
-        ..Default::default()
+        last_modified: None,
     };
 
     let json = serde_json::to_string(&annotations).unwrap();
@@ -292,7 +287,7 @@ fn test_annotations_serialization() {
 
     assert_eq!(annotations.audience, deserialized.audience);
     assert_eq!(annotations.priority, deserialized.priority);
-    assert_eq!(annotations.custom.len(), deserialized.custom.len());
+    assert_eq!(annotations.last_modified, deserialized.last_modified);
 }
 
 // ============================================================================
@@ -703,11 +698,10 @@ fn test_tool() {
 
 #[test]
 fn test_tool_with_annotations() {
+    // Per MCP 2025-11-25, ToolAnnotations only has: title + four boolean hints.
     let annotations = ToolAnnotations {
         title: Some("Annotated Tool".to_string()),
-        audience: Some(vec!["developers".to_string()]),
-        priority: Some(1.0),
-        custom: HashMap::new(),
+        read_only_hint: Some(true),
         ..Default::default()
     };
 
@@ -722,6 +716,8 @@ fn test_tool_with_annotations() {
             additional_properties: None,
             extra_keywords: HashMap::new(),
         },
+        icons: None,
+        execution: None,
         output_schema: None,
         annotations: Some(annotations),
         meta: None,
@@ -730,6 +726,7 @@ fn test_tool_with_annotations() {
     assert!(tool.annotations.is_some());
     if let Some(ref ann) = tool.annotations {
         assert_eq!(ann.title, Some("Annotated Tool".to_string()));
+        assert_eq!(ann.read_only_hint, Some(true));
     }
 }
 
@@ -738,13 +735,7 @@ fn test_tool_input_schema() {
     let mut properties = HashMap::new();
     properties.insert("param1".to_string(), json!({"type": "string"}));
 
-    let schema = ToolInputSchema {
-        schema_type: Some("object".into()),
-        properties: Some(properties),
-        required: Some(vec!["param1".to_string()]),
-        additional_properties: Some(false.into()),
-        extra_keywords: HashMap::new(),
-    };
+    let schema = ToolInputSchema::with_required_properties(properties, vec!["param1".to_string()]);
 
     assert_eq!(schema.schema_type, Some("object".into()));
     assert!(schema.properties.is_some());
@@ -765,6 +756,7 @@ fn test_tool_serialization() {
             additional_properties: None,
             extra_keywords: HashMap::new(),
         },
+        icons: None,
         output_schema: None,
         execution: None,
         annotations: None,
@@ -971,42 +963,29 @@ fn test_comprehensive_serialization() {
         description: Some("A complex tool for testing".to_string()),
         input_schema: ToolInputSchema {
             schema_type: Some("object".into()),
-            properties: Some({
-                let mut props = HashMap::new();
-                props.insert(
-                    "param1".to_string(),
-                    json!({"type": "string", "description": "First parameter"}),
-                );
-                props.insert(
-                    "param2".to_string(),
-                    json!({"type": "integer", "minimum": 0}),
-                );
-                props
-            }),
+            properties: Some(json!({
+                "param1": {"type": "string", "description": "First parameter"},
+                "param2": {"type": "integer", "minimum": 0},
+            })),
             required: Some(vec!["param1".to_string()]),
             additional_properties: Some(false.into()),
             extra_keywords: HashMap::new(),
         },
+        icons: None,
+        execution: None,
         output_schema: Some(ToolOutputSchema {
             schema_type: Some("object".into()),
-            properties: Some({
-                let mut props = HashMap::new();
-                props.insert("result".to_string(), json!({"type": "string"}));
-                props
-            }),
+            properties: Some(json!({
+                "result": {"type": "string"},
+            })),
             required: Some(vec!["result".to_string()]),
             additional_properties: Some(false.into()),
             extra_keywords: HashMap::new(),
         }),
         annotations: Some(ToolAnnotations {
             title: Some("Annotated Complex Tool".to_string()),
-            audience: Some(vec!["developers".to_string(), "testers".to_string()]),
-            priority: Some(1.5),
-            custom: {
-                let mut custom = HashMap::new();
-                custom.insert("category".to_string(), json!("utility"));
-                custom
-            },
+            read_only_hint: Some(false),
+            destructive_hint: Some(true),
             ..Default::default()
         }),
         meta: Some(meta),
@@ -1025,29 +1004,29 @@ fn test_comprehensive_serialization() {
 #[test]
 fn test_sampling_api_comprehensive_workflow() {
     // Test complete CreateMessageRequest with all current MCP fields
-        let sampling_message = SamplingMessage {
-            role: Role::User,
-            content: ContentBlock::Text(TextContent {
-                text: "Test message for sampling".to_string(),
-                annotations: None,
-                meta: None,
-        }),
-        metadata: None,
+    let sampling_message = SamplingMessage {
+        role: Role::User,
+        content: SamplingContent::text("Test message for sampling").into(),
+        meta: None,
     };
 
     let model_preferences = ModelPreferences {
         hints: Some(vec![
-            ModelHint::new("claude-3-5-sonnet"),
-            ModelHint::new("fast"),
+            ModelHint {
+                name: Some("claude-3-5-sonnet".to_string()),
+            },
+            ModelHint {
+                name: Some("fast".to_string()),
+            },
         ]),
         cost_priority: Some(1.0),         // High priority for low cost
         speed_priority: Some(1.0),        // High priority for speed
         intelligence_priority: Some(1.0), // High priority for intelligence
     };
 
-    let mut metadata = HashMap::new();
-    metadata.insert("provider".to_string(), json!("anthropic"));
-    metadata.insert("region".to_string(), json!("us-east-1"));
+    let mut provider_meta = HashMap::new();
+    provider_meta.insert("provider".to_string(), json!("anthropic"));
+    provider_meta.insert("region".to_string(), json!("us-east-1"));
 
     let create_message_request = CreateMessageRequest {
         messages: vec![sampling_message],
@@ -1057,7 +1036,11 @@ fn test_sampling_api_comprehensive_workflow() {
         temperature: Some(0.7),
         max_tokens: 1000,
         stop_sequences: Some(vec!["STOP".to_string(), "END".to_string()]),
-        _meta: None,
+        tools: None,
+        tool_choice: None,
+        task: None,
+        metadata: None,
+        meta: Some(provider_meta),
     };
 
     // Test serialization/deserialization
@@ -1132,17 +1115,14 @@ fn test_sampling_api_model_preferences_validation() {
 
 #[test]
 fn test_create_message_result_complete() {
-    // Test CreateMessageResult with all fields
+    // Test CreateMessageResult with all fields — `stop_reason` is a String per
+    // spec; the StopReason helper enum serializes to the same camelCase value.
     let result = CreateMessageResult {
         role: Role::Assistant,
-        content: ContentBlock::Text(TextContent {
-            text: "This is a test response from the model.".to_string(),
-            annotations: None,
-            meta: None,
-        }),
+        content: SamplingContent::text("This is a test response from the model.").into(),
         model: "claude-3-5-sonnet-20241022".to_string(),
-        stop_reason: Some(StopReason::StopSequence),
-        _meta: None,
+        stop_reason: Some(StopReason::StopSequence.to_string()),
+        meta: None,
     };
 
     let json = serde_json::to_string_pretty(&result).unwrap();
@@ -1150,13 +1130,12 @@ fn test_create_message_result_complete() {
 
     assert_eq!(deserialized.role, Role::Assistant);
     assert_eq!(deserialized.model, "claude-3-5-sonnet-20241022".to_string());
-    assert_eq!(deserialized.stop_reason, Some(StopReason::StopSequence));
+    assert_eq!(deserialized.stop_reason.as_deref(), Some("stopSequence"));
 
-    if let ContentBlock::Text(text_content) = &deserialized.content {
-        assert_eq!(text_content.text, "This is a test response from the model.");
-    } else {
-        panic!("Expected text content");
-    }
+    assert_eq!(
+        deserialized.content.as_text(),
+        Some("This is a test response from the model.")
+    );
 }
 
 #[test]

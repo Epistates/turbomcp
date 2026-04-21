@@ -35,12 +35,11 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use turbomcp_core::types::capabilities::ServerCapabilities;
-use turbomcp_core::types::core::Implementation;
-use turbomcp_core::types::prompts::Prompt;
-use turbomcp_core::types::resources::{Resource, ResourceTemplate};
-use turbomcp_core::types::tools::{Tool, ToolInputSchema};
 use turbomcp_core::{MaybeSend, MaybeSync};
+use turbomcp_protocol::types::{
+    PromptsCapabilities, ResourcesCapabilities, ServerCapabilities, ToolsCapabilities,
+};
+use turbomcp_types::{Implementation, Prompt, Resource, ResourceTemplate, Tool, ToolInputSchema};
 
 use super::context::RequestContext;
 use super::handler::McpHandler;
@@ -277,19 +276,25 @@ impl McpServerBuilder {
                     .collect()
             });
 
+        let input_schema = ToolInputSchema {
+            schema_type: Some("object".into()),
+            properties: properties.map(|m: HashMap<String, serde_json::Value>| {
+                serde_json::Value::Object(m.into_iter().collect())
+            }),
+            required,
+            additional_properties: None,
+            extra_keywords: std::collections::HashMap::new(),
+        };
         let tool = Tool {
             name: name.clone(),
             description: Some(description),
             title: None,
             icons: None,
-            input_schema: ToolInputSchema {
-                schema_type: Some("object".into()),
-                properties,
-                required,
-                additional_properties: None,
-                extra_keywords: HashMap::new(),
-            },
+            input_schema,
             annotations: None,
+            execution: None,
+            output_schema: None,
+            meta: None,
         };
 
         let boxed_handler = handler.into_handler();
@@ -360,19 +365,25 @@ impl McpServerBuilder {
                     .collect()
             });
 
+        let input_schema = ToolInputSchema {
+            schema_type: Some("object".into()),
+            properties: properties.map(|m: HashMap<String, serde_json::Value>| {
+                serde_json::Value::Object(m.into_iter().collect())
+            }),
+            required,
+            additional_properties: None,
+            extra_keywords: std::collections::HashMap::new(),
+        };
         let tool = Tool {
             name: name.clone(),
             description: Some(description),
             title: None,
             icons: None,
-            input_schema: ToolInputSchema {
-                schema_type: Some("object".into()),
-                properties,
-                required,
-                additional_properties: None,
-                extra_keywords: HashMap::new(),
-            },
+            input_schema,
             annotations: None,
+            execution: None,
+            output_schema: None,
+            meta: None,
         };
 
         let boxed_handler = handler.into_handler_with_ctx();
@@ -538,6 +549,7 @@ impl McpServerBuilder {
             mime_type: None,
             size: None,
             annotations: None,
+            meta: None,
         };
 
         let boxed_handler = handler.into_handler();
@@ -590,6 +602,7 @@ impl McpServerBuilder {
             mime_type: None,
             size: None,
             annotations: None,
+            meta: None,
         };
 
         let boxed_handler = handler.into_handler_with_ctx();
@@ -641,6 +654,7 @@ impl McpServerBuilder {
             icons: None,
             mime_type: None,
             annotations: None,
+            meta: None,
         };
 
         let boxed_handler = handler.into_handler();
@@ -695,6 +709,7 @@ impl McpServerBuilder {
             icons: None,
             mime_type: None,
             annotations: None,
+            meta: None,
         };
 
         let boxed_handler = handler.into_handler_with_ctx();
@@ -756,6 +771,7 @@ impl McpServerBuilder {
             } else {
                 Some(arguments)
             },
+            meta: None,
         };
 
         let boxed_handler = handler.into_handler();
@@ -814,6 +830,7 @@ impl McpServerBuilder {
             } else {
                 Some(arguments)
             },
+            meta: None,
         };
 
         let boxed_handler = handler.into_handler_with_ctx();
@@ -896,14 +913,14 @@ impl McpServerBuilder {
             prompts: if self.prompts.is_empty() {
                 None
             } else {
-                Some(turbomcp_core::types::capabilities::PromptsCapability {
+                Some(PromptsCapabilities {
                     list_changed: Some(false),
                 })
             },
             resources: if self.resources.is_empty() && self.resource_templates.is_empty() {
                 None
             } else {
-                Some(turbomcp_core::types::capabilities::ResourcesCapability {
+                Some(ResourcesCapabilities {
                     subscribe: Some(false),
                     list_changed: Some(false),
                 })
@@ -911,7 +928,7 @@ impl McpServerBuilder {
             tools: if self.tools.is_empty() {
                 None
             } else {
-                Some(turbomcp_core::types::capabilities::ToolsCapability {
+                Some(ToolsCapabilities {
                     list_changed: Some(false),
                 })
             },

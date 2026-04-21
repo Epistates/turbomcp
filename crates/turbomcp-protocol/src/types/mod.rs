@@ -6,7 +6,6 @@
 //! # Module Organization
 //!
 //! - [`crate::types::core`] - Core protocol types and utilities
-//! - [`crate::types::domain`] - Validated domain types (Uri, MimeType, Base64String)
 //! - [`crate::types::capabilities`] - Client/server capability negotiation
 //! - [`crate::types::content`] - Message content types (text, image, audio, resources)
 //! - [`crate::types::requests`] - Request/response/notification enums
@@ -26,7 +25,6 @@ pub mod capabilities;
 pub mod completion;
 pub mod content;
 pub mod core;
-pub mod domain;
 pub mod elicitation;
 pub mod initialization;
 pub mod logging;
@@ -44,7 +42,6 @@ pub use capabilities::*;
 pub use completion::*;
 pub use content::*;
 pub use core::*;
-pub use domain::*;
 pub use elicitation::*;
 pub use initialization::*;
 pub use logging::*;
@@ -56,3 +53,12 @@ pub use roots::*;
 pub use sampling::{ModelHint, *};
 pub use tasks::*;
 pub use tools::*;
+
+// Re-export sampling content types from the canonical types crate so they are
+// accessible alongside the protocol's `ContentBlock`. Use `SamplingContent` /
+// `SamplingContentBlock` when constructing `SamplingMessage.content` and
+// `CreateMessageResult.content`. `ToolUseContent` / `ToolResultContent` are the
+// variant payloads for `SamplingContent::ToolUse` / `::ToolResult`.
+pub use turbomcp_types::{
+    SamplingContent, SamplingContentBlock, ToolResultContent, ToolUseContent,
+};

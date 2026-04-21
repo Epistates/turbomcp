@@ -136,8 +136,12 @@ pub use composite::{CompositeServer, CompositeServerBuilder};
 // Re-export visibility layer for progressive disclosure
 pub use visibility::{ComponentFilter, VisibilityLayer, VisibilitySessionGuard};
 
-// Re-export request context for handlers
-pub use context::RequestContext;
+// Re-export request context for handlers, the WASM-transport enum value, and
+// the WASM-specific factory helpers used by the macro-generated handler.
+pub use context::{
+    RequestContext, TransportType, WASM_TIMESTAMP_METADATA_KEY, current_timestamp_ms,
+    from_worker_request, generate_request_id, new_wasm_context,
+};
 
 // Re-export rich context for session state, logging, and progress
 pub use rich_context::{

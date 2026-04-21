@@ -334,7 +334,7 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
 
             if let Some(tool) = tool {
                 let meta = ComponentMeta::from_meta_value(tool.meta.as_ref());
-                if !self.is_visible(&meta, ctx.get_metadata("session_id")) {
+                if !self.is_visible(&meta, ctx.session_id()) {
                     return Err(McpError::tool_not_found(name));
                 }
             }
@@ -357,7 +357,7 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
 
             if let Some(resource) = resource {
                 let meta = ComponentMeta::from_meta_value(resource.meta.as_ref());
-                if !self.is_visible(&meta, ctx.get_metadata("session_id")) {
+                if !self.is_visible(&meta, ctx.session_id()) {
                     return Err(McpError::resource_not_found(uri));
                 }
             }
@@ -380,7 +380,7 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
 
             if let Some(prompt) = prompt {
                 let meta = ComponentMeta::from_meta_value(prompt.meta.as_ref());
-                if !self.is_visible(&meta, ctx.get_metadata("session_id")) {
+                if !self.is_visible(&meta, ctx.session_id()) {
                     return Err(McpError::prompt_not_found(name));
                 }
             }

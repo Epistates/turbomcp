@@ -88,7 +88,9 @@
 //! ```rust,no_run
 //! use turbomcp_client::Client;
 //! use turbomcp_client::sampling::SamplingHandler;
-//! use turbomcp_protocol::types::{ContentBlock, CreateMessageRequest, CreateMessageResult, Role, StopReason, TextContent};
+//! use turbomcp_protocol::types::{
+//!     CreateMessageRequest, CreateMessageResult, Role, SamplingContent, StopReason,
+//! };
 //! use std::future::Future;
 //! use std::pin::Pin;
 //!
@@ -110,16 +112,10 @@
 //!
 //!             Ok(CreateMessageResult {
 //!                 role: Role::Assistant,
-//!                 content: ContentBlock::Text(
-//!                     TextContent {
-//!                         text: "Response from LLM".to_string(),
-//!                         annotations: None,
-//!                         meta: None,
-//!                     }
-//!                 ),
+//!                 content: SamplingContent::text("Response from LLM").into(),
 //!                 model: "gpt-4".to_string(),
-//!                 stop_reason: Some(StopReason::EndTurn),
-//!                 _meta: None,
+//!                 stop_reason: Some(StopReason::EndTurn.to_string()),
+//!                 meta: None,
 //!             })
 //!         })
 //!     }

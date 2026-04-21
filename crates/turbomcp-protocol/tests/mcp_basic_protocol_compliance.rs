@@ -305,7 +305,7 @@ mod icon_compliance {
         // Test that our Icon validation accepts required types
         for mime_type in &required_types {
             let icon = Icon {
-                src: Url::parse("https://example.com/icon.png").unwrap(),
+                src: "https://example.com/icon.png".to_string(),
                 mime_type: Some(mime_type.to_string()),
                 sizes: None,
                 theme: None,
@@ -321,7 +321,7 @@ mod icon_compliance {
         // Test that recommended types are accepted
         for mime_type in &recommended_types {
             let icon = Icon {
-                src: Url::parse("https://example.com/icon.svg").unwrap(),
+                src: "https://example.com/icon.svg".to_string(),
                 mime_type: Some(mime_type.to_string()),
                 sizes: None,
                 theme: None,
@@ -355,7 +355,7 @@ mod icon_compliance {
         // Test safe URIs are accepted
         for uri in &safe_uris {
             let icon = Icon {
-                src: Url::parse(uri).expect("Should be parseable URI"),
+                src: (*uri).to_string(),
                 mime_type: Some("image/png".to_string()),
                 sizes: None,
                 theme: None,
@@ -371,9 +371,9 @@ mod icon_compliance {
         // Test unsafe URIs are rejected
         for uri in &unsafe_uris {
             // Some unsafe URIs might fail parsing or just have bad scheme
-            if let Ok(parsed) = Url::parse(uri) {
+            if Url::parse(uri).is_ok() {
                 let icon = Icon {
-                    src: parsed,
+                    src: (*uri).to_string(),
                     mime_type: Some("image/png".to_string()),
                     sizes: None,
                     theme: None,
@@ -426,8 +426,11 @@ mod icon_compliance {
 
     // Helper functions for icon validation
     fn validate_icon(icon: &Icon) -> std::result::Result<(), String> {
-        // Basic URI scheme validation
-        let uri = &icon.src;
+        // Basic URI scheme validation. `Icon.src` is a plain string per the
+        // MCP 2025-11-25 spec, so we parse lazily with `url::Url::parse` here.
+        let Ok(uri) = Url::parse(&icon.src) else {
+            return Err("Invalid URI".to_string());
+        };
 
         if uri.scheme() == "https" || uri.scheme() == "data" {
             Ok(())

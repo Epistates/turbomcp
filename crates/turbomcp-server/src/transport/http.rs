@@ -37,10 +37,10 @@ use tower_http::limit::RequestBodyLimitLayer;
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
 use turbomcp_core::jsonrpc::JsonRpcResponse as CoreJsonRpcResponse;
-use turbomcp_core::types::core::ProtocolVersion;
 use turbomcp_transport::security::{
     OriginConfig, SecurityHeaders, extract_client_ip, validate_origin,
 };
+use turbomcp_types::ProtocolVersion;
 use uuid::Uuid;
 
 use crate::config::{RateLimiter, ServerConfig};
@@ -467,10 +467,9 @@ async fn route_with_version_tracking<H: McpHandler>(
     session_id: Option<&str>,
 ) -> router::JsonRpcOutgoing {
     let ctx = RequestContext::http();
-    let core_ctx = ctx.to_core_context();
 
     if request.method == "initialize" {
-        let response = router::route_request_with_config(handler, request, &core_ctx, config).await;
+        let response = router::route_request_with_config(handler, request, &ctx, config).await;
 
         // If successful and we have a session, extract and store the negotiated version.
         if let (Some(sid), Some(result)) = (session_id, response.result.as_ref())
@@ -492,11 +491,11 @@ async fn route_with_version_tracking<H: McpHandler>(
     if let Some(sid) = session_id
         && let Some(version) = session_manager.get_protocol_version(sid).await
     {
-        return router::route_request_versioned(handler, request, &core_ctx, &version).await;
+        return router::route_request_versioned(handler, request, &ctx, &version).await;
     }
 
     // Pre-initialize or sessionless: route with config for proper validation.
-    router::route_request_with_config(handler, request, &core_ctx, config).await
+    router::route_request_with_config(handler, request, &ctx, config).await
 }
 
 fn parse_session_id(headers: &HeaderMap) -> Option<String> {

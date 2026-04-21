@@ -1080,6 +1080,7 @@ fn create_valid_prompt() -> Prompt {
         name: "test_prompt".to_string(),
         title: Some("Test Prompt".to_string()),
         description: Some("A test prompt".to_string()),
+        icons: None,
         arguments: Some(vec![create_prompt_argument("arg1")]),
         meta: None,
     }
@@ -1102,6 +1103,7 @@ fn create_valid_resource() -> Resource {
         description: Some("A test resource".to_string()),
         mime_type: Some("text/plain".into()),
         annotations: None,
+        icons: None,
         size: Some(1024),
         meta: None,
     }

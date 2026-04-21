@@ -330,11 +330,11 @@ impl Formatter {
 
 /// Format schema summary for table display
 fn format_schema_summary(schema: &ToolInputSchema) -> String {
-    if let Some(props) = &schema.properties {
-        if !props.is_empty() {
-            let prop_names: Vec<_> = props.keys().map(|k| k.as_str()).collect();
-            return prop_names.join(", ");
-        }
+    if let Some(props) = schema.properties_as_object()
+        && !props.is_empty()
+    {
+        let prop_names: Vec<_> = props.keys().map(|k| k.as_str()).collect();
+        return prop_names.join(", ");
     }
     "No properties".to_string()
 }

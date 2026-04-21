@@ -16,7 +16,7 @@
 //!
 //! ```rust
 //! use turbomcp_protocol::versioning::adapter::{VersionAdapter, adapter_for_version};
-//! use turbomcp_core::types::core::ProtocolVersion;
+//! use turbomcp_types::ProtocolVersion;
 //!
 //! let adapter = adapter_for_version(&ProtocolVersion::V2025_06_18);
 //! assert_eq!(adapter.version(), &ProtocolVersion::V2025_06_18);
@@ -24,7 +24,7 @@
 
 use serde_json::Value;
 use std::collections::HashSet;
-use turbomcp_core::types::core::ProtocolVersion;
+use turbomcp_types::ProtocolVersion;
 
 use crate::types::capabilities::ServerCapabilities;
 

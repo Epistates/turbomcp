@@ -56,17 +56,14 @@ fn test_stop_reason_camel_case_deserialization() {
 
 #[test]
 fn test_create_message_result_with_stop_reason() {
-    // Test full CreateMessageResult with StopReason enum
+    // Test full CreateMessageResult: `stop_reason` is a String per spec; the
+    // `StopReason` helper enum serializes to the same camelCase wire value.
     let result = CreateMessageResult {
         role: Role::Assistant,
-        content: ContentBlock::Text(TextContent {
-            text: "The capital of France is Paris.".to_string(),
-            annotations: None,
-            meta: None,
-        }),
+        content: SamplingContent::text("The capital of France is Paris.").into(),
         model: "claude-3-sonnet-20240307".to_string(),
-        stop_reason: Some(StopReason::EndTurn),
-        _meta: None,
+        stop_reason: Some(StopReason::EndTurn.to_string()),
+        meta: None,
     };
 
     // Serialize
@@ -78,7 +75,7 @@ fn test_create_message_result_with_stop_reason() {
     // Round-trip
     let json_str = serde_json::to_string(&result).unwrap();
     let deserialized: CreateMessageResult = serde_json::from_str(&json_str).unwrap();
-    assert_eq!(deserialized.stop_reason, Some(StopReason::EndTurn));
+    assert_eq!(deserialized.stop_reason.as_deref(), Some("endTurn"));
     assert_eq!(deserialized.model, "claude-3-sonnet-20240307");
 }
 
@@ -98,7 +95,7 @@ fn test_interop_with_spec_example() {
     let result: CreateMessageResult = serde_json::from_value(spec_json).unwrap();
     assert_eq!(result.role, Role::Assistant);
     assert_eq!(result.model, "claude-3-sonnet-20240307");
-    assert_eq!(result.stop_reason, Some(StopReason::EndTurn));
+    assert_eq!(result.stop_reason.as_deref(), Some("endTurn"));
 }
 
 /// Test Gap #6: Priority range validation (0.0-1.0) per schema.json:1346-1370
@@ -199,7 +196,7 @@ fn test_elicit_result_accept_requires_content() {
     let invalid = ElicitResult {
         action: ElicitationAction::Accept,
         content: None,
-        _meta: None,
+        meta: None,
     };
 
     let result = validator.validate_elicit_result(&invalid);
@@ -213,14 +210,15 @@ fn test_elicit_result_accept_with_content_valid() {
     let validator = ProtocolValidator::new();
 
     // Accept with content = VALID
-    let mut content = std::collections::HashMap::new();
-    content.insert("email".to_string(), json!("user@example.com"));
-    content.insert("age".to_string(), json!(30));
+    let content = json!({
+        "email": "user@example.com",
+        "age": 30,
+    });
 
     let valid = ElicitResult {
         action: ElicitationAction::Accept,
         content: Some(content),
-        _meta: None,
+        meta: None,
     };
 
     let result = validator.validate_elicit_result(&valid);
@@ -232,13 +230,12 @@ fn test_elicit_result_decline_with_content_warning() {
     let validator = ProtocolValidator::new();
 
     // Decline with content = WARNING (not recommended but not error)
-    let mut content = std::collections::HashMap::new();
-    content.insert("foo".to_string(), json!("bar"));
+    let content = json!({ "foo": "bar" });
 
     let warning = ElicitResult {
         action: ElicitationAction::Decline,
         content: Some(content),
-        _meta: None,
+        meta: None,
     };
 
     let result = validator.validate_elicit_result(&warning);
@@ -255,7 +252,7 @@ fn test_elicit_result_cancel_without_content_valid() {
     let valid = ElicitResult {
         action: ElicitationAction::Cancel,
         content: None,
-        _meta: None,
+        meta: None,
     };
 
     let result = validator.validate_elicit_result(&valid);
@@ -562,14 +559,15 @@ fn test_full_mcp_compliance_scenario() {
     assert!(prefs_result.is_valid(), "Valid priorities should pass");
 
     // Test elicit result
-    let mut content = std::collections::HashMap::new();
-    content.insert("email".to_string(), json!("test@example.com"));
-    content.insert("priority".to_string(), json!("high"));
+    let content = json!({
+        "email": "test@example.com",
+        "priority": "high",
+    });
 
     let elicit_result = ElicitResult {
         action: ElicitationAction::Accept,
         content: Some(content),
-        _meta: None,
+        meta: None,
     };
 
     let elicit_validation = validator.validate_elicit_result(&elicit_result);
@@ -578,17 +576,13 @@ fn test_full_mcp_compliance_scenario() {
         "Complete elicit result should be valid"
     );
 
-    // Test CreateMessageResult with StopReason
+    // Test CreateMessageResult with StopReason helper → String
     let message_result = CreateMessageResult {
         role: Role::Assistant,
-        content: ContentBlock::Text(TextContent {
-            text: "Response text".to_string(),
-            annotations: None,
-            meta: None,
-        }),
+        content: SamplingContent::text("Response text").into(),
         model: "claude-3-sonnet".to_string(),
-        stop_reason: Some(StopReason::EndTurn),
-        _meta: None,
+        stop_reason: Some(StopReason::EndTurn.to_string()),
+        meta: None,
     };
 
     // Verify serialization

@@ -15,14 +15,10 @@ use tokio::sync::{RwLock, broadcast};
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status};
 use tracing::{debug, info, instrument};
-use turbomcp_core::types::{
-    capabilities::ServerCapabilities,
-    content::ResourceContent,
-    core::Implementation,
-    prompts::{GetPromptResult, Prompt},
-    resources::{Resource, ResourceTemplate},
-    tools::{CallToolResult, Tool},
+use turbomcp_protocol::types::{
+    CallToolResult, GetPromptResult, ResourceContent, ServerCapabilities,
 };
+use turbomcp_types::{Implementation, Prompt, Resource, ResourceTemplate, Tool};
 
 /// Notification sender type
 type NotificationTx = broadcast::Sender<proto::Notification>;
@@ -684,10 +680,13 @@ mod tests {
             .add_tool(Tool {
                 name: "test_tool".to_string(),
                 description: Some("A test tool".to_string()),
-                input_schema: turbomcp_core::types::tools::ToolInputSchema::default(),
+                input_schema: turbomcp_types::ToolInputSchema::default(),
                 title: None,
                 icons: None,
                 annotations: None,
+                execution: None,
+                output_schema: None,
+                meta: None,
             })
             .build();
 

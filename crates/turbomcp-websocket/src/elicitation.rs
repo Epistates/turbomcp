@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::types::{PendingElicitation, WebSocketBidirectionalTransport};
 use turbomcp_protocol::MessageId;
-use turbomcp_protocol::types::{ElicitRequest, ElicitResult, ElicitationAction};
+use turbomcp_protocol::types::{ElicitRequestParams, ElicitResult, ElicitationAction};
 use turbomcp_transport_traits::{
     TransportError, TransportMessage, TransportMessageMetadata, TransportResult,
 };
@@ -25,7 +25,7 @@ impl WebSocketBidirectionalTransport {
     /// Send an elicitation request
     pub async fn send_elicitation(
         &self,
-        request: ElicitRequest,
+        request: ElicitRequestParams,
         timeout_duration: Option<Duration>,
     ) -> TransportResult<ElicitResult> {
         // Check if we're at capacity
@@ -116,7 +116,7 @@ impl WebSocketBidirectionalTransport {
     /// Send an elicitation with retry capability
     pub async fn send_elicitation_with_retry(
         &self,
-        request: ElicitRequest,
+        request: ElicitRequestParams,
         max_retries: u32,
         retry_delay: Duration,
         timeout_duration: Option<Duration>,
@@ -209,7 +209,7 @@ impl WebSocketBidirectionalTransport {
             let cancel_result = ElicitResult {
                 action: ElicitationAction::Cancel,
                 content: None,
-                _meta: None,
+                meta: None,
             };
             let _ = pending.response_tx.send(cancel_result);
             return Ok(());
@@ -341,7 +341,7 @@ impl WebSocketBidirectionalTransport {
             let cancel_result = ElicitResult {
                 action: ElicitationAction::Cancel,
                 content: None,
-                _meta: None,
+                meta: None,
             };
             let _ = pending.response_tx.send(cancel_result);
             debug!(
@@ -449,7 +449,7 @@ pub struct ElicitationInfo {
     /// Request ID
     pub request_id: String,
     /// The elicitation request
-    pub request: ElicitRequest,
+    pub request: ElicitRequestParams,
     /// Timeout deadline
     pub deadline: tokio::time::Instant,
     /// Number of retries attempted

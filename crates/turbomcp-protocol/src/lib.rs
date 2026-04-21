@@ -152,31 +152,22 @@
 //!
 //! ## Server-to-Client Communication
 //!
-//! The protocol provides a `ServerToClientRequests` trait that enables server-initiated requests
-//! to clients, supporting bidirectional communication patterns like sampling and elicitation:
+//! The unified `RequestContext` exposes bidirectional operations directly —
+//! tools call `ctx.sample(...)`, `ctx.elicit_form(...)`,
+//! `ctx.elicit_url(...)`, or `ctx.notify_client(...)` and they succeed
+//! whenever the transport attached a session.
 //!
-//! ```rust,no_run
-//! use turbomcp_protocol::{RequestContext, types::CreateMessageRequest, ServerToClientRequests};
+//! ```rust,ignore
+//! use turbomcp_protocol::RequestContext;
+//! use turbomcp_core::McpError;
+//! use turbomcp_types::CreateMessageRequest;
 //!
-//! // Tools can access server capabilities through the context
-//! async fn my_tool(ctx: RequestContext) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-//!     if let Some(capabilities) = ctx.clone().server_to_client() {
-//!         // Make a fully-typed sampling request to the client
-//!         let request = CreateMessageRequest {
-//!             messages: vec![/* ... */],
-//!             max_tokens: 100,
-//!             model_preferences: None,
-//!             system_prompt: None,
-//!             include_context: None,
-//!             temperature: None,
-//!             stop_sequences: None,
-//!             task: None,
-//!             tools: None,
-//!             tool_choice: None,
-//!             _meta: None,
-//!         };
-//!         let response = capabilities.create_message(request, ctx).await?;
-//!     }
+//! async fn my_tool(ctx: &RequestContext) -> Result<(), McpError> {
+//!     let request = CreateMessageRequest {
+//!         max_tokens: 100,
+//!         ..Default::default()
+//!     };
+//!     let _response = ctx.sample(request).await?;
 //!     Ok(())
 //! }
 //! ```
@@ -302,8 +293,8 @@ pub use context::{
     CompletionReference as ContextCompletionReference, ConnectionMetrics, ElicitationContext,
     ElicitationState, PingContext, PingOrigin, RequestContext, RequestContextExt, RequestInfo,
     ResourceTemplateContext, ResponseContext, RichContextExt, ServerInitiatedContext,
-    ServerInitiatedType, ServerToClientRequests, SessionStateGuard, StateError, TemplateParameter,
-    active_sessions_count, cleanup_session_state,
+    ServerInitiatedType, SessionStateGuard, StateError, TemplateParameter, active_sessions_count,
+    cleanup_session_state,
 };
 // Timestamp and ContentType are now in types module
 pub use enhanced_registry::{EnhancedRegistry, HandlerStats};

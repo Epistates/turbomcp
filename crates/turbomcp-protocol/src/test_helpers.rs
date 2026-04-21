@@ -68,6 +68,7 @@ pub fn test_prompt() -> Prompt {
         name: "test_prompt".to_string(),
         title: Some("Test Prompt".to_string()),
         description: Some("A test prompt".to_string()),
+        icons: None,
         arguments: None,
         meta: None,
     }
@@ -92,6 +93,7 @@ pub fn test_resource() -> Resource {
         description: Some("A test resource".to_string()),
         mime_type: Some("text/plain".into()),
         annotations: None,
+        icons: None,
         size: Some(1024),
         meta: None,
     }

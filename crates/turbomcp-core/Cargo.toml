@@ -40,10 +40,17 @@ rancor = { version = "0.1", default-features = false, optional = true, features 
 
 # Optional std features (for rich-errors)
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock", "std"], optional = true }
+# UUID v4 for RequestContext::new() request-id generation (std-only; WASM builds
+# skip the UUID path and keep the empty default). Small dep, worth the ergonomics.
 uuid = { version = "1.6", default-features = false, features = ["serde", "v4", "std"], optional = true }
 
 # Base64 for Basic auth parsing (optional, std only)
 base64 = { workspace = true, optional = true }
+
+# Tokio-util for CancellationToken integration (optional, std only). Enabling
+# this provides a blanket `impl Cancellable for tokio_util::sync::CancellationToken`
+# so the server can plug tokio-based cancellation into the unified context.
+tokio-util = { workspace = true, optional = true }
 
 [dev-dependencies]
 serde_json = { workspace = true, features = ["std"] }
@@ -57,7 +64,7 @@ required-features = ["zero-copy"]
 
 [features]
 default = ["std"]
-std = ["serde/std", "serde_json/std", "rkyv?/std", "base64"]
+std = ["serde/std", "serde_json/std", "rkyv?/std", "base64", "uuid", "tokio-util"]
 # Enable rich error context with UUID tracking and timestamps
 rich-errors = ["std", "uuid", "chrono"]
 # WASM-specific optimizations

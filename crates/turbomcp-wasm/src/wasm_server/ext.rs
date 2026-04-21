@@ -97,7 +97,7 @@ impl<T: McpHandler> WasmHandlerExt for T {
                 .as_ref()
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "wasm-request".to_string());
-            let ctx = RequestContext::new(request_id, TransportType::Wasm);
+            let ctx = RequestContext::with_id_and_transport(request_id, TransportType::Wasm);
 
             // Route using the shared core router
             let config = RouteConfig::default();
@@ -128,7 +128,7 @@ impl<T: McpHandler> WasmHandlerExt for T {
                 .as_ref()
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "wasm-request".to_string());
-            let ctx = RequestContext::new(request_id, TransportType::Wasm);
+            let ctx = RequestContext::with_id_and_transport(request_id, TransportType::Wasm);
 
             // Route using the shared core router
             let config = RouteConfig::default();

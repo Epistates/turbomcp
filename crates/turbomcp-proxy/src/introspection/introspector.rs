@@ -145,15 +145,12 @@ impl McpIntrospector {
         let request = InitializeRequest {
             protocol_version: PROTOCOL_VERSION.into(),
             capabilities: ClientCapabilities {
-                extensions: None,
                 roots: Some(RootsCapabilities {
                     list_changed: Some(true),
                 }),
                 sampling: Some(SamplingCapabilities {}),
                 elicitation: Some(ElicitationCapabilities::full()),
-                experimental: None,
-                #[cfg(feature = "experimental-tasks")]
-                tasks: None,
+                ..Default::default()
             },
             client_info: Implementation {
                 name: self.client_name.clone(),
@@ -212,19 +209,27 @@ impl McpIntrospector {
 
             // Convert protocol tools to spec tools
             for tool in result.tools {
+                // Helper: extract `properties` out of a raw JSON Schema Value.
+                let extract_properties = |v: Option<&serde_json::Value>| {
+                    v.and_then(|props| props.as_object()).map(|obj| {
+                        obj.iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect::<std::collections::HashMap<_, _>>()
+                    })
+                };
                 all_tools.push(ToolSpec {
                     name: tool.name,
-                    title: None, // Not in Tool type
+                    title: tool.title,
                     description: tool.description,
                     input_schema: ToolInputSchema {
                         schema_type: "object".to_string(),
-                        properties: tool.input_schema.properties,
+                        properties: extract_properties(tool.input_schema.properties.as_ref()),
                         required: tool.input_schema.required,
                         additional: std::collections::HashMap::new(),
                     },
                     output_schema: tool.output_schema.map(|schema| ToolOutputSchema {
                         schema_type: "object".to_string(),
-                        properties: schema.properties,
+                        properties: extract_properties(schema.properties.as_ref()),
                         required: schema.required,
                         additional: std::collections::HashMap::new(),
                     }),
@@ -281,11 +286,11 @@ impl McpIntrospector {
             // Convert protocol resources to spec resources
             for resource in result.resources {
                 all_resources.push(ResourceSpec {
-                    uri: resource.uri.to_string(),
+                    uri: resource.uri.clone(),
                     name: resource.name,
                     title: None,
                     description: resource.description,
-                    mime_type: resource.mime_type.map(Into::into),
+                    mime_type: resource.mime_type,
                     size: resource.size,
                     annotations: resource.annotations.map(|ann| Annotations {
                         fields: serde_json::from_value(

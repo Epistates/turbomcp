@@ -19,6 +19,14 @@ use core::fmt::Display;
 
 use serde::Serialize;
 
+#[cfg(not(feature = "std"))]
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+
 use crate::content::Message;
 use crate::results::{PromptResult, ResourceResult, ToolResult};
 

@@ -7,15 +7,11 @@ use crate::proto::{self, mcp_service_client::McpServiceClient};
 use std::time::Duration;
 use tonic::transport::{Channel, Endpoint};
 use tracing::{debug, info, instrument};
-use turbomcp_core::types::{
-    capabilities::{ClientCapabilities, ServerCapabilities},
-    content::ResourceContent,
-    core::Implementation,
-    initialization::InitializeResult,
-    prompts::{GetPromptResult, Prompt},
-    resources::{Resource, ResourceTemplate},
-    tools::{CallToolResult, Tool},
+use turbomcp_protocol::types::{
+    CallToolResult, ClientCapabilities, GetPromptResult, InitializeResult, ResourceContent,
+    ServerCapabilities,
 };
+use turbomcp_types::{Implementation, Prompt, Resource, ResourceTemplate, Tool};
 
 /// gRPC client for MCP servers
 #[derive(Clone)]

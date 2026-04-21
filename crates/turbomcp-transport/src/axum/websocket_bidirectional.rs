@@ -17,8 +17,8 @@ use turbomcp_protocol::{
         JsonRpcRequest, JsonRpcResponse, JsonRpcResponsePayload, JsonRpcVersion, ResponseId,
     },
     types::{
-        CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsRequest,
-        ListRootsResult, PingRequest, PingResult,
+        CreateMessageRequest, CreateMessageResult, ElicitRequestParams, ElicitResult,
+        ListRootsRequest, ListRootsResult, PingRequest, PingResult,
     },
 };
 
@@ -163,7 +163,7 @@ impl WebSocketDispatcher {
     /// Send elicitation request (will be wrapped by adapter in turbomcp-server)
     pub async fn send_elicitation_request(
         &self,
-        request: ElicitRequest,
+        request: ElicitRequestParams,
     ) -> Result<ElicitResult, String> {
         self.send_request("elicitation/create", request).await
     }

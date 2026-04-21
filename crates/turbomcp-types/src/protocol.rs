@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[cfg(not(feature = "std"))]
-use alloc::collections::BTreeMap as HashMap;
+use alloc::{collections::BTreeMap as HashMap, string::String, vec::Vec};
 #[cfg(feature = "std")]
 use std::collections::HashMap;
 
@@ -126,6 +126,62 @@ pub enum ElicitRequestParams {
     Form(ElicitRequestFormParams),
     /// URL elicitation (out-of-band interaction)
     Url(ElicitRequestURLParams),
+}
+
+impl ElicitRequestParams {
+    /// Create a form-mode elicitation request with no task/meta.
+    #[must_use]
+    pub fn form(message: impl Into<String>, requested_schema: Value) -> Self {
+        Self::Form(ElicitRequestFormParams {
+            message: message.into(),
+            requested_schema,
+            task: None,
+            meta: None,
+        })
+    }
+
+    /// Create a URL-mode elicitation request with no task/meta.
+    #[must_use]
+    pub fn url(
+        message: impl Into<String>,
+        url: impl Into<String>,
+        elicitation_id: impl Into<String>,
+    ) -> Self {
+        Self::Url(ElicitRequestURLParams {
+            message: message.into(),
+            url: url.into(),
+            elicitation_id: elicitation_id.into(),
+            task: None,
+            meta: None,
+        })
+    }
+
+    /// Human-readable message common to both variants.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Form(p) => &p.message,
+            Self::Url(p) => &p.message,
+        }
+    }
+
+    /// Task metadata common to both variants.
+    #[must_use]
+    pub fn task(&self) -> Option<&TaskMetadata> {
+        match self {
+            Self::Form(p) => p.task.as_ref(),
+            Self::Url(p) => p.task.as_ref(),
+        }
+    }
+
+    /// Extension metadata (`_meta`) common to both variants.
+    #[must_use]
+    pub fn meta(&self) -> Option<&HashMap<String, Value>> {
+        match self {
+            Self::Form(p) => p.meta.as_ref(),
+            Self::Url(p) => p.meta.as_ref(),
+        }
+    }
 }
 
 impl Serialize for ElicitRequestParams {

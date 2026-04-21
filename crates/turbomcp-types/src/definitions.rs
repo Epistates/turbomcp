@@ -9,6 +9,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[cfg(not(feature = "std"))]
+use alloc::{collections::BTreeMap as HashMap, string::String, vec::Vec};
+#[cfg(feature = "std")]
+use std::collections::HashMap;
+
 /// Server information for MCP initialization.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ServerInfo {
@@ -70,6 +75,13 @@ impl ServerInfo {
     }
 }
 
+/// Spec-aligned alias for [`ServerInfo`].
+///
+/// MCP 2025-11-25 calls this type `Implementation` for both server and client
+/// identity. The Rust name `ServerInfo` predates the spec; this alias makes
+/// both names available.
+pub type Implementation = ServerInfo;
+
 /// Icon for tools, resources, prompts, or servers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Icon {
@@ -96,8 +108,8 @@ pub enum IconTheme {
     Dark,
 }
 
-impl std::fmt::Display for IconTheme {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for IconTheme {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Light => f.write_str("light"),
             Self::Dark => f.write_str("dark"),
@@ -164,10 +176,10 @@ pub struct Tool {
     pub execution: Option<ToolExecution>,
     /// Output schema for structured results
     #[serde(rename = "outputSchema", skip_serializing_if = "Option::is_none")]
-    pub output_schema: Option<Value>,
+    pub output_schema: Option<ToolOutputSchema>,
     /// Extension metadata (tags, version, etc.)
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<std::collections::HashMap<String, Value>>,
+    pub meta: Option<HashMap<String, Value>>,
 }
 
 impl Tool {
@@ -191,7 +203,7 @@ impl Tool {
 
     /// Set the output schema.
     #[must_use]
-    pub fn with_output_schema(mut self, schema: Value) -> Self {
+    pub fn with_output_schema(mut self, schema: ToolOutputSchema) -> Self {
         self.output_schema = Some(schema);
         self
     }
@@ -252,8 +264,8 @@ pub enum TaskSupportLevel {
     Required,
 }
 
-impl std::fmt::Display for TaskSupportLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for TaskSupportLevel {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Forbidden => f.write_str("forbidden"),
             Self::Optional => f.write_str("optional"),
@@ -263,12 +275,16 @@ impl std::fmt::Display for TaskSupportLevel {
 }
 
 /// JSON Schema for tool input parameters.
+///
+/// `properties` is stored as a raw `serde_json::Value` (typically an object) to
+/// keep the surface forward-compatible with arbitrary JSON Schema. Use
+/// [`ToolInputSchema::properties_as_object`] for map-style access.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ToolInputSchema {
     /// Schema type declaration. This may be a string or an array of strings.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub schema_type: Option<Value>,
-    /// Property definitions
+    /// Property definitions (raw JSON Schema object).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub properties: Option<Value>,
     /// Required property names
@@ -281,12 +297,8 @@ pub struct ToolInputSchema {
     )]
     pub additional_properties: Option<Value>,
     /// Additional JSON Schema keywords preserved losslessly.
-    #[serde(
-        flatten,
-        default,
-        skip_serializing_if = "std::collections::HashMap::is_empty"
-    )]
-    pub extra_keywords: std::collections::HashMap<String, Value>,
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra_keywords: HashMap<String, Value>,
 }
 
 impl Default for ToolInputSchema {
@@ -296,7 +308,7 @@ impl Default for ToolInputSchema {
             properties: None,
             required: None,
             additional_properties: Some(Value::Bool(false)),
-            extra_keywords: std::collections::HashMap::new(),
+            extra_keywords: HashMap::new(),
         }
     }
 }
@@ -309,9 +321,129 @@ impl ToolInputSchema {
     }
 
     /// Create from a JSON value (typically from schemars).
+    ///
+    /// Falls back to [`ToolInputSchema::default`] if the value cannot be
+    /// deserialized as a schema (e.g. not an object).
     #[must_use]
     pub fn from_value(value: Value) -> Self {
         serde_json::from_value(value).unwrap_or_default()
+    }
+
+    /// Borrow `properties` as a JSON object map if present.
+    #[must_use]
+    pub fn properties_as_object(&self) -> Option<&serde_json::Map<String, Value>> {
+        self.properties.as_ref().and_then(|v| v.as_object())
+    }
+
+    /// Build a schema from an explicit property map.
+    #[must_use]
+    pub fn with_properties(properties: HashMap<String, Value>) -> Self {
+        let obj: serde_json::Map<String, Value> = properties.into_iter().collect();
+        Self {
+            schema_type: Some(Value::String("object".into())),
+            properties: Some(Value::Object(obj)),
+            required: None,
+            additional_properties: None,
+            extra_keywords: HashMap::new(),
+        }
+    }
+
+    /// Build a schema from property map + `required` list.
+    #[must_use]
+    pub fn with_required_properties(
+        properties: HashMap<String, Value>,
+        required: Vec<String>,
+    ) -> Self {
+        let obj: serde_json::Map<String, Value> = properties.into_iter().collect();
+        Self {
+            schema_type: Some(Value::String("object".into())),
+            properties: Some(Value::Object(obj)),
+            required: Some(required),
+            additional_properties: Some(Value::Bool(false)),
+            extra_keywords: HashMap::new(),
+        }
+    }
+
+    /// Add a property to the schema (builder style).
+    #[must_use]
+    pub fn add_property(mut self, name: impl Into<String>, property: Value) -> Self {
+        let obj = match self.properties.take() {
+            Some(Value::Object(m)) => m,
+            _ => serde_json::Map::new(),
+        };
+        let mut obj = obj;
+        obj.insert(name.into(), property);
+        self.properties = Some(Value::Object(obj));
+        self
+    }
+
+    /// Mark a property as required (builder style). No-op if already required.
+    #[must_use]
+    pub fn require_property(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        let required = self.required.get_or_insert_with(Vec::new);
+        if !required.contains(&name) {
+            required.push(name);
+        }
+        self
+    }
+}
+
+/// JSON Schema for a tool's structured output (`outputSchema` per MCP spec).
+///
+/// Has the same shape as [`ToolInputSchema`]; a separate struct preserves the
+/// distinction between input and output schemas at the Rust type level.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ToolOutputSchema {
+    /// Schema type declaration. This may be a string or an array of strings.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub schema_type: Option<Value>,
+    /// Property definitions (raw JSON Schema object).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub properties: Option<Value>,
+    /// Required property names.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<Vec<String>>,
+    /// Whether additional properties are allowed, or a schema constraining them.
+    #[serde(
+        rename = "additionalProperties",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub additional_properties: Option<Value>,
+    /// Additional JSON Schema keywords preserved losslessly.
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra_keywords: HashMap<String, Value>,
+}
+
+impl Default for ToolOutputSchema {
+    fn default() -> Self {
+        Self {
+            schema_type: Some(Value::String("object".into())),
+            properties: None,
+            required: None,
+            additional_properties: None,
+            extra_keywords: HashMap::new(),
+        }
+    }
+}
+
+impl ToolOutputSchema {
+    /// Create an empty object output schema.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Create from a JSON value (e.g. a `schemars`-generated schema).
+    #[must_use]
+    pub fn from_value(value: Value) -> Self {
+        serde_json::from_value(value).unwrap_or_default()
+    }
+
+    /// Borrow `properties` as a JSON object map if present.
+    #[must_use]
+    pub fn properties_as_object(&self) -> Option<&serde_json::Map<String, Value>> {
+        self.properties.as_ref().and_then(|v| v.as_object())
     }
 }
 
@@ -394,7 +526,7 @@ pub struct Resource {
     pub size: Option<u64>,
     /// Extension metadata (tags, version, etc.)
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<std::collections::HashMap<String, Value>>,
+    pub meta: Option<HashMap<String, Value>>,
 }
 
 impl Resource {
@@ -478,10 +610,16 @@ pub struct ResourceTemplate {
     /// Template annotations
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ResourceAnnotations>,
+    /// Extension metadata
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, Value>>,
 }
 
 impl ResourceTemplate {
-    /// Create a new resource template.
+    /// Create a new resource template, without validation.
+    ///
+    /// Use [`ResourceTemplate::try_new`] for structural validation of the URI
+    /// template string against RFC 6570 brace balance.
     #[must_use]
     pub fn new(uri_template: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
@@ -489,6 +627,25 @@ impl ResourceTemplate {
             name: name.into(),
             ..Default::default()
         }
+    }
+
+    /// Create a new resource template, validating the URI template against
+    /// the structural shape of RFC 6570 (matched `{` / `}` without nesting).
+    ///
+    /// This is a lightweight check that catches the common drift modes — typos
+    /// in expression names and missing closing braces — without attempting
+    /// full RFC 6570 expansion.
+    pub fn try_new(
+        uri_template: impl Into<String>,
+        name: impl Into<String>,
+    ) -> Result<Self, &'static str> {
+        let uri_template = uri_template.into();
+        validate_uri_template(&uri_template)?;
+        Ok(Self {
+            uri_template,
+            name: name.into(),
+            ..Default::default()
+        })
     }
 
     /// Set the description.
@@ -504,6 +661,35 @@ impl ResourceTemplate {
         self.icons.get_or_insert_with(Vec::new).push(icon);
         self
     }
+}
+
+/// Validate a string against the structural shape of an RFC 6570 URI Template.
+///
+/// Checks for balanced `{` / `}` braces without nesting. This does not attempt
+/// full RFC 6570 expansion — it catches typos and missing closing braces.
+pub fn validate_uri_template(s: &str) -> Result<(), &'static str> {
+    let mut depth = 0i32;
+    for ch in s.chars() {
+        match ch {
+            '{' => {
+                depth += 1;
+                if depth > 1 {
+                    return Err("URI template: nested '{' not allowed in RFC 6570");
+                }
+            }
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return Err("URI template: unbalanced '}' (no matching '{')");
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return Err("URI template: unbalanced '{' (missing closing '}')");
+    }
+    Ok(())
 }
 
 /// Prompt definition.
@@ -527,7 +713,7 @@ pub struct Prompt {
     pub arguments: Option<Vec<PromptArgument>>,
     /// Extension metadata (tags, version, etc.)
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
-    pub meta: Option<std::collections::HashMap<String, Value>>,
+    pub meta: Option<HashMap<String, Value>>,
 }
 
 impl Prompt {

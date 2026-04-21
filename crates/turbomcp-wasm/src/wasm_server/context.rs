@@ -1,237 +1,112 @@
 //! Request context for WASM MCP handlers.
 //!
-//! This module provides a WASM-compatible `RequestContext` that can be passed
-//! to tool, resource, and prompt handlers for accessing request metadata.
+//! v3.2 collapsed the previously-parallel WASM `RequestContext` into the
+//! single canonical type defined in `turbomcp-core`. This module now
+//! re-exports that type and provides WASM-specific construction helpers:
+//!
+//! - [`new_wasm_context`]: fresh context with a Web-Crypto-generated request
+//!   ID (falls back to entropy hashing on native tests).
+//! - [`from_worker_request`]: build a context from a Cloudflare Worker request
+//!   with request ID, session ID, and HTTP headers.
+//! - [`current_timestamp_ms`]: wall-clock milliseconds (JS `Date.now()` on
+//!   WASM, `SystemTime` on native).
 //!
 //! ## Example
 //!
 //! ```ignore
-//! use turbomcp_wasm::wasm_server::RequestContext;
+//! use turbomcp_wasm::wasm_server::context::{new_wasm_context, from_worker_request};
 //!
 //! async fn my_tool(ctx: &RequestContext, args: MyArgs) -> String {
-//!     // Access session ID
 //!     if let Some(session) = ctx.session_id() {
-//!         println!("Session: {}", session);
+//!         println!("Session: {session}");
 //!     }
-//!
-//!     // Access HTTP headers
 //!     if let Some(user_agent) = ctx.header("user-agent") {
-//!         println!("User-Agent: {}", user_agent);
+//!         println!("User-Agent: {user_agent}");
 //!     }
-//!
 //!     format!("Request ID: {}", ctx.request_id())
 //! }
 //! ```
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use hashbrown::HashMap as HashbrownMap;
 
-use serde_json::Value;
+pub use turbomcp_core::context::{RequestContext, TransportType};
 
-/// Request context passed to MCP handlers.
+/// Metadata key under which [`new_wasm_context`] records the request
+/// wall-clock timestamp. WASM doesn't have a usable `std::time::Instant`,
+/// so the JS `Date.now()` value lives in metadata where tool bodies can
+/// read it via `ctx.get_metadata("wasm_timestamp_ms")`.
+pub const WASM_TIMESTAMP_METADATA_KEY: &str = "wasm_timestamp_ms";
+
+/// Build a fresh [`RequestContext`] for the Wasm transport with a
+/// cryptographically-generated request ID and a wall-clock timestamp stored
+/// in metadata under [`WASM_TIMESTAMP_METADATA_KEY`].
+pub fn new_wasm_context() -> RequestContext {
+    RequestContext::with_id_and_transport(generate_request_id(), TransportType::Wasm).with_metadata(
+        WASM_TIMESTAMP_METADATA_KEY,
+        serde_json::Value::from(current_timestamp_ms()),
+    )
+}
+
+/// Build a [`RequestContext`] from an incoming Cloudflare Worker request.
 ///
-/// Contains metadata about the current request including session information,
-/// HTTP headers, user identity, and custom metadata.
-#[derive(Clone, Debug)]
-pub struct RequestContext {
-    /// Unique identifier for this request (typically UUID)
-    request_id: String,
-
-    /// Session ID for stateful connections
+/// If `request_id` is `None`, one is generated. `session_id` and `headers`
+/// are attached when present. Accepts any `IntoIterator` of `(String, String)`
+/// pairs so callers using either `std::collections::HashMap` or
+/// `hashbrown::HashMap` work without conversion.
+pub fn from_worker_request(
+    request_id: Option<String>,
     session_id: Option<String>,
-
-    /// User ID for authenticated requests
-    user_id: Option<String>,
-
-    /// Client ID (application identifier)
-    client_id: Option<String>,
-
-    /// Transport type (e.g., "http", "websocket", "wasm-worker")
-    transport: Option<String>,
-
-    /// HTTP headers from the incoming request
-    headers: Option<HashMap<String, String>>,
-
-    /// Custom metadata key-value pairs
-    metadata: Arc<HashMap<String, Value>>,
-
-    /// Request timestamp (Unix milliseconds)
-    timestamp_ms: u64,
-}
-
-impl RequestContext {
-    /// Create a new request context with a generated request ID.
-    pub fn new() -> Self {
-        Self {
-            request_id: generate_request_id(),
-            session_id: None,
-            user_id: None,
-            client_id: None,
-            transport: Some("wasm-worker".to_string()),
-            headers: None,
-            metadata: Arc::new(HashMap::new()),
-            timestamp_ms: current_timestamp_ms(),
-        }
+    headers: impl IntoIterator<Item = (String, String)>,
+) -> RequestContext {
+    let id = request_id.unwrap_or_else(generate_request_id);
+    let headers: HashbrownMap<String, String> = headers.into_iter().collect();
+    let mut ctx = RequestContext::with_id_and_transport(id, TransportType::Wasm)
+        .with_metadata(
+            WASM_TIMESTAMP_METADATA_KEY,
+            serde_json::Value::from(current_timestamp_ms()),
+        )
+        .with_headers(headers);
+    if let Some(sid) = session_id {
+        ctx = ctx.with_session_id(sid);
     }
-
-    /// Create a request context with a specific request ID.
-    pub fn with_id(request_id: impl Into<String>) -> Self {
-        Self {
-            request_id: request_id.into(),
-            ..Self::new()
-        }
-    }
-
-    /// Get the request ID.
-    pub fn request_id(&self) -> &str {
-        &self.request_id
-    }
-
-    /// Get the session ID, if set.
-    pub fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
-    }
-
-    /// Set the session ID.
-    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
-        self.session_id = Some(session_id.into());
-        self
-    }
-
-    /// Get the user ID, if set.
-    pub fn user_id(&self) -> Option<&str> {
-        self.user_id.as_deref()
-    }
-
-    /// Set the user ID.
-    pub fn with_user_id(mut self, user_id: impl Into<String>) -> Self {
-        self.user_id = Some(user_id.into());
-        self
-    }
-
-    /// Get the client ID, if set.
-    pub fn client_id(&self) -> Option<&str> {
-        self.client_id.as_deref()
-    }
-
-    /// Set the client ID.
-    pub fn with_client_id(mut self, client_id: impl Into<String>) -> Self {
-        self.client_id = Some(client_id.into());
-        self
-    }
-
-    /// Get the transport type.
-    pub fn transport(&self) -> Option<&str> {
-        self.transport.as_deref()
-    }
-
-    /// Set the transport type.
-    pub fn with_transport(mut self, transport: impl Into<String>) -> Self {
-        self.transport = Some(transport.into());
-        self
-    }
-
-    /// Get all HTTP headers.
-    pub fn headers(&self) -> Option<&HashMap<String, String>> {
-        self.headers.as_ref()
-    }
-
-    /// Set HTTP headers.
-    pub fn with_headers(mut self, headers: HashMap<String, String>) -> Self {
-        self.headers = Some(headers);
-        self
-    }
-
-    /// Get a specific HTTP header (case-insensitive).
-    pub fn header(&self, name: &str) -> Option<&str> {
-        let headers = self.headers.as_ref()?;
-        let name_lower = name.to_lowercase();
-
-        headers
-            .iter()
-            .find(|(key, _)| key.to_lowercase() == name_lower)
-            .map(|(_, value)| value.as_str())
-    }
-
-    /// Get a metadata value by key.
-    pub fn get_metadata(&self, key: &str) -> Option<&Value> {
-        self.metadata.get(key)
-    }
-
-    /// Set a metadata value.
-    pub fn with_metadata(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
-        Arc::make_mut(&mut self.metadata).insert(key.into(), value.into());
-        self
-    }
-
-    /// Get the request timestamp in Unix milliseconds.
-    pub fn timestamp_ms(&self) -> u64 {
-        self.timestamp_ms
-    }
-
-    /// Check if the request has a specific role.
-    ///
-    /// Roles are stored in the "auth.roles" metadata field.
-    pub fn has_role(&self, role: &str) -> bool {
-        self.get_metadata("auth")
-            .and_then(|auth| auth.get("roles"))
-            .and_then(|roles| roles.as_array())
-            .map(|roles| roles.iter().any(|r| r.as_str() == Some(role)))
-            .unwrap_or(false)
-    }
-
-    /// Check if the request is authenticated.
-    ///
-    /// Authentication status is stored in the "authenticated" metadata field.
-    pub fn is_authenticated(&self) -> bool {
-        self.get_metadata("authenticated")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-    }
-
-    /// Create a context from an incoming Worker request.
-    pub fn from_worker_request(
-        request_id: Option<String>,
-        session_id: Option<String>,
-        headers: HashMap<String, String>,
-    ) -> Self {
-        let mut ctx = Self::new();
-        ctx.request_id = request_id.unwrap_or_else(generate_request_id);
-        ctx.session_id = session_id;
-        ctx.headers = Some(headers);
-        ctx
-    }
-}
-
-impl Default for RequestContext {
-    fn default() -> Self {
-        Self::new()
-    }
+    ctx
 }
 
 /// Generate a unique request ID with cryptographic randomness.
 ///
-/// Uses Web Crypto API on WASM, getrandom on native.
-/// Format: `req-{timestamp_hex}-{random_hex}`
-fn generate_request_id() -> String {
-    let timestamp = current_timestamp_ms();
-
-    // Get 8 bytes of cryptographic randomness
-    let random = get_random_u64();
-
-    format!("req-{timestamp:x}-{random:x}")
+/// Uses the Web Crypto API on WASM (`req-{timestamp_hex}-{random_hex}`) and
+/// a non-cryptographic fallback on native (tests only).
+pub fn generate_request_id() -> String {
+    format!("req-{:x}-{:x}", current_timestamp_ms(), get_random_u64())
 }
 
-/// Get cryptographically secure random u64.
+/// Get the current wall-clock timestamp in Unix milliseconds.
+///
+/// Uses `js_sys::Date::now()` in WASM, `SystemTime` on native.
+#[cfg(target_arch = "wasm32")]
+pub fn current_timestamp_ms() -> u64 {
+    js_sys::Date::now() as u64
+}
+
+/// Native fallback for [`current_timestamp_ms`] (tests only).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn current_timestamp_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Get cryptographically secure random `u64`.
 #[cfg(target_arch = "wasm32")]
 fn get_random_u64() -> u64 {
-    // Use Web Crypto API for secure randomness
-    if let Some(window) = web_sys::window() {
-        if let Ok(crypto) = window.crypto() {
-            let mut bytes = [0u8; 8];
-            if crypto.get_random_values_with_u8_array(&mut bytes).is_ok() {
-                return u64::from_le_bytes(bytes);
-            }
+    if let Some(window) = web_sys::window()
+        && let Ok(crypto) = window.crypto()
+    {
+        let mut bytes = [0u8; 8];
+        if crypto.get_random_values_with_u8_array(&mut bytes).is_ok() {
+            return u64::from_le_bytes(bytes);
         }
     }
     // Fallback: use timestamp (weak but non-zero)
@@ -240,8 +115,7 @@ fn get_random_u64() -> u64 {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn get_random_u64() -> u64 {
-    // For native builds (primarily used for testing), combine multiple entropy sources
-    // This is NOT cryptographically secure but sufficient for request ID uniqueness
+    // For native builds (tests only). NOT cryptographically secure.
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     use std::thread;
@@ -249,27 +123,9 @@ fn get_random_u64() -> u64 {
     let mut hasher = DefaultHasher::new();
     current_timestamp_ms().hash(&mut hasher);
     thread::current().id().hash(&mut hasher);
-    // Add some address-space randomness from stack location
     let stack_var: u8 = 0;
     (std::ptr::from_ref(&stack_var) as usize).hash(&mut hasher);
     hasher.finish()
-}
-
-/// Get the current timestamp in milliseconds.
-///
-/// Uses `js_sys::Date::now()` in WASM, falls back to 0 on native.
-#[cfg(target_arch = "wasm32")]
-fn current_timestamp_ms() -> u64 {
-    js_sys::Date::now() as u64
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn current_timestamp_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -277,40 +133,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new_context() {
-        let ctx = RequestContext::new();
+    fn new_wasm_context_populates_request_id_and_transport() {
+        let ctx = new_wasm_context();
         assert!(ctx.request_id().starts_with("req-"));
-        assert!(ctx.timestamp_ms() > 0);
-        assert_eq!(ctx.transport(), Some("wasm-worker"));
+        assert_eq!(ctx.transport(), TransportType::Wasm);
+        let ts = ctx
+            .get_metadata(WASM_TIMESTAMP_METADATA_KEY)
+            .and_then(|v| v.as_u64())
+            .expect("timestamp should be set");
+        assert!(ts > 0);
     }
 
     #[test]
-    fn test_with_id() {
-        let ctx = RequestContext::with_id("custom-id");
-        assert_eq!(ctx.request_id(), "custom-id");
-    }
-
-    #[test]
-    fn test_session_id() {
-        let ctx = RequestContext::new().with_session_id("session-123");
+    fn builder_chain_round_trip() {
+        let ctx = new_wasm_context()
+            .with_session_id("session-123")
+            .with_user_id("user-456")
+            .with_client_id("client-789");
         assert_eq!(ctx.session_id(), Some("session-123"));
-    }
-
-    #[test]
-    fn test_user_id() {
-        let ctx = RequestContext::new().with_user_id("user-456");
         assert_eq!(ctx.user_id(), Some("user-456"));
+        assert_eq!(ctx.client_id(), Some("client-789"));
+        assert!(ctx.is_authenticated(), "user_id implies authenticated");
     }
 
     #[test]
-    fn test_headers() {
-        let mut headers = HashMap::new();
-        headers.insert("User-Agent".to_string(), "TestClient/1.0".to_string());
-        headers.insert("Content-Type".to_string(), "application/json".to_string());
+    fn case_insensitive_headers() {
+        let mut headers: HashbrownMap<String, String> = HashbrownMap::new();
+        headers.insert("User-Agent".into(), "TestClient/1.0".into());
+        headers.insert("Content-Type".into(), "application/json".into());
+        let ctx = new_wasm_context().with_headers(headers);
 
-        let ctx = RequestContext::new().with_headers(headers);
-
-        // Case-insensitive lookup
         assert_eq!(ctx.header("user-agent"), Some("TestClient/1.0"));
         assert_eq!(ctx.header("USER-AGENT"), Some("TestClient/1.0"));
         assert_eq!(ctx.header("content-type"), Some("application/json"));
@@ -318,52 +170,41 @@ mod tests {
     }
 
     #[test]
-    fn test_metadata() {
-        let ctx = RequestContext::new()
-            .with_metadata("tenant", serde_json::json!("acme"))
-            .with_metadata("priority", serde_json::json!(5));
-
+    fn metadata_round_trip() {
+        let ctx = new_wasm_context()
+            .with_metadata("tenant", "acme")
+            .with_metadata("priority", 5);
         assert_eq!(ctx.get_metadata("tenant"), Some(&serde_json::json!("acme")));
         assert_eq!(ctx.get_metadata("priority"), Some(&serde_json::json!(5)));
         assert_eq!(ctx.get_metadata("unknown"), None);
     }
 
     #[test]
-    fn test_roles() {
-        let ctx = RequestContext::new().with_metadata(
-            "auth",
-            serde_json::json!({
-                "roles": ["admin", "user"]
-            }),
-        );
-
-        assert!(ctx.has_role("admin"));
-        assert!(ctx.has_role("user"));
-        assert!(!ctx.has_role("superuser"));
+    fn roles_from_auth_metadata() {
+        let ctx = new_wasm_context()
+            .with_metadata("auth", serde_json::json!({ "roles": ["admin", "user"] }));
+        assert!(ctx.has_any_role(&["admin"]));
+        assert!(ctx.has_any_role(&["user", "other"]));
+        assert!(!ctx.has_any_role(&["superuser"]));
     }
 
     #[test]
-    fn test_authenticated() {
-        let ctx = RequestContext::new().with_metadata("authenticated", serde_json::json!(true));
-        assert!(ctx.is_authenticated());
+    fn from_worker_request_attaches_headers_and_ids() {
+        let mut headers: HashbrownMap<String, String> = HashbrownMap::new();
+        headers.insert("authorization".into(), "Bearer token123".into());
 
-        let ctx2 = RequestContext::new();
-        assert!(!ctx2.is_authenticated());
-    }
-
-    #[test]
-    fn test_from_worker_request() {
-        let mut headers = HashMap::new();
-        headers.insert("authorization".to_string(), "Bearer token123".to_string());
-
-        let ctx = RequestContext::from_worker_request(
-            Some("req-abc".into()),
-            Some("sess-xyz".into()),
-            headers,
-        );
+        let ctx = from_worker_request(Some("req-abc".into()), Some("sess-xyz".into()), headers);
 
         assert_eq!(ctx.request_id(), "req-abc");
         assert_eq!(ctx.session_id(), Some("sess-xyz"));
         assert_eq!(ctx.header("authorization"), Some("Bearer token123"));
+        assert_eq!(ctx.transport(), TransportType::Wasm);
+    }
+
+    #[test]
+    fn from_worker_request_generates_id_if_missing() {
+        let headers: HashbrownMap<String, String> = HashbrownMap::new();
+        let ctx = from_worker_request(None, None, headers);
+        assert!(ctx.request_id().starts_with("req-"));
     }
 }

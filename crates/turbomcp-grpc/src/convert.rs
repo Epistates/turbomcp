@@ -3,17 +3,35 @@
 //! This module provides bidirectional conversion between native MCP types
 //! and the generated protobuf types.
 
+// After the v3.2 type-hierarchy consolidation, many of the `MimeType` /
+// `Base64String` newtypes collapsed into transparent `String` aliases and
+// the empty-marker capability structs made `|_| Default::default()` a no-op
+// pattern. Silence the associated lints module-wide rather than retrofitting
+// each conversion site.
+#![allow(
+    clippy::default_trait_access,
+    clippy::useless_conversion,
+    clippy::implicit_clone
+)]
+
 use crate::error::{GrpcError, GrpcResult};
 use crate::proto;
-use turbomcp_core::types::{
-    capabilities::{ClientCapabilities, ServerCapabilities},
-    content::{Content, PromptMessage, ResourceContent},
-    core::{Annotations, Icon, Implementation, Role},
-    initialization::{InitializeRequest, InitializeResult},
-    prompts::{GetPromptResult, Prompt, PromptArgument},
-    resources::{Resource, ResourceTemplate},
-    tools::{CallToolResult, Tool, ToolInputSchema},
+use turbomcp_protocol::types::{
+    CallToolResult, ClientCapabilities, ClientTasksCapabilities, ClientTasksRequestsCapabilities,
+    CompletionCapabilities, ElicitationCapabilities, GetPromptResult, InitializeRequest,
+    InitializeResult, LoggingCapabilities, PromptsCapabilities, ResourcesCapabilities,
+    RootsCapabilities, SamplingCapabilities, ServerCapabilities, ServerTasksCapabilities,
+    ServerTasksRequestsCapabilities, TasksElicitationCapabilities, TasksSamplingCapabilities,
+    TasksToolsCapabilities, ToolsCapabilities,
 };
+use turbomcp_types::{
+    Annotations, AudioContent, BlobResourceContents, Content, Icon, ImageContent, Implementation,
+    Prompt, PromptArgument, PromptMessage, Resource, ResourceAnnotations, ResourceContents,
+    ResourceTemplate, Role, TextContent, TextResourceContents, Tool, ToolInputSchema,
+};
+
+/// Historical alias for module-local clarity; `ResourceContent` === `ResourceContents`.
+type ResourceContent = ResourceContents;
 
 fn encode_json_map(
     map: std::collections::HashMap<String, serde_json::Value>,
@@ -41,6 +59,7 @@ fn decode_json_map(
         .collect()
 }
 
+#[allow(dead_code)]
 fn empty_capability_from_map<T>(map: Option<T>) -> Option<proto::EmptyCapability> {
     map.map(|_| proto::EmptyCapability {})
 }
@@ -192,23 +211,25 @@ impl From<ClientCapabilities> for proto::ClientCapabilities {
             elicitation: caps
                 .elicitation
                 .map(|elicitation| proto::ElicitationCapability {
-                    form: empty_capability_from_map(elicitation.form),
-                    url: empty_capability_from_map(elicitation.url),
+                    form: elicitation.form.map(|_| proto::EmptyCapability {}),
+                    url: elicitation.url.map(|_| proto::EmptyCapability {}),
                 }),
             tasks: caps.tasks.map(|tasks| proto::ClientTasksCapability {
-                list: empty_capability_from_map(tasks.list),
-                cancel: empty_capability_from_map(tasks.cancel),
+                list: tasks.list.map(|_| proto::EmptyCapability {}),
+                cancel: tasks.cancel.map(|_| proto::EmptyCapability {}),
                 requests: tasks
                     .requests
                     .map(|requests| proto::ClientTaskRequestsCapability {
                         sampling: requests.sampling.map(|sampling| {
                             proto::ClientTaskSamplingCapability {
-                                create_message: empty_capability_from_map(sampling.create_message),
+                                create_message: sampling
+                                    .create_message
+                                    .map(|_| proto::EmptyCapability {}),
                             }
                         }),
                         elicitation: requests.elicitation.map(|elicitation| {
                             proto::ClientTaskElicitationCapability {
-                                create: empty_capability_from_map(elicitation.create),
+                                create: elicitation.create.map(|_| proto::EmptyCapability {}),
                             }
                         }),
                     }),
@@ -220,47 +241,34 @@ impl From<ClientCapabilities> for proto::ClientCapabilities {
     }
 }
 
-#[allow(clippy::default_trait_access)]
 impl From<proto::ClientCapabilities> for ClientCapabilities {
     fn from(caps: proto::ClientCapabilities) -> Self {
         Self {
-            roots: caps
-                .roots
-                .map(|r| turbomcp_core::types::capabilities::RootsCapability {
-                    list_changed: Some(r.list_changed),
-                }),
-            sampling: caps
-                .sampling
-                .map(|_| turbomcp_core::types::capabilities::SamplingCapability {}),
-            elicitation: caps.elicitation.map(|elicitation| {
-                turbomcp_core::types::capabilities::ElicitationCapability {
-                    form: elicitation.form.map(|_| Default::default()),
-                    url: elicitation.url.map(|_| Default::default()),
-                }
+            roots: caps.roots.map(|r| RootsCapabilities {
+                list_changed: Some(r.list_changed),
             }),
-            tasks: caps.tasks.map(
-                |tasks| turbomcp_core::types::capabilities::TasksCapability {
-                    list: tasks.list.map(|_| Default::default()),
-                    cancel: tasks.cancel.map(|_| Default::default()),
-                    requests: tasks.requests.map(|requests| {
-                        turbomcp_core::types::capabilities::TaskRequestsCapability {
-                            tools: None,
-                            sampling: requests.sampling.map(|sampling| {
-                                turbomcp_core::types::capabilities::TaskSamplingCapability {
-                                    create_message: sampling
-                                        .create_message
-                                        .map(|_| Default::default()),
-                                }
-                            }),
-                            elicitation: requests.elicitation.map(|elicitation| {
-                                turbomcp_core::types::capabilities::TaskElicitationCapability {
-                                    create: elicitation.create.map(|_| Default::default()),
-                                }
-                            }),
-                        }
+            sampling: caps.sampling.map(|_| SamplingCapabilities {}),
+            elicitation: caps.elicitation.map(|elicitation| ElicitationCapabilities {
+                form: elicitation.form.map(|_| Default::default()),
+                url: elicitation.url.map(|_| Default::default()),
+                schema_validation: None,
+            }),
+            tasks: caps.tasks.map(|tasks| ClientTasksCapabilities {
+                list: tasks.list.map(|_| Default::default()),
+                cancel: tasks.cancel.map(|_| Default::default()),
+                requests: tasks
+                    .requests
+                    .map(|requests| ClientTasksRequestsCapabilities {
+                        sampling: requests.sampling.map(|sampling| TasksSamplingCapabilities {
+                            create_message: sampling.create_message.map(|_| Default::default()),
+                        }),
+                        elicitation: requests.elicitation.map(|elicitation| {
+                            TasksElicitationCapabilities {
+                                create: elicitation.create.map(|_| Default::default()),
+                            }
+                        }),
                     }),
-                },
-            ),
+            }),
             extensions: caps.extensions.map(|extensions| {
                 decode_json_map(extensions.capabilities)
                     .into_iter()
@@ -296,15 +304,15 @@ impl From<ServerCapabilities> for proto::ServerCapabilities {
                 }),
             completions: caps.completions.map(|_| proto::CompletionCapability {}),
             tasks: caps.tasks.map(|tasks| proto::ServerTasksCapability {
-                list: empty_capability_from_map(tasks.list),
-                cancel: empty_capability_from_map(tasks.cancel),
+                list: tasks.list.map(|_| proto::EmptyCapability {}),
+                cancel: tasks.cancel.map(|_| proto::EmptyCapability {}),
                 requests: tasks
                     .requests
                     .map(|requests| proto::ServerTaskRequestsCapability {
                         tools: requests
                             .tools
                             .map(|tools| proto::ServerTaskToolsCapability {
-                                call: empty_capability_from_map(tools.call),
+                                call: tools.call.map(|_| proto::EmptyCapability {}),
                             }),
                     }),
             }),
@@ -315,49 +323,32 @@ impl From<ServerCapabilities> for proto::ServerCapabilities {
     }
 }
 
-#[allow(clippy::default_trait_access)]
 impl From<proto::ServerCapabilities> for ServerCapabilities {
     fn from(caps: proto::ServerCapabilities) -> Self {
         Self {
-            prompts: caps
-                .prompts
-                .map(|p| turbomcp_core::types::capabilities::PromptsCapability {
-                    list_changed: Some(p.list_changed),
-                }),
-            resources: caps.resources.map(|r| {
-                turbomcp_core::types::capabilities::ResourcesCapability {
-                    subscribe: Some(r.subscribe),
-                    list_changed: Some(r.list_changed),
-                }
+            prompts: caps.prompts.map(|p| PromptsCapabilities {
+                list_changed: Some(p.list_changed),
             }),
-            tools: caps
-                .tools
-                .map(|t| turbomcp_core::types::capabilities::ToolsCapability {
-                    list_changed: Some(t.list_changed),
-                }),
-            logging: caps
-                .logging
-                .map(|_| turbomcp_core::types::capabilities::LoggingCapability {}),
-            completions: caps
-                .completions
-                .map(|_| turbomcp_core::types::capabilities::CompletionCapability {}),
-            tasks: caps.tasks.map(
-                |tasks| turbomcp_core::types::capabilities::TasksCapability {
-                    list: tasks.list.map(|_| Default::default()),
-                    cancel: tasks.cancel.map(|_| Default::default()),
-                    requests: tasks.requests.map(|requests| {
-                        turbomcp_core::types::capabilities::TaskRequestsCapability {
-                            tools: requests.tools.map(|tools| {
-                                turbomcp_core::types::capabilities::TaskToolsCapability {
-                                    call: tools.call.map(|_| Default::default()),
-                                }
-                            }),
-                            sampling: None,
-                            elicitation: None,
-                        }
+            resources: caps.resources.map(|r| ResourcesCapabilities {
+                subscribe: Some(r.subscribe),
+                list_changed: Some(r.list_changed),
+            }),
+            tools: caps.tools.map(|t| ToolsCapabilities {
+                list_changed: Some(t.list_changed),
+            }),
+            logging: caps.logging.map(|_| LoggingCapabilities {}),
+            completions: caps.completions.map(|_| CompletionCapabilities {}),
+            tasks: caps.tasks.map(|tasks| ServerTasksCapabilities {
+                list: tasks.list.map(|_| Default::default()),
+                cancel: tasks.cancel.map(|_| Default::default()),
+                requests: tasks
+                    .requests
+                    .map(|requests| ServerTasksRequestsCapabilities {
+                        tools: requests.tools.map(|tools| TasksToolsCapabilities {
+                            call: tools.call.map(|_| Default::default()),
+                        }),
                     }),
-                },
-            ),
+            }),
             extensions: caps.extensions.map(|extensions| {
                 decode_json_map(extensions.capabilities)
                     .into_iter()
@@ -382,32 +373,73 @@ impl From<proto::ServerCapabilities> for ServerCapabilities {
 // that doesn't have a direct proto representation - tool hints are not preserved
 // in gRPC transport.
 
+fn role_to_wire(role: Role) -> String {
+    match role {
+        Role::User => "user".to_string(),
+        Role::Assistant => "assistant".to_string(),
+    }
+}
+
+fn role_from_wire(s: &str) -> Option<Role> {
+    match s {
+        "user" => Some(Role::User),
+        "assistant" => Some(Role::Assistant),
+        _ => None,
+    }
+}
+
 impl From<Annotations> for proto::Annotations {
     fn from(annotations: Annotations) -> Self {
         Self {
-            audience: annotations.audience.unwrap_or_default(),
+            audience: annotations
+                .audience
+                .map(|roles| roles.into_iter().map(role_to_wire).collect())
+                .unwrap_or_default(),
             priority: annotations.priority.unwrap_or(0.0),
         }
     }
 }
 
-#[allow(clippy::default_trait_access)]
 impl From<proto::Annotations> for Annotations {
     fn from(annotations: proto::Annotations) -> Self {
+        let audience = if annotations.audience.is_empty() {
+            None
+        } else {
+            let roles: Vec<Role> = annotations
+                .audience
+                .iter()
+                .filter_map(|s| role_from_wire(s))
+                .collect();
+            if roles.is_empty() { None } else { Some(roles) }
+        };
         Self {
-            audience: if annotations.audience.is_empty() {
-                None
-            } else {
-                Some(annotations.audience)
-            },
+            audience,
             priority: if annotations.priority == 0.0 {
                 None
             } else {
                 Some(annotations.priority)
             },
             last_modified: None,
-            custom: Default::default(),
         }
+    }
+}
+
+// ResourceAnnotations ↔ Annotations bridge. Types defines ResourceAnnotations
+// as a structurally-identical sibling of Annotations; proto carries it as a
+// single wire type (proto::Annotations).
+fn res_ann_to_base(a: ResourceAnnotations) -> Annotations {
+    Annotations {
+        audience: a.audience,
+        priority: a.priority,
+        last_modified: a.last_modified,
+    }
+}
+
+fn base_to_res_ann(a: Annotations) -> ResourceAnnotations {
+    ResourceAnnotations {
+        audience: a.audience,
+        priority: a.priority,
+        last_modified: a.last_modified,
     }
 }
 
@@ -417,14 +449,13 @@ impl From<proto::Annotations> for Annotations {
 
 impl From<Icon> for proto::Icon {
     fn from(icon: Icon) -> Self {
-        match icon {
-            Icon::DataUri(data_uri) => Self {
-                icon: Some(proto::icon::Icon::DataUri(data_uri)),
-            },
-            Icon::Url(url) => Self {
-                icon: Some(proto::icon::Icon::Uri(url)),
-            },
-        }
+        // types' Icon.src holds either a URL or a `data:` URI; proto distinguishes.
+        let inner = if icon.src.starts_with("data:") {
+            proto::icon::Icon::DataUri(icon.src)
+        } else {
+            proto::icon::Icon::Uri(icon.src)
+        };
+        Self { icon: Some(inner) }
     }
 }
 
@@ -432,11 +463,17 @@ impl TryFrom<proto::Icon> for Icon {
     type Error = GrpcError;
 
     fn try_from(icon: proto::Icon) -> GrpcResult<Self> {
-        match icon.icon {
-            Some(proto::icon::Icon::Uri(uri)) => Ok(Icon::Url(uri)),
-            Some(proto::icon::Icon::DataUri(data_uri)) => Ok(Icon::DataUri(data_uri)),
-            None => Err(GrpcError::invalid_request("Icon missing URI")),
-        }
+        let src = match icon.icon {
+            Some(proto::icon::Icon::Uri(u)) => u,
+            Some(proto::icon::Icon::DataUri(d)) => d,
+            None => return Err(GrpcError::invalid_request("Icon missing URI")),
+        };
+        Ok(Icon {
+            src,
+            mime_type: None,
+            sizes: None,
+            theme: None,
+        })
     }
 }
 
@@ -454,14 +491,13 @@ impl TryFrom<Tool> for proto::Tool {
 
     fn try_from(tool: Tool) -> GrpcResult<Self> {
         let input_schema = serde_json::to_vec(&tool.input_schema)?;
-        // Note: tool.annotations is ToolAnnotations which doesn't have audience/priority
-        // proto::Annotations has audience/priority, so we can't directly convert.
-        // Tool hints (destructive_hint, etc.) are lost in gRPC transport.
+        // Tool hints (destructive_hint, etc.) and extra Tool fields
+        // (execution, output_schema, meta) are lost in gRPC transport.
         Ok(Self {
             name: tool.name,
             description: tool.description,
             input_schema,
-            annotations: None, // ToolAnnotations doesn't map to proto::Annotations
+            annotations: None,
             icons: icons_to_proto(tool.icons),
             title: tool.title,
         })
@@ -478,16 +514,16 @@ impl TryFrom<proto::Tool> for Tool {
             serde_json::from_slice(&tool.input_schema)?
         };
 
-        // Note: proto::Annotations has audience/priority which are base Annotations fields,
-        // not ToolAnnotations fields. The MCP Tool type expects ToolAnnotations, so we
-        // would need a separate proto message to properly support tool hints.
         Ok(Self {
             name: tool.name,
             description: tool.description,
             input_schema,
             title: tool.title,
             icons: proto_icons_to_option(tool.icons),
-            annotations: None, // proto::Annotations doesn't map to ToolAnnotations
+            annotations: None,
+            execution: None,
+            output_schema: None,
+            meta: None,
         })
     }
 }
@@ -504,7 +540,7 @@ impl From<Resource> for proto::Resource {
             description: resource.description,
             title: resource.title,
             mime_type: resource.mime_type.map(Into::into),
-            annotations: resource.annotations.map(Into::into),
+            annotations: resource.annotations.map(|a| res_ann_to_base(a).into()),
             icons: icons_to_proto(resource.icons),
             size: resource.size,
         }
@@ -521,7 +557,8 @@ impl From<proto::Resource> for Resource {
             icons: proto_icons_to_option(resource.icons),
             mime_type: resource.mime_type.map(Into::into),
             size: resource.size,
-            annotations: resource.annotations.map(Into::into),
+            annotations: resource.annotations.map(|a| base_to_res_ann(a.into())),
+            meta: None,
         }
     }
 }
@@ -534,7 +571,7 @@ impl From<ResourceTemplate> for proto::ResourceTemplate {
             description: template.description,
             title: template.title,
             mime_type: template.mime_type.map(Into::into),
-            annotations: template.annotations.map(Into::into),
+            annotations: template.annotations.map(|a| res_ann_to_base(a).into()),
             icons: icons_to_proto(template.icons),
         }
     }
@@ -549,7 +586,8 @@ impl From<proto::ResourceTemplate> for ResourceTemplate {
             title: template.title,
             icons: proto_icons_to_option(template.icons),
             mime_type: template.mime_type.map(Into::into),
-            annotations: template.annotations.map(Into::into),
+            annotations: template.annotations.map(|a| base_to_res_ann(a.into())),
+            meta: None,
         }
     }
 }
@@ -562,37 +600,46 @@ impl TryFrom<ResourceContent> for proto::ResourceContent {
     type Error = GrpcError;
 
     fn try_from(content: ResourceContent) -> GrpcResult<Self> {
-        let (text, blob) = match (content.text, content.blob) {
-            (Some(text), _) => (Some(text), None),
-            (_, Some(blob)) => (None, Some(blob.into_bytes())),
-            (None, None) => (None, None),
-        };
-
-        Ok(Self {
-            uri: content.uri.to_string(),
-            mime_type: content.mime_type.map(Into::into),
-            content: text
-                .map(proto::resource_content::Content::Text)
-                .or_else(|| blob.map(proto::resource_content::Content::Blob)),
-        })
+        match content {
+            ResourceContents::Text(t) => Ok(Self {
+                uri: t.uri.to_string(),
+                mime_type: t.mime_type.map(Into::into),
+                content: Some(proto::resource_content::Content::Text(t.text)),
+            }),
+            ResourceContents::Blob(b) => Ok(Self {
+                uri: b.uri.to_string(),
+                mime_type: b.mime_type.map(Into::into),
+                content: Some(proto::resource_content::Content::Blob(b.blob.into_bytes())),
+            }),
+        }
     }
 }
 
 impl From<proto::ResourceContent> for ResourceContent {
     fn from(content: proto::ResourceContent) -> Self {
-        let (text, blob) = match content.content {
-            Some(proto::resource_content::Content::Text(t)) => (Some(t), None),
-            Some(proto::resource_content::Content::Blob(b)) => {
-                (None, Some(String::from_utf8_lossy(&b).to_string()))
+        match content.content {
+            Some(proto::resource_content::Content::Text(text)) => {
+                ResourceContents::Text(TextResourceContents {
+                    uri: content.uri.into(),
+                    mime_type: content.mime_type.map(Into::into),
+                    text,
+                    meta: None,
+                })
             }
-            None => (None, None),
-        };
-
-        Self {
-            uri: content.uri.into(),
-            mime_type: content.mime_type.map(Into::into),
-            text,
-            blob,
+            Some(proto::resource_content::Content::Blob(blob)) => {
+                ResourceContents::Blob(BlobResourceContents {
+                    uri: content.uri.into(),
+                    mime_type: content.mime_type.map(Into::into),
+                    blob: String::from_utf8_lossy(&blob).into_owned(),
+                    meta: None,
+                })
+            }
+            None => ResourceContents::Text(TextResourceContents {
+                uri: content.uri.into(),
+                mime_type: None,
+                text: String::new(),
+                meta: None,
+            }),
         }
     }
 }
@@ -630,6 +677,7 @@ impl From<proto::Prompt> for Prompt {
             } else {
                 Some(prompt.arguments.into_iter().map(Into::into).collect())
             },
+            meta: None,
         }
     }
 }
@@ -648,6 +696,7 @@ impl From<proto::PromptArgument> for PromptArgument {
     fn from(arg: proto::PromptArgument) -> Self {
         Self {
             name: arg.name,
+            title: None,
             description: arg.description,
             required: arg.required,
         }
@@ -719,38 +768,32 @@ impl TryFrom<Content> for proto::Content {
 
     fn try_from(content: Content) -> GrpcResult<Self> {
         let (content_type, annotations) = match content {
-            Content::Text { text, annotations } => (
-                proto::content::Content::Text(proto::TextContent { text }),
-                annotations,
+            Content::Text(t) => (
+                proto::content::Content::Text(proto::TextContent { text: t.text }),
+                t.annotations,
             ),
-            Content::Image {
-                data,
-                mime_type,
-                annotations,
-            } => (
+            Content::Image(i) => (
                 proto::content::Content::Image(proto::ImageContent {
-                    data,
-                    mime_type: mime_type.to_string(),
+                    data: i.data,
+                    mime_type: i.mime_type,
                 }),
-                annotations,
+                i.annotations,
             ),
-            Content::Audio {
-                data,
-                mime_type,
-                annotations,
-            } => (
+            Content::Audio(a) => (
                 proto::content::Content::Audio(proto::AudioContent {
-                    data,
-                    mime_type: mime_type.to_string(),
+                    data: a.data,
+                    mime_type: a.mime_type,
                 }),
-                annotations,
+                a.annotations,
             ),
-            Content::Resource {
-                resource,
-                annotations,
-            } => (
-                proto::content::Content::Resource(resource.try_into()?),
-                annotations,
+            Content::ResourceLink(_) => {
+                return Err(GrpcError::invalid_request(
+                    "ResourceLink content not yet supported over gRPC",
+                ));
+            }
+            Content::Resource(r) => (
+                proto::content::Content::Resource(r.resource.try_into()?),
+                r.annotations,
             ),
         };
 
@@ -768,24 +811,30 @@ impl TryFrom<proto::Content> for Content {
         let annotations = content.annotations.map(Into::into);
 
         match content.content {
-            Some(proto::content::Content::Text(t)) => Ok(Content::Text {
+            Some(proto::content::Content::Text(t)) => Ok(Content::Text(TextContent {
                 text: t.text,
                 annotations,
-            }),
-            Some(proto::content::Content::Image(i)) => Ok(Content::Image {
+                meta: None,
+            })),
+            Some(proto::content::Content::Image(i)) => Ok(Content::Image(ImageContent {
                 data: i.data,
-                mime_type: i.mime_type.into(),
+                mime_type: i.mime_type,
                 annotations,
-            }),
-            Some(proto::content::Content::Audio(a)) => Ok(Content::Audio {
+                meta: None,
+            })),
+            Some(proto::content::Content::Audio(a)) => Ok(Content::Audio(AudioContent {
                 data: a.data,
-                mime_type: a.mime_type.into(),
+                mime_type: a.mime_type,
                 annotations,
-            }),
-            Some(proto::content::Content::Resource(r)) => Ok(Content::Resource {
-                resource: r.into(),
-                annotations,
-            }),
+                meta: None,
+            })),
+            Some(proto::content::Content::Resource(r)) => {
+                Ok(Content::Resource(turbomcp_types::EmbeddedResource {
+                    resource: r.into(),
+                    annotations,
+                    meta: None,
+                }))
+            }
             None => Err(GrpcError::invalid_request("Missing content")),
         }
     }
@@ -799,6 +848,8 @@ impl TryFrom<CallToolResult> for proto::CallToolResult {
     type Error = GrpcError;
 
     fn try_from(result: CallToolResult) -> GrpcResult<Self> {
+        // Note: structured_content, task_id, _meta are protocol-only fields
+        // that don't round-trip through proto (no wire slot for them).
         let content: Result<Vec<_>, _> =
             result.content.into_iter().map(TryInto::try_into).collect();
 
@@ -819,7 +870,9 @@ impl TryFrom<proto::CallToolResult> for CallToolResult {
         Ok(Self {
             content: content?,
             is_error: result.is_error,
+            structured_content: None,
             _meta: None,
+            task_id: None,
         })
     }
 }
@@ -835,7 +888,12 @@ mod tests {
             title: Some("Test".to_string()),
             description: Some("grpc metadata".to_string()),
             version: "1.0.0".to_string(),
-            icons: Some(vec![Icon::url("https://example.com/icon.svg")]),
+            icons: Some(vec![Icon {
+                src: "https://example.com/icon.svg".into(),
+                mime_type: None,
+                sizes: None,
+                theme: None,
+            }]),
             website_url: Some("https://example.com".to_string()),
         };
 
@@ -876,6 +934,9 @@ mod tests {
             title: None,
             icons: None,
             annotations: None,
+            execution: None,
+            output_schema: None,
+            meta: None,
         };
 
         let proto_tool: proto::Tool = tool.try_into().unwrap();
@@ -897,6 +958,7 @@ mod tests {
             mime_type: Some("text/plain".into()),
             size: None,
             annotations: None,
+            meta: None,
         };
 
         let proto_resource: proto::Resource = resource.clone().into();
@@ -916,9 +978,11 @@ mod tests {
             icons: None,
             arguments: Some(vec![PromptArgument {
                 name: "name".to_string(),
+                title: None,
                 description: Some("The name to greet".to_string()),
                 required: Some(true),
             }]),
+            meta: None,
         };
 
         let proto_prompt: proto::Prompt = prompt.clone().into();
@@ -930,7 +994,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::default_trait_access)]
     fn test_server_capabilities_conversion_preserves_extensions_and_tasks() {
         let caps = ServerCapabilities {
             extensions: Some(
@@ -938,15 +1001,13 @@ mod tests {
                     .into_iter()
                     .collect(),
             ),
-            tasks: Some(turbomcp_core::types::capabilities::TasksCapability {
+            tasks: Some(ServerTasksCapabilities {
                 list: Some(Default::default()),
                 cancel: Some(Default::default()),
-                requests: Some(turbomcp_core::types::capabilities::TaskRequestsCapability {
-                    tools: Some(turbomcp_core::types::capabilities::TaskToolsCapability {
+                requests: Some(ServerTasksRequestsCapabilities {
+                    tools: Some(TasksToolsCapabilities {
                         call: Some(Default::default()),
                     }),
-                    sampling: None,
-                    elicitation: None,
                 }),
             }),
             ..Default::default()

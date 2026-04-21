@@ -45,9 +45,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use crate::wasm_server::{McpServer, PromptResult, RequestContext, ResourceResult, ToolResult};
-use turbomcp_core::types::prompts::Prompt;
-use turbomcp_core::types::resources::Resource;
-use turbomcp_core::types::tools::Tool;
+use turbomcp_types::{Prompt, Resource, Tool};
 
 /// In-memory test client for WASM MCP servers.
 ///

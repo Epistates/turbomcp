@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[cfg(not(feature = "std"))]
-use alloc::collections::BTreeMap as HashMap;
+use alloc::{collections::BTreeMap as HashMap, string::String, vec, vec::Vec};
 #[cfg(feature = "std")]
 use std::collections::HashMap;
 

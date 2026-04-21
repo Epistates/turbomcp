@@ -25,7 +25,7 @@ wasi = ["dep:wasi", "dep:wit-bindgen", "dep:url"]
 # Console logging for debugging
 console-log = ["browser", "console_error_panic_hook"]
 # WASM server support - MCP servers running in WASM environments (Cloudflare Workers, etc.)
-wasm-server = ["dep:worker", "dep:schemars", "dep:hashbrown", "wasm-bindgen", "wasm-bindgen-futures", "serde-wasm-bindgen", "js-sys"]
+wasm-server = ["dep:worker", "dep:schemars", "dep:hashbrown", "dep:turbomcp-protocol", "wasm-bindgen", "wasm-bindgen-futures", "serde-wasm-bindgen", "js-sys"]
 # Streamable HTTP support (MCP 2025-11-25 spec with SSE and session management)
 streamable = ["wasm-server", "dep:turbomcp-transport-streamable", "dep:sha2"]
 # Cloudflare Workers feature alias (same as wasm-server, for clarity)
@@ -45,7 +45,10 @@ macros = ["wasm-server", "dep:turbomcp-wasm-macros"]
 turbomcp-core = { workspace = true, default-features = false, features = ["wasm"] }
 
 # MCP types for macro support (enables #[server] macro to work)
-turbomcp-types = { workspace = true }
+turbomcp-types = { workspace = true, features = ["experimental-tasks"] }
+
+# MCP protocol wire wrappers (only when wasm-server feature is enabled)
+turbomcp-protocol = { workspace = true, features = ["experimental-tasks"], optional = true }
 
 # Serialization
 serde = { workspace = true }

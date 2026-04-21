@@ -21,7 +21,7 @@ mod line;
 use std::collections::HashSet;
 
 use serde_json::Value;
-use turbomcp_core::types::core::ProtocolVersion;
+use turbomcp_types::ProtocolVersion;
 
 /// MCP session lifecycle state for per-connection/session version tracking.
 ///

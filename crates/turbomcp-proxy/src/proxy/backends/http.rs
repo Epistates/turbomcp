@@ -135,15 +135,7 @@ impl HttpBackend {
 
         let request = InitializeRequest {
             protocol_version: PROTOCOL_VERSION.into(),
-            capabilities: turbomcp_protocol::types::ClientCapabilities {
-                extensions: None,
-                experimental: None,
-                sampling: None,
-                roots: None,
-                elicitation: None,
-                #[cfg(feature = "experimental-tasks")]
-                tasks: None,
-            },
+            capabilities: turbomcp_protocol::types::ClientCapabilities::default(),
             client_info: turbomcp_protocol::types::Implementation {
                 name: client_name.to_string(),
                 version: client_version.to_string(),

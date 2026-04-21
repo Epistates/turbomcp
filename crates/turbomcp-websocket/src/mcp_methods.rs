@@ -431,7 +431,8 @@ mod tests {
             tools: None,
             tool_choice: None,
             task: None,
-            _meta: None,
+            metadata: None,
+            meta: None,
         };
         let result = transport.send_sampling(request, None).await;
 

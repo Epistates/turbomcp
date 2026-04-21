@@ -15,7 +15,7 @@ use serde_json::json;
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, RwLock, broadcast, mpsc, oneshot};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::Message};
-use turbomcp_protocol::types::{ElicitRequest, ElicitResult};
+use turbomcp_protocol::types::{ElicitRequestParams, ElicitResult};
 use uuid::Uuid;
 
 use turbomcp_transport_traits::{
@@ -39,8 +39,8 @@ pub struct PendingElicitation {
     /// Request ID for correlation
     pub request_id: String,
 
-    /// The elicitation request
-    pub request: ElicitRequest,
+    /// The elicitation request parameters
+    pub request: ElicitRequestParams,
 
     /// Response channel
     pub response_tx: oneshot::Sender<ElicitResult>,
@@ -55,7 +55,7 @@ pub struct PendingElicitation {
 impl PendingElicitation {
     /// Create a new pending elicitation
     pub fn new(
-        request: ElicitRequest,
+        request: ElicitRequestParams,
         response_tx: oneshot::Sender<ElicitResult>,
         timeout: Duration,
     ) -> Self {
@@ -373,21 +373,14 @@ mod tests {
     fn test_pending_elicitation_creation() {
         use turbomcp_protocol::types::ElicitationSchema;
 
-        let request = ElicitRequest {
-            params: turbomcp_protocol::types::ElicitRequestParams::form(
-                "Test message".to_string(),
-                ElicitationSchema {
-                    schema_type: "object".to_string(),
-                    properties: std::collections::HashMap::new(),
-                    required: None,
-                    additional_properties: None,
-                },
-                None,
-                Some(true),
-            ),
-            task: None,
-            _meta: None,
+        let schema = ElicitationSchema {
+            schema_type: "object".to_string(),
+            properties: std::collections::HashMap::new(),
+            required: None,
+            additional_properties: None,
         };
+        let request =
+            ElicitRequestParams::form("Test message", serde_json::to_value(&schema).unwrap());
         let (tx, _rx) = oneshot::channel();
         let timeout = Duration::from_secs(30);
 

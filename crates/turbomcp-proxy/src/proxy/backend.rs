@@ -462,11 +462,11 @@ impl BackendConnector {
             .into_iter()
             .map(|t| {
                 let mut additional = HashMap::new();
-                if let Some(additional_props) = t.input_schema.additional_properties {
-                    additional.insert("additionalProperties".to_string(), additional_props);
+                if let Some(ref additional_props) = t.input_schema.additional_properties {
+                    additional.insert("additionalProperties".to_string(), additional_props.clone());
                 }
-                for (key, value) in t.input_schema.extra_keywords {
-                    additional.insert(key, value);
+                for (key, value) in &t.input_schema.extra_keywords {
+                    additional.insert(key.clone(), value.clone());
                 }
                 let schema_type = t
                     .input_schema
@@ -474,13 +474,18 @@ impl BackendConnector {
                     .as_ref()
                     .and_then(|value| value.as_str().map(str::to_owned))
                     .unwrap_or_else(|| "object".to_string());
+                let properties = t.input_schema.properties_as_object().map(|obj| {
+                    obj.iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect::<std::collections::HashMap<_, _>>()
+                });
                 ToolSpec {
                     name: t.name,
-                    title: None,
+                    title: t.title,
                     description: t.description,
                     input_schema: ToolInputSchema {
                         schema_type,
-                        properties: t.input_schema.properties,
+                        properties,
                         required: t.input_schema.required,
                         additional,
                     },
@@ -495,11 +500,11 @@ impl BackendConnector {
         resources
             .into_iter()
             .map(|r| ResourceSpec {
-                uri: r.uri.to_string(),
+                uri: r.uri.clone(),
                 name: r.name,
                 title: None,
                 description: r.description,
-                mime_type: r.mime_type.map(Into::into),
+                mime_type: r.mime_type,
                 size: None,
                 annotations: None,
             })

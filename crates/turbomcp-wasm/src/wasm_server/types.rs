@@ -15,16 +15,17 @@
 //!
 //! `ToolResult` is aliased from `turbomcp_core::types::tools::CallToolResult`
 //! because the WASM handler machinery uses `IntoToolResponse` which returns
-//! `CallToolResult`. This is the internal wire format type. Users can treat
-//! it identically to `turbomcp_types::ToolResult` for common operations.
+//! the core-layer `CallToolResult` (no_std-friendly). Users can treat it
+//! identically to `turbomcp_types::ToolResult` for common operations.
+//!
+//! This remains core-sourced pending a v4 consolidation of `IntoToolResponse`.
 
 use serde::{Deserialize, Serialize};
 
 // Re-export result types from turbomcp-types (single source of truth)
 pub use turbomcp_types::{PromptResult, ResourceResult};
 
-// ToolResult is aliased from CallToolResult for IntoToolResponse compatibility
-// This is required because the handler traits return CallToolResult
+// ToolResult is aliased from core's CallToolResult for IntoToolResponse compat.
 pub use turbomcp_core::types::tools::CallToolResult as ToolResult;
 
 /// JSON-RPC request structure

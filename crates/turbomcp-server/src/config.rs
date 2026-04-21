@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 // Re-export from core (single source of truth - DRY)
 pub use turbomcp_core::SUPPORTED_VERSIONS as SUPPORTED_PROTOCOL_VERSIONS;
-pub use turbomcp_core::types::core::ProtocolVersion;
+pub use turbomcp_types::ProtocolVersion;
 
 /// Default maximum connections for TCP transport.
 pub const DEFAULT_MAX_CONNECTIONS: usize = 1000;

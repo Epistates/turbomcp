@@ -186,7 +186,7 @@ pub async fn route_request_versioned<H: McpHandler>(
     handler: &H,
     request: JsonRpcIncoming,
     ctx: &RequestContext,
-    negotiated_version: &turbomcp_core::types::core::ProtocolVersion,
+    negotiated_version: &turbomcp_types::ProtocolVersion,
 ) -> JsonRpcOutgoing {
     let adapter = adapter_for_version(negotiated_version);
     let method = request.method.clone();

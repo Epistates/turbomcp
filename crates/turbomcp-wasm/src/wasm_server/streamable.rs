@@ -629,13 +629,13 @@ impl<S: SessionStore> StreamableHandler<S> {
         // Extract request ID from headers
         let request_id = headers.get("x-request-id").cloned();
 
-        RequestContext::from_worker_request(request_id, session_id, headers.clone())
+        super::context::from_worker_request(request_id, session_id, headers.clone())
     }
 
     /// Handle initialize request.
     fn handle_initialize(&self, req: &JsonRpcRequest) -> JsonRpcResponse {
         use turbomcp_core::PROTOCOL_VERSION;
-        use turbomcp_core::types::initialization::InitializeResult;
+        use turbomcp_protocol::types::InitializeResult;
 
         let result = InitializeResult {
             protocol_version: PROTOCOL_VERSION.into(),

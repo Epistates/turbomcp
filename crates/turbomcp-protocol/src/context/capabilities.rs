@@ -1,218 +1,53 @@
-//! Server-to-client communication capabilities for bidirectional MCP communication.
+//! Communication-direction enums used by the bidirectional MCP flow.
 //!
-//! This module defines the trait that enables servers to make requests to clients,
-//! supporting sampling, elicitation, roots listing, and server-initiated notifications.
+//! The old `ServerToClientRequests` trait was deleted in v3.2: no crate in
+//! the workspace implemented it, and its job (sampling / elicitation /
+//! notifications) is now handled by the unified session model — see
+//! [`turbomcp_core::McpSession`] plus the `sample()` / `elicit_form()` /
+//! `elicit_url()` / `notify_client()` methods on
+//! [`turbomcp_core::RequestContext`].
+//!
+//! The supporting enums in this module remain useful as public vocabulary
+//! for describing request/response direction in auditing and analytics.
 
-use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
-use crate::McpError;
-use crate::context::RequestContext;
-use crate::types::{
-    CreateMessageRequest, CreateMessageResult, ElicitRequest, ElicitResult, ListRootsResult,
-    ServerNotification,
-};
-
-/// Trait for server-to-client requests (sampling, elicitation, roots)
-///
-/// This trait provides a type-safe interface for servers to make requests to clients,
-/// enabling bidirectional MCP communication patterns. All methods accept a `RequestContext`
-/// parameter to enable proper context propagation for tracing, attribution, and auditing.
-///
-/// ## Design Rationale
-///
-/// This trait uses typed request/response structures instead of `serde_json::Value` to provide:
-/// - **Type safety**: Compile-time validation of request/response structures
-/// - **Performance**: Zero-cost abstraction with no intermediate serialization
-/// - **Context propagation**: Full support for distributed tracing and user attribution
-/// - **Better errors**: Structured error types instead of generic `Box<dyn Error>`
-///
-/// ## Breaking Change (v2.0.0)
-///
-/// This trait was renamed from `ServerCapabilities` to `ServerToClientRequests` and redesigned
-/// to fix fundamental architecture issues:
-/// - Old: `fn create_message(&self, request: serde_json::Value) -> Result<serde_json::Value, Box<dyn Error>>`
-/// - New: `fn create_message(&self, request: CreateMessageRequest, ctx: RequestContext) -> Result<CreateMessageResult, ServerError>`
-pub trait ServerToClientRequests: Send + Sync + fmt::Debug {
-    /// Send a sampling/createMessage request to the client
-    ///
-    /// This method allows server tools to request LLM sampling from the client.
-    /// The client is responsible for:
-    /// - Selecting an appropriate model based on preferences
-    /// - Making the LLM API call
-    /// - Returning the generated response
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - The sampling request with messages, model preferences, and parameters
-    /// * `ctx` - Request context for tracing, user attribution, and metadata propagation
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The client does not support sampling
-    /// - The transport layer fails
-    /// - The client returns an error response
-    /// - The LLM request fails
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use turbomcp_protocol::context::capabilities::ServerToClientRequests;
-    /// use turbomcp_protocol::RequestContext;
-    /// # use turbomcp_protocol::types::{ContentBlock, CreateMessageRequest, SamplingMessage, Role, TextContent};
-    ///
-    /// async fn example(capabilities: &dyn ServerToClientRequests) {
-    ///     let request = CreateMessageRequest {
-    ///         messages: vec![SamplingMessage {
-    ///             role: Role::User,
-    ///             content: ContentBlock::Text(TextContent {
-    ///                 text: "What is 2+2?".to_string(),
-    ///                 annotations: None,
-    ///                 meta: None,
-    ///             }),
-    ///             metadata: None,
-    ///         }],
-    ///         model_preferences: None,
-    ///         system_prompt: None,
-    ///         include_context: None,
-    ///         temperature: None,
-    ///         max_tokens: 100,
-    ///         stop_sequences: None,
-    ///         task: None,
-    ///         tools: None,
-    ///         tool_choice: None,
-    ///         _meta: None,
-    ///     };
-    ///
-    ///     let ctx = RequestContext::new();
-    ///     # #[allow(unused)]
-    ///     let result = capabilities.create_message(request, ctx).await;
-    /// }
-    /// ```
-    fn create_message(
-        &self,
-        request: CreateMessageRequest,
-        ctx: RequestContext,
-    ) -> BoxFuture<'_, Result<CreateMessageResult, McpError>>;
-
-    /// Send an elicitation request to the client for user input
-    ///
-    /// This method allows server tools to request structured input from users through
-    /// the client's UI. The client is responsible for presenting the elicitation prompt
-    /// and collecting the user's response according to the requested schema.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - The elicitation request with prompt and optional schema
-    /// * `ctx` - Request context for tracing, user attribution, and metadata propagation
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The client does not support elicitation
-    /// - The transport layer fails
-    /// - The user declines or cancels the request
-    /// - The client returns an error response
-    fn elicit(
-        &self,
-        request: ElicitRequest,
-        ctx: RequestContext,
-    ) -> BoxFuture<'_, Result<ElicitResult, McpError>>;
-
-    /// List client's root capabilities
-    ///
-    /// This method allows servers to discover which directories or files the client
-    /// has granted access to. Roots define the filesystem boundaries for resource access.
-    ///
-    /// # Arguments
-    ///
-    /// * `ctx` - Request context for tracing, user attribution, and metadata propagation
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The client does not support roots
-    /// - The transport layer fails
-    /// - The client returns an error response
-    fn list_roots(&self, ctx: RequestContext) -> BoxFuture<'_, Result<ListRootsResult, McpError>>;
-
-    /// Send a notification to the client.
-    ///
-    /// This method allows servers to send notifications to clients for logging,
-    /// progress updates, resource changes, and other events. Unlike requests,
-    /// notifications do not expect a response from the client.
-    ///
-    /// # Arguments
-    ///
-    /// * `notification` - The notification to send (logging, progress, etc.)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The transport layer fails to send the notification
-    /// - The connection is closed
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use turbomcp_protocol::context::capabilities::ServerToClientRequests;
-    /// use turbomcp_protocol::types::{ServerNotification, LoggingNotification, LogLevel};
-    /// use serde_json::json;
-    ///
-    /// async fn example(capabilities: &dyn ServerToClientRequests) {
-    ///     let notification = ServerNotification::Message(LoggingNotification {
-    ///         level: LogLevel::Info,
-    ///         data: json!("Processing request..."),
-    ///         logger: Some("my_tool".to_string()),
-    ///     });
-    ///
-    ///     let _ = capabilities.send_notification(notification).await;
-    /// }
-    /// ```
-    fn send_notification(
-        &self,
-        notification: ServerNotification,
-    ) -> BoxFuture<'_, Result<(), McpError>>;
-}
-
-/// Communication direction for bidirectional requests
+/// Communication direction for bidirectional requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommunicationDirection {
-    /// Client to server
+    /// Client to server.
     ClientToServer,
-    /// Server to client
+    /// Server to client.
     ServerToClient,
 }
 
-/// Communication initiator for tracking request origins
+/// Communication initiator for tracking request origins.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommunicationInitiator {
-    /// Client initiated the request
+    /// Client initiated the request.
     Client,
-    /// Server initiated the request
+    /// Server initiated the request.
     Server,
 }
 
-/// Types of server-initiated requests
+/// Types of server-initiated requests.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ServerInitiatedType {
-    /// Sampling/message creation request
+    /// Sampling / message creation request.
     Sampling,
-    /// Elicitation request for user input
+    /// Elicitation request for user input.
     Elicitation,
-    /// Roots listing request
+    /// Roots listing request.
     Roots,
-    /// Ping/health check request
+    /// Ping / health check request.
     Ping,
 }
 
-/// Origin of a ping request
+/// Origin of a ping request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PingOrigin {
-    /// Client initiated ping
+    /// Client initiated ping.
     Client,
-    /// Server initiated ping
+    /// Server initiated ping.
     Server,
 }
