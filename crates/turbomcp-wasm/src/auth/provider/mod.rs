@@ -260,14 +260,8 @@ impl OAuthProvider {
     ///
     /// Use `with_store()` and `with_user_authenticator()` before deploying to production.
     pub fn new(config: OAuthProviderConfig) -> Self {
-        // Warn about memory store usage
-        #[cfg(target_arch = "wasm32")]
-        web_sys::console::warn_1(
-            &"⚠️  Using MemoryTokenStore - tokens will be lost on Worker restart (~15-30 min). \
-              Use with_store() with DurableObjectTokenStore for production."
-                .into(),
-        );
-
+        // MemoryTokenStore::new() emits the runtime console warning about
+        // non-durable storage on wasm32 targets.
         Self {
             config,
             store: Arc::new(MemoryTokenStore::new()),

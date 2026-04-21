@@ -281,16 +281,7 @@ debug = "line-tables-only"
 # Note: Workspace-level benchmarks are in benches/ directory
 # Run with: ./scripts/run_benchmarks.sh
 
-# [patch.crates-io]
-# Known future incompatibility warnings (non-blocking):
-#
-# num-bigint-dig v0.8.4 (via rsa v0.9.8 via turbomcp-dpop):
-#   - Warning: macro `vec` is private (will be hard error in future Rust)
-#   - Fixed in: num-bigint-dig v0.8.5
-#   - Status: Waiting for upstream rsa crate to update dependency
-#   - Impact: None (warning only, affects future Rust versions)
-#   - Workaround: Not needed for current release
-#   - Issue: https://github.com/rust-lang/rust/issues/120192
+# Dependency advisory notes:
 #
 # paste v1.0.15 (RUSTSEC-2024-0436):
 #   - unmaintained but compile-time only (zero runtime risk)

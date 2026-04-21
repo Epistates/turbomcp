@@ -199,41 +199,44 @@ pub trait TokenStore: Send + Sync + 'static {
     }
 }
 
-/// In-memory token store for testing and single-request scenarios.
+/// In-memory token store for testing, development, and non-Workers WASM environments.
 ///
-/// # ⚠️ Production Warning
+/// This is the reference implementation of the [`TokenStore`] trait. It is used
+/// by the OAuth provider's default constructor and by the crate's own test suite.
 ///
-/// **DO NOT USE IN PRODUCTION.** In Cloudflare Workers, memory is not
-/// persisted across requests. Worker isolates restart approximately every
-/// 15-30 minutes, causing all tokens to be lost.
+/// # When to use
 ///
-/// This will result in:
+/// - Unit and integration tests (`DurableObjectTokenStore` requires a live
+///   Cloudflare `Env` binding and cannot be instantiated in tests).
+/// - Local development against a Workers runtime that is restarted on every change.
+/// - Non-Workers WASM targets (browser, WASI) where process lifetime matches token lifetime.
+///
+/// # When NOT to use
+///
+/// **Not suitable for Cloudflare Workers production.** Worker isolates restart
+/// approximately every 15-30 minutes, dropping all in-memory state. Using this
+/// store in production Workers will cause:
+///
 /// - Users being logged out unexpectedly
 /// - Refresh tokens becoming invalid
 /// - Authorization codes being lost mid-flow
 ///
-/// # Production Alternative
-///
-/// Use `DurableObjectTokenStore` with Cloudflare Durable Objects for
-/// production deployments. Durable Objects provide:
-/// - Strong consistency
-/// - Automatic persistence
-/// - Cross-request state management
+/// For production Workers deployments, pass a
+/// [`DurableObjectTokenStore`](crate::wasm_server::durable_objects::DurableObjectTokenStore)
+/// via [`OAuthProvider::with_store`](super::OAuthProvider::with_store) instead.
+/// `MemoryTokenStore::new()` emits a runtime `console.warn` on `wasm32` targets
+/// to surface this at deploy time.
 ///
 /// # Example
 ///
 /// ```ignore
-/// // ❌ DON'T DO THIS IN PRODUCTION
-/// let store = MemoryTokenStore::new();
+/// // Tests and development: default OAuthProvider uses MemoryTokenStore
+/// let oauth = OAuthProvider::new(config);
 ///
-/// // ✅ DO THIS INSTEAD
-/// let store = DurableObjectTokenStore::new(env.durable_object("OAUTH_STORAGE")?);
+/// // Production Workers: supply a DurableObjectTokenStore explicitly
+/// let store = DurableObjectTokenStore::from_env(&env, "MCP_OAUTH_TOKENS")?;
 /// let oauth = OAuthProvider::new(config).with_store(Arc::new(store));
 /// ```
-#[deprecated(
-    note = "Use DurableObjectTokenStore for production. MemoryTokenStore loses all tokens \
-            on Worker restart (~15-30 minutes). Only use for testing or development."
-)]
 #[derive(Debug, Default)]
 pub struct MemoryTokenStore {
     authorization_codes: RwLock<HashMap<String, AuthorizationCodeGrant>>,
@@ -244,11 +247,10 @@ pub struct MemoryTokenStore {
 impl MemoryTokenStore {
     /// Create a new in-memory token store.
     ///
-    /// # ⚠️ Production Warning
-    ///
-    /// **DO NOT USE IN PRODUCTION.** This store loses all tokens when the
-    /// Worker restarts (~15-30 minutes). Use `DurableObjectTokenStore` instead.
-    #[allow(deprecated)]
+    /// On `wasm32` targets this emits a `console.warn` noting that the store is
+    /// not durable across Cloudflare Worker isolate restarts. Prefer
+    /// [`DurableObjectTokenStore`](crate::wasm_server::durable_objects::DurableObjectTokenStore)
+    /// for production Workers deployments.
     pub fn new() -> Self {
         // Warn users about the limitations of this store
         #[cfg(target_arch = "wasm32")]

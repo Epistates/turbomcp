@@ -720,7 +720,6 @@ pub mod http {
 }
 
 #[cfg(test)]
-#[allow(deprecated)] // Tests cover deprecated batch functionality for defensive deserialization
 mod tests {
     use super::*;
     use serde_json::json;

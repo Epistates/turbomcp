@@ -200,11 +200,7 @@ deny = [
 #exact = true
 
 # Skip duplicate detection for known issues being systematically resolved
-skip = [
-    { crate = "base64", reason = "Multiple versions from different dependencies - will be consolidated" },
-    { crate = "http", reason = "v0.2 and v1.x versions in dependency tree - migration in progress" },
-    { crate = "hyper", reason = "v0.14 and v1.x versions in dependency tree - migration in progress" },
-]
+skip = []
 
 # Skip dependency trees while we fix the root causes
 skip-tree = [
