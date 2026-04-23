@@ -28,6 +28,8 @@ pub struct UnixTransport {
     socket_path: PathBuf,
     /// Server mode flag
     is_server: bool,
+    /// Server socket file permissions (Unix mode bits, e.g. 0o600)
+    permissions: u32,
     /// Message sender for incoming messages (tokio mutex - crosses await)
     sender: Arc<tokio::sync::Mutex<Option<mpsc::Sender<TransportMessage>>>>,
     /// Message receiver for incoming messages (tokio mutex - crosses await)
@@ -52,6 +54,7 @@ impl std::fmt::Debug for UnixTransport {
         f.debug_struct("UnixTransport")
             .field("socket_path", &self.socket_path)
             .field("is_server", &self.is_server)
+            .field("permissions", &format_args!("0o{:o}", self.permissions))
             .field("capabilities", &self.capabilities)
             .field("state", &self.state)
             .field("metrics", &self.metrics)
@@ -59,14 +62,26 @@ impl std::fmt::Debug for UnixTransport {
     }
 }
 
+/// Default Unix socket permissions (owner read/write).
+const DEFAULT_UNIX_SOCKET_MODE: u32 = 0o600;
+
 impl UnixTransport {
     /// Create a new Unix socket transport for server mode
     #[must_use]
     pub fn new_server(socket_path: PathBuf) -> Self {
+        Self::new_server_with_permissions(socket_path, DEFAULT_UNIX_SOCKET_MODE)
+    }
+
+    /// Create a new Unix socket transport for server mode with explicit
+    /// socket file permissions (Unix mode bits). Use `0o600` for
+    /// owner-only (default) or `0o660` / `0o666` for broader access.
+    #[must_use]
+    pub fn new_server_with_permissions(socket_path: PathBuf, permissions: u32) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
         Self {
             socket_path,
             is_server: true,
+            permissions,
             sender: Arc::new(tokio::sync::Mutex::new(None)),
             receiver: Arc::new(tokio::sync::Mutex::new(None)),
             connections: Arc::new(Mutex::new(HashMap::new())),
@@ -90,6 +105,7 @@ impl UnixTransport {
         Self {
             socket_path,
             is_server: false,
+            permissions: DEFAULT_UNIX_SOCKET_MODE,
             sender: Arc::new(tokio::sync::Mutex::new(None)),
             receiver: Arc::new(tokio::sync::Mutex::new(None)),
             connections: Arc::new(Mutex::new(HashMap::new())),
@@ -132,15 +148,19 @@ impl UnixTransport {
             TransportError::ConnectionFailed(format!("Failed to bind Unix socket listener: {e}"))
         })?;
 
-        // Set restrictive socket permissions (owner read/write only)
+        // Apply configured socket permissions (default 0o600 — owner read/write).
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o600);
+            let mode = self.permissions;
+            let perms = std::fs::Permissions::from_mode(mode);
             std::fs::set_permissions(&self.socket_path, perms).map_err(|e| {
                 TransportError::ConfigurationError(format!("Failed to set socket permissions: {e}"))
             })?;
-            info!("Set socket permissions to 0600 on {:?}", self.socket_path);
+            info!(
+                "Set socket permissions to 0o{:o} on {:?}",
+                mode, self.socket_path
+            );
         }
 
         let (tx, rx) = mpsc::channel(1000); // Bounded channel for backpressure control
@@ -680,8 +700,11 @@ impl UnixTransportBuilder {
     #[must_use]
     pub fn build(self) -> UnixTransport {
         if self.is_server {
-            UnixTransport::new_server(self.config.socket_path)
+            let mode = self.config.permissions.unwrap_or(DEFAULT_UNIX_SOCKET_MODE);
+            UnixTransport::new_server_with_permissions(self.config.socket_path, mode)
         } else {
+            // Permissions are a server-only concern (they're applied to the
+            // listening socket file). Clients ignore `UnixConfig::permissions`.
             UnixTransport::new_client(self.config.socket_path)
         }
     }
@@ -711,10 +734,22 @@ mod tests {
 
         assert_eq!(transport.socket_path, Path::new("/tmp/test-server.sock"));
         assert!(transport.is_server);
+        assert_eq!(
+            transport.permissions, 0o644,
+            "builder .permissions() must flow through to UnixTransport"
+        );
         assert!(matches!(
             *transport.state.lock(),
             TransportState::Disconnected
         ));
+    }
+
+    #[test]
+    fn test_unix_transport_builder_default_permissions() {
+        let transport = UnixTransportBuilder::new_server()
+            .socket_path("/tmp/test-default.sock")
+            .build();
+        assert_eq!(transport.permissions, 0o600);
     }
 
     #[test]
