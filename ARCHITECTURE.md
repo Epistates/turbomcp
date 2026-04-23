@@ -93,6 +93,20 @@ Responsibilities:
 └── Zero-copy message optimizations (Bytes)
 ```
 
+**Version-adapter architecture (v3.1+):** All runtime types are the
+latest-spec (`2025-11-25`) shape. `turbomcp_protocol::versioning::adapter`
+provides per-version adapters:
+
+- `2025-11-25` and the `DRAFT-2026-v1` type use a **pass-through** adapter —
+  types serialise as-is.
+- `2025-06-18` uses a **filter-down** adapter — the serialiser strips fields
+  the older spec does not understand, so the wire envelope stays legal for
+  a `2025-06-18` peer while internal code continues to work with the
+  latest-spec types.
+- Adapters are **opt-in** — pick one with `adapter_for_version(&version)`.
+  Normal same-version peers never pay the translation cost.
+
+
 **Note on v2 → v3:** In v2.0.0, the former `turbomcp-core` crate was merged into `turbomcp-protocol` to eliminate circular dependencies. In v3.0.0, `turbomcp-core` was re-extracted as a dedicated `no_std` foundation layer to support WASM targets, and `turbomcp-types` was introduced as the single authoritative type crate.
 
 ### Server and Client

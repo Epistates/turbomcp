@@ -458,12 +458,13 @@ sequenceDiagram
 
 TurboMCP v3 targets MCP `2025-11-25`. The default `VersionManager`
 (`VersionManager::default()` / `Version::known_versions()`) advertises
-`2025-11-25` only and negotiates exact matches.
+the stable set — `2025-06-18` and `2025-11-25` — and negotiates exact
+matches (newest is selected as current).
 
-For interoperability with older peers, the crate also ships version
-adapters for `2025-06-18` (and a draft `DRAFT-2026-v1` type) in
-`turbomcp_protocol::versioning::adapter` — use `adapter_for_version` to
-opt into cross-version translation.
+For full cross-version translation with older peers, the crate also
+ships version adapters for `2025-06-18` (and a draft `DRAFT-2026-v1`
+type) in `turbomcp_protocol::versioning::adapter` — use
+`adapter_for_version` to opt into field-level filtering.
 
 ### Core Features (Always Enabled)
 

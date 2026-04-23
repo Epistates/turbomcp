@@ -516,40 +516,33 @@ let server = shared.consume().await?; // Extracts the value
 
 ### Error Architecture
 
-TurboMCP uses a layered error system designed for both simplicity and MCP specification compliance:
+TurboMCP exposes a single unified error type — `McpError` — defined in
+`turbomcp-core` and re-exported as `turbomcp::McpError` /
+`turbomcp::McpResult`. There is **one error type across the whole stack:**
+handlers, middleware, transport, and protocol layers all speak the same
+`McpError`.
 
-| Error Type | Crate | Purpose | Use When |
-|------------|-------|---------|----------|
-| **`McpError`** | `turbomcp` | Simple application errors | Writing tools, resources, prompts |
-| **`ProtocolError`** | `turbomcp_protocol` | MCP-spec compliant errors with rich context | Protocol implementation, server internals |
+This is a deliberate simplification over the earlier two-tier
+(`McpError` → `ProtocolError`) design: `McpError` already carries
+JSON-RPC error codes, HTTP status mapping, retryability metadata, and a
+fluent `.with_operation(...)` / `.with_component(...)` context chain,
+which is everything the old `ProtocolError` provided.
 
-#### Quick Decision Guide
-
-**Use `McpError` if you are:**
-- Writing tool handlers with `#[tool]`
-- Implementing resource providers with `#[resource]`
-- Building prompt handlers with `#[prompt]`
-- Writing application-level business logic
-
-**Use `ProtocolError` if you are:**
-- Implementing custom protocol handlers
-- Building server middleware
-- Need observability context (request IDs, metadata, error chaining)
-- Require MCP 2025-06-18 specification error codes
-
-**Key Insight:** Errors automatically convert between layers. Use `McpError` in your handlers - the server layer converts to `ProtocolError` with full MCP compliance.
-
-#### Architecture Flow
+#### Flow
 
 ```
 Your Tool Handler
-    ↓ Returns McpError
+    ↓ returns McpResult<T> (i.e. Result<T, McpError>)
 Server Layer (turbomcp-server)
-    ↓ Converts to ServerError::Protocol(Box<ProtocolError>)
-Protocol Layer (turbomcp-protocol)
-    ↓ Serializes with MCP error codes
-JSON-RPC Response
+    ↓ inspects McpError metadata (jsonrpc_code, retryability, context)
+Protocol / JSON-RPC Response
 ```
+
+Use `McpError` everywhere. For MCP-specification error codes, the
+appropriate constructor (`tool_not_found`, `invalid_params`,
+`resource_not_found`, `authentication`, `permission_denied`,
+`rate_limited`, `timeout`, `transport`, `internal`, …) picks the right
+JSON-RPC / MCP code for you — see the "Error Handling" examples below.
 
 ### Ergonomic Error Creation
 
@@ -593,37 +586,26 @@ let _code = err.jsonrpc_code();
 let _status = err.http_status();
 ```
 
-### Protocol-Level Errors (`ProtocolError`)
+### Protocol-Level Error Codes
 
-For advanced use cases requiring rich context and MCP specification compliance:
+`McpError` exposes its MCP / JSON-RPC semantics directly — no separate
+error type is needed:
 
 ```rust
-use turbomcp::ProtocolError;  // Re-exported from turbomcp_protocol
+use turbomcp::McpError;
 
-// Constructors return Box<ProtocolError> for efficient cloning and rich context
-let err = ProtocolError::tool_not_found("calculator");
-let err = ProtocolError::invalid_params("Email must be valid");
-let err = ProtocolError::resource_access_denied(
-    "file://secret.txt",
-    "Path outside allowed directory"
-);
-
-// Add observability context with builder pattern
-let err = ProtocolError::internal("Database connection failed")
+let err = McpError::internal("Database connection failed")
     .with_operation("user_lookup")
-    .with_component("auth_service")
-    .with_request_id(request_id)
-    .with_context("user_id", user_id);
+    .with_component("auth_service");
 
-// Maps to MCP 2025-06-18 specification error codes
-assert_eq!(err.jsonrpc_error_code(), -32603);  // Internal error
+assert_eq!(err.jsonrpc_code(), -32603);   // Internal error
+let _http_status = err.http_status();     // HTTP mapping
+let _retryable = err.is_retryable();      // Retry hint for clients
 ```
 
-**Why `Box<ProtocolError>`?**
-- Enables cheap cloning across async boundaries
-- Preserves full error context and source chain
-- Integrates with observability systems (tracing, metrics)
-- Automatic backtrace capture in debug builds
+Constructors such as `tool_not_found`, `invalid_params`,
+`resource_not_found`, `capability_not_supported`, and `rate_limited`
+emit the MCP-spec JSON-RPC codes defined in `turbomcp-core::error_codes`.
 
 ## Advanced Features
 
@@ -678,18 +660,25 @@ deadline. For STDIO, the process exits cleanly when stdin closes.
 
 SIMD-accelerated JSON parsing is provided by `turbomcp-protocol` (enabled by default via its `simd` feature, which selects `sonic-rs`). No extra flag is required on the `turbomcp` crate.
 
-Configure server behavior via `ServerConfig`:
+Configure server behavior via `ServerConfig` and pass it through the
+server builder — the convenience methods (`run_stdio`, `run_http`, …)
+use defaults and ignore any standalone `ServerConfig`, so reach for
+`.builder().with_config(...)` when you need custom settings:
 
 ```rust
 use turbomcp::prelude::*;
-use std::time::Duration;
+use turbomcp_server::{ServerConfig, Transport};
 
 let config = ServerConfig::builder()
-    .max_message_size(10 * 1024 * 1024)
+    .max_message_size(10 * 1024 * 1024)   // 10 MB
     .build();
 
-let server = Calculator;
-server.run_stdio().await?;
+Calculator
+    .builder()
+    .with_config(config)
+    .transport(Transport::stdio())         // or http/tcp/websocket/unix
+    .serve()
+    .await?;
 ```
 
 ## Testing
