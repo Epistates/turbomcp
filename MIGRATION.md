@@ -254,33 +254,25 @@ Most users will not interact with these crates directly — they are re-exported
 
 **What Changed:**
 - Default protocol version updated to `2025-11-25` (latest MCP spec)
-- Configurable protocol version negotiation with fallback support
+- Configurable protocol version negotiation with version adapters
 - New `ProtocolConfig` type replaces ad-hoc version handling
+
+In v3.0.x the default was strict latest-only. As of v3.1.0 the default
+accepts all stable versions (`2025-11-25` and `2025-06-18`), routing older
+clients through the per-version adapters. See the v3.1.0 section above.
 
 **Migration:**
 
 ```rust
 use turbomcp_server::{ServerConfig, ProtocolConfig};
+use turbomcp_protocol::versioning::ProtocolVersion;
 
-// Default: Latest spec (2025-11-25) with fallback enabled
-// Supports all versions: 2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05
+// Default (v3.1.0+): accepts all ProtocolVersion::STABLE versions
 let config = ServerConfig::builder().build();
 
-// Strict mode: Only accept specific version, no fallback
+// Strict mode: only accept the latest version
 let config = ServerConfig::builder()
-    .protocol(ProtocolConfig::strict("2025-11-25"))
-    .build();
-
-// Custom: Specific preferred version with fallback
-let config = ServerConfig::builder()
-    .protocol(ProtocolConfig {
-        preferred_version: "2025-06-18".to_string(),
-        supported_versions: vec![
-            "2025-11-25".to_string(),
-            "2025-06-18".to_string(),
-        ],
-        allow_fallback: true,
-    })
+    .protocol(ProtocolConfig::strict(ProtocolVersion::LATEST.clone()))
     .build();
 ```
 

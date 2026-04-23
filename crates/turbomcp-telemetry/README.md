@@ -32,12 +32,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Feature Flags
 
-| Feature | Description |
-|---------|-------------|
-| `opentelemetry` | Full OpenTelemetry integration with OTLP export |
-| `prometheus` | Standalone Prometheus metrics (using metrics.rs) |
-| `tower` | Tower middleware for automatic request instrumentation |
-| `full` | All features enabled |
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `tracing-json` | yes | JSON-formatted log output (enabled by default) |
+| `tracing-pretty` | no | Human-readable pretty log output |
+| `opentelemetry` | no | Full OpenTelemetry integration with OTLP export (gRPC or HTTP/protobuf) |
+| `prometheus` | no | Standalone Prometheus metrics via `metrics` + `metrics-exporter-prometheus` |
+| `tower` | no | Tower middleware for automatic request instrumentation |
+| `full` | no | Enables `opentelemetry`, `prometheus`, and `tower` |
 
 ## OpenTelemetry Integration
 
@@ -100,7 +102,7 @@ The telemetry system records MCP-specific attributes on spans:
 | `mcp.prompt.name` | Prompt name for prompts/get |
 | `mcp.request.id` | JSON-RPC request ID |
 | `mcp.session.id` | MCP session ID |
-| `mcp.transport` | Transport type (stdio, http, websocket) |
+| `mcp.transport` | Transport type (stdio, http, websocket, tcp, unix) |
 | `mcp.duration_ms` | Request duration in milliseconds |
 | `mcp.status` | Request status (success/error) |
 
@@ -108,15 +110,21 @@ The telemetry system records MCP-specific attributes on spans:
 
 When using the `prometheus` feature:
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `mcp_requests_total` | Counter | Total requests by method and status |
-| `mcp_request_duration_seconds` | Histogram | Request latency distribution |
-| `mcp_tool_calls_total` | Counter | Tool calls by name and status |
-| `mcp_tool_duration_seconds` | Histogram | Tool execution latency |
-| `mcp_resource_reads_total` | Counter | Resource reads by URI pattern |
-| `mcp_active_connections` | Gauge | Current active connections |
-| `mcp_errors_total` | Counter | Errors by kind and method |
+| Metric | Type | Labels | Description |
+|--------|------|--------|-------------|
+| `mcp_requests_total` | Counter | method, status | Total MCP requests processed |
+| `mcp_request_duration_seconds` | Histogram | method | Request latency distribution |
+| `mcp_request_size_bytes` | Histogram | method | Request payload size |
+| `mcp_response_size_bytes` | Histogram | method | Response payload size |
+| `mcp_tool_calls_total` | Counter | tool, status | Tool calls |
+| `mcp_tool_duration_seconds` | Histogram | tool | Tool execution latency |
+| `mcp_resource_reads_total` | Counter | uri_pattern, status | Resource read operations |
+| `mcp_prompt_gets_total` | Counter | prompt, status | Prompt get operations |
+| `mcp_active_connections` | Gauge | transport | Current active connections |
+| `mcp_connections_total` | Counter | transport | Connections established |
+| `mcp_connection_duration_seconds` | Histogram | transport | Connection lifetime |
+| `mcp_errors_total` | Counter | kind, method | Errors |
+| `mcp_rate_limited_total` | Counter | tenant | Rate-limited requests |
 
 ## License
 

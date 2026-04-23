@@ -43,7 +43,7 @@
 cargo install turbomcp-cli
 
 # Install specific version
-cargo install turbomcp-cli --version 3.0.2
+cargo install turbomcp-cli --version 3.1.1
 ```
 
 ### From Source
@@ -80,19 +80,24 @@ turbomcp-cli <COMMAND>
 
 Commands:
   tools       Tool operations (list, call, schema, export)
-  resources   Resource operations (list, read, templates, subscribe)
+  resources   Resource operations (list, read, templates, subscribe, unsubscribe)
   prompts     Prompt operations (list, get, schema)
-  complete    Completion operations
+  complete    Completion operations (get)
   server      Server management (info, ping, log-level, roots)
-  sample      Sampling operations (advanced)
+  sample      Sampling operations (create)
   connect     Interactive connection wizard
   status      Connection status
+  dev         Development server with hot reload
+  install     Install MCP server to Claude Desktop or Cursor
+  build       Build an MCP server (supports WASM targets)
+  deploy      Deploy an MCP server to cloud platforms
+  new         Create a new MCP server project from a template
   help        Print help information
 
 Global Options:
   -f, --format <FORMAT>     Output format [default: human] [possible: human, json, yaml, table, compact]
   -v, --verbose             Enable verbose output
-  -c, --connection <NAME>   Use saved connection from config
+  -c, --connection <NAME>   Use saved connection from ~/.turbomcp/config.yaml
   --no-color                Disable colored output
   -h, --help                Print help
   -V, --version             Print version
@@ -100,12 +105,15 @@ Global Options:
 
 ### Connection Options
 
-All commands support these connection options:
+Commands that connect to a server accept these flags (via flattened `Connection`):
 
-- `--url <URL>` - Server URL for HTTP/WebSocket or command path for STDIO (default: `http://localhost:8080/mcp`)
-- `--command <COMMAND>` - Command to execute for STDIO transport (overrides `--url`)
-- `--auth <AUTH>` - Bearer token or API key for authentication
-- `--json` - Output results in JSON format
+- `--transport <KIND>` - Force transport: `stdio`, `http`, `ws`, `tcp`, `unix` (auto-detected if omitted)
+- `--url <URL>` - Server URL (env: `MCP_URL`, default: `http://localhost:8080/mcp`)
+- `--command <COMMAND>` - Command to execute for STDIO transport, overrides `--url` (env: `MCP_COMMAND`)
+- `--auth <AUTH>` - Bearer token or API key (env: `MCP_AUTH`)
+- `--timeout <SECONDS>` - Connection timeout in seconds (default: `30`)
+
+Use the global `-f, --format json` flag (not `--json`) to emit JSON output.
 
 ## Commands
 
@@ -163,50 +171,46 @@ turbomcp-cli tools call calculator_add \
 }
 ```
 
-### `tools schema` - Export Tool Schemas
+### `tools schema` - Print Tool Schemas
 
-Export JSON schemas for all tools from an MCP server.
+Print the JSON input schema for one tool (by name) or all tools to stdout.
 
 ```bash
-# Export schemas to stdout (HTTP)
+# Print schemas for all tools (HTTP)
 turbomcp-cli tools schema --url http://localhost:8080/mcp
 
-# Export schemas to file (HTTP)
-turbomcp-cli tools schema \
-    --url http://localhost:8080/mcp \
-    --output schemas.json
+# Print schema for a single tool
+turbomcp-cli tools schema calculator_add --url http://localhost:8080/mcp
 
-# Export schemas from STDIO server
-turbomcp-cli tools schema \
-    --command "./target/debug/my-server" \
-    --output schemas.json
+# Schemas from a STDIO server
+turbomcp-cli tools schema --command "./target/debug/my-server"
 ```
 
-**Example Output:**
-```json
-{
-  "tools": [
-    {
-      "name": "calculator_add",
-      "description": "Add two numbers together",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "a": {"type": "number"},
-          "b": {"type": "number"}
-        },
-        "required": ["a", "b"]
-      }
-    }
-  ]
-}
+### `tools export` - Export Schemas to a Directory
+
+Write each tool's input schema as a separate `<tool>.json` file inside an output
+directory. The directory is created if needed; tool names are sanitized to
+prevent path traversal, and output paths are validated so that symlink-based
+escapes outside the directory are rejected at file creation time.
+
+```bash
+# Export every schema into ./schemas/
+turbomcp-cli tools export \
+    --url http://localhost:8080/mcp \
+    --output ./schemas
+
+# Export from a STDIO server
+turbomcp-cli tools export \
+    --command "./target/debug/my-server" \
+    --output ./schemas
 ```
 
 ## Transport Support
 
-The CLI supports three transport methods:
+The CLI supports five transports. Use `--transport` to force one, or rely on
+URL-based auto-detection:
 
-### HTTP/HTTPS
+### HTTP / HTTPS (SSE)
 ```bash
 turbomcp-cli tools list --url http://localhost:8080/mcp
 turbomcp-cli tools list --url https://api.example.com/mcp
@@ -218,20 +222,29 @@ turbomcp-cli tools list --url ws://localhost:8080/mcp
 turbomcp-cli tools list --url wss://api.example.com/mcp
 ```
 
-### STDIO (Standard Input/Output)
+### TCP
+```bash
+turbomcp-cli tools list --url tcp://localhost:9000
+```
+
+### Unix Domain Socket
+```bash
+turbomcp-cli tools list --url unix:///tmp/mcp.sock
+```
+
+### STDIO (child process)
 ```bash
 # Using --command option
 turbomcp-cli tools list --command "./my-server"
 turbomcp-cli tools list --command "python server.py"
-
-# Or specify path in --url (auto-detected)
-turbomcp-cli tools list --url "./my-server"
 ```
 
 **Transport Auto-Detection:**
-- URLs starting with `http://`, `https://` → HTTP transport
-- URLs starting with `ws://`, `wss://` → WebSocket transport  
-- `--command` option or executable paths → STDIO transport
+- `http://`, `https://` → HTTP/SSE transport
+- `ws://`, `wss://` → WebSocket transport
+- `tcp://` → TCP transport
+- `unix://` → Unix socket transport
+- `--command` option → STDIO transport (spawns a child process)
 
 ## Examples
 
@@ -244,16 +257,15 @@ turbomcp-cli tools call calculator_add \
   --command "./target/debug/calculator-server" \
   --arguments '{"a": 10, "b": 5}'
 
-# Export all schemas to file via WebSocket
-turbomcp-cli tools schema \
+# Export all schemas to a directory via WebSocket
+turbomcp-cli tools export \
   --url ws://localhost:8080/mcp \
-  --output my-server-schemas.json
+  --output ./my-server-schemas
 
-# Test STDIO server with authentication
-turbomcp-cli tools list \
+# Test STDIO server with authentication, emitting JSON
+turbomcp-cli --format json tools list \
   --command "python my-server.py" \
-  --auth "bearer-token-here" \
-  --json
+  --auth "bearer-token-here"
 ```
 
 ## Roadmap

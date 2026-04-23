@@ -4,7 +4,7 @@ OpenAPI to MCP conversion for TurboMCP. Expose REST APIs as MCP tools and resour
 
 ## Overview
 
-This crate allows you to automatically convert an OpenAPI 3.x specification into MCP (Model Context Protocol) tools and resources. This enables AI agents to interact with REST APIs without writing custom handlers.
+This crate allows you to automatically convert an OpenAPI 3.0.x specification (via the `openapiv3` crate) into MCP (Model Context Protocol) tools and resources. This enables AI agents to interact with REST APIs without writing custom handlers.
 
 **Default mapping:**
 - `GET` endpoints → MCP Resources (readable content)
@@ -13,9 +13,10 @@ This crate allows you to automatically convert an OpenAPI 3.x specification into
 ## Quick Start
 
 ```rust
-use turbomcp_openapi::{OpenApiProvider, OpenApiHandler};
-use turbomcp_server::McpServer;
+use std::path::Path;
 use std::time::Duration;
+use turbomcp_openapi::{OpenApiHandler, OpenApiProvider};
+use turbomcp_server::{ServerBuilder, Transport};
 
 // Load from URL
 let provider = OpenApiProvider::from_url("https://api.example.com/openapi.json")
@@ -31,11 +32,12 @@ let provider = OpenApiProvider::from_file(Path::new("openapi.yaml"))?
 let provider = OpenApiProvider::from_string(spec_json)?
     .with_base_url("https://api.example.com")?;
 
-// Convert to MCP handler
-let handler = provider.into_handler();
-
-// Use with TurboMCP server
-let server = McpServer::from_handler(handler);
+// Convert to an McpHandler and serve it with any transport
+let handler: OpenApiHandler = provider.into_handler();
+ServerBuilder::new(handler)
+    .transport(Transport::stdio())
+    .serve()
+    .await?;
 ```
 
 ## Security Features
@@ -112,7 +114,7 @@ let rule = RouteRule::new(McpType::Tool)
 
 ## Features
 
-- **OpenAPI 3.x Support** - Parse both JSON and YAML specifications
+- **OpenAPI 3.0.x Support** - Parse both JSON and YAML specifications (via `openapiv3`)
 - **Multiple Loading Methods** - From URL, file path, or string
 - **Configurable Mapping** - Customize how operations map to MCP types
 - **Regex Pattern Matching** - Route rules support regex path patterns
@@ -158,19 +160,20 @@ impl OpenApiProvider {
 
 ### OpenApiHandler
 
-Implements `McpHandler` for use with TurboMCP servers:
+Implements `turbomcp_core::handler::McpHandler` for use with TurboMCP servers.
+The handler exposes:
 
-```rust
-impl McpHandler for OpenApiHandler {
-    fn server_info(&self) -> ServerInfo;
-    fn list_tools(&self) -> Vec<Tool>;
-    fn list_resources(&self) -> Vec<Resource>;
-    fn list_prompts(&self) -> Vec<Prompt>;
-    async fn call_tool(&self, name: &str, args: Value, ctx: &RequestContext) -> McpResult<ToolResult>;
-    async fn read_resource(&self, uri: &str, ctx: &RequestContext) -> McpResult<ResourceResult>;
-    async fn get_prompt(&self, name: &str, args: Option<Value>, ctx: &RequestContext) -> McpResult<PromptResult>;
-}
-```
+- `server_info()` — returns the spec's `info.title` / `info.version`
+- `list_tools()` — one `Tool` per non-GET operation (subject to route mapping); `meta` includes the original `method`, `path`, and `operationId`
+- `list_resources()` — one `Resource` per GET operation (subject to route mapping); `mime_type` is `application/json`
+- `list_prompts()` — always empty (OpenAPI has no prompt concept)
+- `call_tool(name, args, ctx)` — dispatches an HTTP request for the matching tool, with SSRF validation
+- `read_resource(uri, ctx)` — issues the GET for the matching resource URI
+- `get_prompt(...)` — always returns `prompt_not_found`
+
+Tool names use `operation_id` when present, otherwise `{method}_{path}` with `/`
+replaced by `_` and `{}` stripped. Resource URIs are
+`openapi://{method}{path}` (e.g. `openapi://get/users/{id}`).
 
 ## Error Types
 

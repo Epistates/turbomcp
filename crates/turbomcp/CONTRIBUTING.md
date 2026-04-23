@@ -16,7 +16,7 @@ Thank you for your interest in contributing to TurboMCP! We welcome contribution
 
 ## Code of Conduct
 
-This project adheres to the Contributor Covenant Code of Conduct. By participating, you are expected to uphold this code. Please report unacceptable behavior to [turbomcp@anthropic.com](mailto:turbomcp@anthropic.com).
+This project adheres to the Contributor Covenant Code of Conduct. By participating, you are expected to uphold this code. Please report unacceptable behavior to the project maintainers via GitHub.
 
 ### Our Pledge
 
@@ -26,7 +26,7 @@ We pledge to make participation in our project a harassment-free experience for 
 
 ### Prerequisites
 
-- **Rust**: 1.89+ with 2021 edition
+- **Rust**: 1.89+ with 2024 edition
 - **Git**: For version control
 - **MCP Inspector**: For testing (`npx @modelcontextprotocol/inspector`)
 
@@ -41,7 +41,7 @@ We pledge to make participation in our project a harassment-free experience for 
 
 3. **Add upstream remote**:
    ```bash
-   git remote add upstream https://github.com/anthropics/nextgen-mcp.git
+   git remote add upstream https://github.com/Epistates/turbomcp.git
    ```
 
 4. **Install development dependencies**:
@@ -182,12 +182,12 @@ mod request_handler;
 // Prefer ? operator for error propagation
 fn read_file(path: &str) -> McpResult<String> {
     let contents = fs::read_to_string(path)
-        .map_err(|e| McpError::resource(format!("Failed to read {}: {}", path, e)))?;
+        .map_err(|e| McpError::internal(format!("Failed to read {}: {}", path, e)))?;
     Ok(contents)
 }
 
 // Use descriptive error messages
-return Err(McpError::tool("Invalid input: expected positive number".to_string()));
+return Err(McpError::invalid_params("Invalid input: expected positive number"));
 ```
 
 #### Documentation
@@ -403,7 +403,7 @@ Use the feature request template and include:
 
 **Do not open public issues for security vulnerabilities.**
 
-Email security issues to: [security@anthropic.com](mailto:security@anthropic.com)
+Report security issues privately via GitHub Security Advisories on the Epistates/turbomcp repository.
 
 Include:
 - Description of the vulnerability
@@ -418,7 +418,7 @@ Include:
 - **GitHub Issues**: Bug reports and feature requests
 - **GitHub Discussions**: Questions and community discussion
 - **Discord**: Real-time chat and support
-- **Email**: [turbomcp@anthropic.com](mailto:turbomcp@anthropic.com)
+- **GitHub**: [Epistates/turbomcp](https://github.com/Epistates/turbomcp)
 
 ### Getting Help
 

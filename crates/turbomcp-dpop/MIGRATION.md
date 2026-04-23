@@ -23,11 +23,15 @@ v3.0 removes `DpopAlgorithm::RS256` and `DpopAlgorithm::PS256` to eliminate timi
 vulnerabilities (RUSTSEC-2023-0071). Only ES256 (ECDSA P-256) is supported.
 
 ```rust
-// Before (v2.x) - RS256 and PS256 were accepted
-let key_pair = DpopKeyPair::generate(DpopAlgorithm::RS256)?;
+// Before (v2.x) - RS256 variant existed on DpopAlgorithm
+// (e.g. via DpopKeyManager::generate_key_pair(DpopAlgorithm::RS256))
 
-// After (v3.0) - ES256 only
-let key_pair = DpopKeyPair::generate(DpopAlgorithm::ES256)?;
+// After (v3.0) - ES256 only; direct helper is generate_p256()
+let key_pair = DpopKeyPair::generate_p256()?;
+
+// Or via DpopKeyManager (the only remaining algorithm is ES256):
+// let manager = DpopKeyManager::new_memory().await?;
+// let key_pair = manager.generate_key_pair(DpopAlgorithm::ES256).await?;
 ```
 
 Any `match` arms or configuration values referencing the removed variants will produce compile
@@ -176,19 +180,18 @@ Requires the `hsm-yubico` feature.
 ### Proof construction
 
 ```rust
-use turbomcp_dpop::{DpopProofParams, DpopKeyPair, DpopAlgorithm};
-use http::Method;
-use url::Url;
+use turbomcp_dpop::{DpopProofParams, DpopKeyPair};
 
-let key_pair = DpopKeyPair::generate(DpopAlgorithm::ES256)?;
+let key_pair = DpopKeyPair::generate_p256()?;
 
-// DpopProofParams is constructed via DpopProofParamsBuilder (bon-generated)
-let params = DpopProofParams::builder()
-    .http_method(Method::POST)
-    .http_uri(Url::parse("https://api.example.com/token")?)
-    .build();
-
-let proof = params.sign(&key_pair)?;
+// DpopProofParams is constructed via its bon-generated builder.
+// http_method and http_uri are String-typed (anything Into<String> works).
+let proof = DpopProofParams::builder()
+    .http_method("POST")
+    .http_uri("https://api.example.com/token")
+    .build()
+    .build_with_key(&key_pair)
+    .await?;
 ```
 
 ---

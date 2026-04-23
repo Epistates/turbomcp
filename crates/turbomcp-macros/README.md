@@ -4,159 +4,61 @@
 [![Documentation](https://docs.rs/turbomcp-macros/badge.svg)](https://docs.rs/turbomcp-macros)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Procedural macros for MCP server development with automatic schema generation and compile-time validation.**
+**Procedural macros for MCP server development with automatic schema generation.**
 
 ## Table of Contents
 
 - [Overview](#overview)
-- [Key Features](#key-features)
-- [Architecture](#architecture)
-- [Core Macros](#core-macros)
-  - [MCP 2025-06-18 Enhanced Macros](#mcp-2025-06-18-enhanced-macros)
-  - [#[server] - Server Implementation](#server---server-implementation)
-  - [#[tool] - Tool Registration](#tool---tool-registration)
-  - [#[resource] - Resource Registration](#resource---resource-registration)
-  - [#[prompt] - Prompt Template Registration](#prompt---prompt-template-registration)
-- [Advanced Features](#advanced-features)
-- [Metadata Access](#metadata-access)
-- [Macro Attributes](#macro-attributes)
-- [Generated Code Examples](#generated-code-examples)
-- [IDE Integration](#ide-integration)
-- [Testing Support](#testing-support)
-- [Performance](#performance)
+- [Exported Macros](#exported-macros)
+- [`#[server]`](#server)
+- [`#[tool]`](#tool)
+- [`#[resource]`](#resource)
+- [`#[prompt]`](#prompt)
+- [`#[description]`](#description)
+- [How schemas are generated](#how-schemas-are-generated)
+- [Context injection](#context-injection)
+- [Feature flags](#feature-flags)
 - [Development](#development)
 
 ## Overview
 
-`turbomcp-macros` provides the procedural macros for TurboMCP development. These macros reduce boilerplate code while providing compile-time validation, automatic schema generation, and type-safe parameter handling.
+`turbomcp-macros` provides the procedural macros for TurboMCP development. The macros
+discover handler methods inside an `impl` block, parse their signatures, and generate a
+full `McpHandler` implementation plus JSON schemas for the tool inputs.
 
-## Key Features
+Schema generation uses `schemars` and is always enabled — it is not an optional feature.
 
-### 🎯 **Zero Boilerplate Design**
-- **Automatic registration** - Tools and resources registered automatically
-- **Schema generation** - JSON schemas generated from Rust types  
-- **Parameter extraction** - Type-safe parameter conversion and validation
-- **Error handling** - Automatic error type conversion and propagation
-- **Ergonomic Macros** - `elicit!` for user input, seamless Context API delegation
+## Exported Macros
 
-### ✅ **Compile-Time Validation**
-- **Type checking** - Parameter types validated at compile time
-- **Schema validation** - Generated schemas validated for correctness
-- **IDE support** - Full IntelliSense and error reporting
-- **Macro hygiene** - Proper variable scoping and name collision prevention
+The crate exports exactly these five attribute macros:
 
-### 📋 **Automatic Schema Generation**
-- **JSON Schema** - Complete JSON Schema generation from Rust types
-- **Parameter documentation** - Extract documentation from function signatures
-- **Type introspection** - Deep analysis of parameter and return types
-- **Schema caching** - Efficient schema generation and reuse
+| Macro | Role |
+|---|---|
+| `#[server]` | Transforms an `impl` block into a full `McpHandler` implementation |
+| `#[tool]` | Marks a method as a tool handler (must be inside a `#[server]` block) |
+| `#[resource]` | Marks a method as a resource handler (must be inside a `#[server]` block) |
+| `#[prompt]` | Marks a method as a prompt handler (must be inside a `#[server]` block) |
+| `#[description]` | Attaches a description string to a tool parameter for JSON Schema |
 
-### 🔍 **Context Injection**
-- **Flexible positioning** - Context parameter can appear anywhere in function signature
-- **Send-safe** - Proper Send/Sync bounds for async context
-- **Type safety** - Compile-time validation of context usage
-- **Optional context** - Functions can opt-in or out of context injection
+No other macros are provided by this crate. Used outside a `#[server]` block, the
+handler attributes emit a compile error with a usage example.
 
-## Architecture
+## `#[server]`
 
-```
-┌─────────────────────────────────────────────┐
-│              TurboMCP Macros                │
-├─────────────────────────────────────────────┤
-│ Procedural Macro Processing                │
-│ ├── #[server] trait implementation         │
-│ ├── #[tool] function registration          │
-│ ├── #[resource] handler registration       │
-│ └── #[prompt] template registration        │
-├─────────────────────────────────────────────┤
-│ Schema Generation Engine                   │
-│ ├── Type introspection                     │
-│ ├── JSON Schema creation                   │
-│ ├── Parameter validation                   │
-│ └── Documentation extraction               │
-├─────────────────────────────────────────────┤
-│ Code Generation                            │
-│ ├── Handler registration code              │
-│ ├── Parameter extraction logic             │
-│ ├── Error conversion helpers               │
-│ └── Schema metadata functions              │
-├─────────────────────────────────────────────┤
-│ Compile-Time Validation                    │
-│ ├── Type compatibility checking            │
-│ ├── Parameter validation                   │
-│ ├── Context injection validation           │
-│ └── Schema correctness verification        │
-└─────────────────────────────────────────────┘
-```
+Applies to an inherent (non-trait) `impl` block. Generates an `impl McpHandler` for
+the struct that dispatches tool / resource / prompt calls to the annotated methods.
 
-## Core Macros
+**Supported arguments:**
 
-### MCP 2025-06-18 Enhanced Macros
+- `name = "..."` — Server name. Defaults to the struct identifier.
+- `version = "..."` — Server version. Defaults to `"1.0.0"`.
+- `description = "..."` — Optional server description.
 
-New macros for the latest MCP protocol features:
+The deprecated `transports = [...]` argument is rejected with a diagnostic directing
+you to Cargo feature flags instead.
 
-#### `elicit!` - Elegant User Input (NEW)
-```rust
-use turbomcp::prelude::*;
-use turbomcp_protocol::types::ElicitationSchema;
-
-#[tool("Configure user preferences")]
-async fn configure_preferences(&self, ctx: Context) -> McpResult<String> {
-    let schema = ElicitationSchema::new()
-        .add_string_property("theme", Some("Color theme preference"))
-        .add_boolean_property("notifications", Some("Enable notifications"));
-
-    // Simple macro handles all protocol complexity
-    let result = elicit!(ctx, "Please configure your preferences", schema).await?;
-
-    if let Some(data) = result.content {
-        let theme = data.get("theme").and_then(|v| v.as_str()).unwrap_or("default");
-        Ok(format!("Configured with {} theme", theme))
-    } else {
-        Err(McpError::context("Configuration cancelled".to_string()))
-    }
-}
-```
-
-#### `#[elicitation]` - Attribute-based Elicitation
-```rust
-#[elicitation("Collect user preferences")]
-async fn get_preferences(&self, schema: serde_json::Value) -> McpResult<serde_json::Value> {
-    // Server requests structured input from client
-    Ok(serde_json::json!({"theme": "dark", "language": "en"}))
-}
-```
-
-#### `#[completion]` - Intelligent Autocompletion
-```rust
-#[completion("Complete file paths")]
-async fn complete_path(&self, partial: String) -> McpResult<Vec<String>> {
-    // Provide completion suggestions
-    Ok(vec!["config.json".to_string(), "data.txt".to_string()])
-}
-```
-
-#### `#[template]` - Resource Templates
-```rust
-#[template("users/{user_id}/profile")]
-async fn get_user_profile(&self, user_id: String) -> McpResult<String> {
-    // Dynamic resource with RFC 6570 URI template
-    Ok(format!("Profile for user: {}", user_id))
-}
-```
-
-#### `#[ping]` - Health Monitoring
-```rust
-#[ping("Health check")]
-async fn health_check(&self) -> McpResult<String> {
-    // Bidirectional health monitoring
-    Ok("Server is healthy".to_string())
-}
-```
-
-### `#[server]` - Server Implementation
-
-Automatically implements the MCP server trait for a struct:
+The macro scans impl methods for exactly three attribute names — `tool`, `resource`,
+`prompt` — and passes everything else through unchanged.
 
 ```rust
 use turbomcp::prelude::*;
@@ -164,541 +66,178 @@ use turbomcp::prelude::*;
 #[derive(Clone)]
 struct Calculator;
 
-#[server]
+#[server(name = "calculator", version = "1.0.0")]
 impl Calculator {
-    #[tool("Add two numbers")]
-    async fn add(&self, a: f64, b: f64) -> McpResult<f64> {
-        Ok(a + b)
-    }
-    
-    #[tool("Get server status")]
-    async fn status(&self, ctx: Context) -> McpResult<String> {
-        ctx.info("Status requested").await?;
-        Ok("Server running".to_string())
+    /// Add two numbers
+    #[tool]
+    async fn add(&self, a: f64, b: f64) -> f64 {
+        a + b
     }
 }
-
-// Generated code includes:
-// - Automatic trait implementation
-// - Handler registration
-// - Schema generation
-// - Transport integration
 ```
 
-**Generated Capabilities:**
-- Automatic `MCP` trait implementation
-- Handler registry setup with all annotated functions
-- Schema generation for all tools/resources/prompts
-- Transport method implementations (`run_stdio`, `run_http`, etc.)
+The runner methods (`run_stdio`, `run_http`, `run_tcp`, `run_unix`, `run_websocket`)
+are defined on the `McpServer` trait in `turbomcp-server`, which is blanket-implemented
+for every type that has an `McpHandler`. They are *not* generated per-call by this
+macro; the macro's job is only to produce the `McpHandler` impl.
 
-### `#[tool]` - Tool Registration
+## `#[tool]`
 
-Transforms functions into MCP tools with automatic parameter handling:
+Marks a method as a tool handler. The tool name is the method identifier, and the
+tool description is taken from doc comments unless overridden via the attribute.
+
+**Supported argument forms:**
+
+- `#[tool]` — no arguments; description comes from the `///` doc comment.
+- `#[tool("description")]` — shorthand for the description.
+- `#[tool(description = "...", tags = ["a", "b"], version = "1.0")]` — named arguments.
+
+Recognized named keys: `description`, `tags`, `version`. Unknown keys are silently
+ignored by the parser.
 
 ```rust
-#[tool("Calculate mathematical expressions")]
-async fn calculate(
-    #[description("Mathematical expression to evaluate")]
-    expression: String,
-    #[description("Precision for floating point results")]
-    precision: Option<u32>,
-    ctx: Context
-) -> McpResult<serde_json::Value> {
-    ctx.info(&format!("Calculating: {}", expression)).await?;
-    
-    let precision = precision.unwrap_or(2);
-    // ... calculation logic
-    
-    Ok(serde_json::json!({
-        "result": result,
-        "expression": expression,
-        "precision": precision
-    }))
-}
-```
-
-**Generated Features:**
-- JSON Schema with parameter descriptions
-- Type-safe parameter extraction from JSON
-- Optional parameter handling
-- Context injection (can appear anywhere in signature)
-- Automatic error conversion
-- Tool metadata functions
-
-#### Rich Tool Descriptions (NEW)
-
-The `#[tool]` macro supports multiple metadata fields for improved LLM understanding and context:
-
-```rust
-#[tool(
-    description = "Query notes by metadata pattern",
-    usage = "Identify targets before batch operations",
-    performance = "<100ms typical on 10k notes",
-    related = ["batch_execute", "read_note"],
-    examples = ["status: \"draft\"", "priority > 3"]
-)]
-async fn query_notes(&self, pattern: String) -> McpResult<Vec<Note>> {
-    // Implementation
-}
-```
-
-All fields are combined into a single pipe-delimited description for MCP compliance:
-```
-"Query notes by metadata pattern | Usage: Identify targets before batch operations | Performance: <100ms typical on 10k notes | Related: batch_execute, read_note | Examples: status: "draft", priority > 3"
-```
-
-**Available Fields:**
-- **description**: Primary tool description (required)
-- **usage**: When/why to use this tool (optional)
-- **performance**: Expected performance characteristics (optional)
-- **related**: Related/complementary tools as array (optional)
-- **examples**: Common usage examples as array (optional)
-
-**Backward Compatible:** Simple string syntax still works:
-```rust
-#[tool("Add two numbers")]  // ✓ Still supported
-```
-
-This feature helps LLMs make better decisions about:
-- **When to use** the tool (usage context)
-- **What to expect** in terms of performance
-- **Related workflows** via connected tools
-- **How to use** through concrete examples
-
-### `#[resource]` - Resource Registration
-
-Creates URI template-based resource handlers:
-
-```rust
-#[resource("file://{path}")]
-async fn read_file(
-    #[description("File path to read")]
-    path: String,
-    #[description("Maximum file size in bytes")]
-    max_size: Option<usize>,
-    ctx: Context
-) -> McpResult<String> {
-    let max_size = max_size.unwrap_or(1024 * 1024); // 1MB default
-    
-    if std::fs::metadata(&path)?.len() > max_size as u64 {
-        return Err(McpError::InvalidInput("File too large".to_string()));
-    }
-    
-    ctx.info(&format!("Reading file: {}", path)).await?;
-    
-    tokio::fs::read_to_string(&path).await
-        .map_err(|e| McpError::resource(e.to_string()))
-}
-```
-
-**URI Template Features:**
-- Automatic URI pattern matching
-- Path parameter extraction
-- Query parameter support
-- URI validation
-- Resource metadata generation
-
-### `#[prompt]` - Prompt Template Registration
-
-Creates prompt templates with parameter substitution:
-
-```rust
-#[prompt("code_review")]
-async fn code_review_prompt(
-    #[description("Programming language")]
-    language: String,
-    #[description("Code to review")]
-    code: String,
-    #[description("Focus areas for review")]
-    focus: Option<Vec<String>>,
-    ctx: Context
-) -> McpResult<String> {
-    let focus_areas = focus.unwrap_or_else(|| vec![
-        "security".to_string(),
-        "performance".to_string(),
-        "maintainability".to_string()
-    ]);
-    
-    ctx.info(&format!("Generating {} code review prompt", language)).await?;
-    
-    Ok(format!(
-        "Please review the following {} code focusing on {}:\n\n```{}\n{}\n```",
-        language,
-        focus_areas.join(", "),
-        language,
-        code
-    ))
-}
-```
-
-## Advanced Features
-
-### Context Injection
-
-The `Context` parameter can appear anywhere in the function signature:
-
-```rust
-// Context first
-#[tool("Process data")]
-async fn process(ctx: Context, data: String) -> McpResult<String> {
-    ctx.info("Processing started").await?;
-    Ok(format!("Processed: {}", data))
-}
-
-// Context in middle
-#[tool("Transform data")]
-async fn transform(input: String, ctx: Context, format: String) -> McpResult<String> {
-    ctx.info(&format!("Transforming to {}", format)).await?;
-    // transformation logic
-    Ok(transformed)
-}
-
-// Context last
-#[tool("Validate input")]
-async fn validate(data: String, strict: bool, ctx: Context) -> McpResult<bool> {
-    ctx.info("Validating input").await?;
-    // validation logic
-    Ok(is_valid)
-}
-
-// No context
-#[tool("Simple calculation")]
-async fn add(a: f64, b: f64) -> McpResult<f64> {
-    Ok(a + b)
-}
-```
-
-### Parameter Descriptions
-
-Use the `#[description]` attribute for rich parameter documentation:
-
-```rust
-#[tool("Search documents")]
-async fn search(
-    #[description("Search query string")]
-    query: String,
-    
-    #[description("Maximum number of results to return")]
-    #[default(10)]
-    limit: Option<u32>,
-    
-    #[description("Include archived documents in search")]
-    #[default(false)]
-    include_archived: Option<bool>,
-    
-    #[description("Sort results by relevance or date")]
-    #[allowed("relevance", "date")]
-    sort_by: Option<String>,
-) -> McpResult<SearchResults> {
-    // Implementation
-}
-```
-
-**Generated Schema:**
-```json
-{
-  "type": "object",
-  "properties": {
-    "query": {
-      "type": "string",
-      "description": "Search query string"
-    },
-    "limit": {
-      "type": "integer",
-      "description": "Maximum number of results to return",
-      "default": 10
-    },
-    "include_archived": {
-      "type": "boolean", 
-      "description": "Include archived documents in search",
-      "default": false
-    },
-    "sort_by": {
-      "type": "string",
-      "description": "Sort results by relevance or date",
-      "enum": ["relevance", "date"]
-    }
-  },
-  "required": ["query"]
-}
-```
-
-### Custom Types and Schema Generation
-
-The macros automatically generate schemas for custom types:
-
-```rust
-#[derive(Serialize, Deserialize)]
-struct User {
-    id: u64,
-    name: String,
-    email: Option<String>,
-    active: bool,
-}
-
-#[derive(Serialize, Deserialize)]
-struct CreateUserRequest {
-    name: String,
-    email: String,
-    role: UserRole,
-}
-
-#[derive(Serialize, Deserialize)]
-enum UserRole {
-    Admin,
-    User,
-    Guest,
-}
-
-#[tool("Create a new user")]
-async fn create_user(request: CreateUserRequest) -> McpResult<User> {
-    // Schema automatically generated for both CreateUserRequest and User
-    // Enums become string unions in JSON Schema
-    // Optional fields marked appropriately
-    Ok(User {
-        id: generate_id(),
-        name: request.name,
-        email: Some(request.email),
-        active: true,
-    })
-}
-```
-
-### Helper Macros
-
-#### `elicit!` - Ergonomic Elicitation Macro (NEW)
-
-The `elicit!` macro provides elegant server-initiated user input:
-
-```rust
-use turbomcp::prelude::*;
-use turbomcp_protocol::elicitation::ElicitationSchema;
-
-// Build schema with type safety
-let schema = ElicitationSchema::new()
-    .add_string_property("name", Some("Your name"))
-    .add_boolean_property("subscribe", Some("Subscribe to newsletter"));
-
-// Clean, simple macro call
-let result = elicit!(ctx, "Please provide your information", schema).await?;
-```
-
-**Key Benefits:**
-- **Zero Protocol Complexity** - Handles all MCP elicitation protocol details
-- **Type Safe** - Compile-time validation of context and schema
-- **Ergonomic** - Simple 3-parameter syntax: `(context, message, schema)`
-- **Error Handling** - Automatic error conversion and propagation
-
-#### Error Handling Macros
-
-Ergonomic error creation macros:
-
-```rust
-use turbomcp::prelude::*;
-
-#[tool("Divide numbers")]
-async fn divide(a: f64, b: f64) -> McpResult<f64> {
-    if b == 0.0 {
-        return Err(mcp_error!("Division by zero: {} / {}", a, b));
-    }
-    
-    Ok(a / b)
-}
-
-#[tool("Process file")]
-async fn process_file(path: String) -> McpResult<String> {
-    let content = tokio::fs::read_to_string(&path).await
-        .map_err(|e| mcp_error!("Failed to read file {}: {}", path, e))?;
-    
-    // Processing logic
-    Ok(processed_content)
-}
-```
-
-## Metadata Access
-
-The macros generate metadata access functions:
-
-```rust
-#[derive(Clone)]
-struct MyServer;
-
 #[server]
 impl MyServer {
-    #[tool("Example tool")]
-    async fn example(&self, input: String) -> McpResult<String> {
-        Ok(input)
-    }
-}
-
-// Generated metadata functions
-let (name, description, schema) = MyServer::example_tool_metadata();
-assert_eq!(name, "example");
-assert_eq!(description, "Example tool");
-// schema contains the complete JSON Schema
-
-// Test the generated function directly
-let result = MyServer.test_tool_call("example", serde_json::json!({
-    "input": "test"
-})).await?;
-```
-
-## Macro Attributes
-
-### Tool Attributes
-
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| `#[description]` | Parameter description | `#[description("User ID")]` |
-| `#[default]` | Default value for optional parameters | `#[default(10)]` |
-| `#[allowed]` | Allowed string values (enum) | `#[allowed("read", "write")]` |
-| `#[range]` | Numeric range validation | `#[range(0, 100)]` |
-| `#[pattern]` | Regex pattern validation | `#[pattern(r"^\d{3}-\d{2}-\d{4}$")]` |
-
-### Resource Attributes
-
-| Attribute | Description | Example |
-|-----------|-------------|---------|
-| URI template | Resource URI pattern | `#[resource("file://{path}")]` |
-| `#[mime_type]` | Content MIME type | `#[mime_type("text/plain")]` |
-| `#[binary]` | Binary resource flag | `#[binary(true)]` |
-
-## Generated Code Examples
-
-### Tool Registration
-
-Input:
-```rust
-#[tool("Add numbers")]
-async fn add(&self, a: f64, b: f64) -> McpResult<f64> {
-    Ok(a + b)
-}
-```
-
-Generated (simplified):
-```rust
-// Metadata function
-pub fn add_tool_metadata() -> (&'static str, &'static str, serde_json::Value) {
-    ("add", "Add numbers", serde_json::json!({
-        "type": "object",
-        "properties": {
-            "a": {"type": "number"},
-            "b": {"type": "number"}
-        },
-        "required": ["a", "b"]
-    }))
-}
-
-// Handler registration
-async fn register_handlers(&self, registry: &mut HandlerRegistry) -> McpResult<()> {
-    registry.register_tool("add", |params| {
-        let a: f64 = extract_param(&params, "a")?;
-        let b: f64 = extract_param(&params, "b")?;
-        self.add(a, b).await
-    }).await?;
-    
-    Ok(())
-}
-
-// Direct test function
-pub async fn test_tool_call(&self, name: &str, params: serde_json::Value) -> McpResult<serde_json::Value> {
-    match name {
-        "add" => {
-            let a: f64 = extract_param(&params, "a")?;
-            let b: f64 = extract_param(&params, "b")?;
-            let result = self.add(a, b).await?;
-            Ok(serde_json::to_value(result)?)
-        },
-        _ => Err(McpError::InvalidInput(format!("Unknown tool: {}", name)))
+    /// Greet someone by name
+    #[tool]
+    async fn greet(
+        &self,
+        #[description("Name of the person to greet")] name: String,
+        #[description("Optional greeting prefix")] prefix: Option<String>,
+    ) -> String {
+        let prefix = prefix.unwrap_or_else(|| "Hello".into());
+        format!("{prefix}, {name}!")
     }
 }
 ```
 
-## IDE Integration
+**Input schema rules:**
 
-The macros provide excellent IDE support:
+- `&self` is skipped.
+- Parameters whose type is `Context`, `RequestContext`, `&Context`, or `&RequestContext`
+  are recognized as context and excluded from the schema.
+- Remaining parameters become schema properties; `Option<T>` parameters are optional,
+  everything else is required.
+- Parameter types are passed through `schemars::schema_for!` at compile time.
 
-- **IntelliSense** - Full auto-completion for generated functions
-- **Error highlighting** - Compile-time error detection
-- **Type information** - Hover information for generated code
-- **Go to definition** - Navigate to macro-generated implementations
-- **Refactoring support** - Safe renaming and extraction
+## `#[resource]`
 
-## Testing Support
+Marks a method as a resource handler. Requires a URI template as the first argument.
 
-The macros generate testing utilities:
+**Supported argument forms:**
+
+- `#[resource("uri://template")]`
+- `#[resource("uri://template", mime_type = "application/json")]`
+- `#[resource("uri://template", tags = ["..."], version = "1.0")]`
 
 ```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[tokio::test]
-    async fn test_calculator_tools() {
-        let calc = Calculator;
-        
-        // Test add tool directly
-        let result = calc.test_tool_call("add", serde_json::json!({
-            "a": 5.0,
-            "b": 3.0
-        })).await.unwrap();
-        
-        assert_eq!(result, serde_json::json!(8.0));
-        
-        // Test schema generation
-        let (name, desc, schema) = Calculator::add_tool_metadata();
-        assert_eq!(name, "add");
-        assert_eq!(desc, "Add two numbers");
-        assert!(schema["properties"]["a"]["type"] == "number");
+#[server]
+impl MyServer {
+    /// Application configuration
+    #[resource("config://app", mime_type = "application/json")]
+    async fn config(&self, uri: String, ctx: &RequestContext) -> String {
+        r#"{"debug": false}"#.to_string()
+    }
+
+    /// Read a file by path
+    #[resource("file://{path}")]
+    async fn file(&self, uri: String, ctx: &RequestContext) -> String {
+        format!("Content of {}", uri)
     }
 }
 ```
 
-## Performance
+## `#[prompt]`
 
-The macros generate efficient code:
+Marks a method as a prompt handler. Arguments are optional; a bare `#[prompt]` uses
+the method's doc comment as the prompt description.
 
-- **Zero runtime overhead** - All processing happens at compile time
-- **Optimized registration** - Efficient handler lookup and dispatch
-- **Schema caching** - Schemas generated once and reused
-- **Minimal allocations** - Smart parameter extraction with minimal copying
+```rust
+#[server]
+impl MyServer {
+    /// Generate a greeting prompt
+    #[prompt]
+    async fn greeting(&self, name: String, ctx: &RequestContext) -> String {
+        format!("Hello {}! How can I help you today?", name)
+    }
+}
+```
+
+Function parameters (other than `&self` and context) are exposed as prompt arguments.
+
+## `#[description]`
+
+Attaches a description string to a tool parameter. Both forms are accepted:
+
+- `#[description("text")]`
+- `#[description = "text"]`
+
+The string is embedded into the JSON Schema `description` for that property.
+
+```rust
+#[tool]
+async fn search(
+    &self,
+    #[description("The search query string")] query: String,
+    #[description("Maximum number of results")] limit: Option<u32>,
+) -> Vec<String> {
+    // ...
+}
+```
+
+## How schemas are generated
+
+Each non-context parameter is run through `schemars::schema_for!(T)` at macro
+expansion time. The resulting schema is merged into an object schema with:
+
+- `type: "object"`
+- `properties`: one entry per parameter, with any `#[description(...)]` string
+  merged in
+- `required`: names of non-`Option` parameters
+- `additionalProperties: false`
+
+Complex user-defined types work automatically as long as they implement
+`schemars::JsonSchema` (usually via `#[derive(JsonSchema)]`).
+
+## Context injection
+
+Any parameter whose type resolves to `Context` or `RequestContext` (owned or `&`)
+is recognized as the request context. It is excluded from the generated schema and
+wired from the dispatcher at call time. The context parameter may appear in any
+position in the signature.
+
+## Feature flags
+
+The macro crate itself has a small set of features that gate optional dependencies
+needed by generated code that uses certain transports:
+
+| Feature | Enables |
+|---|---|
+| `http` | pulls in `axum` for HTTP-related code paths |
+| `tcp` | pulls in `tokio` and `turbomcp-transport` |
+| `unix` | pulls in `tokio` and `turbomcp-transport` |
+| `experimental-tasks` | pass-through to `turbomcp-protocol/experimental-tasks` |
+
+In practice you enable the matching features on the umbrella `turbomcp` crate and
+the dependency graph resolves these transitively. `schemars` is always required.
 
 ## Development
 
-### Building
-
 ```bash
-# Build macros crate
-cargo build
+# Build / test
+cargo build -p turbomcp-macros
+cargo test  -p turbomcp-macros
 
-# Test macro expansion
-cargo expand --package turbomcp-macros
-
-# Run macro tests
-cargo test
-```
-
-### Debugging Macros
-
-```bash
-# See expanded macro code
-cargo expand --bin my_server
-
-# Debug specific macro
-RUST_LOG=debug cargo build
+# Inspect expanded macro output
+cargo expand --package your-server-crate
 ```
 
 ## Related Crates
 
-- **[turbomcp](../turbomcp/)** - Main framework (uses these macros)
-- **[turbomcp-protocol](../turbomcp-protocol/)** - Protocol types and core utilities
-- **[turbomcp-server](../turbomcp-server/)** - Server framework
-
-## External Resources
-
-- **[The Rust Reference - Procedural Macros](https://doc.rust-lang.org/reference/procedural-macros.html)** - Rust macro documentation
-- **[JSON Schema Specification](https://json-schema.org/)** - Schema format specification
-- **[serde Documentation](https://serde.rs/)** - Serialization framework used by macros
+- **[turbomcp](../turbomcp/)** — Main SDK (re-exports these macros via `prelude`)
+- **[turbomcp-server](../turbomcp-server/)** — Provides the `McpServer` trait and
+  `run_stdio` / `run_http` / etc.
+- **[turbomcp-protocol](../turbomcp-protocol/)** — Protocol types and message definitions
 
 ## License
 

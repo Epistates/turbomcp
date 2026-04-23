@@ -41,13 +41,13 @@ Core protocol capabilities are enabled by default, and runtime negotiation is ex
 **Quick Start:**
 ```toml
 [dependencies]
-turbomcp-protocol = "3.0.2"
+turbomcp-protocol = "3.1.1"
 ```
 
 Only the experimental Tasks API (SEP-1686) requires a feature flag:
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "3.0.2", features = ["experimental-tasks"] }
+turbomcp-protocol = { version = "3.1.1", features = ["experimental-tasks"] }
 ```
 
 ## Key Features
@@ -142,10 +142,10 @@ use turbomcp_protocol::{
 
 use turbomcp_protocol::types::{
     // Elicitation - Server requests user input
-    ElicitRequest, ElicitResult,
+    ElicitRequestParams, ElicitRequestFormParams, ElicitRequestURLParams, ElicitResult,
 
     // Completion - Intelligent autocompletion
-    CompleteRequest, CompletionResponse,
+    CompleteRequestParams, CompletionResponse,
 
     // Resource Templates - Dynamic resources
     ListResourceTemplatesRequest, ListResourceTemplatesResult,
@@ -307,85 +307,63 @@ let client_caps = ClientCapabilities {
 
 ### Error Handling
 
-The protocol crate provides `Error`, a rich MCP 2025-06-18 specification-compliant error type with comprehensive context and observability support.
-
-#### Understanding `Box<Error>`
-
-**All error constructors return `Box<Error>`** for important architectural reasons:
-
-```rust
-use turbomcp_protocol::Error;
-
-// Constructors return Box<Error>, not Error
-let err: Box<Error> = Error::tool_not_found("calculator");
-let err: Box<Error> = Error::invalid_params("Email required");
-```
-
-**Why `Box<Error>`?**
-
-1. **Cheap Cloning**: Errors clone efficiently across async boundaries
-2. **Rich Context Preservation**: Full error chain, metadata, and backtrace
-3. **Observability Integration**: Seamless tracing and metrics
-4. **Memory Efficiency**: Error type is large (contains UUID, context, backtrace) - boxing keeps it off the stack
+The protocol crate re-exports `McpError` (also aliased as `Error`) from
+`turbomcp-core` as the canonical MCP error type, with rich context and
+observability support.
 
 #### Creating Errors
 
+Error constructors return `McpError` directly (not `Box<_>`):
+
 ```rust
-use turbomcp_protocol::{Error, ErrorKind};
+use turbomcp_protocol::{McpError, ErrorKind};
 
 // MCP specification errors (map to standard error codes)
-let err = Error::tool_not_found("calculator");              // -32001
-let err = Error::tool_execution_failed("calc", "div by 0"); // -32002
-let err = Error::prompt_not_found("code_review");           // -32003
-let err = Error::resource_not_found("file:///missing");     // -32004
-let err = Error::resource_access_denied("file:///etc/passwd", "forbidden"); // -32005
-let err = Error::invalid_params("Email must be valid");     // -32602
-let err = Error::user_rejected("User declined sampling");   // -1
+let err = McpError::tool_not_found("calculator");              // -32001
+let err = McpError::tool_execution_failed("calc", "div by 0"); // -32002
+let err = McpError::prompt_not_found("code_review");           // -32003
+let err = McpError::resource_not_found("file:///missing");     // -32004
+let err = McpError::resource_access_denied("file:///etc/passwd", "forbidden"); // -32005
+let err = McpError::invalid_params("Email must be valid");     // -32602
+let err = McpError::user_rejected("User declined sampling");   // -1
 
-// Add rich context with builder pattern
-let err = Error::internal("Database error")
+// Add context with the builder pattern
+let err = McpError::internal("Database error")
     .with_operation("user_create")
     .with_component("postgres_repository")
-    .with_request_id("req-123")
-    .with_context("user_id", user_id)
-    .with_context("table", "users");
-
-// Error chaining for root cause analysis
-let database_error = Error::internal("Connection pool exhausted");
-let app_error = Error::unavailable("Service temporarily unavailable")
-    .with_source(database_error);
+    .with_request_id("req-123");
 ```
 
 #### Working with JSON-RPC Errors
 
 ```rust
-use turbomcp_protocol::{JsonRpcError, JsonRpcErrorCode, Error};
+use turbomcp_protocol::{JsonRpcError, JsonRpcErrorCode, McpError, ErrorKind};
 
-// Create JSON-RPC errors directly
+// Create JSON-RPC errors directly. `JsonRpcError::code` is an i32;
+// use `JsonRpcErrorCode::code()` to get the numeric value.
 fn handle_tool_error(error: &str) -> JsonRpcError {
     JsonRpcError {
-        code: JsonRpcErrorCode::InvalidParams,
+        code: JsonRpcErrorCode::InvalidParams.code(),
         message: format!("Tool validation failed: {}", error),
         data: None,
     }
 }
 
-// Convert protocol Error to JSON-RPC error code
-let err = Error::tool_not_found("calculator");
+// Convert an McpError to its JSON-RPC / HTTP numeric codes
+let err = McpError::tool_not_found("calculator");
 let code = err.jsonrpc_error_code();  // -32001
-let http = err.http_status_code();    // 404
+let http = err.http_status();         // 404
 
-// Create Error from JSON-RPC error code (preserves semantics)
-let err = Error::rpc(-32001, "Tool 'calculator' not found");
+// Inspect the ErrorKind directly
 assert_eq!(err.kind, ErrorKind::ToolNotFound);
 ```
 
 #### Error Properties
 
 ```rust
-use turbomcp_protocol::Error;
+use turbomcp_protocol::McpError;
 
-let err = Error::timeout("Request took too long");
+let err = McpError::timeout("Request took too long");
 
 // Check error characteristics
 if err.is_retryable() {
@@ -397,10 +375,10 @@ if err.is_temporary() {
 }
 
 // Get HTTP status code for REST APIs
-let status = err.http_status_code();  // 408
+let status = err.http_status();          // 408
 
 // Get MCP-compliant JSON-RPC error code
-let code = err.jsonrpc_error_code();  // -32012
+let code = err.jsonrpc_error_code();     // -32012
 ```
 
 #### Integration with Application Layer
@@ -425,7 +403,8 @@ See the [turbomcp crate error handling docs](../turbomcp/README.md#error-handlin
 ### Custom Message Types
 
 ```rust
-use turbomcp_protocol::{JsonRpcRequest, JsonRpcResponse, RequestId};
+use turbomcp_protocol::{JsonRpcRequest, JsonRpcResponse, JsonRpcVersion};
+use turbomcp_core::RequestId;
 use serde::{Serialize, Deserialize};
 
 // Define custom message types
@@ -441,13 +420,14 @@ struct CustomResponse {
     metadata: serde_json::Value,
 }
 
-// Create custom JSON-RPC messages
+// Create custom JSON-RPC messages.
+// Note: `jsonrpc` is a `JsonRpcVersion` newtype, and `params` is `Option<Value>`.
 fn create_custom_request(id: RequestId, params: CustomRequest) -> JsonRpcRequest {
     JsonRpcRequest {
-        jsonrpc: "2.0".to_string(),
+        jsonrpc: JsonRpcVersion::default(),
         id,
         method: "custom/method".to_string(),
-        params: serde_json::to_value(params).unwrap(),
+        params: Some(serde_json::to_value(params).unwrap()),
     }
 }
 ```
@@ -474,19 +454,16 @@ sequenceDiagram
 
 ## Version Selection Guide
 
-### Choosing the Right MCP Version
+### Protocol Version
 
-**Use MCP 2025-06-18 (Stable)** when:
-- Building production systems
-- Need maximum interoperability with existing MCP clients/servers
-- Require stable, well-tested protocol features
-- Want long-term API stability guarantees
+TurboMCP v3 targets MCP `2025-11-25`. The default `VersionManager`
+(`VersionManager::default()` / `Version::known_versions()`) advertises
+`2025-11-25` only and negotiates exact matches.
 
-**Use MCP 2025-11-25 (Draft)** when:
-- Experimenting with cutting-edge features
-- Building systems that need advanced capabilities (multi-select forms, tasks API, etc.)
-- Contributing to MCP specification development
-- Willing to accept potential breaking changes in future releases
+For interoperability with older peers, the crate also ships version
+adapters for `2025-06-18` (and a draft `DRAFT-2026-v1` type) in
+`turbomcp_protocol::versioning::adapter` — use `adapter_for_version` to
+opt into cross-version translation.
 
 ### Core Features (Always Enabled)
 
@@ -499,7 +476,7 @@ All core MCP 2025-11-25 features are now always available - no feature flags nee
 
 ```toml
 [dependencies]
-turbomcp-protocol = "3.0.2"  # All core features included
+turbomcp-protocol = "3.1.1"  # All core features included
 ```
 
 ### Runtime Version Negotiation
@@ -508,9 +485,9 @@ turbomcp-protocol = "3.0.2"  # All core features included
 ```rust
 use turbomcp_protocol::{InitializeRequest, ClientCapabilities};
 
-// Request draft features (server may downgrade)
+// `protocol_version` is a `ProtocolVersion`; string literals convert via `.into()`.
 let init = InitializeRequest {
-    protocol_version: "2025-11-25".to_string(),
+    protocol_version: "2025-11-25".into(),
     capabilities: ClientCapabilities::default(),
     client_info: /* ... */,
     _meta: None,
@@ -521,9 +498,10 @@ let init = InitializeRequest {
 ```rust
 use turbomcp_protocol::{InitializeResult, ServerCapabilities};
 
-// Respond with actual supported version
+// With the default `VersionManager`, the server must respond with the
+// exact version it supports (2025-11-25) or fail initialization.
 let result = InitializeResult {
-    protocol_version: "2025-06-18".to_string(),  // Or 2025-11-25
+    protocol_version: "2025-11-25".into(),
     capabilities: ServerCapabilities::default(),
     server_info: /* ... */,
     instructions: None,
@@ -531,7 +509,9 @@ let result = InitializeResult {
 };
 ```
 
-**Key Principle:** Clients request, servers decide. The server's response version is the negotiated protocol version for the session.
+**Key Principle:** Clients request a version; the default server
+implementation accepts it only on exact match. Use the adapters in
+`versioning::adapter` if you need to translate across versions.
 
 ### Migration from v2.x
 
@@ -546,7 +526,7 @@ turbomcp-protocol = { version = "2.x", features = ["mcp-url-elicitation", "mcp-i
 
 **After (v3.0):**
 ```toml
-turbomcp-protocol = "3.0.2"  # All features included by default
+turbomcp-protocol = "3.1.1"  # All features included by default
 ```
 
 **Example:**
@@ -572,8 +552,12 @@ fn handle_sensitive_input(params: URLElicitRequestParams) {
 
 | Feature | Description | Default |
 |---------|-------------|---------|
-| `zero-copy` | Zero-copy message handling with serde serialization | ❌ |
-| `messagepack` | MessagePack serialization support | ❌ |
+| `zero-copy` | Zero-copy message handling (`bytes/serde`) | ❌ |
+| `rkyv` | rkyv zero-copy serialization bridge | ❌ |
+| `messagepack` | MessagePack serialization via `msgpacker` | ❌ |
+| `wire` | `turbomcp-wire` codec abstraction | ❌ |
+| `wire-simd` | Wire codec with SIMD acceleration | ❌ |
+| `wire-msgpack` | Wire codec with MessagePack support | ❌ |
 | `mmap` | Memory-mapped file support | ❌ |
 | `lock-free` | Lock-free data structures (experimental, requires unsafe) | ❌ |
 
@@ -614,47 +598,44 @@ These MCP 2025-11-25 features are now **always available** - no feature flag nee
 - ✅ : Always enabled (core feature)
 - ❌ : Disabled by default (requires explicit feature flag)
 
-**Authentication & Security Features (Auth-Related SEPs):**
+**Authentication & Security:**
 
-| Feature | Description | Specification |
-|---------|-------------|---------------|
-| SSRF Protection | Built-in SSRF guards for URL validation | Always enabled |
-| CIMD | Client ID Metadata Documents (OAuth 2.1) | Always enabled |
-| OpenID Discovery | RFC 8414 + OIDC 1.0 discovery support | Always enabled |
-| Incremental Consent | WWW-Authenticate with scope expansion (SEP-835) | Always enabled |
-
-*Note: Auth features are always enabled for maximum security - no feature flag required.*
+Full OAuth 2.1 / OpenID Discovery / DPoP / incremental-consent support
+lives in the companion crates `turbomcp-auth` and `turbomcp-dpop`, not
+in `turbomcp-protocol`. This crate only ships the SSRF / URL-validation
+primitives needed by the protocol layer itself (see
+[`security`](src/security.rs)).
 
 ### Feature Flag Examples
 
 **Minimal build (stable spec only):**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "3.0.2", default-features = false, features = ["std"] }
+turbomcp-protocol = { version = "3.1.1", default-features = false, features = ["std"] }
 ```
 
 **High-performance build:**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "3.0.2", features = ["simd", "zero-copy", "lock-free"] }
+turbomcp-protocol = { version = "3.1.1", features = ["simd", "zero-copy", "lock-free"] }
 ```
 
 **Observable production build:**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "3.0.2", features = ["simd", "tracing", "metrics"] }
+turbomcp-protocol = { version = "3.1.1", features = ["simd", "tracing", "metrics"] }
 ```
 
 **Full MCP 2025-11-25 support (default):**
 ```toml
 [dependencies]
-turbomcp-protocol = "3.0.2"  # All core features included
+turbomcp-protocol = "3.1.1"  # All core features included
 ```
 
 **With experimental Tasks API:**
 ```toml
 [dependencies]
-turbomcp-protocol = { version = "3.0.2", features = ["experimental-tasks"] }
+turbomcp-protocol = { version = "3.1.1", features = ["experimental-tasks"] }
 ```
 
 ## Supported MCP Methods

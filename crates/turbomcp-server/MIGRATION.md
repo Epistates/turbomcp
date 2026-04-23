@@ -33,25 +33,28 @@ fn my_handler() -> McpResult<Value> {
 `ProtocolVersionConfig` does not exist in v3.x. Protocol negotiation is configured through `ProtocolConfig` on `ServerConfig`.
 
 ```rust
-// After (v3.x)
 use turbomcp_server::{ProtocolConfig, ServerConfig};
+use turbomcp_server::config::ProtocolVersion;
 
-// Default: accept all supported versions, fallback enabled
+// Default (v3.1+): accepts every stable spec version, prefers the latest.
+// Fallback is disabled; unknown versions are rejected.
 let config = ServerConfig::new();
 
 // Strict mode: only accept a single version, reject others
 let config = ServerConfig::builder()
-    .protocol(ProtocolConfig::strict("2025-11-25"))
+    .protocol(ProtocolConfig::strict(ProtocolVersion::LATEST.clone()))
     .build();
 
-// Custom: specific preferred version with fallback
+// Explicit multi-version (equivalent to the default)
+let config = ServerConfig::builder()
+    .protocol(ProtocolConfig::multi_version())
+    .build();
+
+// Hand-built: preferred version with fallback for unknown clients
 let config = ServerConfig::builder()
     .protocol(ProtocolConfig {
-        preferred_version: "2025-06-18".to_string(),
-        supported_versions: vec![
-            "2025-11-25".to_string(),
-            "2025-06-18".to_string(),
-        ],
+        preferred_version: ProtocolVersion::LATEST.clone(),
+        supported_versions: ProtocolVersion::STABLE.to_vec(),
         allow_fallback: true,
     })
     .build();
@@ -61,16 +64,16 @@ let config = ServerConfig::builder()
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `preferred_version` | `String` | `"2025-11-25"` | Version offered when client's is unsupported |
-| `supported_versions` | `Vec<String>` | All four versions | Versions this server accepts |
-| `allow_fallback` | `bool` | `true` | Offer preferred version when client's is unsupported |
+| `preferred_version` | `ProtocolVersion` | `ProtocolVersion::LATEST` (`2025-11-25`) | Version offered when client omits one or (with fallback) sends an unknown one |
+| `supported_versions` | `Vec<ProtocolVersion>` | `ProtocolVersion::STABLE.to_vec()` (all stable versions) | Versions this server accepts |
+| `allow_fallback` | `bool` | `false` | Offer preferred version when client's is unsupported |
 
 ### New channel transport feature
 
 v3.x adds an in-process channel transport for zero-overhead communication between components in the same process. Enable with the `channel` feature flag:
 
 ```toml
-turbomcp-server = { version = "3.0.2", features = ["channel"] }
+turbomcp-server = { version = "3.1.1", features = ["channel"] }
 ```
 
 ### ServerConfig now has try_build for validation
@@ -94,9 +97,9 @@ The default feature is `stdio`. This has not changed between v2.x and v3.x. If y
 
 ```toml
 # These all work the same as before
-turbomcp-server = { version = "3.0.2", features = ["http"] }
-turbomcp-server = { version = "3.0.2", features = ["stdio", "http", "websocket", "tcp"] }
-turbomcp-server = { version = "3.0.2", features = ["full"] }
+turbomcp-server = { version = "3.1.1", features = ["http"] }
+turbomcp-server = { version = "3.1.1", features = ["stdio", "http", "websocket", "tcp"] }
+turbomcp-server = { version = "3.1.1", features = ["full"] }
 ```
 
 ---
@@ -136,13 +139,13 @@ turbomcp-auth = "2.0"  # add if you use OAuth/JWT features
 
 ### with_middleware is on MiddlewareStack, not ServerBuilder
 
-`ServerBuilder` does not have a `with_middleware` method. Middleware is composed through `MiddlewareStack`:
+`ServerBuilder` does not have a `with_middleware` method. Middleware is composed through `MiddlewareStack`, which wraps a handler and implements `McpHandler` itself:
 
 ```rust
-use turbomcp_server::{MiddlewareStack, McpServerExt};
+use turbomcp_server::{MiddlewareStack, McpServerExt, Transport};
 
-// Compose middleware, then wrap the handler
-let stack = MiddlewareStack::new(my_middleware).handler(MyServer);
+// Wrap the handler, then layer middleware onto it
+let stack = MiddlewareStack::new(MyServer).with_middleware(my_middleware);
 
 stack.builder()
     .transport(Transport::http("0.0.0.0:8080"))
@@ -150,22 +153,27 @@ stack.builder()
     .await?;
 ```
 
-### ServerBuilder API reference (v3.0.2)
+### ServerBuilder API reference (v3.1)
 
 The following methods are available on `ServerBuilder<H>`:
 
 | Method | Description |
 |---|---|
 | `.transport(Transport)` | Set the transport (default: `Transport::Stdio`) |
-| `.with_rate_limit(u32, Duration)` | Enable token-bucket rate limiting |
-| `.with_connection_limit(usize)` | Cap concurrent connections across all transports |
-| `.with_graceful_shutdown(Duration)` | Wait up to this duration for in-flight requests on shutdown |
+| `.with_rate_limit(u32, Duration)` | Enable token-bucket rate limiting (per client) |
+| `.with_connection_limit(usize)` | Cap concurrent connections across TCP/HTTP/WS/Unix |
+| `.with_graceful_shutdown(Duration)` | Wait up to this duration for in-flight requests on shutdown (HTTP transport) |
 | `.with_max_message_size(usize)` | Reject messages larger than this (default: 10 MB) |
+| `.with_protocol(ProtocolConfig)` | Configure protocol version negotiation |
+| `.with_allowed_origin(impl Into<String>)` | Allow a specific HTTP origin |
+| `.with_origin_validation(OriginValidationConfig)` | Replace the full origin config |
+| `.allow_localhost_origins(bool)` | Accept/deny localhost origins |
+| `.allow_any_origin(bool)` | Disable origin checks entirely |
 | `.with_config(ServerConfig)` | Apply a fully constructed `ServerConfig` |
 | `.serve()` | Start the server (async, blocks until shutdown) |
 | `.into_axum_router()` | Return an `axum::Router` for BYO server integration (requires `http` feature) |
 | `.into_service()` | Return a Tower service (requires `http` feature) |
-| `.into_handler()` | Consume the builder and return the underlying handler |
+| `.handler()` / `.into_handler()` | Borrow / consume the underlying handler |
 
 Available transports via `Transport`:
 

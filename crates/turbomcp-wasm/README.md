@@ -20,7 +20,7 @@ impl MyHandler {
     }
 }
 
-// Native: Use run_tcp(), run_http(), run_websocket(), or serve() (stdio)
+// Native: Use .serve() (stdio default), or .builder().transport(Transport::http(..)).serve()
 // WASM: Use WasmHandlerExt trait for Cloudflare Workers
 ```
 
@@ -71,7 +71,7 @@ npm install turbomcp-wasm
 
 ```toml
 [dependencies]
-turbomcp-wasm = { version = "3.0", default-features = false, features = ["wasm-server"] }
+turbomcp-wasm = { version = "3.1", default-features = false, features = ["wasm-server"] }
 worker = "0.7"
 serde = { version = "1.0", features = ["derive"] }
 schemars = "1.0"

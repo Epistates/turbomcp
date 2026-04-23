@@ -4,7 +4,7 @@ WebSocket bidirectional transport implementation for the TurboMCP SDK.
 
 ## Overview
 
-This crate provides full MCP 2025-06-18 protocol support for WebSocket transport with:
+This crate provides full MCP 2025-11-25 protocol support for WebSocket transport with:
 
 - **Bidirectional Communication**: Full request-response patterns with message correlation
 - **Server-Initiated Requests**: Support for ping, sampling, roots, and elicitation
@@ -20,14 +20,14 @@ This crate provides full MCP 2025-06-18 protocol support for WebSocket transport
 
 ```toml
 [dependencies]
-turbomcp-websocket = "3.0"
+turbomcp-websocket = "3.1"
 ```
 
 Or use through the main transport crate:
 
 ```toml
 [dependencies]
-turbomcp-transport = { version = "3.0.2", features = ["websocket"] }
+turbomcp-transport = { version = "3.1.1", features = ["websocket"] }
 ```
 
 ## Quick Start

@@ -108,19 +108,22 @@ All transports preserve JSON-RPC message format and MCP lifecycle requirements.
 For local process communication:
 
 ```rust
-use turbomcp_transport::stdio::{StdioTransport, ChildProcessConfig};
+use turbomcp_transport::stdio::StdioTransport;
+use turbomcp_transport::{ChildProcessConfig, ChildProcessTransport};
 
 // Direct process communication
 let transport = StdioTransport::new();
 
 // Child process management
-let config = ChildProcessConfig::new()
-    .command("/usr/bin/python3")
-    .args(["-m", "my_mcp_server"])
-    .working_directory("/path/to/server")
-    .environment_vars([("DEBUG", "true")]);
+let config = ChildProcessConfig {
+    command: "/usr/bin/python3".to_string(),
+    args: vec!["-m".into(), "my_mcp_server".into()],
+    working_directory: Some("/path/to/server".to_string()),
+    environment: Some(vec![("DEBUG".into(), "true".into())]),
+    ..ChildProcessConfig::default()
+};
 
-let child_transport = StdioTransport::with_child_process(config).await?;
+let child_transport = ChildProcessTransport::new(config);
 ```
 
 ### MCP 2025-11-25 Streamable HTTP (Client)
@@ -387,14 +390,18 @@ impl Transport for CustomTransport {
 
 | Feature | Description | Default |
 |---------|-------------|---------|
-| `stdio` | Enable STDIO transport | ✅ |
-| `http` | Enable HTTP/SSE transport | ❌ |
-| `websocket` | Enable WebSocket transport | ❌ |
-| `tcp` | Enable TCP transport | ❌ |
-| `unix` | Enable Unix socket transport | ❌ |
-| `tls` | Enable TLS/SSL support | ❌ |
-| `compression` | Enable compression algorithms | ❌ |
+| `stdio` | Enable STDIO transport (re-exports `turbomcp-stdio`) | ✅ |
+| `http` | Enable HTTP/SSE transport (re-exports `turbomcp-http`; pulls axum, tower, tower-http) | ❌ |
+| `websocket` | Enable WebSocket transport (re-exports `turbomcp-websocket`) | ❌ |
+| `tcp` | Enable TCP transport (re-exports `turbomcp-tcp`) | ❌ |
+| `unix` | Enable Unix socket transport (re-exports `turbomcp-unix`) | ❌ |
+| `tls` | Enable TLS support (rustls / tokio-rustls) | ❌ |
+| `compression` | Enable compression algorithms (gzip, brotli, lz4) | ❌ |
 | `metrics` | Enable metrics collection | ❌ |
+| `auth` | Enable `turbomcp-auth` integration (implies `http`) | ❌ |
+| `jwt-validation` | Enable JWT validation middleware (jsonwebtoken + reqwest) | ❌ |
+
+v3.0 note: this crate is a re-export hub. Each transport feature pulls in the corresponding standalone crate (`turbomcp-stdio`, `turbomcp-http`, etc.) as an optional dependency. For a minimal build, you can depend on the individual transport crate directly.
 
 ## SharedTransport for Async Concurrency
 

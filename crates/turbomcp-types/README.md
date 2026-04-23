@@ -53,7 +53,7 @@ let prompt = PromptResult::user("Hello!")
 
 ```toml
 [dependencies]
-turbomcp-types = { version = "3.0", default-features = false, features = ["alloc"] }
+turbomcp-types = { version = "3.1", default-features = false, features = ["alloc"] }
 ```
 
 ## License

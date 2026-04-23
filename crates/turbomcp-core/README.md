@@ -11,30 +11,32 @@ This crate provides the foundational types for the Model Context Protocol (MCP) 
 - **`std`** (default): Enable standard library support
 - **`rich-errors`**: Enable UUID-based error tracking (requires `std`)
 - **`wasm`**: Enable WASM-specific optimizations
+- **`zero-copy`**: Enable rkyv zero-copy serialization for internal message passing
 
 ## no_std Usage
 
 ```toml
 [dependencies]
-turbomcp-core = { version = "3.0", default-features = false }
+turbomcp-core = { version = "3.1", default-features = false }
 ```
 
 ## What's Included
 
-- **Types**: Core MCP types (Tool, Resource, Prompt, Content, Capabilities)
+- **Types**: Core MCP types re-exported from `turbomcp-types` (Tool, Resource, Prompt, Content, ServerInfo, etc.)
 - **Error**: Unified `McpError` type with JSON-RPC code mapping
 - **JSON-RPC**: JSON-RPC 2.0 request/response types
+- **Handler**: Unified `McpHandler` trait with platform-adaptive `MaybeSend`/`MaybeSync` bounds
+- **Auth**: Portable authentication primitives (`Authenticator`, `Credential`, `Principal`)
 
 ## Example
 
 ```rust
 use turbomcp_core::{Tool, ToolInputSchema};
-use turbomcp_core::error::{McpError, ErrorKind, McpResult};
+use turbomcp_core::{McpError, McpResult};
 
 // Create a tool definition
-let tool = Tool::new("calculator")
-    .with_description("Performs calculations")
-    .with_input_schema(ToolInputSchema::object());
+let tool = Tool::new("calculator", "Performs calculations")
+    .with_schema(ToolInputSchema::default());
 
 // Handle errors
 fn my_handler() -> McpResult<String> {

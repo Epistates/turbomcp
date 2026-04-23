@@ -45,12 +45,13 @@ If you're migrating from an RSA-based DPoP implementation:
 
 ```rust
 use turbomcp_dpop::DpopKeyPair;
+use turbomcp_dpop::helpers::public_key_to_jwk;
 
 // Generate new ES256 key pair
-let key_pair = DpopKeyPair::generate()?;
+let key_pair = DpopKeyPair::generate_p256()?;
 
-// Export public key for JWKS
-let jwk = key_pair.public_jwk();
+// Export public key as a JWK (for JWKS endpoints)
+let jwk = public_key_to_jwk(&key_pair.public_key)?;
 ```
 
 ### References
@@ -63,13 +64,13 @@ let jwk = key_pair.public_jwk();
 
 ```toml
 [dependencies]
-turbomcp-dpop = "3.0.2"
+turbomcp-dpop = "3.1.1"
 
 # With Redis storage
-turbomcp-dpop = { version = "3.0.2", features = ["redis-storage"] }
+turbomcp-dpop = { version = "3.1.1", features = ["redis-storage"] }
 
 # With HSM support
-turbomcp-dpop = { version = "3.0.2", features = ["hsm"] }
+turbomcp-dpop = { version = "3.1.1", features = ["hsm"] }
 ```
 
 ## Feature Flags

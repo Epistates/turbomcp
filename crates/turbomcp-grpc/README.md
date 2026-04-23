@@ -16,7 +16,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp-grpc = "3.0.0-alpha.1"
+turbomcp-grpc = "3.1.1"
 ```
 
 ## Quick Start
@@ -24,8 +24,8 @@ turbomcp-grpc = "3.0.0-alpha.1"
 ### Server
 
 ```rust
-use turbomcp_grpc::server::McpGrpcServer;
-use turbomcp_types::Tool;
+use turbomcp_grpc::McpGrpcServer;
+use turbomcp_types::{Tool, ToolInputSchema};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,13 +34,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_tool(Tool {
             name: "hello".to_string(),
             description: Some("Says hello".to_string()),
-            input_schema: serde_json::json!({
+            input_schema: ToolInputSchema::from_value(serde_json::json!({
                 "type": "object",
-                "properties": {
-                    "name": {"type": "string"}
-                }
-            }),
+                "properties": { "name": {"type": "string"} }
+            })),
+            title: None,
+            icons: None,
             annotations: None,
+            output_schema: None,
+            meta: None,
         })
         .build();
 
@@ -56,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Client
 
 ```rust
-use turbomcp_grpc::client::McpGrpcClient;
+use turbomcp_grpc::McpGrpcClient;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -80,27 +82,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Protocol Definition
 
-The gRPC service is defined in `src/proto/mcp.proto` and includes:
+The gRPC service is defined in `src/proto/mcp.proto` (package `turbomcp.mcp.v1`) and includes:
 
 - `Initialize` - Session initialization
 - `Ping` - Health check
 - `ListTools` / `CallTool` - Tool operations
-- `ListResources` / `ReadResource` - Resource operations
+- `ListResources` / `ListResourceTemplates` / `ReadResource` - Resource operations
 - `ListPrompts` / `GetPrompt` - Prompt operations
-- `Subscribe` - Streaming notifications
+- `Subscribe` - Server-streaming notifications
 - `Complete` - Autocomplete suggestions
 - `SetLoggingLevel` - Logging configuration
+- `ListRoots` / `CreateSamplingMessage` / `Elicit` - Client-capability bridges
 
 ## Tower Integration
 
 Use with Tower layers for composable middleware:
 
 ```rust
-use turbomcp_grpc::layer::McpGrpcLayer;
+use turbomcp_grpc::McpGrpcLayer;
 use tower::ServiceBuilder;
 
 let layer = McpGrpcLayer::new()
-    .timeout(Duration::from_secs(30))
     .logging(true)
     .timing(true);
 

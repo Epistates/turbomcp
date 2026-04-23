@@ -4,7 +4,7 @@ This directory contains the individual crates that make up the TurboMCP framewor
 
 ## Table of Contents
 
-- [v3.0.2 Architecture & Performance Highlights](#v302-architecture--performance-highlights)
+- [v3.x Architecture & Performance Highlights](#v3x-architecture--performance-highlights)
 - [Architecture Overview](#architecture-overview)
 - [Crates](#crates)
   - [turbomcp (Main SDK)](#turbomcp---main-sdk)
@@ -25,7 +25,7 @@ This directory contains the individual crates that make up the TurboMCP framewor
 - [Documentation](#documentation)
 - [Contributing](#contributing)
 
-## v3.0.2 Architecture & Performance Highlights
+## v3.x Architecture & Performance Highlights
 
 **Major improvements in 3.0.x:**
 - **Re-extracted turbomcp-core** - No_std foundation layer extracted from protocol for embedded and WASM targets
@@ -322,29 +322,29 @@ Additional crates rounding out the v3 ecosystem:
 ### Complete Framework (Recommended)
 ```toml
 [dependencies]
-turbomcp = "3.0.2"
+turbomcp = "3.1.1"
 ```
 
 ### Specific Layers Only
 ```toml
 [dependencies]
 # For building custom servers
-turbomcp-server = "3.0.2"
-turbomcp-transport = "3.0.2"
+turbomcp-server = "3.1.1"
+turbomcp-transport = "3.1.1"
 
 # For building custom clients
-turbomcp-client = "3.0.2"
-turbomcp-protocol = "3.0.2"
+turbomcp-client = "3.1.1"
+turbomcp-protocol = "3.1.1"
 
 # For low-level protocol work
-turbomcp-protocol = "3.0.2"
+turbomcp-protocol = "3.1.1"
 
 # For a single transport (minimal deps)
-turbomcp-stdio = "3.0.2"
-turbomcp-transport-traits = "3.0.2"
+turbomcp-stdio = "3.1.1"
+turbomcp-transport-traits = "3.1.1"
 
 # For no_std / WASM targets
-turbomcp-core = "3.0.2"
+turbomcp-core = "3.1.1"
 ```
 
 ### Development Tools

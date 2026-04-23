@@ -84,7 +84,7 @@ Full MCP 2025-11-25 protocol implementation on top of the foundation layer.
 Responsibilities:
 ├── JSON-RPC 2.0 message framing and dispatch
 ├── MCP 2025-11-25 specification
-├── Protocol version negotiation (2025-11-25 / 2025-06-18 / 2025-03-26 / 2024-11-05)
+├── Protocol version negotiation (stable: 2025-11-25 and 2025-06-18; default accepts both)
 ├── SIMD-accelerated message processing (optional `simd` feature)
 ├── Request/Response context management
 ├── Session state management
@@ -229,8 +229,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust
 #[tool("Tool with request context")]
-async fn context_tool(&self, ctx: Context, data: String) -> McpResult<String> {
-    // ctx provides: correlation ID, auth info, structured logging, headers
+async fn context_tool(&self, ctx: &RequestContext, data: String) -> McpResult<String> {
+    // ctx provides request correlation, transport info, and session state
     Ok(format!("Processed: {}", data))
 }
 ```

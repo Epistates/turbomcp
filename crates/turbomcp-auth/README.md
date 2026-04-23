@@ -25,15 +25,18 @@ use turbomcp_auth::{
     oauth2::OAuth2Client,
     config::{OAuth2Config, OAuth2FlowType, ProviderType},
 };
+use secrecy::{ExposeSecret, SecretString};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create OAuth2 configuration
     let config = OAuth2Config {
         client_id: "my-client-id".to_string(),
-        client_secret: "my-client-secret".to_string(),
+        // client_secret is SecretString — zeroized on drop
+        client_secret: SecretString::from("my-client-secret".to_string()),
         auth_url: "https://provider.example.com/oauth/authorize".to_string(),
         token_url: "https://provider.example.com/oauth/token".to_string(),
+        revocation_url: None,
         redirect_uri: "http://localhost:8080/callback".to_string(),
         scopes: vec!["openid".to_string(), "profile".to_string()],
         flow_type: OAuth2FlowType::AuthorizationCode,
@@ -50,7 +53,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Step 1: Generate authorization URL with PKCE
     let state = uuid::Uuid::new_v4().to_string();
-    let (auth_url, code_verifier) = client.authorization_code_flow(config.scopes, state);
+    // Returns (auth_url: String, code_verifier: SecretString)
+    let (auth_url, code_verifier) = client.authorization_code_flow(config.scopes.clone(), state);
 
     println!("1. Open authorization URL in browser:\n{}\n", auth_url);
 
@@ -58,7 +62,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // After user authorizes and redirects with code...
 
     // Step 3: Exchange code for token
-    let token = client.exchange_code_for_token("auth_code".to_string(), code_verifier).await?;
+    // exchange_code_for_token takes the verifier as String — expose the secret here
+    let token = client
+        .exchange_code_for_token("auth_code".to_string(), code_verifier.expose_secret().to_string())
+        .await?;
     println!("Access token: {}", token.access_token);
 
     // Step 4: Use token to access protected resources
@@ -117,10 +124,10 @@ fn extract_token(auth_header: &str) -> Result<String, Box<dyn std::error::Error>
 
 ```toml
 [dependencies]
-turbomcp-auth = "3.0.2"
+turbomcp-auth = "3.1.1"
 
 # With DPoP support for enhanced security
-turbomcp-auth = { version = "3.0.2", features = ["dpop"] }
+turbomcp-auth = { version = "3.1.1", features = ["dpop"] }
 
 # With tokio runtime
 tokio = { version = "1", features = ["full"] }
@@ -129,8 +136,38 @@ uuid = { version = "1", features = ["v4"] }
 
 ## Feature Flags
 
-- `default` - Core authentication (no optional features)
-- `dpop` - Enable DPoP (RFC 9449) token binding support via `turbomcp-dpop`
+Defaults: `["api-key", "oauth2"]`.
+
+Core authentication methods:
+- `api-key` *(default)* — API key authentication
+- `oauth2` *(default)* — OAuth 2.1 flows
+- `jwt` — JWT validation helpers
+- `custom` — Custom auth provider traits
+
+Advanced:
+- `dpop` — RFC 9449 DPoP token binding (pulls in `turbomcp-dpop`)
+- `rbac` — Role-based access control helpers
+
+Token lifecycle:
+- `token-refresh` — Automatic token refresh
+- `token-revocation` — Token revocation (RFC 7009)
+
+Observability:
+- `metrics` — Metrics collection (counters, histograms)
+- `tracing-ext` — Extended tracing
+
+Middleware:
+- `middleware` — Tower middleware support
+- `tower` — Alias for `middleware`
+
+MCP 2025-11-25 draft authorization:
+- `mcp-ssrf` — SSRF protection (implied by `mcp-cimd` and `mcp-oidc-discovery`)
+- `mcp-cimd` — Client ID Metadata Documents (SEP-991)
+- `mcp-oidc-discovery` — OIDC Discovery 1.0 / RFC 8414
+- `mcp-incremental-consent` — Incremental scope consent via WWW-Authenticate (SEP-835)
+
+Bundles:
+- `full` — All of the above
 
 ## Supported Providers
 
@@ -245,6 +282,9 @@ cargo run --example oauth2_auth_code_flow
 
 # Protected Resource Server with RFC 9728
 cargo run --example protected_resource_server
+
+# Tower middleware: rate limiting (requires --features middleware)
+cargo run --example tower_rate_limiting --features middleware
 ```
 
 ## Security Best Practices

@@ -13,7 +13,7 @@ MCP client for MCP `2025-11-25` with Tower-native middleware and bidirectional p
 - [Quick Start](#quick-start)
 - [Transport Configuration](#transport-configuration)
 - [Advanced Features](#advanced-features)
-- [Plugin Middleware](#plugin-middleware)
+- [Tower Middleware](#tower-middleware)
 - [Sampling Handler Integration](#sampling-handler-integration)
 - [Handler Registration](#handler-registration)
 - [Error Handling](#error-handling)
@@ -39,7 +39,7 @@ MCP client for MCP `2025-11-25` with Tower-native middleware and bidirectional p
 | **Unix** | ✅ Full | `unix` | Fast local IPC |
 | **WebSocket** | ✅ Full | `websocket` | Real-time bidirectional |
 
-> v3 note: HTTP/SSE client transport includes `Client::connect_http()` convenience APIs and OAuth 2.1 support.
+> v3 note: HTTP/SSE client transport includes `Client::connect_http()` / `connect_http_with()` convenience APIs. (OAuth 2.1 lives in the separate `turbomcp-auth` crate.)
 
 ## Quick Start
 
@@ -67,15 +67,17 @@ async fn main() -> turbomcp_protocol::Result<()> {
     }
 
     // Call a tool
-    let result = client.call_tool("calculator", Some(
-        std::collections::HashMap::from([
+    let result = client.call_tool(
+        "calculator",
+        Some(std::collections::HashMap::from([
             ("operation".to_string(), serde_json::json!("add")),
             ("a".to_string(), serde_json::json!(5)),
             ("b".to_string(), serde_json::json!(3)),
-        ])
-    )).await?;
+        ])),
+        None, // optional task metadata
+    ).await?;
 
-    println!("Result: {}", result);
+    println!("Result: {:?}", result);
     Ok(())
 }
 ```
@@ -162,7 +164,7 @@ let transport = StdioTransport::new();
 let mut client = Client::new(transport);
 ```
 
-### HTTP Transport (New in 2.0!)
+### HTTP Transport
 
 ```rust
 use turbomcp_client::Client;
@@ -281,27 +283,35 @@ let client = ClientBuilder::new()
     .await?;
 ```
 
-### Plugin Middleware
+### Tower Middleware
+
+The v2.x plugin system has been replaced by Tower-native middleware layers composed
+via `tower::ServiceBuilder`. The built-in layers live in `turbomcp_client::middleware`:
 
 ```rust
-use turbomcp_client::ClientBuilder;
-use turbomcp_client::plugins::{MetricsPlugin, PluginConfig};
-use std::sync::Arc;
+use tower::ServiceBuilder;
+use turbomcp_client::middleware::{CacheLayer, MetricsLayer, TracingLayer};
+use std::time::Duration;
 
-let client = ClientBuilder::new()
-    .with_plugin(Arc::new(MetricsPlugin::new(PluginConfig::Metrics)))
-    .build(StdioTransport::new())
-    .await?;
+let service = ServiceBuilder::new()
+    .layer(TracingLayer::new())
+    .layer(MetricsLayer::new())
+    .layer(CacheLayer::default())
+    .timeout(Duration::from_secs(30))
+    .service(transport);
 ```
+
+See [MIGRATION.md](./MIGRATION.md) for the full v2 → v3 migration.
 
 ### Sampling Handler Integration
 
 Handle server-initiated sampling requests by implementing a custom sampling handler:
 
 ```rust
-use turbomcp_client::sampling::SamplingHandler;
-use turbomcp_protocol::types::{ContentBlock, CreateMessageRequest, CreateMessageResult, Role, TextContent};
-use async_trait::async_trait;
+use turbomcp_client::sampling::{BoxSamplingFuture, SamplingHandler};
+use turbomcp_protocol::types::{
+    CreateMessageRequest, CreateMessageResult, Role, SamplingContent, StopReason,
+};
 use std::sync::Arc;
 
 #[derive(Debug)]
@@ -309,28 +319,27 @@ struct MySamplingHandler {
     // Your LLM integration (OpenAI, Anthropic, local model, etc.)
 }
 
-#[async_trait]
 impl SamplingHandler for MySamplingHandler {
-    async fn handle_create_message(&self, request_id: String, request: CreateMessageRequest)
-        -> Result<CreateMessageResult, Box<dyn std::error::Error + Send + Sync>>
-    {
-        // Forward to your LLM service
-        // Use request_id for correlation/tracking
-        // Return the generated response
-        Ok(CreateMessageResult {
-            role: Role::Assistant,
-            content: ContentBlock::Text(TextContent {
-                text: "Generated response".to_string(),
-                annotations: None,
+    fn handle_create_message(
+        &self,
+        _request_id: String,
+        _request: CreateMessageRequest,
+    ) -> BoxSamplingFuture<'_, CreateMessageResult> {
+        Box::pin(async move {
+            // Forward to your LLM service.
+            // Use request_id for correlation/tracking.
+            Ok(CreateMessageResult {
+                role: Role::Assistant,
+                content: SamplingContent::text("Generated response").into(),
+                model: "your-model".to_string(),
+                stop_reason: Some(StopReason::EndTurn.to_string()),
                 meta: None,
-            }),
-            model: Some("your-model".to_string()),
-            stop_reason: None,
+            })
         })
     }
 }
 
-// Register the handler
+// Register the handler (requires an existing `client: Client<_>`)
 let handler = Arc::new(MySamplingHandler { /* ... */ });
 client.set_sampling_handler(handler);
 ```
@@ -340,23 +349,27 @@ client.set_sampling_handler(handler);
 ### Handler Registration
 
 ```rust
-use turbomcp_client::handlers::{ElicitationHandler, ElicitationRequest, ElicitationResponse};
-use async_trait::async_trait;
+use turbomcp_client::handlers::{
+    ElicitationHandler, ElicitationRequest, ElicitationResponse, HandlerResult,
+};
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 #[derive(Debug)]
 struct MyElicitationHandler;
 
-#[async_trait]
 impl ElicitationHandler for MyElicitationHandler {
-    async fn handle_elicitation(&self, request: ElicitationRequest)
-        -> Result<ElicitationResponse, Box<dyn std::error::Error + Send + Sync>>
-    {
-        // Prompt user for input based on request.schema
-        let user_input = collect_user_input(request.schema)?;
-        Ok(ElicitationResponse {
-            action: ElicitationAction::Accept,
-            content: Some(user_input),
+    fn handle_elicitation(
+        &self,
+        _request: ElicitationRequest,
+    ) -> Pin<Box<dyn Future<Output = HandlerResult<ElicitationResponse>> + Send + '_>> {
+        Box::pin(async move {
+            // Prompt the user for input based on `_request.schema()`.
+            let mut content = HashMap::new();
+            content.insert("name".to_string(), serde_json::json!("Alice"));
+            Ok(ElicitationResponse::accept(content))
         })
     }
 }
@@ -366,6 +379,9 @@ let client = ClientBuilder::new()
     .build(StdioTransport::new())
     .await?;
 ```
+
+`ElicitationResponse` exposes three constructors: `accept(content)`, `decline()`, and
+`cancel()`. The response fields are private — do not build it as a struct literal.
 
 ## MCP Operations
 
@@ -385,7 +401,7 @@ let names = client.list_tool_names().await?;
 use std::collections::HashMap;
 let mut args = HashMap::new();
 args.insert("text".to_string(), serde_json::json!("Hello, world!"));
-let result = client.call_tool("echo", Some(args)).await?;
+let result = client.call_tool("echo", Some(args), None).await?;
 ```
 
 ### Prompts
@@ -396,18 +412,16 @@ use turbomcp_protocol::types::PromptInput;
 // List prompts
 let prompts = client.list_prompts().await?;
 
-// Get prompt with arguments
-let prompt_args = PromptInput {
-    arguments: Some(std::collections::HashMap::from([
-        ("language".to_string(), "rust".to_string()),
-        ("topic".to_string(), "async programming".to_string()),
-    ])),
-};
+// Get prompt with arguments.
+// `PromptInput` is a type alias for `HashMap<String, serde_json::Value>`.
+let mut prompt_args: PromptInput = PromptInput::new();
+prompt_args.insert("language".to_string(), serde_json::json!("rust"));
+prompt_args.insert("topic".to_string(), serde_json::json!("async programming"));
 
 let result = client.get_prompt("code_review", Some(prompt_args)).await?;
 println!("Prompt: {}", result.description.unwrap_or_default());
 for message in result.messages {
-    println!("{:?}: {}", message.role, message.content);
+    println!("{:?}: {:?}", message.role, message.content);
 }
 ```
 
@@ -498,34 +512,39 @@ let tools = client.list_tools().await?;
 
 ## Error Handling
 
-```rust
-use turbomcp_protocol::Error;
+`turbomcp_client::Error` is a re-export of `turbomcp_protocol::Error` (alias for
+`turbomcp_core::McpError`). Errors are a struct with a classification (`ErrorKind`)
+and a message, not an enum of variants — inspect `err.kind` / helpers rather than
+pattern-matching variants:
 
-match client.call_tool("my_tool", None).await {
-    Ok(result) => println!("Success: {}", result),
-    Err(Error::Transport(msg)) => eprintln!("Transport error: {}", msg),
-    Err(Error::Protocol(msg)) => eprintln!("Protocol error: {}", msg),
-    Err(Error::BadRequest(msg)) => eprintln!("Bad request: {}", msg),
-    Err(e) => eprintln!("Error: {}", e),
+```rust
+use turbomcp_client::Error;
+use turbomcp_core::error::ErrorKind;
+
+match client.call_tool("my_tool", None, None).await {
+    Ok(result) => println!("Success: {:?}", result),
+    Err(err) => match err.kind {
+        ErrorKind::Transport => eprintln!("Transport error: {err}"),
+        ErrorKind::ProtocolVersionMismatch => eprintln!("Protocol mismatch: {err}"),
+        _ if err.is_retryable() => eprintln!("Retryable error: {err}"),
+        _ => eprintln!("Error ({:?}): {err}", err.kind),
+    },
 }
 ```
 
 ## Examples
 
-For working client examples, see the parent `turbomcp` crate examples:
+For working client examples, see the parent `turbomcp` crate examples directory
+(`crates/turbomcp/examples/`). Client-oriented examples include:
 
-- **`elicitation_client.rs`** - Interactive elicitation handling
-- **`basic_client.rs`** - Basic client usage
-- **`stdio_client.rs`** - STDIO transport example
-- **`tcp_client.rs`** - TCP transport example
-- **`http_client_simple.rs`** - HTTP transport example
-- **`websocket_client_simple.rs`** - WebSocket transport example
+- **`tcp_client.rs`** — TCP transport client
+- **`unix_client.rs`** — Unix socket client
+- **`test_client.rs`** — programmatic test client
 
 Run examples from the workspace root:
 ```bash
-cargo run --example elicitation_client
-cargo run --example basic_client
-cargo run --example stdio_client
+cargo run --example tcp_client
+cargo run --example unix_client
 ```
 
 ## Feature Flags
@@ -541,7 +560,7 @@ cargo run --example stdio_client
 Enable features in `Cargo.toml`:
 ```toml
 [dependencies]
-turbomcp-client = { version = "3.0.2", features = ["tcp", "websocket"] }
+turbomcp-client = { version = "3.1.1", features = ["tcp", "websocket"] }
 ```
 
 ## Architecture
@@ -597,8 +616,8 @@ cargo test
 # Run with specific features
 cargo test --features websocket
 
-# Run examples
-cargo run --example sampling_client
+# Run examples (from the workspace root)
+cargo run --example tcp_client
 ```
 
 ## Related Crates
@@ -610,24 +629,16 @@ cargo run --example sampling_client
 ## Resources
 
 - **[MCP Specification](https://modelcontextprotocol.io/)** - Official protocol docs
-- **[MCP 2025-06-18 Spec](https://spec.modelcontextprotocol.io/2025-06-18/)** - Current version
+- **[MCP 2025-11-25 Spec](https://spec.modelcontextprotocol.io/)** - Current supported version
 - **[TurboMCP Documentation](https://turbomcp.org)** - Framework docs
 
 ## Roadmap
 
-### Version 2.0.4 Features
+Candidate future work (not on any committed timeline):
 
-- **HTTP/SSE Client Transport** - Client-side HTTP/SSE with `Client::connect_http()`
-- **Convenience Constructors** - One-liner client creation for all transports
-- **Ergonomic Config Builders** - Simplified configuration APIs
-
-### Planned Features
-
-- [ ] **Connection Pool Management** - Multi-server connection pooling
-- [ ] **Session Persistence** - Automatic state preservation across reconnects
-- [ ] **Roots Handler** - Complete filesystem roots implementation
-- [ ] **Progress Reporting** - Client-side progress emission
-- [ ] **Batch Requests** - Send multiple requests in single message
+- [ ] **Connection Pool Management** — multi-server connection pooling
+- [ ] **Session Persistence** — automatic state preservation across reconnects
+- [ ] **Batch Requests** — send multiple requests in a single message
 
 ## License
 

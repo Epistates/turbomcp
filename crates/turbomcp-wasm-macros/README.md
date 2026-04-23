@@ -73,11 +73,14 @@ async fn fetch(req: Request, _env: Env, _ctx: Context) -> Result<Response> {
 
 The `#[server]` macro generates the following methods on your struct:
 
-- **`into_mcp_server(self) -> McpServer`** - Convert to a fully-configured MCP server
+- **`into_mcp_server(self) -> McpServer`** - Convert to a fully-configured MCP server (returns `turbomcp_wasm::wasm_server::McpServer`)
 - **`server_info() -> (&'static str, &'static str)`** - Get (name, version) tuple
-- **`get_tools_metadata() -> Vec<(&'static str, &'static str)>`** - Get tool metadata
-- **`get_resources_metadata() -> Vec<(&'static str, &'static str)>`** - Get resource metadata
-- **`get_prompts_metadata() -> Vec<(&'static str, &'static str)>`** - Get prompt metadata
+- **`get_tools_metadata() -> Vec<(&'static str, &'static str, &'static [&'static str], &'static str)>`** - Get tool metadata as (name, description, tags, version) tuples
+- **`get_resources_metadata() -> Vec<(&'static str, &'static str, &'static [&'static str], &'static str)>`** - Get resource metadata as (uri_template, name, tags, version) tuples
+- **`get_prompts_metadata() -> Vec<(&'static str, &'static str, &'static [&'static str], &'static str)>`** - Get prompt metadata as (name, description, tags, version) tuples
+- **`get_tool_tags() -> Vec<(&'static str, Vec<String>)>`** - Tool name to tags mapping (for `VisibilityLayer` integration)
+- **`get_resource_tags() -> Vec<(&'static str, Vec<String>)>`** - Resource URI to tags mapping
+- **`get_prompt_tags() -> Vec<(&'static str, Vec<String>)>`** - Prompt name to tags mapping
 
 ## Attribute Syntax
 
@@ -97,6 +100,18 @@ async fn my_tool(&self, args: MyArgs) -> String { ... }
 // Or without arguments
 #[tool("Description")]
 async fn no_args_tool(&self) -> String { ... }
+
+// Full syntax with tags and version (tags feed VisibilityLayer)
+#[tool(description = "Admin tool", tags = ["admin", "dangerous"], version = "2.0")]
+async fn admin_op(&self, args: AdminArgs) -> Result<String, ToolError> { ... }
+
+// Context injection: add `ctx: Arc<RequestContext>` before args
+#[tool("Auth required")]
+async fn auth_tool(
+    &self,
+    ctx: std::sync::Arc<RequestContext>,
+    args: AuthArgs,
+) -> Result<String, ToolError> { ... }
 ```
 
 ### `#[resource]`

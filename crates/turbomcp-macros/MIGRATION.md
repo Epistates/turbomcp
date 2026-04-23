@@ -11,7 +11,7 @@ This document covers only changes to the procedural macros in `turbomcp-macros`.
 
 ### Macros that exist in v3.0
 
-The complete set of exported macros in v3.0.2 is:
+The complete set of exported macros in v3.x is:
 
 | Macro | Role |
 |---|---|
@@ -31,19 +31,17 @@ The generated code resolves the host crate as `turbomcp` or `turbomcp-server` (f
 `crate`). If your v2.x server was built against internal crate paths directly, the generated trait
 impl may reference a different path. Using `turbomcp::prelude::*` is the supported import style.
 
-**Transport method generation is feature-gated.**
-The `#[server]` macro generates transport runner methods (`run_stdio`, `run_http`, etc.) only when
-the corresponding feature is enabled in `turbomcp-macros`. In v3.0 these features are:
+**Transport runner methods moved to a trait.**
+In v3.x the `#[server]` macro only generates the `McpHandler` impl. The runner methods
+(`run_stdio`, `run_http`, `run_tcp`, `run_unix`, `run_websocket`) live on the `McpServer`
+trait in `turbomcp-server`, which is blanket-implemented for every `McpHandler`. Enable
+the matching Cargo features on the umbrella `turbomcp` crate (`http`, `tcp`, `unix`,
+`websocket`) to make the corresponding transport method functional. The `turbomcp-macros`
+crate itself has `http`, `tcp`, and `unix` features that only gate optional dependencies
+used by generated code paths; they do not add or remove runner methods.
 
-| Feature | Generated method |
-|---|---|
-| _(default, no feature)_ | `run()` via STDIO |
-| `http` | HTTP/SSE transport methods (requires `axum`) |
-| `tcp` | TCP transport methods (requires `tokio`, `turbomcp-transport`) |
-| `unix` | Unix socket transport methods (requires `tokio`, `turbomcp-transport`) |
-
-In v2.x the transport feature gating was handled differently. If you were relying on specific
-generated method names, verify them after upgrading with `cargo expand`.
+If you were relying on specific generated method names from v2.x, verify them after
+upgrading with `cargo expand`.
 
 **`analyze_impl()` only processes `#[tool]`, `#[resource]`, and `#[prompt]`.**
 The `#[server]` macro scans for exactly these three attribute names on methods in the impl block.

@@ -10,7 +10,7 @@ Rust SDK for the Model Context Protocol (MCP) with comprehensive specification s
 ## Quick Navigation
 
 **Jump to section:**
-[Overview](#overview) | [Quick Start](#quick-start) | [Core Concepts](#core-concepts) | [Advanced Features](#mcp-2025-06-18-enhanced-features) | [Security](#security-features) | [Performance](#performance) | [Deployment](#deployment--operations) | [Examples](#examples)
+[Overview](#overview) | [Quick Start](#quick-start) | [Core Concepts](#core-concepts) | [Advanced Features](#mcp-2025-11-25-enhanced-features) | [Security](#security-features) | [Performance](#performance) | [Deployment](#deployment--operations) | [Examples](#examples)
 
 ## Overview
 
@@ -136,7 +136,7 @@ Add TurboMCP to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-turbomcp = "3.0.2"
+turbomcp = "3.1.1"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -158,8 +158,7 @@ impl Calculator {
     }
 
     #[tool("Get server status")]
-    async fn status(&self, ctx: Context) -> McpResult<String> {
-        ctx.info("Status requested").await?;
+    async fn status(&self) -> McpResult<String> {
         Ok("Server running".to_string())
     }
 }
@@ -268,11 +267,9 @@ async fn calculate(
     expression: String,
     #[description("Precision for results")]
     precision: Option<u32>,
-    ctx: Context
 ) -> McpResult<f64> {
     let precision = precision.unwrap_or(2);
-    ctx.info(&format!("Calculating: {}", expression)).await?;
-    
+
     // Calculation logic
     let result = evaluate_expression(&expression)?;
     Ok(round_to_precision(result, precision))
@@ -289,12 +286,9 @@ async fn read_file(
     &self,
     #[description("File path to read")]
     path: String,
-    ctx: Context
 ) -> McpResult<String> {
-    ctx.info(&format!("Reading file: {}", path)).await?;
-    
     tokio::fs::read_to_string(&path).await
-        .map_err(|e| McpError::resource(e.to_string()))
+        .map_err(|e| McpError::internal(e.to_string()))
 }
 ```
 
@@ -310,10 +304,7 @@ async fn code_review_prompt(
     language: String,
     #[description("Code to review")]
     code: String,
-    ctx: Context
 ) -> McpResult<String> {
-    ctx.info(&format!("Generating {} code review", language)).await?;
-    
     Ok(format!(
         "Please review the following {} code:\n\n```{}\n{}\n```",
         language, language, code
@@ -321,208 +312,52 @@ async fn code_review_prompt(
 }
 ```
 
-### MCP 2025-06-18 Enhanced Features
+### MCP 2025-11-25 Enhanced Features
 
-#### Roots Support - Filesystem Boundaries
+TurboMCP targets MCP `2025-11-25` (with `2025-06-18` accepted by default via
+per-version response adapters). Protocol-level features such as resource URI
+templates (RFC 6570), elicitation, sampling, tasks, and draft extensions are
+implemented in `turbomcp-protocol`; see the crate-level docs for current
+surface area. The available attribute macros for server authors are:
+`#[server]`, `#[tool]`, `#[resource]`, `#[prompt]`, and `#[description]`.
 
-```rust
-#[server(
-    name = "filesystem-server",
-    version = "1.0.0",
-    root = "file:///workspace:Project Workspace",
-    root = "file:///tmp:Temporary Files"
-)]
-impl FileSystemServer {
-    #[tool("List files in directory")]
-    async fn list_files(&self, ctx: Context, path: String) -> McpResult<Vec<String>> {
-        ctx.info(&format!("Listing files in: {}", path)).await?;
-        // Operations are bounded by configured roots
-        Ok(vec!["file1.txt".to_string(), "file2.txt".to_string()])
-    }
-}
-```
-
-#### Elicitation - Server-Initiated User Input
+### Resource Templates (RFC 6570)
 
 ```rust
-use turbomcp::prelude::*;
-use turbomcp_protocol::types::ElicitationSchema;
-
-#[tool("Configure application settings")]
-async fn configure_app(&self, ctx: Context) -> McpResult<String> {
-    // Build elicitation schema with type safety
-    let schema = ElicitationSchema::new()
-        .add_string_property("theme", Some("Color theme preference"))
-        .add_boolean_property("notifications", Some("Enable push notifications"))
-        .add_required(["theme"]);
-    
-    // Simple, elegant elicitation with type safety
-    let result = elicit("Configure your preferences")
-        .field("theme", text("UI theme preference")
-            .options(&["light", "dark"]))
-        .send(&ctx)
-        .await?;
-    
-    // Process the structured response
-    if let Some(data) = result.content {
-        let theme = data.get("theme")
-            .and_then(|v| v.as_str())
-            .unwrap_or("default");
-        Ok(format!("Configured with {} theme", theme))
-    } else {
-        Err(McpError::context("Configuration cancelled".to_string()))
-    }
-}
-```
-
-#### Sampling Support - Bidirectional LLM Communication
-
-```rust
-use turbomcp::prelude::*;
-
-#[tool("Get AI code review")]
-async fn code_review(&self, ctx: Context, code: String) -> McpResult<String> {
-    // Log the request with user context
-    let user = ctx.user_id().unwrap_or("anonymous");
-    ctx.info(&format!("User {} requesting code review", user)).await?;
-    
-    // Build sampling request with ergonomic JSON
-    let request = serde_json::json!({
-        "messages": [{
-            "role": "user",
-            "content": {
-                "type": "text",
-                "text": format!("Please review this code:\n\n{}", code)
-            }
-        }],
-        "maxTokens": 500,
-        "systemPrompt": "You are a senior code reviewer. Provide constructive feedback."
-    });
-    
-    // Request LLM assistance through the client
-    match ctx.create_message(request).await {
-        Ok(response) => {
-            ctx.info("AI review completed successfully").await?;
-            Ok(format!("AI Review: {:?}", response))
-        }
-        Err(_) => {
-            // Graceful fallback if sampling unavailable
-            let issues = code.matches("TODO").count() + code.matches("FIXME").count();
-            Ok(format!("Static analysis: {} lines, {} issues found", code.lines().count(), issues))
-        }
-    }
-}
-```
-
-#### Completion - Intelligent Autocompletion
-
-```rust
-#[completion("Complete file paths")]
-async fn complete_file_path(&self, partial: String) -> McpResult<Vec<String>> {
-    let files = std::fs::read_dir(".")?
-        .filter_map(|e| e.ok())
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .filter(|name| name.starts_with(&partial))
-        .collect();
-    Ok(files)
-}
-```
-
-#### Resource Templates - Dynamic URIs
-
-```rust
-#[template("users/{user_id}/posts/{post_id}")]
-async fn get_user_post(&self, user_id: String, post_id: String) -> McpResult<Post> {
+#[resource("users/{user_id}/posts/{post_id}")]
+async fn get_user_post(&self, user_id: String, post_id: String) -> McpResult<String> {
     // RFC 6570 URI template with multiple parameters
-    let post = self.database.get_post(&user_id, &post_id).await?;
-    Ok(post)
-}
-```
-
-#### Ping - Bidirectional Health Monitoring
-
-```rust
-#[ping("Health check")]
-async fn health_check(&self, ctx: Context) -> McpResult<HealthStatus> {
-    let db_status = self.database.ping().await.is_ok();
-    let cache_status = self.cache.ping().await.is_ok();
-    
-    Ok(HealthStatus {
-        healthy: db_status && cache_status,
-        database: db_status,
-        cache: cache_status,
-        timestamp: ctx.timestamp(),
-    })
+    Ok(format!("post {post_id} for user {user_id}"))
 }
 ```
 
 ### Context Injection
 
-The `Context` parameter provides request correlation, authentication, and observability:
+Inject `&RequestContext` as the first parameter to access per-request
+metadata (correlation IDs, transport info, session state). Auth, structured
+logging, metrics, and server-initiated sampling are handled through separate
+facilities (middleware, the `turbomcp-telemetry` crate, and the client-side
+`create_message` API respectively) rather than on the context itself.
 
 ```rust
-#[tool("Authenticated operation")]
-async fn secure_operation(&self, ctx: Context, data: String) -> McpResult<String> {
-    // Authentication
-    let user = ctx.authenticated_user()?;
-    
-    // Logging with correlation
-    ctx.info(&format!("Processing request for user: {}", user.id)).await?;
-    
-    // Request metadata
-    let request_id = ctx.request_id();
-    let start_time = ctx.start_time();
-    
-    // Processing...
-    let result = process_data(&data).await?;
-    
-    // Performance tracking
-    ctx.record_metric("processing_time", start_time.elapsed()).await?;
-    
-    Ok(result)
+#[tool("Inspect request context")]
+async fn inspect(&self, ctx: &RequestContext) -> McpResult<String> {
+    Ok(format!("request_id={} transport={:?}", ctx.request_id, ctx.transport))
 }
 ```
 
 ## Authentication & Security
 
-### OAuth 2.0 Setup
+### OAuth 2.1 Setup
 
-TurboMCP provides built-in OAuth 2.0 support:
-
-```rust
-use turbomcp::prelude::*;
-use turbomcp::auth::*;
-
-#[derive(Clone)]
-struct SecureServer {
-    oauth_providers: Arc<RwLock<HashMap<String, OAuth2Provider>>>,
-}
-
-#[server]
-impl SecureServer {
-    #[tool("Get user profile")]
-    async fn get_user_profile(&self, ctx: Context) -> McpResult<UserProfile> {
-        let user = ctx.authenticated_user()
-            .ok_or_else(|| McpError::unauthorized("Authentication required".to_string()))?;
-        
-        Ok(UserProfile {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-        })
-    }
-
-    #[tool("Start OAuth flow")]
-    async fn start_oauth_flow(&self, provider: String) -> McpResult<String> {
-        let providers = self.oauth_providers.read().await;
-        let oauth_provider = providers.get(&provider)
-            .ok_or_else(|| McpError::InvalidInput(format!("Unknown provider: {}", provider)))?;
-        
-        let auth_result = oauth_provider.start_authorization().await?;
-        Ok(format!("Visit: {}", auth_result.auth_url))
-    }
-}
-```
+TurboMCP ships an OAuth 2.1 + PKCE implementation in the `turbomcp-auth`
+crate, re-exported from the main crate as `turbomcp::auth` when the `auth`
+feature is enabled. DPoP (RFC 9449) proof-of-possession lives in
+`turbomcp-dpop` and is enabled via the `dpop` feature (which pulls in
+`auth`). Authenticated identity is attached to requests through
+`RequestContext::principal` via middleware; tools read it from the context
+rather than calling an `authenticated_user()` helper. See the
+`turbomcp-auth` crate docs for the provider / middleware construction APIs.
 
 ### Security Configuration
 
@@ -738,28 +573,24 @@ async fn read_file(&self, path: String) -> McpResult<String> {
 
 ### Application-Level Errors (`McpError`)
 
-Simple enum for common error cases:
+Construct errors with fluent constructors:
 
 ```rust
 use turbomcp::McpError;
 
-match result {
-    Err(McpError::InvalidInput(msg)) => {
-        // Handle validation errors
-    },
-    Err(McpError::unauthorized(msg)) => {
-        // Handle authentication errors
-    },
-    Err(McpError::resource(msg)) => {
-        // Handle resource access errors
-    },
-    Err(McpError::transport(msg)) => {
-        // Handle transport errors
-    },
-    Ok(value) => {
-        // Process success case
-    }
-}
+// Construct with appropriate constructor
+let err = McpError::invalid_params("Name must not be empty");
+let err = McpError::authentication("Token expired");
+let err = McpError::resource_not_found("file://missing.txt");
+let err = McpError::transport("Connection dropped");
+let err = McpError::internal("Unexpected state")
+    .with_operation("process")
+    .with_component("handler");
+
+// Query error metadata
+assert!(err.is_retryable() || !err.is_retryable());
+let _code = err.jsonrpc_code();
+let _status = err.http_status();
 ```
 
 ### Protocol-Level Errors (`ProtocolError`)
@@ -837,53 +668,27 @@ async fn create_user(&self, request: CreateUserRequest) -> McpResult<User> {
 
 ### Graceful Shutdown
 
-Handle shutdown signals gracefully:
-
-```rust
-use tokio::signal;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let server = MyServer::new();
-    let (server, shutdown_handle) = server.into_server_with_shutdown()?;
-
-    let server_task = tokio::spawn(async move {
-        server.run_stdio().await
-    });
-
-    signal::ctrl_c().await?;
-    // NOTE: For STDIO transport, avoid logging to prevent JSON-RPC pollution
-    // For other transports, you could use: tracing::info!("Shutdown signal received");
-
-    shutdown_handle.shutdown().await;
-    server_task.await??;
-
-    Ok(())
-}
-```
+The HTTP transport integrates with Tokio signal handlers for graceful
+shutdown. Configure the drain timeout through the server builder
+(`ServerBuilder::with_graceful_shutdown`); the HTTP runner awaits SIGINT
+(and SIGTERM on Unix) and drains in-flight requests up to the configured
+deadline. For STDIO, the process exits cleanly when stdin closes.
 
 ### Performance Tuning
 
-Enable SIMD acceleration for maximum performance:
+SIMD-accelerated JSON parsing is provided by `turbomcp-protocol` (enabled by default via its `simd` feature, which selects `sonic-rs`). No extra flag is required on the `turbomcp` crate.
 
-```toml
-[dependencies]
-turbomcp = { version = "3.0.2", features = ["simd"] }
-```
-
-Configure performance settings:
+Configure server behavior via `ServerConfig`:
 
 ```rust
 use turbomcp::prelude::*;
+use std::time::Duration;
 
-// Use pre-configured performance profiles
-let config = SessionConfig::high_performance();
-// Other available profiles:
-// SessionConfig::memory_optimized() - For resource-constrained environments
-// SessionConfig::development() - For development with verbose logging
+let config = ServerConfig::builder()
+    .max_message_size(10 * 1024 * 1024)
+    .build();
 
-// Create server and run with selected config
-let server = Calculator; // Your server implementation
+let server = Calculator;
 server.run_stdio().await?;
 ```
 
@@ -951,21 +756,23 @@ Add to your Claude Desktop configuration:
 Use the TurboMCP client:
 
 ```rust
-use turbomcp_client::{ClientBuilder, Transport};
+use std::collections::HashMap;
+use turbomcp_client::Client;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let client = ClientBuilder::new()
-        .transport(Transport::stdio_with_command("./my-server"))
-        .connect().await?;
+    // Connect over HTTP (other helpers: Client::connect_stdio, etc.)
+    let client = Client::connect_http("http://localhost:8080/mcp").await?;
 
     let tools = client.list_tools().await?;
     println!("Available tools: {:?}", tools);
 
-    let result = client.call_tool("add", serde_json::json!({
-        "a": 5,
-        "b": 3
-    })).await?;
+    let mut args = HashMap::new();
+    args.insert("a".into(), serde_json::json!(5));
+    args.insert("b".into(), serde_json::json!(3));
+
+    // call_tool(name, arguments, task_metadata)
+    let result = client.call_tool("add", Some(args), None).await?;
     println!("Result: {:?}", result);
 
     Ok(())
@@ -974,38 +781,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Examples
 
-Explore comprehensive examples in the `examples/` directory:
+Explore examples in the `examples/` directory:
 
 ```bash
-# Basic calculator server
-cargo run --example 01_basic_calculator
+# Minimal server
+cargo run --example hello_world
+cargo run --example calculator
+cargo run --example macro_server
 
-# File system tools
-cargo run --example 02_file_tools
+# Server patterns
+cargo run --example stateful
+cargo run --example validation
+cargo run --example composition
+cargo run --example middleware
+cargo run --example visibility
+cargo run --example tags_versioning
 
-# Database integration
-cargo run --example 03_database_server
+# Transports (require the matching feature flag)
+cargo run --example tcp_server  --features tcp
+cargo run --example tcp_client  --features tcp
+cargo run --example unix_client --features unix
+cargo run --example transports_demo --features "stdio,http,tcp"
 
-# Web scraping tools
-cargo run --example 04_web_tools
-
-# Authentication with OAuth 2.0
-cargo run --example 09_oauth_authentication
-
-# HTTP server with advanced features
-cargo run --example 10_http_server
+# Capability builders & testing
+cargo run --example type_state_builders_demo
+cargo run --example test_client
 ```
 
 ## Feature Flags
 
 | Feature | Description | Default |
 |---------|-------------|---------|
-| `simd` | Enable SIMD acceleration for JSON processing | ❌ |
-| `oauth` | Enable OAuth 2.0 authentication | ✅ |
-| `metrics` | Enable metrics collection and endpoints | ✅ |
-| `compression` | Enable response compression | ✅ |
-| `all-transports` | Enable all transport protocols | ✅ |
-| `minimal` | Minimal build (STDIO only) | ❌ |
+| `stdio` | STDIO transport | ✅ |
+| `http` | HTTP / SSE (Streamable HTTP) transport | ❌ |
+| `websocket` | WebSocket bidirectional transport | ❌ |
+| `tcp` | Raw TCP socket transport | ❌ |
+| `unix` | Unix domain socket transport | ❌ |
+| `channel` | In-process channel transport (testing/benchmarks) | ❌ |
+| `minimal` | Bundle: STDIO only (= `stdio`) | ❌ |
+| `full` | Bundle: all transports + telemetry | ❌ |
+| `full-stack` | Bundle: `full` + `full-client` | ❌ |
+| `all-transports` | Bundle: all transports incl. `channel` (no telemetry) | ❌ |
+| `telemetry` | OpenTelemetry, metrics, structured logging | ❌ |
+| `auth` | OAuth 2.1, JWT, API key auth (turbomcp-auth) | ❌ |
+| `dpop` | RFC 9449 DPoP (requires `auth`) | ❌ |
+| `client-integration` | Re-export minimal `turbomcp-client` (STDIO) | ❌ |
+| `full-client` | `turbomcp-client` with all transports | ❌ |
+| `experimental-tasks` | Tasks API (SEP-1686) | ❌ |
 
 ### Important: Minimum Feature Requirements
 
@@ -1022,15 +844,15 @@ When using `default-features = false`, you must explicitly enable at least one t
 ```toml
 # Minimal STDIO-only server
 [dependencies]
-turbomcp = { version = "3.0.2", default-features = false, features = ["stdio"] }
+turbomcp = { version = "3.1.1", default-features = false, features = ["stdio"] }
 
 # HTTP-only server
 [dependencies]
-turbomcp = { version = "3.0.2", default-features = false, features = ["http"] }
+turbomcp = { version = "3.1.1", default-features = false, features = ["http"] }
 
 # Multiple transports without default features
 [dependencies]
-turbomcp = { version = "3.0.2", default-features = false, features = ["stdio", "http", "websocket"] }
+turbomcp = { version = "3.1.1", default-features = false, features = ["stdio", "http", "websocket"] }
 ```
 
 Without at least one transport feature enabled, the server will not be able to communicate using the MCP protocol.
@@ -1043,8 +865,8 @@ Without at least one transport feature enabled, the server will not be able to c
 # Build with all features
 cargo build --all-features
 
-# Build optimized for production
-cargo build --release --features simd
+# Build optimized for production (SIMD JSON is enabled by default via turbomcp-protocol)
+cargo build --release --features full
 
 # Run tests
 cargo test --workspace
@@ -1090,12 +912,6 @@ async fn add(&self, a: i32, b: i32) -> McpResult<i32> {
 ```bash
 # Run performance benchmarks
 cargo bench
-
-# Test SIMD acceleration
-cargo run --example simd_performance --features simd
-
-# Profile memory usage
-cargo run --example memory_profile
 ```
 
 ## Documentation

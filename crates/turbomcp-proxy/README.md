@@ -2,9 +2,8 @@
 
 > **Universal MCP Adapter/Generator** - Introspection, proxying, and code generation for any MCP server
 
-[![Status](https://img.shields.io/badge/Phase%204-Complete-green)](../../PROXY_PROGRESS.md)
-[![MCP Version](https://img.shields.io/badge/MCP-2025--06--18-blue)](https://modelcontextprotocol.io)
-[![Rust Version](https://img.shields.io/badge/rustc-1.70+-blue.svg)](https://www.rust-lang.org)
+[![MCP Version](https://img.shields.io/badge/MCP-2025--11--25-blue)](https://modelcontextprotocol.io)
+[![Rust Version](https://img.shields.io/badge/rustc-1.89+-blue.svg)](https://www.rust-lang.org)
 
 **turbomcp-proxy** is a universal tool that works with **ANY** MCP server implementation (TurboMCP, Python SDK, TypeScript SDK, custom implementations). It discovers server capabilities via the MCP protocol and dynamically generates adapters for different transports and protocols.
 
@@ -170,7 +169,7 @@ turbomcp-proxy serve \
   --frontend stdio \
   | my-cli-tool
 
-# With backend authentication
+# With backend authentication (Bearer token for HTTP backend)
 turbomcp-proxy serve \
   --backend http --http https://api.example.com/mcp \
   --auth-token "your-secret-token" \
@@ -237,11 +236,16 @@ turbomcp-proxy generate \
 └─────────────────────────────────────────────────────────┘
 ```
 
-See **[Design Document](../../PROXY_DESIGN.md)** for complete architecture details.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for deeper internals.
 
 ---
 
 ## Installation
+
+**From crates.io:**
+```bash
+cargo install turbomcp-proxy
+```
 
 **From source:**
 ```bash
@@ -249,21 +253,15 @@ cd crates/turbomcp-proxy
 cargo install --path .
 ```
 
-**From crates.io:** _(coming soon)_
-```bash
-cargo install turbomcp-proxy
-```
-
 ---
 
 ## Documentation
 
-- **[Design Document](../../PROXY_DESIGN.md)** - Complete technical design
-- **[Progress Tracker](../../PROXY_PROGRESS.md)** - Implementation progress
-- **[Security Review](./SECURITY_REVIEW.md)** - World-class security assessment
-- **[Examples](./examples/)** - Usage examples
-- **[API Docs](https://docs.rs/turbomcp-proxy)** - Rust API documentation
-- **[Test Suite](./tests/)** - Comprehensive integration tests (40+ cases)
+- **[ARCHITECTURE.md](./ARCHITECTURE.md)** — Internal architecture overview
+- **[SECURITY_REVIEW.md](./SECURITY_REVIEW.md)** — Security assessment
+- **[LIBRARY_USAGE.md](./LIBRARY_USAGE.md)** — Using the crate as a library
+- **[Examples](./examples/)** — Runnable usage examples
+- **[API Docs](https://docs.rs/turbomcp-proxy)** — Rust API documentation
 
 ---
 
@@ -291,22 +289,27 @@ turbomcp-proxy inspect [OPTIONS]
 Backend Options:
   --backend <TYPE>    Backend type (stdio, http, tcp, unix, websocket)
   --cmd <CMD>         Command to run (for stdio backend)
+  --args <ARGS>       Command arguments (for stdio, repeatable)
   --http <URL>        HTTP/SSE server URL
   --tcp <ADDR>        TCP endpoint (host:port)
   --unix <PATH>       Unix socket path
   --websocket <URL>   WebSocket server URL
 
 Output Options:
-  --output <FILE>     Save to file
-  --format <FORMAT>   Output format (human, json, yaml)
+  -o, --output <FILE> Save to file
+  --append            Append to output file instead of overwriting
+
+Global (before the subcommand name):
+  -f, --format <FMT>  Output format: human (default), json, yaml
 
 Examples:
   turbomcp-proxy inspect --backend stdio --cmd "python server.py"
-  turbomcp-proxy inspect --backend http --http https://api.example.com/mcp
-  turbomcp-proxy inspect --backend tcp --tcp localhost:5000 --format json
-  turbomcp-proxy inspect --backend unix --unix /tmp/mcp.sock --output capabilities.json
+  turbomcp-proxy -f json inspect --backend stdio --cmd "python server.py"
+  turbomcp-proxy inspect --backend stdio --cmd node --args dist/server.js -o spec.json
 
-Note: Inspect currently supports stdio backend. TCP, Unix, HTTP, and WebSocket backends are supported in the backend connector but not yet in the inspect introspection layer.
+Note: Inspect currently supports only the STDIO backend. The other backends
+(HTTP, TCP, Unix, WebSocket) are fully wired in `serve` and `schema`, but the
+inspect command returns a configuration error for them today.
 ```
 
 ### `serve` - Runtime Proxy
@@ -317,23 +320,31 @@ turbomcp-proxy serve [OPTIONS]
 Backend Options:
   --backend <TYPE>    Backend type (stdio, http, tcp, unix, websocket)
   --cmd <CMD>         Command to run (for stdio backend)
-  --server <URL>      Server URL (for http/websocket backend)
+  --args <ARGS>       Command arguments (for stdio backend, repeatable)
+  --working-dir <DIR> Working directory for subprocess (for stdio backend)
+  --http <URL>        HTTP/SSE server URL (for http backend)
+  --websocket <URL>   WebSocket server URL (for websocket backend)
   --tcp <HOST:PORT>   TCP endpoint (for tcp backend)
   --unix <PATH>       Unix socket path (for unix backend)
-  --auth-token <TOK>  Authentication token for HTTP backend
+  --auth-token <TOK>  Bearer token for HTTP backend authentication
 
 Frontend Options:
-  --frontend <TYPE>   Frontend type (stdio, http, tcp, unix, websocket)
-  --bind <ADDR>       Bind address (for http/tcp/websocket frontend)
-  --endpoint <PATH>   HTTP endpoint path (default: /mcp)
+  --frontend <TYPE>   Frontend type (default: http)
+  --bind <ADDR>       Bind address (default: 127.0.0.1:3000)
+  --path <PATH>       HTTP endpoint path (default: /mcp)
 
 Authentication Options (Frontend HTTP Server):
-  --jwt-secret <SECRET>        JWT secret for token validation
+  --jwt-secret <SECRET>        JWT secret (symmetric HS256/384/512)
+  --jwt-jwks-uri <URI>         JWKS URI for asymmetric RS*/ES* validation
+  --jwt-algorithm <ALG>        JWT algorithm (default: HS256)
+  --jwt-audience <AUD>         Required `aud` claim (repeatable)
+  --jwt-issuer <ISS>           Required `iss` claim (repeatable)
   --api-key-header <HEADER>    API key header name (default: x-api-key)
   --require-auth               Require authentication for all requests
 
 Environment Variables:
-  TURBOMCP_JWT_SECRET          JWT secret (alternative to --jwt-secret)
+  TURBOMCP_JWT_SECRET          Alternative to --jwt-secret
+  TURBOMCP_JWT_JWKS_URI        Alternative to --jwt-jwks-uri
 
 Examples:
   # STDIO → HTTP (development, localhost only)
@@ -355,7 +366,7 @@ Examples:
 
   # HTTP → STDIO with backend authentication
   turbomcp-proxy serve \
-    --backend http --server https://api.example.com/mcp \
+    --backend http --http https://api.example.com/mcp \
     --auth-token "backend-token" \
     --frontend stdio
 
@@ -376,14 +387,20 @@ Examples:
 turbomcp-proxy generate [OPTIONS]
 
 Options:
-  --backend <TYPE>    Backend type
-  --cmd <CMD>         Command to run (for stdio)
-  --server <URL>      Server URL (for http/websocket)
-  --frontend <TYPE>   Frontend type
-  --output <DIR>      Output directory
+  --backend <TYPE>    Backend type (stdio, http, tcp, unix, websocket)
+  --cmd <CMD>         Command to run (for stdio backend)
+  --args <ARGS>       Command arguments (for stdio backend, repeatable)
+  --http <URL>        HTTP/SSE server URL (for http backend)
+  --websocket <URL>   WebSocket server URL (for websocket backend)
+  --tcp <HOST:PORT>   TCP endpoint (for tcp backend)
+  --unix <PATH>       Unix socket path (for unix backend)
+  --frontend <TYPE>   Frontend type (default: http)
+  --output, -o <DIR>  Output directory (required)
+  --name <NAME>       Package name (defaults to server name)
+  --version <VER>     Package version (default: 0.1.0)
   --build             Build after generation
-  --release           Build in release mode
-  --run               Run after building
+  --release           Build in release mode (requires --build)
+  --run               Run after building (requires --build)
 
 Examples:
   # Generate and build
@@ -483,13 +500,11 @@ Status: Command structure complete. Full implementation of REST and GraphQL adap
 
 ## Development Status
 
-**Current Version:** 2.2.0
-**MVP Status:** Complete - Production Ready (Phases 1-4)
-**Latest Release:** 2.2.0 - Security Hardening & HTTP Header Propagation
-
-See **[Progress Tracker](../../PROXY_PROGRESS.md)** for detailed progress.
-
-### Version 2.2.0 - Security Hardening & HTTP Header Propagation
+**Current Version:** 3.1.1 (tracks the TurboMCP workspace)
+**Status:** Production-ready for STDIO/HTTP/TCP/Unix/WebSocket proxying,
+code generation, and OpenAPI/GraphQL/Protobuf schema export. Protocol
+adapters (`adapter rest`, `adapter graphql`) are scaffolded — see
+"Protocol Adapters" below.
 
 **Transport Coverage:**
 - [x] **STDIO** (subprocess, CLI tools)
@@ -523,53 +538,25 @@ See **[Progress Tracker](../../PROXY_PROGRESS.md)** for detailed progress.
 - [x] **RuntimeProxyBuilder**: Security-first builder with comprehensive validation
 - [x] **Authentication**: JWT and API key support via turbomcp-transport integration
 
-### Roadmap
+### What's not done yet
 
-- [x] **Phase 0:** Design & Planning (Complete)
-- [x] **Phase 1:** Introspection Engine (Complete - October 2025)
-- [x] **Phase 2:** Runtime Proxy - STDIO → HTTP (Complete - October 2025)
-- [x] **Phase 3:** Runtime Proxy - HTTP → STDIO (Complete - October 2025)
-- [x] **Phase 4:** Code Generation (Complete - October 2025)
-  - 777 lines of production templates
-  - 51/51 tests passing
-  - Zero TODO markers
-  - Type-safe Rust generation from JSON Schema
-  - Dual frontend support (HTTP + STDIO)
-- [x] **Phase 4.5:** Authentication Integration (Complete - October 2025)
-  - JWT authentication (RFC 7519)
-  - API key authentication
-  - Environment variable support
-  - Security warnings for public bindings
-- [x] **Phase 5:** Schema Export (Complete - November 2025)
-  - OpenAPI 3.1 schema generation
-  - GraphQL schema definition generation
-  - Protobuf 3 schema generation
-  - File output support
-- [x] **Phase 5.5:** Transport & Backend Extension (Complete - November 2025)
-  - TCP backend support
-  - Unix domain socket backend support
-  - CLI argument validation and parsing
-  - Full transport integration
-- [x] **Phase 6:** Protocol Adapters (Scaffolding - November 2025)
-  - REST API adapter framework
-  - GraphQL adapter framework
-  - Ready for full implementation
-- [ ] **Phase 7:** Production Features (Planning)
-
-**MVP Target:** Phases 1-3 (Complete - October 2025)
-**Code Generation:** Phase 4 (Complete - October 2025)
-**Authentication:** Phase 4.5 (Complete - October 2025)
-**Schema Export & Transports:** Phase 5-5.5 (Complete - November 2025)
-**Full Release:** 6/7 phases complete - 86%
+- **Full REST adapter implementation** — the `adapter rest` command structure
+  is in place; end-to-end request routing and Swagger UI wiring are a work
+  in progress.
+- **Full GraphQL adapter** — scaffolded behind the `graphql` feature flag;
+  no `async-graphql` dependency is pinned yet, so the feature on its own
+  does not produce a working adapter.
+- **Inspect over non-STDIO backends** — the `inspect` command rejects HTTP,
+  TCP, Unix, and WebSocket today. Use `schema` (which does support all
+  backends) if you need introspection output over those transports.
 
 ---
 
 ## Contributing
 
-We welcome contributions! Please see:
-- **[CONTRIBUTING.md](./CONTRIBUTING.md)** - Contribution guidelines (coming soon)
-- **[Design Document](../../PROXY_DESIGN.md)** - Technical architecture
-- **[Progress Tracker](../../PROXY_PROGRESS.md)** - Current status
+Contributions welcome. See the top-level repository's
+[CONTRIBUTING guide](../../README.md) and
+[ARCHITECTURE.md](../../ARCHITECTURE.md) for project-wide context.
 
 ---
 

@@ -16,16 +16,14 @@ This crate provides the foundational abstractions that all transport implementat
 
 Transport implementations should depend on this crate and implement the `Transport` trait:
 
-```rust
-use turbomcp_transport_traits::{Transport, TransportResult, TransportMessage};
-use async_trait::async_trait;
+```rust,ignore
+use turbomcp_transport_traits::{Transport, TransportResult, TransportMessage, TransportType};
 
 struct MyTransport { /* ... */ }
 
-#[async_trait]
 impl Transport for MyTransport {
     fn transport_type(&self) -> TransportType { /* ... */ }
-    // ... other trait methods
+    // ... other trait methods (return Pin<Box<dyn Future<...> + Send>>)
 }
 ```
 
@@ -33,7 +31,7 @@ impl Transport for MyTransport {
 
 This crate is part of the TurboMCP v3.0 restructuring effort to provide:
 
-- **Lean core**: Only trait definitions and types (~800 LOC)
+- **Lean core**: Only trait definitions and types (~1,700 LOC)
 - **No transport implementations**: Implementations live in separate crates
 - **Foundation for all transports**: STDIO, HTTP, WebSocket, TCP, Unix, gRPC
 
