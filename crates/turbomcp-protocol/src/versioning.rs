@@ -158,9 +158,17 @@ impl Version {
         s.parse()
     }
 
-    /// Get all known MCP versions
+    /// Get all known MCP versions supported by this build (stable set,
+    /// newest last). Mirrors `ProtocolVersion::STABLE` in `turbomcp-types`.
     pub fn known_versions() -> Vec<Version> {
-        vec![Version::latest()]
+        vec![
+            Version {
+                year: 2025,
+                month: 6,
+                day: 18,
+            },
+            Version::latest(),
+        ]
     }
 }
 

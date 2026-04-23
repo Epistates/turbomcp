@@ -186,11 +186,13 @@ fn test_version_compatibility_edge_cases() {
 #[test]
 fn test_known_versions_structure() {
     let known = Version::known_versions();
-    assert_eq!(known, vec![Version::latest()]);
+    let v_2025_06_18 = Version::new(2025, 6, 18).unwrap();
+    assert_eq!(known, vec![v_2025_06_18.clone(), Version::latest()]);
 
     let manager = VersionManager::new(known.clone()).unwrap();
+    // VersionManager sorts newest-first on construction.
     let supported = manager.supported_versions();
-    assert_eq!(supported, &[Version::latest()]);
+    assert_eq!(supported, &[Version::latest(), v_2025_06_18]);
     assert!(known.contains(&Version::current()));
 }
 
@@ -642,7 +644,7 @@ fn test_version_from_date_string() {
 fn test_version_manager_default() {
     let manager = VersionManager::default();
 
-    // Should contain latest version only
+    // Should contain the full known-versions set
     let known = Version::known_versions();
     assert_eq!(manager.supported_versions().len(), known.len());
 
