@@ -8,7 +8,7 @@
 //! - `StoredEvent`: Persisted event for replay support
 
 #[cfg(not(feature = "std"))]
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 use core::fmt;
 #[cfg(feature = "std")]
 use std::{string::String, vec::Vec};
@@ -68,8 +68,8 @@ impl SessionId {
     pub fn try_new() -> Option<Self> {
         let mut bytes = [0u8; 16]; // 128 bits of entropy
 
-        // getrandom works on all platforms including WASM (via js feature)
-        if getrandom::getrandom(&mut bytes).is_err() {
+        // getrandom works on all platforms including WASM (via wasm_js feature)
+        if getrandom::fill(&mut bytes).is_err() {
             return None;
         }
 
