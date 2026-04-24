@@ -21,7 +21,7 @@ use super::super::{
     DpopAlgorithm, DpopError, DpopKeyMetadata, DpopKeyPair, DpopPrivateKey, DpopPublicKey, Result,
 };
 use super::{HsmHealthStatus, HsmInfo, HsmOperations, HsmStats, Pkcs11Config, TokenInfo, common};
-use cryptoki::context::{CInitializeArgs, Pkcs11};
+use cryptoki::context::{CInitializeArgs, CInitializeFlags, Pkcs11};
 use cryptoki::mechanism::Mechanism;
 use cryptoki::object::{Attribute, AttributeType, KeyType, ObjectClass, ObjectHandle};
 use cryptoki::session::{Session, UserType};
@@ -120,7 +120,7 @@ impl r2d2::ManageConnection for SessionManager {
 
         // Login with user PIN - zeroized after use for security
         let pin_str = Zeroizing::new(self.config.user_pin.expose_secret().to_string());
-        let auth_pin = AuthPin::new(pin_str.to_string());
+        let auth_pin = AuthPin::new(pin_str.to_string().into());
         session
             .login(UserType::User, Some(&auth_pin))
             .map_err(|e| DpopError::KeyManagementError {
@@ -300,9 +300,9 @@ impl Pkcs11HsmManager {
                 ),
             })?;
 
-        // Initialize with default arguments
+        // Allow the PKCS#11 library to use native OS locking for thread-safe session pooling.
         context
-            .initialize(CInitializeArgs::OsThreads)
+            .initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK))
             .map_err(|e| DpopError::ConfigurationError {
                 reason: format!("Failed to initialize PKCS#11: {}", e),
             })?;
