@@ -85,7 +85,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use serde::Deserialize;
+use base64::Engine;
+use url::form_urlencoded;
 use worker::{Headers, Request, Response, Url};
 
 pub use crypto::{
@@ -169,9 +170,15 @@ pub trait UserAuthenticator: 'static {
 #[derive(Debug, Clone)]
 pub enum RateLimitResult {
     /// Request is allowed, with remaining count
-    Allowed { remaining: u32 },
+    Allowed {
+        /// Number of requests remaining in the current window.
+        remaining: u32,
+    },
     /// Rate limit exceeded, with retry-after seconds
-    Exceeded { retry_after_secs: u32 },
+    Exceeded {
+        /// Number of seconds the client should wait before retrying.
+        retry_after_secs: u32,
+    },
 }
 
 /// Rate limiter trait for OAuth endpoints.
@@ -1130,7 +1137,7 @@ impl OAuthProvider {
         description: &str,
         state: Option<&str>,
     ) -> worker::Result<Response> {
-        let mut err = OAuthError {
+        let err = OAuthError {
             error: error.to_string(),
             error_description: Some(description.to_string()),
             error_uri: None,

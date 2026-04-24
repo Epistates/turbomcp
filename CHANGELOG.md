@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.2] - 2026-04-24
+
+Patch release replacing several hand-rolled subsystems with battle-tested
+crates, refreshing dependencies, and adapting to upstream API breakage.
+
+### Refactor
+
+- **Rate limiting backed by `governor` (GCRA, lock-free)** — `crates/turbomcp-auth/src/rate_limit.rs` and `crates/turbomcp-transport/src/axum/middleware/rate_limit.rs`. The bespoke sliding-window/token-bucket implementations are replaced by per-endpoint keyed `governor` limiters over a `DashMap` state store. Removes a global write-lock hot path from both layers; correctness now comes from a maintained crate instead of hand-rolled timestamp bookkeeping. Public API on `turbomcp-auth::RateLimiter` is preserved (`check` / `record` / `get_usage` / `reset` / `reset_all`); `get_usage` now reports the configured limit rather than a discrete count (GCRA does not expose a non-consuming counter), and `cleanup_interval` becomes advisory. The axum middleware surfaces `X-RateLimit-Limit` and `X-RateLimit-Burst` headers.
+- **WebSocket retry/reconnect uses `backon`** — `crates/turbomcp-websocket/src/{bidirectional,connection,elicitation}.rs`. `send_request_with_retry` and `send_elicitation_with_retry` adopt `ConstantBuilder`; `reconnect` adopts `ExponentialBuilder` honoring `initial_delay`, `max_delay`, `backoff_factor`, `max_retries`. `reconnect` also snapshots its config up front so the `parking_lot::Mutex` is no longer held across `await`. Behavior (counts, delays, tracing) is preserved.
+- **CLI / OpenAPI migrated from `serde_yaml` to `serde_norway`** — `crates/turbomcp-cli/src/{error,formatter}.rs`, `crates/turbomcp-openapi/src/{error,parser.rs}`. `serde_yaml` is unmaintained; `serde_norway` is a drop-in maintained fork.
+- **WASM handler trait bounds split on `target_arch`** — `crates/turbomcp-wasm/src/wasm_server/{handler_traits,server}.rs`. Native targets keep `Send + Sync` on tool/resource/prompt handler aliases; `wasm32` (single-threaded) drops them so handlers composed of `!Send` futures (e.g. `worker::Request`) compile cleanly.
+- **`RichContextExt` uses `MaybeSend` bounds** — `crates/turbomcp-protocol/src/context/rich.rs`. The `debug` / `info` / `warning` / `error` / `log` / `report_progress*` methods replace their `Send` bounds with `MaybeSend` so the trait compiles on `wasm32`.
+
+### Fixes
+
+- **PKCS#11 HSM init adapts to `cryptoki` 0.10** — `crates/turbomcp-dpop/src/hsm/pkcs11.rs`. Replace `CInitializeArgs::OsThreads` with explicit `CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK)` so the PKCS#11 library uses native OS locking for thread-safe session pooling. `AuthPin::new` now takes a `SecretString` — wrap the user PIN with `.into()`.
+- **`turbomcp-protocol` adapts to `msgpacker` 0.7** — `crates/turbomcp-protocol/src/message.rs`. `msgpacker` 0.7 replaces the `Extend<u8>` pack target with `bytes::BufMut`; the `JsonValue` packer now uses `put_u8` / `put_u16` / `put_u32` accordingly.
+- **`turbomcp-transport-streamable` adapts to `getrandom` 0.4** — `crates/turbomcp-transport-streamable/src/session.rs`. Switch from `getrandom::getrandom(&mut bytes)` to `getrandom::fill(&mut bytes)`; doc comments reference the `wasm_js` backend feature.
+- **`alloc` gate widened in `turbomcp-transport-streamable`** — `crates/turbomcp-transport-streamable/src/lib.rs`. Switch the `extern crate alloc` cfg from `feature = "alloc"` to `not(feature = "std")` so `no_std` builds without an explicit alloc feature still pull `alloc` in.
+- **`turbomcp-wasm` token store hashing** — `crates/turbomcp-wasm/src/wasm_server/durable_objects/token_store.rs`. Replace `format!("tok_{:x}", result)` with a manual hex writer over the digest bytes; `sha2` 0.11's `GenericArray` no longer implements `LowerHex` directly.
+- **WASM OAuth provider tidy-up** — `crates/turbomcp-wasm/src/auth/provider/{crypto,mod}.rs`. Drop an unused `wasm_bindgen` prelude import; pull in `base64::Engine` / `url::form_urlencoded` for OAuth helpers; document the `RateLimitResult::{Allowed, Exceeded}` variant fields.
+
+### Chore
+
+- **Workspace dependency bumps** — `Cargo.toml`, `Cargo.lock`. Notable: `tokio` 1.52, `futures` 0.3.32, `hyper` 1.9, `axum` 0.8.9, `tokio-tungstenite` 0.29, `jsonschema` 0.46, `msgpacker` 0.7, `rand` 0.10, `sha2` 0.11, `wasm-bindgen` 0.2.118, `web-sys` 0.3.95, `wit-bindgen` 0.57, `worker` 0.8, `hashbrown` 0.17, `cryptoki` 0.10, `getrandom` 0.4. Per-crate manifest bumps align with the workspace.
+- **New workspace deps:** `governor` 0.10 (rate limiting) and `backon` 1.6 (retry/backoff).
+- **`turbomcp-auth`:** `dashmap` is now always-on (no longer behind `mcp-cimd` / `mcp-oidc-discovery`).
+- **`turbomcp-wasm`:** add `urlencoding` dep and `demo-oauth` feature; pin `getrandom` 0.4 with `wasm_js` for `wasm32-unknown-unknown`.
+- **`turbomcp-protocol`:** scope `tokio` to `rt`/`time`/`sync`/`macros` only (non-workspace entry to allow `default-features = false`); drop unused `ahash` dep.
+- **Tests:** drop `#[cfg(feature = "experimental-tasks")]` guards on `Capabilities { tasks: None }` in protocol tests — the field is unconditional in the consolidated types.
+- **`deny.toml`:** drop `OpenSSL` license allow and stale RUSTSEC ignores (`paste`, `proc-macro-error`); both are no longer pulled.
+
 ## [3.1.1] - 2026-04-21
 
 Patch release consolidating canonical types, hardening filesystem path handling,

@@ -52,49 +52,81 @@ use super::response::IntoToolResponse;
 use super::traits::IntoPromptResponse;
 use super::types::{PromptResult, ResourceResult, ToolResult};
 
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+#[cfg(target_arch = "wasm32")]
+type BoxedFuture<T> = Pin<Box<dyn Future<Output = T>>>;
+
 /// Type alias for async tool handlers (no context)
-///
-/// Note: WASM is single-threaded so futures don't need Send bounds.
-pub type ToolHandler =
-    Arc<dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = ToolResult>>> + Send + Sync>;
+#[cfg(not(target_arch = "wasm32"))]
+pub type ToolHandler = Arc<dyn Fn(serde_json::Value) -> BoxedFuture<ToolResult> + Send + Sync>;
+
+/// Type alias for async tool handlers (no context)
+#[cfg(target_arch = "wasm32")]
+pub type ToolHandler = Arc<dyn Fn(serde_json::Value) -> BoxedFuture<ToolResult>>;
 
 /// Type alias for async tool handlers with context
-pub type ToolHandlerWithCtx = Arc<
-    dyn Fn(Arc<RequestContext>, serde_json::Value) -> Pin<Box<dyn Future<Output = ToolResult>>>
-        + Send
-        + Sync,
->;
+#[cfg(not(target_arch = "wasm32"))]
+pub type ToolHandlerWithCtx =
+    Arc<dyn Fn(Arc<RequestContext>, serde_json::Value) -> BoxedFuture<ToolResult> + Send + Sync>;
+
+/// Type alias for async tool handlers with context
+#[cfg(target_arch = "wasm32")]
+pub type ToolHandlerWithCtx =
+    Arc<dyn Fn(Arc<RequestContext>, serde_json::Value) -> BoxedFuture<ToolResult>>;
 
 /// Type alias for async resource handlers (no context)
-pub type ResourceHandlerFn = Arc<
-    dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<ResourceResult, String>>>> + Send + Sync,
+#[cfg(not(target_arch = "wasm32"))]
+pub type ResourceHandlerFn =
+    Arc<dyn Fn(String) -> BoxedFuture<Result<ResourceResult, String>> + Send + Sync>;
+
+/// Type alias for async resource handlers (no context)
+#[cfg(target_arch = "wasm32")]
+pub type ResourceHandlerFn = Arc<dyn Fn(String) -> BoxedFuture<Result<ResourceResult, String>>>;
+
+/// Type alias for async resource handlers with context
+#[cfg(not(target_arch = "wasm32"))]
+pub type ResourceHandlerWithCtxFn = Arc<
+    dyn Fn(Arc<RequestContext>, String) -> BoxedFuture<Result<ResourceResult, String>>
+        + Send
+        + Sync,
 >;
 
 /// Type alias for async resource handlers with context
-pub type ResourceHandlerWithCtxFn = Arc<
-    dyn Fn(
-            Arc<RequestContext>,
-            String,
-        ) -> Pin<Box<dyn Future<Output = Result<ResourceResult, String>>>>
-        + Send
-        + Sync,
+#[cfg(target_arch = "wasm32")]
+pub type ResourceHandlerWithCtxFn =
+    Arc<dyn Fn(Arc<RequestContext>, String) -> BoxedFuture<Result<ResourceResult, String>>>;
+
+/// Type alias for async prompt handlers (no context)
+#[cfg(not(target_arch = "wasm32"))]
+pub type PromptHandlerFn = Arc<
+    dyn Fn(Option<serde_json::Value>) -> BoxedFuture<Result<PromptResult, String>> + Send + Sync,
 >;
 
 /// Type alias for async prompt handlers (no context)
-pub type PromptHandlerFn = Arc<
-    dyn Fn(Option<serde_json::Value>) -> Pin<Box<dyn Future<Output = Result<PromptResult, String>>>>
+#[cfg(target_arch = "wasm32")]
+pub type PromptHandlerFn =
+    Arc<dyn Fn(Option<serde_json::Value>) -> BoxedFuture<Result<PromptResult, String>>>;
+
+/// Type alias for async prompt handlers with context
+#[cfg(not(target_arch = "wasm32"))]
+pub type PromptHandlerWithCtxFn = Arc<
+    dyn Fn(
+            Arc<RequestContext>,
+            Option<serde_json::Value>,
+        ) -> BoxedFuture<Result<PromptResult, String>>
         + Send
         + Sync,
 >;
 
 /// Type alias for async prompt handlers with context
+#[cfg(target_arch = "wasm32")]
 pub type PromptHandlerWithCtxFn = Arc<
     dyn Fn(
-            Arc<RequestContext>,
-            Option<serde_json::Value>,
-        ) -> Pin<Box<dyn Future<Output = Result<PromptResult, String>>>>
-        + Send
-        + Sync,
+        Arc<RequestContext>,
+        Option<serde_json::Value>,
+    ) -> BoxedFuture<Result<PromptResult, String>>,
 >;
 
 /// Enum wrapping both context-aware and non-context-aware tool handlers

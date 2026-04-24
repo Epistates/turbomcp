@@ -59,7 +59,7 @@ use std::cell::RefCell;
 #[cfg(target_arch = "wasm32")]
 type SessionStateMap = std::collections::HashMap<String, HashMap<String, Value>>;
 
-/// Thread-local session state storage for WASM.
+// Thread-local session state storage for WASM.
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     static SESSION_STATE: RefCell<SessionStateMap> = RefCell::new(HashMap::new());

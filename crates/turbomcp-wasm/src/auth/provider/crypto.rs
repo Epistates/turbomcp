@@ -7,7 +7,6 @@
 //! - JWT signing
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
 /// Errors that can occur during cryptographic operations.

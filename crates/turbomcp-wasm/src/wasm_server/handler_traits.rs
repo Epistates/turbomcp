@@ -57,49 +57,81 @@ use super::types::{PromptResult, ResourceResult, ToolResult};
 // Type Aliases (to satisfy clippy type_complexity)
 // ============================================================================
 
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+#[cfg(target_arch = "wasm32")]
+type BoxedFuture<T> = Pin<Box<dyn Future<Output = T>>>;
+
 /// Boxed async tool handler function type (no context)
-///
-/// Note: WASM is single-threaded so inner futures don't need Send bounds.
-type BoxedToolHandler =
-    Box<dyn Fn(serde_json::Value) -> Pin<Box<dyn Future<Output = ToolResult>>> + Send + Sync>;
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedToolHandler = Box<dyn Fn(serde_json::Value) -> BoxedFuture<ToolResult> + Send + Sync>;
+
+/// Boxed async tool handler function type (no context)
+#[cfg(target_arch = "wasm32")]
+type BoxedToolHandler = Box<dyn Fn(serde_json::Value) -> BoxedFuture<ToolResult>>;
 
 /// Boxed async tool handler function type with context
-type BoxedToolHandlerWithCtx = Box<
-    dyn Fn(Arc<RequestContext>, serde_json::Value) -> Pin<Box<dyn Future<Output = ToolResult>>>
-        + Send
-        + Sync,
->;
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedToolHandlerWithCtx =
+    Box<dyn Fn(Arc<RequestContext>, serde_json::Value) -> BoxedFuture<ToolResult> + Send + Sync>;
+
+/// Boxed async tool handler function type with context
+#[cfg(target_arch = "wasm32")]
+type BoxedToolHandlerWithCtx =
+    Box<dyn Fn(Arc<RequestContext>, serde_json::Value) -> BoxedFuture<ToolResult>>;
 
 /// Boxed async resource handler function type (no context)
-type BoxedResourceHandler = Box<
-    dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<ResourceResult, String>>>> + Send + Sync,
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedResourceHandler =
+    Box<dyn Fn(String) -> BoxedFuture<Result<ResourceResult, String>> + Send + Sync>;
+
+/// Boxed async resource handler function type (no context)
+#[cfg(target_arch = "wasm32")]
+type BoxedResourceHandler = Box<dyn Fn(String) -> BoxedFuture<Result<ResourceResult, String>>>;
+
+/// Boxed async resource handler function type with context
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedResourceHandlerWithCtx = Box<
+    dyn Fn(Arc<RequestContext>, String) -> BoxedFuture<Result<ResourceResult, String>>
+        + Send
+        + Sync,
 >;
 
 /// Boxed async resource handler function type with context
-type BoxedResourceHandlerWithCtx = Box<
-    dyn Fn(
-            Arc<RequestContext>,
-            String,
-        ) -> Pin<Box<dyn Future<Output = Result<ResourceResult, String>>>>
-        + Send
-        + Sync,
+#[cfg(target_arch = "wasm32")]
+type BoxedResourceHandlerWithCtx =
+    Box<dyn Fn(Arc<RequestContext>, String) -> BoxedFuture<Result<ResourceResult, String>>>;
+
+/// Boxed async prompt handler function type (no context)
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedPromptHandler = Box<
+    dyn Fn(Option<serde_json::Value>) -> BoxedFuture<Result<PromptResult, String>> + Send + Sync,
 >;
 
 /// Boxed async prompt handler function type (no context)
-type BoxedPromptHandler = Box<
-    dyn Fn(Option<serde_json::Value>) -> Pin<Box<dyn Future<Output = Result<PromptResult, String>>>>
+#[cfg(target_arch = "wasm32")]
+type BoxedPromptHandler =
+    Box<dyn Fn(Option<serde_json::Value>) -> BoxedFuture<Result<PromptResult, String>>>;
+
+/// Boxed async prompt handler function type with context
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedPromptHandlerWithCtx = Box<
+    dyn Fn(
+            Arc<RequestContext>,
+            Option<serde_json::Value>,
+        ) -> BoxedFuture<Result<PromptResult, String>>
         + Send
         + Sync,
 >;
 
 /// Boxed async prompt handler function type with context
+#[cfg(target_arch = "wasm32")]
 type BoxedPromptHandlerWithCtx = Box<
     dyn Fn(
-            Arc<RequestContext>,
-            Option<serde_json::Value>,
-        ) -> Pin<Box<dyn Future<Output = Result<PromptResult, String>>>>
-        + Send
-        + Sync,
+        Arc<RequestContext>,
+        Option<serde_json::Value>,
+    ) -> BoxedFuture<Result<PromptResult, String>>,
 >;
 
 // ============================================================================

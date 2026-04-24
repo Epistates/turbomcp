@@ -391,6 +391,7 @@ impl DurableObjectTokenStore {
 /// Tokens are never stored in plaintext - only their cryptographic hash.
 /// This prevents token compromise even if the storage is breached.
 fn hash_token(token: &str) -> String {
+    use core::fmt::Write as _;
     use sha2::{Digest, Sha256};
 
     let mut hasher = Sha256::new();
@@ -398,7 +399,13 @@ fn hash_token(token: &str) -> String {
     let result = hasher.finalize();
 
     // Format as hex with tok_ prefix for easy identification
-    format!("tok_{:x}", result)
+    let bytes: &[u8] = result.as_ref();
+    let mut hash = String::with_capacity("tok_".len() + bytes.len() * 2);
+    hash.push_str("tok_");
+    for byte in bytes {
+        write!(&mut hash, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    hash
 }
 
 /// Error type for token store operations.
