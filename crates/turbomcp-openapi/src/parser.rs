@@ -16,7 +16,7 @@ pub fn parse_spec(content: &str) -> Result<OpenAPI> {
     }
 
     // Try YAML
-    serde_yaml::from_str(content).map_err(Into::into)
+    serde_norway::from_str(content).map_err(Into::into)
 }
 
 /// Load an OpenAPI specification from a file.

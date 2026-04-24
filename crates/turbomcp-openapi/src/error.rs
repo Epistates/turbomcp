@@ -63,8 +63,8 @@ impl From<serde_json::Error> for OpenApiError {
     }
 }
 
-impl From<serde_yaml::Error> for OpenApiError {
-    fn from(err: serde_yaml::Error) -> Self {
+impl From<serde_norway::Error> for OpenApiError {
+    fn from(err: serde_norway::Error) -> Self {
         Self::ParseError(err.to_string())
     }
 }

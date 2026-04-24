@@ -215,7 +215,7 @@ impl Formatter {
     }
 
     fn display_yaml<T: Serialize + ?Sized>(&self, value: &T) -> CliResult<()> {
-        let yaml = serde_yaml::to_string(value)?;
+        let yaml = serde_norway::to_string(value)?;
         println!("{yaml}");
         Ok(())
     }
