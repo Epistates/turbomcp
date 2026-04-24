@@ -336,7 +336,6 @@ fn test_concurrent_type_cloning() {
         logging: Some(LoggingCapabilities {}),
         experimental: None,
         completions: None,
-        #[cfg(feature = "experimental-tasks")]
         tasks: None,
     });
 

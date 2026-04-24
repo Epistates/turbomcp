@@ -53,6 +53,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
+use turbomcp_core::MaybeSend;
 
 use crate::McpError;
 use crate::types::LogLevel;
@@ -196,8 +197,8 @@ pub trait RichContextExt {
     /// transport is not available (no-op in that case).
     fn debug(
         &self,
-        message: impl Into<String> + Send,
-    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send;
+        message: impl Into<String> + MaybeSend,
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + MaybeSend;
 
     /// Send an info-level log message to the client.
     ///
@@ -205,8 +206,8 @@ pub trait RichContextExt {
     /// transport is not available (no-op in that case).
     fn info(
         &self,
-        message: impl Into<String> + Send,
-    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send;
+        message: impl Into<String> + MaybeSend,
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + MaybeSend;
 
     /// Send a warning-level log message to the client.
     ///
@@ -214,8 +215,8 @@ pub trait RichContextExt {
     /// transport is not available (no-op in that case).
     fn warning(
         &self,
-        message: impl Into<String> + Send,
-    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send;
+        message: impl Into<String> + MaybeSend,
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + MaybeSend;
 
     /// Send an error-level log message to the client.
     ///
@@ -223,8 +224,8 @@ pub trait RichContextExt {
     /// transport is not available (no-op in that case).
     fn error(
         &self,
-        message: impl Into<String> + Send,
-    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send;
+        message: impl Into<String> + MaybeSend,
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + MaybeSend;
 
     /// Send a log message to the client with a specific level.
     ///
@@ -236,9 +237,9 @@ pub trait RichContextExt {
     fn log(
         &self,
         level: LogLevel,
-        message: impl Into<String> + Send,
+        message: impl Into<String> + MaybeSend,
         logger: Option<String>,
-    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send;
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + MaybeSend;
 
     // ===== Progress Reporting =====
 
@@ -262,7 +263,7 @@ pub trait RichContextExt {
         current: u64,
         total: u64,
         message: Option<&str>,
-    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send;
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + MaybeSend;
 
     /// Report progress with custom progress token.
     ///
@@ -270,11 +271,11 @@ pub trait RichContextExt {
     /// with different progress tokens.
     fn report_progress_with_token(
         &self,
-        token: impl Into<String> + Send,
+        token: impl Into<String> + MaybeSend,
         current: u64,
         total: Option<u64>,
         message: Option<&str>,
-    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send;
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + MaybeSend;
 }
 
 impl RichContextExt for RequestContext {
@@ -348,26 +349,26 @@ impl RichContextExt for RequestContext {
 
     // ===== Client Logging =====
 
-    async fn debug(&self, message: impl Into<String> + Send) -> Result<(), McpError> {
+    async fn debug(&self, message: impl Into<String> + MaybeSend) -> Result<(), McpError> {
         self.log(LogLevel::Debug, message, None).await
     }
 
-    async fn info(&self, message: impl Into<String> + Send) -> Result<(), McpError> {
+    async fn info(&self, message: impl Into<String> + MaybeSend) -> Result<(), McpError> {
         self.log(LogLevel::Info, message, None).await
     }
 
-    async fn warning(&self, message: impl Into<String> + Send) -> Result<(), McpError> {
+    async fn warning(&self, message: impl Into<String> + MaybeSend) -> Result<(), McpError> {
         self.log(LogLevel::Warning, message, None).await
     }
 
-    async fn error(&self, message: impl Into<String> + Send) -> Result<(), McpError> {
+    async fn error(&self, message: impl Into<String> + MaybeSend) -> Result<(), McpError> {
         self.log(LogLevel::Error, message, None).await
     }
 
     async fn log(
         &self,
         level: LogLevel,
-        message: impl Into<String> + Send,
+        message: impl Into<String> + MaybeSend,
         logger: Option<String>,
     ) -> Result<(), McpError> {
         // If no bidirectional session is attached, silently succeed (no-op).
@@ -401,7 +402,7 @@ impl RichContextExt for RequestContext {
 
     async fn report_progress_with_token(
         &self,
-        token: impl Into<String> + Send,
+        token: impl Into<String> + MaybeSend,
         current: u64,
         total: Option<u64>,
         message: Option<&str>,

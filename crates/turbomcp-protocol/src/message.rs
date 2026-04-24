@@ -46,6 +46,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
+#[cfg(feature = "messagepack")]
+use bytes::BufMut;
 use bytes::{Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -111,12 +113,12 @@ impl JsonValue {
 impl msgpacker::Packable for JsonValue {
     fn pack<T>(&self, buf: &mut T) -> usize
     where
-        T: Extend<u8>,
+        T: BufMut,
     {
         match self {
             JsonValue::Null => {
                 // Pack nil
-                buf.extend([0xc0]);
+                buf.put_u8(0xc0);
                 1
             }
             JsonValue::Bool(b) => b.pack(buf),
@@ -129,15 +131,15 @@ impl msgpacker::Packable for JsonValue {
 
                 // Pack array length
                 if len <= 15 {
-                    buf.extend([0x90 + len as u8]);
+                    buf.put_u8(0x90 + len as u8);
                     bytes_written += 1;
                 } else if len <= u16::MAX as usize {
-                    buf.extend([0xdc]);
-                    buf.extend((len as u16).to_be_bytes());
+                    buf.put_u8(0xdc);
+                    buf.put_u16(len as u16);
                     bytes_written += 3;
                 } else {
-                    buf.extend([0xdd]);
-                    buf.extend((len as u32).to_be_bytes());
+                    buf.put_u8(0xdd);
+                    buf.put_u32(len as u32);
                     bytes_written += 5;
                 }
 
@@ -155,15 +157,15 @@ impl msgpacker::Packable for JsonValue {
 
                 // Pack map length
                 if len <= 15 {
-                    buf.extend([0x80 + len as u8]);
+                    buf.put_u8(0x80 + len as u8);
                     bytes_written += 1;
                 } else if len <= u16::MAX as usize {
-                    buf.extend([0xde]);
-                    buf.extend((len as u16).to_be_bytes());
+                    buf.put_u8(0xde);
+                    buf.put_u16(len as u16);
                     bytes_written += 3;
                 } else {
-                    buf.extend([0xdf]);
-                    buf.extend((len as u32).to_be_bytes());
+                    buf.put_u8(0xdf);
+                    buf.put_u32(len as u32);
                     bytes_written += 5;
                 }
 

@@ -688,7 +688,6 @@ mod capability_negotiation_compliance {
             sampling: None, // Client doesn't support sampling
             elicitation: None,
             experimental: None,
-            #[cfg(feature = "experimental-tasks")]
             tasks: None,
         };
 
@@ -702,7 +701,6 @@ mod capability_negotiation_compliance {
             logging: None,
             completions: None,
             experimental: None,
-            #[cfg(feature = "experimental-tasks")]
             tasks: None,
         };
 
