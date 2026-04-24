@@ -16,7 +16,7 @@ rust-version = "1.89.0"
 default = ["std"]
 std = ["serde/std", "serde_json/std"]
 # WASM-specific optimizations
-wasm = []
+wasm = ["alloc"]
 # Enable alloc for no_std environments
 alloc = []
 
@@ -26,13 +26,13 @@ serde = { version = "1.0", default-features = false, features = ["derive", "allo
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 
 # HashMap for no_std environments (std provides std::collections::HashMap)
-hashbrown = { version = "0.15", default-features = false, features = ["serde", "inline-more"] }
+hashbrown = { version = "0.17", default-features = false, features = ["serde", "inline-more", "default-hasher"] }
 
 # Base64 for event ID encoding (pure Rust, no_std)
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 
-# Cryptographically secure random number generation (works on WASM via js feature)
-getrandom = { version = "0.2", default-features = false, features = ["js"] }
+# Cryptographically secure random number generation (works on WASM via wasm_js feature)
+getrandom = { version = "0.4", default-features = false, features = ["wasm_js"] }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }

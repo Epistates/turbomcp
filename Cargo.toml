@@ -80,7 +80,7 @@ const_is_empty = "allow"
 # Core async runtime and utilities
 # Tokio: Production optimization - use only needed features instead of "full"
 # Includes: runtime, networking, sync, timers, signal handling, process, macros, io
-tokio = { version = "1.50", features = [
+tokio = { version = "1.52", features = [
     "rt", "rt-multi-thread",  # Multi-threaded async runtime
     "net",                     # TCP/UDP networking
     "sync",                    # Channels, mutexes, RwLock
@@ -91,33 +91,33 @@ tokio = { version = "1.50", features = [
     "io-util",                 # Async I/O utilities
 ] }
 tokio-util = { version = "0.7.18", features = ["codec", "io"] }
-futures = "0.3.31"
+futures = "0.3.32"
 pin-project-lite = "0.2.17"
 
 # Test utilities
 walkdir = "2.5"
-tempfile = "3.26"
+tempfile = "3.27"
 
 # Serialization with performance focus
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = { version = "1.0.149", features = ["raw_value", "preserve_order"] }
-msgpacker = { version = "0.4", features = ["derive", "alloc"] }  # MessagePack for binary efficiency
-sonic-rs = "0.5.7"   # High-performance JSON
+msgpacker = { version = "0.7", features = ["derive"] }  # MessagePack for binary efficiency
+sonic-rs = "0.5.8"   # High-performance JSON
 simd-json = "0.17" # SIMD-accelerated JSON parsing
 ciborium = "0.2"
 
 # Schema validation and generation
 schemars = { version = "1.2.1", features = ["chrono04", "uuid1"] }
-jsonschema = { version = "0.44", default-features = false }
+jsonschema = { version = "0.46", default-features = false }
 
 # HTTP/WebSocket/Network
 reqwest = { version = "0.13.2", default-features = false, features = ["json", "stream", "rustls", "http2", "brotli", "gzip", "form", "query"] }
-axum = { version = "0.8.8", features = ["ws", "tracing", "macros"] }
+axum = { version = "0.8.9", features = ["ws", "tracing", "macros"] }
 tower = { version = "0.5.3", features = ["util", "retry", "timeout"] }
 tower-http = { version = "0.6.8", features = ["compression-br", "compression-gzip", "cors", "timeout", "trace", "limit"] }
-hyper = { version = "1.8", features = ["http1", "http2", "server", "client"] }
+hyper = { version = "1.9", features = ["http1", "http2", "server", "client"] }
 hyper-util = { version = "0.1.20", features = ["tokio", "server-auto", "client-legacy"] }
-tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.29.0", features = ["rustls-tls-native-roots"] }
 
 # Error handling and diagnostics
 thiserror = "2.0.18"
@@ -146,19 +146,19 @@ tokio-stream = "0.1"
 
 # URL and random utilities
 url = "2.5.8"
-fastrand = "2.3"
+fastrand = "2.4"
 
 # Configuration and CLI
 config = "0.15"
-clap = { version = "4.5.60", features = ["derive", "env", "color"] }
-clap_complete = "4.5"
+clap = { version = "4.6.1", features = ["derive", "env", "color"] }
+clap_complete = "4.6"
 
 # Security and authentication
 ring = "0.17.14"
 subtle = "2.6"  # Constant-time comparison for secret values
 base64 = "0.22.1"
 percent-encoding = "2.3.2"  # URL percent encoding/decoding (RFC 3986)
-uuid = { version = "1.22", features = ["v4", "serde"] }
+uuid = { version = "1.23", features = ["v4", "serde"] }
 jsonwebtoken = { version = "10.3", features = ["aws_lc_rs", "use_pem"] }
 
 # Time and date handling
@@ -167,30 +167,36 @@ time = { version = "0.3.47", features = ["serde", "macros"] }
 
 # Memory and performance optimizations
 bytes = "1.11.1"
-smallvec = { version = "1.11", features = ["serde"] }
+smallvec = { version = "1.15", features = ["serde"] }
 compact_str = { version = "0.9", features = ["serde"] }
 ahash = "0.8.12"
-arc-swap = "1.8"
+arc-swap = "1.9"
 
 # Caching
-moka = { version = "0.12.14", features = ["future"] }
+moka = { version = "0.12.15", features = ["future"] }
+
+# Rate limiting (lock-free GCRA, replaces hand-rolled token bucket / sliding window)
+governor = "0.10.4"
+
+# Retry/backoff (replaces hand-rolled exponential backoff loops)
+backon = { version = "1.6.0", features = ["tokio-sleep"] }
 
 # Serde extensions
 serde_with = "3.18"
 
 # Development and testing
 criterion = { version = "0.8.2", features = ["html_reports"] }
-proptest = "1.10"
+proptest = "1.11"
 tokio-test = "0.4"
 wiremock = "0.6.5"
 pretty_assertions = "1.4.1"
-insta = { version = "1.46", features = ["json", "redactions"] }
-rand = "0.9"
-quickcheck = "1.0"
-quickcheck_macros = "1.0"
-mock_instant = "0.3"
+insta = { version = "1.47", features = ["json", "redactions"] }
+rand = "0.10"
+quickcheck = "1.1"
+quickcheck_macros = "1.2"
+mock_instant = "0.6"
 serial_test = "3.4"
-sha2 = "0.10"
+sha2 = "0.11"
 testcontainers = "0.27"
 
 # Documentation

@@ -35,7 +35,7 @@ urlencoding = "2.1"
 url = "2.5"
 
 # HTTP types
-http = "1.0"
+http = "1.4"
 
 # Tower integration (optional)
 tower = { workspace = true, optional = true }
@@ -54,10 +54,14 @@ secrecy = { version = "0.10", features = ["serde"] }
 
 # Cryptography
 subtle = "2.6"
-blake3 = "1.5"
+blake3 = "1.8"
 
 # Token validation cache (replaces lru due to RUSTSEC-2026-0002 unsoundness)
 moka = { workspace = true }
+
+# GCRA rate limiting (lock-free, replaces hand-rolled sliding-window)
+governor = { workspace = true }
+dashmap = { workspace = true }
 
 # Serde extensions (OneOrMany for JWT aud field)
 serde_with = { workspace = true }
@@ -65,8 +69,7 @@ serde_with = { workspace = true }
 # HTTP client for OAuth flows
 reqwest = { workspace = true }
 
-# MCP 2025-11-25 Draft: CIMD support
-dashmap = { workspace = true, optional = true }
+# (dashmap is now always-on above; CIMD features depend on it but no longer opt-in.)
 
 # Internal dependencies
 turbomcp-protocol = { workspace = true }
@@ -110,8 +113,8 @@ tower = ["middleware"]  # Alias for middleware (for consistency with other turbo
 
 # MCP 2025-11-25 Draft Specification Features (Authorization)
 mcp-ssrf = []                               # SSRF protection for HTTP fetching (used by CIMD and Discovery)
-mcp-cimd = ["mcp-ssrf", "dep:dashmap"]      # Client ID Metadata Documents (SEP-991)
-mcp-oidc-discovery = ["mcp-ssrf", "dep:dashmap"]  # OpenID Connect Discovery 1.0 support (RFC 8414 + OIDC)
+mcp-cimd = ["mcp-ssrf"]                     # Client ID Metadata Documents (SEP-991)
+mcp-oidc-discovery = ["mcp-ssrf"]           # OpenID Connect Discovery 1.0 support (RFC 8414 + OIDC)
 mcp-incremental-consent = []                # Incremental scope consent via WWW-Authenticate (SEP-835)
 
 # Batteries-included

@@ -29,7 +29,7 @@ tokio = { workspace = true }
 # Serialization
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-serde_yaml = "0.9"
+serde_norway = "0.9"
 
 # Error handling
 thiserror = { workspace = true }
@@ -38,10 +38,10 @@ thiserror = { workspace = true }
 url = "2.5"
 
 # Regex for route pattern matching
-regex = "1.11"
+regex = "1.12"
 
 # IP address validation for SSRF protection
-ipnetwork = "0.20"
+ipnetwork = "0.21"
 
 [dev-dependencies]
 tokio-test = { workspace = true }

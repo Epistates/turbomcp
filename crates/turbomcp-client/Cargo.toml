@@ -39,7 +39,7 @@ parking_lot = "0.12"
 
 # Legacy Tower integration (deprecated, kept for compatibility)
 pin-project-lite = { version = "0.2", optional = true }
-http = { version = "1.2", optional = true }
+http = { version = "1.4", optional = true }
 
 [dev-dependencies]
 bytes = { workspace = true }

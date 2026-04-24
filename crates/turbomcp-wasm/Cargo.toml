@@ -25,13 +25,16 @@ wasi = ["dep:wasi", "dep:wit-bindgen", "dep:url"]
 # Console logging for debugging
 console-log = ["browser", "console_error_panic_hook"]
 # WASM server support - MCP servers running in WASM environments (Cloudflare Workers, etc.)
-wasm-server = ["dep:worker", "dep:schemars", "dep:hashbrown", "dep:turbomcp-protocol", "wasm-bindgen", "wasm-bindgen-futures", "serde-wasm-bindgen", "js-sys"]
+# web-sys is required because rich_context/context use `web_sys::console::*` for logging.
+wasm-server = ["dep:worker", "dep:schemars", "dep:hashbrown", "dep:turbomcp-protocol", "wasm-bindgen", "wasm-bindgen-futures", "serde-wasm-bindgen", "js-sys", "web-sys"]
 # Streamable HTTP support (MCP 2025-11-25 spec with SSE and session management)
 streamable = ["wasm-server", "dep:turbomcp-transport-streamable", "dep:sha2"]
 # Cloudflare Workers feature alias (same as wasm-server, for clarity)
 cloudflare = ["wasm-server"]
 # Authentication support for WASM servers (JWT validation via Web Crypto API)
-auth = ["wasm-server", "web-sys"]
+auth = ["wasm-server", "web-sys", "dep:url", "dep:urlencoding"]
+# Explicit opt-in for demo OAuth auto-approval in release builds
+demo-oauth = []
 # Procedural macros for zero-boilerplate WASM MCP server development
 macros = ["wasm-server", "dep:turbomcp-wasm-macros"]
 # NOTE: The `native` feature has been removed.
@@ -48,7 +51,7 @@ turbomcp-core = { workspace = true, default-features = false, features = ["wasm"
 turbomcp-types = { workspace = true, features = ["experimental-tasks"] }
 
 # MCP protocol wire wrappers (only when wasm-server feature is enabled)
-turbomcp-protocol = { workspace = true, features = ["experimental-tasks"], optional = true }
+turbomcp-protocol = { version = "3.1.1", path = "../turbomcp-protocol", default-features = false, features = ["std", "experimental-tasks"], optional = true }
 
 # Serialization
 serde = { workspace = true }
@@ -61,9 +64,9 @@ base64 = { workspace = true }
 subtle = { workspace = true }
 
 # Browser dependencies (optional)
-wasm-bindgen = { version = "0.2.108", optional = true }
+wasm-bindgen = { version = "0.2.118", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
-js-sys = { version = "0.3.85", optional = true }
+js-sys = { version = "0.3.95", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
 
 # Async channel for WebSocket
@@ -74,17 +77,18 @@ console_error_panic_hook = { version = "0.1", optional = true }
 
 # WASI Preview 2 dependencies (optional - for wasi feature)
 wasi = { version = "0.14", optional = true }
-wit-bindgen = { version = "0.39", optional = true }
+wit-bindgen = { version = "0.57", optional = true }
 url = { version = "2.5", optional = true }
+urlencoding = { version = "2.1", optional = true }
 
 # Cloudflare Workers SDK (optional - for cloudflare feature)
-worker = { version = "0.7.4", optional = true }
+worker = { version = "0.8.1", optional = true }
 
 # JSON Schema generation (optional - for cloudflare feature typed tools)
 schemars = { workspace = true, optional = true }
 
 # HashMap for compatibility with turbomcp-core types (uses hashbrown for no_std)
-hashbrown = { version = "0.15", optional = true }
+hashbrown = { version = "0.17", optional = true }
 
 # Cryptographic hashing for token storage (SHA-256, works on WASM)
 sha2 = { workspace = true, optional = true }
@@ -100,7 +104,7 @@ turbomcp-transport-streamable = { workspace = true, optional = true, features = 
 turbomcp = { workspace = true, optional = true }
 
 [dependencies.web-sys]
-version = "0.3.85"
+version = "0.3.95"
 optional = true
 features = [
     "console",
@@ -136,11 +140,18 @@ features = [
     "JsonWebKey",
 ]
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { workspace = true, features = ["js"] }
+# getrandom 0.4 removed the implicit `js` feature; wasm32-unknown-unknown
+# requires the explicit `wasm_js` backend feature. Pulled transitively via
+# rand -> turbomcp-protocol.
+getrandom = { version = "0.4", features = ["wasm_js"] }
+
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
 tokio = { workspace = true, features = ["full"] }
 # For native tests that need random number generation
-getrandom = "0.2"
+getrandom = "0.4"
 
 # NOTE: The portable_server example has been removed since the native feature is gone.
 # For portable servers, use conditional compilation with separate macro invocations.

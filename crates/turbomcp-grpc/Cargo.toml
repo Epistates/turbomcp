@@ -36,7 +36,7 @@ turbomcp-transport-traits = { workspace = true }
 # Tower integration
 tower = { workspace = true }
 tower-service = "0.3"
-http = "1.0"
+http = "1.4"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -49,12 +49,12 @@ thiserror = { workspace = true }
 tracing = "0.1"
 
 # Utilities
-bytes = "1.5"
-uuid = { version = "1.6", features = ["v4"] }
+bytes = "1.11"
+uuid = { version = "1.23", features = ["v4"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
-tempfile = "3.0"
+tempfile = "3.27"
 
 [build-dependencies]
 tonic-build = "0.14"

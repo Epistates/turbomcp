@@ -41,14 +41,16 @@ anyhow = { workspace = true }
 axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
+# GCRA rate limiting (optional - only when axum middleware is enabled)
+governor = { workspace = true, optional = true }
 tokio-tungstenite = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 async-stream = { version = "0.3", optional = true }
 
 # Compression (optional)
-flate2 = { version = "1.0", optional = true }
+flate2 = { version = "1.1", optional = true }
 brotli = { version = "8.0.2", optional = true }
-lz4_flex = { version = "0.11", optional = true }
+lz4_flex = { version = "0.13", optional = true }
 
 # TLS support (optional)
 rustls = { version = "0.23", optional = true }
@@ -91,7 +93,7 @@ default = ["stdio"]
 
 # Core transports
 stdio = ["dep:turbomcp-stdio"]
-http = ["dep:turbomcp-http", "axum", "tower", "tower-http", "async-stream"]
+http = ["dep:turbomcp-http", "axum", "tower", "tower-http", "async-stream", "governor"]
 websocket = ["dep:turbomcp-websocket", "tokio-tungstenite", "http", "futures-util"]
 tcp = ["dep:turbomcp-tcp", "tokio/net"]
 unix = ["dep:turbomcp-unix", "tokio/net"]

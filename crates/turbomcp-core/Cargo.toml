@@ -21,13 +21,13 @@ serde = { version = "1.0", default-features = false, features = ["derive", "allo
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 
 # no_std compatible HashMap
-hashbrown = { version = "0.15", features = ["serde"] }
+hashbrown = { version = "0.17", features = ["serde"] }
 
 # Compact strings (no_std compatible)
 compact_str = { version = "0.9", default-features = false, features = ["serde"] }
 
 # Small vectors (no_std compatible)
-smallvec = { version = "1.11", default-features = false, features = ["serde"] }
+smallvec = { version = "1.15", default-features = false, features = ["serde"] }
 
 # Zero-copy serialization (optional)
 rkyv = { version = ">=0.8.13", default-features = false, optional = true, features = [
@@ -42,7 +42,7 @@ rancor = { version = "0.1", default-features = false, optional = true, features 
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock", "std"], optional = true }
 # UUID v4 for RequestContext::new() request-id generation (std-only; WASM builds
 # skip the UUID path and keep the empty default). Small dep, worth the ergonomics.
-uuid = { version = "1.6", default-features = false, features = ["serde", "v4", "std"], optional = true }
+uuid = { version = "1.23", default-features = false, features = ["serde", "v4", "std"], optional = true }
 
 # Base64 for Basic auth parsing (optional, std only)
 base64 = { workspace = true, optional = true }

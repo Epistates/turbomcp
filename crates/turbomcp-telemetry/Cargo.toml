@@ -37,7 +37,7 @@ futures-util = { version = "0.3", optional = true }
 pin-project-lite = { version = "0.2", optional = true }
 
 # HTTP types
-http = "1.0"
+http = "1.4"
 
 # Async runtime
 tokio = { workspace = true }
@@ -52,7 +52,7 @@ thiserror = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true }
 tokio-test = "0.4"
-proptest = "1.5"
+proptest = "1.11"
 tower = { version = "0.5", features = ["util"] }
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 

@@ -42,6 +42,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
 fastrand = { workspace = true }
+backon = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
