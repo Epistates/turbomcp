@@ -367,58 +367,64 @@ impl WebSocketBidirectionalTransport {
 
     /// Reconnect with exponential backoff
     pub async fn reconnect(&mut self) -> TransportResult<()> {
-        if !self.config.lock().reconnect.enabled {
+        use backon::{ExponentialBuilder, Retryable};
+
+        // Snapshot reconnect config so we don't hold the lock across awaits or
+        // each retry attempt.
+        let (enabled, url, initial_delay, max_delay, backoff_factor, max_retries) = {
+            let cfg = self.config.lock();
+            (
+                cfg.reconnect.enabled,
+                cfg.url.clone(),
+                cfg.reconnect.initial_delay,
+                cfg.reconnect.max_delay,
+                cfg.reconnect.backoff_factor,
+                cfg.reconnect.max_retries,
+            )
+        };
+
+        if !enabled {
             return Err(TransportError::NotAvailable(
                 "Reconnection is disabled".to_string(),
             ));
         }
 
-        let url = self.config.lock().url.clone().ok_or_else(|| {
+        let url = url.ok_or_else(|| {
             TransportError::ConfigurationError("No URL configured for reconnection".to_string())
         })?;
 
-        let mut retry_count = 0;
-        let mut delay = self.config.lock().reconnect.initial_delay;
+        let policy = ExponentialBuilder::default()
+            .with_min_delay(initial_delay)
+            .with_max_delay(max_delay)
+            .with_factor(backoff_factor as f32)
+            .with_max_times(max_retries as usize);
 
-        while retry_count < self.config.lock().reconnect.max_retries {
-            info!(
-                "Attempting reconnection {} of {}",
-                retry_count + 1,
-                self.config.lock().reconnect.max_retries
+        let result = (|| async {
+            // Record the attempt; per-instance stats are updated inside
+            // connect_client on success.
+            let mut stats = WebSocketConnectionStats::new();
+            stats.record_reconnection_attempt();
+            self.connect_client(&url).await
+        })
+        .retry(policy)
+        .notify(|err, dur| {
+            warn!(
+                "Reconnection attempt failed: {} — retrying in {:?}",
+                err, dur
             );
+        })
+        .await;
 
-            // Update metrics
-            {
-                let mut stats = WebSocketConnectionStats::new();
-                stats.record_reconnection_attempt();
+        match result {
+            Ok(()) => {
+                info!("Reconnection successful");
+                Ok(())
             }
-
-            match self.connect_client(&url).await {
-                Ok(()) => {
-                    info!("Reconnection successful after {} attempts", retry_count + 1);
-                    return Ok(());
-                }
-                Err(e) => {
-                    warn!("Reconnection attempt {} failed: {}", retry_count + 1, e);
-                    retry_count += 1;
-
-                    if retry_count < self.config.lock().reconnect.max_retries {
-                        tokio::time::sleep(delay).await;
-
-                        // Exponential backoff
-                        delay = std::time::Duration::from_secs_f64(
-                            (delay.as_secs_f64() * self.config.lock().reconnect.backoff_factor)
-                                .min(self.config.lock().reconnect.max_delay.as_secs_f64()),
-                        );
-                    }
-                }
-            }
+            Err(_) => Err(TransportError::ConnectionFailed(format!(
+                "Reconnection failed after {} attempts",
+                max_retries
+            ))),
         }
-
-        Err(TransportError::ConnectionFailed(format!(
-            "Reconnection failed after {} attempts",
-            self.config.lock().reconnect.max_retries
-        )))
     }
 
     /// Force close the connection immediately

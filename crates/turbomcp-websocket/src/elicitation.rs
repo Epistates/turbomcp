@@ -121,41 +121,25 @@ impl WebSocketBidirectionalTransport {
         retry_delay: Duration,
         timeout_duration: Option<Duration>,
     ) -> TransportResult<ElicitResult> {
-        let mut attempts = 0;
-        let mut last_error = None;
+        use backon::{ConstantBuilder, Retryable};
 
-        while attempts <= max_retries {
-            match self
-                .send_elicitation(request.clone(), timeout_duration)
+        let session_id = self.session_id.clone();
+        let policy = ConstantBuilder::default()
+            .with_delay(retry_delay)
+            .with_max_times(max_retries as usize);
+
+        (|| async {
+            self.send_elicitation(request.clone(), timeout_duration)
                 .await
-            {
-                Ok(result) => {
-                    if attempts > 0 {
-                        debug!(
-                            "Elicitation succeeded after {} retries in session {}",
-                            attempts, self.session_id
-                        );
-                    }
-                    return Ok(result);
-                }
-                Err(e) => {
-                    last_error = Some(e);
-                    attempts += 1;
-
-                    if attempts <= max_retries {
-                        debug!(
-                            "Elicitation attempt {} failed in session {}, retrying after {:?}",
-                            attempts, self.session_id, retry_delay
-                        );
-                        tokio::time::sleep(retry_delay).await;
-                    }
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| {
-            TransportError::SendFailed("All elicitation retry attempts failed".to_string())
-        }))
+        })
+        .retry(policy)
+        .notify(|err, dur| {
+            debug!(
+                "Elicitation attempt failed in session {} ({}), retrying after {:?}",
+                session_id, err, dur
+            );
+        })
+        .await
     }
 
     /// Process incoming message for elicitation responses

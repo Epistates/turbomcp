@@ -157,41 +157,24 @@ impl WebSocketBidirectionalTransport {
         retry_delay: Duration,
         timeout: Option<Duration>,
     ) -> TransportResult<TransportMessage> {
-        let mut attempts = 0;
-        let mut last_error = None;
+        use backon::{ConstantBuilder, Retryable};
 
-        while attempts <= max_retries {
-            match self.send_request(message.clone(), timeout).await {
-                Ok(response) => {
-                    if attempts > 0 {
-                        tracing::debug!(
-                            "Request succeeded after {} retries in session {}",
-                            attempts,
-                            self.session_id
-                        );
-                    }
-                    return Ok(response);
-                }
-                Err(e) => {
-                    last_error = Some(e);
-                    attempts += 1;
+        let session_id = self.session_id.clone();
+        let policy = ConstantBuilder::default()
+            .with_delay(retry_delay)
+            .with_max_times(max_retries as usize);
 
-                    if attempts <= max_retries {
-                        tracing::debug!(
-                            "Request attempt {} failed in session {}, retrying after {:?}",
-                            attempts,
-                            self.session_id,
-                            retry_delay
-                        );
-                        tokio::time::sleep(retry_delay).await;
-                    }
-                }
-            }
-        }
-
-        Err(last_error.unwrap_or_else(|| {
-            TransportError::SendFailed("All request retry attempts failed".to_string())
-        }))
+        (|| async { self.send_request(message.clone(), timeout).await })
+            .retry(policy)
+            .notify(|err, dur| {
+                tracing::debug!(
+                    "Request attempt failed in session {} ({}), retrying after {:?}",
+                    session_id,
+                    err,
+                    dur
+                );
+            })
+            .await
     }
 
     /// Get all active correlation IDs
