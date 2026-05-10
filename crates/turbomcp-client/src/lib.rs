@@ -249,7 +249,7 @@ pub use turbomcp_transport::streamable_http_client::{
 #[cfg(feature = "tcp")]
 pub use turbomcp_transport::tcp::{TcpTransport, TcpTransportBuilder};
 
-#[cfg(feature = "unix")]
+#[cfg(all(feature = "unix", unix))]
 pub use turbomcp_transport::unix::{UnixTransport, UnixTransportBuilder};
 
 #[cfg(feature = "websocket")]

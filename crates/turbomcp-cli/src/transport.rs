@@ -13,7 +13,7 @@ use turbomcp_transport::child_process::{ChildProcessConfig, ChildProcessTranspor
 #[cfg(feature = "tcp")]
 use turbomcp_transport::tcp::TcpTransportBuilder;
 
-#[cfg(feature = "unix")]
+#[cfg(all(feature = "unix", unix))]
 use turbomcp_transport::unix::UnixTransportBuilder;
 
 #[cfg(feature = "http")]
@@ -34,7 +34,7 @@ enum ClientInner {
     Stdio(Client<ChildProcessTransport>),
     #[cfg(feature = "tcp")]
     Tcp(Client<turbomcp_transport::tcp::TcpTransport>),
-    #[cfg(feature = "unix")]
+    #[cfg(all(feature = "unix", unix))]
     Unix(Client<turbomcp_transport::unix::UnixTransport>),
     #[cfg(feature = "http")]
     Http(Client<StreamableHttpClientTransport>),
@@ -49,7 +49,7 @@ impl UnifiedClient {
             ClientInner::Stdio(client) => Ok(client.initialize().await?),
             #[cfg(feature = "tcp")]
             ClientInner::Tcp(client) => Ok(client.initialize().await?),
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => Ok(client.initialize().await?),
             #[cfg(feature = "http")]
             ClientInner::Http(client) => Ok(client.initialize().await?),
@@ -64,7 +64,7 @@ impl UnifiedClient {
             ClientInner::Stdio(client) => Ok(client.list_tools().await?),
             #[cfg(feature = "tcp")]
             ClientInner::Tcp(client) => Ok(client.list_tools().await?),
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => Ok(client.list_tools().await?),
             #[cfg(feature = "http")]
             ClientInner::Http(client) => Ok(client.list_tools().await?),
@@ -83,7 +83,7 @@ impl UnifiedClient {
             ClientInner::Stdio(client) => client.call_tool(name, arguments, None).await?,
             #[cfg(feature = "tcp")]
             ClientInner::Tcp(client) => client.call_tool(name, arguments, None).await?,
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => client.call_tool(name, arguments, None).await?,
             #[cfg(feature = "http")]
             ClientInner::Http(client) => client.call_tool(name, arguments, None).await?,
@@ -101,7 +101,7 @@ impl UnifiedClient {
             ClientInner::Stdio(client) => Ok(client.list_resources().await?),
             #[cfg(feature = "tcp")]
             ClientInner::Tcp(client) => Ok(client.list_resources().await?),
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => Ok(client.list_resources().await?),
             #[cfg(feature = "http")]
             ClientInner::Http(client) => Ok(client.list_resources().await?),
@@ -119,7 +119,7 @@ impl UnifiedClient {
             ClientInner::Stdio(client) => Ok(client.read_resource(uri).await?),
             #[cfg(feature = "tcp")]
             ClientInner::Tcp(client) => Ok(client.read_resource(uri).await?),
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => Ok(client.read_resource(uri).await?),
             #[cfg(feature = "http")]
             ClientInner::Http(client) => Ok(client.read_resource(uri).await?),
@@ -136,7 +136,7 @@ impl UnifiedClient {
             ClientInner::Stdio(client) => Ok(client.list_resource_templates().await?),
             #[cfg(feature = "tcp")]
             ClientInner::Tcp(client) => Ok(client.list_resource_templates().await?),
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => Ok(client.list_resource_templates().await?),
             #[cfg(feature = "http")]
             ClientInner::Http(client) => Ok(client.list_resource_templates().await?),
@@ -151,7 +151,7 @@ impl UnifiedClient {
             ClientInner::Stdio(client) => Ok(client.subscribe(uri).await?),
             #[cfg(feature = "tcp")]
             ClientInner::Tcp(client) => Ok(client.subscribe(uri).await?),
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => Ok(client.subscribe(uri).await?),
             #[cfg(feature = "http")]
             ClientInner::Http(client) => Ok(client.subscribe(uri).await?),
@@ -166,7 +166,7 @@ impl UnifiedClient {
             ClientInner::Stdio(client) => Ok(client.unsubscribe(uri).await?),
             #[cfg(feature = "tcp")]
             ClientInner::Tcp(client) => Ok(client.unsubscribe(uri).await?),
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => Ok(client.unsubscribe(uri).await?),
             #[cfg(feature = "http")]
             ClientInner::Http(client) => Ok(client.unsubscribe(uri).await?),
@@ -181,7 +181,7 @@ impl UnifiedClient {
             ClientInner::Stdio(client) => Ok(client.list_prompts().await?),
             #[cfg(feature = "tcp")]
             ClientInner::Tcp(client) => Ok(client.list_prompts().await?),
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => Ok(client.list_prompts().await?),
             #[cfg(feature = "http")]
             ClientInner::Http(client) => Ok(client.list_prompts().await?),
@@ -200,7 +200,7 @@ impl UnifiedClient {
             ClientInner::Stdio(client) => Ok(client.get_prompt(name, arguments).await?),
             #[cfg(feature = "tcp")]
             ClientInner::Tcp(client) => Ok(client.get_prompt(name, arguments).await?),
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => Ok(client.get_prompt(name, arguments).await?),
             #[cfg(feature = "http")]
             ClientInner::Http(client) => Ok(client.get_prompt(name, arguments).await?),
@@ -225,7 +225,7 @@ impl UnifiedClient {
             ClientInner::Tcp(client) => Ok(client
                 .complete_prompt(prompt_name, argument_name, argument_value, context)
                 .await?),
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => Ok(client
                 .complete_prompt(prompt_name, argument_name, argument_value, context)
                 .await?),
@@ -256,7 +256,7 @@ impl UnifiedClient {
             ClientInner::Tcp(client) => Ok(client
                 .complete_resource(resource_uri, argument_name, argument_value, context)
                 .await?),
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => Ok(client
                 .complete_resource(resource_uri, argument_name, argument_value, context)
                 .await?),
@@ -283,7 +283,7 @@ impl UnifiedClient {
                 client.ping().await?;
                 Ok(())
             }
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => {
                 client.ping().await?;
                 Ok(())
@@ -313,7 +313,7 @@ impl UnifiedClient {
                 client.set_log_level(level).await?;
                 Ok(())
             }
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             ClientInner::Unix(client) => {
                 client.set_log_level(level).await?;
                 Ok(())
@@ -401,14 +401,14 @@ pub async fn create_client(conn: &Connection) -> CliResult<UnifiedClient> {
                 "TCP transport is not enabled (missing 'tcp' feature)".to_string(),
             ))
         }
-        #[cfg(feature = "unix")]
+        #[cfg(all(feature = "unix", unix))]
         TransportKind::Unix => {
             let transport = create_unix_transport(conn).await?;
             Ok(UnifiedClient {
                 inner: ClientInner::Unix(Client::new(transport)),
             })
         }
-        #[cfg(not(feature = "unix"))]
+        #[cfg(not(all(feature = "unix", unix)))]
         TransportKind::Unix => {
             Err(CliError::NotSupported(
                 "Unix socket transport is not enabled (missing 'unix' feature)".to_string(),
@@ -510,7 +510,7 @@ async fn create_tcp_transport(
 }
 
 /// Create Unix socket transport from connection
-#[cfg(feature = "unix")]
+#[cfg(all(feature = "unix", unix))]
 async fn create_unix_transport(
     conn: &Connection,
 ) -> CliResult<turbomcp_transport::unix::UnixTransport> {

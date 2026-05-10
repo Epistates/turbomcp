@@ -144,7 +144,7 @@ pub trait McpHandlerExt: McpHandler {
     fn run_tcp(&self, addr: &str) -> impl Future<Output = McpResult<()>> + Send;
 
     /// Run on Unix domain socket transport (line-based JSON-RPC).
-    #[cfg(feature = "unix")]
+    #[cfg(all(feature = "unix", unix))]
     fn run_unix(&self, path: &str) -> impl Future<Output = McpResult<()>> + Send;
 
     /// Handle a single JSON-RPC request (for serverless environments).
@@ -193,7 +193,7 @@ impl<T: McpHandler> McpHandlerExt for T {
         async move { super::transport::tcp::run(&handler, &addr).await }
     }
 
-    #[cfg(feature = "unix")]
+    #[cfg(all(feature = "unix", unix))]
     fn run_unix(&self, path: &str) -> impl Future<Output = McpResult<()>> + Send {
         let path = path.to_string();
         let handler = self.clone();

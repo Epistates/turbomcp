@@ -70,7 +70,7 @@ pub use crate::{RetryPolicy, StreamableHttpClientConfig, StreamableHttpClientTra
 #[cfg(feature = "tcp")]
 pub use crate::{TcpTransport, TcpTransportBuilder};
 
-#[cfg(feature = "unix")]
+#[cfg(all(feature = "unix", unix))]
 pub use crate::{UnixTransport, UnixTransportBuilder};
 
 #[cfg(feature = "websocket")]
