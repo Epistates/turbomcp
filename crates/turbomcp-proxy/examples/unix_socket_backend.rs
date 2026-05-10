@@ -13,9 +13,17 @@
 //!   cargo run -p turbomcp --example unix_server --features unix
 //!   ```
 
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("This example requires a Unix platform.");
+}
+
+#[cfg(unix)]
 use std::path::PathBuf;
+#[cfg(unix)]
 use turbomcp_proxy::proxy::{BackendConfig, BackendConnector, BackendTransport};
 
+#[cfg(unix)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize tracing for logging

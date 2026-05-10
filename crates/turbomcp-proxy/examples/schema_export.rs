@@ -103,6 +103,7 @@ fn parse_backend() -> Result<ExampleBackend, Box<dyn Error>> {
             let (host, port) = parse_host_port(&endpoint)?;
             BackendTransport::Tcp { host, port }
         }
+        #[cfg(unix)]
         "unix" => {
             let path = value_after(&args, "--unix")
                 .ok_or_else(|| invalid_input("unix backend requires --unix /path/to/socket"))?;
