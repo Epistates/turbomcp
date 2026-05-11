@@ -27,10 +27,6 @@ turbomcp-client = { workspace = true }
 turbomcp-server = { workspace = true, optional = true, features = ["http", "websocket"] }
 turbomcp-auth = { workspace = true, optional = true }
 
-# Unix domain socket transport — only on Unix platforms (macOS, Linux)
-[target.'cfg(unix)'.dependencies]
-turbomcp-transport = { workspace = true, features = ["unix"] }
-
 # Async runtime
 tokio = { workspace = true }
 
@@ -88,6 +84,10 @@ ipnetwork = { version = "0.21", features = ["serde"] }
 # Security
 secrecy = { version = "0.10", features = ["serde"] }
 jsonwebtoken = { workspace = true, optional = true }
+
+# Unix domain socket transport — only on Unix platforms (macOS, Linux)
+[target.'cfg(unix)'.dependencies]
+turbomcp-transport = { workspace = true, features = ["unix"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

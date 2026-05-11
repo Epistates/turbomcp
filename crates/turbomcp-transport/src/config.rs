@@ -271,7 +271,7 @@ impl Configs {
     }
 
     /// Default Unix socket configuration
-    #[cfg(feature = "unix")]
+    #[cfg(all(feature = "unix", unix))]
     pub fn unix(path: impl Into<String>) -> TransportConfig {
         TransportConfigBuilder::new(TransportType::Unix)
             .custom("path", path.into())

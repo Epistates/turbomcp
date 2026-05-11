@@ -131,7 +131,7 @@ pub enum Transport {
     },
 
     /// Unix domain socket transport (line-based JSON-RPC).
-    #[cfg(feature = "unix")]
+    #[cfg(all(feature = "unix", unix))]
     Unix {
         /// Socket path (e.g., "/tmp/mcp.sock")
         path: String,
@@ -186,7 +186,7 @@ impl Transport {
     /// # Arguments
     ///
     /// * `path` - Socket path (e.g., "/tmp/mcp.sock")
-    #[cfg(feature = "unix")]
+    #[cfg(all(feature = "unix", unix))]
     #[must_use]
     pub fn unix(path: impl Into<String>) -> Self {
         Self::Unix { path: path.into() }
@@ -457,7 +457,7 @@ impl<H: McpHandler> ServerBuilder<H> {
                 super::transport::tcp::run_with_config(&self.handler, &addr, &config).await
             }
 
-            #[cfg(feature = "unix")]
+            #[cfg(all(feature = "unix", unix))]
             Transport::Unix { path } => {
                 super::transport::unix::run_with_config(&self.handler, &path, &config).await
             }

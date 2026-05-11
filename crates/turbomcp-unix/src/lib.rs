@@ -65,6 +65,7 @@
     clippy::all
 )]
 #![deny(unsafe_code)]
+#![cfg(unix)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![allow(
     clippy::module_name_repetitions,

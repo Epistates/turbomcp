@@ -131,7 +131,7 @@ pub mod stdio;
 #[cfg(feature = "tcp")]
 pub mod tcp;
 
-#[cfg(feature = "unix")]
+#[cfg(all(feature = "unix", unix))]
 pub mod unix;
 
 #[cfg(feature = "channel")]

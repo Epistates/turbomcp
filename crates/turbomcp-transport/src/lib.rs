@@ -226,8 +226,8 @@ pub mod tcp {
 ///
 /// v3.0: This module re-exports from the `turbomcp-unix` crate.
 /// The implementation has been extracted for modular builds.
-#[cfg(feature = "unix")]
-#[cfg_attr(docsrs, doc(cfg(feature = "unix")))]
+#[cfg(all(feature = "unix", unix))]
+#[cfg_attr(docsrs, doc(cfg(all(feature = "unix", unix))))]
 pub mod unix {
     pub use turbomcp_unix::{UnixConfig, UnixTransport, UnixTransportBuilder};
 }
@@ -291,7 +291,7 @@ pub use websocket_bidirectional::{
 #[cfg(feature = "tcp")]
 pub use tcp::TcpTransport;
 
-#[cfg(feature = "unix")]
+#[cfg(all(feature = "unix", unix))]
 pub use unix::UnixTransport;
 
 // Re-export child process transport (always available)

@@ -1,6 +1,6 @@
 //! Comprehensive tests for Unix domain socket transport implementation
 
-#[cfg(feature = "unix")]
+#[cfg(all(feature = "unix", unix))]
 mod unix_tests {
     use std::path::{Path, PathBuf};
     use turbomcp_transport::core::{Transport, TransportState, TransportType};
