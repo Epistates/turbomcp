@@ -1,6 +1,6 @@
 [package]
 name = "turbomcp-wasm"
-version = "3.1.4"
+version = "3.1.5"
 edition = "2024"
 rust-version = "1.89.0"
 authors = ["Nicholas Paterno <nick@epistates.com>"]
@@ -51,7 +51,7 @@ turbomcp-core = { workspace = true, default-features = false, features = ["wasm"
 turbomcp-types = { workspace = true, features = ["experimental-tasks"] }
 
 # MCP protocol wire wrappers (only when wasm-server feature is enabled)
-turbomcp-protocol = { version = "3.1.4", path = "../turbomcp-protocol", default-features = false, features = ["std", "experimental-tasks"], optional = true }
+turbomcp-protocol = { version = "3.1.5", path = "../turbomcp-protocol", default-features = false, features = ["std", "experimental-tasks"], optional = true }
 
 # Serialization
 serde = { workspace = true }

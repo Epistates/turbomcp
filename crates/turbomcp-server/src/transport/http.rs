@@ -28,10 +28,10 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::DefaultBodyLimit;
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
-use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use bytes::Bytes;
 use tokio::sync::{Mutex, RwLock, mpsc, oneshot};
 use tower_http::limit::RequestBodyLimitLayer;
 use turbomcp_core::error::{McpError, McpResult};
@@ -854,6 +854,43 @@ fn empty_response(status: StatusCode) -> Response {
     status.into_response()
 }
 
+fn sse_event_bytes(
+    id: &str,
+    event_type: Option<&str>,
+    data: &str,
+    retry_millis: Option<u64>,
+) -> Bytes {
+    let mut event = String::new();
+    event.push_str("id: ");
+    event.push_str(id);
+    event.push('\n');
+
+    if let Some(retry_millis) = retry_millis {
+        event.push_str("retry: ");
+        event.push_str(&retry_millis.to_string());
+        event.push('\n');
+    }
+
+    if let Some(event_type) = event_type {
+        event.push_str("event: ");
+        event.push_str(event_type);
+        event.push('\n');
+    }
+
+    if data.is_empty() {
+        event.push_str("data:\n");
+    } else {
+        for line in data.split('\n') {
+            event.push_str("data: ");
+            event.push_str(line.strip_suffix('\r').unwrap_or(line));
+            event.push('\n');
+        }
+    }
+
+    event.push('\n');
+    Bytes::from(event)
+}
+
 fn validate_protocol_header(
     headers: &HeaderMap,
     config: Option<&ServerConfig>,
@@ -863,11 +900,14 @@ fn validate_protocol_header(
         // Per MCP 2025-11-25 §Streamable HTTP, post-init requests MUST carry
         // `Mcp-Protocol-Version`. Pre-init (no `expected` yet) is permissive
         // so that the very first POST `initialize` doesn't have to negotiate
-        // a version it hasn't seen yet. After session creation, missing
-        // header → 400 with a `tracing::warn!` for observability.
+        // a version it hasn't seen yet. Some deployed clients, including
+        // Codex/rmcp 0.130, omit the header on `notifications/initialized`
+        // even after a successful negotiation; accept the negotiated session
+        // version rather than closing the transport during startup.
         if expected.is_some() {
-            tracing::warn!("Post-init request missing required Mcp-Protocol-Version header");
-            return Err(StatusCode::BAD_REQUEST);
+            tracing::debug!(
+                "Post-init request missing Mcp-Protocol-Version header; using negotiated session version"
+            );
         }
         return Ok(());
     };
@@ -1131,62 +1171,58 @@ async fn handle_sse<H: McpHandler>(
         return empty_response(StatusCode::NOT_FOUND);
     };
 
-    // Create the SSE stream. Per MCP spec (2025-11-25, SEP-1699 clarification):
-    //   "The server SHOULD immediately send an SSE event consisting of an
-    //    event ID and an empty data field in order to prime the client to
-    //    reconnect (using that event ID as Last-Event-ID)."
-    //   "Event IDs SHOULD encode sufficient information to identify the
-    //    originating stream."
-    //
-    // Each GET subscription gets its own `stream_id` (UUID short form) so
-    // concurrent streams on the same session produce distinguishable event
-    // IDs. Format: `{session_id}-{stream_id}-{seq}`. Seq 0 is the primer;
-    // each subsequent message increments. A future replay buffer can use
-    // the (stream_id, seq) tuple to resume from an arbitrary Last-Event-ID.
+    // Create the SSE stream. Each GET subscription gets its own `stream_id` so
+    // Event IDs include a stream component so concurrent streams on the same
+    // session produce distinguishable IDs. Format: `{session_id}-{stream_id}-{seq}`.
+    // A future replay buffer can use the (stream_id, seq) tuple to resume from
+    // an arbitrary Last-Event-ID.
     let stream_id = Uuid::new_v4().simple().to_string();
-    let primer_id = format!("{}-{}-0", session_id, stream_id);
     let session_id_for_events = session_id.clone();
     let stream_id_for_events = stream_id;
     let stream = async_stream::stream! {
-        yield Ok::<_, std::convert::Infallible>(
-            Event::default().id(primer_id).data(""),
-        );
+        // Flush the stream without dispatching an empty SSE data event. Older
+        // RMCP/Codex clients have treated `data:\n\n` as a malformed JSON-RPC
+        // payload during startup, while SSE comments are explicitly non-message
+        // traffic.
+        yield Ok::<_, std::convert::Infallible>(Bytes::from_static(b": connected\n\n"));
 
         // Drain messages routed to this specific subscriber. Per spec we
         // only see messages that the server explicitly chose to send to
         // this stream; other concurrent streams on the same session have
         // their own receivers.
-        let mut seq: u64 = 1;
+        let mut seq: u64 = 0;
         loop {
-            match rx.recv().await {
-                Some(message) => {
+            match tokio::time::timeout(Duration::from_secs(SSE_KEEP_ALIVE_SECS), rx.recv()).await {
+                Ok(Some(message)) => {
                     let event_id = format!(
                         "{}-{}-{}",
                         session_id_for_events, stream_id_for_events, seq
                     );
                     seq = seq.saturating_add(1);
-                    yield Ok::<_, std::convert::Infallible>(
-                        Event::default()
-                            .id(event_id)
-                            .event("message")
-                            .data(message),
-                    );
+                    yield Ok::<_, std::convert::Infallible>(sse_event_bytes(
+                        &event_id,
+                        Some("message"),
+                        &message,
+                        None,
+                    ));
                 }
-                None => {
+                Ok(None) => {
                     tracing::debug!("SSE subscriber channel closed");
                     break;
+                }
+                Err(_) => {
+                    yield Ok::<_, std::convert::Infallible>(Bytes::from_static(b": keep-alive\n\n"));
                 }
             }
         }
     };
 
-    let mut response = Sse::new(stream)
-        .keep_alive(
-            KeepAlive::new()
-                .interval(Duration::from_secs(SSE_KEEP_ALIVE_SECS))
-                .text("keep-alive"),
-        )
-        .into_response();
+    let mut response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from_stream(stream))
+        .expect("SSE response builder should be valid");
     response
         .headers_mut()
         .insert("mcp-session-id", session_header_value(&session_id));

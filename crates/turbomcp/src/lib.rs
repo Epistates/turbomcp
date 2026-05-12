@@ -173,6 +173,18 @@ pub use turbomcp_server::ServerConfigBuilder;
 /// Transport configuration enum for runtime transport selection
 pub use turbomcp_server::Transport;
 
+/// Exact-name visibility rules for tools, resources, and prompts
+pub use turbomcp_server::ComponentVisibilityRules;
+
+/// Runtime visibility configuration for reducing the MCP component surface
+pub use turbomcp_server::VisibilityConfig;
+
+/// Handler wrapper for progressive disclosure and AI-friendly tool filtering
+pub use turbomcp_server::VisibilityLayer;
+
+/// RAII cleanup guard for session-specific visibility overrides
+pub use turbomcp_server::VisibilitySessionGuard;
+
 // Re-export protocol types for advanced usage
 
 /// Request payload for tool invocation
@@ -307,8 +319,9 @@ pub mod prelude {
 
     // Core traits and types
     pub use super::{
-        McpError, McpHandler, McpHandlerExt, McpResult, McpServerExt, ProtocolConfig,
-        ServerBuilder, ServerConfig, ServerConfigBuilder, Transport,
+        ComponentVisibilityRules, McpError, McpHandler, McpHandlerExt, McpResult, McpServerExt,
+        ProtocolConfig, ServerBuilder, ServerConfig, ServerConfigBuilder, Transport,
+        VisibilityConfig, VisibilityLayer, VisibilitySessionGuard,
     };
 
     // Result types for handlers

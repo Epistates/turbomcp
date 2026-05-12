@@ -17,6 +17,7 @@ validation), and the JSON-RPC router shared by every transport.
 - [Server Builder](#server-builder)
 - [Server Configuration](#server-configuration)
 - [Protocol Version Negotiation](#protocol-version-negotiation)
+- [Visibility](#visibility)
 - [Middleware](#middleware)
 - [Transports](#transports)
 - [Feature Flags](#feature-flags)
@@ -192,6 +193,32 @@ Calculator.builder()
 `ProtocolConfig::negotiate(client_version)` returns the negotiated
 `ProtocolVersion` or `None` if no compatible version is found (and fallback
 is disabled).
+
+## Visibility
+
+`VisibilityLayer` wraps any `McpHandler` and filters `tools/list`,
+`resources/list`, `resources/templates/list`, and `prompts/list`. Hidden tools,
+resources, and prompts are also rejected on call/read/get paths as not found.
+
+Use it for both human UX and LLM-facing AX: expose only the tools relevant to a
+deployment profile, hide unsafe operations, and keep client context focused.
+
+```rust,ignore
+use turbomcp_server::{VisibilityConfig, VisibilityLayer};
+
+let config = VisibilityConfig::new()
+    .allow_tools(["search", "read_note", "list_notes"])
+    .disable_tools(["delete_note", "reindex_all"])
+    .require_read_only_tools();
+
+let server = VisibilityLayer::new(MyServer).with_visibility_config(config);
+server.builder().serve().await?;
+```
+
+For config files, map user choices into `VisibilityConfig`: exact tool
+allowlists reduce context load, denylists remove risky operations, and
+`require_read_only_tools()` only exposes tools annotated with
+`readOnlyHint: true`.
 
 ## Middleware
 

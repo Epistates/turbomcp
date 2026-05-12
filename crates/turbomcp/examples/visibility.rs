@@ -12,7 +12,6 @@
 
 use turbomcp::__macro_support::turbomcp_core::handler::McpHandler;
 use turbomcp::prelude::*;
-use turbomcp_server::{VisibilityLayer, VisibilitySessionGuard};
 use turbomcp_types::component::ComponentFilter;
 
 #[derive(Clone)]
@@ -21,31 +20,39 @@ struct FeatureServer;
 #[turbomcp::server(name = "feature-server", version = "1.0.0")]
 impl FeatureServer {
     /// Available to everyone
-    #[tool(description = "Get current time", tags = ["public", "readonly"])]
+    #[tool(
+        description = "Get current time",
+        tags = ["public", "readonly"],
+        read_only = true
+    )]
     async fn get_time(&self) -> McpResult<String> {
         Ok(chrono::Utc::now().to_rfc3339())
     }
 
     /// Available to everyone
-    #[tool(description = "Say hello", tags = ["public"])]
+    #[tool(description = "Say hello", tags = ["public"], read_only = true)]
     async fn greet(&self, name: String) -> McpResult<String> {
         Ok(format!("Hello, {}!", name))
     }
 
     /// Only for premium users
-    #[tool(description = "Premium feature", tags = ["premium"])]
+    #[tool(description = "Premium feature", tags = ["premium"], read_only = true)]
     async fn premium_feature(&self) -> McpResult<String> {
         Ok("Welcome to premium! You have access to advanced features.".into())
     }
 
     /// Only for admins
-    #[tool(description = "Admin dashboard", tags = ["admin"])]
+    #[tool(description = "Admin dashboard", tags = ["admin"], read_only = true)]
     async fn admin_dashboard(&self) -> McpResult<String> {
         Ok("Admin Dashboard: 42 users, 100 requests/min".into())
     }
 
     /// Dangerous - hidden by default
-    #[tool(description = "Delete all data", tags = ["admin", "dangerous"])]
+    #[tool(
+        description = "Delete all data",
+        tags = ["admin", "dangerous"],
+        destructive = true
+    )]
     async fn delete_all(&self) -> McpResult<String> {
         Ok("All data deleted (simulated)".into())
     }
@@ -78,6 +85,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Tools visible to regular users (admin/dangerous hidden):");
     println!("--------------------------------------------------------");
     for tool in visibility.list_tools() {
+        print_tool(&tool);
+    }
+    println!();
+
+    // Create an AI-facing profile with a small, read-only tool surface.
+    let ax_profile = VisibilityLayer::new(server.clone())
+        .allow_tools(["get_time", "greet"])
+        .require_read_only_tools();
+
+    println!("Focused LLM profile (exact allowlist + read-only tools):");
+    println!("--------------------------------------------------------");
+    for tool in ax_profile.list_tools() {
         print_tool(&tool);
     }
     println!();

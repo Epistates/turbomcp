@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.5] - 2026-05-11
+
+Patch release: Streamable HTTP interoperability hardening for RMCP/Codex
+clients, plus dogfood coverage for two-way Rust SDK compatibility.
+
+### Added
+
+- **AI-friendly server visibility policy** — `VisibilityLayer` now supports
+  exact allow/deny rules for tools, resources, resource templates, and prompts,
+  plus a strict read-only tool profile. Consumers can load a `VisibilityConfig`
+  from application config to reduce `tools/list` context load and block hidden
+  calls, including unlisted dynamic calls, as not found.
+- **TurboMCP <-> RMCP Streamable HTTP dogfood interop checks** — the dogfood
+  benchmark suite now validates RMCP client to TurboMCP HTTP server and TurboMCP
+  client to RMCP HTTP server flows, including initialization, tools, resources,
+  prompts, and Codex-compatible standalone SSE startup framing.
+- **RMCP comparison diligence notes** — added a focused comparison of
+  TurboMCP against the official Rust MCP SDK covering implementation strengths,
+  feature gaps, compliance risks, and SOTA follow-ups.
+
+### Changed
+
+- **HTTP clients open SSE only after session establishment** — Streamable HTTP
+  clients now defer the GET SSE connection until the server has issued an
+  `Mcp-Session-Id`, matching RMCP server expectations for session-scoped
+  streams.
+- **Release-facing metadata now targets 3.1.5** — workspace manifests, internal
+  crate dependency pins, lockfile entries, and Cargo-facing demo snippets
+  identify the patch release consistently.
+
+### Fixed
+
+- **Standalone Streamable HTTP SSE startup no longer emits an empty data
+  event** — TurboMCP server now opens GET streams with an SSE comment and
+  reserves `data:` events for real JSON-RPC messages, avoiding rmcp/Codex
+  startup failures on clients that parse empty primers as payloads.
+- **POST SSE primer events no longer break the TurboMCP HTTP client** — empty or
+  whitespace-only POST-SSE events are ignored instead of being parsed as
+  JSON-RPC payloads.
+
 ## [3.1.4] - 2026-05-08
 
 Patch release: MCP compliance hardening focused on the 2025-11-25 and

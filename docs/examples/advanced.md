@@ -27,7 +27,9 @@ cargo run -p turbomcp --example visibility
 ```
 
 Use it when one handler should expose different tools or resources based on
-tags, disabled component filters, or session-specific grants.
+tags, exact allow/deny names, read-only tool annotations, or session-specific
+grants. For AI-facing deployments, prefer a small allowlist plus read-only
+annotations so `tools/list` stays focused and unsafe operations remain hidden.
 
 ## Middleware
 

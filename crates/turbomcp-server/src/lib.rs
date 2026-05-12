@@ -105,7 +105,9 @@ mod visibility;
 pub mod transport;
 
 /// Progressive disclosure through component visibility control.
-pub use visibility::{VisibilityLayer, VisibilitySessionGuard};
+pub use visibility::{
+    ComponentVisibilityRules, VisibilityConfig, VisibilityLayer, VisibilitySessionGuard,
+};
 
 /// Server composition through handler mounting.
 pub use composite::CompositeHandler;
@@ -173,8 +175,8 @@ pub mod __macro_support {
 pub mod prelude {
     // Core traits
     pub use super::{
-        CompositeHandler, McpHandler, McpHandlerExt, McpMiddleware, McpServerExt, MiddlewareStack,
-        VisibilityLayer, VisibilitySessionGuard,
+        ComponentVisibilityRules, CompositeHandler, McpHandler, McpHandlerExt, McpMiddleware,
+        McpServerExt, MiddlewareStack, VisibilityConfig, VisibilityLayer, VisibilitySessionGuard,
     };
 
     // Builder and transport

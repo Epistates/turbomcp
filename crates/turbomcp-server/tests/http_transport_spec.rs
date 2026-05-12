@@ -406,6 +406,30 @@ async fn initialized_notification_returns_202_without_body() {
 }
 
 #[tokio::test]
+async fn initialized_notification_allows_missing_protocol_header_after_negotiation() {
+    let (base_url, handle) = spawn_server().await;
+    let client = Client::new();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let response = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    assert!(response.text().await.unwrap().is_empty());
+
+    handle.abort();
+}
+
+#[tokio::test]
 async fn unknown_client_jsonrpc_response_post_returns_400() {
     let (base_url, handle) = spawn_server().await;
     let client = Client::new();
@@ -505,21 +529,13 @@ async fn rejected_sampling_response_returns_before_timeout() {
     assert_eq!(body["error"]["message"], "User rejected sampling");
 }
 
-#[tokio::test]
-async fn sse_sends_primer_event_with_id() {
+async fn read_first_sse_record(client: &Client, base_url: &str, session_id: &str) -> String {
     use tokio::io::AsyncReadExt;
-
-    let (base_url, handle) = spawn_server().await;
-    let client = Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap();
-    let session_id = initialize_session(&client, &base_url).await;
 
     let response = client
         .get(format!("{}/mcp", base_url))
         .header(header::ACCEPT, "text/event-stream")
-        .header("Mcp-Session-Id", &session_id)
+        .header("Mcp-Session-Id", session_id)
         .header("MCP-Protocol-Version", "2025-11-25")
         .send()
         .await
@@ -527,9 +543,7 @@ async fn sse_sends_primer_event_with_id() {
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    // Read just enough bytes to see the first event (up to the second
-    // blank line). An SSE primer event has an `id:` line and an empty
-    // `data:` line followed by the record-terminating blank line.
+    // Read just enough bytes to see the first SSE record.
     let mut stream = tokio_util::io::StreamReader::new(
         response
             .bytes_stream()
@@ -551,75 +565,35 @@ async fn sse_sends_primer_event_with_id() {
         }
     }
 
-    // Per SSE spec, a valid primer event carries only an `id:` line and no
-    // `data:` line (equivalent to an empty data field). axum's Sse writer
-    // drops `data:` lines when the payload is empty, so we require the id
-    // and require the event to carry no non-empty data line.
-    let first_event = collected.split("\n\n").next().unwrap_or("");
-    assert!(
-        first_event.lines().any(|line| line.starts_with("id:")),
-        "first SSE event should carry an id for Last-Event-ID resume, got: {collected:?}"
-    );
-    assert!(
-        first_event
-            .lines()
-            .all(|line| !line.starts_with("data:")
-                || line.trim_start_matches("data:").trim().is_empty()),
-        "primer event should have no non-empty data field, got: {collected:?}"
-    );
-
-    handle.abort();
+    let collected = collected.replace("\r\n", "\n");
+    collected.split("\n\n").next().unwrap_or("").to_string()
 }
 
-// SEP-1699 clarification: "Event IDs SHOULD encode sufficient information to
-// identify the originating stream." Two concurrent GET subscriptions on the
-// same session must therefore get distinct primer event IDs so a client can
-// resume the right stream after a disconnect.
+fn assert_startup_record_is_comment(record: &str) {
+    assert!(
+        record.lines().any(|line| line.starts_with(':')),
+        "startup SSE record should be a comment, got: {record:?}"
+    );
+    assert!(
+        record.lines().all(|line| line.starts_with(':')),
+        "startup SSE record should contain only comment lines, got: {record:?}"
+    );
+    assert!(
+        !record.lines().any(|line| line.starts_with("data:")),
+        "startup SSE record must not dispatch an empty data event, got: {record:?}"
+    );
+    assert!(
+        !record.lines().any(|line| line.starts_with("id:")),
+        "startup SSE record must not advance Last-Event-ID before a JSON-RPC message, got: {record:?}"
+    );
+    assert!(
+        !record.lines().any(|line| line.starts_with("retry:")),
+        "startup SSE record must not rely on a synthetic retry event, got: {record:?}"
+    );
+}
+
 #[tokio::test]
-async fn concurrent_sse_streams_have_distinct_event_ids() {
-    use tokio::io::AsyncReadExt;
-
-    async fn read_first_event_id(client: &Client, base_url: &str, session_id: &str) -> String {
-        let response = client
-            .get(format!("{}/mcp", base_url))
-            .header(header::ACCEPT, "text/event-stream")
-            .header("Mcp-Session-Id", session_id)
-            .header("MCP-Protocol-Version", "2025-11-25")
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-
-        let mut stream = tokio_util::io::StreamReader::new(
-            response
-                .bytes_stream()
-                .map(|r| r.map_err(std::io::Error::other)),
-        );
-        let mut buf = vec![0u8; 512];
-        let mut collected = String::new();
-        for _ in 0..8 {
-            let n = tokio::time::timeout(Duration::from_secs(1), stream.read(&mut buf))
-                .await
-                .expect("read timed out")
-                .expect("read error");
-            if n == 0 {
-                break;
-            }
-            collected.push_str(std::str::from_utf8(&buf[..n]).unwrap());
-            if collected.contains("\n\n") {
-                break;
-            }
-        }
-
-        collected
-            .split("\n\n")
-            .next()
-            .unwrap_or("")
-            .lines()
-            .find_map(|line| line.strip_prefix("id:").map(|s| s.trim().to_string()))
-            .unwrap_or_default()
-    }
-
+async fn sse_starts_with_comment_not_empty_data_event() {
     let (base_url, handle) = spawn_server().await;
     let client = Client::builder()
         .timeout(Duration::from_secs(5))
@@ -627,25 +601,145 @@ async fn concurrent_sse_streams_have_distinct_event_ids() {
         .unwrap();
     let session_id = initialize_session(&client, &base_url).await;
 
-    let id_a = read_first_event_id(&client, &base_url, &session_id).await;
-    let id_b = read_first_event_id(&client, &base_url, &session_id).await;
+    let first_event = read_first_sse_record(&client, &base_url, &session_id).await;
+    assert_startup_record_is_comment(&first_event);
 
-    assert!(!id_a.is_empty(), "first stream must emit a primer id");
-    assert!(!id_b.is_empty(), "second stream must emit a primer id");
-    assert_ne!(
-        id_a, id_b,
-        "concurrent streams on the same session must have distinct event IDs (got {id_a} == {id_b})"
-    );
-    // Both IDs must be scoped to this session — the encoding starts with
-    // `{session_id}-` so a client can resume the right session.
-    let prefix = format!("{}-", session_id);
+    handle.abort();
+}
+
+// Streamable HTTP startup traffic must not synthesize an SSE data event. Some
+// RMCP/Codex client versions try to parse `data:\n\n` as JSON-RPC during
+// startup and close the worker before sending `notifications/initialized`.
+#[tokio::test]
+async fn concurrent_sse_streams_start_with_comments_not_synthetic_events() {
+    let (base_url, handle) = spawn_server().await;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let first_event = read_first_sse_record(&client, &base_url, &session_id).await;
+    let second_event = read_first_sse_record(&client, &base_url, &session_id).await;
+
+    assert_startup_record_is_comment(&first_event);
+    assert_startup_record_is_comment(&second_event);
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn server_initiated_sse_messages_have_resumable_event_ids() {
+    let (base_url, handle) = spawn_sampling_server().await;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let session_id =
+        initialize_session_with_capabilities(&client, &base_url, json!({ "sampling": {} })).await;
+
+    let sse_response = client
+        .get(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(sse_response.status(), StatusCode::OK);
+
+    let responder_client = client.clone();
+    let responder_base_url = base_url.clone();
+    let responder_session_id = session_id.clone();
+    let responder = tokio::spawn(async move {
+        use tokio::io::AsyncBufReadExt;
+
+        let mut reader = tokio::io::BufReader::new(tokio_util::io::StreamReader::new(
+            sse_response
+                .bytes_stream()
+                .map(|r| r.map_err(std::io::Error::other)),
+        ));
+        let mut event_id = String::new();
+        let mut data = String::new();
+
+        loop {
+            let mut line = String::new();
+            let n = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+                .await
+                .expect("timed out reading SSE line")
+                .expect("SSE read error");
+            assert_ne!(n, 0, "SSE stream closed before a JSON-RPC message");
+
+            let line = line.trim_end_matches(&['\r', '\n'][..]);
+            if line.is_empty() {
+                if !data.is_empty() {
+                    break;
+                }
+                continue;
+            }
+
+            if let Some(rest) = line.strip_prefix("id:") {
+                event_id = rest.trim().to_string();
+            } else if let Some(rest) = line.strip_prefix("data:") {
+                data.push_str(rest.trim_start());
+            }
+        }
+
+        let server_request: serde_json::Value =
+            serde_json::from_str(&data).expect("SSE data should be JSON");
+        assert_eq!(server_request["method"], "sampling/createMessage");
+        assert!(
+            event_id.starts_with(&format!("{}-", responder_session_id)),
+            "server-initiated event id should be scoped to the session, got: {event_id}"
+        );
+
+        let response = responder_client
+            .post(format!("{}/mcp", responder_base_url))
+            .header(header::ACCEPT, "application/json, text/event-stream")
+            .header("Mcp-Session-Id", &responder_session_id)
+            .header("MCP-Protocol-Version", "2025-11-25")
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": server_request["id"],
+                "result": {
+                    "role": "assistant",
+                    "content": {
+                        "type": "text",
+                        "text": "sampled"
+                    },
+                    "model": "test-model"
+                }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        event_id
+    });
+
+    let tool_response = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .header("MCP-Protocol-Version", "2025-11-25")
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "sample_text",
+                "arguments": {}
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(tool_response.status(), StatusCode::OK);
+
+    let event_id = responder.await.unwrap();
     assert!(
-        id_a.starts_with(&prefix),
-        "event id should start with `{prefix}`, got: {id_a}"
-    );
-    assert!(
-        id_b.starts_with(&prefix),
-        "event id should start with `{prefix}`, got: {id_b}"
+        event_id.ends_with("-0"),
+        "first JSON-RPC message on a stream should use sequence 0, got: {event_id}"
     );
 
     handle.abort();

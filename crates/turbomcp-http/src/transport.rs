@@ -434,6 +434,19 @@ impl StreamableHttpClientTransport {
 
     /// Start SSE connection task
     async fn start_sse_connection(&self) -> TransportResult<()> {
+        if self.session_id.read().await.is_none() {
+            debug!("Deferring SSE connection until server provides a session ID");
+            return Ok(());
+        }
+
+        let mut task_handle = self.sse_task_handle.lock().await;
+        if let Some(handle) = task_handle.as_ref()
+            && !handle.is_finished()
+        {
+            debug!("SSE connection task already running");
+            return Ok(());
+        }
+
         info!("Starting SSE connection to {}", self.get_endpoint_url());
 
         let endpoint_url = self.get_endpoint_url();
@@ -459,7 +472,7 @@ impl StreamableHttpClientTransport {
             .await;
         });
 
-        *self.sse_task_handle.lock().await = Some(task);
+        *task_handle = Some(task);
 
         Ok(())
     }
@@ -783,6 +796,10 @@ impl StreamableHttpClientTransport {
         }
 
         let data_str = event_data.join("\n");
+        if data_str.trim().is_empty() {
+            debug!("Skipping empty POST SSE event");
+            return Ok(());
+        }
 
         // Parse as JSON-RPC message
         let json_value: serde_json::Value = serde_json::from_str(&data_str).map_err(|e| {
@@ -882,6 +899,7 @@ impl Transport for StreamableHttpClientTransport {
                 .and_then(|v| v.to_str().ok())
             {
                 *self.session_id.write().await = Some(session_id.to_string());
+                self.start_sse_connection().await?;
             }
 
             // MCP 2025-11-25: HTTP 202 Accepted means notification/response was accepted (no body)
