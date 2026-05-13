@@ -1261,4 +1261,41 @@ mod tests {
         assert_eq!(stored.as_ref().unwrap(), "http://127.0.0.1:8080/mcp");
         assert!(stored.as_ref().unwrap().starts_with("http://"));
     }
+
+    #[tokio::test]
+    async fn test_post_sse_whitespace_data_event_is_ignored() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let last_event_id = Arc::new(RwLock::new(None));
+
+        StreamableHttpClientTransport::process_post_sse_event(
+            "id: primer-1\nevent: message\ndata:    \n",
+            &tx,
+            &last_event_id,
+        )
+        .await
+        .expect("whitespace POST SSE event should be ignored");
+
+        assert_eq!(last_event_id.read().await.as_deref(), Some("primer-1"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_post_sse_json_event_is_queued() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let last_event_id = Arc::new(RwLock::new(None));
+
+        StreamableHttpClientTransport::process_post_sse_event(
+            "id: msg-1\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n",
+            &tx,
+            &last_event_id,
+        )
+        .await
+        .expect("valid POST SSE event should be queued");
+
+        assert_eq!(last_event_id.read().await.as_deref(), Some("msg-1"));
+        let message = rx.try_recv().expect("queued message");
+        let value: serde_json::Value =
+            serde_json::from_slice(&message.payload).expect("valid queued JSON");
+        assert_eq!(value["jsonrpc"], "2.0");
+    }
 }

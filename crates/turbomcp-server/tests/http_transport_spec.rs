@@ -430,6 +430,55 @@ async fn initialized_notification_allows_missing_protocol_header_after_negotiati
 }
 
 #[tokio::test]
+async fn post_init_requests_allow_missing_protocol_header_after_negotiation() {
+    let (base_url, handle) = spawn_server().await;
+    let client = Client::new();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    for (id, method) in [(2, "tools/list"), (3, "resources/list")] {
+        let response = client
+            .post(format!("{}/mcp", base_url))
+            .header(header::ACCEPT, "application/json, text/event-stream")
+            .header("Mcp-Session-Id", &session_id)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "method": method
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert!(body.get("result").is_some(), "{method} body: {body}");
+    }
+
+    let call_response = client
+        .post(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "application/json, text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .json(&json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "missing",
+                "arguments": {}
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(call_response.status(), StatusCode::OK);
+    let body: serde_json::Value = call_response.json().await.unwrap();
+    assert_eq!(body["error"]["code"], -32001);
+
+    handle.abort();
+}
+
+#[tokio::test]
 async fn unknown_client_jsonrpc_response_post_returns_400() {
     let (base_url, handle) = spawn_server().await;
     let client = Client::new();

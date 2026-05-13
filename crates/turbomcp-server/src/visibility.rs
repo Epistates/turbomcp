@@ -28,13 +28,13 @@
 //! // Create a visibility layer that hides admin tools by default
 //! let layer = VisibilityLayer::new(server)
 //!     .with_disabled(ComponentFilter::with_tags(["admin"]))
-//!     .disable_tools(["delete_all", "reset_database"]);
+//!     .with_disabled_tools(["delete_all", "reset_database"]);
 //!
 //! // Or apply a config loaded by a consumer such as TurboVault
 //! let layer = VisibilityLayer::new(server)
 //!     .with_visibility_config(
 //!         VisibilityConfig::new()
-//!             .allow_tools(["search", "read_note", "list_notes"])
+//!             .with_allowed_tools(["search", "read_note", "list_notes"])
 //!             .require_read_only_tools(),
 //!     );
 //!
@@ -68,13 +68,13 @@ use turbomcp_types::{
 
 /// Type alias for session visibility maps to reduce complexity.
 type SessionVisibilityMap = Arc<dashmap::DashMap<String, HashSet<String>>>;
-type SharedVisibilityRules = Arc<RwLock<ComponentVisibilityRules>>;
 
 /// Exact-name visibility rules for one MCP component family.
 ///
 /// Matching is case-sensitive and exact. Deny rules win over allow rules. When
-/// `allow` is `Some`, only matching identifiers are visible; when it is `None`,
-/// every identifier is visible unless it appears in `deny`.
+/// `allow` is `Some`, only matching identifiers are enabled; when it is `None`,
+/// every identifier is enabled unless it appears in `deny`. Hidden identifiers
+/// remain callable/readable/gettable, but are omitted from `list_*` responses.
 ///
 /// Resources and resource templates are matched by both `name` and URI/URI
 /// template, so config authors can use whichever identifier is most stable for
@@ -82,26 +82,30 @@ type SharedVisibilityRules = Arc<RwLock<ComponentVisibilityRules>>;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ComponentVisibilityRules {
-    /// Exact identifiers to expose. `None` means no allowlist is configured.
+    /// Exact identifiers to enable. `None` means no allowlist is configured.
     ///
-    /// An empty set inside `Some` intentionally hides the entire component
+    /// An empty set inside `Some` intentionally disables the entire component
     /// family.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allow: Option<BTreeSet<String>>,
 
-    /// Exact identifiers to hide.
+    /// Exact identifiers to disable from both listing and direct use.
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     pub deny: BTreeSet<String>,
+
+    /// Exact identifiers to omit from lists while still permitting direct use.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pub hide: BTreeSet<String>,
 }
 
 impl ComponentVisibilityRules {
-    /// Create rules that expose everything unless denied.
+    /// Create rules that enable and list everything unless denied or hidden.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Create rules that expose only the given exact identifiers.
+    /// Create rules that enable only the given exact identifiers.
     #[must_use]
     pub fn allow<I, S>(names: I) -> Self
     where
@@ -111,10 +115,11 @@ impl ComponentVisibilityRules {
         Self {
             allow: Some(collect_names(names)),
             deny: BTreeSet::new(),
+            hide: BTreeSet::new(),
         }
     }
 
-    /// Create rules that hide the given exact identifiers.
+    /// Create rules that disable the given exact identifiers.
     #[must_use]
     pub fn deny<I, S>(names: I) -> Self
     where
@@ -124,12 +129,27 @@ impl ComponentVisibilityRules {
         Self {
             allow: None,
             deny: collect_names(names),
+            hide: BTreeSet::new(),
+        }
+    }
+
+    /// Create rules that omit the given exact identifiers from lists.
+    #[must_use]
+    pub fn hide<I, S>(names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            allow: None,
+            deny: BTreeSet::new(),
+            hide: collect_names(names),
         }
     }
 
     /// Replace the allowlist with the given exact identifiers.
     #[must_use]
-    pub fn with_allow<I, S>(mut self, names: I) -> Self
+    pub fn with_allowed<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
@@ -138,29 +158,40 @@ impl ComponentVisibilityRules {
         self
     }
 
-    /// Add exact identifiers to the denylist.
+    /// Replace the denylist with the given exact identifiers.
     #[must_use]
-    pub fn with_deny<I, S>(mut self, names: I) -> Self
+    pub fn with_disabled<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.deny.extend(names.into_iter().map(Into::into));
+        self.deny = collect_names(names);
         self
     }
 
-    /// Check visibility for a single exact identifier.
+    /// Replace the hidden list with the given exact identifiers.
     #[must_use]
-    pub fn is_visible(&self, identifier: &str) -> bool {
-        self.is_visible_any([identifier])
+    pub fn with_hidden<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.hide = collect_names(names);
+        self
     }
 
-    /// Check visibility for any of several identifiers for the same component.
-    ///
-    /// Denying any identifier hides the component. When an allowlist is present,
-    /// at least one identifier must be allowlisted.
+    /// Check whether a single exact identifier is enabled for direct use.
     #[must_use]
-    pub fn is_visible_any<'a, I>(&self, identifiers: I) -> bool
+    pub fn is_enabled(&self, identifier: &str) -> bool {
+        self.is_enabled_any([identifier])
+    }
+
+    /// Check whether any identifier for the same component is enabled for direct use.
+    ///
+    /// Denying any identifier disables the component. When an allowlist is
+    /// present, at least one identifier must be allowlisted.
+    #[must_use]
+    pub fn is_enabled_any<'a, I>(&self, identifiers: I) -> bool
     where
         I: IntoIterator<Item = &'a str>,
     {
@@ -178,6 +209,26 @@ impl ComponentVisibilityRules {
                 .iter()
                 .any(|identifier| allow.contains(*identifier))
         })
+    }
+
+    /// Check whether a single exact identifier should appear in list responses.
+    #[must_use]
+    pub fn is_listed(&self, identifier: &str) -> bool {
+        self.is_listed_any([identifier])
+    }
+
+    /// Check whether any identifier for the same component should appear in lists.
+    #[must_use]
+    pub fn is_listed_any<'a, I>(&self, identifiers: I) -> bool
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        let identifiers = identifiers.into_iter().collect::<Vec<_>>();
+
+        self.is_enabled_any(identifiers.iter().copied())
+            && !identifiers
+                .iter()
+                .any(|identifier| self.hide.contains(*identifier))
     }
 }
 
@@ -212,91 +263,135 @@ impl VisibilityConfig {
         Self::default()
     }
 
-    /// Expose only the named tools.
+    /// Enable only the named tools.
     #[must_use]
-    pub fn allow_tools<I, S>(mut self, names: I) -> Self
+    pub fn with_allowed_tools<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.tools = self.tools.with_allow(names);
+        self.tools = self.tools.with_allowed(names);
         self
     }
 
-    /// Hide the named tools.
+    /// Disable the named tools from both listing and direct calls.
     #[must_use]
-    pub fn disable_tools<I, S>(mut self, names: I) -> Self
+    pub fn with_disabled_tools<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.tools = self.tools.with_deny(names);
+        self.tools = self.tools.with_disabled(names);
         self
     }
 
-    /// Expose only the named resources. Names and URIs both match.
+    /// Hide the named tools from `tools/list` while still permitting direct calls.
     #[must_use]
-    pub fn allow_resources<I, S>(mut self, identifiers: I) -> Self
+    pub fn with_hidden_tools<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.resources = self.resources.with_allow(identifiers);
+        self.tools = self.tools.with_hidden(names);
         self
     }
 
-    /// Hide the named resources. Names and URIs both match.
+    /// Enable only the named resources. Names and URIs both match.
     #[must_use]
-    pub fn disable_resources<I, S>(mut self, identifiers: I) -> Self
+    pub fn with_allowed_resources<I, S>(mut self, identifiers: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.resources = self.resources.with_deny(identifiers);
+        self.resources = self.resources.with_allowed(identifiers);
         self
     }
 
-    /// Expose only the named resource templates. Names and URI templates both match.
+    /// Disable the named resources from both listing and direct reads.
     #[must_use]
-    pub fn allow_resource_templates<I, S>(mut self, identifiers: I) -> Self
+    pub fn with_disabled_resources<I, S>(mut self, identifiers: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.resource_templates = self.resource_templates.with_allow(identifiers);
+        self.resources = self.resources.with_disabled(identifiers);
         self
     }
 
-    /// Hide the named resource templates. Names and URI templates both match.
+    /// Hide the named resources from list responses while still permitting reads.
     #[must_use]
-    pub fn disable_resource_templates<I, S>(mut self, identifiers: I) -> Self
+    pub fn with_hidden_resources<I, S>(mut self, identifiers: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.resource_templates = self.resource_templates.with_deny(identifiers);
+        self.resources = self.resources.with_hidden(identifiers);
         self
     }
 
-    /// Expose only the named prompts.
+    /// Enable only the named resource templates. Names and URI templates both match.
     #[must_use]
-    pub fn allow_prompts<I, S>(mut self, names: I) -> Self
+    pub fn with_allowed_resource_templates<I, S>(mut self, identifiers: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.prompts = self.prompts.with_allow(names);
+        self.resource_templates = self.resource_templates.with_allowed(identifiers);
         self
     }
 
-    /// Hide the named prompts.
+    /// Disable the named resource templates from list responses.
     #[must_use]
-    pub fn disable_prompts<I, S>(mut self, names: I) -> Self
+    pub fn with_disabled_resource_templates<I, S>(mut self, identifiers: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.prompts = self.prompts.with_deny(names);
+        self.resource_templates = self.resource_templates.with_disabled(identifiers);
+        self
+    }
+
+    /// Hide the named resource templates from list responses.
+    #[must_use]
+    pub fn with_hidden_resource_templates<I, S>(mut self, identifiers: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.resource_templates = self.resource_templates.with_hidden(identifiers);
+        self
+    }
+
+    /// Enable only the named prompts.
+    #[must_use]
+    pub fn with_allowed_prompts<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.prompts = self.prompts.with_allowed(names);
+        self
+    }
+
+    /// Disable the named prompts from both listing and direct gets.
+    #[must_use]
+    pub fn with_disabled_prompts<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.prompts = self.prompts.with_disabled(names);
+        self
+    }
+
+    /// Hide the named prompts from `prompts/list` while still permitting gets.
+    #[must_use]
+    pub fn with_hidden_prompts<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.prompts = self.prompts.with_hidden(names);
         self
     }
 
@@ -382,15 +477,15 @@ pub struct VisibilityLayer<H> {
     /// Globally disabled component filters
     global_disabled: Arc<RwLock<Vec<ComponentFilter>>>,
     /// Exact-name visibility rules for tools
-    tool_rules: SharedVisibilityRules,
+    tool_rules: ComponentVisibilityRules,
     /// Exact-name visibility rules for resources
-    resource_rules: SharedVisibilityRules,
+    resource_rules: ComponentVisibilityRules,
     /// Exact-name visibility rules for resource templates
-    resource_template_rules: SharedVisibilityRules,
+    resource_template_rules: ComponentVisibilityRules,
     /// Exact-name visibility rules for prompts
-    prompt_rules: SharedVisibilityRules,
+    prompt_rules: ComponentVisibilityRules,
     /// When true, only explicitly read-only tools are visible/callable
-    read_only_tools_required: Arc<RwLock<bool>>,
+    read_only_tools_required: bool,
     /// Session-specific visibility overrides (keyed by session_id)
     ///
     /// **Warning**: Entries must be manually cleaned up via [`clear_session`](Self::clear_session)
@@ -406,13 +501,11 @@ impl<H: std::fmt::Debug> std::fmt::Debug for VisibilityLayer<H> {
             .field("global_disabled_count", &self.global_disabled.read().len())
             .field(
                 "tool_allow_count",
-                &self.tool_rules.read().allow.as_ref().map(BTreeSet::len),
+                &self.tool_rules.allow.as_ref().map(BTreeSet::len),
             )
-            .field("tool_deny_count", &self.tool_rules.read().deny.len())
-            .field(
-                "read_only_tools_required",
-                &*self.read_only_tools_required.read(),
-            )
+            .field("tool_deny_count", &self.tool_rules.deny.len())
+            .field("tool_hide_count", &self.tool_rules.hide.len())
+            .field("read_only_tools_required", &self.read_only_tools_required)
             .field("session_enabled_count", &self.session_enabled.len())
             .field("session_disabled_count", &self.session_disabled.len())
             .finish()
@@ -425,11 +518,11 @@ impl<H: McpHandler> VisibilityLayer<H> {
         Self {
             inner,
             global_disabled: Arc::new(RwLock::new(Vec::new())),
-            tool_rules: Arc::new(RwLock::new(ComponentVisibilityRules::new())),
-            resource_rules: Arc::new(RwLock::new(ComponentVisibilityRules::new())),
-            resource_template_rules: Arc::new(RwLock::new(ComponentVisibilityRules::new())),
-            prompt_rules: Arc::new(RwLock::new(ComponentVisibilityRules::new())),
-            read_only_tools_required: Arc::new(RwLock::new(false)),
+            tool_rules: ComponentVisibilityRules::new(),
+            resource_rules: ComponentVisibilityRules::new(),
+            resource_template_rules: ComponentVisibilityRules::new(),
+            prompt_rules: ComponentVisibilityRules::new(),
+            read_only_tools_required: false,
             session_enabled: Arc::new(dashmap::DashMap::new()),
             session_disabled: Arc::new(dashmap::DashMap::new()),
         }
@@ -461,12 +554,12 @@ impl<H: McpHandler> VisibilityLayer<H> {
     /// [`with_disabled`](Self::with_disabled) and
     /// [`enable_for_session`](Self::enable_for_session) remains independent.
     #[must_use]
-    pub fn with_visibility_config(self, config: VisibilityConfig) -> Self {
-        *self.tool_rules.write() = config.tools;
-        *self.resource_rules.write() = config.resources;
-        *self.resource_template_rules.write() = config.resource_templates;
-        *self.prompt_rules.write() = config.prompts;
-        *self.read_only_tools_required.write() = config.require_read_only_tools;
+    pub fn with_visibility_config(mut self, config: VisibilityConfig) -> Self {
+        self.tool_rules = config.tools;
+        self.resource_rules = config.resources;
+        self.resource_template_rules = config.resource_templates;
+        self.prompt_rules = config.prompts;
+        self.read_only_tools_required = config.require_read_only_tools;
         self
     }
 
@@ -474,114 +567,146 @@ impl<H: McpHandler> VisibilityLayer<H> {
     #[must_use]
     pub fn visibility_config(&self) -> VisibilityConfig {
         VisibilityConfig {
-            tools: self.tool_rules.read().clone(),
-            resources: self.resource_rules.read().clone(),
-            resource_templates: self.resource_template_rules.read().clone(),
-            prompts: self.prompt_rules.read().clone(),
-            require_read_only_tools: *self.read_only_tools_required.read(),
+            tools: self.tool_rules.clone(),
+            resources: self.resource_rules.clone(),
+            resource_templates: self.resource_template_rules.clone(),
+            prompts: self.prompt_rules.clone(),
+            require_read_only_tools: self.read_only_tools_required,
         }
     }
 
-    /// Expose only the named tools.
+    /// Enable only the named tools.
     ///
     /// This filters both `tools/list` and `tools/call`. Exact denies configured
-    /// through [`disable_tools`](Self::disable_tools) still win.
+    /// through [`with_disabled_tools`](Self::with_disabled_tools) still win.
     #[must_use]
-    pub fn allow_tools<I, S>(self, names: I) -> Self
+    pub fn with_allowed_tools<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.tool_rules.write().allow = Some(collect_names(names));
+        self.tool_rules = self.tool_rules.with_allowed(names);
         self
     }
 
-    /// Hide the named tools from `tools/list` and reject matching calls as not found.
+    /// Disable the named tools from `tools/list` and reject matching calls as not found.
     #[must_use]
-    pub fn disable_tools<I, S>(self, names: I) -> Self
+    pub fn with_disabled_tools<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.tool_rules
-            .write()
-            .deny
-            .extend(names.into_iter().map(Into::into));
+        self.tool_rules = self.tool_rules.with_disabled(names);
         self
     }
 
-    /// Expose only the named resources. Resource names and URIs both match.
+    /// Hide the named tools from `tools/list` while still permitting direct calls.
     #[must_use]
-    pub fn allow_resources<I, S>(self, identifiers: I) -> Self
+    pub fn with_hidden_tools<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.resource_rules.write().allow = Some(collect_names(identifiers));
+        self.tool_rules = self.tool_rules.with_hidden(names);
         self
     }
 
-    /// Hide the named resources. Resource names and URIs both match.
+    /// Enable only the named resources. Resource names and URIs both match.
     #[must_use]
-    pub fn disable_resources<I, S>(self, identifiers: I) -> Self
+    pub fn with_allowed_resources<I, S>(mut self, identifiers: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.resource_rules
-            .write()
-            .deny
-            .extend(identifiers.into_iter().map(Into::into));
+        self.resource_rules = self.resource_rules.with_allowed(identifiers);
         self
     }
 
-    /// Expose only the named resource templates. Names and URI templates both match.
+    /// Disable the named resources. Resource names and URIs both match.
     #[must_use]
-    pub fn allow_resource_templates<I, S>(self, identifiers: I) -> Self
+    pub fn with_disabled_resources<I, S>(mut self, identifiers: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.resource_template_rules.write().allow = Some(collect_names(identifiers));
+        self.resource_rules = self.resource_rules.with_disabled(identifiers);
         self
     }
 
-    /// Hide the named resource templates. Names and URI templates both match.
+    /// Hide the named resources from list responses while still permitting reads.
     #[must_use]
-    pub fn disable_resource_templates<I, S>(self, identifiers: I) -> Self
+    pub fn with_hidden_resources<I, S>(mut self, identifiers: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.resource_template_rules
-            .write()
-            .deny
-            .extend(identifiers.into_iter().map(Into::into));
+        self.resource_rules = self.resource_rules.with_hidden(identifiers);
         self
     }
 
-    /// Expose only the named prompts.
+    /// Enable only the named resource templates. Names and URI templates both match.
     #[must_use]
-    pub fn allow_prompts<I, S>(self, names: I) -> Self
+    pub fn with_allowed_resource_templates<I, S>(mut self, identifiers: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.prompt_rules.write().allow = Some(collect_names(names));
+        self.resource_template_rules = self.resource_template_rules.with_allowed(identifiers);
         self
     }
 
-    /// Hide the named prompts.
+    /// Disable the named resource templates. Names and URI templates both match.
     #[must_use]
-    pub fn disable_prompts<I, S>(self, names: I) -> Self
+    pub fn with_disabled_resource_templates<I, S>(mut self, identifiers: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.prompt_rules
-            .write()
-            .deny
-            .extend(names.into_iter().map(Into::into));
+        self.resource_template_rules = self.resource_template_rules.with_disabled(identifiers);
+        self
+    }
+
+    /// Hide the named resource templates from list responses.
+    #[must_use]
+    pub fn with_hidden_resource_templates<I, S>(mut self, identifiers: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.resource_template_rules = self.resource_template_rules.with_hidden(identifiers);
+        self
+    }
+
+    /// Enable only the named prompts.
+    #[must_use]
+    pub fn with_allowed_prompts<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.prompt_rules = self.prompt_rules.with_allowed(names);
+        self
+    }
+
+    /// Disable the named prompts.
+    #[must_use]
+    pub fn with_disabled_prompts<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.prompt_rules = self.prompt_rules.with_disabled(names);
+        self
+    }
+
+    /// Hide the named prompts from `prompts/list` while still permitting gets.
+    #[must_use]
+    pub fn with_hidden_prompts<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.prompt_rules = self.prompt_rules.with_hidden(names);
         self
     }
 
@@ -591,8 +716,8 @@ impl<H: McpHandler> VisibilityLayer<H> {
     /// operations. Tools with no annotation are hidden; annotation gaps should
     /// fail closed.
     #[must_use]
-    pub fn require_read_only_tools(self) -> Self {
-        *self.read_only_tools_required.write() = true;
+    pub fn require_read_only_tools(mut self) -> Self {
+        self.read_only_tools_required = true;
         self
     }
 
@@ -624,13 +749,13 @@ impl<H: McpHandler> VisibilityLayer<H> {
         false
     }
 
-    /// Check if a tool is visible under exact-name, annotation, tag, and session rules.
-    fn is_tool_visible(&self, tool: &Tool, session_id: Option<&str>) -> bool {
-        if !self.is_tool_name_visible(&tool.name) {
+    /// Check if a tool is enabled/callable under exact-name, annotation, tag, and session rules.
+    fn is_tool_enabled(&self, tool: &Tool, session_id: Option<&str>) -> bool {
+        if !self.tool_rules.is_enabled(&tool.name) {
             return false;
         }
 
-        if *self.read_only_tools_required.read() && !is_explicit_read_only_tool(tool) {
+        if self.read_only_tools_required && !is_explicit_read_only_tool(tool) {
             return false;
         }
 
@@ -638,22 +763,21 @@ impl<H: McpHandler> VisibilityLayer<H> {
         self.is_visible(&meta, session_id)
     }
 
-    /// Check exact-name visibility for a tool call when no listed tool metadata is available.
-    fn is_tool_name_visible(&self, name: &str) -> bool {
-        self.tool_rules.read().is_visible(name)
+    /// Check if a tool is listed under exact-name, annotation, tag, and session rules.
+    fn is_tool_listed(&self, tool: &Tool, session_id: Option<&str>) -> bool {
+        self.is_tool_enabled(tool, session_id) && self.tool_rules.is_listed(&tool.name)
     }
 
     /// Check if an unlisted tool may be called.
     fn is_unlisted_tool_callable(&self, name: &str) -> bool {
-        self.is_tool_name_visible(name) && !*self.read_only_tools_required.read()
+        self.tool_rules.is_enabled(name) && !self.read_only_tools_required
     }
 
-    /// Check if a resource is visible under exact-name, tag, and session rules.
-    fn is_resource_visible(&self, resource: &Resource, session_id: Option<&str>) -> bool {
+    /// Check if a resource is enabled/readable under exact-name, tag, and session rules.
+    fn is_resource_enabled(&self, resource: &Resource, session_id: Option<&str>) -> bool {
         if !self
             .resource_rules
-            .read()
-            .is_visible_any([resource.name.as_str(), resource.uri.as_str()])
+            .is_enabled_any([resource.name.as_str(), resource.uri.as_str()])
         {
             return false;
         }
@@ -662,21 +786,28 @@ impl<H: McpHandler> VisibilityLayer<H> {
         self.is_visible(&meta, session_id)
     }
 
-    /// Check exact-name visibility for a resource read when no listed metadata is available.
-    fn is_unlisted_resource_readable(&self, uri: &str) -> bool {
-        self.resource_rules.read().is_visible(uri)
+    /// Check if a resource is listed under exact-name, tag, and session rules.
+    fn is_resource_listed(&self, resource: &Resource, session_id: Option<&str>) -> bool {
+        self.is_resource_enabled(resource, session_id)
+            && self
+                .resource_rules
+                .is_listed_any([resource.name.as_str(), resource.uri.as_str()])
     }
 
-    /// Check if a resource template is visible under exact-name, tag, and session rules.
-    fn is_resource_template_visible(
+    /// Check exact-name visibility for a resource read when no listed metadata is available.
+    fn is_unlisted_resource_readable(&self, uri: &str) -> bool {
+        self.resource_rules.is_enabled(uri)
+    }
+
+    /// Check if a resource template is listed under exact-name, tag, and session rules.
+    fn is_resource_template_listed(
         &self,
         template: &ResourceTemplate,
         session_id: Option<&str>,
     ) -> bool {
         if !self
             .resource_template_rules
-            .read()
-            .is_visible_any([template.name.as_str(), template.uri_template.as_str()])
+            .is_listed_any([template.name.as_str(), template.uri_template.as_str()])
         {
             return false;
         }
@@ -685,9 +816,9 @@ impl<H: McpHandler> VisibilityLayer<H> {
         self.is_visible(&meta, session_id)
     }
 
-    /// Check if a prompt is visible under exact-name, tag, and session rules.
-    fn is_prompt_visible(&self, prompt: &Prompt, session_id: Option<&str>) -> bool {
-        if !self.prompt_rules.read().is_visible(&prompt.name) {
+    /// Check if a prompt is enabled/gettable under exact-name, tag, and session rules.
+    fn is_prompt_enabled(&self, prompt: &Prompt, session_id: Option<&str>) -> bool {
+        if !self.prompt_rules.is_enabled(&prompt.name) {
             return false;
         }
 
@@ -695,9 +826,14 @@ impl<H: McpHandler> VisibilityLayer<H> {
         self.is_visible(&meta, session_id)
     }
 
+    /// Check if a prompt is listed under exact-name, tag, and session rules.
+    fn is_prompt_listed(&self, prompt: &Prompt, session_id: Option<&str>) -> bool {
+        self.is_prompt_enabled(prompt, session_id) && self.prompt_rules.is_listed(&prompt.name)
+    }
+
     /// Check exact-name visibility for a prompt get when no listed metadata is available.
     fn is_unlisted_prompt_gettable(&self, name: &str) -> bool {
-        self.prompt_rules.read().is_visible(name)
+        self.prompt_rules.is_enabled(name)
     }
 
     /// Enable components with the given tags for a specific session.
@@ -803,7 +939,7 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
         self.inner
             .list_tools()
             .into_iter()
-            .filter(|tool| self.is_tool_visible(tool, None))
+            .filter(|tool| self.is_tool_listed(tool, None))
             .collect()
     }
 
@@ -811,7 +947,7 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
         self.inner
             .list_resources()
             .into_iter()
-            .filter(|resource| self.is_resource_visible(resource, None))
+            .filter(|resource| self.is_resource_listed(resource, None))
             .collect()
     }
 
@@ -819,7 +955,7 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
         self.inner
             .list_resource_templates()
             .into_iter()
-            .filter(|template| self.is_resource_template_visible(template, None))
+            .filter(|template| self.is_resource_template_listed(template, None))
             .collect()
     }
 
@@ -827,7 +963,7 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
         self.inner
             .list_prompts()
             .into_iter()
-            .filter(|prompt| self.is_prompt_visible(prompt, None))
+            .filter(|prompt| self.is_prompt_listed(prompt, None))
             .collect()
     }
 
@@ -839,12 +975,13 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
     ) -> impl std::future::Future<Output = McpResult<ToolResult>> + turbomcp_core::marker::MaybeSend + 'a
     {
         async move {
-            // Check if tool is visible for this session
+            // Check listed tool metadata when available; unlisted dynamic tools
+            // can still be governed by exact-name rules.
             let tools = self.inner.list_tools();
             let tool = tools.iter().find(|t| t.name == name);
 
             if let Some(tool) = tool {
-                if !self.is_tool_visible(tool, ctx.session_id()) {
+                if !self.is_tool_enabled(tool, ctx.session_id()) {
                     return Err(McpError::tool_not_found(name));
                 }
             } else if !self.is_unlisted_tool_callable(name) {
@@ -863,12 +1000,13 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
     + turbomcp_core::marker::MaybeSend
     + 'a {
         async move {
-            // Check if resource is visible for this session
+            // Check listed resource metadata when available; unlisted dynamic
+            // resources can still be governed by exact-name rules.
             let resources = self.inner.list_resources();
             let resource = resources.iter().find(|r| r.uri == uri);
 
             if let Some(resource) = resource {
-                if !self.is_resource_visible(resource, ctx.session_id()) {
+                if !self.is_resource_enabled(resource, ctx.session_id()) {
                     return Err(McpError::resource_not_found(uri));
                 }
             } else if !self.is_unlisted_resource_readable(uri) {
@@ -887,12 +1025,13 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
     ) -> impl std::future::Future<Output = McpResult<PromptResult>> + turbomcp_core::marker::MaybeSend + 'a
     {
         async move {
-            // Check if prompt is visible for this session
+            // Check listed prompt metadata when available; unlisted dynamic
+            // prompts can still be governed by exact-name rules.
             let prompts = self.inner.list_prompts();
             let prompt = prompts.iter().find(|p| p.name == name);
 
             if let Some(prompt) = prompt {
-                if !self.is_prompt_visible(prompt, ctx.session_id()) {
+                if !self.is_prompt_enabled(prompt, ctx.session_id()) {
                     return Err(McpError::prompt_not_found(name));
                 }
             } else if !self.is_unlisted_prompt_gettable(name) {
@@ -1103,28 +1242,41 @@ mod tests {
 
     #[test]
     fn test_component_visibility_rules_deny_wins() {
-        let rules = ComponentVisibilityRules::allow(["search", "delete"]).with_deny(["delete"]);
+        let rules = ComponentVisibilityRules::allow(["search", "delete"]).with_disabled(["delete"]);
 
-        assert!(rules.is_visible("search"));
-        assert!(!rules.is_visible("delete"));
-        assert!(!rules.is_visible("unknown"));
+        assert!(rules.is_enabled("search"));
+        assert!(rules.is_listed("search"));
+        assert!(!rules.is_enabled("delete"));
+        assert!(!rules.is_listed("delete"));
+        assert!(!rules.is_enabled("unknown"));
     }
 
     #[test]
     fn test_component_visibility_rules_match_aliases() {
         let rules = ComponentVisibilityRules::allow(["vault://public"]);
 
-        assert!(rules.is_visible_any(["public_resource", "vault://public"]));
-        assert!(!rules.is_visible_any(["public_resource", "vault://private"]));
+        assert!(rules.is_enabled_any(["public_resource", "vault://public"]));
+        assert!(!rules.is_enabled_any(["public_resource", "vault://private"]));
+    }
+
+    #[test]
+    fn test_component_visibility_rules_can_hide_without_disabling() {
+        let rules = ComponentVisibilityRules::hide(["advanced_tool"]);
+
+        assert!(rules.is_enabled("advanced_tool"));
+        assert!(!rules.is_listed("advanced_tool"));
+        assert!(rules.is_enabled("public_tool"));
+        assert!(rules.is_listed("public_tool"));
     }
 
     #[test]
     fn test_visibility_config_round_trips_serialization() {
         let config = VisibilityConfig::new()
-            .allow_tools(["search", "read_note"])
-            .disable_tools(["delete_note"])
-            .allow_resources(["vault://public"])
-            .allow_prompts(["summarize"])
+            .with_allowed_tools(["search", "read_note"])
+            .with_disabled_tools(["delete_note"])
+            .with_hidden_tools(["advanced_graph"])
+            .with_allowed_resources(["vault://public"])
+            .with_allowed_prompts(["summarize"])
             .require_read_only_tools();
 
         let json = serde_json::to_string(&config).expect("visibility config serializes");
@@ -1136,7 +1288,8 @@ mod tests {
 
     #[test]
     fn test_empty_tool_allowlist_hides_all_tools() {
-        let layer = VisibilityLayer::new(MockHandler).allow_tools(std::iter::empty::<&str>());
+        let layer =
+            VisibilityLayer::new(MockHandler).with_allowed_tools(std::iter::empty::<&str>());
 
         assert!(layer.list_tools().is_empty());
     }
@@ -1175,7 +1328,7 @@ mod tests {
 
     #[test]
     fn test_exact_tool_allowlist_reduces_list_surface() {
-        let layer = VisibilityLayer::new(MockHandler).allow_tools(["public_tool"]);
+        let layer = VisibilityLayer::new(MockHandler).with_allowed_tools(["public_tool"]);
 
         assert_eq!(tool_names(&layer), vec!["public_tool"]);
     }
@@ -1183,15 +1336,88 @@ mod tests {
     #[test]
     fn test_exact_tool_denylist_wins_over_allowlist() {
         let layer = VisibilityLayer::new(MockHandler)
-            .allow_tools(["public_tool", "admin_tool"])
-            .disable_tools(["public_tool"]);
+            .with_allowed_tools(["public_tool", "admin_tool"])
+            .with_disabled_tools(["public_tool"]);
 
         assert_eq!(tool_names(&layer), vec!["admin_tool"]);
     }
 
+    #[test]
+    fn test_layer_clone_has_independent_exact_rules() {
+        let base = VisibilityLayer::new(MockHandler);
+        let narrowed = base.clone().with_allowed_tools(["public_tool"]);
+
+        assert_eq!(base.list_tools().len(), 2);
+        assert_eq!(tool_names(&narrowed), vec!["public_tool"]);
+    }
+
+    #[test]
+    fn test_with_disabled_tools_replaces_previous_denylist() {
+        let layer = VisibilityLayer::new(MockHandler)
+            .with_disabled_tools(["public_tool"])
+            .with_disabled_tools(["admin_tool"]);
+
+        assert_eq!(tool_names(&layer), vec!["public_tool"]);
+    }
+
     #[tokio::test]
-    async fn test_hidden_tool_call_returns_not_found() {
-        let layer = VisibilityLayer::new(MockHandler).disable_tools(["public_tool"]);
+    async fn test_hidden_tool_is_not_listed_but_remains_callable() {
+        let layer = VisibilityLayer::new(MockHandler).with_hidden_tools(["public_tool"]);
+        let ctx = RequestContext::default();
+
+        assert_eq!(tool_names(&layer), vec!["admin_tool"]);
+
+        let result = layer
+            .call_tool("public_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect("hidden but enabled tool should remain callable");
+        assert_eq!(result.first_text(), Some("Called public_tool"));
+    }
+
+    #[tokio::test]
+    async fn test_disabled_tool_wins_over_hidden_tool() {
+        let layer = VisibilityLayer::new(MockHandler)
+            .with_hidden_tools(["public_tool"])
+            .with_disabled_tools(["public_tool"]);
+        let ctx = RequestContext::default();
+
+        assert!(!tool_names(&layer).contains(&"public_tool".to_string()));
+
+        let err = layer
+            .call_tool("public_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect_err("disabled tool should not be callable even if hidden");
+        assert_eq!(err.kind, turbomcp_core::error::ErrorKind::ToolNotFound);
+    }
+
+    #[test]
+    fn test_tag_disabled_tool_stays_hidden_despite_name_allowlist() {
+        let layer = VisibilityLayer::new(MockHandler)
+            .with_allowed_tools(["admin_tool"])
+            .disable_tags(["admin"]);
+
+        assert!(layer.list_tools().is_empty());
+    }
+
+    #[test]
+    fn test_visibility_config_getter_reflects_builder_methods() {
+        let layer = VisibilityLayer::new(MockHandler)
+            .with_allowed_tools(["public_tool"])
+            .with_disabled_resources(["vault://admin"])
+            .with_hidden_prompts(["admin_prompt"])
+            .require_read_only_tools();
+
+        let config = layer.visibility_config();
+
+        assert!(config.tools.allow.unwrap().contains("public_tool"));
+        assert!(config.resources.deny.contains("vault://admin"));
+        assert!(config.prompts.hide.contains("admin_prompt"));
+        assert!(config.require_read_only_tools);
+    }
+
+    #[tokio::test]
+    async fn test_disabled_tool_call_returns_not_found() {
+        let layer = VisibilityLayer::new(MockHandler).with_disabled_tools(["public_tool"]);
         let ctx = RequestContext::default();
 
         let err = layer
@@ -1223,8 +1449,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_session_disable_blocks_visible_tagged_tool_call() {
+        let layer = VisibilityLayer::new(MockHandler);
+        let ctx = RequestContext::default().with_session_id("session1");
+
+        let result = layer
+            .call_tool("public_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect("public tool should initially pass through");
+        assert_eq!(result.first_text(), Some("Called public_tool"));
+
+        layer.disable_for_session("session1", &["public".to_string()]);
+
+        let err = layer
+            .call_tool("public_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect_err("session-disabled tagged tool should be rejected");
+        assert_eq!(err.kind, turbomcp_core::error::ErrorKind::ToolNotFound);
+    }
+
+    #[tokio::test]
     async fn test_exact_tool_policy_blocks_unlisted_dynamic_call() {
-        let layer = VisibilityLayer::new(DynamicHandler).disable_tools(["dynamic_tool"]);
+        let layer = VisibilityLayer::new(DynamicHandler).with_disabled_tools(["dynamic_tool"]);
         let ctx = RequestContext::default();
 
         let err = layer
@@ -1237,7 +1483,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exact_tool_allowlist_can_permit_unlisted_dynamic_call() {
-        let layer = VisibilityLayer::new(DynamicHandler).allow_tools(["dynamic_tool"]);
+        let layer = VisibilityLayer::new(DynamicHandler).with_allowed_tools(["dynamic_tool"]);
         let ctx = RequestContext::default();
 
         let result = layer
@@ -1251,7 +1497,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_only_policy_blocks_unlisted_dynamic_tool() {
         let layer = VisibilityLayer::new(DynamicHandler)
-            .allow_tools(["dynamic_tool"])
+            .with_allowed_tools(["dynamic_tool"])
             .require_read_only_tools();
         let ctx = RequestContext::default();
 
@@ -1271,8 +1517,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hidden_resource_read_returns_not_found() {
-        let layer = VisibilityLayer::new(MockHandler).disable_resources(["vault://public"]);
+    async fn test_disabled_resource_read_returns_not_found() {
+        let layer = VisibilityLayer::new(MockHandler).with_disabled_resources(["vault://public"]);
         let ctx = RequestContext::default();
 
         let err = layer
@@ -1285,7 +1531,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_resource_allowlist_by_name_allows_uri_read() {
-        let layer = VisibilityLayer::new(MockHandler).allow_resources(["public_resource"]);
+        let layer = VisibilityLayer::new(MockHandler).with_allowed_resources(["public_resource"]);
         let ctx = RequestContext::default();
 
         let result = layer
@@ -1298,7 +1544,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_exact_resource_policy_blocks_unlisted_dynamic_read() {
-        let layer = VisibilityLayer::new(DynamicHandler).disable_resources(["vault://dynamic"]);
+        let layer =
+            VisibilityLayer::new(DynamicHandler).with_disabled_resources(["vault://dynamic"]);
         let ctx = RequestContext::default();
 
         let err = layer
@@ -1310,8 +1557,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hidden_prompt_get_returns_not_found() {
-        let layer = VisibilityLayer::new(MockHandler).disable_prompts(["public_prompt"]);
+    async fn test_disabled_prompt_get_returns_not_found() {
+        let layer = VisibilityLayer::new(MockHandler).with_disabled_prompts(["public_prompt"]);
         let ctx = RequestContext::default();
 
         let err = layer
@@ -1324,7 +1571,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exact_prompt_policy_blocks_unlisted_dynamic_get() {
-        let layer = VisibilityLayer::new(DynamicHandler).disable_prompts(["dynamic_prompt"]);
+        let layer = VisibilityLayer::new(DynamicHandler).with_disabled_prompts(["dynamic_prompt"]);
         let ctx = RequestContext::default();
 
         let err = layer
@@ -1338,10 +1585,10 @@ mod tests {
     #[test]
     fn test_visibility_config_applies_component_rules() {
         let config = VisibilityConfig::new()
-            .allow_tools(["public_tool"])
-            .disable_resources(["vault://admin"])
-            .allow_prompts(["public_prompt"])
-            .allow_resource_templates(["vault://notes/{id}"]);
+            .with_allowed_tools(["public_tool"])
+            .with_disabled_resources(["vault://admin"])
+            .with_allowed_prompts(["public_prompt"])
+            .with_allowed_resource_templates(["vault://notes/{id}"]);
 
         let layer = VisibilityLayer::new(MockHandler).with_visibility_config(config);
 

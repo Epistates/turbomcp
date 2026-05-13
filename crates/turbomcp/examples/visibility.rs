@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create an AI-facing profile with a small, read-only tool surface.
     let ax_profile = VisibilityLayer::new(server.clone())
-        .allow_tools(["get_time", "greet"])
+        .with_allowed_tools(["get_time", "greet"])
         .require_read_only_tools();
 
     println!("Focused LLM profile (exact allowlist + read-only tools):");

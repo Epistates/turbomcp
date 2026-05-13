@@ -197,18 +197,20 @@ is disabled).
 ## Visibility
 
 `VisibilityLayer` wraps any `McpHandler` and filters `tools/list`,
-`resources/list`, `resources/templates/list`, and `prompts/list`. Hidden tools,
-resources, and prompts are also rejected on call/read/get paths as not found.
+`resources/list`, `resources/templates/list`, and `prompts/list`. Disabled
+tools, resources, and prompts are also rejected on call/read/get paths as not
+found; hidden components stay callable but are omitted from list responses.
 
 Use it for both human UX and LLM-facing AX: expose only the tools relevant to a
-deployment profile, hide unsafe operations, and keep client context focused.
+deployment profile, disable unsafe operations, and keep client context focused.
 
 ```rust,ignore
 use turbomcp_server::{VisibilityConfig, VisibilityLayer};
 
 let config = VisibilityConfig::new()
-    .allow_tools(["search", "read_note", "list_notes"])
-    .disable_tools(["delete_note", "reindex_all"])
+    .with_allowed_tools(["search", "read_note", "list_notes"])
+    .with_disabled_tools(["delete_note", "reindex_all"])
+    .with_hidden_tools(["advanced_graph_query"])
     .require_read_only_tools();
 
 let server = VisibilityLayer::new(MyServer).with_visibility_config(config);
@@ -216,9 +218,10 @@ server.builder().serve().await?;
 ```
 
 For config files, map user choices into `VisibilityConfig`: exact tool
-allowlists reduce context load, denylists remove risky operations, and
-`require_read_only_tools()` only exposes tools annotated with
-`readOnlyHint: true`.
+allowlists reduce context load, disabled tools remove risky operations, hidden
+tools stay callable without consuming `tools/list` context, and
+`require_read_only_tools()` only exposes tools annotated with `readOnlyHint:
+true`.
 
 ## Middleware
 

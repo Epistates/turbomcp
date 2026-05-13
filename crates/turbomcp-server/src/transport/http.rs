@@ -854,22 +854,11 @@ fn empty_response(status: StatusCode) -> Response {
     status.into_response()
 }
 
-fn sse_event_bytes(
-    id: &str,
-    event_type: Option<&str>,
-    data: &str,
-    retry_millis: Option<u64>,
-) -> Bytes {
+fn sse_event_bytes(id: &str, event_type: Option<&str>, data: &str) -> Bytes {
     let mut event = String::new();
     event.push_str("id: ");
     event.push_str(id);
     event.push('\n');
-
-    if let Some(retry_millis) = retry_millis {
-        event.push_str("retry: ");
-        event.push_str(&retry_millis.to_string());
-        event.push('\n');
-    }
 
     if let Some(event_type) = event_type {
         event.push_str("event: ");
@@ -902,11 +891,11 @@ fn validate_protocol_header(
         // so that the very first POST `initialize` doesn't have to negotiate
         // a version it hasn't seen yet. Some deployed clients, including
         // Codex/rmcp 0.130, omit the header on `notifications/initialized`
-        // even after a successful negotiation; accept the negotiated session
-        // version rather than closing the transport during startup.
+        // even after a successful negotiation; tolerate the absence and keep
+        // using the version already associated with this session.
         if expected.is_some() {
             tracing::debug!(
-                "Post-init request missing Mcp-Protocol-Version header; using negotiated session version"
+                "Post-init request missing Mcp-Protocol-Version header; continuing with session version"
             );
         }
         return Ok(());
@@ -1203,7 +1192,6 @@ async fn handle_sse<H: McpHandler>(
                         &event_id,
                         Some("message"),
                         &message,
-                        None,
                     ));
                 }
                 Ok(None) => {
@@ -1319,6 +1307,26 @@ mod tests {
         ) -> McpResult<PromptResult> {
             Err(McpError::prompt_not_found(name))
         }
+    }
+
+    #[test]
+    fn sse_event_bytes_formats_multiline_data_and_strips_crlf() {
+        let event = sse_event_bytes("session-stream-1", Some("message"), "one\r\ntwo\nthree");
+        let text = std::str::from_utf8(event.as_ref()).expect("valid utf8");
+
+        assert_eq!(
+            text,
+            "id: session-stream-1\nevent: message\ndata: one\ndata: two\ndata: three\n\n"
+        );
+    }
+
+    #[test]
+    fn sse_event_bytes_formats_empty_data_without_retry() {
+        let event = sse_event_bytes("session-stream-1", None, "");
+        let text = std::str::from_utf8(event.as_ref()).expect("valid utf8");
+
+        assert_eq!(text, "id: session-stream-1\ndata:\n\n");
+        assert!(!text.contains("retry:"));
     }
 
     // MCP 2025-11-25 §Multiple Connections:

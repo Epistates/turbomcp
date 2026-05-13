@@ -15,10 +15,11 @@ clients, plus dogfood coverage for two-way Rust SDK compatibility.
 ### Added
 
 - **AI-friendly server visibility policy** — `VisibilityLayer` now supports
-  exact allow/deny rules for tools, resources, resource templates, and prompts,
-  plus a strict read-only tool profile. Consumers can load a `VisibilityConfig`
-  from application config to reduce `tools/list` context load and block hidden
-  calls, including unlisted dynamic calls, as not found.
+  exact allowed/disabled/hidden rules for tools, resources, resource templates,
+  and prompts, plus a strict read-only tool profile. Consumers can load a
+  `VisibilityConfig` from application config to reduce `tools/list` context
+  load, keep niche tools callable but unlisted, and block disabled calls,
+  including unlisted dynamic calls, as not found.
 - **TurboMCP <-> RMCP Streamable HTTP dogfood interop checks** — the dogfood
   benchmark suite now validates RMCP client to TurboMCP HTTP server and TurboMCP
   client to RMCP HTTP server flows, including initialization, tools, resources,
