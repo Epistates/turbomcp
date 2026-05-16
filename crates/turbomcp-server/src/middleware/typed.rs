@@ -13,7 +13,8 @@ use turbomcp_core::context::RequestContext;
 use turbomcp_core::error::McpResult;
 use turbomcp_core::handler::McpHandler;
 use turbomcp_types::{
-    Prompt, PromptResult, Resource, ResourceResult, ResourceTemplate, ServerInfo, Tool, ToolResult,
+    Prompt, PromptResult, Resource, ResourceResult, ResourceTemplate, ServerCapabilities,
+    ServerInfo, Tool, ToolResult,
 };
 
 /// Typed middleware trait with hooks for each MCP operation.
@@ -277,6 +278,7 @@ impl<'a> Next<'a> {
 /// Internal trait for type-erased handler access.
 trait DynHandler: Send + Sync {
     fn dyn_server_info(&self) -> ServerInfo;
+    fn dyn_server_capabilities(&self) -> ServerCapabilities;
     fn dyn_list_tools(&self) -> Vec<Tool>;
     fn dyn_list_resources(&self) -> Vec<Resource>;
     fn dyn_list_resource_templates(&self) -> Vec<ResourceTemplate>;
@@ -314,6 +316,10 @@ struct HandlerWrapper<H: McpHandler> {
 impl<H: McpHandler> DynHandler for HandlerWrapper<H> {
     fn dyn_server_info(&self) -> ServerInfo {
         self.handler.server_info()
+    }
+
+    fn dyn_server_capabilities(&self) -> ServerCapabilities {
+        self.handler.server_capabilities()
     }
 
     fn dyn_list_tools(&self) -> Vec<Tool> {
@@ -432,6 +438,10 @@ impl<H: McpHandler> MiddlewareStack<H> {
 impl<H: McpHandler> McpHandler for MiddlewareStack<H> {
     fn server_info(&self) -> ServerInfo {
         self.handler.dyn_server_info()
+    }
+
+    fn server_capabilities(&self) -> ServerCapabilities {
+        self.handler.dyn_server_capabilities()
     }
 
     fn list_tools(&self) -> Vec<Tool> {
@@ -713,6 +723,24 @@ mod tests {
         let info = stack.server_info();
         assert_eq!(info.name, "test");
         assert_eq!(info.version, "1.0.0");
+    }
+
+    #[test]
+    fn test_server_capabilities_passthrough() {
+        let hidden_handler = crate::VisibilityLayer::new(TestHandler)
+            .with_hidden_tools(["test_tool"])
+            .with_hidden_resources(["test://resource"])
+            .with_hidden_prompts(["test_prompt"]);
+        let stack = MiddlewareStack::new(hidden_handler);
+
+        assert!(stack.list_tools().is_empty());
+        assert!(stack.list_resources().is_empty());
+        assert!(stack.list_prompts().is_empty());
+
+        let capabilities = stack.server_capabilities();
+        assert!(capabilities.tools.is_some());
+        assert!(capabilities.resources.is_some());
+        assert!(capabilities.prompts.is_some());
     }
 
     #[test]

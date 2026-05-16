@@ -51,6 +51,19 @@ clients, plus dogfood coverage for two-way Rust SDK compatibility.
 - **POST SSE primer events no longer break the TurboMCP HTTP client** — empty or
   whitespace-only POST-SSE events are ignored instead of being parsed as
   JSON-RPC payloads.
+- **Hidden-only visibility profiles still advertise operation capabilities** —
+  hidden-but-callable tools, resources, and prompts no longer disappear from the
+  initialize capability surface just because they are omitted from list
+  responses, including when visibility layers are wrapped by middleware or
+  mounted into composite handlers.
+- **Visibility clone/build patterns no longer share tag filter mutations** —
+  cloning a `VisibilityLayer` before applying global tag filters now behaves
+  like exact-name rules: builder mutations on the clone do not mutate the
+  original layer's visibility profile.
+- **Registry-backed dispatch preserves first-listed duplicate metadata** —
+  malformed handlers that advertise duplicate component identifiers keep the
+  previous first-match authorization behavior instead of letting the registry's
+  map representation silently prefer the last duplicate.
 
 ## [3.1.4] - 2026-05-08
 

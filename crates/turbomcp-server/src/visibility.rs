@@ -88,39 +88,37 @@ enum RegistryLookup<T> {
 
 impl ComponentRegistryCache {
     fn replace_tools(&mut self, tools: Vec<Tool>) {
-        self.tools = Some(
-            tools
-                .into_iter()
-                .map(|tool| (tool.name.clone(), tool))
-                .collect(),
-        );
+        let mut registry = BTreeMap::new();
+        for tool in tools {
+            registry.entry(tool.name.clone()).or_insert(tool);
+        }
+        self.tools = Some(registry);
     }
 
     fn replace_resources(&mut self, resources: Vec<Resource>) {
-        self.resources_by_uri = Some(
-            resources
-                .into_iter()
-                .map(|resource| (resource.uri.clone(), resource))
-                .collect(),
-        );
+        let mut registry = BTreeMap::new();
+        for resource in resources {
+            registry.entry(resource.uri.clone()).or_insert(resource);
+        }
+        self.resources_by_uri = Some(registry);
     }
 
     fn replace_resource_templates(&mut self, templates: Vec<ResourceTemplate>) {
-        self.resource_templates_by_uri_template = Some(
-            templates
-                .into_iter()
-                .map(|template| (template.uri_template.clone(), template))
-                .collect(),
-        );
+        let mut registry = BTreeMap::new();
+        for template in templates {
+            registry
+                .entry(template.uri_template.clone())
+                .or_insert(template);
+        }
+        self.resource_templates_by_uri_template = Some(registry);
     }
 
     fn replace_prompts(&mut self, prompts: Vec<Prompt>) {
-        self.prompts = Some(
-            prompts
-                .into_iter()
-                .map(|prompt| (prompt.name.clone(), prompt))
-                .collect(),
-        );
+        let mut registry = BTreeMap::new();
+        for prompt in prompts {
+            registry.entry(prompt.name.clone()).or_insert(prompt);
+        }
+        self.prompts = Some(registry);
     }
 
     fn tool(&self, name: &str) -> RegistryLookup<Tool> {
@@ -566,7 +564,6 @@ impl Drop for VisibilitySessionGuard {
 /// **Warning**: Session overrides stored in this layer must be manually cleaned up
 /// via [`clear_session`](Self::clear_session) or by using a [`VisibilitySessionGuard`]
 /// to prevent unbounded memory growth.
-#[derive(Clone)]
 pub struct VisibilityLayer<H> {
     /// The wrapped handler
     inner: H,
@@ -590,6 +587,23 @@ pub struct VisibilityLayer<H> {
     /// or [`session_guard`](Self::session_guard) to prevent unbounded memory growth.
     session_enabled: SessionVisibilityMap,
     session_disabled: SessionVisibilityMap,
+}
+
+impl<H: Clone> Clone for VisibilityLayer<H> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            global_disabled: Arc::new(RwLock::new(self.global_disabled.read().clone())),
+            tool_rules: self.tool_rules.clone(),
+            resource_rules: self.resource_rules.clone(),
+            resource_template_rules: self.resource_template_rules.clone(),
+            prompt_rules: self.prompt_rules.clone(),
+            read_only_tools_required: self.read_only_tools_required,
+            component_registry: Arc::clone(&self.component_registry),
+            session_enabled: Arc::clone(&self.session_enabled),
+            session_disabled: Arc::clone(&self.session_disabled),
+        }
+    }
 }
 
 impl<H: std::fmt::Debug> std::fmt::Debug for VisibilityLayer<H> {
@@ -1130,6 +1144,10 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
         self.inner.server_info()
     }
 
+    fn server_capabilities(&self) -> turbomcp_types::ServerCapabilities {
+        self.inner.server_capabilities()
+    }
+
     fn list_tools(&self) -> Vec<Tool> {
         let tools = self.inner.list_tools();
         self.register_tools(tools.clone());
@@ -1563,6 +1581,71 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Debug)]
+    struct DuplicateToolMetadataHandler;
+
+    #[allow(clippy::manual_async_fn)]
+    impl McpHandler for DuplicateToolMetadataHandler {
+        fn server_info(&self) -> turbomcp_types::ServerInfo {
+            turbomcp_types::ServerInfo::new("duplicates", "1.0.0")
+        }
+
+        fn list_tools(&self) -> Vec<Tool> {
+            vec![
+                Tool {
+                    name: "duplicate_tool".to_string(),
+                    annotations: Some(ToolAnnotations::default().with_read_only(true)),
+                    ..Default::default()
+                },
+                Tool {
+                    name: "duplicate_tool".to_string(),
+                    annotations: Some(ToolAnnotations::default().with_destructive(true)),
+                    ..Default::default()
+                },
+            ]
+        }
+
+        fn list_resources(&self) -> Vec<Resource> {
+            Vec::new()
+        }
+
+        fn list_prompts(&self) -> Vec<Prompt> {
+            Vec::new()
+        }
+
+        fn call_tool<'a>(
+            &'a self,
+            name: &'a str,
+            _args: serde_json::Value,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ToolResult>>
+        + turbomcp_core::marker::MaybeSend
+        + 'a {
+            async move { Ok(ToolResult::text(format!("Called {}", name))) }
+        }
+
+        fn read_resource<'a>(
+            &'a self,
+            uri: &'a str,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ResourceResult>>
+        + turbomcp_core::marker::MaybeSend
+        + 'a {
+            async move { Err(McpError::resource_not_found(uri)) }
+        }
+
+        fn get_prompt<'a>(
+            &'a self,
+            name: &'a str,
+            _args: Option<serde_json::Value>,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<PromptResult>>
+        + turbomcp_core::marker::MaybeSend
+        + 'a {
+            async move { Err(McpError::prompt_not_found(name)) }
+        }
+    }
+
     fn tool_names<H: McpHandler>(layer: &VisibilityLayer<H>) -> Vec<String> {
         layer
             .list_tools()
@@ -1683,6 +1766,15 @@ mod tests {
     }
 
     #[test]
+    fn test_layer_clone_has_independent_tag_filters() {
+        let base = VisibilityLayer::new(MockHandler);
+        let narrowed = base.clone().disable_tags(["admin"]);
+
+        assert_eq!(base.list_tools().len(), 2);
+        assert_eq!(tool_names(&narrowed), vec!["public_tool"]);
+    }
+
+    #[test]
     fn test_with_disabled_tools_replaces_previous_denylist() {
         let layer = VisibilityLayer::new(MockHandler)
             .with_disabled_tools(["public_tool"])
@@ -1703,6 +1795,60 @@ mod tests {
             .await
             .expect("hidden but enabled tool should remain callable");
         assert_eq!(result.first_text(), Some("Called public_tool"));
+    }
+
+    #[tokio::test]
+    async fn test_hidden_resource_and_prompt_are_not_listed_but_remain_callable() {
+        let layer = VisibilityLayer::new(MockHandler)
+            .with_hidden_resources(["vault://public"])
+            .with_hidden_prompts(["public_prompt"]);
+        let ctx = RequestContext::default();
+
+        assert_eq!(layer.list_resources().len(), 1);
+        assert_eq!(layer.list_prompts().len(), 1);
+
+        let resource = layer
+            .read_resource("vault://public", &ctx)
+            .await
+            .expect("hidden but enabled resource should remain readable");
+        assert_eq!(resource.first_text(), Some("Read vault://public"));
+
+        let prompt = layer
+            .get_prompt("public_prompt", None, &ctx)
+            .await
+            .expect("hidden but enabled prompt should remain gettable");
+        assert_eq!(
+            prompt.messages[0].content.as_text(),
+            Some("Prompt public_prompt")
+        );
+    }
+
+    #[test]
+    fn test_hidden_only_profile_still_advertises_operation_capabilities() {
+        let layer = VisibilityLayer::new(MockHandler)
+            .with_hidden_tools(["public_tool", "admin_tool"])
+            .with_hidden_resources(["vault://public", "vault://admin"])
+            .with_hidden_resource_templates(["vault://notes/{id}"])
+            .with_hidden_prompts(["public_prompt", "admin_prompt"]);
+
+        assert!(layer.list_tools().is_empty());
+        assert!(layer.list_resources().is_empty());
+        assert!(layer.list_resource_templates().is_empty());
+        assert!(layer.list_prompts().is_empty());
+
+        let capabilities = layer.server_capabilities();
+        assert!(
+            capabilities.tools.is_some(),
+            "hidden-but-callable tools still require the tools capability"
+        );
+        assert!(
+            capabilities.resources.is_some(),
+            "hidden-but-readable resources still require the resources capability"
+        );
+        assert!(
+            capabilities.prompts.is_some(),
+            "hidden-but-gettable prompts still require the prompts capability"
+        );
     }
 
     #[tokio::test]
@@ -1892,6 +2038,19 @@ mod tests {
             .await
             .expect("refreshed read-only metadata should permit dispatch");
         assert_eq!(result.first_text(), Some("Called mutable_tool"));
+    }
+
+    #[tokio::test]
+    async fn test_registry_preserves_first_duplicate_tool_metadata() {
+        let layer = VisibilityLayer::new(DuplicateToolMetadataHandler).require_read_only_tools();
+        let ctx = RequestContext::default();
+
+        let result = layer
+            .call_tool("duplicate_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect("first listed read-only metadata should govern dispatch");
+
+        assert_eq!(result.first_text(), Some("Called duplicate_tool"));
     }
 
     #[tokio::test]

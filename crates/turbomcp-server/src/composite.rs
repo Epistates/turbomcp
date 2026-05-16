@@ -27,7 +27,8 @@ use turbomcp_core::context::RequestContext;
 use turbomcp_core::error::{McpError, McpResult};
 use turbomcp_core::handler::McpHandler;
 use turbomcp_types::{
-    Prompt, PromptResult, Resource, ResourceResult, ResourceTemplate, ServerInfo, Tool, ToolResult,
+    Prompt, PromptResult, Resource, ResourceResult, ResourceTemplate, ServerCapabilities,
+    ServerInfo, Tool, ToolResult,
 };
 
 /// A composite handler that mounts multiple handlers with prefixes.
@@ -124,6 +125,7 @@ impl<H: McpHandler> Clone for HandlerWrapper<H> {
 /// Dynamic dispatch trait for type-erased handlers.
 trait DynHandler: Send + Sync {
     fn dyn_clone(&self) -> Box<dyn DynHandler>;
+    fn dyn_server_capabilities(&self) -> ServerCapabilities;
     fn dyn_list_tools(&self) -> Vec<Tool>;
     fn dyn_list_resources(&self) -> Vec<Resource>;
     fn dyn_list_resource_templates(&self) -> Vec<ResourceTemplate>;
@@ -150,6 +152,10 @@ trait DynHandler: Send + Sync {
 impl<H: McpHandler> DynHandler for HandlerWrapper<H> {
     fn dyn_clone(&self) -> Box<dyn DynHandler> {
         Box::new(self.clone())
+    }
+
+    fn dyn_server_capabilities(&self) -> ServerCapabilities {
+        self.handler.server_capabilities()
     }
 
     fn dyn_list_tools(&self) -> Vec<Tool> {
@@ -405,6 +411,69 @@ impl CompositeHandler {
     }
 }
 
+fn merge_optional_bool(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left || right),
+        (Some(left), None) => Some(left),
+        (None, Some(right)) => Some(right),
+        (None, None) => None,
+    }
+}
+
+fn merge_server_capabilities(target: &mut ServerCapabilities, source: ServerCapabilities) {
+    if let Some(source_tools) = source.tools {
+        if let Some(target_tools) = target.tools.as_mut() {
+            target_tools.list_changed =
+                merge_optional_bool(target_tools.list_changed, source_tools.list_changed);
+        } else {
+            target.tools = Some(source_tools);
+        }
+    }
+
+    if let Some(source_resources) = source.resources {
+        if let Some(target_resources) = target.resources.as_mut() {
+            target_resources.subscribe =
+                merge_optional_bool(target_resources.subscribe, source_resources.subscribe);
+            target_resources.list_changed =
+                merge_optional_bool(target_resources.list_changed, source_resources.list_changed);
+        } else {
+            target.resources = Some(source_resources);
+        }
+    }
+
+    if let Some(source_prompts) = source.prompts {
+        if let Some(target_prompts) = target.prompts.as_mut() {
+            target_prompts.list_changed =
+                merge_optional_bool(target_prompts.list_changed, source_prompts.list_changed);
+        } else {
+            target.prompts = Some(source_prompts);
+        }
+    }
+
+    if target.logging.is_none() {
+        target.logging = source.logging;
+    }
+    if target.completions.is_none() {
+        target.completions = source.completions;
+    }
+    if target.tasks.is_none() {
+        target.tasks = source.tasks;
+    }
+
+    if let Some(source_extensions) = source.extensions {
+        target
+            .extensions
+            .get_or_insert_with(Default::default)
+            .extend(source_extensions);
+    }
+    if let Some(source_experimental) = source.experimental {
+        target
+            .experimental
+            .get_or_insert_with(Default::default)
+            .extend(source_experimental);
+    }
+}
+
 #[allow(clippy::manual_async_fn)]
 impl McpHandler for CompositeHandler {
     fn server_info(&self) -> ServerInfo {
@@ -413,6 +482,14 @@ impl McpHandler for CompositeHandler {
             info = info.with_description(desc);
         }
         info
+    }
+
+    fn server_capabilities(&self) -> ServerCapabilities {
+        let mut capabilities = ServerCapabilities::default();
+        for mounted in self.handlers.iter() {
+            merge_server_capabilities(&mut capabilities, mounted.handler.dyn_server_capabilities());
+        }
+        capabilities
     }
 
     fn list_tools(&self) -> Vec<Tool> {
@@ -725,6 +802,24 @@ mod tests {
         let prompt_names: Vec<&str> = prompts.iter().map(|p| p.name.as_str()).collect();
         assert!(prompt_names.contains(&"weather_forecast_prompt"));
         assert!(prompt_names.contains(&"news_summary_prompt"));
+    }
+
+    #[test]
+    fn test_hidden_mounted_handler_still_contributes_capabilities() {
+        let hidden_weather = crate::VisibilityLayer::new(WeatherHandler)
+            .with_hidden_tools(["get_forecast"])
+            .with_hidden_resources(["api/current"])
+            .with_hidden_prompts(["forecast_prompt"]);
+        let server = CompositeHandler::new("main", "1.0.0").mount(hidden_weather, "weather");
+
+        assert!(server.list_tools().is_empty());
+        assert!(server.list_resources().is_empty());
+        assert!(server.list_prompts().is_empty());
+
+        let capabilities = server.server_capabilities();
+        assert!(capabilities.tools.is_some());
+        assert!(capabilities.resources.is_some());
+        assert!(capabilities.prompts.is_some());
     }
 
     #[tokio::test]
