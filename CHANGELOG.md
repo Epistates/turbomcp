@@ -20,6 +20,10 @@ clients, plus dogfood coverage for two-way Rust SDK compatibility.
   `VisibilityConfig` from application config to reduce `tools/list` context
   load, keep niche tools callable but unlisted, and block disabled calls,
   including unlisted dynamic calls, as not found.
+- **Registry-backed visibility dispatch** — visibility authorization now uses a
+  cached component registry populated by list responses or lazily on first
+  direct use, with explicit refresh/clear hooks for dynamic servers whose
+  advertised components change at runtime.
 - **TurboMCP <-> RMCP Streamable HTTP dogfood interop checks** — the dogfood
   benchmark suite now validates RMCP client to TurboMCP HTTP server and TurboMCP
   client to RMCP HTTP server flows, including initialization, tools, resources,

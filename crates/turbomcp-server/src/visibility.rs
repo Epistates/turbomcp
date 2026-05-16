@@ -53,7 +53,7 @@
 //! } // Guard dropped here, session state automatically cleaned up
 //! ```
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -68,6 +68,102 @@ use turbomcp_types::{
 
 /// Type alias for session visibility maps to reduce complexity.
 type SessionVisibilityMap = Arc<dashmap::DashMap<String, HashSet<String>>>;
+
+/// Type alias for the cached component registry used by dispatch authorization.
+type SharedComponentRegistry = Arc<RwLock<ComponentRegistryCache>>;
+
+#[derive(Debug, Clone, Default)]
+struct ComponentRegistryCache {
+    tools: Option<BTreeMap<String, Tool>>,
+    resources_by_uri: Option<BTreeMap<String, Resource>>,
+    resource_templates_by_uri_template: Option<BTreeMap<String, ResourceTemplate>>,
+    prompts: Option<BTreeMap<String, Prompt>>,
+}
+
+enum RegistryLookup<T> {
+    Uninitialized,
+    Found(T),
+    Missing,
+}
+
+impl ComponentRegistryCache {
+    fn replace_tools(&mut self, tools: Vec<Tool>) {
+        self.tools = Some(
+            tools
+                .into_iter()
+                .map(|tool| (tool.name.clone(), tool))
+                .collect(),
+        );
+    }
+
+    fn replace_resources(&mut self, resources: Vec<Resource>) {
+        self.resources_by_uri = Some(
+            resources
+                .into_iter()
+                .map(|resource| (resource.uri.clone(), resource))
+                .collect(),
+        );
+    }
+
+    fn replace_resource_templates(&mut self, templates: Vec<ResourceTemplate>) {
+        self.resource_templates_by_uri_template = Some(
+            templates
+                .into_iter()
+                .map(|template| (template.uri_template.clone(), template))
+                .collect(),
+        );
+    }
+
+    fn replace_prompts(&mut self, prompts: Vec<Prompt>) {
+        self.prompts = Some(
+            prompts
+                .into_iter()
+                .map(|prompt| (prompt.name.clone(), prompt))
+                .collect(),
+        );
+    }
+
+    fn tool(&self, name: &str) -> RegistryLookup<Tool> {
+        match &self.tools {
+            Some(tools) => tools
+                .get(name)
+                .cloned()
+                .map_or(RegistryLookup::Missing, RegistryLookup::Found),
+            None => RegistryLookup::Uninitialized,
+        }
+    }
+
+    fn resource_by_uri(&self, uri: &str) -> RegistryLookup<Resource> {
+        match &self.resources_by_uri {
+            Some(resources) => resources
+                .get(uri)
+                .cloned()
+                .map_or(RegistryLookup::Missing, RegistryLookup::Found),
+            None => RegistryLookup::Uninitialized,
+        }
+    }
+
+    fn prompt(&self, name: &str) -> RegistryLookup<Prompt> {
+        match &self.prompts {
+            Some(prompts) => prompts
+                .get(name)
+                .cloned()
+                .map_or(RegistryLookup::Missing, RegistryLookup::Found),
+            None => RegistryLookup::Uninitialized,
+        }
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    fn is_initialized(&self) -> bool {
+        self.tools.is_some()
+            || self.resources_by_uri.is_some()
+            || self.resource_templates_by_uri_template.is_some()
+            || self.prompts.is_some()
+    }
+}
 
 /// Exact-name visibility rules for one MCP component family.
 ///
@@ -486,6 +582,8 @@ pub struct VisibilityLayer<H> {
     prompt_rules: ComponentVisibilityRules,
     /// When true, only explicitly read-only tools are visible/callable
     read_only_tools_required: bool,
+    /// Registry snapshot used to authorize direct dispatch without re-listing
+    component_registry: SharedComponentRegistry,
     /// Session-specific visibility overrides (keyed by session_id)
     ///
     /// **Warning**: Entries must be manually cleaned up via [`clear_session`](Self::clear_session)
@@ -506,6 +604,10 @@ impl<H: std::fmt::Debug> std::fmt::Debug for VisibilityLayer<H> {
             .field("tool_deny_count", &self.tool_rules.deny.len())
             .field("tool_hide_count", &self.tool_rules.hide.len())
             .field("read_only_tools_required", &self.read_only_tools_required)
+            .field(
+                "component_registry_initialized",
+                &self.component_registry.read().is_initialized(),
+            )
             .field("session_enabled_count", &self.session_enabled.len())
             .field("session_disabled_count", &self.session_disabled.len())
             .finish()
@@ -523,6 +625,7 @@ impl<H: McpHandler> VisibilityLayer<H> {
             resource_template_rules: ComponentVisibilityRules::new(),
             prompt_rules: ComponentVisibilityRules::new(),
             read_only_tools_required: false,
+            component_registry: Arc::new(RwLock::new(ComponentRegistryCache::default())),
             session_enabled: Arc::new(dashmap::DashMap::new()),
             session_disabled: Arc::new(dashmap::DashMap::new()),
         }
@@ -573,6 +676,34 @@ impl<H: McpHandler> VisibilityLayer<H> {
             prompts: self.prompt_rules.clone(),
             require_read_only_tools: self.read_only_tools_required,
         }
+    }
+
+    /// Refresh the component registry used to authorize direct dispatch.
+    ///
+    /// `VisibilityLayer` updates this registry when clients request list
+    /// responses and lazily initializes the relevant component family on first
+    /// direct use. Call this method when the wrapped handler's advertised
+    /// tools, resources, templates, or prompts change outside those flows.
+    pub fn refresh_component_registry(&self) {
+        let tools = self.inner.list_tools();
+        let resources = self.inner.list_resources();
+        let resource_templates = self.inner.list_resource_templates();
+        let prompts = self.inner.list_prompts();
+
+        let mut registry = self.component_registry.write();
+        registry.replace_tools(tools);
+        registry.replace_resources(resources);
+        registry.replace_resource_templates(resource_templates);
+        registry.replace_prompts(prompts);
+    }
+
+    /// Clear the cached component registry.
+    ///
+    /// The next direct dispatch check rebuilds the needed component family from
+    /// the wrapped handler before applying visibility policy. This is useful
+    /// for dynamic handlers that add or remove components at runtime.
+    pub fn clear_component_registry(&self) {
+        self.component_registry.write().clear();
     }
 
     /// Enable only the named tools.
@@ -721,6 +852,69 @@ impl<H: McpHandler> VisibilityLayer<H> {
         self
     }
 
+    fn register_tools(&self, tools: Vec<Tool>) {
+        self.component_registry.write().replace_tools(tools);
+    }
+
+    fn register_resources(&self, resources: Vec<Resource>) {
+        self.component_registry.write().replace_resources(resources);
+    }
+
+    fn register_resource_templates(&self, templates: Vec<ResourceTemplate>) {
+        self.component_registry
+            .write()
+            .replace_resource_templates(templates);
+    }
+
+    fn register_prompts(&self, prompts: Vec<Prompt>) {
+        self.component_registry.write().replace_prompts(prompts);
+    }
+
+    fn registered_tool(&self, name: &str) -> Option<Tool> {
+        let lookup = { self.component_registry.read().tool(name) };
+        match lookup {
+            RegistryLookup::Found(tool) => return Some(tool),
+            RegistryLookup::Missing => return None,
+            RegistryLookup::Uninitialized => {}
+        }
+
+        let tools = self.inner.list_tools();
+        let tool = tools.iter().find(|tool| tool.name == name).cloned();
+        self.register_tools(tools);
+        tool
+    }
+
+    fn registered_resource(&self, uri: &str) -> Option<Resource> {
+        let lookup = { self.component_registry.read().resource_by_uri(uri) };
+        match lookup {
+            RegistryLookup::Found(resource) => return Some(resource),
+            RegistryLookup::Missing => return None,
+            RegistryLookup::Uninitialized => {}
+        }
+
+        let resources = self.inner.list_resources();
+        let resource = resources
+            .iter()
+            .find(|resource| resource.uri == uri)
+            .cloned();
+        self.register_resources(resources);
+        resource
+    }
+
+    fn registered_prompt(&self, name: &str) -> Option<Prompt> {
+        let lookup = { self.component_registry.read().prompt(name) };
+        match lookup {
+            RegistryLookup::Found(prompt) => return Some(prompt),
+            RegistryLookup::Missing => return None,
+            RegistryLookup::Uninitialized => {}
+        }
+
+        let prompts = self.inner.list_prompts();
+        let prompt = prompts.iter().find(|prompt| prompt.name == name).cloned();
+        self.register_prompts(prompts);
+        prompt
+    }
+
     /// Check if a component is visible given its metadata and session.
     fn is_visible(&self, meta: &ComponentMeta, session_id: Option<&str>) -> bool {
         // Check global disabled filters
@@ -768,8 +962,8 @@ impl<H: McpHandler> VisibilityLayer<H> {
         self.is_tool_enabled(tool, session_id) && self.tool_rules.is_listed(&tool.name)
     }
 
-    /// Check if an unlisted tool may be called.
-    fn is_unlisted_tool_callable(&self, name: &str) -> bool {
+    /// Check if an unregistered dynamic tool may be called.
+    fn is_unregistered_tool_callable(&self, name: &str) -> bool {
         self.tool_rules.is_enabled(name) && !self.read_only_tools_required
     }
 
@@ -794,8 +988,8 @@ impl<H: McpHandler> VisibilityLayer<H> {
                 .is_listed_any([resource.name.as_str(), resource.uri.as_str()])
     }
 
-    /// Check exact-name visibility for a resource read when no listed metadata is available.
-    fn is_unlisted_resource_readable(&self, uri: &str) -> bool {
+    /// Check exact-name visibility for a resource read when no registered metadata is available.
+    fn is_unregistered_resource_readable(&self, uri: &str) -> bool {
         self.resource_rules.is_enabled(uri)
     }
 
@@ -831,8 +1025,8 @@ impl<H: McpHandler> VisibilityLayer<H> {
         self.is_prompt_enabled(prompt, session_id) && self.prompt_rules.is_listed(&prompt.name)
     }
 
-    /// Check exact-name visibility for a prompt get when no listed metadata is available.
-    fn is_unlisted_prompt_gettable(&self, name: &str) -> bool {
+    /// Check exact-name visibility for a prompt get when no registered metadata is available.
+    fn is_unregistered_prompt_gettable(&self, name: &str) -> bool {
         self.prompt_rules.is_enabled(name)
     }
 
@@ -920,6 +1114,7 @@ impl<H: McpHandler> VisibilityLayer<H> {
 
     /// Get a mutable reference to the inner handler.
     pub fn inner_mut(&mut self) -> &mut H {
+        self.clear_component_registry();
         &mut self.inner
     }
 
@@ -936,32 +1131,40 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
     }
 
     fn list_tools(&self) -> Vec<Tool> {
-        self.inner
-            .list_tools()
+        let tools = self.inner.list_tools();
+        self.register_tools(tools.clone());
+
+        tools
             .into_iter()
             .filter(|tool| self.is_tool_listed(tool, None))
             .collect()
     }
 
     fn list_resources(&self) -> Vec<Resource> {
-        self.inner
-            .list_resources()
+        let resources = self.inner.list_resources();
+        self.register_resources(resources.clone());
+
+        resources
             .into_iter()
             .filter(|resource| self.is_resource_listed(resource, None))
             .collect()
     }
 
     fn list_resource_templates(&self) -> Vec<ResourceTemplate> {
-        self.inner
-            .list_resource_templates()
+        let templates = self.inner.list_resource_templates();
+        self.register_resource_templates(templates.clone());
+
+        templates
             .into_iter()
             .filter(|template| self.is_resource_template_listed(template, None))
             .collect()
     }
 
     fn list_prompts(&self) -> Vec<Prompt> {
-        self.inner
-            .list_prompts()
+        let prompts = self.inner.list_prompts();
+        self.register_prompts(prompts.clone());
+
+        prompts
             .into_iter()
             .filter(|prompt| self.is_prompt_listed(prompt, None))
             .collect()
@@ -975,16 +1178,13 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
     ) -> impl std::future::Future<Output = McpResult<ToolResult>> + turbomcp_core::marker::MaybeSend + 'a
     {
         async move {
-            // Check listed tool metadata when available; unlisted dynamic tools
-            // can still be governed by exact-name rules.
-            let tools = self.inner.list_tools();
-            let tool = tools.iter().find(|t| t.name == name);
-
-            if let Some(tool) = tool {
-                if !self.is_tool_enabled(tool, ctx.session_id()) {
+            // Check registered tool metadata when available; unregistered
+            // dynamic tools can still be governed by exact-name rules.
+            if let Some(tool) = self.registered_tool(name) {
+                if !self.is_tool_enabled(&tool, ctx.session_id()) {
                     return Err(McpError::tool_not_found(name));
                 }
-            } else if !self.is_unlisted_tool_callable(name) {
+            } else if !self.is_unregistered_tool_callable(name) {
                 return Err(McpError::tool_not_found(name));
             }
 
@@ -1000,16 +1200,13 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
     + turbomcp_core::marker::MaybeSend
     + 'a {
         async move {
-            // Check listed resource metadata when available; unlisted dynamic
-            // resources can still be governed by exact-name rules.
-            let resources = self.inner.list_resources();
-            let resource = resources.iter().find(|r| r.uri == uri);
-
-            if let Some(resource) = resource {
-                if !self.is_resource_enabled(resource, ctx.session_id()) {
+            // Check registered resource metadata when available; unregistered
+            // dynamic resources can still be governed by exact-name rules.
+            if let Some(resource) = self.registered_resource(uri) {
+                if !self.is_resource_enabled(&resource, ctx.session_id()) {
                     return Err(McpError::resource_not_found(uri));
                 }
-            } else if !self.is_unlisted_resource_readable(uri) {
+            } else if !self.is_unregistered_resource_readable(uri) {
                 return Err(McpError::resource_not_found(uri));
             }
 
@@ -1025,16 +1222,13 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
     ) -> impl std::future::Future<Output = McpResult<PromptResult>> + turbomcp_core::marker::MaybeSend + 'a
     {
         async move {
-            // Check listed prompt metadata when available; unlisted dynamic
-            // prompts can still be governed by exact-name rules.
-            let prompts = self.inner.list_prompts();
-            let prompt = prompts.iter().find(|p| p.name == name);
-
-            if let Some(prompt) = prompt {
-                if !self.is_prompt_enabled(prompt, ctx.session_id()) {
+            // Check registered prompt metadata when available; unregistered
+            // dynamic prompts can still be governed by exact-name rules.
+            if let Some(prompt) = self.registered_prompt(name) {
+                if !self.is_prompt_enabled(&prompt, ctx.session_id()) {
                     return Err(McpError::prompt_not_found(name));
                 }
-            } else if !self.is_unlisted_prompt_gettable(name) {
+            } else if !self.is_unregistered_prompt_gettable(name) {
                 return Err(McpError::prompt_not_found(name));
             }
 
@@ -1046,6 +1240,7 @@ impl<H: McpHandler> McpHandler for VisibilityLayer<H> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use turbomcp_types::ToolAnnotations;
 
     #[derive(Clone, Debug)]
@@ -1232,7 +1427,143 @@ mod tests {
         }
     }
 
-    fn tool_names(layer: &VisibilityLayer<MockHandler>) -> Vec<String> {
+    #[derive(Debug, Default)]
+    struct CountingState {
+        tool_lists: AtomicUsize,
+        resource_lists: AtomicUsize,
+        prompt_lists: AtomicUsize,
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct CountingHandler {
+        state: Arc<CountingState>,
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    impl McpHandler for CountingHandler {
+        fn server_info(&self) -> turbomcp_types::ServerInfo {
+            turbomcp_types::ServerInfo::new("counting", "1.0.0")
+        }
+
+        fn list_tools(&self) -> Vec<Tool> {
+            self.state.tool_lists.fetch_add(1, Ordering::SeqCst);
+            vec![Tool {
+                name: "counted_tool".to_string(),
+                annotations: Some(ToolAnnotations::default().with_read_only(true)),
+                ..Default::default()
+            }]
+        }
+
+        fn list_resources(&self) -> Vec<Resource> {
+            self.state.resource_lists.fetch_add(1, Ordering::SeqCst);
+            vec![Resource::new("counted://resource", "counted_resource")]
+        }
+
+        fn list_prompts(&self) -> Vec<Prompt> {
+            self.state.prompt_lists.fetch_add(1, Ordering::SeqCst);
+            vec![Prompt::new("counted_prompt", "Counted prompt")]
+        }
+
+        fn call_tool<'a>(
+            &'a self,
+            name: &'a str,
+            _args: serde_json::Value,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ToolResult>>
+        + turbomcp_core::marker::MaybeSend
+        + 'a {
+            async move { Ok(ToolResult::text(format!("Called {}", name))) }
+        }
+
+        fn read_resource<'a>(
+            &'a self,
+            uri: &'a str,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ResourceResult>>
+        + turbomcp_core::marker::MaybeSend
+        + 'a {
+            async move { Ok(ResourceResult::text(uri, format!("Read {}", uri))) }
+        }
+
+        fn get_prompt<'a>(
+            &'a self,
+            name: &'a str,
+            _args: Option<serde_json::Value>,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<PromptResult>>
+        + turbomcp_core::marker::MaybeSend
+        + 'a {
+            async move { Ok(PromptResult::user(format!("Prompt {}", name))) }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct MutableToolHandler {
+        read_only: Arc<AtomicBool>,
+    }
+
+    #[allow(clippy::manual_async_fn)]
+    impl McpHandler for MutableToolHandler {
+        fn server_info(&self) -> turbomcp_types::ServerInfo {
+            turbomcp_types::ServerInfo::new("mutable", "1.0.0")
+        }
+
+        fn list_tools(&self) -> Vec<Tool> {
+            let annotation = if self.read_only.load(Ordering::SeqCst) {
+                ToolAnnotations::default().with_read_only(true)
+            } else {
+                ToolAnnotations::default().with_destructive(true)
+            };
+
+            vec![Tool {
+                name: "mutable_tool".to_string(),
+                annotations: Some(annotation),
+                ..Default::default()
+            }]
+        }
+
+        fn list_resources(&self) -> Vec<Resource> {
+            Vec::new()
+        }
+
+        fn list_prompts(&self) -> Vec<Prompt> {
+            Vec::new()
+        }
+
+        fn call_tool<'a>(
+            &'a self,
+            name: &'a str,
+            _args: serde_json::Value,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ToolResult>>
+        + turbomcp_core::marker::MaybeSend
+        + 'a {
+            async move { Ok(ToolResult::text(format!("Called {}", name))) }
+        }
+
+        fn read_resource<'a>(
+            &'a self,
+            uri: &'a str,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<ResourceResult>>
+        + turbomcp_core::marker::MaybeSend
+        + 'a {
+            async move { Err(McpError::resource_not_found(uri)) }
+        }
+
+        fn get_prompt<'a>(
+            &'a self,
+            name: &'a str,
+            _args: Option<serde_json::Value>,
+            _ctx: &'a RequestContext,
+        ) -> impl std::future::Future<Output = McpResult<PromptResult>>
+        + turbomcp_core::marker::MaybeSend
+        + 'a {
+            async move { Err(McpError::prompt_not_found(name)) }
+        }
+    }
+
+    fn tool_names<H: McpHandler>(layer: &VisibilityLayer<H>) -> Vec<String> {
         layer
             .list_tools()
             .into_iter()
@@ -1466,6 +1797,101 @@ mod tests {
             .await
             .expect_err("session-disabled tagged tool should be rejected");
         assert_eq!(err.kind, turbomcp_core::error::ErrorKind::ToolNotFound);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_uses_registered_tool_without_relisting() {
+        let handler = CountingHandler::default();
+        let state = Arc::clone(&handler.state);
+        let layer = VisibilityLayer::new(handler);
+        let ctx = RequestContext::default();
+
+        assert_eq!(tool_names(&layer), vec!["counted_tool"]);
+        assert_eq!(state.tool_lists.load(Ordering::SeqCst), 1);
+
+        layer
+            .call_tool("counted_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect("registered tool should dispatch");
+        layer
+            .call_tool("counted_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect("registered tool should dispatch again");
+
+        assert_eq!(
+            state.tool_lists.load(Ordering::SeqCst),
+            1,
+            "dispatch should use the registry populated by tools/list"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_lazily_builds_registry_once_per_component_family() {
+        let handler = CountingHandler::default();
+        let state = Arc::clone(&handler.state);
+        let layer = VisibilityLayer::new(handler);
+        let ctx = RequestContext::default();
+
+        layer
+            .call_tool("counted_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect("registered tool should dispatch");
+        layer
+            .call_tool("counted_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect("registered tool should dispatch again");
+        assert_eq!(state.tool_lists.load(Ordering::SeqCst), 1);
+
+        layer
+            .read_resource("counted://resource", &ctx)
+            .await
+            .expect("registered resource should dispatch");
+        layer
+            .read_resource("counted://resource", &ctx)
+            .await
+            .expect("registered resource should dispatch again");
+        assert_eq!(state.resource_lists.load(Ordering::SeqCst), 1);
+
+        layer
+            .get_prompt("counted_prompt", None, &ctx)
+            .await
+            .expect("registered prompt should dispatch");
+        layer
+            .get_prompt("counted_prompt", None, &ctx)
+            .await
+            .expect("registered prompt should dispatch again");
+        assert_eq!(state.prompt_lists.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_refresh_component_registry_updates_dispatch_metadata() {
+        let read_only = Arc::new(AtomicBool::new(false));
+        let layer = VisibilityLayer::new(MutableToolHandler {
+            read_only: Arc::clone(&read_only),
+        })
+        .require_read_only_tools();
+        let ctx = RequestContext::default();
+
+        let err = layer
+            .call_tool("mutable_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect_err("initial destructive metadata should be rejected");
+        assert_eq!(err.kind, turbomcp_core::error::ErrorKind::ToolNotFound);
+
+        read_only.store(true, Ordering::SeqCst);
+        let err = layer
+            .call_tool("mutable_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect_err("cached destructive metadata should remain fail-closed");
+        assert_eq!(err.kind, turbomcp_core::error::ErrorKind::ToolNotFound);
+
+        layer.refresh_component_registry();
+
+        let result = layer
+            .call_tool("mutable_tool", serde_json::json!({}), &ctx)
+            .await
+            .expect("refreshed read-only metadata should permit dispatch");
+        assert_eq!(result.first_text(), Some("Called mutable_tool"));
     }
 
     #[tokio::test]

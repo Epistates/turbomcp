@@ -32,6 +32,11 @@ session-specific grants. For AI-facing deployments, prefer a small allowlist
 plus read-only annotations so `tools/list` stays focused and unsafe operations
 remain disabled.
 
+Visibility dispatch uses a component registry populated by list responses or
+lazily on first direct use. Dynamic servers that mutate their advertised
+components should call `refresh_component_registry()` or
+`clear_component_registry()` on the layer after those changes.
+
 ## Middleware
 
 `crates/turbomcp/examples/middleware.rs` demonstrates typed middleware:

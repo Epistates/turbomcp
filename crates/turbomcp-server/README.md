@@ -223,6 +223,12 @@ tools stay callable without consuming `tools/list` context, and
 `require_read_only_tools()` only exposes tools annotated with `readOnlyHint:
 true`.
 
+Direct call/read/get authorization is registry-backed. The registry is populated
+from list responses and lazily initialized on first direct use, so dispatch does
+not re-enumerate components on every request. Dynamic servers that add or remove
+advertised components at runtime can call `refresh_component_registry()` or
+`clear_component_registry()` on the layer.
+
 ## Middleware
 
 Middleware is typed around the MCP operation set. Implement `McpMiddleware`
