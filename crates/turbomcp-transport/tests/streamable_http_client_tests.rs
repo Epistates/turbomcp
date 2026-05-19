@@ -75,7 +75,7 @@ mod streamable_http_client_tests {
             .and(path("/mcp"))
             .and(header("Accept", "text/event-stream"))
             .respond_with(ResponseTemplate::new(405))
-            .expect(1)
+            .expect(0)
             .mount(&mock_server)
             .await;
 
@@ -97,6 +97,73 @@ mod streamable_http_client_tests {
         tokio::time::sleep(Duration::from_millis(25)).await;
 
         assert_eq!(transport.state().await, TransportState::Connected);
+
+        transport.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_sse_get_starts_after_session_id_is_established() {
+        let mock_server = MockServer::start().await;
+
+        let response_body = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": "1",
+            "result": {
+                "protocolVersion": "2025-11-25",
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                },
+                "capabilities": {}
+            }
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/mcp"))
+            .and(header("Content-Type", "application/json"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(&response_body)
+                    .insert_header("Content-Type", "application/json")
+                    .insert_header("Mcp-Session-Id", "test-session-123"),
+            )
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/mcp"))
+            .and(header("Accept", "text/event-stream"))
+            .and(header("Mcp-Session-Id", "test-session-123"))
+            .and(header("MCP-Protocol-Version", "2025-11-25"))
+            .respond_with(ResponseTemplate::new(405))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = StreamableHttpClientConfig {
+            base_url: mock_server.uri(),
+            endpoint_path: "/mcp".to_string(),
+            timeout: Duration::from_secs(5),
+            retry_policy: RetryPolicy::Fixed {
+                interval: Duration::from_secs(60),
+                max_attempts: Some(1),
+            },
+            protocol_version: "2025-11-25".to_string(),
+            ..Default::default()
+        };
+
+        let transport = StreamableHttpClientTransport::new(config).expect("test config builds");
+
+        transport.connect().await.unwrap();
+
+        let request = create_jsonrpc_request("1", "initialize");
+        transport.send(request).await.unwrap();
+
+        let response = transport.receive().await.unwrap();
+        assert!(response.is_some(), "Should receive initialize response");
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         transport.disconnect().await.unwrap();
     }
