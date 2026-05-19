@@ -34,6 +34,12 @@ clients, plus dogfood coverage for two-way Rust SDK compatibility.
 
 ### Changed
 
+- **Visibility config APIs now use explicit replacement semantics** —
+  `VisibilityConfig` and `VisibilityLayer` expose `with_allowed_*`,
+  `with_disabled_*`, and `with_hidden_*` builders for exact-name policy.
+  Disabled components are rejected on direct use, hidden components are omitted
+  from list responses but remain directly usable, and disabled rules win over
+  hidden or allowed rules.
 - **HTTP clients open SSE only after session establishment** — Streamable HTTP
   clients now defer the GET SSE connection until the server has issued an
   `Mcp-Session-Id`, matching RMCP server expectations for session-scoped
@@ -51,6 +57,10 @@ clients, plus dogfood coverage for two-way Rust SDK compatibility.
 - **POST SSE primer events no longer break the TurboMCP HTTP client** — empty or
   whitespace-only POST-SSE events are ignored instead of being parsed as
   JSON-RPC payloads.
+- **Post-initialize Streamable HTTP requests tolerate missing protocol-version
+  headers** — once a session has negotiated a protocol version, TurboMCP keeps
+  using that session version for later requests that omit
+  `MCP-Protocol-Version`, matching tolerant rmcp/Codex startup behavior.
 - **Hidden-only visibility profiles still advertise operation capabilities** —
   hidden-but-callable tools, resources, and prompts no longer disappear from the
   initialize capability surface just because they are omitted from list
