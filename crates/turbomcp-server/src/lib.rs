@@ -132,6 +132,7 @@ pub use router::{
 
 // Re-export McpHandler from core for unified architecture
 pub use turbomcp_core::handler::McpHandler;
+pub use turbomcp_core::marker::MaybeSend;
 
 /// Internal module for macro-generated code.
 #[doc(hidden)]
@@ -201,6 +202,7 @@ pub mod prelude {
         IntoResourceResult,
         IntoToolResult,
         // Core types
+        ListTasksResult,
         Message,
         Prompt,
         PromptArgument,
@@ -208,7 +210,9 @@ pub mod prelude {
         Resource,
         ResourceContents,
         ResourceResult,
+        ResourceTemplate,
         ServerInfo,
+        Task,
         Tool,
         ToolInputSchema,
         ToolResult,
