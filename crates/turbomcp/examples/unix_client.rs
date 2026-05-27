@@ -12,11 +12,16 @@
 //! cargo run --example unix_client --features "unix full-client"
 //! ```
 
+#[cfg(not(windows))] // Gate all imports to avoid unused clippy warnings on Windows
 use std::collections::HashMap;
+#[cfg(not(windows))]
 use std::path::PathBuf;
+#[cfg(not(windows))]
 use turbomcp_client::{Client, Result};
+#[cfg(not(windows))]
 use turbomcp_transport::unix::UnixTransport;
 
+#[cfg(not(windows))]
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -73,5 +78,11 @@ async fn main() -> Result<()> {
     }
 
     tracing::info!("✅ Demo complete");
+    Ok(())
+}
+
+#[cfg(windows)]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!("The UnixTransport client example is not supported on Windows.");
     Ok(())
 }

@@ -18,6 +18,10 @@ crates_dir := "crates"
 target_dir := "target"
 coverage_dir := "coverage"
 
+# Set shell for both unix and Windows environments
+set shell := ["sh", "-euc"]
+set windows-shell := ["sh", "-euc", "--"] # Requires Git to be installed with `sh` in PATH if on Windows
+
 # Version info (computed)
 version := `grep '^version' crates/turbomcp/Cargo.toml | head -1 | cut -d '"' -f 2`
 git_hash := `git rev-parse --short HEAD 2>/dev/null || echo "unknown"`
@@ -127,8 +131,6 @@ build-all-features:
 # Run comprehensive test suite (tests + clippy + fmt)
 [group: 'test']
 test:
-  #!/usr/bin/env bash
-  set -euo pipefail
   echo "Running comprehensive test suite..."
   echo "Step 1/5: Running unit and integration tests..."
   cargo test --workspace --lib --exclude turbomcp-transport
