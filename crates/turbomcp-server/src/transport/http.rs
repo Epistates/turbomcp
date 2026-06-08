@@ -1166,14 +1166,18 @@ async fn handle_sse<H: McpHandler>(
     // A future replay buffer can use the (stream_id, seq) tuple to resume from
     // an arbitrary Last-Event-ID.
     let stream_id = Uuid::new_v4().simple().to_string();
+    let primer_id = format!("{}-{}-0", session_id, stream_id);
     let session_id_for_events = session_id.clone();
     let stream_id_for_events = stream_id;
     let stream = async_stream::stream! {
-        // Flush the stream without dispatching an empty SSE data event. Older
-        // RMCP/Codex clients have treated `data:\n\n` as a malformed JSON-RPC
-        // payload during startup, while SSE comments are explicitly non-message
-        // traffic.
+        // Per MCP spec (2025-11-25): "The server SHOULD immediately send an SSE
+        // event consisting of an event ID and an empty data field in order to
+        // prime the client to reconnect." Send a comment first so clients that
+        // mistake `data:\n\n` for a JSON-RPC message are unaffected, then send
+        // the spec-required primer event so clients that await an event ID + data
+        // field before issuing their first POST are not left waiting.
         yield Ok::<_, std::convert::Infallible>(Bytes::from_static(b": connected\n\n"));
+        yield Ok::<_, std::convert::Infallible>(sse_event_bytes(&primer_id, None, ""));
 
         // Drain messages routed to this specific subscriber. Per spec we
         // only see messages that the server explicitly chose to send to
