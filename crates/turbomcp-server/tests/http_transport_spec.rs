@@ -285,6 +285,76 @@ async fn read_next_sse_json(response: reqwest::Response) -> serde_json::Value {
     }
 }
 
+// MCP 2025-11-25 §Resumability: SSE event IDs MUST be globally unique within a
+// session. The GET listening stream opens with a `: connected` comment (for
+// older RMCP/Codex clients) followed by a primer event carrying an event ID and
+// an empty data field, giving the client an immediate `Last-Event-ID` anchor.
+// The primer is the stream's seq-0 cursor; real messages must start at seq 1 so
+// they can never reuse the primer's ID on replay.
+#[tokio::test]
+async fn get_sse_stream_primes_client_with_unique_event_id() {
+    use tokio::io::AsyncBufReadExt;
+
+    let (base_url, _handle) = spawn_server().await;
+    let client = Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let session_id = initialize_session(&client, &base_url).await;
+
+    let sse_response = client
+        .get(format!("{}/mcp", base_url))
+        .header(header::ACCEPT, "text/event-stream")
+        .header("Mcp-Session-Id", &session_id)
+        .send()
+        .await
+        .expect("GET SSE stream");
+    assert_eq!(sse_response.status(), StatusCode::OK);
+
+    let mut reader = tokio::io::BufReader::new(tokio_util::io::StreamReader::new(
+        sse_response
+            .bytes_stream()
+            .map(|r| r.map_err(std::io::Error::other)),
+    ));
+
+    // The first two frames are deterministic: the `: connected` comment, then
+    // the primer event (`id:` + empty `data:`). Read raw lines so we can inspect
+    // the comment and the event ID, which `read_next_sse_json` would discard.
+    let mut saw_comment = false;
+    let mut primer_id: Option<String> = None;
+    let mut empty_data = false;
+    for _ in 0..6 {
+        let mut line = String::new();
+        let n = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line))
+            .await
+            .expect("timed out reading SSE line")
+            .expect("SSE read error");
+        assert_ne!(n, 0, "stream closed before the primer event");
+        let line = line.trim_end_matches(&['\r', '\n'][..]);
+        if line == ": connected" {
+            saw_comment = true;
+        } else if let Some(id) = line.strip_prefix("id: ") {
+            primer_id = Some(id.to_string());
+        } else if line == "data:" {
+            empty_data = true;
+        }
+        if saw_comment && primer_id.is_some() && empty_data {
+            break;
+        }
+    }
+
+    assert!(
+        saw_comment,
+        "primer event must be preceded by the `: connected` comment"
+    );
+    let primer_id = primer_id.expect("primer event must carry an `id:` field");
+    assert!(empty_data, "primer event must have an empty data field");
+    assert!(
+        primer_id.ends_with("-0"),
+        "primer must be the stream's seq-0 cursor so message IDs (seq 1+) never collide, got {primer_id}"
+    );
+}
+
 async fn run_sampling_round_trip(client_sampling_payload: serde_json::Value) -> serde_json::Value {
     let (base_url, handle) = spawn_sampling_server().await;
     let client = Client::builder()
@@ -787,8 +857,9 @@ async fn server_initiated_sse_messages_have_resumable_event_ids() {
 
     let event_id = responder.await.unwrap();
     assert!(
-        event_id.ends_with("-0"),
-        "first JSON-RPC message on a stream should use sequence 0, got: {event_id}"
+        event_id.ends_with("-1"),
+        "the stream's primer event holds sequence 0, so the first JSON-RPC \
+         message must use sequence 1 to keep event IDs unique, got: {event_id}"
     );
 
     handle.abort();
