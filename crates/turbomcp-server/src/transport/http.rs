@@ -1170,20 +1170,27 @@ async fn handle_sse<H: McpHandler>(
     let session_id_for_events = session_id.clone();
     let stream_id_for_events = stream_id;
     let stream = async_stream::stream! {
-        // Per MCP spec (2025-11-25): "The server SHOULD immediately send an SSE
-        // event consisting of an event ID and an empty data field in order to
-        // prime the client to reconnect." Send a comment first so clients that
-        // mistake `data:\n\n` for a JSON-RPC message are unaffected, then send
-        // the spec-required primer event so clients that await an event ID + data
-        // field before issuing their first POST are not left waiting.
+        // This is the GET listening stream. Resumption in MCP is always via GET
+        // + `Last-Event-ID`, so the spec's *required* primer event applies to
+        // POST-initiated SSE streams (§Sending Messages, item 6) — and this
+        // server answers POST with a single `application/json` object rather
+        // than a stream, so that requirement never engages here. We still emit a
+        // primer on the GET stream: §Resumability permits attaching event IDs,
+        // and doing so hands the client an immediate `Last-Event-ID` anchor to
+        // resume from. Send the `: connected` comment first so older RMCP/Codex
+        // clients that misparse `data:\n\n` as a JSON-RPC payload are
+        // unaffected, then the primer event (event ID + empty data field).
         yield Ok::<_, std::convert::Infallible>(Bytes::from_static(b": connected\n\n"));
         yield Ok::<_, std::convert::Infallible>(sse_event_bytes(&primer_id, None, ""));
 
         // Drain messages routed to this specific subscriber. Per spec we
         // only see messages that the server explicitly chose to send to
         // this stream; other concurrent streams on the same session have
-        // their own receivers.
-        let mut seq: u64 = 0;
+        // their own receivers. The primer above consumed seq 0, so real
+        // message IDs start at 1 — §Resumability requires event IDs to be
+        // globally unique within the session, and reusing `-0` here would
+        // make the primer and the first message indistinguishable on replay.
+        let mut seq: u64 = 1;
         loop {
             match tokio::time::timeout(Duration::from_secs(SSE_KEEP_ALIVE_SECS), rx.recv()).await {
                 Ok(Some(message)) => {
