@@ -28,7 +28,7 @@ The original design proposed a single `#[server]` macro that would work for both
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                        Application Layer                                  │
+│                        Application Layer                                 │
 │   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                   │
 │   │  Native MCP  │  │  Cloudflare  │  │   Browser    │                   │
 │   │   Server     │  │   Worker     │  │   Client     │                   │
@@ -36,34 +36,34 @@ The original design proposed a single `#[server]` macro that would work for both
 └──────────────────────────────────────────────────────────────────────────┘
          │                    │                    │
          ▼                    ▼                    ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│    turbomcp     │  │  turbomcp-wasm  │  │ turbomcp-wasm   │
-│   (std, tokio)  │  │   (server)      │  │   (browser)     │
-│                 │  │                 │  │                 │
-│ • #[server]     │  │ • McpServer     │  │ • BrowserClient │
-│ • run_stdio()   │  │ • WithAuth      │  │ • FetchTransport│
-│ • run_http()    │  │ • Worker integ  │  │                 │
-│ • run_tcp()     │  │                 │  │                 │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
+┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐
+│    turbomcp     │  │  turbomcp-wasm  │  │ turbomcp-wasm    │
+│   (std, tokio)  │  │   (server)      │  │   (browser)      │
+│                 │  │                 │  │                  │
+│ • #[server]     │  │ • McpServer     │  │ • BrowserClient  │
+│ • run_stdio()   │  │ • WithAuth      │  │ • FetchTransport │
+│ • run_http()    │  │ • Worker integ  │  │                  │
+│ • run_tcp()     │  │                 │  │                  │
+└─────────────────┘  └─────────────────┘  └──────────────────┘
          │                    │                    │
          └────────────────────┼────────────────────┘
                               ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                     Core Layer (turbomcp-core)                            │
-│   • McpHandler trait (unified, platform-adaptive Send bounds)             │
-│   • RequestContext (minimal, no_std compatible)                           │
-│   • MaybeSend/MaybeSync marker traits                                     │
-│   • Authentication traits (Authenticator, CredentialExtractor)            │
-│   no_std compatible with alloc                                            │
+│                     Core Layer (turbomcp-core)                           │
+│   • McpHandler trait (unified, platform-adaptive Send bounds)            │
+│   • RequestContext (minimal, no_std compatible)                          │
+│   • MaybeSend/MaybeSync marker traits                                    │
+│   • Authentication traits (Authenticator, CredentialExtractor)           │
+│   no_std compatible with alloc                                           │
 └──────────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                     Types Layer (turbomcp-types)                          │
-│   • ALL MCP type definitions (Tool, Resource, Prompt, ServerInfo)         │
-│   • Result types (ToolResult, ResourceResult, PromptResult)               │
-│   • Error types (McpError with JSON-RPC codes)                            │
-│   Single source of truth - no_std compatible                              │
+│                     Types Layer (turbomcp-types)                         │
+│   • ALL MCP type definitions (Tool, Resource, Prompt, ServerInfo)        │
+│   • Result types (ToolResult, ResourceResult, PromptResult)              │
+│   • Error types (McpError with JSON-RPC codes)                           │
+│   Single source of truth - no_std compatible                             │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
