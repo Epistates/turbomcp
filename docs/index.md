@@ -47,7 +47,7 @@ TurboMCP enables you to build MCP servers with:
   System design, context lifecycle, and design decisions
 
 - **[Deployment](deployment/docker.md)**
-  Deploy to production with Docker, Kubernetes, edge, and observability
+  Deploy to production with Docker, Kubernetes, edge platforms, and observability
 
 </div>
 

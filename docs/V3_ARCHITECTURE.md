@@ -15,68 +15,68 @@ TurboMCP v3 is a major architectural redesign focused on:
 ## Architecture Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                        Application Layer                              │
-│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │
-│   │   Your MCP   │  │    Demo     │  │   Examples   │               │
-│   │   Server     │  │   Server    │  │              │               │
-│   └──────────────┘  └──────────────┘  └──────────────┘               │
-└──────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                     Application Layer                             │
+│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐            │
+│   │   Your MCP   │  │     Demo     │  │   Examples   │            │
+│   │   Server     │  │    Server    │  │              │            │
+│   └──────────────┘  └──────────────┘  └──────────────┘            │
+└───────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                        SDK Layer (turbomcp)                           │
-│   • High-level API                                                    │
-│   • Re-exports everything users need                                  │
-│   • Transport runners (run_stdio, run_http)                          │
-└──────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                        SDK Layer (turbomcp)                       │
+│   • High-level API                                                │
+│   • Re-exports everything users need                              │
+│   • Transport runners (run_stdio, run_http)                       │
+└───────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                        Macro Layer (turbomcp-macros)                  │
-│   • #[server] - generates McpHandler implementation                  │
-│   • #[tool] - marks tool handlers, generates JSON schema              │
-│   • #[resource] - marks resource handlers                            │
-│   • #[prompt] - marks prompt handlers                                │
-└──────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                        Macro Layer (turbomcp-macros)              │
+│   • #[server] - generates McpHandler implementation               │
+│   • #[tool] - marks tool handlers, generates JSON schema          │
+│   • #[resource] - marks resource handlers                         │
+│   • #[prompt] - marks prompt handlers                             │
+└───────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                     Runtime Layer (turbomcp-server)                   │
-│   • JSON-RPC routing                                                 │
-│   • Transport implementations (STDIO, HTTP, WebSocket)               │
-│   • Server configuration                                             │
-│   • Connection management                                            │
-└──────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                     Runtime Layer (turbomcp-server)               │
+│   • JSON-RPC routing                                              │
+│   • Transport implementations (STDIO, HTTP, WebSocket)            │
+│   • Server configuration                                          │
+│   • Connection management                                         │
+└───────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                     Protocol Layer (turbomcp-protocol)                │
-│   • Advanced protocol features                                       │
-│   • Session management                                               │
-│   • Capability negotiation                                           │
-│   • Validation                                                       │
-└──────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                     Protocol Layer (turbomcp-protocol)            │
+│   • Advanced protocol features                                    │
+│   • Session management                                            │
+│   • Capability negotiation                                        │
+│   • Validation                                                    │
+└───────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                     Core Layer (turbomcp-core)                        │
-│   • McpHandler trait definition                                      │
-│   • RequestContext (transport-agnostic)                              │
-│   • IntoToolResult, IntoResourceResult traits                        │
-│   • no_std compatible                                                │
-└──────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                     Core Layer (turbomcp-core)                    │
+│   • McpHandler trait definition                                   │
+│   • RequestContext (transport-agnostic)                           │
+│   • IntoToolResult, IntoResourceResult traits                     │
+│   • no_std compatible                                             │
+└───────────────────────────────────────────────────────────────────┘
                               │
                               ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                     Types Layer (turbomcp-types)                      │
-│   • ALL MCP type definitions                                         │
-│   • Content types (TextContent, ImageContent, etc.)                  │
-│   • Definition types (Tool, Resource, Prompt, ServerInfo)            │
-│   • Result types (ToolResult, ResourceResult, PromptResult)          │
-│   • Error types (McpError)                                           │
-│   • Single source of truth                                           │
-└──────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                     Types Layer (turbomcp-types)                  │
+│   • ALL MCP type definitions                                      │
+│   • Content types (TextContent, ImageContent, etc.)               │
+│   • Definition types (Tool, Resource, Prompt, ServerInfo)         │
+│   • Result types (ToolResult, ResourceResult, PromptResult)       │
+│   • Error types (McpError)                                        │
+│   • Single source of truth                                        │
+└───────────────────────────────────────────────────────────────────┘
 ```
 
 ## Core Design Principles
