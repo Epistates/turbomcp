@@ -77,7 +77,10 @@ type PendingServerRequests = Arc<Mutex<HashMap<String, PendingServerResponse>>>;
 #[derive(Debug)]
 struct SessionData {
     /// Ordered list of active SSE subscribers (newest last).
-    subscribers: Vec<mpsc::UnboundedSender<String>>,
+    ///
+    /// Payloads are `Arc<str>` so routing/broadcast shares one allocation
+    /// instead of copying the full message per send.
+    subscribers: Vec<mpsc::UnboundedSender<Arc<str>>>,
     /// Negotiated protocol version (set after successful initialize).
     protocol_version: Option<ProtocolVersion>,
     /// Client capabilities captured from the successful initialize request.
@@ -154,7 +157,7 @@ impl SessionManager {
     pub async fn subscribe_session(
         &self,
         session_id: &str,
-    ) -> Option<mpsc::UnboundedReceiver<String>> {
+    ) -> Option<mpsc::UnboundedReceiver<Arc<str>>> {
         let mut sessions = self.sessions.write().await;
         let data = sessions.get_mut(session_id)?;
         let (tx, rx) = mpsc::unbounded_channel();
@@ -181,6 +184,9 @@ impl SessionManager {
         let Some(data) = sessions.get_mut(session_id) else {
             return false;
         };
+        // One shared allocation for the payload; retries clone the Arc, not
+        // the message bytes.
+        let message: Arc<str> = Arc::from(message);
         // Drain dead senders from the newest end forward until we find a
         // live one that accepts the message. This gives new SSE connections
         // priority over stale ones without closing streams that are idle.
@@ -189,7 +195,7 @@ impl SessionManager {
                 data.subscribers.pop();
                 continue;
             }
-            if tx.send(message.to_string()).is_ok() {
+            if tx.send(Arc::clone(&message)).is_ok() {
                 return true;
             }
             // Send only fails here if the receiver was dropped between the
@@ -209,6 +215,8 @@ impl SessionManager {
     #[doc(hidden)]
     pub async fn broadcast(&self, message: &str) {
         let mut sessions = self.sessions.write().await;
+        // One shared allocation for all sessions instead of one copy each.
+        let message: Arc<str> = Arc::from(message);
         for (session_id, data) in sessions.iter_mut() {
             let mut delivered = false;
             while let Some(tx) = data.subscribers.last() {
@@ -216,7 +224,7 @@ impl SessionManager {
                     data.subscribers.pop();
                     continue;
                 }
-                if tx.send(message.to_string()).is_ok() {
+                if tx.send(Arc::clone(&message)).is_ok() {
                     delivered = true;
                     break;
                 }
@@ -865,7 +873,17 @@ fn empty_response(status: StatusCode) -> Response {
 /// Public for `benches/sse_throughput.rs`; treat as crate-internal.
 #[doc(hidden)]
 pub fn sse_event_bytes(id: &str, event_type: Option<&str>, data: &str) -> Bytes {
-    let mut event = String::new();
+    // Size the buffer exactly so the per-message hot path performs a single
+    // allocation instead of amplification-by-doubling as the frame grows:
+    // "id: {id}\n" + optional "event: {event_type}\n" + one "data: {line}\n"
+    // per line + the trailing blank line. CR stripping can only shrink data.
+    let data_lines = data.bytes().filter(|&b| b == b'\n').count() + 1;
+    let capacity = 5 + id.len()
+        + event_type.map_or(0, |t| t.len() + 8)
+        + data.len()
+        + 7 * data_lines
+        + 1;
+    let mut event = String::with_capacity(capacity);
     event.push_str("id: ");
     event.push_str(id);
     event.push('\n');
@@ -1377,8 +1395,8 @@ mod tests {
         let first = tokio::time::timeout(std::time::Duration::from_millis(100), rx1.recv()).await;
         let second = tokio::time::timeout(std::time::Duration::from_millis(100), rx2.recv()).await;
 
-        let first_got = matches!(first, Ok(Some(ref s)) if s == "hello");
-        let second_got = matches!(second, Ok(Some(ref s)) if s == "hello");
+        let first_got = matches!(first, Ok(Some(ref s)) if &**s == "hello");
+        let second_got = matches!(second, Ok(Some(ref s)) if &**s == "hello");
 
         assert!(
             first_got ^ second_got,

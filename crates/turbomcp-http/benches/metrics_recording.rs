@@ -39,7 +39,7 @@ fn bench_metrics_recording(c: &mut Criterion) {
                             let transport = Arc::clone(&transport);
                             tokio::spawn(async move {
                                 for _ in 0..CALLS_PER_TASK {
-                                    transport.record_message_received(black_box(256)).await;
+                                    transport.record_message_received(black_box(256));
                                 }
                             })
                         })
