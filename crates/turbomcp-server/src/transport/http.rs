@@ -873,16 +873,14 @@ fn empty_response(status: StatusCode) -> Response {
 /// Public for `benches/sse_throughput.rs`; treat as crate-internal.
 #[doc(hidden)]
 pub fn sse_event_bytes(id: &str, event_type: Option<&str>, data: &str) -> Bytes {
-    // Size the buffer exactly so the per-message hot path performs a single
-    // allocation instead of amplification-by-doubling as the frame grows:
-    // "id: {id}\n" + optional "event: {event_type}\n" + one "data: {line}\n"
-    // per line + the trailing blank line. CR stripping can only shrink data.
-    let data_lines = data.bytes().filter(|&b| b == b'\n').count() + 1;
-    let capacity = 5 + id.len()
-        + event_type.map_or(0, |t| t.len() + 8)
-        + data.len()
-        + 7 * data_lines
-        + 1;
+    // Pre-size the buffer so the per-message hot path performs a single
+    // allocation instead of amplification-by-doubling as the frame grows.
+    // Sized for the dominant single-line (JSON-RPC) case: "id: {id}\n" +
+    // optional "event: {event_type}\n" + "data: {data}\n" + trailing "\n".
+    // Multi-line data needs +6 bytes per extra line and may regrow; counting
+    // lines up front to size exactly costs a full scan of `data`, which
+    // benchmarked slower than the occasional regrowth it avoids.
+    let capacity = 5 + id.len() + event_type.map_or(0, |t| t.len() + 8) + data.len() + 8;
     let mut event = String::with_capacity(capacity);
     event.push_str("id: ");
     event.push_str(id);
