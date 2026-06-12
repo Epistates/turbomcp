@@ -55,6 +55,11 @@ criterion = { workspace = true, features = ["async_tokio"] }
 proptest = "1.11"
 reqwest = { workspace = true }
 
+[[bench]]
+name = "sse_throughput"
+harness = false
+required-features = ["http"]
+
 [features]
 default = ["stdio"]
 

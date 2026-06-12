@@ -512,6 +512,16 @@ impl StdioTransport {
         Ok(())
     }
 
+    /// Parse one newline-delimited JSON line into a [`TransportMessage`],
+    /// taking ownership of the line as the reader task does.
+    ///
+    /// Exposed for `benches/line_parse.rs`; not part of the supported
+    /// public API.
+    #[doc(hidden)]
+    pub fn bench_parse_message(line: String) -> TransportResult<TransportMessage> {
+        Self::parse_message(&line)
+    }
+
     fn parse_message(line: &str) -> TransportResult<TransportMessage> {
         let line = line.trim();
         if line.is_empty() {

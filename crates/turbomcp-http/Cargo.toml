@@ -42,6 +42,11 @@ fastrand = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
+criterion = { workspace = true, features = ["async_tokio"] }
+
+[[bench]]
+name = "metrics_recording"
+harness = false
 
 [features]
 default = []

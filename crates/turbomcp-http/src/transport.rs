@@ -368,6 +368,28 @@ impl StreamableHttpClientTransport {
         })
     }
 
+    /// Record one sent message in the transport metrics.
+    ///
+    /// Exposed for `benches/metrics_recording.rs`; not part of the supported
+    /// public API.
+    #[doc(hidden)]
+    pub async fn record_message_sent(&self, payload_len: usize) {
+        let mut metrics = self.metrics.write().await;
+        metrics.messages_sent += 1;
+        metrics.bytes_sent += payload_len as u64;
+    }
+
+    /// Record one received message in the transport metrics.
+    ///
+    /// Exposed for `benches/metrics_recording.rs`; not part of the supported
+    /// public API.
+    #[doc(hidden)]
+    pub async fn record_message_received(&self, payload_len: usize) {
+        let mut metrics = self.metrics.write().await;
+        metrics.messages_received += 1;
+        metrics.bytes_received += payload_len as u64;
+    }
+
     /// Get full endpoint URL
     fn get_endpoint_url(&self) -> String {
         format!("{}{}", self.config.base_url, self.config.endpoint_path)
@@ -848,9 +870,7 @@ impl StreamableHttpClientTransport {
                 TransportError::ConnectionLost("SSE channel disconnected".to_string())
             })?,
         };
-        let mut metrics = self.metrics.write().await;
-        metrics.messages_received += 1;
-        metrics.bytes_received += message.payload.len() as u64;
+        self.record_message_received(message.payload.len()).await;
         Ok(message)
     }
 }
@@ -905,12 +925,7 @@ impl Transport for StreamableHttpClientTransport {
             // MCP 2025-11-25: HTTP 202 Accepted means notification/response was accepted (no body)
             if response.status() == reqwest::StatusCode::ACCEPTED {
                 debug!("Received HTTP 202 Accepted (no response body expected)");
-                // Update metrics
-                {
-                    let mut metrics = self.metrics.write().await;
-                    metrics.messages_sent += 1;
-                    metrics.bytes_sent += message.payload.len() as u64;
-                }
+                self.record_message_sent(message.payload.len()).await;
                 return Ok(());
             }
 
@@ -1007,12 +1022,7 @@ impl Transport for StreamableHttpClientTransport {
                 debug!("POST SSE stream processing completed");
             }
 
-            // Update metrics
-            {
-                let mut metrics = self.metrics.write().await;
-                metrics.messages_sent += 1;
-                metrics.bytes_sent += message.payload.len() as u64;
-            }
+            self.record_message_sent(message.payload.len()).await;
 
             debug!("Message sent successfully");
             Ok(())
@@ -1036,12 +1046,7 @@ impl Transport for StreamableHttpClientTransport {
                 match response_receiver.try_recv() {
                     Ok(message) => {
                         debug!("Received queued JSON response");
-                        // Update metrics
-                        {
-                            let mut metrics = self.metrics.write().await;
-                            metrics.messages_received += 1;
-                            metrics.bytes_received += message.payload.len() as u64;
-                        }
+                        self.record_message_received(message.payload.len()).await;
                         return Ok(Some(message));
                     }
                     Err(mpsc::error::TryRecvError::Empty) => {
@@ -1060,12 +1065,7 @@ impl Transport for StreamableHttpClientTransport {
             match sse_receiver.try_recv() {
                 Ok(message) => {
                     debug!("Received SSE message");
-                    // Update metrics
-                    {
-                        let mut metrics = self.metrics.write().await;
-                        metrics.messages_received += 1;
-                        metrics.bytes_received += message.payload.len() as u64;
-                    }
+                    self.record_message_received(message.payload.len()).await;
                     Ok(Some(message))
                 }
                 Err(mpsc::error::TryRecvError::Empty) => Ok(None),

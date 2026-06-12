@@ -173,7 +173,10 @@ impl SessionManager {
     /// exactly one of the session's currently connected streams (the most
     /// recently subscribed live one), dropping any closed senders along the
     /// way. Returns `true` if the message was delivered.
-    pub(crate) async fn send_to_session(&self, session_id: &str, message: &str) -> bool {
+    ///
+    /// Public for `benches/sse_throughput.rs`; treat as crate-internal.
+    #[doc(hidden)]
+    pub async fn send_to_session(&self, session_id: &str, message: &str) -> bool {
         let mut sessions = self.sessions.write().await;
         let Some(data) = sessions.get_mut(session_id) else {
             return false;
@@ -200,8 +203,11 @@ impl SessionManager {
     ///
     /// Iterates every session and routes to a single live subscriber
     /// following the same per-session rule as [`Self::send_to_session`].
-    #[allow(dead_code)] // Reserved for server-initiated push (not yet wired)
-    pub(crate) async fn broadcast(&self, message: &str) {
+    ///
+    /// Reserved for server-initiated push (not yet wired). Public for
+    /// `benches/sse_throughput.rs`; treat as crate-internal.
+    #[doc(hidden)]
+    pub async fn broadcast(&self, message: &str) {
         let mut sessions = self.sessions.write().await;
         for (session_id, data) in sessions.iter_mut() {
             let mut delivered = false;
@@ -854,7 +860,11 @@ fn empty_response(status: StatusCode) -> Response {
     status.into_response()
 }
 
-fn sse_event_bytes(id: &str, event_type: Option<&str>, data: &str) -> Bytes {
+/// Frame one payload as an SSE event (`id:` / `event:` / `data:` lines).
+///
+/// Public for `benches/sse_throughput.rs`; treat as crate-internal.
+#[doc(hidden)]
+pub fn sse_event_bytes(id: &str, event_type: Option<&str>, data: &str) -> Bytes {
     let mut event = String::new();
     event.push_str("id: ");
     event.push_str(id);
