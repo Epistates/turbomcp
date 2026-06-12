@@ -27,7 +27,12 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 
 # OAuth 2.1 dependencies
-oauth2 = { version = "5.0", default-features = false, features = ["reqwest", "rustls-tls"] }
+# default-features = false with NO http-client features: oauth2's bundled `reqwest`
+# feature pulls in reqwest 0.12 (a second copy of the whole HTTP stack). We never
+# use it — all token requests go through our own OAuth2HttpClient adapter
+# (src/oauth2/http_client.rs), which implements AsyncHttpClient over the
+# workspace reqwest 0.13.
+oauth2 = { version = "5.0", default-features = false }
 jsonwebtoken = { workspace = true }
 base64 = { workspace = true }
 sha2 = { workspace = true }

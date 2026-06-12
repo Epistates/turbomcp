@@ -191,12 +191,17 @@ tokio-test = "0.4"
 wiremock = "0.6.5"
 pretty_assertions = "1.4.1"
 insta = { version = "1.47", features = ["json", "redactions"] }
-rand = "0.10"
+# Pinned to 0.9 (not 0.10) to match governor and tungstenite — keeps a single
+# rand/rand_core/getrandom generation in the build. Revisit when those move to 0.10.
+rand = "0.9"
 quickcheck = "1.1"
 quickcheck_macros = "1.2"
 mock_instant = "0.6"
 serial_test = "3.4"
-sha2 = "0.11"
+# Pinned to 0.10 (not 0.11) to match the digest-0.10 stack used by p256 and oauth2 —
+# avoids compiling two copies of sha2/digest/block-buffer/crypto-common.
+# Upgrade to 0.11 when p256 (RustCrypto) and oauth2 move to digest 0.11.
+sha2 = "0.10"
 testcontainers = "0.27"
 
 # Documentation
