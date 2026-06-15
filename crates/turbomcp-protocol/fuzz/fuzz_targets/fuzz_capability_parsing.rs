@@ -89,7 +89,7 @@ fuzz_target!(|data: &[u8]| {
                 icons: None,
                 website_url: None,
             },
-            _meta: None,
+            meta: None,
         };
 
         if let Ok(json) = serde_json::to_string(&init_request) {
@@ -108,7 +108,7 @@ fuzz_target!(|data: &[u8]| {
                 website_url: None,
             },
             instructions: Some("Fuzz test instructions".to_string()),
-            _meta: None,
+            meta: None,
         };
 
         if let Ok(json) = serde_json::to_string(&init_result) {
@@ -181,6 +181,7 @@ fn build_server_capabilities(input: &CapabilityFuzzInput) -> ServerCapabilities 
         prompts,
         resources,
         tools,
+        tasks: None,
     }
 }
 
@@ -194,7 +195,10 @@ fn build_client_capabilities(input: &CapabilityFuzzInput) -> ClientCapabilities 
     };
 
     let sampling = if input.has_sampling {
-        Some(SamplingCapabilities {})
+        Some(SamplingCapabilities {
+            context: None,
+            tools: None,
+        })
     } else {
         None
     };
@@ -230,5 +234,6 @@ fn build_client_capabilities(input: &CapabilityFuzzInput) -> ClientCapabilities 
         sampling,
         elicitation,
         experimental,
+        tasks: None,
     }
 }
