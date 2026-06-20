@@ -38,3 +38,12 @@ uuid = { workspace = true }
 [dev-dependencies]
 tokio-test = { workspace = true }
 pretty_assertions = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "line_parse"
+harness = false
+required-features = ["internal-bench"]
+
+[features]
+internal-bench = []

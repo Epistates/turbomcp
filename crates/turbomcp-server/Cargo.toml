@@ -55,8 +55,15 @@ criterion = { workspace = true, features = ["async_tokio"] }
 proptest = "1.11"
 reqwest = { workspace = true }
 
+[[bench]]
+name = "sse_throughput"
+harness = false
+required-features = ["http", "internal-bench"]
+
 [features]
 default = ["stdio"]
+
+internal-bench = []
 
 # Transport features (progressive enhancement)
 stdio = ["dep:turbomcp-transport", "turbomcp-transport/stdio"]

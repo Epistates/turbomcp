@@ -119,6 +119,15 @@ impl AtomicMetrics {
     }
 
     /// Creates a serializable `TransportMetrics` snapshot from the current atomic values.
+    ///
+    /// # Approximation note
+    /// All updates use `Ordering::Relaxed`. As a result, a snapshot provides
+    /// an *approximate*, point-in-time view of the counters. Individual fields
+    /// are eventually consistent, but a single snapshot may observe a mix of
+    /// values that were not all recorded at exactly the same moment (e.g. a
+    /// message count and its corresponding byte count may be slightly out of
+    /// sync). This is acceptable for performance metrics and matches the
+    /// original lock-based implementation's behavior under contention.
     pub fn snapshot(&self) -> TransportMetrics {
         let avg_latency_us = self.avg_latency_us.load(Ordering::Relaxed);
         let uncompressed = self.uncompressed_bytes.load(Ordering::Relaxed);
@@ -220,5 +229,47 @@ mod tests {
         let snapshot3 = metrics.snapshot();
         assert!(snapshot3.average_latency_ms > 0.0);
         assert!(snapshot3.average_latency_ms.is_finite());
+    }
+
+    /// Concurrent increments should be safe and the final snapshot should
+    /// reflect (approximately) the total work done. Because we use Relaxed
+    /// ordering the test only asserts that the observed totals are at least
+    /// the minimum expected; in practice with a join they are exact.
+    #[test]
+    fn test_atomic_metrics_concurrent_updates() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let metrics = Arc::new(AtomicMetrics::new());
+        let num_threads = 4;
+        let increments = 1_000u64;
+
+        let handles: Vec<_> = (0..num_threads)
+            .map(|_| {
+                let m = Arc::clone(&metrics);
+                thread::spawn(move || {
+                    for _ in 0..increments {
+                        m.messages_sent.fetch_add(1, Ordering::Relaxed);
+                        m.bytes_sent.fetch_add(64, Ordering::Relaxed);
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let snap = metrics.snapshot();
+        let expected_msgs = num_threads * increments;
+        let expected_bytes = expected_msgs * 64;
+
+        // With the join we expect exact equality, but we document the
+        // approximate nature of snapshots under Relaxed atomics.
+        assert!(snap.messages_sent >= expected_msgs);
+        assert!(snap.bytes_sent >= expected_bytes);
+        // In this controlled case they should be exactly equal
+        assert_eq!(snap.messages_sent, expected_msgs);
+        assert_eq!(snap.bytes_sent, expected_bytes);
     }
 }

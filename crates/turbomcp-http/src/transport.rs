@@ -17,15 +17,16 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tracing::{debug, error, info, warn};
 
 use turbomcp_protocol::MessageId;
 use turbomcp_transport_traits::{
-    LimitsConfig, TlsConfig, TlsVersion, Transport, TransportCapabilities, TransportError,
-    TransportEventEmitter, TransportMessage, TransportMetrics, TransportResult, TransportState,
-    TransportType, validate_request_size, validate_response_size,
+    AtomicMetrics, LimitsConfig, TlsConfig, TlsVersion, Transport, TransportCapabilities,
+    TransportError, TransportEventEmitter, TransportMessage, TransportMetrics, TransportResult,
+    TransportState, TransportType, validate_request_size, validate_response_size,
 };
 
 /// Retry policy for auto-reconnect
@@ -182,7 +183,10 @@ pub struct StreamableHttpClientTransport {
     http_client: HttpClient,
     state: Arc<RwLock<TransportState>>,
     capabilities: TransportCapabilities,
-    metrics: Arc<RwLock<TransportMetrics>>,
+    /// Lock-free metrics counters — updated on every message send/receive,
+    /// so this must not sit behind a lock (see `turbomcp-stdio` for the
+    /// same pattern).
+    metrics: Arc<AtomicMetrics>,
     _event_emitter: TransportEventEmitter,
 
     /// Legacy SSE message endpoint if a server sends an `endpoint` event.
@@ -355,7 +359,7 @@ impl StreamableHttpClientTransport {
                 compression_algorithms: Vec::new(),
                 custom: HashMap::new(),
             },
-            metrics: Arc::new(RwLock::new(TransportMetrics::default())),
+            metrics: Arc::new(AtomicMetrics::default()),
             _event_emitter: event_emitter,
             message_endpoint: Arc::new(RwLock::new(None)),
             session_id: Arc::new(RwLock::new(None)),
@@ -366,6 +370,54 @@ impl StreamableHttpClientTransport {
             response_sender: response_tx,
             sse_task_handle: Arc::new(Mutex::new(None)),
         })
+    }
+
+    #[allow(dead_code)]
+    fn record_message_sent_inner(&self, payload_len: usize) {
+        self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .bytes_sent
+            .fetch_add(payload_len as u64, Ordering::Relaxed);
+    }
+
+    #[allow(dead_code)]
+    fn record_message_received_inner(&self, payload_len: usize) {
+        self.metrics
+            .messages_received
+            .fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .bytes_received
+            .fetch_add(payload_len as u64, Ordering::Relaxed);
+    }
+
+    /// Record one sent message in the transport metrics.
+    ///
+    /// Exposed under the `internal-bench` feature for `benches/metrics_recording.rs`;
+    /// not part of the supported public API.
+    #[cfg(not(feature = "internal-bench"))]
+    pub(crate) fn record_message_sent(&self, payload_len: usize) {
+        self.record_message_sent_inner(payload_len);
+    }
+
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
+    pub fn record_message_sent(&self, payload_len: usize) {
+        self.record_message_sent_inner(payload_len);
+    }
+
+    /// Record one received message in the transport metrics.
+    ///
+    /// Exposed under the `internal-bench` feature for `benches/metrics_recording.rs`;
+    /// not part of the supported public API.
+    #[cfg(not(feature = "internal-bench"))]
+    pub(crate) fn record_message_received(&self, payload_len: usize) {
+        self.record_message_received_inner(payload_len);
+    }
+
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
+    pub fn record_message_received(&self, payload_len: usize) {
+        self.record_message_received_inner(payload_len);
     }
 
     /// Get full endpoint URL
@@ -848,9 +900,7 @@ impl StreamableHttpClientTransport {
                 TransportError::ConnectionLost("SSE channel disconnected".to_string())
             })?,
         };
-        let mut metrics = self.metrics.write().await;
-        metrics.messages_received += 1;
-        metrics.bytes_received += message.payload.len() as u64;
+        self.record_message_received(message.payload.len());
         Ok(message)
     }
 }
@@ -905,12 +955,7 @@ impl Transport for StreamableHttpClientTransport {
             // MCP 2025-11-25: HTTP 202 Accepted means notification/response was accepted (no body)
             if response.status() == reqwest::StatusCode::ACCEPTED {
                 debug!("Received HTTP 202 Accepted (no response body expected)");
-                // Update metrics
-                {
-                    let mut metrics = self.metrics.write().await;
-                    metrics.messages_sent += 1;
-                    metrics.bytes_sent += message.payload.len() as u64;
-                }
+                self.record_message_sent(message.payload.len());
                 return Ok(());
             }
 
@@ -1007,12 +1052,7 @@ impl Transport for StreamableHttpClientTransport {
                 debug!("POST SSE stream processing completed");
             }
 
-            // Update metrics
-            {
-                let mut metrics = self.metrics.write().await;
-                metrics.messages_sent += 1;
-                metrics.bytes_sent += message.payload.len() as u64;
-            }
+            self.record_message_sent(message.payload.len());
 
             debug!("Message sent successfully");
             Ok(())
@@ -1036,12 +1076,7 @@ impl Transport for StreamableHttpClientTransport {
                 match response_receiver.try_recv() {
                     Ok(message) => {
                         debug!("Received queued JSON response");
-                        // Update metrics
-                        {
-                            let mut metrics = self.metrics.write().await;
-                            metrics.messages_received += 1;
-                            metrics.bytes_received += message.payload.len() as u64;
-                        }
+                        self.record_message_received(message.payload.len());
                         return Ok(Some(message));
                     }
                     Err(mpsc::error::TryRecvError::Empty) => {
@@ -1060,12 +1095,7 @@ impl Transport for StreamableHttpClientTransport {
             match sse_receiver.try_recv() {
                 Ok(message) => {
                     debug!("Received SSE message");
-                    // Update metrics
-                    {
-                        let mut metrics = self.metrics.write().await;
-                        metrics.messages_received += 1;
-                        metrics.bytes_received += message.payload.len() as u64;
-                    }
+                    self.record_message_received(message.payload.len());
                     Ok(Some(message))
                 }
                 Err(mpsc::error::TryRecvError::Empty) => Ok(None),
@@ -1089,7 +1119,7 @@ impl Transport for StreamableHttpClientTransport {
     }
 
     fn metrics(&self) -> Pin<Box<dyn Future<Output = TransportMetrics> + Send + '_>> {
-        Box::pin(async move { self.metrics.read().await.clone() })
+        Box::pin(async move { self.metrics.snapshot() })
     }
 
     fn connect(&self) -> Pin<Box<dyn Future<Output = TransportResult<()>> + Send + '_>> {
