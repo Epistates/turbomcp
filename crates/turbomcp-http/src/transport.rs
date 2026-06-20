@@ -382,7 +382,9 @@ impl StreamableHttpClientTransport {
 
     #[allow(dead_code)]
     fn record_message_received_inner(&self, payload_len: usize) {
-        self.metrics.messages_received.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .messages_received
+            .fetch_add(1, Ordering::Relaxed);
         self.metrics
             .bytes_received
             .fetch_add(payload_len as u64, Ordering::Relaxed);

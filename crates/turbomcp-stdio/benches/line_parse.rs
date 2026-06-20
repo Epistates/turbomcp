@@ -14,8 +14,7 @@ use turbomcp_stdio::StdioTransport;
 
 /// Build a JSON-RPC request line of roughly `size` bytes.
 fn request_line(size: usize) -> String {
-    let skeleton =
-        r#"{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"bench","arguments":{"data":""}}}"#;
+    let skeleton = r#"{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"bench","arguments":{"data":""}}}"#;
     let filler = "z".repeat(size.saturating_sub(skeleton.len()).max(1));
     format!(
         r#"{{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{{"name":"bench","arguments":{{"data":"{filler}"}}}}}}"#

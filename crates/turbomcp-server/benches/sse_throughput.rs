@@ -41,7 +41,13 @@ fn bench_sse_event_bytes(c: &mut Criterion) {
         let data = payload(size);
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(BenchmarkId::new("single_line", size), &data, |b, data| {
-            b.iter(|| black_box(sse_event_bytes(black_box(id), Some("message"), black_box(data))));
+            b.iter(|| {
+                black_box(sse_event_bytes(
+                    black_box(id),
+                    Some("message"),
+                    black_box(data),
+                ))
+            });
         });
     }
 
@@ -52,7 +58,13 @@ fn bench_sse_event_bytes(c: &mut Criterion) {
         .join("\n");
     group.throughput(Throughput::Bytes(multiline.len() as u64));
     group.bench_function("multi_line_64x64", |b| {
-        b.iter(|| black_box(sse_event_bytes(black_box(id), Some("message"), black_box(&multiline))));
+        b.iter(|| {
+            black_box(sse_event_bytes(
+                black_box(id),
+                Some("message"),
+                black_box(&multiline),
+            ))
+        });
     });
 
     group.finish();
