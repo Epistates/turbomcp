@@ -1,8 +1,7 @@
-# Perf PR 1 — Transport per-message I/O overhead
+# Perf PR — Transport per-message I/O overhead
 
-**Date:** 2026-06-12
+**Date:** 2026-06-19
 **Branch:** `perf/pr1-transport-io-overhead`
-**Scope:** roadmap items 2c, 2e, 2f, 2k (`perf_roadmap.md`, "PR 1 — Transport per-message I/O overhead")
 
 ## Summary
 
@@ -10,12 +9,12 @@ Four constant-factor fixes on work performed for **every message** crossing a
 transport, each proven with a new criterion benchmark run before and after the
 change on identical hardware:
 
-| Item | Crate | Change | Headline result |
-|------|-------|--------|-----------------|
-| 2c | `turbomcp-http` | Metrics counters: `RwLock<TransportMetrics>` → lock-free `AtomicMetrics` | **+573 % / +482 % throughput** at 4/16 concurrent tasks |
-| 2e | `turbomcp-server` | SSE subscriber channel payload: `String` → `Arc<str>` | Broadcast fan-out **+220 % (8 sessions) / +299 % (64 sessions)** |
-| 2f | `turbomcp-server` | `sse_event_bytes`: exact single-allocation buffer sizing | **−90 % (64 B) to −27 % (64 KB)** frame-build time |
-| 2k | `turbomcp-stdio` | Inbound line → payload: per-line `String` copy → zero-copy `Bytes` slice | **−2.7 % to −20.3 %** parse time, scaling with payload size |
+| Crate | Change | Headline result |
+|-------|--------|-----------------|
+| `turbomcp-http` | Metrics counters: `RwLock<TransportMetrics>` → lock-free `AtomicMetrics` | **+573 % / +482 % throughput** at 4/16 concurrent tasks |
+| `turbomcp-server` | SSE subscriber channel payload: `String` → `Arc<str>` | Broadcast fan-out **+220 % (8 sessions) / +299 % (64 sessions)** |
+| `turbomcp-server` | `sse_event_bytes`: exact single-allocation buffer sizing | **−90 % (64 B) to −27 % (64 KB)** frame-build time |
+| `turbomcp-stdio` | Inbound line → payload: per-line `String` copy → zero-copy `Bytes` slice | **−2.7 % to −20.3 %** parse time, scaling with payload size |
 
 No protocol behavior changes. All 500+ existing tests across the four affected
 crates pass; the only test edits are mechanical signature updates plus one new
@@ -40,14 +39,14 @@ Reproduction:
 
 ```sh
 git checkout 4068df5   # scaffolding: benches exist, hot paths unmodified
-cargo bench -p turbomcp-server --features http --bench sse_throughput -- --save-baseline before
-cargo bench -p turbomcp-http --bench metrics_recording -- --save-baseline before
-cargo bench -p turbomcp-stdio --bench line_parse -- --save-baseline before
+cargo bench -p turbomcp-server --features http,internal-bench --bench sse_throughput -- --save-baseline before
+cargo bench -p turbomcp-http --features internal-bench --bench metrics_recording -- --save-baseline before
+cargo bench -p turbomcp-stdio --features internal-bench --bench line_parse -- --save-baseline before
 git checkout perf/pr1-transport-io-overhead
 # re-run the same three commands with: --baseline before
 ```
 
-## 2c — HTTP client metrics: `RwLock` → atomics
+## HTTP client metrics: `RwLock` → atomics
 
 `StreamableHttpClientTransport` bumped two counters under a
 `tokio::sync::RwLock<TransportMetrics>` **write** lock on every message sent
@@ -71,7 +70,7 @@ record serializes on the write lock and parks/wakes tasks. The atomic path
 instead **gains** from concurrency (48 → 62 M/s) and never blocks a message on
 metrics bookkeeping.
 
-## 2e — SSE subscriber payloads: `String` → `Arc<str>`
+## SSE subscriber payloads: `String` → `Arc<str>`
 
 `SessionManager` routed every outbound SSE message as `tx.send(message.to_string())`
 — a full copy of the payload per send attempt, and per *session* in
@@ -96,7 +95,7 @@ is downstream, where the SSE stream handler shares rather than owns):
 | 4 KB | 206 ns | 178 ns | −14.7 % |
 | 64 KB | 1.28 µs | 1.40 µs | **+10.3 %** (see trade-offs) |
 
-## 2f — `sse_event_bytes` single-allocation framing
+## `sse_event_bytes` single-allocation framing
 
 The SSE frame (`id:`/`event:`/`data:` lines) was built into `String::new()`,
 paying the grow-by-doubling realloc-and-copy chain on every outbound event. The
@@ -118,7 +117,7 @@ than the reallocations it avoids. The committed version (`a785e49`) sizes
 without scanning. If a future change reintroduces exact sizing, it must use a
 SIMD count (e.g. `memchr::memchr_iter().count()`) and re-benchmark.
 
-## 2k — stdio inbound line: zero-copy payload
+## stdio inbound line: zero-copy payload
 
 `parse_message` built the payload as `Bytes::from(line.to_string())` — a full
 copy of every inbound line. The reader task already owns the `String`, so
@@ -169,18 +168,19 @@ all covered by pre-existing tests that pass unmodified.
   single-subscriber case is dominated by network I/O in practice.
 * **`broadcast` to 1 session: +5 %** (134 → 138 ns) — same Arc-header cost,
   nanoseconds in absolute terms, repaid 200×+ at realistic fan-outs.
-* **API surface:** `SessionManager::subscribe_session` (reachable at
-  `turbomcp_server::transport::http`) now returns
-  `UnboundedReceiver<Arc<str>>` instead of `UnboundedReceiver<String>`. The
-  type is plumbing for the crate's own SSE handler; no in-repo or doc-example
-  consumer exists outside that handler. `send_to_session`/`broadcast`/
-  `sse_event_bytes` are now `#[doc(hidden)] pub` so the benchmarks can drive
-  the real code paths.
+* **API surface:** To avoid exposing the `Arc<str>` change (and the
+  plumbing methods) to normal users, `SessionManager`, `subscribe_session`,
+  `send_to_session`, `broadcast`, and `sse_event_bytes` are only `pub`
+  (with `#[doc(hidden)]`) when the `internal-bench` Cargo feature is enabled.
+  The `[[bench]]` targets declare the feature via `required-features`. Normal
+  consumers with `--features http` see only the documented `run*` entry points.
+  The performance wins (single `Arc::from` + cheap clones on the send side)
+  are unaffected.
 
 ## Benchmark inventory added by this PR
 
-| File | Measures | Used by roadmap |
-|------|----------|-----------------|
-| `crates/turbomcp-server/benches/sse_throughput.rs` | SSE framing, session routing, broadcast fan-out | PR 5 regression guard |
-| `crates/turbomcp-http/benches/metrics_recording.rs` | Metrics record path, 1/4/16-task contention | — |
-| `crates/turbomcp-stdio/benches/line_parse.rs` | Inbound line → `TransportMessage` | PR 5 regression guard |
+| File | Measures |
+|------|----------|
+| `crates/turbomcp-server/benches/sse_throughput.rs` | SSE framing, session routing, broadcast fan-out |
+| `crates/turbomcp-http/benches/metrics_recording.rs` | Metrics record path, 1/4/16-task contention |
+| `crates/turbomcp-stdio/benches/line_parse.rs` | Inbound line → `TransportMessage` |

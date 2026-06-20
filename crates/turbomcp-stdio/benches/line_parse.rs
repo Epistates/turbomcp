@@ -5,7 +5,7 @@
 //! (JSON validation, id extraction, payload `Bytes` construction) across
 //! payload sizes.
 //!
-//! Run with: `cargo bench -p turbomcp-stdio --bench line_parse`
+//! Run with: `cargo bench -p turbomcp-stdio --features internal-bench --bench line_parse`
 
 use std::hint::black_box;
 

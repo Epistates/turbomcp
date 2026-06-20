@@ -5,7 +5,7 @@
 //! the win from lock-free counters is contention-dependent, so the bench
 //! sweeps the number of concurrently recording tasks (1/4/16).
 //!
-//! Run with: `cargo bench -p turbomcp-http --bench metrics_recording`
+//! Run with: `cargo bench -p turbomcp-http --features internal-bench --bench metrics_recording`
 
 use std::hint::black_box;
 use std::sync::Arc;

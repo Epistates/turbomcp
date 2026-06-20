@@ -372,28 +372,50 @@ impl StreamableHttpClientTransport {
         })
     }
 
-    /// Record one sent message in the transport metrics.
-    ///
-    /// Exposed for `benches/metrics_recording.rs`; not part of the supported
-    /// public API.
-    #[doc(hidden)]
-    pub fn record_message_sent(&self, payload_len: usize) {
+    #[allow(dead_code)]
+    fn record_message_sent_inner(&self, payload_len: usize) {
         self.metrics.messages_sent.fetch_add(1, Ordering::Relaxed);
         self.metrics
             .bytes_sent
             .fetch_add(payload_len as u64, Ordering::Relaxed);
     }
 
-    /// Record one received message in the transport metrics.
-    ///
-    /// Exposed for `benches/metrics_recording.rs`; not part of the supported
-    /// public API.
-    #[doc(hidden)]
-    pub fn record_message_received(&self, payload_len: usize) {
+    #[allow(dead_code)]
+    fn record_message_received_inner(&self, payload_len: usize) {
         self.metrics.messages_received.fetch_add(1, Ordering::Relaxed);
         self.metrics
             .bytes_received
             .fetch_add(payload_len as u64, Ordering::Relaxed);
+    }
+
+    /// Record one sent message in the transport metrics.
+    ///
+    /// Exposed under the `internal-bench` feature for `benches/metrics_recording.rs`;
+    /// not part of the supported public API.
+    #[cfg(not(feature = "internal-bench"))]
+    pub(crate) fn record_message_sent(&self, payload_len: usize) {
+        self.record_message_sent_inner(payload_len);
+    }
+
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
+    pub fn record_message_sent(&self, payload_len: usize) {
+        self.record_message_sent_inner(payload_len);
+    }
+
+    /// Record one received message in the transport metrics.
+    ///
+    /// Exposed under the `internal-bench` feature for `benches/metrics_recording.rs`;
+    /// not part of the supported public API.
+    #[cfg(not(feature = "internal-bench"))]
+    pub(crate) fn record_message_received(&self, payload_len: usize) {
+        self.record_message_received_inner(payload_len);
+    }
+
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
+    pub fn record_message_received(&self, payload_len: usize) {
+        self.record_message_received_inner(payload_len);
     }
 
     /// Get full endpoint URL

@@ -5,7 +5,7 @@
 //! - `send_to_session` — routing one payload to a session's live subscriber
 //! - `broadcast` — fanning one payload out across N sessions
 //!
-//! Run with: `cargo bench -p turbomcp-server --features http --bench sse_throughput`
+//! Run with: `cargo bench -p turbomcp-server --features http,internal-bench --bench sse_throughput`
 
 use std::hint::black_box;
 use std::sync::Arc;

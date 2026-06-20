@@ -47,6 +47,9 @@ criterion = { workspace = true, features = ["async_tokio"] }
 [[bench]]
 name = "metrics_recording"
 harness = false
+required-features = ["internal-bench"]
 
 [features]
 default = []
+
+internal-bench = []
