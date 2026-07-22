@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.6] - 2026-07-22
+
+Patch release: Streamable HTTP correctness fixes (client response hang, CRLF
+SSE parsing, POST-stream primer events) and transport hot-path performance.
+Most of this release was contributed by @ForrestThump (#14, #15, #18, #19,
+#20, #21) — thank you!
+
+### Fixed
+
+- **Streamable HTTP client no longer hangs waiting for POST-response SSE
+  streams to close** — `send()` used to block until the server ended the
+  request's SSE stream, stalling clients against servers that keep the
+  stream open after answering. The client now returns as soon as the
+  correlated response (matching request ID with a `result` or `error`)
+  arrives; remaining stream messages are still consumed and queued. (#21)
+- **SSE event parsing accepts CRLF and lone-CR line endings** — the client
+  HTTP transport now normalizes `\r\n` and `\r` to `\n` per the SSE
+  specification before splitting events, fixing interop with servers (and
+  proxies) that emit CRLF-framed streams. (#21)
+- **Spec-required primer event restored on POST-response SSE streams** —
+  POST-initiated streams once again open with an empty-data event carrying a
+  globally unique, stream-encoding event ID (`{session}-{stream}-0`), giving
+  clients a `Last-Event-ID` for resumption as the 2025-11-25 Streamable HTTP
+  transport spec recommends. (#17)
+- **`McpHandler` public-method types are re-exported** so downstream code can
+  name them without depending on internal crates. (#15)
+- **`just test` works on Windows.** (#14)
+
+### Changed
+
+- **Transport per-message overhead reduced** (#20, criterion-verified):
+  HTTP client transport metrics moved from `RwLock` to the same lock-free
+  `AtomicMetrics` the stdio transport uses; server SSE broadcast payloads are
+  shared as `Arc<str>` instead of cloned `String`s per subscriber; SSE frames
+  are encoded with a single exact-size allocation; the stdio transport slices
+  trimmed lines zero-copy from the read buffer. Benchmarks ship behind the
+  new non-public `internal-bench` feature.
+- **Duplicate dependency versions consolidated across the workspace.** (#19)
+- **Documentation ASCII diagrams realigned.** (#18)
+
 ## [3.1.5] - 2026-05-11
 
 Patch release: Streamable HTTP interoperability hardening for RMCP/Codex
