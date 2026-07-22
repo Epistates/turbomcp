@@ -2,7 +2,7 @@ name: Fuzzing
 
 on:
   pull_request:
-    branches: [ main ]
+    branches: [ main, v3.x ]
     paths:
       - 'crates/turbomcp-protocol/**'
       - 'crates/turbomcp-core/**'
