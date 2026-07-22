@@ -28,6 +28,27 @@ use turbomcp_transport_traits::{
     TransportType, validate_request_size, validate_response_size,
 };
 
+/// Normalize SSE line endings to bare `\n`.
+///
+/// The SSE specification (and the MCP servers built on frameworks that follow it) permits a line
+/// to be terminated by `\r\n`, a lone `\r`, or `\n` — clients are required to accept all three.
+/// Both SSE read loops in this file locate event boundaries with a `\n\n` search, which silently
+/// finds nothing (and therefore silently drops every event, with no error) against a server that
+/// emits `\r\n`. Confirmed live against a real MCP server that does exactly this.
+///
+/// Applied per-chunk before appending to the read buffer. A chunk boundary that happens to land
+/// exactly inside a `\r\n` pair produces one extra blank line in the reassembled buffer in the
+/// rare worst case — harmless, since the per-field event parser below already treats blank lines
+/// as a no-op — so this stays a simple per-chunk pass rather than carrying a pending-CR byte
+/// across chunk boundaries.
+fn normalize_sse_line_endings(chunk: &str) -> std::borrow::Cow<'_, str> {
+    if chunk.contains('\r') {
+        std::borrow::Cow::Owned(chunk.replace("\r\n", "\n").replace('\r', "\n"))
+    } else {
+        std::borrow::Cow::Borrowed(chunk)
+    }
+}
+
 /// Retry policy for auto-reconnect
 #[derive(Clone, Debug)]
 pub enum RetryPolicy {
@@ -593,7 +614,15 @@ impl StreamableHttpClientTransport {
                         match chunk_result {
                             Ok(chunk) => {
                                 let chunk_str = String::from_utf8_lossy(&chunk);
-                                buffer.push_str(&chunk_str);
+                                // The SSE spec (and MCP servers built on frameworks that default
+                                // to it) permits `\r\n` or a lone `\r` as a line terminator, not
+                                // just `\n` — normalize per chunk so the `\n\n` event-boundary
+                                // search below works regardless of which convention the server
+                                // uses. (A chunk boundary landing exactly inside a `\r\n` pair
+                                // yields one extra blank line in the rare worst case, which the
+                                // per-field parser below already treats as a no-op — not worth
+                                // the complexity of carrying a pending-CR byte across chunks.)
+                                buffer.push_str(&normalize_sse_line_endings(&chunk_str));
 
                                 // Process complete events
                                 while let Some(pos) = buffer.find("\n\n") {
@@ -755,12 +784,21 @@ impl StreamableHttpClientTransport {
         }
     }
 
-    /// Process SSE event from POST response
+    /// Process one complete SSE event (already split off a `\n\n` boundary) from a POST
+    /// response stream, queue it, and report whether it was the JSON-RPC *response* correlated
+    /// to `expected_id` — as opposed to some other message (a request or notification) the
+    /// server chose to send first over the same stream.
+    ///
+    /// Per the MCP Streamable HTTP transport, a server MAY keep this per-POST SSE stream open
+    /// after sending the correlated response (e.g. to send further related messages later); the
+    /// caller must stop reading once it has that response rather than waiting for the stream to
+    /// close, which is not guaranteed to happen. See `send()`'s call site.
     async fn process_post_sse_event(
         event_str: &str,
         response_sender: &mpsc::Sender<TransportMessage>,
         last_event_id: &Arc<RwLock<Option<String>>>,
-    ) -> TransportResult<()> {
+        expected_id: Option<&serde_json::Value>,
+    ) -> TransportResult<bool> {
         let lines: Vec<&str> = event_str.lines().collect();
         let mut event_data: Vec<String> = Vec::new();
         let mut event_id: Option<String> = None;
@@ -792,19 +830,29 @@ impl StreamableHttpClientTransport {
         }
 
         if event_data.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
 
         let data_str = event_data.join("\n");
         if data_str.trim().is_empty() {
             debug!("Skipping empty POST SSE event");
-            return Ok(());
+            return Ok(false);
         }
 
         // Parse as JSON-RPC message
         let json_value: serde_json::Value = serde_json::from_str(&data_str).map_err(|e| {
             TransportError::SerializationFailed(format!("Invalid JSON in POST SSE: {}", e))
         })?;
+
+        // A JSON-RPC *response* carries "id" plus "result" xor "error" — that's what the caller
+        // is waiting for. A request or notification the server sends first over the same stream
+        // (e.g. a progress notification) has no such shape and must not end the read loop early.
+        let is_correlated_response = json_value.get("id").is_some()
+            && (json_value.get("result").is_some() || json_value.get("error").is_some())
+            && match expected_id {
+                Some(expected) => json_value.get("id") == Some(expected),
+                None => true,
+            };
 
         let message = TransportMessage::new(
             MessageId::from("post-sse-response".to_string()),
@@ -823,7 +871,7 @@ impl StreamableHttpClientTransport {
             "Queued message from POST SSE stream: {}",
             String::from_utf8_lossy(&message.payload)
         );
-        Ok(())
+        Ok(is_correlated_response)
     }
 
     /// Await the next inbound message.
@@ -946,9 +994,24 @@ impl Transport for StreamableHttpClientTransport {
 
                 debug!("JSON response queued successfully");
             } else if content_type.contains("text/event-stream") {
-                // MCP 2025-11-25: Server returned SSE stream response from POST
-                // Process the stream synchronously to ensure responses are available
+                // MCP 2025-11-25: Server returned SSE stream response from POST.
+                //
+                // Per the Streamable HTTP transport, a server MAY keep this stream open *after*
+                // sending the JSON-RPC response correlated to our request (e.g. to send further
+                // related messages later) — it is not required to close it. So this loop must
+                // stop as soon as it has queued that correlated response, not wait for the
+                // stream to end; otherwise a compliant server that keeps the connection open
+                // hangs this call until an unrelated operation-level timeout papers over it.
                 debug!("Received SSE stream response from POST, processing events");
+
+                // The outgoing request's own "id", so we know which SSE event is *the* response
+                // versus some other message (a notification, say) the server sends first over
+                // the same stream. `None` when the outgoing payload isn't a single object with an
+                // "id" (e.g. a notification) — in that case any response-shaped event ends the loop.
+                let expected_id: Option<serde_json::Value> =
+                    serde_json::from_slice::<serde_json::Value>(&message.payload)
+                        .ok()
+                        .and_then(|v| v.get("id").cloned());
 
                 let response_sender = self.response_sender.clone();
                 let last_event_id = Arc::clone(&self.last_event_id);
@@ -969,21 +1032,30 @@ impl Transport for StreamableHttpClientTransport {
                     match chunk_result {
                         Ok(chunk) => {
                             let chunk_str = String::from_utf8_lossy(&chunk);
-                            buffer.push_str(&chunk_str);
+                            // See the matching comment in the GET SSE loop above: normalize
+                            // `\r\n`/lone `\r` to `\n` per chunk so the event-boundary search
+                            // below works against servers using either line-ending convention
+                            // (confirmed necessary live against a real server that emits `\r\n`).
+                            buffer.push_str(&normalize_sse_line_endings(&chunk_str));
 
                             // Process complete events
                             while let Some(pos) = buffer.find("\n\n") {
                                 let event_str = buffer[..pos].to_string();
                                 buffer = buffer[pos + 2..].to_string();
 
-                                if let Err(e) = Self::process_post_sse_event(
+                                match Self::process_post_sse_event(
                                     &event_str,
                                     &response_sender,
                                     &last_event_id,
+                                    expected_id.as_ref(),
                                 )
                                 .await
                                 {
-                                    warn!("Failed to process POST SSE event: {}", e);
+                                    Ok(true) => break 'post_sse_loop,
+                                    Ok(false) => {}
+                                    Err(e) => {
+                                        warn!("Failed to process POST SSE event: {}", e);
+                                    }
                                 }
                             }
 
@@ -1143,6 +1215,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_normalize_sse_line_endings_converts_crlf() {
+        let input = "event: message\r\ndata: {\"a\":1}\r\n\r\n";
+        assert_eq!(
+            normalize_sse_line_endings(input),
+            "event: message\ndata: {\"a\":1}\n\n"
+        );
+    }
+
+    #[test]
+    fn test_normalize_sse_line_endings_converts_lone_cr() {
+        let input = "event: message\rdata: {\"a\":1}\r\r";
+        assert_eq!(
+            normalize_sse_line_endings(input),
+            "event: message\ndata: {\"a\":1}\n\n"
+        );
+    }
+
+    #[test]
+    fn test_normalize_sse_line_endings_leaves_bare_lf_untouched() {
+        let input = "event: message\ndata: {\"a\":1}\n\n";
+        assert_eq!(normalize_sse_line_endings(input), input);
+    }
+
+    #[test]
     fn test_retry_policy_fixed() {
         let policy = RetryPolicy::Fixed {
             interval: Duration::from_secs(5),
@@ -1267,14 +1363,16 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
         let last_event_id = Arc::new(RwLock::new(None));
 
-        StreamableHttpClientTransport::process_post_sse_event(
+        let is_response = StreamableHttpClientTransport::process_post_sse_event(
             "id: primer-1\nevent: message\ndata:    \n",
             &tx,
             &last_event_id,
+            None,
         )
         .await
         .expect("whitespace POST SSE event should be ignored");
 
+        assert!(!is_response, "an ignored/empty event is never the response");
         assert_eq!(last_event_id.read().await.as_deref(), Some("primer-1"));
         assert!(rx.try_recv().is_err());
     }
@@ -1284,18 +1382,127 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
         let last_event_id = Arc::new(RwLock::new(None));
 
-        StreamableHttpClientTransport::process_post_sse_event(
+        let is_response = StreamableHttpClientTransport::process_post_sse_event(
             "id: msg-1\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n",
             &tx,
             &last_event_id,
+            None,
         )
         .await
         .expect("valid POST SSE event should be queued");
 
+        assert!(
+            is_response,
+            "a result-bearing message is the correlated response"
+        );
         assert_eq!(last_event_id.read().await.as_deref(), Some("msg-1"));
         let message = rx.try_recv().expect("queued message");
         let value: serde_json::Value =
             serde_json::from_slice(&message.payload).expect("valid queued JSON");
         assert_eq!(value["jsonrpc"], "2.0");
+    }
+
+    #[tokio::test]
+    async fn test_post_sse_notification_before_response_does_not_end_the_read_loop() {
+        // A server MAY send other messages (e.g. a progress notification — "method", no
+        // "result"/"error") over the same POST-response stream before the actual correlated
+        // response. The caller must keep reading past it, not treat it as the final response.
+        let (tx, mut rx) = mpsc::channel(2);
+        let last_event_id = Arc::new(RwLock::new(None));
+        let expected_id = serde_json::json!(1);
+
+        let is_response = StreamableHttpClientTransport::process_post_sse_event(
+            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n",
+            &tx,
+            &last_event_id,
+            Some(&expected_id),
+        )
+        .await
+        .expect("notification event should be queued, not erred");
+        assert!(
+            !is_response,
+            "a notification is never the correlated response"
+        );
+
+        let is_response = StreamableHttpClientTransport::process_post_sse_event(
+            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n",
+            &tx,
+            &last_event_id,
+            Some(&expected_id),
+        )
+        .await
+        .expect("valid POST SSE event should be queued");
+        assert!(
+            is_response,
+            "the id-matching result IS the correlated response"
+        );
+
+        assert!(
+            !rx.try_recv()
+                .expect("notification queued")
+                .payload
+                .is_empty()
+        );
+        assert!(rx.try_recv().is_ok(), "response also queued");
+    }
+
+    #[tokio::test]
+    async fn test_post_sse_response_with_mismatched_id_is_not_the_correlated_response() {
+        // A late-arriving response to a DIFFERENT request than the one we're waiting on must not
+        // be mistaken for ours — only an exact id match ends the read loop.
+        let (tx, mut rx) = mpsc::channel(1);
+        let last_event_id = Arc::new(RwLock::new(None));
+        let expected_id = serde_json::json!(2);
+
+        let is_response = StreamableHttpClientTransport::process_post_sse_event(
+            "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n",
+            &tx,
+            &last_event_id,
+            Some(&expected_id),
+        )
+        .await
+        .expect("valid POST SSE event should be queued");
+
+        assert!(!is_response, "id 1 does not match the expected id 2");
+        assert!(
+            rx.try_recv().is_ok(),
+            "still queued for the caller, just not the loop's exit signal"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_post_sse_event_with_crlf_line_endings_is_parsed() {
+        // Reproduces a real server's raw bytes (confirmed via a live capture): SSE fields
+        // terminated with `\r\n`, event boundary `\r\n\r\n`. Simulates the buffer normalization
+        // `send()` applies per chunk before handing a complete event to this function — without
+        // it, `event_str.lines()` still splits `\r\n` correctly (Rust's `lines()` already strips
+        // a trailing `\r`), but the buffer-level `\n\n` boundary search upstream would never fire
+        // on a `\r\n\r\n`-only stream, so the event would never reach this function at all. This
+        // test exercises the normalize step directly to prove the boundary is found.
+        let raw = "id: 1\r\nevent: message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\r\n\r\nrest";
+        let normalized = normalize_sse_line_endings(raw);
+        let pos = normalized
+            .find("\n\n")
+            .expect("normalized buffer must expose an event boundary");
+        let event_str = &normalized[..pos];
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let last_event_id = Arc::new(RwLock::new(None));
+
+        let is_response = StreamableHttpClientTransport::process_post_sse_event(
+            event_str,
+            &tx,
+            &last_event_id,
+            None,
+        )
+        .await
+        .expect("CRLF-terminated event should parse");
+
+        assert!(is_response);
+        assert_eq!(last_event_id.read().await.as_deref(), Some("1"));
+        let message = rx.try_recv().expect("queued message");
+        let value: serde_json::Value =
+            serde_json::from_slice(&message.payload).expect("valid queued JSON");
+        assert_eq!(value["result"], serde_json::json!({}));
     }
 }
