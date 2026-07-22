@@ -550,7 +550,7 @@ impl Transport for UnixTransport {
                 "Unix transport send: {} connections registered",
                 connections.len()
             );
-            for (key, _) in connections.iter() {
+            for key in connections.keys() {
                 debug!("  Connection key: {}", key);
             }
             if connections.is_empty() {
