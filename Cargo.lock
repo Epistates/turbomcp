@@ -5552,6 +5552,7 @@ name = "turbomcp-http"
 version = "3.1.5"
 dependencies = [
  "bytes",
+ "criterion",
  "fastrand",
  "futures",
  "reqwest 0.13.3",
@@ -5734,6 +5735,7 @@ name = "turbomcp-stdio"
 version = "3.1.5"
 dependencies = [
  "bytes",
+ "criterion",
  "futures",
  "parking_lot",
  "pretty_assertions",

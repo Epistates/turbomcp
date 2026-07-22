@@ -457,7 +457,7 @@ impl StdioTransport {
                                 continue;
                             }
 
-                            match Self::parse_message(&line) {
+                            match Self::parse_message(line) {
                                 Ok(message) => {
                                     let size = message.size();
 
@@ -512,14 +512,25 @@ impl StdioTransport {
         Ok(())
     }
 
-    fn parse_message(line: &str) -> TransportResult<TransportMessage> {
-        let line = line.trim();
-        if line.is_empty() {
+    /// Parse one newline-delimited JSON line into a [`TransportMessage`],
+    /// taking ownership of the line as the reader task does.
+    ///
+    /// Exposed under the `internal-bench` feature for `benches/line_parse.rs`;
+    /// not part of the supported public API.
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
+    pub fn bench_parse_message(line: String) -> TransportResult<TransportMessage> {
+        Self::parse_message(line)
+    }
+
+    fn parse_message(line: String) -> TransportResult<TransportMessage> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
             return Err(TransportError::ProtocolError("Empty message".to_string()));
         }
 
         // Parse JSON
-        let json_value: serde_json::Value = serde_json::from_str(line)
+        let json_value: serde_json::Value = serde_json::from_str(trimmed)
             .map_err(|e| TransportError::SerializationFailed(e.to_string()))?;
 
         // Extract message ID
@@ -532,8 +543,12 @@ impl StdioTransport {
             })
             .unwrap_or_else(|| MessageId::from(Uuid::new_v4()));
 
-        // Create transport message
-        let payload = Bytes::from(line.to_string());
+        // Create the transport message by reusing the reader's allocation:
+        // convert the owned line to `Bytes` (no copy) and slice it to the
+        // trimmed range instead of copying the payload.
+        let start = trimmed.as_ptr() as usize - line.as_ptr() as usize;
+        let end = start + trimmed.len();
+        let payload = Bytes::from(line.into_bytes()).slice(start..end);
         let metadata = TransportMessageMetadata::with_content_type("application/json");
 
         Ok(TransportMessage::with_metadata(
@@ -842,17 +857,28 @@ mod tests {
     #[test]
     fn test_message_parsing() {
         let json_line = r#"{"jsonrpc":"2.0","id":"test-123","method":"test","params":{}}"#;
-        let message = StdioTransport::parse_message(json_line).unwrap();
+        let message = StdioTransport::parse_message(json_line.to_string()).unwrap();
 
         assert_eq!(message.id, MessageId::from("test-123"));
         assert_eq!(message.content_type(), Some("application/json"));
-        assert!(!message.payload.is_empty());
+        assert_eq!(message.payload.as_ref(), json_line.as_bytes());
+    }
+
+    #[test]
+    fn test_message_parsing_trims_surrounding_whitespace() {
+        // The payload must be exactly the trimmed line even though the
+        // zero-copy path slices into the original (untrimmed) allocation.
+        let json_line = "  {\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"test\"}\r";
+        let message = StdioTransport::parse_message(json_line.to_string()).unwrap();
+
+        assert_eq!(message.payload.as_ref(), json_line.trim().as_bytes());
+        assert_eq!(message.id, MessageId::from(7));
     }
 
     #[test]
     fn test_message_parsing_with_numeric_id() {
         let json_line = r#"{"jsonrpc":"2.0","id":42,"method":"test","params":{}}"#;
-        let message = StdioTransport::parse_message(json_line).unwrap();
+        let message = StdioTransport::parse_message(json_line.to_string()).unwrap();
 
         assert_eq!(message.id, MessageId::from(42));
     }
@@ -860,7 +886,7 @@ mod tests {
     #[test]
     fn test_message_parsing_without_id() {
         let json_line = r#"{"jsonrpc":"2.0","method":"notification","params":{}}"#;
-        let message = StdioTransport::parse_message(json_line).unwrap();
+        let message = StdioTransport::parse_message(json_line.to_string()).unwrap();
 
         // Should generate a UUID when no ID is present
         match message.id {
@@ -875,7 +901,7 @@ mod tests {
     #[test]
     fn test_message_parsing_invalid_json() {
         let invalid_json = "not json at all";
-        let result = StdioTransport::parse_message(invalid_json);
+        let result = StdioTransport::parse_message(invalid_json.to_string());
 
         assert!(matches!(
             result,
@@ -885,10 +911,10 @@ mod tests {
 
     #[test]
     fn test_message_parsing_empty() {
-        let result = StdioTransport::parse_message("");
+        let result = StdioTransport::parse_message(String::new());
         assert!(matches!(result, Err(TransportError::ProtocolError(_))));
 
-        let result = StdioTransport::parse_message("   ");
+        let result = StdioTransport::parse_message("   ".to_string());
         assert!(matches!(result, Err(TransportError::ProtocolError(_))));
     }
 

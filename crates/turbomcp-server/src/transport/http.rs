@@ -77,7 +77,10 @@ type PendingServerRequests = Arc<Mutex<HashMap<String, PendingServerResponse>>>;
 #[derive(Debug)]
 struct SessionData {
     /// Ordered list of active SSE subscribers (newest last).
-    subscribers: Vec<mpsc::UnboundedSender<String>>,
+    ///
+    /// Payloads are `Arc<str>` so routing/broadcast shares one allocation
+    /// instead of copying the full message per send.
+    subscribers: Vec<mpsc::UnboundedSender<Arc<str>>>,
     /// Negotiated protocol version (set after successful initialize).
     protocol_version: Option<ProtocolVersion>,
     /// Client capabilities captured from the successful initialize request.
@@ -91,6 +94,19 @@ struct SessionData {
 }
 
 /// Session manager for SSE connections.
+///
+/// Low-level type. Normally `pub(crate)`. Exposed publicly (with `#[doc(hidden)]`)
+/// only under the `internal-bench` feature so that benchmarks can drive the
+/// real hot paths (including the `Arc<str>` subscriber change).
+#[cfg(not(feature = "internal-bench"))]
+#[derive(Clone, Debug)]
+pub(crate) struct SessionManager {
+    /// Map of session ID to per-session data.
+    sessions: Arc<RwLock<HashMap<String, SessionData>>>,
+}
+
+#[cfg(feature = "internal-bench")]
+#[doc(hidden)]
 #[derive(Clone, Debug)]
 pub struct SessionManager {
     /// Map of session ID to per-session data.
@@ -104,15 +120,27 @@ impl Default for SessionManager {
 }
 
 impl SessionManager {
-    /// Create a new session manager.
-    pub fn new() -> Self {
+    #[allow(dead_code)]
+    fn new_inner() -> Self {
         Self {
             sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    /// Create a new session and return the session ID.
-    pub async fn create_session(
+    /// Create a new session manager.
+    #[cfg(not(feature = "internal-bench"))]
+    pub(crate) fn new() -> Self {
+        Self::new_inner()
+    }
+
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
+    pub fn new() -> Self {
+        Self::new_inner()
+    }
+
+    #[allow(dead_code)]
+    async fn create_session_inner(
         &self,
         initialize_request_id: Option<&serde_json::Value>,
     ) -> String {
@@ -138,7 +166,36 @@ impl SessionManager {
         session_id
     }
 
+    /// Create a new session and return the session ID.
+    #[cfg(not(feature = "internal-bench"))]
+    pub(crate) async fn create_session(
+        &self,
+        initialize_request_id: Option<&serde_json::Value>,
+    ) -> String {
+        self.create_session_inner(initialize_request_id).await
+    }
+
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
+    pub async fn create_session(
+        &self,
+        initialize_request_id: Option<&serde_json::Value>,
+    ) -> String {
+        self.create_session_inner(initialize_request_id).await
+    }
+
     /// Remove a session.
+    #[cfg(not(feature = "internal-bench"))]
+    pub(crate) async fn remove_session(&self, session_id: &str) -> bool {
+        let removed = self.sessions.write().await.remove(session_id).is_some();
+        if removed {
+            tracing::debug!("Removed session: {}", session_id);
+        }
+        removed
+    }
+
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
     pub async fn remove_session(&self, session_id: &str) -> bool {
         let removed = self.sessions.write().await.remove(session_id).is_some();
         if removed {
@@ -147,14 +204,11 @@ impl SessionManager {
         removed
     }
 
-    /// Subscribe to an existing session's SSE stream.
-    ///
-    /// Each subscribe returns a dedicated [`mpsc::UnboundedReceiver`] that
-    /// only receives messages routed to this subscriber — never broadcasts.
-    pub async fn subscribe_session(
+    #[allow(dead_code)]
+    async fn subscribe_session_inner(
         &self,
         session_id: &str,
-    ) -> Option<mpsc::UnboundedReceiver<String>> {
+    ) -> Option<mpsc::UnboundedReceiver<Arc<str>>> {
         let mut sessions = self.sessions.write().await;
         let data = sessions.get_mut(session_id)?;
         let (tx, rx) = mpsc::unbounded_channel();
@@ -162,22 +216,48 @@ impl SessionManager {
         Some(rx)
     }
 
+    /// Subscribe to an existing session's SSE stream.
+    ///
+    /// Each subscribe returns a dedicated [`mpsc::UnboundedReceiver`] that
+    /// only receives messages routed to this subscriber — never broadcasts.
+    #[cfg(not(feature = "internal-bench"))]
+    pub(crate) async fn subscribe_session(
+        &self,
+        session_id: &str,
+    ) -> Option<mpsc::UnboundedReceiver<Arc<str>>> {
+        self.subscribe_session_inner(session_id).await
+    }
+
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
+    pub async fn subscribe_session(
+        &self,
+        session_id: &str,
+    ) -> Option<mpsc::UnboundedReceiver<Arc<str>>> {
+        self.subscribe_session_inner(session_id).await
+    }
+
     /// Check whether a session exists.
+    #[cfg(not(feature = "internal-bench"))]
+    pub(crate) async fn has_session(&self, session_id: &str) -> bool {
+        self.sessions.read().await.contains_key(session_id)
+    }
+
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
     pub async fn has_session(&self, session_id: &str) -> bool {
         self.sessions.read().await.contains_key(session_id)
     }
 
-    /// Send a message to one subscriber for the given session.
-    ///
-    /// Per the MCP Multiple Connections rule, this routes the message to
-    /// exactly one of the session's currently connected streams (the most
-    /// recently subscribed live one), dropping any closed senders along the
-    /// way. Returns `true` if the message was delivered.
-    pub(crate) async fn send_to_session(&self, session_id: &str, message: &str) -> bool {
+    #[allow(dead_code)]
+    async fn send_to_session_inner(&self, session_id: &str, message: &str) -> bool {
         let mut sessions = self.sessions.write().await;
         let Some(data) = sessions.get_mut(session_id) else {
             return false;
         };
+        // One shared allocation for the payload; retries clone the Arc, not
+        // the message bytes.
+        let message: Arc<str> = Arc::from(message);
         // Drain dead senders from the newest end forward until we find a
         // live one that accepts the message. This gives new SSE connections
         // priority over stale ones without closing streams that are idle.
@@ -186,7 +266,7 @@ impl SessionManager {
                 data.subscribers.pop();
                 continue;
             }
-            if tx.send(message.to_string()).is_ok() {
+            if tx.send(Arc::clone(&message)).is_ok() {
                 return true;
             }
             // Send only fails here if the receiver was dropped between the
@@ -196,13 +276,31 @@ impl SessionManager {
         false
     }
 
-    /// Broadcast a message to one subscriber per session.
+    /// Send a message to one subscriber for the given session.
     ///
-    /// Iterates every session and routes to a single live subscriber
-    /// following the same per-session rule as [`Self::send_to_session`].
-    #[allow(dead_code)] // Reserved for server-initiated push (not yet wired)
-    pub(crate) async fn broadcast(&self, message: &str) {
+    /// Per the MCP Multiple Connections rule, this routes the message to
+    /// exactly one of the session's currently connected streams (the most
+    /// recently subscribed live one), dropping any closed senders along the
+    /// way. Returns `true` if the message was delivered.
+    ///
+    /// Exposed under the `internal-bench` feature for `benches/sse_throughput.rs`;
+    /// treat as crate-internal otherwise.
+    #[cfg(not(feature = "internal-bench"))]
+    pub(crate) async fn send_to_session(&self, session_id: &str, message: &str) -> bool {
+        self.send_to_session_inner(session_id, message).await
+    }
+
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
+    pub async fn send_to_session(&self, session_id: &str, message: &str) -> bool {
+        self.send_to_session_inner(session_id, message).await
+    }
+
+    #[allow(dead_code)]
+    async fn broadcast_inner(&self, message: &str) {
         let mut sessions = self.sessions.write().await;
+        // One shared allocation for all sessions instead of one copy each.
+        let message: Arc<str> = Arc::from(message);
         for (session_id, data) in sessions.iter_mut() {
             let mut delivered = false;
             while let Some(tx) = data.subscribers.last() {
@@ -210,7 +308,7 @@ impl SessionManager {
                     data.subscribers.pop();
                     continue;
                 }
-                if tx.send(message.to_string()).is_ok() {
+                if tx.send(Arc::clone(&message)).is_ok() {
                     delivered = true;
                     break;
                 }
@@ -220,6 +318,26 @@ impl SessionManager {
                 tracing::warn!("No live subscriber for session {}", session_id);
             }
         }
+    }
+
+    /// Broadcast a message to one subscriber per session.
+    ///
+    /// Iterates every session and routes to a single live subscriber
+    /// following the same per-session rule as [`Self::send_to_session`].
+    ///
+    /// Reserved for server-initiated push (not yet wired). Exposed under the
+    /// `internal-bench` feature for `benches/sse_throughput.rs`; treat as
+    /// crate-internal otherwise.
+    #[cfg(not(feature = "internal-bench"))]
+    #[allow(dead_code)]
+    pub(crate) async fn broadcast(&self, message: &str) {
+        self.broadcast_inner(message).await
+    }
+
+    #[cfg(feature = "internal-bench")]
+    #[doc(hidden)]
+    pub async fn broadcast(&self, message: &str) {
+        self.broadcast_inner(message).await
     }
 
     /// Get the number of active sessions.
@@ -854,8 +972,20 @@ fn empty_response(status: StatusCode) -> Response {
     status.into_response()
 }
 
-fn sse_event_bytes(id: &str, event_type: Option<&str>, data: &str) -> Bytes {
-    let mut event = String::new();
+// SessionManager and sse_event_bytes are made `pub` (doc-hidden) only under
+// the `internal-bench` feature via the cfg'd struct and fn definitions above/below.
+
+#[allow(dead_code)]
+fn sse_event_bytes_inner(id: &str, event_type: Option<&str>, data: &str) -> Bytes {
+    // Pre-size the buffer so the per-message hot path performs a single
+    // allocation instead of amplification-by-doubling as the frame grows.
+    // Sized for the dominant single-line (JSON-RPC) case: "id: {id}\n" +
+    // optional "event: {event_type}\n" + "data: {data}\n" + trailing "\n".
+    // Multi-line data needs +6 bytes per extra line and may regrow; counting
+    // lines up front to size exactly costs a full scan of `data`, which
+    // benchmarked slower than the occasional regrowth it avoids.
+    let capacity = 5 + id.len() + event_type.map_or(0, |t| t.len() + 8) + data.len() + 8;
+    let mut event = String::with_capacity(capacity);
     event.push_str("id: ");
     event.push_str(id);
     event.push('\n');
@@ -871,6 +1001,8 @@ fn sse_event_bytes(id: &str, event_type: Option<&str>, data: &str) -> Bytes {
     } else {
         for line in data.split('\n') {
             event.push_str("data: ");
+            // Strip trailing \r from the split line to keep the wire format
+            // clean (data may contain \r\n).
             event.push_str(line.strip_suffix('\r').unwrap_or(line));
             event.push('\n');
         }
@@ -878,6 +1010,21 @@ fn sse_event_bytes(id: &str, event_type: Option<&str>, data: &str) -> Bytes {
 
     event.push('\n');
     Bytes::from(event)
+}
+
+/// Frame one payload as an SSE event (`id:` / `event:` / `data:` lines).
+///
+/// Exposed under the `internal-bench` feature for `benches/sse_throughput.rs`;
+/// treat as crate-internal otherwise.
+#[cfg(not(feature = "internal-bench"))]
+pub(crate) fn sse_event_bytes(id: &str, event_type: Option<&str>, data: &str) -> Bytes {
+    sse_event_bytes_inner(id, event_type, data)
+}
+
+#[cfg(feature = "internal-bench")]
+#[doc(hidden)]
+pub fn sse_event_bytes(id: &str, event_type: Option<&str>, data: &str) -> Bytes {
+    sse_event_bytes_inner(id, event_type, data)
 }
 
 fn validate_protocol_header(
@@ -1367,8 +1514,8 @@ mod tests {
         let first = tokio::time::timeout(std::time::Duration::from_millis(100), rx1.recv()).await;
         let second = tokio::time::timeout(std::time::Duration::from_millis(100), rx2.recv()).await;
 
-        let first_got = matches!(first, Ok(Some(ref s)) if s == "hello");
-        let second_got = matches!(second, Ok(Some(ref s)) if s == "hello");
+        let first_got = matches!(first, Ok(Some(ref s)) if &**s == "hello");
+        let second_got = matches!(second, Ok(Some(ref s)) if &**s == "hello");
 
         assert!(
             first_got ^ second_got,
