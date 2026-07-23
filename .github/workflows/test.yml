@@ -61,6 +61,13 @@ jobs:
     - name: Unit tests
       run: cargo test --workspace --all-features --lib --bins
 
+    # Integration tests spawn example binaries (the `child_process` smoke test
+    # execs `examples/hello_world`), and `--tests` alone never builds examples —
+    # clippy above only type-checks them (metadata, no linked binaries). This
+    # also guards that every example links.
+    - name: Build examples
+      run: cargo build --workspace --all-features --examples
+
     # Workspace-level integration / compliance tests live in `tests/` and per-crate
     # `tests/` directories. Pre-3.1 these were never executed in CI — only `--lib
     # --bins` ran, so ~600 integration tests across compliance, fault-injection,
@@ -148,12 +155,17 @@ jobs:
     # in the untrusted-input decoders (wire codec, Mcp-Param header sentinel,
     # URI-template matcher, and the sonic-vs-serde differential) on every
     # push. Longer campaigns run out of band.
+    # The prebuilt cargo-fuzz binary is musl-linked, and cargo-fuzz defaults
+    # --target to the triple *it* was compiled for — building the fuzz targets
+    # for musl, where ASan is unsupported (statically linked libc). Pin the
+    # build to the actual host triple.
     - name: Fuzz each target briefly
       working-directory: fuzz
       run: |
+        HOST_TARGET="$(rustc +nightly -vV | sed -n 's/^host: //p')"
         for target in codec_decode mcp_header_codec uri_template sonic_decode; do
           echo "::group::fuzz $target"
-          cargo +nightly fuzz run "$target" -- -max_total_time=30 -rss_limit_mb=4096
+          cargo +nightly fuzz run "$target" --target "$HOST_TARGET" -- -max_total_time=30 -rss_limit_mb=4096
           echo "::endgroup::"
         done
 
