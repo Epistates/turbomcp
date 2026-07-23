@@ -27,8 +27,10 @@ impl Calc {
     }
 }
 
+// Every transport entry point erases into `ProtocolError` (via `From`), so a
+// multi-transport main composes with `?` — no `Box<dyn Error>` needed.
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), turbomcp::ProtocolError> {
     // Logs MUST go to stderr — on stdio, stdout carries the MCP protocol framing.
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
@@ -36,7 +38,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let addr: SocketAddr = args
                 .next()
                 .unwrap_or_else(|| "127.0.0.1:8080".to_owned())
-                .parse()?;
+                .parse()
+                .expect("invalid listen address");
             eprintln!("serving calc over HTTP on http://{addr}/mcp");
             // `.into_server()` resolves to the macro's inherent method, so the
             // tool capability is pre-registered before we build the dispatcher.

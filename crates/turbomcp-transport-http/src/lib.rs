@@ -499,6 +499,17 @@ pub enum HttpError {
     Io(#[from] std::io::Error),
 }
 
+/// Erase into the service-layer boundary error so a binary that serves over
+/// more than one transport can `?` every entry point against a single
+/// `Result<(), ProtocolError>` — the type `serve_stdio` already returns.
+impl From<HttpError> for ProtocolError {
+    fn from(err: HttpError) -> Self {
+        match err {
+            HttpError::Io(e) => ProtocolError::Transport(format!("http: {e}")),
+        }
+    }
+}
+
 /// Per-request shared state: the service to dispatch into, the codec, the
 /// Origin policy, and the optional resource-server authenticator. Cheap to
 /// clone (the service clones per request by contract).
@@ -1507,6 +1518,15 @@ fn protocol_error_response(err: &ProtocolError) -> Response {
 mod tests {
     use super::*;
     use turbomcp_core::JsonRpcRequest;
+
+    #[test]
+    fn http_error_bridges_into_protocol_error() {
+        let err = HttpError::Io(std::io::Error::other("bind failed"));
+        match ProtocolError::from(err) {
+            ProtocolError::Transport(msg) => assert!(msg.contains("bind failed")),
+            other => panic!("expected Transport, got {other:?}"),
+        }
+    }
 
     fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut h = HeaderMap::new();

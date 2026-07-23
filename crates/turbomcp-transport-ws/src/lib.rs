@@ -64,7 +64,9 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{Role, WebSocketConfig};
 use turbomcp_codec::{Codec, CodecError, DefaultCodec};
 use turbomcp_core::JsonRpcMessage;
-use turbomcp_service::{AuthDecision, HttpAuthenticator, McpService, ServeConfig, Transport};
+use turbomcp_service::{
+    AuthDecision, HttpAuthenticator, McpService, ProtocolError, ServeConfig, Transport,
+};
 
 /// Failures from the WebSocket transport.
 #[derive(Debug, thiserror::Error)]
@@ -82,6 +84,20 @@ pub enum WsError {
     /// An outbound frame was not valid UTF-8 (encodings are always JSON text).
     #[error("frame was not valid UTF-8")]
     Utf8,
+}
+
+/// Erase into the service-layer boundary error so a binary that serves over
+/// more than one transport can `?` every entry point against a single
+/// `Result<(), ProtocolError>` — the type `serve_stdio` already returns.
+impl From<WsError> for ProtocolError {
+    fn from(err: WsError) -> Self {
+        match err {
+            WsError::Io(e) => ProtocolError::Transport(format!("websocket: {e}")),
+            WsError::Ws(e) => ProtocolError::Transport(format!("websocket: {e}")),
+            WsError::Codec(e) => ProtocolError::Parse(e.to_string()),
+            WsError::Utf8 => ProtocolError::Internal("websocket frame was not valid UTF-8".into()),
+        }
+    }
 }
 
 /// Server-side configuration for [`serve_websocket_with`]: the upgrade-time
@@ -499,6 +515,19 @@ where
 mod tests {
     use super::*;
     use turbomcp_core::{JsonRpcRequest, JsonRpcResponse, RequestId};
+
+    #[test]
+    fn ws_error_bridges_into_protocol_error() {
+        let io = WsError::Io(std::io::Error::other("accept failed"));
+        assert!(matches!(
+            ProtocolError::from(io),
+            ProtocolError::Transport(m) if m.contains("accept failed")
+        ));
+        assert!(matches!(
+            ProtocolError::from(WsError::Utf8),
+            ProtocolError::Internal(_)
+        ));
+    }
 
     #[tokio::test]
     async fn round_trips_frames_over_a_duplex() {
