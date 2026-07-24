@@ -6,7 +6,7 @@
 
 use serde_json::{Value, json};
 use tower::{Service, ServiceExt};
-use turbomcp_core::{Implementation, JsonRpcMessage, JsonRpcRequest, McpResult};
+use turbomcp_core::{Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpResult};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
     CallToolContext, CompleteContext, GetPromptContext, ListPromptsContext, ListResourcesContext,
@@ -64,9 +64,12 @@ impl WithResources for Kitchen {
     async fn read_resource(
         &self,
         _ctx: &ReadResourceContext,
-        _params: neutral::ReadResourceParams,
+        params: neutral::ReadResourceParams,
     ) -> McpResult<neutral::ReadResourceResult> {
-        Ok(neutral::ReadResourceResult::text("mem://a", "hi"))
+        match params.uri.as_str() {
+            "mem://a" => Ok(neutral::ReadResourceResult::text("mem://a", "hi")),
+            other => Err(McpError::resource_not_found(other)),
+        }
     }
 }
 
@@ -398,4 +401,23 @@ async fn wrong_jsonrpc_version_is_invalid_request() {
         .await
         .unwrap();
     assert!(reply.is_none(), "bad-version notification is dropped");
+}
+
+/// Resource-not-found is **version-split**: the `2026-07-28` RC renumbered it
+/// to `-32602` (Invalid Params) to align with JSON-RPC, while `2025-11-25`
+/// prescribes `-32002`. The draft half is pinned here; the legacy half rides
+/// the session adapter in `legacy_session.rs`.
+#[tokio::test]
+async fn resource_not_found_is_invalid_params_on_the_draft() {
+    let mut svc = kitchen();
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "resources/read",
+            Some(json!({ "uri": "mem://gone", "_meta": draft_meta() })),
+        ),
+    )
+    .await;
+    assert_eq!(out["error"]["code"], -32602, "{out}");
 }

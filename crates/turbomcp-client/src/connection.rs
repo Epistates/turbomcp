@@ -34,6 +34,7 @@ use std::time::Duration;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use turbomcp_core::{JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId};
+use turbomcp_protocol::methods::notification;
 use turbomcp_service::Transport;
 
 use crate::cache::ResponseCache;
@@ -295,6 +296,18 @@ fn route_inbound(
                 Some(handler) => {
                     let handler = Arc::clone(handler);
                     tokio::spawn(async move {
+                        // `elicitation/complete` also reaches its dedicated
+                        // hook; a malformed one (no string `elicitationId`)
+                        // is an unknown id — ignored, per spec.
+                        if n.method == notification::ELICITATION_COMPLETE
+                            && let Some(id) = n
+                                .params
+                                .as_ref()
+                                .and_then(|p| p.get("elicitationId"))
+                                .and_then(Value::as_str)
+                        {
+                            handler.on_elicitation_complete(id.to_owned()).await;
+                        }
                         handler.on_notification(n.method, n.params).await;
                     });
                 }

@@ -55,8 +55,23 @@ pub trait ClientHandler: Send + Sync + 'static {
     /// Fire-and-forget — there is nothing to answer. The default ignores it.
     /// (The client's response cache is invalidated by `list_changed`
     /// notifications independently of this hook.)
+    ///
+    /// `notifications/elicitation/complete` also routes to the dedicated
+    /// [`on_elicitation_complete`](Self::on_elicitation_complete) hook.
     async fn on_notification(&self, method: String, params: Option<Value>) {
         let _ = (method, params);
+    }
+
+    /// An out-of-band interaction started by a URL-mode `elicitation/create`
+    /// finished (`notifications/elicitation/complete`): retry the request that
+    /// needed it, dismiss the "waiting on you" UI, or ignore it.
+    ///
+    /// Per spec you **must ignore** ids you don't recognize or have already
+    /// completed, and must not *rely* on this arriving — it is a server MAY,
+    /// so keep the manual retry/cancel controls working regardless. The
+    /// default ignores it.
+    async fn on_elicitation_complete(&self, elicitation_id: String) {
+        let _ = elicitation_id;
     }
 }
 

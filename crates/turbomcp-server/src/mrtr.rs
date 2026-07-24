@@ -242,6 +242,10 @@ enum HandleMode {
 
 struct Inner {
     mode: HandleMode,
+    /// The connection this request arrived on (empty when unknown). Used to
+    /// address the initiating client for out-of-band notifications — the
+    /// elicitation spec's MUST ("only ... the client that initiated").
+    connection: String,
     /// The client's declared capabilities (gates which input requests may be
     /// sent — SEP-2322 MUST). `None` = nothing declared.
     client_capabilities: Option<Value>,
@@ -284,6 +288,7 @@ impl ClientHandle {
         Self {
             inner: Arc::new(Inner {
                 mode: HandleMode::Unavailable(reason),
+                connection: String::new(),
                 client_capabilities: None,
                 responses: BTreeMap::new(),
                 collected: Mutex::new(BTreeMap::new()),
@@ -296,6 +301,7 @@ impl ClientHandle {
 
     /// A draft-path MRTR handle for one request (re)execution.
     pub(crate) fn mrtr(
+        connection: &str,
         client_capabilities: Option<Value>,
         responses: BTreeMap<String, Value>,
         state_in: Option<Value>,
@@ -304,6 +310,7 @@ impl ClientHandle {
         Self {
             inner: Arc::new(Inner {
                 mode: HandleMode::Mrtr,
+                connection: connection.to_owned(),
                 client_capabilities,
                 responses,
                 collected: Mutex::new(BTreeMap::new()),
@@ -325,6 +332,7 @@ impl ClientHandle {
         Self {
             inner: Arc::new(Inner {
                 mode: HandleMode::TaskMediated { slot },
+                connection: String::new(),
                 client_capabilities,
                 responses: BTreeMap::new(),
                 collected: Mutex::new(BTreeMap::new()),
@@ -349,6 +357,7 @@ impl ClientHandle {
                     connection: connection.to_owned(),
                     pending,
                 },
+                connection: connection.to_owned(),
                 client_capabilities,
                 responses: BTreeMap::new(),
                 collected: Mutex::new(BTreeMap::new()),
@@ -403,6 +412,40 @@ impl ClientHandle {
             )
             .await?;
         parse_elicit_outcome(&raw)
+    }
+
+    /// Tell the client that the out-of-band interaction started by a URL-mode
+    /// [`elicit_url`](Self::elicit_url) finished
+    /// (`notifications/elicitation/complete`), so it can retry the request or
+    /// update its UI without waiting on the user.
+    ///
+    /// Optional by spec (a MAY), and delivered only to the client that
+    /// initiated the elicitation — `elicitation_id` must be the id that
+    /// request carried, so set one explicitly with
+    /// [`ElicitUrlParams::with_elicitation_id`](neutral::ElicitUrlParams::with_elicitation_id)
+    /// when you intend to notify (an id minted for you is never surfaced).
+    ///
+    /// Best-effort: `false` if the initiating connection is already gone (the
+    /// client's own retry controls cover that case — the spec requires them).
+    pub async fn notify_elicitation_complete(&self, elicitation_id: &str) -> bool {
+        let Some(writer) = request_writer(&self.inner.connection, self.session_id()) else {
+            return false;
+        };
+        let note = turbomcp_core::JsonRpcNotification::new(
+            turbomcp_protocol::methods::notification::ELICITATION_COMPLETE,
+            Some(json!({ "elicitationId": elicitation_id })),
+        );
+        writer.send(note.into()).await.is_ok()
+    }
+
+    /// The legacy session this handle is bound to, if any (draft handles are
+    /// sessionless — the draft forbids delivering request-scoped messages on
+    /// any stream but the request's own).
+    fn session_id(&self) -> &str {
+        match &self.inner.mode {
+            HandleMode::Bidi { session, .. } => session,
+            _ => "",
+        }
     }
 
     /// Ask for several inputs in **one** round trip (PLAN MR-4): all missing
@@ -754,7 +797,7 @@ mod tests {
 
     #[tokio::test]
     async fn elicit_without_declared_capability_is_an_error_not_an_abort() {
-        let handle = ClientHandle::mrtr(Some(json!({})), BTreeMap::new(), None, false);
+        let handle = ClientHandle::mrtr("", Some(json!({})), BTreeMap::new(), None, false);
         let err = handle
             .elicit("k", neutral::ElicitParams::new("?", json!({})))
             .await
@@ -766,6 +809,7 @@ mod tests {
     #[tokio::test]
     async fn elicit_url_records_url_mode_request() {
         let handle = ClientHandle::mrtr(
+            "",
             Some(json!({ "elicitation": {} })),
             BTreeMap::new(),
             None,
@@ -799,6 +843,7 @@ mod tests {
     #[tokio::test]
     async fn elicit_url_mints_an_id_when_unset() {
         let handle = ClientHandle::mrtr(
+            "",
             Some(json!({ "elicitation": {} })),
             BTreeMap::new(),
             None,
@@ -820,8 +865,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn elicitation_complete_reaches_only_the_initiating_connection() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        let _guard = turbomcp_service::outbound::register("elicit-conn", tx);
+        let handle = ClientHandle::mrtr("elicit-conn", None, BTreeMap::new(), None, false);
+
+        assert!(handle.notify_elicitation_complete("eid-1").await);
+        let turbomcp_core::JsonRpcMessage::Notification(n) = rx.try_recv().expect("a notification")
+        else {
+            panic!("expected a notification")
+        };
+        assert_eq!(n.method, "notifications/elicitation/complete");
+        assert_eq!(n.params.unwrap()["elicitationId"], "eid-1");
+
+        // No connection (an MRTR handle whose transport never named one) is a
+        // no-op, not an error: the notification is a spec MAY.
+        let orphan = ClientHandle::mrtr("", None, BTreeMap::new(), None, false);
+        assert!(!orphan.notify_elicitation_complete("eid-1").await);
+    }
+
+    #[tokio::test]
     async fn strict_keys_reject_shape_conflict() {
         let handle = ClientHandle::mrtr(
+            "",
             Some(json!({ "elicitation": {} })),
             BTreeMap::new(),
             None,
@@ -848,6 +914,7 @@ mod tests {
     #[tokio::test]
     async fn non_strict_keys_only_warn_on_conflict() {
         let handle = ClientHandle::mrtr(
+            "",
             Some(json!({ "elicitation": {} })),
             BTreeMap::new(),
             None,

@@ -79,4 +79,9 @@ pub mod notification {
     /// `notifications/message` — a structured log message (`logging`
     /// capability); request-scoped on the draft, session-scoped on legacy.
     pub const MESSAGE: &str = "notifications/message";
+    /// `notifications/elicitation/complete` — an out-of-band interaction
+    /// started by a URL-mode `elicitation/create` finished. Optional (spec
+    /// MAY); goes only to the client that initiated it and names that
+    /// request's `elicitationId`.
+    pub const ELICITATION_COMPLETE: &str = "notifications/elicitation/complete";
 }

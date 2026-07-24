@@ -6,12 +6,12 @@
 use serde_json::{Value, json};
 use tower::{Service, ServiceExt};
 use turbomcp_core::{
-    Implementation, JsonRpcMessage, JsonRpcRequest, McpResult, ProtocolVersion, meta,
+    Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpResult, ProtocolVersion, meta,
 };
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
-    CallToolContext, LegacySessionAdapter, ListToolsContext, McpServerCore, MethodRouter,
-    VersionDispatcher, WithTools,
+    CallToolContext, LegacySessionAdapter, ListResourcesContext, ListToolsContext, McpServerCore,
+    MethodRouter, ReadResourceContext, VersionDispatcher, WithResources, WithTools,
 };
 use turbomcp_service::ProtocolError;
 
@@ -56,10 +56,30 @@ impl WithTools for Echo {
     }
 }
 
+/// Resources exist only to prove the version-split resource-not-found code
+/// on this wire; every read misses.
+impl WithResources for Echo {
+    async fn list_resources(
+        &self,
+        _ctx: &ListResourcesContext,
+        _params: neutral::ListParams,
+    ) -> McpResult<neutral::ListResourcesResult> {
+        Ok(neutral::ListResourcesResult::new(vec![]))
+    }
+
+    async fn read_resource(
+        &self,
+        _ctx: &ReadResourceContext,
+        params: neutral::ReadResourceParams,
+    ) -> McpResult<neutral::ReadResourceResult> {
+        Err(McpError::resource_not_found(params.uri))
+    }
+}
+
 fn adapter() -> LegacySessionAdapter<VersionDispatcher<Echo>> {
     LegacySessionAdapter::new(VersionDispatcher::new(
         Echo,
-        MethodRouter::new().with_tools(),
+        MethodRouter::new().with_tools().with_resources(),
     ))
 }
 
@@ -223,4 +243,22 @@ async fn ping_answers_on_the_legacy_path() {
     let _ = call_result(&mut svc, initialize_request(1, "2025-11-25")).await;
     let pong = call_result(&mut svc, JsonRpcRequest::new(2, "ping", None)).await;
     assert_eq!(pong, json!({}));
+}
+
+/// Resource-not-found is **version-split**: `2025-11-25` prescribes `-32002`,
+/// while the `2026-07-28` RC renumbered it to `-32602` (Invalid Params). A
+/// legacy client keyed on its own spec's number must see that number — the
+/// draft half is pinned in `dispatch_invariants.rs`.
+#[tokio::test]
+async fn resource_not_found_uses_the_legacy_code_on_this_wire() {
+    let mut svc = adapter();
+    let init = call_result(&mut svc, initialize_request(1, "2025-11-25")).await;
+    assert_eq!(init["protocolVersion"], "2025-11-25");
+
+    let read = JsonRpcRequest::new(2, "resources/read", Some(json!({ "uri": "mem://gone" })));
+    let Some(JsonRpcMessage::Response(r)) = call(&mut svc, read).await else {
+        panic!("expected a response")
+    };
+    let err = r.error.expect("resource-not-found error");
+    assert_eq!(err.code, -32002, "{}", err.message);
 }

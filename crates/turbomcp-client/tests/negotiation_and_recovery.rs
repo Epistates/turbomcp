@@ -5,8 +5,8 @@
 //! auto-driven task terminal-state mapping — all against hand-scripted
 //! servers so each branch is reached deterministically.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -440,4 +440,92 @@ async fn driven_task_terminal_states_map_to_client_errors() {
         .expect("ttl backstop fires promptly")
         .expect_err("ttl exceeded");
     assert!(matches!(&err, ClientError::Timeout), "{err:?}");
+}
+
+// ---- elicitation/complete routing -----------------------------------------------
+
+/// Records the ids handed to the dedicated `on_elicitation_complete` hook, and
+/// separately every notification method seen by the generic hook.
+#[derive(Clone, Default)]
+struct CompletionSpy {
+    ids: Arc<Mutex<Vec<String>>>,
+    methods: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl ClientHandler for CompletionSpy {
+    async fn elicit(&self, _request: neutral::ElicitParams) -> neutral::ElicitOutcome {
+        neutral::ElicitOutcome::new(neutral::ElicitAction::Decline, Map::new())
+    }
+    async fn on_elicitation_complete(&self, elicitation_id: String) {
+        self.ids.lock().unwrap().push(elicitation_id);
+    }
+    async fn on_notification(&self, method: String, _params: Option<Value>) {
+        self.methods.lock().unwrap().push(method);
+    }
+}
+
+/// A server-pushed `notifications/elicitation/complete` reaches the dedicated
+/// hook with its `elicitationId` — and still reaches the generic notification
+/// hook. A malformed one (no string id) is an unknown id: generic hook only,
+/// never the typed one (clients MUST ignore unknown ids).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn elicitation_complete_reaches_the_typed_hook() {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    tokio::spawn(async move {
+        let (rd, mut wr) = split(server_io);
+        let mut lines = BufReader::new(rd).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let frame: Value = serde_json::from_str(&line).expect("valid json");
+            let Some(id) = frame.get("id").cloned() else {
+                continue;
+            };
+            if frame.get("method").and_then(Value::as_str) != Some("server/discover") {
+                continue;
+            }
+            let mut reply = json!({ "jsonrpc": "2.0", "id": id });
+            reply
+                .as_object_mut()
+                .unwrap()
+                .extend(discover_ok().as_object().unwrap().clone());
+            wr.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+            for params in [
+                json!({ "elicitationId": "eid-7" }),
+                json!({ "elicitationId": 42 }), // malformed → unknown id
+            ] {
+                let note = json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/elicitation/complete",
+                    "params": params,
+                });
+                wr.write_all(format!("{note}\n").as_bytes()).await.unwrap();
+            }
+        }
+    });
+
+    let spy = CompletionSpy::default();
+    let _client = ClientBuilder::new("ec", "1.0.0")
+        .with_connect_mode(ConnectMode::Modern)
+        .with_handler(spy.clone())
+        .connect(transport_for(client_io))
+        .await
+        .unwrap();
+
+    // Both notifications are in flight behind the handshake response.
+    for _ in 0..50 {
+        if spy.methods.lock().unwrap().len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(
+        *spy.ids.lock().unwrap(),
+        vec!["eid-7".to_owned()],
+        "only the well-formed id reaches the typed hook"
+    );
+    assert_eq!(
+        spy.methods.lock().unwrap().len(),
+        2,
+        "both still reach the generic hook"
+    );
 }

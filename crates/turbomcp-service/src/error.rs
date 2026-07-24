@@ -2,7 +2,7 @@
 //! mapping used everywhere a user error must become a wire response.
 
 use turbomcp_codec::CodecError;
-use turbomcp_core::{JsonRpcError, JsonRpcResponse, McpError, RequestId};
+use turbomcp_core::{JsonRpcError, JsonRpcResponse, McpError, ProtocolVersion, RequestId};
 
 /// Errors at the service/transport boundary — *not* normal protocol responses.
 ///
@@ -112,6 +112,19 @@ impl From<CodecError> for ProtocolError {
 pub fn mcp_to_jsonrpc_error(err: &McpError) -> JsonRpcError {
     JsonRpcError {
         code: err.jsonrpc_code(),
+        message: err.to_string(),
+        data: None,
+    }
+}
+
+/// [`mcp_to_jsonrpc_error`] for a known protocol version: resource-not-found
+/// is version-split (`-32002` through `2025-11-25`, `-32602` from the
+/// 2026-07-28 RC on, which renumbered it to align with JSON-RPC). Use this
+/// wherever the negotiated version is in hand.
+#[must_use]
+pub fn mcp_to_jsonrpc_error_for(err: &McpError, version: &ProtocolVersion) -> JsonRpcError {
+    JsonRpcError {
+        code: err.jsonrpc_code_for(version),
         message: err.to_string(),
         data: None,
     }

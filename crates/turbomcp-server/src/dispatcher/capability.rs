@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use turbomcp_core::{
-    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError, RequestContext, RequestId, meta,
+    JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError, ProtocolVersion, RequestContext,
+    RequestId, meta,
 };
 use turbomcp_protocol::draft::types as draft;
 use turbomcp_protocol::v2025_11_25::types as legacy;
@@ -35,7 +36,7 @@ use super::params::{
     parse_call_tool_params, parse_complete_params, parse_get_prompt_params, parse_list_params,
     parse_read_resource_params,
 };
-use super::{Shared, connection_id, error_response, ok_value, session_id};
+use super::{Shared, connection_id, error_response_for, ok_value, session_id};
 
 /// Fill the server's configured default cache policy (SEP-2549) into a
 /// cacheable neutral result whose handler didn't set one. Applied on both wire
@@ -64,16 +65,17 @@ where
 async fn finish<N, W>(
     id: RequestId,
     method: &str,
+    version: &ProtocolVersion,
     fut: Option<BoxFuture<'static, Result<N, McpError>>>,
 ) -> JsonRpcMessage
 where
     W: Serialize + From<N>,
 {
     match fut {
-        None => error_response(id, &McpError::method_not_found(method)),
+        None => error_response_for(id, version, &McpError::method_not_found(method)),
         Some(f) => match f.await {
             Ok(result) => ok_value(id, &W::from(result)),
-            Err(e) => error_response(id, &e),
+            Err(e) => error_response_for(id, version, &e),
         },
     }
 }
@@ -86,6 +88,10 @@ pub(super) trait WireFamily {
     /// Whether this wire family delivers client interaction via MRTR
     /// (`InputRequiredResult`); the legacy family uses inline bidi instead.
     const MRTR: bool;
+    /// A version of this family, for the error codes that are version-split
+    /// (resource-not-found renumbered `-32002` -> `-32602` at the 2026-07-28
+    /// RC). Any member of the family answers identically.
+    const VERSION: ProtocolVersion;
     type ListTools: Serialize + From<neutral::ListToolsResult>;
     type CallTool: Serialize + From<neutral::CallToolResult>;
     type ListResources: Serialize + From<neutral::ListResourcesResult>;
@@ -101,6 +107,7 @@ pub(super) struct DraftWire;
 
 impl WireFamily for DraftWire {
     const MRTR: bool = true;
+    const VERSION: ProtocolVersion = ProtocolVersion::Draft;
     type ListTools = draft::ListToolsResult;
     type CallTool = draft::CallToolResult;
     type ListResources = draft::ListResourcesResult;
@@ -116,6 +123,7 @@ pub(super) struct LegacyWire;
 
 impl WireFamily for LegacyWire {
     const MRTR: bool = false;
+    const VERSION: ProtocolVersion = ProtocolVersion::V2025_11_25;
     type ListTools = legacy::ListToolsResult;
     type CallTool = legacy::CallToolResult;
     type ListResources = legacy::ListResourcesResult;
@@ -143,12 +151,12 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
         methods::request::TOOLS_LIST => {
             let fut = router.dispatch_list_tools(server, ListToolsContext::new(ctx), list_params);
             let fut = with_cache_default(fut, shared.cache.tools_list);
-            finish::<_, W::ListTools>(id, method, fut).await
+            finish::<_, W::ListTools>(id, method, &W::VERSION, fut).await
         }
         methods::request::TOOLS_CALL => {
             let params = match parse_call_tool_params(req.params.as_ref()) {
                 Ok(p) => p,
-                Err(e) => return error_response(id, &e),
+                Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
             let handle = match mrtr_handle::<W>(
                 req,
@@ -158,7 +166,7 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 shared.strict_elicitation_keys,
             ) {
                 Ok(h) => h,
-                Err(e) => return error_response(id, &e),
+                Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
             let fut = router.dispatch_call_tool(
                 server,
@@ -169,13 +177,25 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 params,
             );
             let subject = ctx.identity.subject().map(str::to_owned);
-            finish_mrtr::<_, W::CallTool>(id, method, subject, fut, &handle, signer, W::MRTR).await
+            finish_mrtr::<_, W::CallTool>(
+                id,
+                MrtrTurn {
+                    method,
+                    version: &W::VERSION,
+                    subject,
+                    handle: &handle,
+                    signer,
+                    mrtr_enabled: W::MRTR,
+                },
+                fut,
+            )
+            .await
         }
         methods::request::RESOURCES_LIST => {
             let fut =
                 router.dispatch_list_resources(server, ListResourcesContext::new(ctx), list_params);
             let fut = with_cache_default(fut, shared.cache.resources_list);
-            finish::<_, W::ListResources>(id, method, fut).await
+            finish::<_, W::ListResources>(id, method, &W::VERSION, fut).await
         }
         methods::request::RESOURCES_TEMPLATES_LIST => {
             let fut = router.dispatch_list_resource_templates(
@@ -184,12 +204,12 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 list_params,
             );
             let fut = with_cache_default(fut, shared.cache.resource_templates_list);
-            finish::<_, W::ListResourceTemplates>(id, method, fut).await
+            finish::<_, W::ListResourceTemplates>(id, method, &W::VERSION, fut).await
         }
         methods::request::RESOURCES_READ => {
             let params = match parse_read_resource_params(req.params.as_ref()) {
                 Ok(p) => p,
-                Err(e) => return error_response(id, &e),
+                Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
             let handle = match mrtr_handle::<W>(
                 req,
@@ -199,7 +219,7 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 shared.strict_elicitation_keys,
             ) {
                 Ok(h) => h,
-                Err(e) => return error_response(id, &e),
+                Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
             let fut = router.dispatch_read_resource(
                 server,
@@ -211,19 +231,30 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
             );
             let fut = with_cache_default(fut, shared.cache.resources_read);
             let subject = ctx.identity.subject().map(str::to_owned);
-            finish_mrtr::<_, W::ReadResource>(id, method, subject, fut, &handle, signer, W::MRTR)
-                .await
+            finish_mrtr::<_, W::ReadResource>(
+                id,
+                MrtrTurn {
+                    method,
+                    version: &W::VERSION,
+                    subject,
+                    handle: &handle,
+                    signer,
+                    mrtr_enabled: W::MRTR,
+                },
+                fut,
+            )
+            .await
         }
         methods::request::PROMPTS_LIST => {
             let fut =
                 router.dispatch_list_prompts(server, ListPromptsContext::new(ctx), list_params);
             let fut = with_cache_default(fut, shared.cache.prompts_list);
-            finish::<_, W::ListPrompts>(id, method, fut).await
+            finish::<_, W::ListPrompts>(id, method, &W::VERSION, fut).await
         }
         methods::request::PROMPTS_GET => {
             let params = match parse_get_prompt_params(req.params.as_ref()) {
                 Ok(p) => p,
-                Err(e) => return error_response(id, &e),
+                Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
             let handle = match mrtr_handle::<W>(
                 req,
@@ -233,7 +264,7 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 shared.strict_elicitation_keys,
             ) {
                 Ok(h) => h,
-                Err(e) => return error_response(id, &e),
+                Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
             let fut = router.dispatch_get_prompt(
                 server,
@@ -244,15 +275,27 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 params,
             );
             let subject = ctx.identity.subject().map(str::to_owned);
-            finish_mrtr::<_, W::GetPrompt>(id, method, subject, fut, &handle, signer, W::MRTR).await
+            finish_mrtr::<_, W::GetPrompt>(
+                id,
+                MrtrTurn {
+                    method,
+                    version: &W::VERSION,
+                    subject,
+                    handle: &handle,
+                    signer,
+                    mrtr_enabled: W::MRTR,
+                },
+                fut,
+            )
+            .await
         }
         methods::request::COMPLETION_COMPLETE => {
             let params = match parse_complete_params(req.params.as_ref()) {
                 Ok(p) => p,
-                Err(e) => return error_response(id, &e),
+                Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
             let fut = router.dispatch_complete(server, CompleteContext::new(ctx), params);
-            finish::<_, W::Complete>(id, method, fut).await
+            finish::<_, W::Complete>(id, method, &W::VERSION, fut).await
         }
         _ => unreachable!("dispatch_capability called with an unrouted method"),
     }
@@ -303,11 +346,29 @@ fn mrtr_handle<W: WireFamily>(
         None => None,
     };
     Ok(ClientHandle::mrtr(
+        connection_id(req.params.as_ref()).unwrap_or_default(),
         ctx.client_capabilities.clone(),
         fields.input_responses.unwrap_or_default(),
         state_in,
         strict_keys,
     ))
+}
+
+/// Everything [`finish_mrtr`] needs about the *request* it is completing, as
+/// one value (the alternative trips clippy's argument limit).
+pub(super) struct MrtrTurn<'a> {
+    /// The originating method — names the error and binds the signed state.
+    pub(super) method: &'a str,
+    /// The wire family's version, for the version-split error codes.
+    pub(super) version: &'a ProtocolVersion,
+    /// The authenticated principal, bound into any minted `requestState`.
+    pub(super) subject: Option<String>,
+    /// The handler's client channel: what it recorded, what it stashed.
+    pub(super) handle: &'a ClientHandle,
+    pub(super) signer: &'a StateSigner,
+    /// Whether this wire answers `InputRequiredResult` at all (legacy uses
+    /// inline bidi, so a sentinel there is a leak, not a turn).
+    pub(super) mrtr_enabled: bool,
 }
 
 /// [`finish`], plus MRTR-abort interception: when the handler bailed with the
@@ -316,18 +377,22 @@ fn mrtr_handle<W: WireFamily>(
 /// outbound `requestState` (the spec's MUST: at least one of the two).
 async fn finish_mrtr<N, WIRE>(
     id: RequestId,
-    method: &str,
-    subject: Option<String>,
+    turn: MrtrTurn<'_>,
     fut: Option<BoxFuture<'static, Result<N, McpError>>>,
-    handle: &ClientHandle,
-    signer: &StateSigner,
-    mrtr_enabled: bool,
 ) -> JsonRpcMessage
 where
     WIRE: Serialize + From<N>,
 {
+    let MrtrTurn {
+        method,
+        version,
+        subject,
+        handle,
+        signer,
+        mrtr_enabled,
+    } = turn;
     let Some(f) = fut else {
-        return error_response(id, &McpError::method_not_found(method));
+        return error_response_for(id, version, &McpError::method_not_found(method));
     };
     match f.await {
         Ok(result) => ok_value(id, &WIRE::from(result)),
@@ -337,8 +402,9 @@ where
             if collected.is_empty() && state_out.is_none() {
                 // The spec requires at least one of inputRequests/requestState;
                 // a bare sentinel means a handler leaked it manually.
-                return error_response(
+                return error_response_for(
                     id,
+                    version,
                     &McpError::internal("MRTR abort recorded no input requests"),
                 );
             }
@@ -358,12 +424,12 @@ where
                     Ok(token) => {
                         result.insert("requestState".to_owned(), serde_json::json!(token));
                     }
-                    Err(e) => return error_response(id, &e),
+                    Err(e) => return error_response_for(id, version, &e),
                 }
             }
             JsonRpcResponse::success(id, Value::Object(result)).into()
         }
-        Err(e) => error_response(id, &e),
+        Err(e) => error_response_for(id, version, &e),
     }
 }
 

@@ -141,6 +141,29 @@ impl McpError {
         }
     }
 
+    /// The JSON-RPC error code for this variant **as `version` spells it**.
+    ///
+    /// One code is version-split: resource-not-found is `-32002` through
+    /// `2025-11-25` and `-32602` (Invalid Params) from the `2026-07-28` RC on,
+    /// which renumbered it to align with JSON-RPC. Everything else matches
+    /// [`jsonrpc_code`](Self::jsonrpc_code), which answers for the current
+    /// revision — prefer this method wherever the negotiated version is known.
+    #[must_use]
+    pub fn jsonrpc_code_for(&self, version: &crate::ProtocolVersion) -> i32 {
+        use crate::ProtocolVersion as V;
+        match self {
+            Self::ResourceNotFound(_)
+                if matches!(
+                    version,
+                    V::V2024_11_05 | V::V2025_03_26 | V::V2025_06_18 | V::V2025_11_25
+                ) =>
+            {
+                -32002
+            }
+            other => other.jsonrpc_code(),
+        }
+    }
+
     /// The HTTP status equivalent for this variant (PLAN.md §4.10).
     ///
     /// An embedder affordance: the bundled Streamable HTTP transport never
@@ -233,6 +256,33 @@ mod tests {
             McpError::tool_execution_failed("t", "boom").http_status(),
             200
         );
+    }
+
+    #[test]
+    fn resource_not_found_is_version_split() {
+        use crate::ProtocolVersion as V;
+        let err = McpError::resource_not_found("mem://gone");
+        // The RC renumbered it to Invalid Params; earlier revisions keep the
+        // MCP-specific -32002 their spec text prescribes.
+        assert_eq!(err.jsonrpc_code(), -32602, "version-agnostic = current");
+        assert_eq!(err.jsonrpc_code_for(&V::Draft), -32602);
+        for legacy in [
+            V::V2024_11_05,
+            V::V2025_03_26,
+            V::V2025_06_18,
+            V::V2025_11_25,
+        ] {
+            assert_eq!(err.jsonrpc_code_for(&legacy), -32002, "{legacy:?}");
+        }
+        // Every other variant is version-stable.
+        for e in [
+            McpError::internal("x"),
+            McpError::invalid_params("x"),
+            McpError::tool_not_found("x"),
+            McpError::HeaderMismatch("x".into()),
+        ] {
+            assert_eq!(e.jsonrpc_code_for(&V::V2025_11_25), e.jsonrpc_code(), "{e}");
+        }
     }
 
     #[test]

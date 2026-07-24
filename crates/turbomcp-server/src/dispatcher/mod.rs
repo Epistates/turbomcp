@@ -33,7 +33,7 @@ use turbomcp_core::{
 };
 use turbomcp_protocol::neutral::CachePolicy;
 use turbomcp_protocol::{methods, version};
-use turbomcp_service::{ProtocolError, mcp_to_jsonrpc_error};
+use turbomcp_service::{ProtocolError, mcp_to_jsonrpc_error, mcp_to_jsonrpc_error_for};
 
 use crate::extension::{Extension, ExtensionRequest};
 use crate::inflight::InFlightRegistry;
@@ -833,8 +833,18 @@ fn ok_value<T: Serialize>(id: RequestId, value: &T) -> JsonRpcMessage {
     }
 }
 
+/// Render `err` for a request whose version isn't known (or isn't relevant to
+/// the code): uses the current revision's mapping. Prefer
+/// [`error_response_for`] anywhere the negotiated version is in hand.
 fn error_response(id: RequestId, err: &McpError) -> JsonRpcMessage {
     JsonRpcResponse::error(id, mcp_to_jsonrpc_error(err)).into()
+}
+
+/// Render `err` as `version` spells it — resource-not-found is the one
+/// version-split code (`-32002` through `2025-11-25`, `-32602` from the
+/// 2026-07-28 RC on).
+fn error_response_for(id: RequestId, version: &ProtocolVersion, err: &McpError) -> JsonRpcMessage {
+    JsonRpcResponse::error(id, mcp_to_jsonrpc_error_for(err, version)).into()
 }
 
 /// `-32003` Missing Required Client Capability (SEP-2663): the client requested
