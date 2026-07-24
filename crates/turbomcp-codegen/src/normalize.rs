@@ -187,10 +187,10 @@ pub fn open_embedded_schemas(schema: &mut Value) {
 /// Open every `_meta` object definition so typify keeps arbitrary keys.
 ///
 /// `_meta` is an open map by spec — `MetaObject` carries arbitrary
-/// reverse-DNS-namespaced keys, and the specialized shapes
-/// (`RequestMetaObject`, `ResultMetaObject`, `NotificationMetaObject`,
-/// `SubscriptionsListenResultMeta`) extend it with *reserved* keys while
-/// keeping the map open. JSON Schema treats a `properties`-only object as
+/// reverse-DNS-namespaced keys, and the specialized shapes (e.g.
+/// `RequestMetaObject`) extend it with *reserved* keys while keeping the map
+/// open. The set of specialized shapes moves with the spec, so they are
+/// discovered from the schema rather than listed here. JSON Schema treats a `properties`-only object as
 /// open, but typify emits a CLOSED struct for it, so round-tripping a message
 /// through the typed structs would silently drop every non-reserved `_meta`
 /// key (trace context, user metadata). Inject `additionalProperties: {}` into
@@ -317,10 +317,10 @@ mod tests {
     fn opens_meta_object_definitions() {
         let mut schema = json!({
             "$defs": {
-                "ResultMetaObject": {
+                "RequestMetaObject": {
                     "type": "object",
                     "properties": {
-                        "io.modelcontextprotocol/serverInfo": { "type": "object" }
+                        "io.modelcontextprotocol/protocolVersion": { "type": "string" }
                     }
                 },
                 // Same shape but never referenced from a `_meta` property —
@@ -332,7 +332,7 @@ mod tests {
                 "SomeResult": {
                     "type": "object",
                     "properties": {
-                        "_meta": { "$ref": "#/$defs/ResultMetaObject" },
+                        "_meta": { "$ref": "#/$defs/RequestMetaObject" },
                         "other": { "$ref": "#/$defs/NotMeta" }
                     }
                 }
@@ -340,7 +340,7 @@ mod tests {
         });
         open_meta_objects(&mut schema);
         assert_eq!(
-            schema["$defs"]["ResultMetaObject"]["additionalProperties"],
+            schema["$defs"]["RequestMetaObject"]["additionalProperties"],
             json!({}),
             "meta object opened"
         );

@@ -1,5 +1,5 @@
 //! Client behavior under server responses the happy path never produces:
-//! the `Auto` → legacy negotiation fallback, the `-32020` HeaderMismatch
+//! the `Auto` → legacy negotiation fallback, the HeaderMismatch
 //! refresh-and-retry-once recovery, the MRTR round cap and no-handler error,
 //! packaged `sampling/createMessage` / `roots/list` dispatch, and the
 //! auto-driven task terminal-state mapping — all against hand-scripted
@@ -74,11 +74,13 @@ impl ClientHandler for AcceptAll {
 // ---- Auto → legacy fallback ----------------------------------------------------
 
 /// The point of `ConnectMode::Auto`: when `server/discover` is unavailable
-/// (`-32601` from a legacy-only server, or `-32022` from a version-strict
-/// one), the client falls back to `initialize` and lands on `2025-11-25`.
+/// (`-32601` from a legacy-only server, or UnsupportedProtocolVersion from a
+/// version-strict one), the client falls back to `initialize` and lands on
+/// `2025-11-25`. Both the RC's `-32004` and the earlier draft's `-32022` are
+/// accepted, so a peer tracking either spec revision still negotiates.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auto_falls_back_to_legacy_when_discover_is_unavailable() {
-    for discover_code in [-32601i64, -32022] {
+    for discover_code in [-32601i64, -32004, -32022] {
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         spawn_scripted(server_io, move |method, _| match method {
             "server/discover" => Some(json!({
@@ -130,13 +132,20 @@ async fn auto_does_not_swallow_unrelated_discover_failures() {
     );
 }
 
-// ---- -32020 HeaderMismatch recovery ---------------------------------------------
+// ---- HeaderMismatch recovery ----------------------------------------------------
 
-/// Per the transports spec, `-32020` on `tools/call` means the client's
-/// mirrored headers came from a stale schema: refresh `tools/list` (rebuilding
-/// the header cache) and retry exactly once.
+/// Per the transports spec, a HeaderMismatch on `tools/call` means the
+/// client's mirrored headers came from a stale schema: refresh `tools/list`
+/// (rebuilding the header cache) and retry exactly once. Driven for both the
+/// RC's `-32001` and the earlier draft's `-32020`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn header_mismatch_refreshes_tools_list_and_retries_once() {
+    for mismatch_code in [-32001i64, -32020] {
+        header_mismatch_retry_case(mismatch_code).await;
+    }
+}
+
+async fn header_mismatch_retry_case(mismatch_code: i64) {
     let calls = Arc::new(AtomicUsize::new(0));
     let lists = Arc::new(AtomicUsize::new(0));
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
@@ -154,7 +163,9 @@ async fn header_mismatch_refreshes_tools_list_and_retries_once() {
             }
             "tools/call" => {
                 if calls.fetch_add(1, SeqCst) == 0 {
-                    Some(json!({ "error": { "code": -32020, "message": "header mismatch" } }))
+                    Some(
+                        json!({ "error": { "code": mismatch_code, "message": "header mismatch" } }),
+                    )
                 } else {
                     Some(json!({ "result": {
                         "content": [{ "type": "text", "text": "ok" }],

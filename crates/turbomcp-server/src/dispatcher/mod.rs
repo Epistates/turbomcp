@@ -53,7 +53,7 @@ mod params;
 
 use augment::try_augment_call;
 use capability::{DraftWire, LegacyWire, dispatch_capability};
-use handshake::{discover_response, handle_initialize, stamp_server_info};
+use handshake::{discover_response, handle_initialize};
 use legacy_tasks::{
     handle_tasks_method, has_task_field, legacy_list_tools_with_task_support, task_augmented_call,
 };
@@ -91,9 +91,6 @@ struct Shared {
     extensions: Arc<Vec<Arc<dyn Extension>>>,
     /// Opt-in: treat an elicit key reused with a different shape as an error.
     strict_elicitation_keys: bool,
-    /// Stamp `io.modelcontextprotocol/serverInfo` into every draft result's
-    /// `_meta` (spec SHOULD; opt out via `without_server_info_meta`).
-    server_info_meta: bool,
     /// Per-capability cache defaults (SEP-2549), applied to draft cacheable
     /// results whose handler didn't set a policy.
     cache: CachePolicies,
@@ -101,7 +98,8 @@ struct Shared {
 
 /// Per-capability cache defaults (SEP-2549) for the `2026-07-28` wire's
 /// `ttlMs`/`cacheScope` fields — one [`CachePolicy`] per cacheable surface
-/// (`server/discover`, the four `*/list`s, `resources/read`). The default is
+/// (the four `*/list`s and `resources/read`; `server/discover` lost its cache
+/// fields in the 2026-07-28 RC and is not configurable). The default is
 /// [`CachePolicy::NO_CACHE`] everywhere (private + immediately stale —
 /// exactly the pre-configuration behavior). A handler-set policy on a neutral
 /// result wins over these defaults. The `2025-11-25` wire has no cache
@@ -118,7 +116,6 @@ struct Shared {
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CachePolicies {
-    pub(crate) discover: CachePolicy,
     pub(crate) tools_list: CachePolicy,
     pub(crate) resources_list: CachePolicy,
     pub(crate) resource_templates_list: CachePolicy,
@@ -131,20 +128,12 @@ impl CachePolicies {
     #[must_use]
     pub fn uniform(policy: CachePolicy) -> Self {
         Self {
-            discover: policy,
             tools_list: policy,
             resources_list: policy,
             resource_templates_list: policy,
             resources_read: policy,
             prompts_list: policy,
         }
-    }
-
-    /// Set the `server/discover` policy.
-    #[must_use]
-    pub fn discover(mut self, policy: CachePolicy) -> Self {
-        self.discover = policy;
-        self
     }
 
     /// Set the `tools/list` policy.
@@ -262,7 +251,6 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 pending: Arc::new(PendingRequests::default()),
                 extensions: Arc::new(Vec::new()),
                 strict_elicitation_keys: false,
-                server_info_meta: true,
                 cache: CachePolicies::default(),
             },
         }
@@ -287,15 +275,14 @@ impl<S: McpServerCore> VersionDispatcher<S> {
         }
     }
 
-    /// Gracefully close every live `subscriptions/listen` subscription: each
-    /// listen request is answered with a `SubscriptionsListenResult` (its
-    /// `_meta` names the subscription), which on HTTP also ends the listen SSE
-    /// stream. Call this at the start of a graceful shutdown, **before** the
-    /// transport drains — the subscriptions spec sends this response only at
-    /// graceful teardown (an abrupt transport close carries no response).
+    /// Drop every live `subscriptions/listen` subscription at graceful
+    /// shutdown. The subscriptions spec (2026-07-28 RC) sends **no** closing
+    /// response — the server ends a subscription by closing the underlying
+    /// stream, which the HTTP transport does off its shutdown token. This
+    /// clears the registry so no further notifications are routed.
     /// `run_http` wires it to the configured shutdown token automatically.
-    pub async fn close_subscriptions(&self) {
-        self.shared.subs.close_all().await;
+    pub fn close_subscriptions(&self) {
+        self.shared.subs.close_all();
     }
 
     /// Opt in to strict elicitation keys: reusing an `elicit` key with a
@@ -304,16 +291,6 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     #[must_use]
     pub fn strict_elicitation_keys(mut self) -> Self {
         self.shared.strict_elicitation_keys = true;
-        self
-    }
-
-    /// Opt out of stamping `io.modelcontextprotocol/serverInfo` into every
-    /// draft result's `_meta`. The stamp is on by default — servers SHOULD
-    /// identify themselves on every response ("unless specifically configured
-    /// not to do so"); this is that configuration.
-    #[must_use]
-    pub fn without_server_info_meta(mut self) -> Self {
-        self.shared.server_info_meta = false;
         self
     }
 
@@ -463,16 +440,6 @@ async fn handle<S: McpServerCore>(
                 .await;
             }
 
-            // Draft results carry the server's identity in `_meta`
-            // (`io.modelcontextprotocol/serverInfo`, spec SHOULD) — resolve
-            // both facts before `req` moves into the dispatch.
-            let stamp_info = (shared.server_info_meta
-                && matches!(
-                    classify_version(req.params.as_ref(), &supported),
-                    VersionRoute::Modern
-                ))
-            .then(|| server.server_info());
-
             let dispatch =
                 handle_request(server, &router, &supported, &shared, req, cancel.clone());
             tokio::select! {
@@ -480,13 +447,7 @@ async fn handle<S: McpServerCore>(
                 // nothing (cancellation spec: "stop processing … not send a
                 // response for the cancelled request").
                 () = cancel.cancelled() => Ok(None),
-                out = dispatch => {
-                    let mut reply = out?;
-                    if let Some(info) = &stamp_info {
-                        stamp_server_info(&mut reply, info);
-                    }
-                    Ok(Some(reply))
-                }
+                out = dispatch => Ok(Some(out?)),
             }
         }
         JsonRpcMessage::Notification(n) => {
@@ -612,7 +573,6 @@ async fn handle_request<S: McpServerCore>(
             router,
             supported,
             &shared.extensions,
-            shared.cache.discover,
         )),
         methods::request::PING => Ok(JsonRpcResponse::success(id, serde_json::json!({})).into()),
 
@@ -877,12 +837,12 @@ fn error_response(id: RequestId, err: &McpError) -> JsonRpcMessage {
     JsonRpcResponse::error(id, mcp_to_jsonrpc_error(err)).into()
 }
 
-/// `-32021` Missing Required Client Capability (SEP-2663): the client requested
+/// `-32003` Missing Required Client Capability (SEP-2663): the client requested
 /// an extension's behavior without declaring its capability. The `data` names
 /// the required extension so the client can re-declare and retry.
 fn missing_capability_response(id: RequestId, extension_id: &str) -> JsonRpcMessage {
     let err = JsonRpcError {
-        code: -32021,
+        code: -32003,
         message: "missing required client capability".to_owned(),
         data: Some(serde_json::json!({
             "requiredCapabilities": { "extensions": { extension_id: {} } }

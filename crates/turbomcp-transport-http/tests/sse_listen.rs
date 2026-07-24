@@ -144,14 +144,17 @@ async fn listen_answers_sse_with_ack_first_then_events() {
     );
 }
 
-/// Graceful teardown (subscriptions spec): `close_subscriptions` answers the
-/// listen request with a `SubscriptionsListenResult` — `_meta` names the
-/// subscription verbatim — and the response ends the SSE stream.
+/// Graceful teardown (subscriptions spec, 2026-07-28 RC): the server sends
+/// **no** closing response — a subscription ends by the server closing the
+/// stream. Firing the configured shutdown token ends the listen SSE stream;
+/// `close_subscriptions` just drops the registry state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn close_subscriptions_answers_listen_and_ends_the_stream() {
+async fn shutdown_ends_the_listen_stream_without_a_response() {
     let dispatcher = VersionDispatcher::new(Watched, MethodRouter::new().with_tools());
     let closer = dispatcher.clone();
-    let app = router(dispatcher, HttpConfig::new());
+    let config = HttpConfig::new();
+    let shutdown = config.shutdown_token();
+    let app = router(dispatcher, config);
 
     let resp = app
         .oneshot(listen_request(7, json!({ "toolsListChanged": true })))
@@ -164,24 +167,14 @@ async fn close_subscriptions_answers_listen_and_ends_the_stream() {
     let ack = event_json(&next_sse_chunk(&mut body, &mut buffer).await);
     assert_eq!(ack["method"], "notifications/subscriptions/acknowledged");
 
-    closer.close_subscriptions().await;
+    shutdown.cancel();
+    closer.close_subscriptions();
 
-    let closed = event_json(&next_sse_chunk(&mut body, &mut buffer).await);
-    assert_eq!(
-        closed["id"], 7,
-        "the close result answers the listen request"
-    );
-    assert_eq!(closed["result"]["resultType"], "complete");
-    assert_eq!(
-        closed["result"]["_meta"]["io.modelcontextprotocol/subscriptionId"],
-        json!(7)
-    );
-
-    // The final response ends the long-lived stream.
+    // The stream ends with no further event — closing IS the signal.
     let end = tokio::time::timeout(Duration::from_secs(5), body.frame()).await;
     assert!(
         matches!(end, Ok(None)),
-        "stream should end after the close result, got {end:?}"
+        "stream should end on shutdown with no closing response, got {end:?}"
     );
 }
 

@@ -113,10 +113,7 @@ async fn server_handles_discover_list_and_call_over_stdio_framing() {
 
     // discover (id 1)
     let discover = responses.iter().find(|r| r["id"] == 1).unwrap();
-    assert_eq!(
-        discover["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
-        "calculator"
-    );
+    assert_eq!(discover["result"]["serverInfo"]["name"], "calculator");
     assert_eq!(
         discover["result"]["capabilities"]["tools"]["listChanged"],
         true

@@ -66,7 +66,7 @@ pub(crate) const NEGOTIATED_VERSION_META_KEY: &str = "io.turbomcp.internal/negot
 /// How a [`Client`] decides which protocol version to speak.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ConnectMode {
-    /// Probe the modern (`server/discover`) path first; on `-32601`/`-32022`
+    /// Probe the modern (`server/discover`) path first; on `-32601`/`-32004`
     /// fall back to the legacy `initialize` handshake. The default.
     #[default]
     Auto,
@@ -181,12 +181,12 @@ impl ClientBuilder {
             ConnectMode::Auto => match self.modern_handshake(&conn).await {
                 Ok(o) => o,
                 // -32601 method-not-found (no discover) / unsupported version
-                // → the server only speaks legacy. `-32022` is the current
-                // UnsupportedProtocolVersionError code; `-32004` is the
-                // pre-renumber value, tolerated for peers tracking an older
-                // draft.
+                // → the server only speaks legacy. `-32004` is the current
+                // UnsupportedProtocolVersionError code (2026-07-28 RC);
+                // `-32022` is the earlier draft's value, tolerated for peers
+                // still tracking it.
                 Err(ClientError::Rpc(e))
-                    if e.code == -32601 || e.code == -32022 || e.code == -32004 =>
+                    if e.code == -32601 || e.code == -32004 || e.code == -32022 =>
                 {
                     self.legacy_handshake(&conn).await?
                 }
@@ -265,20 +265,14 @@ impl Handshake {
     /// `initialize` or `server/discover` result; missing fields degrade
     /// gracefully rather than fail the handshake.
     ///
-    /// The server identity lives at the top level on legacy `initialize`
-    /// (`serverInfo`) and in the result `_meta` on the draft
-    /// (`io.modelcontextprotocol/serverInfo` — the dedicated `DiscoverResult`
-    /// field was removed upstream).
+    /// Both wires carry the server identity as a top-level `serverInfo`
+    /// field (the draft briefly moved it into `_meta`; the 2026-07-28 RC
+    /// made it first-class again).
     fn from_result(version: ProtocolVersion, result: &Value) -> Self {
         Self {
             version,
             server_info: result
                 .get("serverInfo")
-                .or_else(|| {
-                    result
-                        .get("_meta")
-                        .and_then(|m| m.get("io.modelcontextprotocol/serverInfo"))
-                })
                 .and_then(|v| serde_json::from_value(v.clone()).ok()),
             server_capabilities: result
                 .get("capabilities")
@@ -501,7 +495,7 @@ impl Client {
     }
 
     /// The shared `tools/call` path: issue the (optionally task-augmented)
-    /// call with the `-32020` refresh-and-retry-once recovery, then settle
+    /// call with the HeaderMismatch refresh-and-retry-once recovery, then settle
     /// whatever came back into a final `CallToolResult`.
     async fn call_tool_with(
         &self,
@@ -521,13 +515,17 @@ impl Client {
             params
         };
         let v = match self.mrtr_request(request::TOOLS_CALL, build(self)).await {
-            // `-32020` HeaderMismatch: our mirror headers may be built from a
-            // stale schema. Per the transports spec, refresh `tools/list`
-            // (which rebuilds the header cache) and retry once.
-            Err(ClientError::Rpc(e)) if e.code == -32020 => {
+            // HeaderMismatch: our mirror headers may be built from a stale
+            // schema. Per the transports spec, refresh `tools/list` (which
+            // rebuilds the header cache) and retry once. `-32001` is the
+            // current code (2026-07-28 RC); `-32020` is the earlier draft's,
+            // tolerated for peers still tracking it.
+            Err(ClientError::Rpc(e)) if e.code == -32001 || e.code == -32020 => {
+                let code = e.code;
                 tracing::warn!(
                     tool = %name,
-                    "HeaderMismatch (-32020); refreshing tools/list and retrying once"
+                    code,
+                    "HeaderMismatch; refreshing tools/list and retrying once"
                 );
                 let _ = self.list_tools(None).await;
                 self.mrtr_request(request::TOOLS_CALL, build(self)).await?

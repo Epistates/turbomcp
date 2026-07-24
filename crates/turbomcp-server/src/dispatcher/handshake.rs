@@ -1,6 +1,6 @@
 //! Version-agnostic entry points: the legacy `initialize` handshake (version
 //! negotiation + session minting + capability advertisement) and the draft
-//! `server/discover` response, plus the result-`_meta` serverInfo stamp.
+//! `server/discover` response.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 use turbomcp_core::{
     Implementation, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, McpError, ProtocolVersion,
-    RequestId, meta,
+    RequestId,
 };
 use turbomcp_protocol::draft::types as draft;
 use turbomcp_protocol::neutral;
@@ -184,9 +184,8 @@ pub(super) fn discover_response<S: McpServerCore>(
     router: &MethodRouter<S>,
     supported: &[ProtocolVersion],
     extensions: &[Arc<dyn Extension>],
-    cache: neutral::CachePolicy,
 ) -> JsonRpcMessage {
-    let result = build_discover_result(server, router, supported, cache);
+    let result = build_discover_result(server, router, supported);
     let mut value = match serde_json::to_value(&result) {
         Ok(v) => v,
         Err(e) => return error_response(id, &McpError::internal(format!("serialize result: {e}"))),
@@ -210,7 +209,6 @@ fn build_discover_result<S: McpServerCore>(
     server: &S,
     router: &MethodRouter<S>,
     supported: &[ProtocolVersion],
-    cache: neutral::CachePolicy,
 ) -> draft::DiscoverResult {
     // `listChanged`/`subscribe` are true: the subscription registry delivers
     // these for every registered capability (`subscriptions/listen`).
@@ -243,46 +241,14 @@ fn build_discover_result<S: McpServerCore>(
             }),
     };
     draft::DiscoverResult {
-        cache_scope: match cache.scope {
-            neutral::CacheScope::Public => draft::DiscoverResultCacheScope::Public,
-            neutral::CacheScope::Private => draft::DiscoverResultCacheScope::Private,
-        },
         capabilities,
         instructions: server.instructions(),
-        // The server's identity rides `_meta` (`io.modelcontextprotocol/
-        // serverInfo`) — the dedicated `DiscoverResult.serverInfo` field was
-        // removed from the draft.
-        meta: Some(draft::ResultMetaObject {
-            io_modelcontextprotocol_server_info: Some(to_draft_impl(server.server_info())),
-            extra: serde_json::Map::new(),
-        }),
+        meta: None,
         result_type: neutral::result_type::COMPLETE.to_string(),
+        // `serverInfo` is a first-class required field again (2026-07-28 RC;
+        // the earlier draft's `_meta` identity convention is gone).
+        server_info: to_draft_impl(server.server_info()),
         supported_versions: supported.iter().map(|v| v.as_str().to_owned()).collect(),
-        ttl_ms: cache.ttl_ms,
-    }
-}
-
-/// Stamp `io.modelcontextprotocol/serverInfo` into a successful result's
-/// `_meta` (draft results only; servers SHOULD identify themselves on every
-/// response). An existing key — e.g. `server/discover`'s own — is left alone;
-/// error responses and non-object results are untouched.
-pub(super) fn stamp_server_info(msg: &mut JsonRpcMessage, info: &Implementation) {
-    let JsonRpcMessage::Response(resp) = msg else {
-        return;
-    };
-    let Some(result) = resp.result.as_mut().and_then(Value::as_object_mut) else {
-        return;
-    };
-    let Ok(info_value) = serde_json::to_value(to_draft_impl(info.clone())) else {
-        return;
-    };
-    let meta = result
-        .entry("_meta")
-        .or_insert_with(|| Value::Object(serde_json::Map::new()));
-    if let Some(meta) = meta.as_object_mut()
-        && !meta.contains_key(meta::keys::SERVER_INFO)
-    {
-        meta.insert(meta::keys::SERVER_INFO.to_owned(), info_value);
     }
 }
 

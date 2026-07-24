@@ -150,19 +150,23 @@ async fn configured_policy_fills_draft_cacheable_results() {
         },
         Some(cache),
         vec![
-            draft_request(1, "server/discover", json!({})),
-            draft_request(2, "tools/list", json!({})),
-            draft_request(3, "resources/list", json!({})),
-            draft_request(4, "resources/read", json!({ "uri": "mem://a" })),
+            draft_request(1, "tools/list", json!({})),
+            draft_request(2, "resources/list", json!({})),
+            draft_request(3, "resources/read", json!({ "uri": "mem://a" })),
+            // `server/discover` lost its cache fields in the 2026-07-28 RC.
+            draft_request(4, "server/discover", json!({})),
         ],
     )
     .await;
 
-    for id in 1..=4 {
+    for id in 1..=3 {
         let result = result_of(&frames, id);
         assert_eq!(result["ttlMs"], json!(60_000), "id {id}: {result:#?}");
         assert_eq!(result["cacheScope"], json!("public"), "id {id}");
     }
+    let discover = result_of(&frames, 4);
+    assert!(discover.get("ttlMs").is_none(), "{discover:#?}");
+    assert!(discover.get("cacheScope").is_none(), "{discover:#?}");
 }
 
 #[tokio::test]
@@ -189,18 +193,13 @@ async fn unconfigured_default_is_no_cache() {
             override_cache: false,
         },
         None,
-        vec![
-            draft_request(1, "server/discover", json!({})),
-            draft_request(2, "tools/list", json!({})),
-        ],
+        vec![draft_request(1, "tools/list", json!({}))],
     )
     .await;
 
-    for id in 1..=2 {
-        let result = result_of(&frames, id);
-        assert_eq!(result["ttlMs"], json!(0), "id {id}");
-        assert_eq!(result["cacheScope"], json!("private"), "id {id}");
-    }
+    let result = result_of(&frames, 1);
+    assert_eq!(result["ttlMs"], json!(0));
+    assert_eq!(result["cacheScope"], json!("private"));
 }
 
 #[tokio::test]

@@ -287,11 +287,8 @@ mod tests {
             panic!("expected response")
         };
         let result = r.result.expect("discover result");
-        // Server identity rides `_meta` on the draft (dedicated field removed).
-        assert_eq!(
-            result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
-            "calculator"
-        );
+        // `serverInfo` is a first-class required field again (RC).
+        assert_eq!(result["serverInfo"]["name"], "calculator");
         assert_eq!(result["capabilities"]["tools"]["listChanged"], true);
         assert_eq!(result["resultType"], "complete");
         let versions = result["supportedVersions"].as_array().unwrap();
@@ -311,12 +308,9 @@ mod tests {
         assert_eq!(result["tools"][0]["name"], "add");
         assert_eq!(result["tools"][0]["description"], "Add two numbers");
         assert_eq!(result["resultType"], "complete");
-        // Every draft result identifies the server in `_meta` (spec SHOULD;
-        // opt out via `without_server_info_meta`).
-        assert_eq!(
-            result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
-            "calculator"
-        );
+        // The RC dropped the per-result `_meta` server-identity convention:
+        // only `server/discover` carries `serverInfo`.
+        assert!(result.get("_meta").is_none());
     }
 
     #[tokio::test]
@@ -344,7 +338,7 @@ mod tests {
             panic!()
         };
         let err = r.error.expect("should be an error");
-        assert_eq!(err.code, -32022);
+        assert_eq!(err.code, -32004);
     }
 
     #[tokio::test]

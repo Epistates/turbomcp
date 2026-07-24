@@ -92,9 +92,9 @@ async fn call(req: JsonRpcRequest) -> serde_json::Value {
 #[tokio::test]
 async fn discover_derives_capabilities_from_impls() {
     let result = call(JsonRpcRequest::new(1, "server/discover", None)).await;
-    // The draft carries the server identity in the result `_meta` (the
-    // dedicated `DiscoverResult.serverInfo` field was removed upstream).
-    let server_info = &result["_meta"]["io.modelcontextprotocol/serverInfo"];
+    // `serverInfo` is a first-class required field on both wires (the draft
+    // briefly moved it into `_meta`; the 2026-07-28 RC restored it).
+    let server_info = &result["serverInfo"];
     assert_eq!(server_info["name"], "demo");
     assert_eq!(server_info["title"], "Demo Server");
     assert_eq!(

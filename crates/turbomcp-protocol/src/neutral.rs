@@ -1274,17 +1274,16 @@ impl ElicitParams {
 /// directs the user to `url` (e.g. an OAuth consent page); the response carries
 /// an [`ElicitAction`] but no form content.
 ///
-/// `elicitation_id` is **version-split**: the `2025-11-25` wire requires a
-/// server-unique opaque id (the client echoes it for out-of-band completion),
-/// so the legacy inline-bidi path mints one when absent. The draft **removed**
-/// the field (a server correlates across MRTR retries via `requestState`
-/// instead), so it is never emitted there.
+/// `elicitation_id` is a server-unique opaque id required by **both** wires
+/// (the draft briefly dropped it; the 2026-07-28 RC restored it as required,
+/// pairing it with `notifications/elicitation/complete`). The server mints
+/// one when unset.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ElicitUrlParams {
     /// The message explaining why the interaction is needed.
     pub message: String,
-    /// A server-unique opaque id (`2025-11-25` only; see the type docs).
+    /// A server-unique opaque id (minted when unset; see the type docs).
     pub elicitation_id: Option<String>,
     /// The URL the user should navigate to.
     pub url: String,
@@ -1300,8 +1299,8 @@ impl ElicitUrlParams {
         }
     }
 
-    /// Set an explicit elicitation id for the `2025-11-25` wire (the legacy
-    /// path mints one when unset; the draft never carries one).
+    /// Set an explicit elicitation id (one is minted when unset). Clients
+    /// treat it as opaque; `notifications/elicitation/complete` references it.
     #[must_use]
     pub fn with_elicitation_id(mut self, id: impl Into<String>) -> Self {
         self.elicitation_id = Some(id.into());

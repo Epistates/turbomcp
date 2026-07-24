@@ -32,10 +32,6 @@ pub mod keys {
     /// Absent ⇒ the server MUST NOT send `notifications/message` for the
     /// request.
     pub const LOG_LEVEL: &str = "io.modelcontextprotocol/logLevel";
-    /// Per-*result* server implementation info (draft stateless model):
-    /// servers SHOULD identify themselves on every response. Self-reported —
-    /// display/logging only, never a security input.
-    pub const SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
 }
 
 /// Internal `_meta` keys: the in-process side-channel a transport (or session

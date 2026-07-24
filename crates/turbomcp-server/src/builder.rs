@@ -31,7 +31,6 @@ pub struct ServerBuilder<S> {
     router: MethodRouter<S>,
     tasks: bool,
     strict_elicitation_keys: bool,
-    server_info_meta: bool,
     session_idle_timeout: Option<std::time::Duration>,
     session_backend: Option<Arc<dyn SessionBackend>>,
     task_backend: Option<Arc<dyn TaskBackend>>,
@@ -48,7 +47,6 @@ impl<S: McpServerCore> ServerBuilder<S> {
             router: MethodRouter::new(),
             tasks: false,
             strict_elicitation_keys: false,
-            server_info_meta: true,
             session_idle_timeout: None,
             session_backend: None,
             task_backend: None,
@@ -66,7 +64,6 @@ impl<S: McpServerCore> ServerBuilder<S> {
             router,
             tasks: false,
             strict_elicitation_keys: false,
-            server_info_meta: true,
             session_idle_timeout: None,
             session_backend: None,
             task_backend: None,
@@ -134,15 +131,6 @@ impl<S: McpServerCore> ServerBuilder<S> {
     #[must_use]
     pub fn strict_elicitation_keys(mut self) -> Self {
         self.strict_elicitation_keys = true;
-        self
-    }
-
-    /// Opt out of stamping `io.modelcontextprotocol/serverInfo` into every
-    /// draft result's `_meta`. See
-    /// [`VersionDispatcher::without_server_info_meta`].
-    #[must_use]
-    pub fn without_server_info_meta(mut self) -> Self {
-        self.server_info_meta = false;
         self
     }
 
@@ -219,9 +207,6 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if self.strict_elicitation_keys {
             dispatcher = dispatcher.strict_elicitation_keys();
-        }
-        if !self.server_info_meta {
-            dispatcher = dispatcher.without_server_info_meta();
         }
         if let Some(backend) = self.session_backend {
             dispatcher = dispatcher.with_session_backend(backend);

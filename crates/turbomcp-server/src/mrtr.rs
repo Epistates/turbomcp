@@ -387,20 +387,19 @@ impl ClientHandle {
         key: &str,
         params: neutral::ElicitUrlParams,
     ) -> McpResult<neutral::ElicitOutcome> {
-        // `elicitationId` is version-split: the `2025-11-25` wire requires it
-        // (mint one if the handler didn't set it), the draft removed it
-        // (correlate across MRTR retries via `requestState` instead).
-        let legacy_id = matches!(self.inner.mode, HandleMode::Bidi { .. }).then(|| {
-            params
-                .elicitation_id
-                .clone()
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
-        });
+        // Both wires require `elicitationId` on URL-mode requests (the draft
+        // briefly dropped it; the 2026-07-28 RC restored it as required,
+        // pairing it with `notifications/elicitation/complete`). Mint one if
+        // the handler didn't set it.
+        let elicitation_id = params
+            .elicitation_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let raw = self
             .obtain(
                 key,
                 "elicitation",
-                elicit_url_request_value(&params, legacy_id),
+                elicit_url_request_value(&params, elicitation_id),
             )
             .await?;
         parse_elicit_outcome(&raw)
@@ -650,22 +649,18 @@ fn elicit_request_value(params: &neutral::ElicitParams) -> Value {
     })
 }
 
-/// The wire `InputRequest` object for a URL-mode elicitation. `legacy_id` is
-/// `Some` only on the `2025-11-25` inline-bidi path — the draft removed
-/// `elicitationId` from URL-mode requests.
-fn elicit_url_request_value(params: &neutral::ElicitUrlParams, legacy_id: Option<String>) -> Value {
-    let mut request = json!({
+/// The wire `InputRequest` object for a URL-mode elicitation. Both wires
+/// require `elicitationId` (2026-07-28 RC).
+fn elicit_url_request_value(params: &neutral::ElicitUrlParams, elicitation_id: String) -> Value {
+    json!({
         "method": "elicitation/create",
         "params": {
             "mode": "url",
             "message": params.message,
             "url": params.url,
+            "elicitationId": elicitation_id,
         },
-    });
-    if let Some(id) = legacy_id {
-        request["params"]["elicitationId"] = json!(id);
-    }
-    request
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -789,22 +784,39 @@ mod tests {
         let params = &collected["k"]["params"];
         assert_eq!(params["mode"], "url");
         assert_eq!(params["url"], "https://auth.example/go");
-        // The draft removed `elicitationId` from URL-mode requests — the MRTR
-        // path never emits it, even when the handler set one (it is a
-        // `2025-11-25`-only field; correlate via `requestState` instead).
-        assert!(params.get("elicitationId").is_none());
+        // Both wires require `elicitationId` (2026-07-28 RC) — the handler's
+        // explicit id is carried verbatim.
+        assert_eq!(params["elicitationId"], "eid-1");
     }
 
     #[test]
-    fn elicit_url_wire_value_is_version_split() {
+    fn elicit_url_wire_value_carries_elicitation_id() {
         let params = neutral::ElicitUrlParams::new("Sign in", "https://auth.example/go");
-        // Draft (MRTR): no elicitationId, ever.
-        let draft = elicit_url_request_value(&params, None);
-        assert!(draft["params"].get("elicitationId").is_none());
-        // Legacy (inline bidi): the wire requires it — threaded/minted by
-        // `elicit_url`.
-        let legacy = elicit_url_request_value(&params, Some("eid-9".into()));
-        assert_eq!(legacy["params"]["elicitationId"], "eid-9");
+        let value = elicit_url_request_value(&params, "eid-9".into());
+        assert_eq!(value["params"]["elicitationId"], "eid-9");
+    }
+
+    #[tokio::test]
+    async fn elicit_url_mints_an_id_when_unset() {
+        let handle = ClientHandle::mrtr(
+            Some(json!({ "elicitation": {} })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+        let err = handle
+            .elicit_url(
+                "k",
+                neutral::ElicitUrlParams::new("Sign in", "https://auth.example/go"),
+            )
+            .await
+            .expect_err("no cached response → abort");
+        assert!(matches!(err, McpError::InputRequired));
+        let collected = handle.collected();
+        let id = collected["k"]["params"]["elicitationId"]
+            .as_str()
+            .expect("a minted elicitationId");
+        assert!(!id.is_empty());
     }
 
     #[tokio::test]

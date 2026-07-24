@@ -117,7 +117,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
         serde_json::to_value(&agreed).unwrap_or_else(|_| Value::Object(Map::new()));
     // Offer the raw `notifications` filter to each extension (it reads its own
     // fields). A non-declaring client requesting an extension's notifications
-    // is `-32021` (SEP-2663); accepted filters are merged into the ack.
+    // is `-32003` (SEP-2663); accepted filters are merged into the ack.
     if !extensions.is_empty() {
         let raw_notifications = req
             .params

@@ -17,7 +17,7 @@ pub enum ProtocolError {
     /// A frame could not be parsed (JSON-RPC `-32700`).
     #[error("parse error: {0}")]
     Parse(String),
-    /// The request's protocol version is absent or unsupported (`-32022`).
+    /// The request's protocol version is absent or unsupported (`-32004`).
     #[error("unsupported protocol version (requested {requested:?}; supported {supported:?})")]
     UnsupportedVersion {
         /// The version the client asked for, if any.
@@ -25,7 +25,7 @@ pub enum ProtocolError {
         /// The versions this server accepts.
         supported: Vec<String>,
     },
-    /// A required capability for the requested method is not available (`-32021`).
+    /// A required capability for the requested method is not available (`-32003`).
     #[error("missing required capability: {0}")]
     MissingCapability(String),
     /// The request referenced a session this server does not know — expired,
@@ -51,11 +51,13 @@ impl ProtocolError {
     pub fn jsonrpc_code(&self) -> i32 {
         match self {
             Self::Parse(_) => -32700,
-            // Spec-allocated codes (draft error-code allocation policy).
-            Self::UnsupportedVersion { .. } => -32022,
-            Self::MissingCapability(_) => -32021,
+            // Spec-allocated codes (2026-07-28 RC error-code allocation).
+            Self::UnsupportedVersion { .. } => -32004,
+            Self::MissingCapability(_) => -32003,
             Self::UnknownSession(_) => -32002,
-            Self::Transport(_) | Self::ServerShuttingDown => -32001,
+            // `-32000` is the implementation-defined floor; `-32001` now
+            // belongs to `HeaderMismatch` per the RC allocation.
+            Self::Transport(_) | Self::ServerShuttingDown => -32000,
             Self::Internal(_) => -32603,
         }
     }
@@ -67,12 +69,25 @@ impl ProtocolError {
     #[must_use]
     pub fn into_response(self, id: RequestId) -> JsonRpcResponse {
         let code = self.jsonrpc_code();
+        let message = self.to_string();
+        // `UnsupportedProtocolVersionError` requires
+        // `data: { supported, requested }` (2026-07-28 RC).
+        let data = match &self {
+            Self::UnsupportedVersion {
+                requested,
+                supported,
+            } => Some(serde_json::json!({
+                "supported": supported,
+                "requested": requested.as_deref().unwrap_or(""),
+            })),
+            _ => None,
+        };
         JsonRpcResponse::error(
             id,
             JsonRpcError {
                 code,
-                message: self.to_string(),
-                data: None,
+                message,
+                data,
             },
         )
     }

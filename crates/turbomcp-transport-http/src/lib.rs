@@ -133,8 +133,8 @@ fn declared_version(msg: &JsonRpcMessage) -> Option<String> {
 /// (transports spec §Request Metadata / §Server Validation). Applies to
 /// messages whose body `_meta` declares a protocol version — the stateless
 /// draft envelope; the legacy `2025-11-25` session flow keeps its
-/// negotiated-version tolerance. Any failure is `400` +
-/// `HeaderMismatchError` (`-32020`).
+/// negotiated-version tolerance. Any failure is `400` + a
+/// `HeaderMismatch` JSON-RPC error (`-32001`).
 ///
 /// Headers are pure **mirrors** — the body stays authoritative and values are
 /// never sourced *from* headers (the earlier fill-absent `Mcp-Param-*` merge
@@ -524,6 +524,9 @@ struct HttpState<S> {
     rate_limiter: Option<Arc<dyn RateLimiter>>,
     session_terminator: Option<Arc<dyn SessionTerminator>>,
     trusted_proxies: Arc<[IpAddr]>,
+    /// The configured shutdown token; dedicated `subscriptions/listen` SSE
+    /// streams end when it fires (the RC's server-side subscription close).
+    shutdown: CancellationToken,
 }
 
 /// Build the configured axum [`Router`] for `service` without binding a socket —
@@ -544,6 +547,7 @@ where
         rate_limiter: config.rate_limiter.clone(),
         session_terminator: config.session_terminator.clone(),
         trusted_proxies: config.trusted_proxies.clone().into(),
+        shutdown: config.shutdown.clone(),
     };
     let mut app = Router::new()
         .route(
@@ -782,7 +786,13 @@ where
         Err(e) => return protocol_error_response(&e),
     }
 
-    sse_response(state.codec, rx, registration, state.sse_keepalive)
+    sse_response(
+        state.codec,
+        rx,
+        registration,
+        state.sse_keepalive,
+        Some(state.shutdown.clone()),
+    )
 }
 
 /// Dispatch one JSON-RPC request with a per-request server→client channel
@@ -1046,24 +1056,32 @@ fn sse_response(
     rx: tokio::sync::mpsc::Receiver<JsonRpcMessage>,
     registration: outbound::WriterGuard,
     keepalive: Duration,
+    shutdown: Option<CancellationToken>,
 ) -> Response {
     let stream = futures::stream::unfold(
-        (Some((rx, registration)), codec),
-        |(live, codec)| async move {
+        (Some((rx, registration)), codec, shutdown),
+        |(live, codec, shutdown)| async move {
             let (mut rx, registration) = live?;
-            let msg = rx.recv().await?;
+            // A listen stream carries the shutdown token: the subscriptions
+            // spec ends a subscription by closing the stream (no closing
+            // response), so graceful teardown ends it here. Other streams
+            // (per-POST, legacy GET) end on their final response instead.
+            let msg = match &shutdown {
+                Some(token) => tokio::select! {
+                    () = token.cancelled() => None,
+                    m = rx.recv() => m,
+                }?,
+                None => rx.recv().await?,
+            };
             let event = sse_event(&codec, &msg);
-            // A JSON-RPC *response* ends the stream: on the listen stream the
-            // only response ever delivered is the graceful-close
-            // `SubscriptionsListenResult` answering the listen request itself
-            // (subscriptions spec). Emitting it and closing mirrors the
-            // per-POST stream contract ("the final response ends the stream").
+            // A JSON-RPC *response* ends the stream — the per-POST stream
+            // contract ("the final response ends the stream").
             let next = if matches!(msg, JsonRpcMessage::Response(_)) {
                 None
             } else {
                 Some((rx, registration))
             };
-            Some((Ok::<_, Infallible>(event), (next, codec)))
+            Some((Ok::<_, Infallible>(event), (next, codec, shutdown)))
         },
     );
 
@@ -1131,7 +1149,7 @@ where
 
     let (tx, rx) = tokio::sync::mpsc::channel::<JsonRpcMessage>(SSE_CHANNEL_CAPACITY);
     let registration = outbound::register(outbound::session_stream_id(sid), tx);
-    sse_response(state.codec, rx, registration, state.sse_keepalive)
+    sse_response(state.codec, rx, registration, state.sse_keepalive, None)
 }
 
 /// Client-initiated session termination (`2025-11-25` spec §Session
@@ -1363,15 +1381,15 @@ fn message_has_version(msg: &JsonRpcMessage) -> bool {
         .is_some()
 }
 
-/// `400` + `HeaderMismatchError` (`-32020`): an HTTP header did not match the
-/// corresponding request-body value, or a required header is missing or
-/// malformed (transports spec §Server Validation).
+/// `400` + a `HeaderMismatch` JSON-RPC error (`-32001`): an HTTP header did
+/// not match the corresponding request-body value, or a required header is
+/// missing or malformed (transports spec §Server Validation).
 fn header_mismatch_rejection(detail: &str) -> Response {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": null,
         "error": {
-            "code": -32020,
+            "code": -32001,
             "message": format!("header mismatch: {detail}"),
         },
     });
@@ -1379,14 +1397,20 @@ fn header_mismatch_rejection(detail: &str) -> Response {
 }
 
 /// `400` for an explicit but unsupported `MCP-Protocol-Version` header
-/// (`UnsupportedProtocolVersionError`, `-32022`).
+/// (`UnsupportedProtocolVersionError`, `-32004`, with the spec-required
+/// `data: { supported, requested }`).
 fn version_header_rejection(requested: &str) -> Response {
+    let supported: Vec<&str> = ProtocolVersion::SUPPORTED
+        .iter()
+        .map(ProtocolVersion::as_str)
+        .collect();
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": null,
         "error": {
-            "code": -32022,
+            "code": -32004,
             "message": format!("unsupported MCP-Protocol-Version header: {requested}"),
+            "data": { "supported": supported, "requested": requested },
         },
     });
     (StatusCode::BAD_REQUEST, Json(body)).into_response()

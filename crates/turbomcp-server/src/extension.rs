@@ -153,7 +153,7 @@ pub enum SubscribeOutcome {
     /// The listen request doesn't reference this extension's notifications.
     NotApplicable,
     /// The request targets the extension but the client didn't declare its
-    /// capability → the dispatcher answers `-32021` (Missing Required Client
+    /// capability → the dispatcher answers `-32003` (Missing Required Client
     /// Capability), per SEP-2663.
     MissingCapability,
     /// The extension recorded the subscription against the connection; the

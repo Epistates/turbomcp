@@ -6,9 +6,9 @@
 //! request), `Mcp-Name` (`tools/call` / `resources/read` / `prompts/get`), and
 //! `Mcp-Param-{name}` (tool arguments annotated `x-mcp-header`). Headers are
 //! pure **mirrors**: the body is authoritative, clients derive header values
-//! from it, and servers validate equality — a mismatch is `400` +
-//! `HeaderMismatchError` (`-32020`). Servers never source values *from*
-//! headers.
+//! from it, and servers validate equality — a mismatch is `400` + a
+//! `HeaderMismatch` JSON-RPC error (`-32001`). Servers never source values
+//! *from* headers.
 //!
 //! This module is the shared client/server half: header names, the Base64
 //! sentinel value codec, and the body-value rendering rules. The client

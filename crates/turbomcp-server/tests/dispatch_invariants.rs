@@ -1,5 +1,5 @@
 //! Dispatcher spec invariants the rest of the suite only reaches implicitly:
-//! modern-path version rejection (`-32022` with the supported list),
+//! modern-path version rejection (`-32004` with the supported list),
 //! capability-derivation *enforcement* (unadvertised capability → `-32601`),
 //! pagination-cursor plumbing, the malformed-params matrix (`-32602`), the
 //! dual-version `server/discover` list, and the unknown-method catch-all.
@@ -161,16 +161,19 @@ where
     };
     json!({
         "result": r.result,
-        "error": r.error.map(|e| json!({ "code": e.code, "message": e.message })),
+        "error": r.error.map(|e| json!({
+            "code": e.code, "message": e.message, "data": e.data,
+        })),
     })
 }
 
 /// PLAN §4.9: an unknown protocol version on a capability method answers
-/// `-32022` and names the versions this build supports, so the client can
+/// `-32004` and names the versions this build supports — in the message and,
+/// as the RC requires, in `data: { supported, requested }` — so the client can
 /// re-issue with one of them. A capability request with no version at all is
 /// equally unsupported.
 #[tokio::test]
-async fn unknown_protocol_version_gets_32022_with_the_supported_list() {
+async fn unknown_protocol_version_gets_32004_with_the_supported_list() {
     let mut svc = kitchen();
     let req = JsonRpcRequest::new(
         1,
@@ -180,16 +183,24 @@ async fn unknown_protocol_version_gets_32022_with_the_supported_list() {
         })),
     );
     let out = call(&mut svc, req).await;
-    assert_eq!(out["error"]["code"], -32022, "{out}");
+    assert_eq!(out["error"]["code"], -32004, "{out}");
     let msg = out["error"]["message"].as_str().unwrap();
     assert!(msg.contains("1999-01-01"), "names the requested: {msg}");
     assert!(
         msg.contains("2025-11-25") && msg.contains("2026-07-28"),
         "names the supported versions: {msg}"
     );
+    // The RC pins the machine-readable payload, not just the prose.
+    let data = &out["error"]["data"];
+    assert_eq!(data["requested"], "1999-01-01", "{out}");
+    assert_eq!(
+        data["supported"],
+        json!(["2025-11-25", "2026-07-28"]),
+        "{out}"
+    );
 
     let out = call(&mut svc, JsonRpcRequest::new(2, "tools/list", None)).await;
-    assert_eq!(out["error"]["code"], -32022, "absent version: {out}");
+    assert_eq!(out["error"]["code"], -32004, "absent version: {out}");
 }
 
 /// The teeth of "capabilities are derived, not declared": a method whose

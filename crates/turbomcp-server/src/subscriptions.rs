@@ -251,25 +251,15 @@ impl SubscriptionRegistry {
         }
     }
 
-    /// Gracefully close every live draft subscription: answer each listen
-    /// request with a [`SubscriptionsListenResult`]-shaped response (the
-    /// subscription ended; `_meta` carries its id verbatim) and clear the
-    /// registry. The subscriptions spec sends this response only at graceful
-    /// teardown — e.g. server shutdown; an abrupt transport close carries no
-    /// response. On HTTP the response also ends the listen SSE stream.
-    pub(crate) async fn close_all(&self) {
-        let targets: Vec<(String, RequestId)> = self.lock().drain().map(|(key, _)| key).collect();
-        for (connection, id) in targets {
-            let Some(writer) = outbound::writer(&connection) else {
-                continue; // connection already gone — the abrupt-close case
-            };
-            let result = json!({
-                "resultType": "complete",
-                "_meta": { meta::keys::SUBSCRIPTION_ID: subscription_id_value(&id) },
-            });
-            let response = turbomcp_core::JsonRpcResponse::success(id, result);
-            let _ = writer.send(response.into()).await;
-        }
+    /// Drop every live draft subscription at graceful teardown. The
+    /// subscriptions spec (2026-07-28 RC) sends **no** closing response — a
+    /// listen request's "response" is the open stream itself, and the server
+    /// ends a subscription by closing the underlying stream/connection. The
+    /// HTTP transport ends its dedicated listen SSE streams off its shutdown
+    /// token; on stdio the connection itself is what closes. This just clears
+    /// the registry so no further notifications are routed.
+    pub(crate) fn close_all(&self) {
+        self.lock().clear();
     }
 
     fn lock(
@@ -438,7 +428,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn close_all_answers_each_listen_request_and_clears() {
+    async fn close_all_sends_nothing_and_clears() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         let _guard = outbound::register("close-conn", tx);
         let reg = Arc::new(SubscriptionRegistry::default());
@@ -449,24 +439,11 @@ mod tests {
             filter(true, &[]),
         );
 
-        reg.close_all().await;
+        reg.close_all();
 
-        let mut ids_seen = Vec::new();
-        while let Ok(msg) = rx.try_recv() {
-            let JsonRpcMessage::Response(r) = msg else {
-                panic!("close_all sends responses, got {msg:?}");
-            };
-            let result = r.result.expect("a SubscriptionsListenResult");
-            assert_eq!(result["resultType"], "complete");
-            // `_meta.subscriptionId` mirrors the response's own id, verbatim.
-            assert_eq!(
-                result["_meta"][meta::keys::SUBSCRIPTION_ID],
-                serde_json::to_value(&r.id).unwrap()
-            );
-            ids_seen.push(r.id);
-        }
-        ids_seen.sort_by_key(|id| format!("{id:?}"));
-        assert_eq!(ids_seen.len(), 2, "one close result per subscription");
+        // The RC subscriptions spec sends no closing response — teardown is
+        // closing the stream itself (the transport's job), never a message.
+        assert!(rx.try_recv().is_err(), "close_all must send nothing");
 
         // The registry is empty: a publish reaches nobody.
         reg.publish(methods::notification::TOOLS_LIST_CHANGED, None, |_| true)

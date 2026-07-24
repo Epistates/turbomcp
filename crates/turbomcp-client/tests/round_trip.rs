@@ -126,14 +126,14 @@ async fn concurrent_requests_correlate_independently() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn server_error_surfaces_as_rpc_error() {
     let client = connected_client();
-    // Missing protocolVersion on a modern request → -32022 (PLAN §4.9).
+    // Missing protocolVersion on a modern request → -32004 (PLAN §4.9).
     let err = client
         .request("tools/list", Some(json!({})))
         .await
         .expect_err("should error without version");
     match err {
-        ClientError::Rpc(e) => assert_eq!(e.code, -32022),
-        other => panic!("expected Rpc(-32022), got {other:?}"),
+        ClientError::Rpc(e) => assert_eq!(e.code, -32004),
+        other => panic!("expected Rpc(-32004), got {other:?}"),
     }
 }
 

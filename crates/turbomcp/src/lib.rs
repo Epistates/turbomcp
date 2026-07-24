@@ -115,14 +115,15 @@ pub mod http {
         async fn run_http(self, addr: SocketAddr, config: HttpConfig) -> Result<(), HttpError> {
             let dispatcher = self.build();
             let config = config.with_session_terminator(Arc::new(dispatcher.session_terminator()));
-            // Graceful teardown: when the shutdown token fires, answer every
-            // live `subscriptions/listen` with its close result (which also
-            // ends the listen SSE streams) before axum drains.
+            // Graceful teardown: when the shutdown token fires, drop the live
+            // `subscriptions/listen` registrations (the transport ends the
+            // listen SSE streams itself off the same token — the RC sends no
+            // closing response).
             let closer = dispatcher.clone();
             let shutdown = config.shutdown_token();
             tokio::spawn(async move {
                 shutdown.cancelled().await;
-                closer.close_subscriptions().await;
+                closer.close_subscriptions();
             });
             serve_http(addr, dispatcher, config).await
         }

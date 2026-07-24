@@ -40,28 +40,28 @@ pub enum McpError {
         /// Failure reason (becomes tool error content).
         reason: String,
     },
-    /// The requested resource URI was not found. JSON-RPC `-32602` (per the
-    /// resource-not-found SEP — re-verify number), HTTP 404.
+    /// The requested resource URI was not found. JSON-RPC `-32602`
+    /// (Invalid Params — the 2026-07-28 RC moved it off `-32002`), HTTP 404.
     ResourceNotFound(String),
-    /// Authentication failed or is required. JSON-RPC `-32001`, HTTP 401.
+    /// Authentication failed or is required. JSON-RPC `-32000`, HTTP 401.
     Authentication(String),
-    /// The identity is authenticated but not permitted. JSON-RPC `-32001`,
+    /// The identity is authenticated but not permitted. JSON-RPC `-32000`,
     /// HTTP 403.
     PermissionDenied(String),
-    /// The operation timed out. JSON-RPC `-32001`, HTTP 504. Retryable.
+    /// The operation timed out. JSON-RPC `-32000`, HTTP 504. Retryable.
     Timeout(String),
     /// Transport-level failure (connection closed, I/O error). JSON-RPC
-    /// `-32001`, HTTP 503. Retryable.
+    /// `-32000`, HTTP 503. Retryable.
     Transport(String),
-    /// The requested protocol version is not supported. JSON-RPC `-32022`,
+    /// The requested protocol version is not supported. JSON-RPC `-32004`,
     /// HTTP 400. Carries the requested version (or `None` when absent).
     UnsupportedProtocolVersion(String),
     /// The request requires a client capability that was not advertised.
-    /// JSON-RPC `-32021`, HTTP 400.
+    /// JSON-RPC `-32003`, HTTP 400.
     MissingRequiredCapability(String),
     /// An HTTP header did not match the corresponding request-body value
     /// (`MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name`, `Mcp-Param-*`).
-    /// JSON-RPC `-32020`, HTTP 400.
+    /// JSON-RPC `-32001`, HTTP 400.
     HeaderMismatch(String),
     /// MRTR abort sentinel (SEP-2322): a handler asked the client for input
     /// (`ctx.client.elicit(…)`) that the request didn't carry yet. It exists
@@ -128,15 +128,16 @@ impl McpError {
             Self::Internal(_) | Self::ToolExecutionFailed { .. } | Self::InputRequired => -32603,
             Self::InvalidParams(_) | Self::ResourceNotFound(_) => -32602,
             Self::MethodNotFound(_) | Self::ToolNotFound(_) => -32601,
+            // `-32000` is the implementation-defined server-error floor;
+            // `-32001..` upward is claimed by the spec's allocations below.
             Self::Authentication(_)
             | Self::PermissionDenied(_)
             | Self::Timeout(_)
-            | Self::Transport(_) => -32001,
-            // Spec-allocated codes (draft error-code allocation policy:
-            // `-32020..-32099` is reserved for the MCP specification).
-            Self::HeaderMismatch(_) => -32020,
-            Self::MissingRequiredCapability(_) => -32021,
-            Self::UnsupportedProtocolVersion(_) => -32022,
+            | Self::Transport(_) => -32000,
+            // Spec-allocated codes (2026-07-28 RC error-code allocation).
+            Self::HeaderMismatch(_) => -32001,
+            Self::MissingRequiredCapability(_) => -32003,
+            Self::UnsupportedProtocolVersion(_) => -32004,
         }
     }
 
@@ -217,13 +218,13 @@ mod tests {
         assert_eq!(McpError::method_not_found("x").jsonrpc_code(), -32601);
         assert_eq!(
             McpError::UnsupportedProtocolVersion("x".into()).jsonrpc_code(),
-            -32022
+            -32004
         );
         assert_eq!(
             McpError::MissingRequiredCapability("x".into()).jsonrpc_code(),
-            -32021
+            -32003
         );
-        assert_eq!(McpError::HeaderMismatch("x".into()).jsonrpc_code(), -32020);
+        assert_eq!(McpError::HeaderMismatch("x".into()).jsonrpc_code(), -32001);
         assert_eq!(McpError::authentication("x").http_status(), 401);
         assert_eq!(McpError::permission_denied("x").http_status(), 403);
         assert_eq!(McpError::timeout("x").http_status(), 504);
@@ -235,14 +236,16 @@ mod tests {
     }
 
     #[test]
-    fn auth_group_maps_to_minus_32001() {
+    fn auth_group_maps_to_minus_32000() {
+        // `-32000` (implementation-defined floor) — NOT `-32001`, which the
+        // 2026-07-28 RC allocates to `HeaderMismatch`.
         for e in [
             McpError::authentication("x"),
             McpError::permission_denied("x"),
             McpError::timeout("x"),
             McpError::transport("x"),
         ] {
-            assert_eq!(e.jsonrpc_code(), -32001, "{e}");
+            assert_eq!(e.jsonrpc_code(), -32000, "{e}");
         }
     }
 

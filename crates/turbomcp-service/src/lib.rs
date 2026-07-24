@@ -115,7 +115,7 @@ mod tests {
                 supported: vec![]
             }
             .jsonrpc_code(),
-            -32022
+            -32004
         );
     }
 }

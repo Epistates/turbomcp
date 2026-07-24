@@ -232,7 +232,7 @@ async fn modern_stateless_requests_pass_through_unchanged() {
 #[tokio::test]
 async fn draft_request_without_required_headers_is_400() {
     // A draft-enveloped body without its mirrored headers is a
-    // HeaderMismatch (-32020): this server supports no pre-2025-06-18
+    // HeaderMismatch (-32001): this server supports no pre-2025-06-18
     // clients, so the version header is required, and draft requests also
     // require Mcp-Method (+ Mcp-Name for call/read/get).
     let call = json!({
@@ -253,7 +253,7 @@ async fn draft_request_without_required_headers_is_400() {
         let resp = app().oneshot(post(call.clone(), &headers)).await.unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let v = body_json(resp).await;
-        assert_eq!(v["error"]["code"], -32020);
+        assert_eq!(v["error"]["code"], -32001);
     }
 }
 
