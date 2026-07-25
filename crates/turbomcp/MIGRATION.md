@@ -141,3 +141,23 @@ Tracked for later phases; absent in this alpha:
   WebSocket (enable the `websocket` feature and serve with
   `turbomcp::ws::serve_websocket`). Use stdio for local IPC, HTTP/WebSocket for
   network access.
+
+## Companion crates published for v3
+
+These shipped alongside `turbomcp` 3.x and have **no 4.x release**. There is no
+4.x crate to upgrade to, so a project using one of them should stay on the `3.x`
+line for that piece — the two majors are independent crates and can coexist in
+one workspace while you migrate the server/client code.
+
+| v3 crate (3.1.5) | Status in v4 |
+|---|---|
+| `turbomcp-cli` | Not ported. Use the official [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to poke at a server, or drive one from the [`client` example](examples/client.rs). |
+| `turbomcp-proxy` | Not ported. Planned to be rebuilt on `turbomcp-client` post-GA. |
+| `turbomcp-openapi` | Not ported. Planned post-GA. |
+| `turbomcp-wasm` / `turbomcp-wasm-macros` | No WASM *transport* at GA, but the foundation (`turbomcp-core`, `-codec`, `-protocol`) builds `no_std` for `wasm32-unknown-unknown` — CI enforces it on every run. The bindings layer is a later effort. |
+| `turbomcp-grpc` | Not ported, and unlikely to be: gRPC is not an MCP-spec transport. |
+| `turbomcp-dpop` | Not ported. DPoP (RFC 9449) is still absent from the MCP spec; `Identity::Dpop` exists in v4 but has no validator. |
+
+`turbomcp-tcp`, `turbomcp-unix`, `turbomcp-transport-streamable`, `turbomcp-wire`,
+and `turbomcp-types` were internal decompositions of the v3 SDK; their roles are
+covered by the v4 crates in the table at the top of the [README](README.md).

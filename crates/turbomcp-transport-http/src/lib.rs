@@ -97,7 +97,7 @@ use turbomcp_codec::{Codec, DefaultCodec};
 use turbomcp_core::{JsonRpcMessage, ProtocolVersion, RequestId, meta};
 use turbomcp_service::{
     AuthDecision, CancellationToken, HttpAuthenticator, McpService, ProtocolError, RateKey,
-    RateLimiter, SessionTerminator, mcp_headers, outbound,
+    RateLimiter, SessionTerminator, catch_handler_panic, mcp_headers, outbound,
 };
 
 /// The session header of the `2025-11-25` Streamable HTTP transport.
@@ -112,6 +112,16 @@ const HEADER_MCP_NAME: HeaderName = HeaderName::from_static("mcp-name");
 /// (`Mcp-Param-<name>`). Compared case-insensitively (HTTP lowercases header
 /// names).
 const MCP_PARAM_PREFIX: &str = "mcp-param-";
+
+/// The id this message owes a response to — `None` for anything but a request.
+/// Captured before dispatch so a panicking handler can still be answered (see
+/// [`catch_handler_panic`]).
+fn request_id(msg: &JsonRpcMessage) -> Option<RequestId> {
+    match msg {
+        JsonRpcMessage::Request(r) => Some(r.id.clone()),
+        _ => None,
+    }
+}
 
 /// The protocol version a message's own `_meta` declares, if any — the
 /// stateless draft envelope. Must be read **before** the dual-stack routing
@@ -732,7 +742,7 @@ where
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
         return protocol_error_response(&e);
     }
-    match svc.call(msg).await {
+    match catch_handler_panic(request_id(&msg), svc.call(msg)).await {
         Ok(Some(reply)) => {
             let mut resp = encode_json_response(&state.codec, &reply);
             // A successful initialize hands the minted session back to the
@@ -777,7 +787,7 @@ where
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
         return protocol_error_response(&e);
     }
-    match svc.call(msg).await {
+    match catch_handler_panic(request_id(&msg), svc.call(msg)).await {
         // Accepted: no JSON-RPC response; the ack notification is already in
         // the channel as the stream's first event.
         Ok(None) => {}
@@ -843,7 +853,10 @@ where
     if let Err(e) = poll_fn(|cx| svc.poll_ready(cx)).await {
         return protocol_error_response(&e);
     }
-    let mut call = Box::pin(svc.call(msg));
+    // Wrapped at construction, not at each await: this future is polled from
+    // here *and* from the upgraded SSE stream below, and a handler panic must
+    // answer on whichever path is live.
+    let mut call = Box::pin(catch_handler_panic(Some(request_id.clone()), svc.call(msg)));
 
     tokio::select! {
         biased;

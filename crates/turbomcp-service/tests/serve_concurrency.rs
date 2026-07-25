@@ -463,3 +463,64 @@ async fn driver_sanitizes_inbound_and_asserts_connection_identity() {
     drop(in_tx);
     driver.await.unwrap().expect("clean shutdown on EOF");
 }
+
+/// A handler that panics still owes its request a response: the driver answers
+/// `-32603` rather than leaving the peer to wait out its own timeout, and the
+/// connection keeps serving afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panicking_handler_answers_and_the_connection_survives() {
+    #[derive(Clone)]
+    struct PanicOnBoom;
+
+    impl Service<JsonRpcMessage> for PanicOnBoom {
+        type Response = Option<JsonRpcMessage>;
+        type Error = ProtocolError;
+        type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, msg: JsonRpcMessage) -> Self::Future {
+            Box::pin(async move {
+                let JsonRpcMessage::Request(req) = msg else {
+                    return Ok(None);
+                };
+                assert_ne!(req.method, "boom", "handler exploded");
+                Ok(Some(
+                    JsonRpcResponse::success(req.id, serde_json::json!("ok")).into(),
+                ))
+            })
+        }
+    }
+
+    let (in_tx, in_rx) = mpsc::channel(8);
+    let (out_tx, mut out_rx) = mpsc::unbounded_channel();
+    let transport = MockTransport {
+        inbound: in_rx,
+        outbound: out_tx,
+    };
+    let driver = tokio::spawn(serve_with(transport, PanicOnBoom, ServeConfig::default()));
+
+    in_tx.send(request(1, "boom")).await.unwrap();
+    let reply = tokio::time::timeout(Duration::from_secs(5), out_rx.recv())
+        .await
+        .expect("a panicking handler must still answer")
+        .unwrap();
+    let JsonRpcMessage::Response(r) = &reply else {
+        panic!("expected a response, got {reply:?}");
+    };
+    assert_eq!(r.id, RequestId::from(1i64));
+    assert_eq!(r.error.as_ref().expect("error response").code, -32603);
+
+    // The connection is still usable.
+    in_tx.send(request(2, "fine")).await.unwrap();
+    let next = tokio::time::timeout(Duration::from_secs(5), out_rx.recv())
+        .await
+        .expect("the connection survives a handler panic")
+        .unwrap();
+    assert_eq!(reply_id(&next), Some(RequestId::from(2i64)));
+
+    drop(in_tx);
+    driver.await.unwrap().expect("clean shutdown on EOF");
+}

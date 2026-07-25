@@ -17,6 +17,8 @@ turbomcp-core = { workspace = true }
 turbomcp-codec = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
+# `FutureExt::catch_unwind`, so a panicking handler still answers its request.
+futures = { workspace = true }
 governor = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }
@@ -25,7 +27,6 @@ tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tokio-util = { workspace = true }
 
 [dev-dependencies]
-futures = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = [
     "macros",

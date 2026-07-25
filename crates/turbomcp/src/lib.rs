@@ -4,7 +4,7 @@
 //! workspace crates and the `#[server]` / `#[tool]` / `#[resource]` / `#[prompt]`
 //! macros, plus a [`prelude`] for the common imports.
 //!
-//! ```ignore
+//! ```
 //! use turbomcp::prelude::*;
 //!
 //! #[derive(Clone)]
@@ -18,8 +18,67 @@
 //!         Ok(format!("Hello, {name}!"))
 //!     }
 //! }
+//!
+//! # async fn run() -> Result<(), turbomcp::ProtocolError> {
+//! // Logs MUST go to stderr — stdout carries the MCP protocol framing.
+//! Hello.run_stdio().await
+//! # }
 //! ```
+//!
+//! ## Tool return types
+//!
+//! A `#[tool]` returns `String`/`&str`, any numeric or `bool` scalar, `()`
+//! (empty success), [`Json<T>`] (structured output — the value lands in
+//! `structuredContent` and the macro generates the tool's `outputSchema` from
+//! `T`), [`Image`] / [`Audio`] (base64 `data` + `mime_type` → a content
+//! block), or a [`neutral::CallToolResult`] — each optionally wrapped in
+//! [`McpResult`]. A returned [`McpError`] becomes a *tool-level* error
+//! (`CallToolResult { isError: true }`) the model can read and correct, not a
+//! transport error.
+//!
+//! ```
+//! use turbomcp::prelude::*;
+//!
+//! #[derive(serde::Serialize, turbomcp::schemars::JsonSchema)]
+//! struct Stats { count: u64, mean: f64 }
+//!
+//! #[derive(Clone)]
+//! struct Kitchen;
+//!
+//! #[server(name = "kitchen-sink", version = "1.0.0")]
+//! impl Kitchen {
+//!     /// A bare scalar becomes a text content block.
+//!     #[tool]
+//!     async fn add(&self, a: i64, b: i64) -> i64 { a + b }
+//!
+//!     /// `Json<T>` becomes `structuredContent` + a generated `outputSchema`.
+//!     #[tool]
+//!     async fn stats(&self) -> Json<Stats> { Json(Stats { count: 3, mean: 1.5 }) }
+//!
+//!     /// `Image`/`Audio` become a single image/audio content block.
+//!     #[tool]
+//!     async fn chart(&self) -> Image {
+//!         Image { data: String::new(), mime_type: "image/png".into() }
+//!     }
+//!
+//!     /// A returned `McpError` is a tool-level error, not a transport error.
+//!     #[tool]
+//!     async fn divide(&self, a: f64, b: f64) -> McpResult<f64> {
+//!         if b == 0.0 {
+//!             return Err(McpError::invalid_params("b must be non-zero"));
+//!         }
+//!         Ok(a / b)
+//!     }
+//! }
+//! ```
+//!
+//! Note: on the `2025-11-25` wire `structuredContent` must be a JSON object,
+//! so a `Json<T>` serializing to a scalar or array carries its value in the
+//! text mirror only there; the `2026-07-28` wire accepts any JSON value.
 #![forbid(unsafe_code)]
+// Every example in these docs is a real doctest — they are the API contract
+// users read first, so they compile or the build fails.
+#![warn(missing_docs)]
 
 // ---- foundation -------------------------------------------------------------
 
@@ -65,21 +124,51 @@ pub use turbomcp_transport_stdio::{serve_stdio, serve_stdio_with, stdio};
 /// builder — it builds the dispatcher, wires session termination (`DELETE`)
 /// automatically, and serves:
 ///
-/// ```ignore
+/// ```no_run
 /// use turbomcp::prelude::*;
 /// use turbomcp::http::{HttpConfig, ServeHttp};
 ///
+/// #[derive(Clone)]
+/// struct MyServer;
+///
+/// #[server(name = "my-server", version = "1.0.0")]
+/// impl MyServer {
+///     #[tool]
+///     async fn ping(&self) -> String { "pong".into() }
+/// }
+///
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// MyServer.into_server().run_http("127.0.0.1:8080".parse()?, HttpConfig::new()).await?;
+/// # Ok(())
+/// # }
 /// ```
 ///
-/// For full control (e.g. wrapping the dispatcher in RPC middleware like the
-/// telemetry [`TraceContextLayer`](crate::telemetry::TraceContextLayer)), build
-/// the service yourself and call [`serve_http`](http::serve_http):
+/// For full control — in particular to wrap the dispatcher in RPC middleware
+/// such as the telemetry [`TraceContextLayer`](crate::telemetry::TraceContextLayer)
+/// (feature `telemetry`) — build the service yourself and call
+/// [`serve_http`](http::serve_http). Note that this path does *not* auto-wire
+/// `DELETE` session termination; pass
+/// [`HttpConfig::with_session_terminator`](http::HttpConfig::with_session_terminator)
+/// if you need it.
 ///
-/// ```ignore
-/// use tower::Layer;
-/// let service = TraceContextLayer::new().layer(MyServer.into_server().build());
+/// ```no_run
+/// # use turbomcp::prelude::*;
+/// use turbomcp::http::{HttpConfig, serve_http};
+///
+/// # #[derive(Clone)]
+/// # struct MyServer;
+/// # #[server(name = "my-server", version = "1.0.0")]
+/// # impl MyServer {
+/// #     #[tool]
+/// #     async fn ping(&self) -> String { "pong".into() }
+/// # }
+/// # async fn run() -> Result<(), Box<dyn std::error::Error>> {
+/// # let addr = "127.0.0.1:8080".parse()?;
+/// // …or `SomeLayer::new().layer(…)` around this to add RPC middleware.
+/// let service = MyServer.into_server().build();
 /// serve_http(addr, service, HttpConfig::new()).await?;
+/// # Ok(())
+/// # }
 /// ```
 #[cfg(feature = "http")]
 pub mod http {

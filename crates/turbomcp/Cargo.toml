@@ -78,9 +78,6 @@ http-body-util = "0.1"
 reqwest = { workspace = true }
 turbomcp-transport-stdio = { workspace = true }
 
-[lib]
-doctest = false
-
 [[example]]
 name = "hello_world"
 
@@ -109,6 +106,10 @@ name = "elicitation"
 [[example]]
 name = "tasks"
 required-features = ["ext-tasks"]
+
+[[example]]
+name = "client"
+required-features = ["client"]
 
 [[bench]]
 name = "dispatch"

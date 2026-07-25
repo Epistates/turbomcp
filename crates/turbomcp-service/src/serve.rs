@@ -47,7 +47,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use turbomcp_core::{JsonRpcMessage, meta};
 
-use crate::{McpService, ProtocolError, Transport};
+use crate::{McpService, ProtocolError, Transport, catch_handler_panic};
 
 /// Tuning for the [`serve_with`] driver.
 #[derive(Clone, Debug)]
@@ -184,9 +184,15 @@ where
                         let mut ready = svc.clone();
                         std::mem::swap(&mut ready, &mut svc);
                         let out_tx = tx.clone();
+                        // Kept for the panic path: a handler that unwinds still
+                        // owes this request a response (see `catch_handler_panic`).
+                        let reply_id = match &msg {
+                            JsonRpcMessage::Request(r) => Some(r.id.clone()),
+                            _ => None,
+                        };
                         handlers.spawn(async move {
                             let _permit = permit; // released when the handler ends
-                            match ready.call(msg).await {
+                            match catch_handler_panic(reply_id, ready.call(msg)).await {
                                 Ok(Some(reply)) => {
                                     let _ = out_tx.send(reply).await;
                                 }

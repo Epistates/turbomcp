@@ -92,17 +92,20 @@ Compliance is tested, not asserted:
 
 - **Official conformance suite** — the vendored
   `@modelcontextprotocol/conformance` harness drives a full-featured TurboMCP
-  server over Streamable HTTP: **47 checks, 0 failures** on the pinned stable
-  harness (0.1.16), and the next-generation `0.2.0-alpha` harness (52 checks)
-  also passes clean (`crates/turbomcp-conformance`).
+  server over Streamable HTTP: on the pinned stable harness (0.1.16),
+  **47 checks — 43 pass, 0 fail, 4 informational**; the next-generation
+  `0.2.0-alpha` harness (52 checks) also passes clean
+  (`crates/turbomcp-conformance`).
 - **Cross-SDK interop** — a TurboMCP client drives an official-Rust-SDK
   (rmcp 2.2) server and vice-versa, in-process
   (`crates/turbomcp-interop`).
-- **≈390 tests across the workspace** — dual-version dispatch, transport
-  hardening (Origin/auth/size caps/idle reaping), MRTR elicitation, tasks
-  (including in-execution input), subscriptions, response caching, auth
-  negative paths, client failure semantics against misbehaving servers, and
-  byte-level codec interchangeability (serde_json ↔ sonic-rs).
+- **≈510 tests across the workspace** (plus 86 more re-run against the
+  `no_std` foundation configs) — dual-version dispatch, transport hardening
+  (Origin/auth/size caps/idle reaping), handler-panic containment, MRTR
+  elicitation, tasks (including in-execution input), subscriptions, pagination,
+  response caching, auth negative paths, client failure semantics against
+  misbehaving servers, and byte-level codec interchangeability
+  (serde_json ↔ sonic-rs).
 - **Fuzzing + supply chain** — cargo-fuzz targets (codec decode, header
   sentinel, URI templates) and `cargo-deny`
   (advisories/bans/licenses/sources) run in CI.

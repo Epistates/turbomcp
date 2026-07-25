@@ -286,3 +286,78 @@ async fn oversized_body_is_413() {
     let resp = app(config).oneshot(post(&body)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
+
+/// A `#[tool]` body that panics must still answer its POST with `-32603`
+/// rather than tearing down the connection with no response. Covers the
+/// lazy-upgrade dispatch path (`tools/call`), where the call future is polled
+/// from both the inline arm and the upgraded SSE stream.
+#[tokio::test]
+async fn a_panicking_tool_answers_with_an_internal_error() {
+    #[derive(Clone)]
+    struct Exploding;
+
+    impl McpServerCore for Exploding {
+        fn server_info(&self) -> Implementation {
+            Implementation::new("exploding", "0.1.0")
+        }
+    }
+
+    impl WithTools for Exploding {
+        async fn list_tools(
+            &self,
+            _ctx: &ListToolsContext,
+            _params: neutral::ListParams,
+        ) -> McpResult<neutral::ListToolsResult> {
+            Ok(neutral::ListToolsResult::new(vec![neutral::Tool::new(
+                "boom",
+                json!({"type": "object"}),
+            )]))
+        }
+
+        async fn call_tool(
+            &self,
+            _ctx: &CallToolContext,
+            _params: neutral::CallToolParams,
+        ) -> McpResult<neutral::CallToolResult> {
+            panic!("tool exploded")
+        }
+    }
+
+    let app = || {
+        let dispatcher = VersionDispatcher::new(Exploding, MethodRouter::new().with_tools());
+        router(dispatcher, HttpConfig::new())
+    };
+
+    let resp = app()
+        .oneshot(draft_post(
+            &format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"boom","arguments":{{}},"_meta":{DRAFT_META}}}}}"#
+            ),
+            "tools/call",
+            Some("boom"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_json(resp).await;
+    assert_eq!(v["id"], 1);
+    assert_eq!(v["error"]["code"], -32603);
+    // The panic payload belongs in the log, not on the wire.
+    assert!(
+        !v["error"]["message"].as_str().unwrap().contains("exploded"),
+        "leaked panic payload: {v}"
+    );
+
+    // The endpoint keeps serving afterwards.
+    let resp = app()
+        .oneshot(draft_post(
+            &format!(r#"{{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{{"_meta":{DRAFT_META}}}}}"#),
+            "tools/list",
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let v = body_json(resp).await;
+    assert_eq!(v["result"]["tools"][0]["name"], "boom");
+}

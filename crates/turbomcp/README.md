@@ -140,6 +140,7 @@ In [`examples/`](examples/) — run with `cargo run -p turbomcp --example <name>
 | `elicitation` | asking the user for input (MRTR + legacy inline) |
 | `dual_transport` | one server over stdio **and** HTTP (`--features http`) |
 | `tasks` | the draft Tasks extension (`--features ext-tasks`) |
+| `client` | the other half: a client that spawns `hello_world` and drives it (`--features client`) |
 
 ## Migrating from v3
 

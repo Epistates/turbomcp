@@ -77,12 +77,12 @@ jobs:
 
     # An explicit `--doc` force-runs doctests even for crates that opt out
     # with `doctest = false` (unlike a plain `cargo test`, which honors it).
-    # Exclude the two opted-out crates: turbomcp-protocol's @generated wire
-    # types carry the spec's prose verbatim (rustdoc misreads the indented/
-    # backticked text as Rust code), and the facade's docs are compile-checked
-    # by its examples instead.
+    # turbomcp-protocol is the one opt-out: its @generated wire types carry the
+    # spec's prose verbatim, and rustdoc misreads that indented/backticked text
+    # as Rust code. Every other crate's doc examples must compile — the facade's
+    # especially, since they are the API contract users read first.
     - name: Doc tests
-      run: cargo test --workspace --all-features --doc --exclude turbomcp-protocol --exclude turbomcp
+      run: cargo test --workspace --all-features --doc --exclude turbomcp-protocol
 
     - name: Cleanup
       if: always()

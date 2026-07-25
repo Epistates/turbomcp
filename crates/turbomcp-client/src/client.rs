@@ -39,6 +39,11 @@ use crate::handler::{ClientHandler, dispatch_server_request};
 /// `input_required` forever.
 const MAX_MRTR_ROUNDS: usize = 16;
 
+/// Cap on pages the `list_all_*` helpers will follow — a guard against a
+/// server whose `nextCursor` never terminates. Set far above any real catalog
+/// (even at one item per page) so it only ever trips on a broken server.
+const MAX_LIST_PAGES: usize = 10_000;
+
 /// The SEP-2663 Tasks-extension methods the typed task surface speaks.
 const TASKS_GET: &str = "tasks/get";
 const TASKS_UPDATE: &str = "tasks/update";
@@ -399,6 +404,43 @@ impl Client {
         Ok(v)
     }
 
+    /// Drive `fetch` across every page of a paginated list, concatenating the
+    /// items. `fetch` takes the cursor for the page to request (`None` for the
+    /// first) and returns that page's items plus its `nextCursor`.
+    ///
+    /// The cursor is opaque and server-chosen, so following it is unbounded by
+    /// construction. Two guards keep a broken or hostile server from spinning
+    /// this loop forever: a `nextCursor` that repeats the one just sent (or is
+    /// empty) is not advancing, and [`MAX_LIST_PAGES`] caps the total. Both
+    /// fail loudly rather than silently returning a partial list — a truncated
+    /// result that looks complete is the failure mode these helpers exist to
+    /// prevent.
+    async fn collect_pages<T, F, Fut>(&self, method: &str, mut fetch: F) -> ClientResult<Vec<T>>
+    where
+        F: FnMut(Option<String>) -> Fut,
+        Fut: Future<Output = ClientResult<(Vec<T>, Option<String>)>>,
+    {
+        let mut items = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..MAX_LIST_PAGES {
+            let (page, next) = fetch(cursor.clone()).await?;
+            items.extend(page);
+            match next {
+                None => return Ok(items),
+                Some(next) if next.is_empty() || Some(&next) == cursor.as_ref() => {
+                    return Err(ClientError::Protocol(format!(
+                        "{method} returned a nextCursor that does not advance; \
+                         refusing to page forever"
+                    )));
+                }
+                Some(next) => cursor = Some(next),
+            }
+        }
+        Err(ClientError::Protocol(format!(
+            "{method} exceeded {MAX_LIST_PAGES} pages; refusing to page further"
+        )))
+    }
+
     /// List the server's tools (one page; pass a `cursor` to continue).
     ///
     /// # Errors
@@ -439,6 +481,23 @@ impl Client {
             });
         drop(cache);
         Ok(result)
+    }
+
+    /// Every tool the server offers, following pagination to the last page.
+    ///
+    /// Prefer this to [`list_tools`](Self::list_tools) unless you are driving
+    /// the cursor yourself: a paginating server answers `list_tools(None)`
+    /// with only the *first* page, which is easy to mistake for the whole set.
+    ///
+    /// # Errors
+    /// Propagates RPC and decode failures, and rejects a server whose cursor
+    /// doesn't advance (see [`ClientError::Protocol`]).
+    pub async fn list_all_tools(&self) -> ClientResult<Vec<neutral::Tool>> {
+        self.collect_pages("tools/list", |cursor| async move {
+            let page = self.list_tools(cursor.as_deref()).await?;
+            Ok((page.tools, page.next_cursor))
+        })
+        .await
     }
 
     /// Call a tool by name with an arguments object.
@@ -618,6 +677,22 @@ impl Client {
         self.decode::<draft::ListResourcesResult, legacy::ListResourcesResult, _>(v)
     }
 
+    /// Every resource the server offers, following pagination to the last page.
+    ///
+    /// See [`list_all_tools`](Self::list_all_tools) for why this is usually
+    /// the one you want.
+    ///
+    /// # Errors
+    /// Propagates RPC and decode failures, and rejects a server whose cursor
+    /// doesn't advance.
+    pub async fn list_all_resources(&self) -> ClientResult<Vec<neutral::Resource>> {
+        self.collect_pages("resources/list", |cursor| async move {
+            let page = self.list_resources(cursor.as_deref()).await?;
+            Ok((page.resources, page.next_cursor))
+        })
+        .await
+    }
+
     /// Read a resource by URI.
     ///
     /// # Errors
@@ -662,6 +737,25 @@ impl Client {
         self.decode::<draft::ListResourceTemplatesResult, legacy::ListResourceTemplatesResult, _>(v)
     }
 
+    /// Every resource template the server offers, following pagination to the
+    /// last page.
+    ///
+    /// See [`list_all_tools`](Self::list_all_tools) for why this is usually
+    /// the one you want.
+    ///
+    /// # Errors
+    /// Propagates RPC and decode failures, and rejects a server whose cursor
+    /// doesn't advance.
+    pub async fn list_all_resource_templates(
+        &self,
+    ) -> ClientResult<Vec<neutral::ResourceTemplate>> {
+        self.collect_pages("resources/templates/list", |cursor| async move {
+            let page = self.list_resource_templates(cursor.as_deref()).await?;
+            Ok((page.resource_templates, page.next_cursor))
+        })
+        .await
+    }
+
     /// List the server's prompts (one page; pass a `cursor` to continue).
     ///
     /// # Errors
@@ -674,6 +768,22 @@ impl Client {
             .cached_request(request::PROMPTS_LIST, list_params(cursor), cursor)
             .await?;
         self.decode::<draft::ListPromptsResult, legacy::ListPromptsResult, _>(v)
+    }
+
+    /// Every prompt the server offers, following pagination to the last page.
+    ///
+    /// See [`list_all_tools`](Self::list_all_tools) for why this is usually
+    /// the one you want.
+    ///
+    /// # Errors
+    /// Propagates RPC and decode failures, and rejects a server whose cursor
+    /// doesn't advance.
+    pub async fn list_all_prompts(&self) -> ClientResult<Vec<neutral::Prompt>> {
+        self.collect_pages("prompts/list", |cursor| async move {
+            let page = self.list_prompts(cursor.as_deref()).await?;
+            Ok((page.prompts, page.next_cursor))
+        })
+        .await
     }
 
     /// Get a prompt by name with string arguments.

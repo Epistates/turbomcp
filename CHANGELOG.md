@@ -7,7 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed — breaking (since `4.0.0-alpha.1`)
+
+- **JSON-RPC error codes renumbered to the `2026-07-28` RC allocation.** The
+  draft reallocated its spec-assigned codes, so the numbers `4.0.0-alpha.1`
+  emitted have moved. Anything matching on these values must be updated:
+
+  | Condition | was | now |
+  |---|---|---|
+  | `HeaderMismatch` | `-32020` | `-32001` |
+  | `MissingRequiredCapability` | `-32021` | `-32003` |
+  | `UnsupportedProtocolVersion` | `-32022` | `-32004` |
+  | `ResourceNotFound` (draft wire only) | `-32002` | `-32602` |
+
+  `resources/read` for an unknown URI is now **version-split**: the
+  `2025-11-25` wire keeps `-32002` (its own spec's code) while the draft wire
+  answers `-32602`. Servers get this automatically — the negotiated version
+  selects the rendering (`McpError::jsonrpc_code_for`). The typed `Client`
+  accepts both the old and new numbers on the negotiation and refresh-retry
+  recovery paths, so it interoperates with peers tracking either revision.
+- **`UnsupportedProtocolVersion` now carries a `data` payload** — the RC
+  requires `{ supported, requested }` alongside the code, so clients can
+  renegotiate without a second round trip.
+- **`server/discover` no longer stamps `serverInfo` into result `_meta`.** The
+  RC restored `serverInfo` as a first-class field on `DiscoverResult`; read it
+  there. The `io.modelcontextprotocol/serverInfo` `_meta` key is gone.
+- **`subscriptions/listen` sends no closing response.** The RC deleted
+  `SubscriptionsListenResult`; graceful teardown simply ends the stream.
+  `VersionDispatcher::close_subscriptions()` is now synchronous.
+
 ### Added
+
+- **A panicking handler now answers its request.** A `#[tool]` (or any
+  handler) that panics previously produced *no response at all*: on stdio and
+  WebSocket the task died silently and the peer waited out its own timeout;
+  over HTTP the request went unanswered. Both transports now convert the panic
+  into a `-32603` internal error for that request id and keep the connection
+  serving — JSON-RPC requires every request to be answered, and one buggy tool
+  should not strand a client. The panic payload is logged (`tracing::error!`),
+  never put on the wire. Under `panic = "abort"` the process still aborts, as
+  that profile asks for.
+- **`Client::list_all_tools` / `list_all_resources` / `list_all_prompts` /
+  `list_all_resource_templates`** — follow `nextCursor` to the last page and
+  return the concatenated items. The single-page `list_*` methods answer with
+  only the *first* page against a paginating server, which is easy to mistake
+  for the whole set. A server whose cursor doesn't advance (repeats the cursor
+  it was given, or returns an empty one) is rejected rather than paged forever,
+  and a page cap backstops the loop.
+- **`notifications/elicitation/complete`, both halves.** A server can signal
+  that an out-of-band URL-mode elicitation finished:
+  `ClientHandle::notify_elicitation_complete(id)` delivers it to the
+  originating connection only (a spec MUST), and clients receive it through the
+  typed `ClientHandler::on_elicitation_complete` hook as well as the generic
+  `on_notification`. URL-mode `elicitation/create` now always carries an
+  `elicitationId` (minted when the handler doesn't supply one), which the RC
+  requires. The notification is a spec MAY, so clients must keep working
+  without it — the manual retry path is unchanged.
+- **`client` example** — the other half of the protocol end to end: spawn a
+  server as a child process, inspect what the handshake negotiated, enumerate
+  tools, call one, and answer server→client elicitation via `ClientHandler`.
+  Run it with `cargo run -p turbomcp --features client --example client`.
+- **The facade's doc examples are compile-checked.** `turbomcp` no longer sets
+  `doctest = false`, and its examples are real doctests rather than `ignore`
+  blocks, so the API tour users read first cannot silently rot. CI runs
+  doctests for every crate except `turbomcp-protocol`, whose `@generated` wire
+  types carry the spec's prose verbatim.
+- **Draft wire types re-synced to the upstream `2026-07-28-RC` tag.** The
+  generated `draft/types.rs` now tracks the release-candidate schema. The
+  dated `ProtocolVersion` variant is still deliberately *not* pinned: the RC is
+  not the freeze, so the version stays the slip-proof `ProtocolVersion::Draft`
+  channel until the final tag lands.
+- **`HttpError` and `WsError` convert into `ProtocolError`** via `From`, so a
+  transport failure composes with `?` in a `main` that returns
+  `turbomcp::ProtocolError` instead of forcing a boxed error. The per-transport
+  error types are unchanged — the bridge is additive.
 
 - **HTTP `Accept` validation (transports spec).** The Streamable HTTP
   endpoint now enforces the spec's content-negotiation MUSTs: a `POST` whose
@@ -53,10 +126,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Test-suite hardening across every crate** (per-crate audit): ~70 new tests
   pinning previously unexercised spec invariants and defensive branches —
-  modern-path version rejection (`-32022` + the supported list), capability
+  modern-path version rejection (`-32004` + the supported list), capability
   enforcement (unadvertised capability → `-32601`), pagination-cursor
   plumbing, the malformed-params matrix, the client's `Auto`→legacy fallback,
-  the `-32020` refresh-and-retry recovery, MRTR round-cap / no-handler edges,
+  the `-32001` refresh-and-retry recovery, MRTR round-cap / no-handler edges,
   packaged sampling/roots dispatch, task terminal-state mapping, response-
   cache TTL/eviction/per-URI invalidation end-to-end, JWT algorithm-allowlist
   and required-claim rejection, HTTP auth on GET/DELETE + 403
