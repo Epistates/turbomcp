@@ -14,14 +14,15 @@
 //! All generated paths are rooted at `::turbomcp` so the macro works from any
 //! downstream crate.
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens as _, format_ident, quote};
+use syn::ext::IdentExt as _;
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::{
-    Attribute, Expr, ExprLit, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Lit, LitStr, Meta,
-    MetaNameValue, Pat, Token, Type, parse2,
+    Attribute, Expr, ExprLit, FnArg, Ident, ImplItem, ImplItemFn, ItemImpl, Lit, LitStr, Meta, Pat,
+    Token, Type, parse2,
 };
 
 /// Entry point called by the `#[proc_macro_attribute]` shim.
@@ -55,29 +56,14 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
             continue;
         };
         match kind {
-            Marker::Tool {
-                desc,
-                name,
-                task,
-                scopes,
-                title,
-                hints,
-            } => {
-                let mut h = Handler::parse(f, desc, HandlerKind::Tool)?;
-                h.wire_name = name;
-                h.task = task;
-                h.scopes = scopes;
-                h.title = title;
-                h.hints = hints;
-                tools.push(h);
-            }
-            Marker::Prompt { desc, name } => {
-                let mut h = Handler::parse(f, desc, HandlerKind::Prompt)?;
-                h.wire_name = name;
-                prompts.push(h);
-            }
-            Marker::Resource { uri, desc } => {
-                resources.push(Handler::parse(f, desc, HandlerKind::Resource { uri })?);
+            Marker::Handler { kind, desc, args } => {
+                let mut h = Handler::parse(f, desc, kind)?;
+                h.apply(args);
+                match &h.kind {
+                    HandlerKind::Tool => tools.push(h),
+                    HandlerKind::Prompt => prompts.push(h),
+                    HandlerKind::Resource { .. } => resources.push(h),
+                }
             }
             Marker::Completion => {
                 if completion.is_some() {
@@ -93,10 +79,19 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
         strip_param_attrs(f);
     }
 
-    // `name = "…"` makes collisions expressible, and two handlers answering
-    // the same wire name would silently shadow one another in dispatch.
-    reject_duplicate_names(&tools, "tool")?;
-    reject_duplicate_names(&prompts, "prompt")?;
+    // The wire name is what clients call; the spec constrains it, and dispatch
+    // matches on it — so an out-of-spec or shadowed name is a compile error.
+    for t in &tools {
+        validate_tool_name(&t.wire_name(), t.wire_name_span())?;
+    }
+    reject_duplicates(&tools, |h| h.wire_name(), "tool name", NAME_REMEDY)?;
+    reject_duplicates(&prompts, |h| h.wire_name(), "prompt name", NAME_REMEDY)?;
+    reject_duplicates(
+        &resources,
+        Handler::resource_uri,
+        "resource URI",
+        "give each resource a distinct URI",
+    )?;
 
     let core_impl = gen_core_impl(&self_ty, &args)?;
     let tools_impl = (!tools.is_empty()).then(|| gen_tools_impl(&self_ty, &tools));
@@ -153,24 +148,67 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     })
 }
 
-/// Reject two handlers of the same kind answering to one wire name. Tools and
-/// prompts are separate namespaces, so this is checked per kind.
-fn reject_duplicate_names(handlers: &[Handler], kind: &str) -> syn::Result<()> {
+const NAME_REMEDY: &str = "rename one, or give it a distinct `name = \"…\"`";
+
+/// Reject two handlers claiming one wire identity — dispatch matches on it, so
+/// the second could never run. Tools and prompts are keyed by wire name (they
+/// are separate namespaces, hence one call per kind); resources by URI.
+fn reject_duplicates(
+    handlers: &[Handler],
+    key: impl Fn(&Handler) -> String,
+    what: &str,
+    remedy: &str,
+) -> syn::Result<()> {
     let mut seen: std::collections::HashMap<String, &Ident> = std::collections::HashMap::new();
     for h in handlers {
-        let name = h.wire_name();
-        if let Some(first) = seen.get(&name) {
+        let k = key(h);
+        if let Some(first) = seen.get(&k) {
             return Err(syn::Error::new(
                 h.method.span(),
                 format!(
-                    "two {kind}s answer to the wire name `{name}`; it is already \
-                     claimed by the method `{first}`. Wire names must be unique \
-                     within a server — rename one, or give it a distinct \
-                     `name = \"…\"`."
+                    "two handlers claim the {what} `{k}`; it is already claimed by \
+                     the method `{first}`. Dispatch matches on it, so the second \
+                     would never run — {remedy}."
                 ),
             ));
         }
-        seen.insert(name, &h.method);
+        seen.insert(k, &h.method);
+    }
+    Ok(())
+}
+
+/// Check a tool's wire name against the spec's naming rules (`server/tools`,
+/// identical in `2025-11-25` and the draft): 1–128 characters drawn from ASCII
+/// letters, digits, `_`, `-`, and `.`.
+///
+/// The spec states these as SHOULDs, but they are enforced here. Clients apply
+/// their own name patterns and reject or mangle what falls outside this set, and
+/// a compile error is a far better place to discover that than a production
+/// `tools/call`. A server that genuinely must use another name can implement
+/// [`WithTools`](turbomcp::WithTools) by hand.
+fn validate_tool_name(name: &str, span: Span) -> syn::Result<()> {
+    let len = name.chars().count();
+    if len == 0 {
+        return Err(syn::Error::new(span, "a tool name must not be empty"));
+    }
+    if len > 128 {
+        return Err(syn::Error::new(
+            span,
+            format!("tool name `{name}` is {len} characters; the spec allows at most 128"),
+        ));
+    }
+    if let Some(c) = name
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')))
+    {
+        return Err(syn::Error::new(
+            span,
+            format!(
+                "tool name `{name}` contains `{c}`, which the spec does not permit: a \
+                 tool name may use ASCII letters, digits, `_`, `-`, and `.` \
+                 (e.g. `getUser`, `DATA_EXPORT_v2`, `admin.tools.list`)"
+            ),
+        ));
     }
     Ok(())
 }
@@ -280,22 +318,15 @@ fn protocol_variant(wire: &LitStr) -> syn::Result<proc_macro2::TokenStream> {
     }
 }
 
+/// A parsed marker attribute. `#[completion]` takes no arguments and has no
+/// handler model of its own; the other three share one.
 enum Marker {
-    Tool {
+    Handler {
+        kind: HandlerKind,
+        /// The resolved description: an explicit `description = "…"`, else the
+        /// bare-string shorthand, else the doc comment.
         desc: Option<String>,
-        name: Option<String>,
-        task: bool,
-        scopes: Vec<String>,
-        title: Option<String>,
-        hints: ToolHints,
-    },
-    Prompt {
-        desc: Option<String>,
-        name: Option<String>,
-    },
-    Resource {
-        uri: String,
-        desc: Option<String>,
+        args: MarkerArgs,
     },
     Completion,
 }
@@ -319,17 +350,104 @@ impl ToolHints {
     }
 }
 
-/// One argument inside `#[tool(...)]`: a bare description string, `description =
-/// "…"`, `title = "…"`, the `task` flag, `scopes("…", …)` (required OAuth
-/// scopes), or a behavior hint — `read_only` / `destructive` / `idempotent` /
-/// `open_world`, each optionally `= true|false` (bare = `true`).
-enum ToolArg {
+/// Which marker an attribute belongs to. Gates the keys it accepts, so a
+/// misplaced one is reported against *that* marker rather than the union of
+/// everything any marker takes.
+#[derive(Clone, Copy)]
+enum MarkerKind {
+    Tool,
+    Prompt,
+    Resource,
+}
+
+impl MarkerKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Tool => "#[tool]",
+            Self::Prompt => "#[prompt]",
+            Self::Resource => "#[resource]",
+        }
+    }
+
+    /// Whether this marker accepts the named key.
+    fn accepts(self, key: &str) -> bool {
+        match self {
+            Self::Tool => matches!(
+                key,
+                "description"
+                    | "name"
+                    | "title"
+                    | "task"
+                    | "scopes"
+                    | "read_only"
+                    | "destructive"
+                    | "idempotent"
+                    | "open_world"
+            ),
+            Self::Prompt => matches!(key, "description" | "name" | "title"),
+            Self::Resource => matches!(key, "description" | "name" | "title" | "mime_type"),
+        }
+    }
+
+    /// The keys this marker accepts, for the "expected …" half of an error.
+    fn expected(self) -> &'static str {
+        match self {
+            Self::Tool => {
+                "`description = \"…\"`, `name = \"…\"`, `title = \"…\"`, `task`, \
+                 `scopes(\"…\", …)`, or a behavior hint (`read_only`, `destructive`, \
+                 `idempotent`, `open_world`)"
+            }
+            Self::Prompt => "`description = \"…\"`, `name = \"…\"`, or `title = \"…\"`",
+            Self::Resource => {
+                "`description = \"…\"`, `name = \"…\"`, `title = \"…\"`, or `mime_type = \"…\"`"
+            }
+        }
+    }
+}
+
+/// One argument inside a marker attribute, with the span to blame for it.
+///
+/// Parsing is deliberately marker-agnostic — [`Punctuated::parse_terminated`]
+/// takes a plain `Parse` impl, which can't see the marker — so an unrecognized
+/// key becomes [`ArgKind::Unknown`] and the per-marker gate runs in
+/// [`MarkerArgs::parse`], where the marker *is* known.
+struct MarkerArg {
+    span: Span,
+    kind: ArgKind,
+}
+
+/// A bare string (the URI on `#[resource]`, a description shorthand elsewhere),
+/// `description` / `name` / `title` / `mime_type = "…"`, the `task` flag,
+/// `scopes("…", …)` (required OAuth scopes), or a behavior hint — `read_only` /
+/// `destructive` / `idempotent` / `open_world`, each optionally `= true|false`
+/// (bare = `true`).
+enum ArgKind {
+    Positional(LitStr),
     Desc(String),
-    Name(String),
+    Name(LitStr),
     Title(String),
+    MimeType(String),
     Task,
     Scopes(Vec<String>),
     Hint(HintKind, bool),
+    Unknown(String),
+}
+
+impl ArgKind {
+    /// The key this argument was written as, for the per-marker gate.
+    fn key(&self) -> &str {
+        match self {
+            Self::Positional(_) => "",
+            Self::Desc(_) => "description",
+            Self::Name(_) => "name",
+            Self::Title(_) => "title",
+            Self::MimeType(_) => "mime_type",
+            Self::Task => "task",
+            Self::Scopes(_) => "scopes",
+            Self::Hint(k, _) => k.key(),
+            Self::Unknown(k) => k,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -340,137 +458,177 @@ enum HintKind {
     OpenWorld,
 }
 
-fn hint_kind(meta: &Meta) -> Option<HintKind> {
-    let p = meta.path();
-    if p.is_ident("read_only") {
-        Some(HintKind::ReadOnly)
-    } else if p.is_ident("destructive") {
-        Some(HintKind::Destructive)
-    } else if p.is_ident("idempotent") {
-        Some(HintKind::Idempotent)
-    } else if p.is_ident("open_world") {
-        Some(HintKind::OpenWorld)
-    } else {
-        None
+impl HintKind {
+    fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "read_only" => Some(Self::ReadOnly),
+            "destructive" => Some(Self::Destructive),
+            "idempotent" => Some(Self::Idempotent),
+            "open_world" => Some(Self::OpenWorld),
+            _ => None,
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read_only",
+            Self::Destructive => "destructive",
+            Self::Idempotent => "idempotent",
+            Self::OpenWorld => "open_world",
+        }
     }
 }
 
-impl Parse for ToolArg {
+impl Parse for MarkerArg {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(LitStr) {
             let s: LitStr = input.parse()?;
-            return Ok(ToolArg::Desc(s.value()));
+            return Ok(Self {
+                span: s.span(),
+                kind: ArgKind::Positional(s),
+            });
         }
         let meta: Meta = input.parse()?;
-        if meta.path().is_ident("task") {
-            Ok(ToolArg::Task)
-        } else if meta.path().is_ident("description") {
-            match meta {
-                Meta::NameValue(nv) => lit_str(&nv.value)
-                    .map(ToolArg::Desc)
-                    .ok_or_else(|| syn::Error::new(nv.value.span(), "expected a string literal")),
-                _ => Err(syn::Error::new(
-                    meta.span(),
-                    "expected `description = \"…\"`",
-                )),
-            }
-        } else if meta.path().is_ident("name") {
-            match meta {
-                Meta::NameValue(nv) => lit_str(&nv.value)
-                    .map(ToolArg::Name)
-                    .ok_or_else(|| syn::Error::new(nv.value.span(), "expected a string literal")),
-                _ => Err(syn::Error::new(meta.span(), "expected `name = \"…\"`")),
-            }
-        } else if meta.path().is_ident("title") {
-            match meta {
-                Meta::NameValue(nv) => lit_str(&nv.value)
-                    .map(ToolArg::Title)
-                    .ok_or_else(|| syn::Error::new(nv.value.span(), "expected a string literal")),
-                _ => Err(syn::Error::new(meta.span(), "expected `title = \"…\"`")),
-            }
-        } else if meta.path().is_ident("scopes") {
-            match meta {
+        let span = meta.path().span();
+        let key = meta
+            .path()
+            .get_ident()
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        // `task` is a flag; the rest take a value, so their shape is checked here
+        // and the marker gate (which key belongs on which marker) runs later.
+        let kind = match key.as_str() {
+            "task" => ArgKind::Task,
+            "description" => ArgKind::Desc(name_value_str(&meta, &key)?),
+            "name" => ArgKind::Name(name_value_lit(&meta, &key)?),
+            "title" => ArgKind::Title(name_value_str(&meta, &key)?),
+            "mime_type" => ArgKind::MimeType(name_value_str(&meta, &key)?),
+            "scopes" => match &meta {
                 Meta::List(list) => {
                     let lits =
                         list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)?;
-                    Ok(ToolArg::Scopes(lits.iter().map(LitStr::value).collect()))
+                    ArgKind::Scopes(lits.iter().map(LitStr::value).collect())
                 }
-                _ => Err(syn::Error::new(meta.span(), "expected `scopes(\"…\", …)`")),
-            }
-        } else if let Some(kind) = hint_kind(&meta) {
-            match meta {
-                // Bare flag: `read_only` means the hint is true.
-                Meta::Path(_) => Ok(ToolArg::Hint(kind, true)),
-                // Explicit: `destructive = false` declares the hint false
-                // (distinct from not declaring it — the spec defaults differ).
-                Meta::NameValue(nv) => match &nv.value {
-                    syn::Expr::Lit(el) => match &el.lit {
-                        syn::Lit::Bool(b) => Ok(ToolArg::Hint(kind, b.value)),
-                        _ => Err(syn::Error::new(
-                            nv.value.span(),
-                            "expected `true` or `false`",
-                        )),
-                    },
-                    _ => Err(syn::Error::new(
-                        nv.value.span(),
-                        "expected `true` or `false`",
-                    )),
-                },
-                Meta::List(l) => Err(syn::Error::new(
-                    l.span(),
-                    "behavior hints take no list — use the bare flag or `= true|false`",
-                )),
-            }
-        } else {
-            Err(syn::Error::new(
-                meta.span(),
-                "expected `description = \"…\"`, `name = \"…\"`, `title = \"…\"`, `task`, `scopes(…)`, \
-                 or a behavior hint (`read_only`, `destructive`, `idempotent`, `open_world`)",
-            ))
-        }
+                _ => return Err(syn::Error::new(span, "expected `scopes(\"…\", …)`")),
+            },
+            _ => match HintKind::from_key(&key) {
+                Some(hint) => ArgKind::Hint(hint, hint_value(&meta)?),
+                None => ArgKind::Unknown(key),
+            },
+        };
+        Ok(Self { span, kind })
     }
 }
 
-/// Everything `#[tool(...)]` can declare.
+/// The boolean a behavior hint declares: bare (`read_only`) means `true`;
+/// `destructive = false` declares the hint *false*, which is distinct from
+/// leaving it unset — the spec's defaults differ.
+fn hint_value(meta: &Meta) -> syn::Result<bool> {
+    match meta {
+        Meta::Path(_) => Ok(true),
+        Meta::NameValue(nv) => match &nv.value {
+            Expr::Lit(ExprLit {
+                lit: Lit::Bool(b), ..
+            }) => Ok(b.value),
+            other => Err(syn::Error::new(other.span(), "expected `true` or `false`")),
+        },
+        Meta::List(l) => Err(syn::Error::new(
+            l.span(),
+            "behavior hints take no list — use the bare flag or `= true|false`",
+        )),
+    }
+}
+
+/// The string literal of `key = "…"`, blaming the key when the shape is wrong.
+fn name_value_lit(meta: &Meta, key: &str) -> syn::Result<LitStr> {
+    let Meta::NameValue(nv) = meta else {
+        return Err(syn::Error::new(
+            meta.span(),
+            format!("expected `{key} = \"…\"`"),
+        ));
+    };
+    match &nv.value {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) => Ok(s.clone()),
+        other => Err(syn::Error::new(other.span(), "expected a string literal")),
+    }
+}
+
+fn name_value_str(meta: &Meta, key: &str) -> syn::Result<String> {
+    name_value_lit(meta, key).map(|s| s.value())
+}
+
+/// Everything a marker attribute can declare. Which fields may be set is gated
+/// per marker by [`MarkerKind::accepts`], so one struct serves all three without
+/// letting `#[prompt(task)]` through.
 #[derive(Default)]
-struct ToolMarkerArgs {
+struct MarkerArgs {
+    /// The bare string, if any: the URI on `#[resource]`, otherwise a
+    /// description shorthand.
+    positional: Option<LitStr>,
     desc: Option<String>,
-    /// `#[tool(name = "…")]` — the wire name, when it should differ from the
-    /// Rust method name.
-    name: Option<String>,
+    /// `name = "…"` — kept as a literal so a bad name is reported at the
+    /// literal rather than at the method.
+    name: Option<LitStr>,
+    title: Option<String>,
+    mime_type: Option<String>,
     task: bool,
     scopes: Vec<String>,
-    title: Option<String>,
     hints: ToolHints,
 }
 
-/// Parse `#[tool]`, `#[tool("…")]`, `#[tool(description = "…")]`, `#[tool(task)]`,
-/// `#[tool(scopes(…))]`, `#[tool(title = "…")]`, behavior hints, and combinations.
-fn parse_tool_args(attr: &Attribute) -> syn::Result<ToolMarkerArgs> {
-    match &attr.meta {
-        Meta::Path(_) => Ok(ToolMarkerArgs::default()),
-        Meta::NameValue(nv) => Ok(ToolMarkerArgs {
-            desc: lit_str(&nv.value),
-            ..ToolMarkerArgs::default()
-        }),
-        Meta::List(_) => {
-            let args = attr.parse_args_with(Punctuated::<ToolArg, Token![,]>::parse_terminated)?;
-            let mut parsed = ToolMarkerArgs::default();
-            for a in args {
-                match a {
-                    ToolArg::Desc(s) => parsed.desc = Some(s),
-                    ToolArg::Name(s) => parsed.name = Some(s),
-                    ToolArg::Title(s) => parsed.title = Some(s),
-                    ToolArg::Task => parsed.task = true,
-                    ToolArg::Scopes(s) => parsed.scopes = s,
-                    ToolArg::Hint(HintKind::ReadOnly, v) => parsed.hints.read_only = Some(v),
-                    ToolArg::Hint(HintKind::Destructive, v) => parsed.hints.destructive = Some(v),
-                    ToolArg::Hint(HintKind::Idempotent, v) => parsed.hints.idempotent = Some(v),
-                    ToolArg::Hint(HintKind::OpenWorld, v) => parsed.hints.open_world = Some(v),
-                }
+impl MarkerArgs {
+    /// Parse `#[m]`, `#[m = "…"]`, `#[m("…")]`, `#[m(key = "…", …)]`, and
+    /// combinations, rejecting keys the marker does not accept.
+    fn parse(attr: &Attribute, marker: MarkerKind) -> syn::Result<Self> {
+        let mut parsed = Self::default();
+        match &attr.meta {
+            Meta::Path(_) => return Ok(parsed),
+            Meta::NameValue(nv) => {
+                parsed.desc = lit_str(&nv.value);
+                return Ok(parsed);
             }
-            Ok(parsed)
+            Meta::List(_) => {}
         }
+        let args = attr.parse_args_with(Punctuated::<MarkerArg, Token![,]>::parse_terminated)?;
+        for a in args {
+            let key = a.kind.key();
+            if !key.is_empty() && !marker.accepts(key) {
+                return Err(syn::Error::new(
+                    a.span,
+                    format!(
+                        "`{key}` is not valid on {} — expected {}",
+                        marker.label(),
+                        marker.expected()
+                    ),
+                ));
+            }
+            match a.kind {
+                ArgKind::Positional(s) => {
+                    if parsed.positional.is_some() {
+                        return Err(syn::Error::new(
+                            a.span,
+                            format!("{} takes at most one bare string", marker.label()),
+                        ));
+                    }
+                    parsed.positional = Some(s);
+                }
+                ArgKind::Desc(s) => parsed.desc = Some(s),
+                ArgKind::Name(s) => parsed.name = Some(s),
+                ArgKind::Title(s) => parsed.title = Some(s),
+                ArgKind::MimeType(s) => parsed.mime_type = Some(s),
+                ArgKind::Task => parsed.task = true,
+                ArgKind::Scopes(s) => parsed.scopes = s,
+                ArgKind::Hint(HintKind::ReadOnly, v) => parsed.hints.read_only = Some(v),
+                ArgKind::Hint(HintKind::Destructive, v) => parsed.hints.destructive = Some(v),
+                ArgKind::Hint(HintKind::Idempotent, v) => parsed.hints.idempotent = Some(v),
+                ArgKind::Hint(HintKind::OpenWorld, v) => parsed.hints.open_world = Some(v),
+                // Unreachable: the gate above rejects unknown keys.
+                ArgKind::Unknown(_) => {}
+            }
+        }
+        Ok(parsed)
     }
 }
 
@@ -489,71 +647,39 @@ fn take_marker(attrs: &mut Vec<Attribute>) -> syn::Result<Option<Marker>> {
     };
     let attr = attrs.remove(pos);
     let doc = doc_comment(attrs);
-    if attr.path().is_ident("tool") {
-        let parsed = parse_tool_args(&attr)?;
-        Ok(Some(Marker::Tool {
-            desc: parsed.desc.or(doc),
-            name: parsed.name,
-            task: parsed.task,
-            scopes: parsed.scopes,
-            title: parsed.title,
-            hints: parsed.hints,
-        }))
+    if attr.path().is_ident("completion") {
+        return Ok(Some(Marker::Completion));
+    }
+    let marker = if attr.path().is_ident("tool") {
+        MarkerKind::Tool
     } else if attr.path().is_ident("prompt") {
-        let parsed = parse_prompt_args(&attr)?;
-        Ok(Some(Marker::Prompt {
-            desc: parsed.0.or(doc),
-            name: parsed.1,
-        }))
-    } else if attr.path().is_ident("completion") {
-        Ok(Some(Marker::Completion))
+        MarkerKind::Prompt
     } else {
-        // #[resource("uri")] — URI is required.
-        let uri = attr.parse_args::<syn::LitStr>().map_err(|_| {
-            syn::Error::new(
-                attr.span(),
-                "#[resource(\"uri\")] requires a string URI argument",
-            )
-        })?;
-        Ok(Some(Marker::Resource {
-            uri: uri.value(),
-            desc: doc,
-        }))
-    }
-}
-
-/// Extract a description from `#[tool("…")]` or `#[tool(description = "…")]`.
-/// Parse `#[prompt]`, `#[prompt("…")]`, `#[prompt(description = "…")]`,
-/// `#[prompt(name = "…")]`, and combinations, into `(description, name)`.
-fn parse_prompt_args(attr: &Attribute) -> syn::Result<(Option<String>, Option<String>)> {
-    match &attr.meta {
-        Meta::Path(_) => Ok((None, None)),
-        Meta::NameValue(nv) => Ok((lit_str(&nv.value), None)),
-        Meta::List(_) => {
-            // `#[prompt("…")]` — a bare description, the common shorthand.
-            if let Ok(s) = attr.parse_args::<syn::LitStr>() {
-                return Ok((Some(s.value()), None));
-            }
-            let metas =
-                attr.parse_args_with(Punctuated::<MetaNameValue, Token![,]>::parse_terminated)?;
-            let (mut desc, mut name) = (None, None);
-            for nv in metas {
-                let value = lit_str(&nv.value)
-                    .ok_or_else(|| syn::Error::new(nv.value.span(), "expected a string literal"))?;
-                if nv.path.is_ident("description") {
-                    desc = Some(value);
-                } else if nv.path.is_ident("name") {
-                    name = Some(value);
-                } else {
-                    return Err(syn::Error::new(
-                        nv.path.span(),
-                        "expected `description = \"…\"` or `name = \"…\"`",
-                    ));
-                }
-            }
-            Ok((desc, name))
+        MarkerKind::Resource
+    };
+    let mut args = MarkerArgs::parse(&attr, marker)?;
+    let kind = match marker {
+        MarkerKind::Tool => HandlerKind::Tool,
+        MarkerKind::Prompt => HandlerKind::Prompt,
+        // On `#[resource]` the bare string is the URI, and it is required.
+        MarkerKind::Resource => {
+            let uri = args.positional.take().ok_or_else(|| {
+                syn::Error::new(
+                    attr.span(),
+                    "#[resource(\"uri\")] requires a string URI argument",
+                )
+            })?;
+            HandlerKind::Resource { uri: uri.value() }
         }
-    }
+    };
+    // Elsewhere the bare string is the description shorthand; an explicit
+    // `description = "…"` wins over it, and both win over the doc comment.
+    let desc = args
+        .desc
+        .take()
+        .or_else(|| args.positional.as_ref().map(LitStr::value))
+        .or(doc);
+    Ok(Some(Marker::Handler { kind, desc, args }))
 }
 
 // ---- handler model -----------------------------------------------------------
@@ -585,7 +711,7 @@ struct Handler {
     /// wire name is a public contract, and welding it to a Rust identifier
     /// makes an internal rename a breaking change for clients (and rules out
     /// names that aren't valid identifiers, like `search.web`).
-    wire_name: Option<String>,
+    wire_name: Option<LitStr>,
     description: Option<String>,
     args: Vec<ArgParam>,
     /// Ordered call sites (skipping the receiver) so the call can be rebuilt.
@@ -597,18 +723,52 @@ struct Handler {
     task: bool,
     /// `#[tool(scopes(…))]`: OAuth scopes the caller must hold. Tools only.
     scopes: Vec<String>,
-    /// `#[tool(title = "…")]`: human-facing display name. Tools only.
+    /// `title = "…"`: human-facing display name (all three kinds).
     title: Option<String>,
+    /// `#[resource(mime_type = "…")]`: the MIME type of what this resource
+    /// serves, when it is known statically. Resources only.
+    mime_type: Option<String>,
     /// `#[tool(read_only, …)]` behavior hints → `ToolAnnotations`. Tools only.
     hints: ToolHints,
 }
 
 impl Handler {
+    /// Apply the marker's arguments. Keys that don't belong to this handler's
+    /// kind were already rejected at parse time, so they are simply absent.
+    fn apply(&mut self, args: MarkerArgs) {
+        self.wire_name = args.name;
+        self.title = args.title;
+        self.mime_type = args.mime_type;
+        self.task = args.task;
+        self.scopes = args.scopes;
+        self.hints = args.hints;
+    }
+
     /// The name this handler answers to on the wire.
+    ///
+    /// Defaults to the Rust method name with any raw-identifier prefix removed:
+    /// `#[tool] async fn r#type` is a tool named `type`, not `r#type` (which
+    /// isn't a name the spec permits).
     fn wire_name(&self) -> String {
         self.wire_name
-            .clone()
-            .unwrap_or_else(|| self.method.to_string())
+            .as_ref()
+            .map_or_else(|| self.method.unraw().to_string(), LitStr::value)
+    }
+
+    /// The span to blame for a wire-name problem: the literal when the name was
+    /// given explicitly, the method identifier when it was derived.
+    fn wire_name_span(&self) -> Span {
+        self.wire_name
+            .as_ref()
+            .map_or_else(|| self.method.span(), LitStr::span)
+    }
+
+    /// This resource's URI. Panics on any other kind — callers filter first.
+    fn resource_uri(&self) -> String {
+        match &self.kind {
+            HandlerKind::Resource { uri } => uri.clone(),
+            _ => unreachable!("resource_uri on a non-resource handler"),
+        }
     }
 
     fn parse(f: &ImplItemFn, description: Option<String>, kind: HandlerKind) -> syn::Result<Self> {
@@ -688,6 +848,7 @@ impl Handler {
             task: false,
             scopes: Vec::new(),
             title: None,
+            mime_type: None,
             hints: ToolHints::default(),
         })
     }
@@ -965,34 +1126,22 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
 
     // resources/list — concrete resources only (templates go to templates/list).
     let list_entries = fixed.iter().map(|r| {
-        let HandlerKind::Resource { uri } = &r.kind else {
-            unreachable!()
-        };
-        let name = r.method.to_string();
-        let desc = r
-            .description
-            .as_ref()
-            .map(|d| quote!(.with_description(#d)));
-        quote!(::turbomcp::neutral::Resource::new(#uri, #name) #desc)
+        let uri = r.resource_uri();
+        let name = r.wire_name();
+        let meta = resource_metadata(r);
+        quote!(::turbomcp::neutral::Resource::new(#uri, #name) #meta)
     });
 
     // resources/templates/list — parameterized URIs.
     let template_entries = templated.iter().map(|r| {
-        let HandlerKind::Resource { uri } = &r.kind else {
-            unreachable!()
-        };
-        let name = r.method.to_string();
-        let desc = r
-            .description
-            .as_ref()
-            .map(|d| quote!(.with_description(#d)));
-        quote!(::turbomcp::neutral::ResourceTemplate::new(#uri, #name) #desc)
+        let uri = r.resource_uri();
+        let name = r.wire_name();
+        let meta = resource_metadata(r);
+        quote!(::turbomcp::neutral::ResourceTemplate::new(#uri, #name) #meta)
     });
 
     let fixed_arms = fixed.iter().map(|r| {
-        let HandlerKind::Resource { uri } = &r.kind else {
-            unreachable!()
-        };
+        let uri = r.resource_uri();
         let method = &r.method;
         let call_args = r.call_args(|_| quote!(compile_error!("fixed resource takes no args")));
         quote! {
@@ -1005,9 +1154,7 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
 
     // Each templated resource: try to match the incoming URI, bind vars by name.
     let template_matches = templated.iter().map(|r| {
-        let HandlerKind::Resource { uri } = &r.kind else {
-            unreachable!()
-        };
+        let uri = r.resource_uri();
         let method = &r.method;
         let extracts = r.args.iter().map(|a| {
             let ident = &a.ident;
@@ -1092,6 +1239,18 @@ fn gen_resources_impl(self_ty: &Type, resources: &[Handler]) -> TokenStream {
     }
 }
 
+/// The builder tail carrying a resource's optional metadata. `Resource` and
+/// `ResourceTemplate` expose the same setters, so one generator serves both.
+fn resource_metadata(r: &Handler) -> TokenStream {
+    let desc = r
+        .description
+        .as_ref()
+        .map(|d| quote!(.with_description(#d)));
+    let title = r.title.as_ref().map(|t| quote!(.with_title(#t)));
+    let mime = r.mime_type.as_ref().map(|m| quote!(.with_mime_type(#m)));
+    quote!(#desc #title #mime)
+}
+
 // ---- codegen: prompts --------------------------------------------------------
 
 fn gen_prompts_impl(self_ty: &Type, prompts: &[Handler]) -> TokenStream {
@@ -1134,6 +1293,7 @@ fn gen_prompt_list_entry(p: &Handler) -> TokenStream {
         .description
         .as_ref()
         .map(|d| quote!(.with_description(#d)));
+    let title = p.title.as_ref().map(|t| quote!(.with_title(#t)));
     let args = p.args.iter().map(|a| {
         let arg_name = a.ident.to_string();
         let req = (!a.is_option).then(|| quote!(.required(true)));
@@ -1143,7 +1303,7 @@ fn gen_prompt_list_entry(p: &Handler) -> TokenStream {
             .map(|d| quote!(.with_description(#d)));
         quote!(.with_argument(::turbomcp::neutral::PromptArgument::new(#arg_name) #req #adesc))
     });
-    quote!(::turbomcp::neutral::Prompt::new(#name) #desc #(#args)*)
+    quote!(::turbomcp::neutral::Prompt::new(#name) #desc #title #(#args)*)
 }
 
 fn gen_prompt_get_arm(p: &Handler) -> TokenStream {

@@ -90,16 +90,33 @@ impl Docs {
 }
 ```
 
-### Naming and protocol selection
+### Naming, metadata, and protocol selection
 
-A tool's or prompt's wire name defaults to the Rust method name; set
-`name = "…"` when the two should not be coupled (renaming a Rust method is
+A tool's, prompt's, or resource's wire name defaults to the Rust method name;
+set `name = "…"` when the two should not be coupled (renaming a Rust method is
 otherwise a breaking change for clients) or when the wire name isn't a valid
-Rust identifier:
+Rust identifier. Tool names are checked at compile time against the spec's
+rules — 1–128 characters of ASCII letters, digits, `_`, `-`, and `.` — and
+against each other, so a name real clients would reject or a silently shadowed
+duplicate never reaches a release.
 
 ```rust,ignore
 #[tool(name = "search.web", description = "Search the web")]
 async fn search_web(&self, q: String) -> String { … }
+```
+
+All three markers also take `title = "…"` (the human-facing display name), and
+`#[resource]` takes `mime_type = "…"` — what a client needs to decide how to
+render the bytes:
+
+```rust,ignore
+#[resource(
+    "config://app",
+    name = "app-config",
+    title = "Application configuration",
+    mime_type = "application/json",
+)]
+async fn config(&self) -> McpResult<String> { … }
 ```
 
 A server answers both protocol revisions by default. Pin it to the frozen

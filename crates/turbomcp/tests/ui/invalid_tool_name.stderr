@@ -1,0 +1,5 @@
+error: tool name `search the web` contains ` `, which the spec does not permit: a tool name may use ASCII letters, digits, `_`, `-`, and `.` (e.g. `getUser`, `DATA_EXPORT_v2`, `admin.tools.list`)
+ --> tests/ui/invalid_tool_name.rs:9:19
+  |
+9 |     #[tool(name = "search the web")]
+  |                   ^^^^^^^^^^^^^^^^

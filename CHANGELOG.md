@@ -68,18 +68,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   breaking change for every client and made names that aren't valid Rust
   identifiers (`search.web`, `list-files`) impossible to express. Two handlers
   of the same kind claiming one wire name is now a compile error.
-
-### Fixed
-
-- **Two `#[server]` impls in one module no longer collide.** The generated
-  per-tool argument structs were named `__Tmcp_{method}_Args` — module-scoped —
-  so two servers each having, say, a `search` tool failed to compile with
-  "`__Tmcp_search_Args` is defined multiple times" pointing at the attribute
-  rather than the cause. They are now qualified by the server type.
-- **A generic `impl` block gets a real diagnostic.** `#[server]` on
-  `impl<T> Server<T>` produced "cannot find type `T` in this scope" against
-  generated code; it now explains that generic impls are unsupported and what to
-  do instead.
+- **Tool names are checked against the spec at compile time.** `server/tools`
+  (identically in `2025-11-25` and the draft) limits a tool name to 1–128
+  characters of ASCII letters, digits, `_`, `-`, and `.`. Now that `name = "…"`
+  makes arbitrary names expressible, one outside that set is a compile error
+  naming the offending character — clients apply their own name patterns and
+  reject or mangle what falls outside it, and a build failure is a better place
+  to learn that than a production `tools/call`.
+- **`#[resource]` takes metadata.** It accepted nothing but a URI, so a
+  resource's `name` was stuck as its Rust method identifier and its `mimeType` —
+  what a client needs to decide how to render the bytes — was unreachable from
+  the macro entirely. It now takes `name`, `title`, `description`, and
+  `mime_type` after the URI, on both concrete resources and templates.
+- **`#[prompt(title = "…")]` and `#[tool(title = "…")]`** — `title` is now
+  accepted on all three handler markers rather than tools alone.
+- **Two resources may not claim one URI.** `read_resource` matches on the URI,
+  so the second handler was simply dead code; it is now a compile error, as the
+  equivalent duplicate name already was for tools and prompts.
 
 - **`ServerBuilder::with_state_key`** — sign MRTR `requestState` with a key you
   supply instead of the per-process random secret. The default is correct for a
@@ -272,6 +277,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Two `#[server]` impls in one module no longer collide.** The generated
+  per-tool argument structs were named `__Tmcp_{method}_Args` — module-scoped —
+  so two servers each having, say, a `search` tool failed to compile with
+  "`__Tmcp_search_Args` is defined multiple times" pointing at the attribute
+  rather than the cause. They are now qualified by the server type.
+- **A generic `impl` block gets a real diagnostic.** `#[server]` on
+  `impl<T> Server<T>` produced "cannot find type `T` in this scope" against
+  generated code; it now explains that generic impls are unsupported and what to
+  do instead.
+- **A raw-identifier handler no longer leaks its `r#`.** `#[tool] async fn
+  r#type` advertised a tool named `r#type` — a name the spec does not permit and
+  no client can call idiomatically. The prefix is Rust lexis, not part of the
+  name, and is now stripped.
 - **Float decode is now correctly rounded** (serde_json `float_roundtrip`).
   Without it, JSON numbers with extreme exponents (e.g. `2.5e-308`) gained
   1 ulp on decode — found by the new codec edge-payload suite, which also

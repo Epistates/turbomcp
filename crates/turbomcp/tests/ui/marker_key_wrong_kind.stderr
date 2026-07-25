@@ -1,0 +1,5 @@
+error: `task` is not valid on #[prompt] — expected `description = "…"`, `name = "…"`, or `title = "…"`
+  --> tests/ui/marker_key_wrong_kind.rs:10:14
+   |
+10 |     #[prompt(task)]
+   |              ^^^^

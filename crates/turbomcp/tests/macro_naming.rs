@@ -32,6 +32,13 @@ impl Renamed {
         "plain".into()
     }
 
+    /// A raw identifier: `r#` is Rust lexis, not part of the name a client
+    /// sees — and `#` is not a character the spec permits in a tool name.
+    #[tool]
+    async fn r#type(&self) -> String {
+        "raw".into()
+    }
+
     #[prompt(name = "summarize-text", description = "Summarize")]
     async fn summarize(&self, text: String) -> McpResult<String> {
         Ok(format!("summary: {text}"))
@@ -95,7 +102,17 @@ async fn tools_list_reports_the_wire_name() {
         .iter()
         .filter_map(|t| t["name"].as_str())
         .collect();
-    assert_eq!(names, ["search.web", "plain"]);
+    assert_eq!(names, ["search.web", "plain", "type"]);
+}
+
+/// A raw-identifier method is reachable under its unprefixed name.
+#[tokio::test]
+async fn a_raw_identifier_method_drops_its_prefix() {
+    let mut params = Map::new();
+    params.insert("name".into(), json!("type"));
+    params.insert("arguments".into(), json!({}));
+    let body = call(Renamed.into_server().build(), draft("tools/call", params)).await;
+    assert_eq!(body["result"]["content"][0]["text"], "raw", "got {body}");
 }
 
 #[tokio::test]
