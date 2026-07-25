@@ -10,6 +10,9 @@
 //!   [`ConnectMode`], modern `_meta` stamping, and the typed MCP API.
 //! - [`connect_child`] spawns a server subprocess and connects over its stdio.
 #![forbid(unsafe_code)]
+// docs.rs builds with `--cfg docsrs` on nightly so every feature-gated item
+// renders with the feature that unlocks it.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 
 mod cache;
@@ -30,6 +33,8 @@ pub use stdio::connect_child;
 pub use async_trait::async_trait;
 
 #[cfg(feature = "http")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 mod http;
 #[cfg(feature = "http")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub use http::{HttpClientError, HttpClientTransport, connect_http};

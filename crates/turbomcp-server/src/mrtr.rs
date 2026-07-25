@@ -11,10 +11,12 @@
 //!
 //! `requestState` is the handler's opaque resume blob. It round-trips through
 //! the client, so it is attacker-controlled input (mrtr spec MUST): outbound
-//! state is HMAC-SHA256-signed with a per-dispatcher secret and the protected
-//! payload binds the method name, the authenticated principal (a state minted
-//! for one subject can't be replayed by another), and an expiry; inbound state
-//! that fails any check is rejected with `-32602` before the handler runs.
+//! state is HMAC-SHA256-signed and the protected payload binds the method name,
+//! the authenticated principal (a state minted for one subject can't be
+//! replayed by another), and an expiry; inbound state that fails any check is
+//! rejected with `-32602` before the handler runs. The signing key defaults to
+//! a per-dispatcher secret; multi-replica deployments share one via
+//! [`ServerBuilder::with_state_key`](crate::ServerBuilder::with_state_key).
 //!
 //! On `2025-11-25` the same handle calls go out as **inline bidirectional
 //! requests**: a real `elicitation/create` (etc.) JSON-RPC request is written
@@ -35,6 +37,7 @@ use serde_json::{Map, Value, json};
 use sha2::Sha256;
 use tokio::sync::oneshot;
 use turbomcp_core::{JsonRpcRequest, JsonRpcResponse, McpError, McpResult, RequestId};
+use turbomcp_protocol::methods::request;
 use turbomcp_protocol::neutral;
 
 use crate::subscriptions::request_writer;
@@ -49,7 +52,13 @@ const STATE_TTL: Duration = Duration::from_secs(10 * 60);
 
 // ---- request-state signing -----------------------------------------------------
 
-/// Signs/verifies `requestState` blobs with a per-dispatcher random secret.
+/// Signs/verifies `requestState` blobs.
+///
+/// The key defaults to a per-dispatcher random secret, which is right for a
+/// single process: nothing else can mint a state it will accept, and a restart
+/// invalidates every outstanding one. A deployment running more than one
+/// replica must supply a shared key instead — see
+/// [`ServerBuilder::with_state_key`](crate::ServerBuilder::with_state_key).
 pub(crate) struct StateSigner {
     key: [u8; 32],
 }
@@ -59,6 +68,11 @@ impl StateSigner {
         use rand::Rng as _;
         let mut key = [0u8; 32];
         rand::rng().fill_bytes(&mut key);
+        Self { key }
+    }
+
+    /// A signer over a caller-supplied key (shared across replicas).
+    pub(crate) fn from_key(key: [u8; 32]) -> Self {
         Self { key }
     }
 
@@ -388,7 +402,8 @@ impl ClientHandle {
     /// Ask the user to visit a URL (URL-mode elicitation, draft `mode: "url"`).
     ///
     /// The client presents `params.message` and directs the user to `params.url`
-    /// (e.g. an OAuth consent page); the returned [`ElicitOutcome`] carries the
+    /// (e.g. an OAuth consent page); the returned
+    /// [`ElicitOutcome`](neutral::ElicitOutcome) carries the
     /// user's [`ElicitAction`](neutral::ElicitAction) with no form content. Uses
     /// the same `key` retry semantics as [`elicit`](Self::elicit).
     pub async fn elicit_url(
@@ -493,14 +508,14 @@ impl ClientHandle {
     /// upstream deprecation marking (AUDIT F10).
     #[deprecated(note = "marked deprecated upstream; still functional in both versions")]
     pub async fn create_message(&self, key: &str, params: Value) -> McpResult<Value> {
-        self.request_raw(key, "sampling/createMessage", "sampling", params)
+        self.request_raw(key, request::SAMPLING_CREATE_MESSAGE, "sampling", params)
             .await
     }
 
     /// Ask the client for its filesystem roots (`roots/list`).
     #[deprecated(note = "marked deprecated upstream; still functional in both versions")]
     pub async fn list_roots(&self, key: &str) -> McpResult<Value> {
-        self.request_raw(key, "roots/list", "roots", json!({}))
+        self.request_raw(key, request::ROOTS_LIST, "roots", json!({}))
             .await
     }
 
@@ -683,7 +698,7 @@ async fn send_and_await(
 /// The wire `InputRequest` object for a form-mode elicitation.
 fn elicit_request_value(params: &neutral::ElicitParams) -> Value {
     json!({
-        "method": "elicitation/create",
+        "method": request::ELICITATION_CREATE,
         "params": {
             "mode": "form",
             "message": params.message,
@@ -696,7 +711,7 @@ fn elicit_request_value(params: &neutral::ElicitParams) -> Value {
 /// require `elicitationId` (2026-07-28 RC).
 fn elicit_url_request_value(params: &neutral::ElicitUrlParams, elicitation_id: String) -> Value {
     json!({
-        "method": "elicitation/create",
+        "method": request::ELICITATION_CREATE,
         "params": {
             "mode": "url",
             "message": params.message,
@@ -763,6 +778,43 @@ mod tests {
         assert!(
             StateSigner::new()
                 .verify("tools/call", None, &token)
+                .is_err()
+        );
+    }
+
+    /// The point of `ServerBuilder::with_state_key`: replicas that share a key
+    /// redeem each other's states, so an elicitation survives being re-issued
+    /// to a different instance (or to the same one after a restart). Without
+    /// it every replica mints its own secret and MRTR breaks behind a load
+    /// balancer.
+    #[test]
+    fn a_shared_key_lets_another_replica_redeem_the_state() {
+        let key = [7u8; 32];
+        let replica_a = StateSigner::from_key(key);
+        let replica_b = StateSigner::from_key(key);
+
+        let token = replica_a
+            .sign("tools/call", Some("user-1"), &json!({"step": 2}))
+            .unwrap();
+        assert_eq!(
+            replica_b
+                .verify("tools/call", Some("user-1"), &token)
+                .unwrap(),
+            json!({"step": 2}),
+            "a replica sharing the key must redeem the state"
+        );
+
+        // Sharing the key does not weaken the other bindings: a different
+        // principal still cannot replay another's state.
+        assert!(
+            replica_b
+                .verify("tools/call", Some("user-2"), &token)
+                .is_err()
+        );
+        // And a replica on a *different* key (mid-rotation) rejects it.
+        assert!(
+            StateSigner::from_key([8u8; 32])
+                .verify("tools/call", Some("user-1"), &token)
                 .is_err()
         );
     }

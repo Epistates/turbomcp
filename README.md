@@ -99,7 +99,7 @@ Compliance is tested, not asserted:
 - **Cross-SDK interop** — a TurboMCP client drives an official-Rust-SDK
   (rmcp 2.2) server and vice-versa, in-process
   (`crates/turbomcp-interop`).
-- **≈510 tests across the workspace** (plus 86 more re-run against the
+- **≈520 tests across the workspace** (plus 86 more re-run against the
   `no_std` foundation configs) — dual-version dispatch, transport hardening
   (Origin/auth/size caps/idle reaping), handler-panic containment, MRTR
   elicitation, tasks (including in-execution input), subscriptions, pagination,

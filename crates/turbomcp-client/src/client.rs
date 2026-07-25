@@ -23,7 +23,7 @@ use std::time::Duration;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use turbomcp_core::meta::keys;
-use turbomcp_core::{Implementation, ProtocolVersion};
+use turbomcp_core::{Implementation, LogLevel, ProtocolVersion};
 use turbomcp_protocol::draft::types as draft;
 use turbomcp_protocol::methods::{notification, request};
 use turbomcp_protocol::neutral;
@@ -44,10 +44,6 @@ const MAX_MRTR_ROUNDS: usize = 16;
 /// (even at one item per page) so it only ever trips on a broken server.
 const MAX_LIST_PAGES: usize = 10_000;
 
-/// The SEP-2663 Tasks-extension methods the typed task surface speaks.
-const TASKS_GET: &str = "tasks/get";
-const TASKS_UPDATE: &str = "tasks/update";
-const TASKS_CANCEL: &str = "tasks/cancel";
 /// `resultType: "task"` marks a `CreateTaskResult` (SEP-2663).
 const RESULT_TYPE_TASK: &str = "task";
 /// Poll cadence when the server suggests none, and the floor applied to a
@@ -493,7 +489,7 @@ impl Client {
     /// Propagates RPC and decode failures, and rejects a server whose cursor
     /// doesn't advance (see [`ClientError::Protocol`]).
     pub async fn list_all_tools(&self) -> ClientResult<Vec<neutral::Tool>> {
-        self.collect_pages("tools/list", |cursor| async move {
+        self.collect_pages(request::TOOLS_LIST, |cursor| async move {
             let page = self.list_tools(cursor.as_deref()).await?;
             Ok((page.tools, page.next_cursor))
         })
@@ -686,7 +682,7 @@ impl Client {
     /// Propagates RPC and decode failures, and rejects a server whose cursor
     /// doesn't advance.
     pub async fn list_all_resources(&self) -> ClientResult<Vec<neutral::Resource>> {
-        self.collect_pages("resources/list", |cursor| async move {
+        self.collect_pages(request::RESOURCES_LIST, |cursor| async move {
             let page = self.list_resources(cursor.as_deref()).await?;
             Ok((page.resources, page.next_cursor))
         })
@@ -749,7 +745,7 @@ impl Client {
     pub async fn list_all_resource_templates(
         &self,
     ) -> ClientResult<Vec<neutral::ResourceTemplate>> {
-        self.collect_pages("resources/templates/list", |cursor| async move {
+        self.collect_pages(request::RESOURCES_TEMPLATES_LIST, |cursor| async move {
             let page = self.list_resource_templates(cursor.as_deref()).await?;
             Ok((page.resource_templates, page.next_cursor))
         })
@@ -779,7 +775,7 @@ impl Client {
     /// Propagates RPC and decode failures, and rejects a server whose cursor
     /// doesn't advance.
     pub async fn list_all_prompts(&self) -> ClientResult<Vec<neutral::Prompt>> {
-        self.collect_pages("prompts/list", |cursor| async move {
+        self.collect_pages(request::PROMPTS_LIST, |cursor| async move {
             let page = self.list_prompts(cursor.as_deref()).await?;
             Ok((page.prompts, page.next_cursor))
         })
@@ -823,6 +819,103 @@ impl Client {
         self.decode::<draft::CompleteResult, legacy::CompleteResult, _>(v)
     }
 
+    // ---- subscriptions ------------------------------------------------------
+
+    /// Open a notification subscription (`subscriptions/listen`, `2026-07-28`).
+    ///
+    /// This is how a draft-protocol client receives server→client
+    /// notifications at all: the draft replaced both `resources/subscribe` and
+    /// the HTTP GET stream with this one long-lived subscription. Notifications
+    /// then arrive at [`ClientHandler::on_notification`], each stamped with
+    /// this subscription's id in `_meta`.
+    ///
+    /// Returns the acknowledgement's `notifications` object — the filter subset
+    /// the server actually **agreed** to, which may be narrower than what you
+    /// asked for (it intersects your filter with the capabilities it
+    /// registered). Check it rather than assuming; a server with no prompts
+    /// silently drops `promptsListChanged`.
+    ///
+    /// Unlike every other request, this one is answered by that acknowledgement
+    /// rather than a JSON-RPC response — only a *failure* answers in band. The
+    /// subscription lasts until the connection ends; the server closes it by
+    /// ending the stream.
+    ///
+    /// On `2025-11-25` the server answers `-32601`; use
+    /// [`subscribe_resource`](Self::subscribe_resource) there instead.
+    ///
+    /// # Errors
+    /// Propagates RPC failures, and [`ClientError::Timeout`] if neither an
+    /// acknowledgement nor an error arrives within the request timeout.
+    pub async fn listen(&self, filter: neutral::SubscriptionFilter) -> ClientResult<Value> {
+        let wire: draft::SubscriptionFilter = filter.into();
+        let mut params = Map::new();
+        params.insert(
+            "notifications".into(),
+            serde_json::to_value(wire).map_err(|e| ClientError::Decode(e.to_string()))?,
+        );
+        let ack = self
+            .versioned_request(request::SUBSCRIPTIONS_LISTEN, params)
+            .await?;
+        Ok(ack
+            .get("notifications")
+            .cloned()
+            .unwrap_or(Value::Object(Map::new())))
+    }
+
+    /// Subscribe to updates for one resource (`resources/subscribe`,
+    /// `2025-11-25`).
+    ///
+    /// `notifications/resources/updated` for `uri` then arrive at
+    /// [`ClientHandler::on_notification`]. The draft dropped this method in
+    /// favor of [`listen`](Self::listen) with
+    /// [`SubscriptionFilter::with_resource`](neutral::SubscriptionFilter::with_resource);
+    /// on that wire the server answers `-32601`.
+    ///
+    /// # Errors
+    /// Propagates RPC failures (`-32601` if the server doesn't advertise
+    /// `resources.subscribe`).
+    pub async fn subscribe_resource(&self, uri: impl Into<String>) -> ClientResult<()> {
+        let mut params = Map::new();
+        params.insert("uri".into(), json!(uri.into()));
+        self.versioned_request(request::RESOURCES_SUBSCRIBE, params)
+            .await
+            .map(drop)
+    }
+
+    /// Drop a [`subscribe_resource`](Self::subscribe_resource) subscription
+    /// (`resources/unsubscribe`, `2025-11-25`).
+    ///
+    /// # Errors
+    /// Propagates RPC failures.
+    pub async fn unsubscribe_resource(&self, uri: impl Into<String>) -> ClientResult<()> {
+        let mut params = Map::new();
+        params.insert("uri".into(), json!(uri.into()));
+        self.versioned_request(request::RESOURCES_UNSUBSCRIBE, params)
+            .await
+            .map(drop)
+    }
+
+    // ---- logging ------------------------------------------------------------
+
+    /// Set the minimum severity of `notifications/message` the server sends
+    /// (`logging/setLevel`, `2025-11-25`).
+    ///
+    /// Until a client calls this the server sends no log messages at all, so
+    /// on `2025-11-25` this is the opt-in for server logging; messages arrive
+    /// at [`ClientHandler::on_notification`].
+    ///
+    /// # Errors
+    /// Propagates RPC failures (`-32601` if the server doesn't advertise
+    /// `logging`).
+    #[deprecated(note = "SEP-2577 deprecates logging; still functional on 2025-11-25")]
+    pub async fn set_level(&self, level: LogLevel) -> ClientResult<()> {
+        let mut params = Map::new();
+        params.insert("level".into(), json!(level));
+        self.versioned_request(request::LOGGING_SET_LEVEL, params)
+            .await
+            .map(drop)
+    }
+
     /// Poll a task's current state (`tasks/get`, SEP-2663 Tasks extension).
     ///
     /// Returns the raw task object (the extension owns its wire types): a
@@ -834,7 +927,7 @@ impl Client {
     pub async fn task_get(&self, task_id: &str) -> ClientResult<Value> {
         let mut params = Map::new();
         params.insert("taskId".into(), json!(task_id));
-        self.versioned_request(TASKS_GET, params).await
+        self.versioned_request(request::TASKS_GET, params).await
     }
 
     /// Answer a task's outstanding `inputRequests` (`tasks/update`). Each key
@@ -851,7 +944,7 @@ impl Client {
         let mut params = Map::new();
         params.insert("taskId".into(), json!(task_id));
         params.insert("inputResponses".into(), Value::Object(input_responses));
-        self.versioned_request(TASKS_UPDATE, params).await
+        self.versioned_request(request::TASKS_UPDATE, params).await
     }
 
     /// Request cooperative cancellation of a task (`tasks/cancel`). The ack is
@@ -863,9 +956,46 @@ impl Client {
     pub async fn task_cancel(&self, task_id: &str) -> ClientResult<()> {
         let mut params = Map::new();
         params.insert("taskId".into(), json!(task_id));
-        self.versioned_request(TASKS_CANCEL, params)
+        self.versioned_request(request::TASKS_CANCEL, params)
             .await
             .map(|_| ())
+    }
+
+    /// Enumerate this session's tasks (`tasks/list`), one page at a time.
+    ///
+    /// Returns the raw result — `{ "tasks": [...], "nextCursor": ... }` — since
+    /// tasks are wire-owned on both versions (core on `2025-11-25`, the
+    /// SEP-2663 extension on the draft). Use
+    /// [`list_all_tasks`](Self::list_all_tasks) unless you are driving the
+    /// cursor yourself.
+    ///
+    /// # Errors
+    /// Propagates RPC failures (`-32601` if the server has no Tasks support).
+    pub async fn task_list(&self, cursor: Option<&str>) -> ClientResult<Value> {
+        self.versioned_request(request::TASKS_LIST, list_params(cursor))
+            .await
+    }
+
+    /// Every task in this session, following pagination to the last page.
+    ///
+    /// # Errors
+    /// Propagates RPC failures, and rejects a server whose cursor doesn't
+    /// advance (see [`list_all_tools`](Self::list_all_tools)).
+    pub async fn list_all_tasks(&self) -> ClientResult<Vec<Value>> {
+        self.collect_pages(request::TASKS_LIST, |cursor| async move {
+            let page = self.task_list(cursor.as_deref()).await?;
+            let tasks = page
+                .get("tasks")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let next = page
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            Ok((tasks, next))
+        })
+        .await
     }
 
     /// Drive a `CreateTaskResult` to its terminal state (SEP-2663): poll

@@ -69,9 +69,11 @@ impl JwkSource for StaticJwks {
 }
 
 #[cfg(feature = "http-jwks")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http-jwks")))]
 pub use http::HttpJwks;
 
 #[cfg(feature = "http-jwks")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http-jwks")))]
 mod http {
     use std::sync::RwLock;
     use std::time::{Duration, Instant};

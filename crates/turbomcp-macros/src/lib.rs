@@ -9,6 +9,7 @@
 //! are inert markers: `#[server]` consumes them. They are defined as pass-through
 //! attribute macros only so the names resolve and tooling recognizes them.
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 use proc_macro::TokenStream;
 

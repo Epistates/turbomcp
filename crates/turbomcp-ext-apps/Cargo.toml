@@ -11,9 +11,16 @@ repository = "https://github.com/Epistates/turbomcp"
 homepage = "https://turbomcp.org"
 keywords = ["mcp", "apps", "extension"]
 categories = ["network-programming"]
+# Not published while it is a skeleton: the crate's entire content is a
+# dependency edge, so releasing it would put a version number on an API that
+# doesn't exist yet. It ships when the Apps extension does (v4.1) — see
+# `.strategy/v4/EXT_APPS_SCOPE.md`.
+publish = false
 
 [dependencies]
 turbomcp-core = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
+# Lights the `doc(cfg)` labels that name the feature behind each gated item.
+rustdoc-args = ["--cfg", "docsrs"]

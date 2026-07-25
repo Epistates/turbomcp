@@ -23,6 +23,7 @@
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 use turbomcp_core::JsonRpcError;
+use turbomcp_protocol::methods::request;
 use turbomcp_protocol::neutral;
 
 use crate::error::{ClientError, ClientResult};
@@ -86,16 +87,16 @@ pub(crate) async fn dispatch_server_request(
     params: Option<Value>,
 ) -> Result<Value, JsonRpcError> {
     match method {
-        "elicitation/create" => {
+        request::ELICITATION_CREATE => {
             let elicit = parse_elicit_params(params)?;
             let outcome = handler.elicit(elicit).await;
             Ok(elicit_outcome_value(&outcome))
         }
-        "sampling/createMessage" => handler
+        request::SAMPLING_CREATE_MESSAGE => handler
             .create_message(params.unwrap_or(Value::Null))
             .await
             .map_err(|e| internal_error(&e.to_string())),
-        "roots/list" => handler
+        request::ROOTS_LIST => handler
             .list_roots()
             .await
             .map_err(|e| internal_error(&e.to_string())),

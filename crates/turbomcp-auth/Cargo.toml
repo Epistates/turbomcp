@@ -46,3 +46,5 @@ sha2 = { workspace = true }
 
 [package.metadata.docs.rs]
 all-features = true
+# Lights the `doc(cfg)` labels that name the feature behind each gated item.
+rustdoc-args = ["--cfg", "docsrs"]

@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`subscriptions/listen` sends no closing response.** The RC deleted
   `SubscriptionsListenResult`; graceful teardown simply ends the stream.
   `VersionDispatcher::close_subscriptions()` is now synchronous.
+- **`turbomcp-ext-apps` is no longer published.** Its entire content is a
+  dependency edge — the Apps extension (SEP-1865) is scoped for v4.1 — so
+  releasing it would put a version number on an API that doesn't exist. It
+  ships when the extension does.
 
 ### Added
 
@@ -47,6 +51,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   should not strand a client. The panic payload is logged (`tracing::error!`),
   never put on the wire. Under `panic = "abort"` the process still aborts, as
   that profile asks for.
+- **`ServerBuilder::with_state_key`** — sign MRTR `requestState` with a key you
+  supply instead of the per-process random secret. The default is correct for a
+  single process but means a state minted by one replica can't be redeemed by
+  another, and a restart invalidates every outstanding one; a shared key is what
+  makes MRTR work behind a load balancer. This is the signing-key counterpart to
+  the existing `with_session_backend` / `with_task_backend` seams — sharing the
+  *stores* across replicas doesn't help while the *signature* is still
+  per-process. Sharing a key weakens nothing else: a state stays bound to its
+  minting principal and method.
+- **The client can now reach the subscription, logging, and task-listing
+  methods the server has always implemented.**
+  - `Client::listen(SubscriptionFilter)` — `subscriptions/listen`, which on the
+    `2026-07-28` wire is the *only* way to receive server→client notifications
+    (the draft replaced both `resources/subscribe` and the HTTP GET stream with
+    it). It returns the filter subset the server actually agreed to, which may
+    be narrower than requested. Uniquely among requests, success arrives as the
+    `acknowledged` *notification* rather than a response — the connection actor
+    now correlates that back to the waiting call, so it no longer sat until the
+    request timeout.
+  - `Client::subscribe_resource` / `unsubscribe_resource` — the `2025-11-25`
+    equivalents.
+  - `Client::set_level` — `logging/setLevel`, the `2025-11-25` opt-in without
+    which a server sends no log messages at all. Marked deprecated to track
+    SEP-2577, which deprecates logging on the draft.
+  - `Client::task_list` / `list_all_tasks` — completes the task surface
+    alongside the existing `task_get` / `task_update` / `task_cancel`.
+- **`neutral::SubscriptionFilter`** — the version-stable filter type for
+  `subscriptions/listen`, with `From` conversions to and from the draft wire.
 - **`Client::list_all_tools` / `list_all_resources` / `list_all_prompts` /
   `list_all_resource_templates`** — follow `nextCursor` to the last page and
   return the concatenated items. The single-page `list_*` methods answer with
@@ -77,6 +109,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dated `ProtocolVersion` variant is still deliberately *not* pinned: the RC is
   not the freeze, so the version stays the slip-proof `ProtocolVersion::Draft`
   channel until the final tag lands.
+- **docs.rs now labels every feature-gated item** with the feature that unlocks
+  it (`doc(cfg)`), across the facade and the `client` / `auth` / `telemetry`
+  crates — previously a reader had no way to tell from the page which of nine
+  features gated a symbol. A new CI job builds the docs exactly as docs.rs does
+  (nightly + `--cfg docsrs`) with `-D warnings`, which caught three broken
+  intra-doc links; `just docs-rs` runs the same check locally.
+- **A self-activating `SemVer (public API)` CI job.** `cargo-semver-checks`
+  needs a published baseline in the same major, and no 4.x has shipped, so it
+  reports that and passes today; the first 4.x release on crates.io turns it
+  into a real gate with no further edits. Also `just semver-check`.
 - **`HttpError` and `WsError` convert into `ProtocolError`** via `From`, so a
   transport failure composes with `?` in a `main` that returns
   `turbomcp::ProtocolError` instead of forcing a boxed error. The per-transport

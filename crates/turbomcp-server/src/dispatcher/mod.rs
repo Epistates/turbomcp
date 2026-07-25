@@ -207,7 +207,7 @@ impl Shared {
     }
 }
 
-/// The [`SessionTerminator`] handle returned by
+/// The [`SessionTerminator`](turbomcp_service::SessionTerminator) handle returned by
 /// [`VersionDispatcher::session_terminator`]: shares the dispatcher's stores so
 /// `DELETE` drops the session state and its subscription routes together.
 #[derive(Clone)]
@@ -304,6 +304,15 @@ impl<S: McpServerCore> VersionDispatcher<S> {
     #[must_use]
     pub fn with_cache_policy(mut self, cache: impl Into<CachePolicies>) -> Self {
         self.shared.cache = cache.into();
+        self
+    }
+
+    /// Sign MRTR `requestState` with `key` instead of a per-process random
+    /// secret. See [`ServerBuilder::with_state_key`](crate::ServerBuilder::with_state_key)
+    /// for when this is required and how to source the key.
+    #[must_use]
+    pub fn with_state_key(mut self, key: [u8; 32]) -> Self {
+        self.shared.signer = Arc::new(StateSigner::from_key(key));
         self
     }
 

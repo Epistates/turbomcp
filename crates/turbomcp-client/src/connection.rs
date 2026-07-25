@@ -33,7 +33,9 @@ use std::time::Duration;
 
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
-use turbomcp_core::{JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId};
+use turbomcp_core::{
+    JsonRpcError, JsonRpcMessage, JsonRpcRequest, JsonRpcResponse, RequestId, meta,
+};
 use turbomcp_protocol::methods::notification;
 use turbomcp_service::Transport;
 
@@ -287,6 +289,15 @@ fn route_inbound(
             None
         }
         JsonRpcMessage::Notification(n) => {
+            // `subscriptions/listen` is answered by its acknowledgement, not by
+            // a JSON-RPC response (only failures answer in band), so the ack is
+            // what completes the waiting request. It still reaches the handler
+            // below like any other notification.
+            if n.method == notification::SUBSCRIPTIONS_ACKNOWLEDGED
+                && let Some(id) = acknowledged_subscription_id(n.params.as_ref())
+            {
+                complete_pending_ok(&id, n.params.clone().unwrap_or(Value::Null), pending);
+            }
             // Invalidate cached responses the notification obsoletes, then
             // hand it to the user's handler (default: ignore).
             if let Some(cache) = cache {
@@ -351,6 +362,24 @@ fn route_inbound(
                 )))
             }
         },
+    }
+}
+
+/// The listen request id an acknowledgement names, from its `_meta`.
+///
+/// The subscriptions spec pins this to the listen request's JSON-RPC id
+/// **verbatim** — a number stays a number — so it round-trips through
+/// `RequestId`'s untagged representation.
+fn acknowledged_subscription_id(params: Option<&Value>) -> Option<RequestId> {
+    let raw = params?.get("_meta")?.get(meta::keys::SUBSCRIPTION_ID)?;
+    serde_json::from_value(raw.clone()).ok()
+}
+
+/// Complete a waiting request with a successful value, if one is waiting.
+fn complete_pending_ok(id: &RequestId, value: Value, pending: &Arc<Pending>) {
+    let waiter = pending.lock().expect("pending mutex poisoned").remove(id);
+    if let Some(waiter) = waiter {
+        let _ = waiter.send(Ok(value));
     }
 }
 

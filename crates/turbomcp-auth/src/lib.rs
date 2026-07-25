@@ -33,9 +33,13 @@
 //! // HttpConfig::new().with_authenticator(resource_server)
 //! ```
 #![forbid(unsafe_code)]
+// docs.rs builds with `--cfg docsrs` on nightly so every feature-gated item
+// renders with the feature that unlocks it.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 
 #[cfg(feature = "oauth-client")]
+#[cfg_attr(docsrs, doc(cfg(feature = "oauth-client")))]
 pub mod client;
 mod error;
 mod jwks;
@@ -50,6 +54,7 @@ pub use resource_server::ResourceServer;
 pub use validator::{AuthPrincipal, BearerValidator, JwtValidator};
 
 #[cfg(feature = "http-jwks")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http-jwks")))]
 pub use jwks::HttpJwks;
 
 /// Re-exported from `jsonwebtoken` for configuring [`JwtValidator`].

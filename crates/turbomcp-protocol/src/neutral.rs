@@ -193,6 +193,11 @@ pub enum TaskSupport {
     Required,
 }
 
+/// A tool the server offers, as `tools/list` reports it.
+///
+/// The `#[tool]` macro builds these from a method signature: `input_schema`
+/// and `output_schema` are generated at compile time, so the advertised
+/// contract can't drift from the handler that serves it.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct Tool {
@@ -507,6 +512,55 @@ impl ListParams {
         Self {
             cursor: Some(cursor.into()),
         }
+    }
+}
+
+// ---- subscriptions (`subscriptions/listen`, 2026-07-28) ------------------------
+
+/// What a client asks to be notified about on a `subscriptions/listen` stream.
+///
+/// Draft-only: `2026-07-28` replaced both `resources/subscribe` and the HTTP
+/// GET stream with one long-lived subscription carrying this filter. The
+/// server intersects it with the capabilities it actually registered and
+/// reports the agreed subset in the acknowledgement, so asking for something
+/// unsupported narrows the subscription rather than failing it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SubscriptionFilter {
+    /// Notify on `notifications/tools/list_changed`.
+    pub tools_list_changed: bool,
+    /// Notify on `notifications/resources/list_changed`.
+    pub resources_list_changed: bool,
+    /// Notify on `notifications/prompts/list_changed`.
+    pub prompts_list_changed: bool,
+    /// Notify on `notifications/resources/updated` for these URIs — the
+    /// replacement for `2025-11-25`'s `resources/subscribe`.
+    pub resource_subscriptions: Vec<String>,
+}
+
+impl SubscriptionFilter {
+    /// An empty filter — subscribe to nothing, then opt in.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Subscribe to every `*_list_changed` notification.
+    #[must_use]
+    pub fn all_list_changed() -> Self {
+        Self {
+            tools_list_changed: true,
+            resources_list_changed: true,
+            prompts_list_changed: true,
+            resource_subscriptions: Vec::new(),
+        }
+    }
+
+    /// Also watch `uri` for `notifications/resources/updated`.
+    #[must_use]
+    pub fn with_resource(mut self, uri: impl Into<String>) -> Self {
+        self.resource_subscriptions.push(uri.into());
+        self
     }
 }
 
@@ -1557,6 +1611,31 @@ impl From<Icon> for draft::Icon {
                 IconTheme::Light => draft::IconTheme::Light,
                 IconTheme::Dark => draft::IconTheme::Dark,
             }),
+        }
+    }
+}
+
+impl From<SubscriptionFilter> for draft::SubscriptionFilter {
+    fn from(f: SubscriptionFilter) -> Self {
+        // The wire models each flag as `Option<bool>` where absent means "not
+        // requested"; send `Some(true)` only for what was asked for, so the
+        // filter on the wire says exactly what the caller meant.
+        draft::SubscriptionFilter {
+            tools_list_changed: f.tools_list_changed.then_some(true),
+            resources_list_changed: f.resources_list_changed.then_some(true),
+            prompts_list_changed: f.prompts_list_changed.then_some(true),
+            resource_subscriptions: f.resource_subscriptions,
+        }
+    }
+}
+
+impl From<draft::SubscriptionFilter> for SubscriptionFilter {
+    fn from(f: draft::SubscriptionFilter) -> Self {
+        SubscriptionFilter {
+            tools_list_changed: f.tools_list_changed.unwrap_or(false),
+            resources_list_changed: f.resources_list_changed.unwrap_or(false),
+            prompts_list_changed: f.prompts_list_changed.unwrap_or(false),
+            resource_subscriptions: f.resource_subscriptions,
         }
     }
 }

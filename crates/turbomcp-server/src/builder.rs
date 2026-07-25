@@ -36,6 +36,7 @@ pub struct ServerBuilder<S> {
     task_backend: Option<Arc<dyn TaskBackend>>,
     extensions: Vec<Arc<dyn Extension>>,
     cache: Option<CachePolicies>,
+    state_key: Option<[u8; 32]>,
 }
 
 impl<S: McpServerCore> ServerBuilder<S> {
@@ -52,6 +53,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             task_backend: None,
             extensions: Vec::new(),
             cache: None,
+            state_key: None,
         }
     }
 
@@ -69,6 +71,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             task_backend: None,
             extensions: Vec::new(),
             cache: None,
+            state_key: None,
         }
     }
 
@@ -196,6 +199,47 @@ impl<S: McpServerCore> ServerBuilder<S> {
         self
     }
 
+    /// Sign MRTR `requestState` with a key you supply, rather than the
+    /// per-process random secret used by default.
+    ///
+    /// `requestState` is the opaque, HMAC-signed blob a handler hands back with
+    /// an elicitation so the re-issued request can resume where it left off.
+    /// The default key is minted per dispatcher, which is correct for a single
+    /// process — but it means **a state minted by one replica cannot be
+    /// redeemed by another, and a restart invalidates every outstanding one**.
+    /// Set a shared key on every replica when you run more than one, or when
+    /// in-flight elicitations must survive a rolling deploy. This is the
+    /// signing-key counterpart to
+    /// [`with_session_backend`](Self::with_session_backend) /
+    /// [`with_task_backend`](Self::with_task_backend): sharing the *stores*
+    /// across replicas does not help if the *signature* is still per-process.
+    ///
+    /// The key is a MAC secret, so treat it like one: 32 bytes from a CSPRNG,
+    /// held in your secret manager, never derived from a passphrase or
+    /// hard-coded. Anyone holding it can mint states this server will accept —
+    /// though a forged state still can't cross principals or methods, since
+    /// both are bound into the signed payload. Rotating the key invalidates
+    /// outstanding states; handlers see the re-issued request fail
+    /// verification, which is the same path a tampered state takes.
+    ///
+    /// ```
+    /// # use turbomcp_server::{IntoServerBuilder, McpServerCore};
+    /// # use turbomcp_core::Implementation;
+    /// # #[derive(Clone)]
+    /// # struct MyServer;
+    /// # impl McpServerCore for MyServer {
+    /// #     fn server_info(&self) -> Implementation { Implementation::new("s", "1.0") }
+    /// # }
+    /// # fn load_from_secret_manager() -> [u8; 32] { [0u8; 32] }
+    /// let key: [u8; 32] = load_from_secret_manager();
+    /// let dispatcher = MyServer.into_server().with_state_key(key).build();
+    /// ```
+    #[must_use]
+    pub fn with_state_key(mut self, key: [u8; 32]) -> Self {
+        self.state_key = Some(key);
+        self
+    }
+
     /// Finish: produce the `tower::Service<JsonRpcMessage>` for this server.
     #[must_use]
     pub fn build(self) -> VersionDispatcher<S> {
@@ -218,6 +262,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if let Some(cache) = self.cache {
             dispatcher = dispatcher.with_cache_policy(cache);
+        }
+        if let Some(key) = self.state_key {
+            dispatcher = dispatcher.with_state_key(key);
         }
         dispatcher
     }

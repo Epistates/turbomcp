@@ -76,6 +76,9 @@
 //! so a `Json<T>` serializing to a scalar or array carries its value in the
 //! text mirror only there; the `2026-07-28` wire accepts any JSON value.
 #![forbid(unsafe_code)]
+// docs.rs builds with `--cfg docsrs` on nightly so every feature-gated item
+// renders with the feature that unlocks it.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 // Every example in these docs is a real doctest — they are the API contract
 // users read first, so they compile or the build fails.
 #![warn(missing_docs)]
@@ -171,6 +174,7 @@ pub use turbomcp_transport_stdio::{serve_stdio, serve_stdio_with, stdio};
 /// # }
 /// ```
 #[cfg(feature = "http")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub mod http {
     use std::net::SocketAddr;
     use std::sync::Arc;
@@ -221,25 +225,29 @@ pub mod http {
 
 /// WebSocket transport (bidirectional, non-spec convenience). Enable with the
 /// `websocket` feature. Serve with
-/// [`ws::serve_websocket`](ws::serve_websocket) over a `TcpListener` (see
-/// [`ws::WsConfig`](ws::WsConfig) for Origin policy, bearer auth, limits, and
-/// keepalive), or connect a client transport with [`ws::connect`](ws::connect).
+/// [`ws::serve_websocket`] over a `TcpListener` (see [`ws::WsConfig`] for
+/// Origin policy, bearer auth, limits, and keepalive), or connect a client
+/// transport with [`ws::connect`].
 #[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub use turbomcp_transport_ws as ws;
 
 /// OAuth 2.1 resource-server auth: bearer-token validation + RFC 9728 metadata.
 /// Enable with the `auth` feature, then protect an HTTP endpoint with
 /// [`HttpConfig::with_authenticator`](http::HttpConfig::with_authenticator).
 #[cfg(feature = "auth")]
+#[cfg_attr(docsrs, doc(cfg(feature = "auth")))]
 pub use turbomcp_auth as auth;
 
 /// The HTTP authentication seam (implemented by [`auth::ResourceServer`]).
 #[cfg(feature = "http")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub use turbomcp_service::{AuthDecision, HttpAuthenticator};
 
 /// The HTTP rate-limiting seam + the in-process `governor`-backed default.
 /// Apply with [`HttpConfig::with_rate_limiter`](http::HttpConfig::with_rate_limiter).
 #[cfg(feature = "http")]
+#[cfg_attr(docsrs, doc(cfg(feature = "http")))]
 pub use turbomcp_service::{GovernorRateLimiter, RateKey, RateLimiter};
 
 /// OpenTelemetry observability: the [`TraceContextLayer`](telemetry::TraceContextLayer)
@@ -248,12 +256,14 @@ pub use turbomcp_service::{GovernorRateLimiter, RateKey, RateLimiter};
 /// in-flight, labeled by method + version + outcome), and an optional OTLP
 /// export pipeline (traces + metrics). Enable with the `telemetry` feature.
 #[cfg(feature = "telemetry")]
+#[cfg_attr(docsrs, doc(cfg(feature = "telemetry")))]
 pub use turbomcp_telemetry as telemetry;
 
 /// The MCP client: [`client::ClientBuilder`] runs the handshake + version
 /// negotiation, then [`client::Client`] speaks the typed [`neutral`] API.
 /// Enable with the `client` feature.
 #[cfg(feature = "client")]
+#[cfg_attr(docsrs, doc(cfg(feature = "client")))]
 pub use turbomcp_client as client;
 
 /// The draft Tasks extension (`io.modelcontextprotocol/tasks`, SEP-2663):
@@ -261,6 +271,7 @@ pub use turbomcp_client as client;
 /// to answer `tools/call` with an async task handle. Enable with the
 /// `ext-tasks` feature.
 #[cfg(feature = "ext-tasks")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ext-tasks")))]
 pub use turbomcp_ext_tasks as ext_tasks;
 
 // ---- macros -----------------------------------------------------------------
@@ -297,6 +308,7 @@ pub mod prelude {
 
     /// The HTTP one-liner `builder.run_http(addr, config)` (feature `http`).
     #[cfg(feature = "http")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "http")))]
     pub use crate::http::ServeHttp;
 
     pub use turbomcp_macros::{completion, mcp_header, prompt, resource, server, tool};

@@ -2,7 +2,7 @@
 //!
 //! The draft (`2026-07-28`) moves Tasks out of the core protocol into an
 //! **official extension**: a server may answer a `tools/call` with an
-//! asynchronous *task handle* ([`CreateTaskResult`](wire::CreateTaskResult),
+//! asynchronous *task handle* ([`wire::CreateTaskResult`],
 //! `resultType: "task"`) instead of a final result, and the client polls
 //! `tasks/get` / drives input via `tasks/update` / cancels via `tasks/cancel`.
 //! This crate owns those wire types (the core draft schema defines none of

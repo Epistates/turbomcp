@@ -36,3 +36,5 @@ tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync
 
 [package.metadata.docs.rs]
 all-features = true
+# Lights the `doc(cfg)` labels that name the feature behind each gated item.
+rustdoc-args = ["--cfg", "docsrs"]

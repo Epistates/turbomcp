@@ -285,6 +285,27 @@ check-deps:
 # Security & Audit
 # =============================================================================
 
+# Check the public API against the last published 4.x for SemVer breakage.
+# No-op until a 4.x is on crates.io (there is nothing to compare against yet).
+[group: 'quality']
+semver-check:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  if ! command -v cargo-semver-checks >/dev/null 2>&1; then
+    echo "cargo-semver-checks not installed. Install with: cargo install cargo-semver-checks"
+    exit 0
+  fi
+  baseline=$(curl -sSf -H 'User-Agent: turbomcp (nick@epistates.com)' \
+    https://crates.io/api/v1/crates/turbomcp \
+    | jq -r '[.versions[] | select(.yanked == false) | .num
+             | select(startswith("4."))] | first // empty')
+  if [ -z "$baseline" ]; then
+    echo "No published 4.x baseline yet — nothing to compare against."
+    exit 0
+  fi
+  echo "Comparing the public API against turbomcp $baseline"
+  cargo semver-checks check-release --package turbomcp --baseline-version "$baseline"
+
 # Security audit of dependencies
 [group: 'security']
 audit:
@@ -323,6 +344,18 @@ docs-build:
 docs-check: test-docs
   @echo "Checking documentation..."
   cargo doc --workspace --no-deps --document-private-items
+
+# Build docs exactly as docs.rs does — nightly + `--cfg docsrs`, so the
+# `doc(cfg(feature = ...))` labels compile — and fail on any rustdoc warning.
+# This is the CI `Rustdoc (docs.rs config)` job; needs a nightly toolchain.
+# turbomcp-protocol is exempt: its @generated types embed the spec's prose,
+# which rustdoc misreads as code (same reason it opts out of doctests).
+[group: 'docs']
+docs-rs:
+  @echo "Building docs in the docs.rs configuration..."
+  RUSTDOCFLAGS="--cfg docsrs -D warnings" cargo +nightly doc \
+    --workspace --all-features --no-deps --exclude turbomcp-protocol
+  @echo "Rustdoc clean"
 
 # =============================================================================
 # Coverage

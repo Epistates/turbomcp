@@ -29,3 +29,5 @@ std = ["turbomcp-core/std", "serde/std", "serde_json/std"]
 
 [package.metadata.docs.rs]
 all-features = true
+# Lights the `doc(cfg)` labels that name the feature behind each gated item.
+rustdoc-args = ["--cfg", "docsrs"]

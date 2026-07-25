@@ -20,6 +20,7 @@
 //! codegen remaps typify's `::std::` output), so this crate is wasm-portable.
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 

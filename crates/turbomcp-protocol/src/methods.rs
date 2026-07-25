@@ -34,6 +34,10 @@ pub mod request {
     pub const TASKS_GET: &str = "tasks/get";
     /// `tasks/cancel` — request cancellation of a task (core in `2025-11-25`).
     pub const TASKS_CANCEL: &str = "tasks/cancel";
+    /// `tasks/update` — answer a task's outstanding `inputRequests`
+    /// (SEP-2663; the draft extension only — `2025-11-25` core Tasks has no
+    /// in-execution input).
+    pub const TASKS_UPDATE: &str = "tasks/update";
     /// `tasks/result` — retrieve a task's final result, blocking until the task
     /// reaches a terminal status (core in `2025-11-25`).
     pub const TASKS_RESULT: &str = "tasks/result";
@@ -51,6 +55,25 @@ pub mod request {
     /// `logging/setLevel` — per-session minimum log severity (`2025-11-25`;
     /// the draft replaced it with the per-request `_meta` `logLevel` key).
     pub const LOGGING_SET_LEVEL: &str = "logging/setLevel";
+
+    // ---- server → client ----------------------------------------------------
+    //
+    // These travel the other way: the *server* issues them and the *client*
+    // answers. They ride MRTR `inputRequests` on the draft and inline bidi
+    // requests on `2025-11-25`, so both the server's request builder and the
+    // client's dispatcher must name them identically — which is why they live
+    // here rather than as literals at each end.
+
+    /// `elicitation/create` — ask the client's user for input (form or URL
+    /// mode). Completion of a URL-mode interaction is reported by
+    /// [`notification::ELICITATION_COMPLETE`](super::notification::ELICITATION_COMPLETE).
+    pub const ELICITATION_CREATE: &str = "elicitation/create";
+    /// `sampling/createMessage` — ask the client to run an LLM completion.
+    /// Deprecated upstream but functional on both versions.
+    pub const SAMPLING_CREATE_MESSAGE: &str = "sampling/createMessage";
+    /// `roots/list` — ask the client which filesystem roots the server may
+    /// operate on. Deprecated upstream but functional on both versions.
+    pub const ROOTS_LIST: &str = "roots/list";
 }
 
 /// Notification method names (no response).

@@ -33,6 +33,9 @@
 //! installs a `tracing` subscriber that exports the layer's spans. Without it,
 //! the spans flow to whatever `tracing` subscriber the host installs.
 #![forbid(unsafe_code)]
+// docs.rs builds with `--cfg docsrs` on nightly so every feature-gated item
+// renders with the feature that unlocks it.
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
 
 mod layer;
@@ -44,8 +47,10 @@ pub use metrics::{Metrics, MetricsLayer};
 pub use propagation::{extract as extract_context, inject as inject_context};
 
 #[cfg(feature = "otlp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "otlp")))]
 mod otlp;
 #[cfg(feature = "otlp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "otlp")))]
 pub use otlp::{OtlpConfig, TelemetryGuard, init_otlp};
 
 /// How [`TraceContextLayer`] records the caller's identity on a span.
@@ -86,6 +91,7 @@ impl SpanPolicy {
 
 /// Errors from installing the OTLP pipeline (feature `otlp`).
 #[cfg(feature = "otlp")]
+#[cfg_attr(docsrs, doc(cfg(feature = "otlp")))]
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum TelemetryError {
