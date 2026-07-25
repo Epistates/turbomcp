@@ -90,6 +90,27 @@ impl Docs {
 }
 ```
 
+### Naming and protocol selection
+
+A tool's or prompt's wire name defaults to the Rust method name; set
+`name = "…"` when the two should not be coupled (renaming a Rust method is
+otherwise a breaking change for clients) or when the wire name isn't a valid
+Rust identifier:
+
+```rust,ignore
+#[tool(name = "search.web", description = "Search the web")]
+async fn search_web(&self, q: String) -> String { … }
+```
+
+A server answers both protocol revisions by default. Pin it to the frozen
+stable one — the draft's wire shapes can still change before it freezes — with
+`protocols(…)`; an excluded version is refused with `-32004` plus the list of
+versions that *are* served:
+
+```rust,ignore
+#[server(name = "prod", version = "1.0.0", protocols("2025-11-25"))]
+```
+
 Tools return `String`/`&str`, any numeric or `bool` scalar, `()` (empty
 success), `Json<T>` (structured output — see below), or a
 `neutral::CallToolResult` — each optionally wrapped in `McpResult<_>`. A

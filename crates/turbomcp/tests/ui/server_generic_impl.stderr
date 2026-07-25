@@ -1,0 +1,5 @@
+error: #[server] does not support generic impl blocks — the generated `McpServerCore`/`WithTools` impls are for one concrete type. Apply it to a concrete type (e.g. a type alias or newtype), or implement the capability traits by hand.
+ --> tests/ui/server_generic_impl.rs:8:5
+  |
+8 | impl<T: Clone + Send + Sync + 'static> Generic<T> {
+  |     ^

@@ -51,6 +51,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   should not strand a client. The panic payload is logged (`tracing::error!`),
   never put on the wire. Under `panic = "abort"` the process still aborts, as
   that profile asks for.
+- **`#[server(protocols("2025-11-25", …))]`** — pin which protocol revisions a
+  server accepts. The default stays dual-stack, but that serves the draft, whose
+  wire shapes can still change before it freezes; a server shipping to
+  production can now say so. The underlying `McpServerCore::supported_versions`
+  was always honored by dispatch, negotiation, and `server/discover` — it was
+  simply unreachable from the macro, which emits the whole `McpServerCore` impl.
+  A request naming an excluded version is refused with `-32004` and the list of
+  versions that *are* served. Literal wire strings rather than `stable`/`draft`
+  aliases, deliberately: an alias would silently change meaning at the freeze,
+  which is the opposite of what a version pin is for. An unknown version is a
+  compile error naming the valid ones.
+- **`#[tool(name = "…")]` and `#[prompt(name = "…")]`** — set the name a tool or
+  prompt answers to on the wire, defaulting to the Rust method name as before.
+  The two were welded together, which made renaming a Rust method a silent
+  breaking change for every client and made names that aren't valid Rust
+  identifiers (`search.web`, `list-files`) impossible to express. Two handlers
+  of the same kind claiming one wire name is now a compile error.
+
+### Fixed
+
+- **Two `#[server]` impls in one module no longer collide.** The generated
+  per-tool argument structs were named `__Tmcp_{method}_Args` — module-scoped —
+  so two servers each having, say, a `search` tool failed to compile with
+  "`__Tmcp_search_Args` is defined multiple times" pointing at the attribute
+  rather than the cause. They are now qualified by the server type.
+- **A generic `impl` block gets a real diagnostic.** `#[server]` on
+  `impl<T> Server<T>` produced "cannot find type `T` in this scope" against
+  generated code; it now explains that generic impls are unsupported and what to
+  do instead.
+
 - **`ServerBuilder::with_state_key`** — sign MRTR `requestState` with a key you
   supply instead of the per-process random secret. The default is correct for a
   single process but means a state minted by one replica can't be redeemed by

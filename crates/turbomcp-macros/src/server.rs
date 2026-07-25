@@ -15,7 +15,7 @@
 //! downstream crate.
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::{ToTokens as _, format_ident, quote};
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
@@ -28,6 +28,18 @@ use syn::{
 pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenStream> {
     let args = ServerArgs::parse(attr)?;
     let mut block: ItemImpl = parse2(item)?;
+    // The generated trait impls name the type directly, so generic parameters
+    // would escape their binder. Say so plainly — otherwise the user sees
+    // "cannot find type `T` in this scope" pointing at generated code.
+    if !block.generics.params.is_empty() {
+        return Err(syn::Error::new(
+            block.generics.span(),
+            "#[server] does not support generic impl blocks — the generated \
+             `McpServerCore`/`WithTools` impls are for one concrete type. \
+             Apply it to a concrete type (e.g. a type alias or newtype), or \
+             implement the capability traits by hand.",
+        ));
+    }
     let self_ty = (*block.self_ty).clone();
 
     // Classify methods and collect handler models. Clean the marker attributes
@@ -45,19 +57,25 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
         match kind {
             Marker::Tool {
                 desc,
+                name,
                 task,
                 scopes,
                 title,
                 hints,
             } => {
                 let mut h = Handler::parse(f, desc, HandlerKind::Tool)?;
+                h.wire_name = name;
                 h.task = task;
                 h.scopes = scopes;
                 h.title = title;
                 h.hints = hints;
                 tools.push(h);
             }
-            Marker::Prompt(desc) => prompts.push(Handler::parse(f, desc, HandlerKind::Prompt)?),
+            Marker::Prompt { desc, name } => {
+                let mut h = Handler::parse(f, desc, HandlerKind::Prompt)?;
+                h.wire_name = name;
+                prompts.push(h);
+            }
             Marker::Resource { uri, desc } => {
                 resources.push(Handler::parse(f, desc, HandlerKind::Resource { uri })?);
             }
@@ -75,7 +93,12 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
         strip_param_attrs(f);
     }
 
-    let core_impl = gen_core_impl(&self_ty, &args);
+    // `name = "…"` makes collisions expressible, and two handlers answering
+    // the same wire name would silently shadow one another in dispatch.
+    reject_duplicate_names(&tools, "tool")?;
+    reject_duplicate_names(&prompts, "prompt")?;
+
+    let core_impl = gen_core_impl(&self_ty, &args)?;
     let tools_impl = (!tools.is_empty()).then(|| gen_tools_impl(&self_ty, &tools));
     let resources_impl = (!resources.is_empty()).then(|| gen_resources_impl(&self_ty, &resources));
     let prompts_impl = (!prompts.is_empty()).then(|| gen_prompts_impl(&self_ty, &prompts));
@@ -130,6 +153,28 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> syn::Result<TokenS
     })
 }
 
+/// Reject two handlers of the same kind answering to one wire name. Tools and
+/// prompts are separate namespaces, so this is checked per kind.
+fn reject_duplicate_names(handlers: &[Handler], kind: &str) -> syn::Result<()> {
+    let mut seen: std::collections::HashMap<String, &Ident> = std::collections::HashMap::new();
+    for h in handlers {
+        let name = h.wire_name();
+        if let Some(first) = seen.get(&name) {
+            return Err(syn::Error::new(
+                h.method.span(),
+                format!(
+                    "two {kind}s answer to the wire name `{name}`; it is already \
+                     claimed by the method `{first}`. Wire names must be unique \
+                     within a server — rename one, or give it a distinct \
+                     `name = \"…\"`."
+                ),
+            ));
+        }
+        seen.insert(name, &h.method);
+    }
+    Ok(())
+}
+
 // ---- attribute parsing -------------------------------------------------------
 
 struct ServerArgs {
@@ -137,24 +182,55 @@ struct ServerArgs {
     version: String,
     title: Option<String>,
     instructions: Option<String>,
+    /// Wire strings from `protocols(…)`, paired with their spans for error
+    /// reporting. Empty means "unset" — the server keeps the crate default
+    /// (`ProtocolVersion::SUPPORTED`).
+    protocols: Vec<LitStr>,
 }
 
 impl ServerArgs {
     fn parse(attr: TokenStream) -> syn::Result<Self> {
-        let metas =
-            Punctuated::<MetaNameValue, Token![,]>::parse_terminated.parse2(attr.clone())?;
+        // `Meta` rather than `MetaNameValue`: `protocols(…)` is a list, like
+        // `#[tool(scopes(…))]`.
+        let metas = Punctuated::<Meta, Token![,]>::parse_terminated.parse2(attr.clone())?;
         let mut name = None;
         let mut version = None;
         let mut title = None;
         let mut instructions = None;
+        let mut protocols = Vec::new();
         for m in metas {
             let key = m
-                .path
+                .path()
                 .get_ident()
                 .map(ToString::to_string)
                 .unwrap_or_default();
-            let val = lit_str(&m.value)
-                .ok_or_else(|| syn::Error::new(m.value.span(), "expected a string literal"))?;
+            if key == "protocols" {
+                let Meta::List(list) = &m else {
+                    return Err(syn::Error::new(
+                        m.span(),
+                        "expected `protocols(\"2025-11-25\", …)`",
+                    ));
+                };
+                let lits =
+                    list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)?;
+                if lits.is_empty() {
+                    return Err(syn::Error::new(
+                        list.span(),
+                        "`protocols(…)` needs at least one version — a server that \
+                         accepts none can answer nothing",
+                    ));
+                }
+                protocols = lits.into_iter().collect();
+                continue;
+            }
+            let Meta::NameValue(nv) = &m else {
+                return Err(syn::Error::new(
+                    m.span(),
+                    format!("expected `{key} = \"…\"`"),
+                ));
+            };
+            let val = lit_str(&nv.value)
+                .ok_or_else(|| syn::Error::new(nv.value.span(), "expected a string literal"))?;
             match key.as_str() {
                 "name" => name = Some(val),
                 "version" => version = Some(val),
@@ -162,9 +238,9 @@ impl ServerArgs {
                 "instructions" => instructions = Some(val),
                 other => {
                     return Err(syn::Error::new(
-                        m.path.span(),
+                        m.path().span(),
                         format!(
-                            "unknown #[server] argument `{other}` (expected name, version, title, instructions)"
+                            "unknown #[server] argument `{other}` (expected name, version, title, instructions, protocols)"
                         ),
                     ));
                 }
@@ -178,19 +254,45 @@ impl ServerArgs {
             })?,
             title,
             instructions,
+            protocols,
         })
+    }
+}
+
+/// The `ProtocolVersion` variant path for a wire string in `protocols(…)`.
+///
+/// The macro can't reach `ProtocolVersion::SUPPORTED` (it would be a runtime
+/// value, and `supported_versions` returns `&'static [_]`), so the mapping
+/// lives here. **When the draft freezes and `Draft` becomes a dated variant,
+/// this table moves with it** — `protocols_accepts_every_supported_version`
+/// in the facade tests fails if the two fall out of step.
+fn protocol_variant(wire: &LitStr) -> syn::Result<proc_macro2::TokenStream> {
+    match wire.value().as_str() {
+        "2025-11-25" => Ok(quote! { ::turbomcp::ProtocolVersion::V2025_11_25 }),
+        "2026-07-28" => Ok(quote! { ::turbomcp::ProtocolVersion::Draft }),
+        other => Err(syn::Error::new(
+            wire.span(),
+            format!(
+                "`{other}` is not a protocol version this build serves \
+                 (expected \"2025-11-25\" or \"2026-07-28\")"
+            ),
+        )),
     }
 }
 
 enum Marker {
     Tool {
         desc: Option<String>,
+        name: Option<String>,
         task: bool,
         scopes: Vec<String>,
         title: Option<String>,
         hints: ToolHints,
     },
-    Prompt(Option<String>),
+    Prompt {
+        desc: Option<String>,
+        name: Option<String>,
+    },
     Resource {
         uri: String,
         desc: Option<String>,
@@ -223,6 +325,7 @@ impl ToolHints {
 /// `open_world`, each optionally `= true|false` (bare = `true`).
 enum ToolArg {
     Desc(String),
+    Name(String),
     Title(String),
     Task,
     Scopes(Vec<String>),
@@ -271,6 +374,13 @@ impl Parse for ToolArg {
                     "expected `description = \"…\"`",
                 )),
             }
+        } else if meta.path().is_ident("name") {
+            match meta {
+                Meta::NameValue(nv) => lit_str(&nv.value)
+                    .map(ToolArg::Name)
+                    .ok_or_else(|| syn::Error::new(nv.value.span(), "expected a string literal")),
+                _ => Err(syn::Error::new(meta.span(), "expected `name = \"…\"`")),
+            }
         } else if meta.path().is_ident("title") {
             match meta {
                 Meta::NameValue(nv) => lit_str(&nv.value)
@@ -314,7 +424,7 @@ impl Parse for ToolArg {
         } else {
             Err(syn::Error::new(
                 meta.span(),
-                "expected `description = \"…\"`, `title = \"…\"`, `task`, `scopes(…)`, \
+                "expected `description = \"…\"`, `name = \"…\"`, `title = \"…\"`, `task`, `scopes(…)`, \
                  or a behavior hint (`read_only`, `destructive`, `idempotent`, `open_world`)",
             ))
         }
@@ -325,6 +435,9 @@ impl Parse for ToolArg {
 #[derive(Default)]
 struct ToolMarkerArgs {
     desc: Option<String>,
+    /// `#[tool(name = "…")]` — the wire name, when it should differ from the
+    /// Rust method name.
+    name: Option<String>,
     task: bool,
     scopes: Vec<String>,
     title: Option<String>,
@@ -346,6 +459,7 @@ fn parse_tool_args(attr: &Attribute) -> syn::Result<ToolMarkerArgs> {
             for a in args {
                 match a {
                     ToolArg::Desc(s) => parsed.desc = Some(s),
+                    ToolArg::Name(s) => parsed.name = Some(s),
                     ToolArg::Title(s) => parsed.title = Some(s),
                     ToolArg::Task => parsed.task = true,
                     ToolArg::Scopes(s) => parsed.scopes = s,
@@ -379,13 +493,18 @@ fn take_marker(attrs: &mut Vec<Attribute>) -> syn::Result<Option<Marker>> {
         let parsed = parse_tool_args(&attr)?;
         Ok(Some(Marker::Tool {
             desc: parsed.desc.or(doc),
+            name: parsed.name,
             task: parsed.task,
             scopes: parsed.scopes,
             title: parsed.title,
             hints: parsed.hints,
         }))
     } else if attr.path().is_ident("prompt") {
-        Ok(Some(Marker::Prompt(marker_description(&attr)?.or(doc))))
+        let parsed = parse_prompt_args(&attr)?;
+        Ok(Some(Marker::Prompt {
+            desc: parsed.0.or(doc),
+            name: parsed.1,
+        }))
     } else if attr.path().is_ident("completion") {
         Ok(Some(Marker::Completion))
     } else {
@@ -404,24 +523,36 @@ fn take_marker(attrs: &mut Vec<Attribute>) -> syn::Result<Option<Marker>> {
 }
 
 /// Extract a description from `#[tool("…")]` or `#[tool(description = "…")]`.
-fn marker_description(attr: &Attribute) -> syn::Result<Option<String>> {
+/// Parse `#[prompt]`, `#[prompt("…")]`, `#[prompt(description = "…")]`,
+/// `#[prompt(name = "…")]`, and combinations, into `(description, name)`.
+fn parse_prompt_args(attr: &Attribute) -> syn::Result<(Option<String>, Option<String>)> {
     match &attr.meta {
-        Meta::Path(_) => Ok(None),
+        Meta::Path(_) => Ok((None, None)),
+        Meta::NameValue(nv) => Ok((lit_str(&nv.value), None)),
         Meta::List(_) => {
+            // `#[prompt("…")]` — a bare description, the common shorthand.
             if let Ok(s) = attr.parse_args::<syn::LitStr>() {
-                return Ok(Some(s.value()));
+                return Ok((Some(s.value()), None));
             }
-            let nv = attr.parse_args::<MetaNameValue>()?;
-            if nv.path.is_ident("description") {
-                Ok(lit_str(&nv.value))
-            } else {
-                Err(syn::Error::new(
-                    attr.span(),
-                    "expected `#[tool]`, `#[tool(\"…\")]`, or `#[tool(description = \"…\")]`",
-                ))
+            let metas =
+                attr.parse_args_with(Punctuated::<MetaNameValue, Token![,]>::parse_terminated)?;
+            let (mut desc, mut name) = (None, None);
+            for nv in metas {
+                let value = lit_str(&nv.value)
+                    .ok_or_else(|| syn::Error::new(nv.value.span(), "expected a string literal"))?;
+                if nv.path.is_ident("description") {
+                    desc = Some(value);
+                } else if nv.path.is_ident("name") {
+                    name = Some(value);
+                } else {
+                    return Err(syn::Error::new(
+                        nv.path.span(),
+                        "expected `description = \"…\"` or `name = \"…\"`",
+                    ));
+                }
             }
+            Ok((desc, name))
         }
-        Meta::NameValue(nv) => Ok(lit_str(&nv.value)),
     }
 }
 
@@ -449,6 +580,12 @@ enum Slot {
 struct Handler {
     kind: HandlerKind,
     method: Ident,
+    /// `name = "…"` from the marker: the name this handler answers to on the
+    /// wire. `None` means the Rust method name. Decoupled on purpose — the
+    /// wire name is a public contract, and welding it to a Rust identifier
+    /// makes an internal rename a breaking change for clients (and rules out
+    /// names that aren't valid identifiers, like `search.web`).
+    wire_name: Option<String>,
     description: Option<String>,
     args: Vec<ArgParam>,
     /// Ordered call sites (skipping the receiver) so the call can be rebuilt.
@@ -467,6 +604,13 @@ struct Handler {
 }
 
 impl Handler {
+    /// The name this handler answers to on the wire.
+    fn wire_name(&self) -> String {
+        self.wire_name
+            .clone()
+            .unwrap_or_else(|| self.method.to_string())
+    }
+
     fn parse(f: &ImplItemFn, description: Option<String>, kind: HandlerKind) -> syn::Result<Self> {
         if f.sig.asyncness.is_none() {
             return Err(syn::Error::new(
@@ -536,6 +680,7 @@ impl Handler {
         Ok(Self {
             kind,
             method: f.sig.ident.clone(),
+            wire_name: None,
             description,
             args,
             slots,
@@ -562,7 +707,7 @@ impl Handler {
 
 // ---- codegen: McpServerCore --------------------------------------------------
 
-fn gen_core_impl(self_ty: &Type, args: &ServerArgs) -> TokenStream {
+fn gen_core_impl(self_ty: &Type, args: &ServerArgs) -> syn::Result<TokenStream> {
     let name = &args.name;
     let version = &args.version;
     let title_set = args.title.as_ref().map(
@@ -575,7 +720,25 @@ fn gen_core_impl(self_ty: &Type, args: &ServerArgs) -> TokenStream {
             }
         }
     });
-    quote! {
+    // `protocols(…)` narrows the dual-stack default. A `static` (not a
+    // promoted temporary) because `ProtocolVersion` owns a `String` in its
+    // `Unknown` variant, so it has a destructor and can't be const-promoted.
+    let protocols_fn = if args.protocols.is_empty() {
+        None
+    } else {
+        let variants = args
+            .protocols
+            .iter()
+            .map(protocol_variant)
+            .collect::<syn::Result<Vec<_>>>()?;
+        Some(quote! {
+            fn supported_versions(&self) -> &'static [::turbomcp::ProtocolVersion] {
+                static SUPPORTED: &[::turbomcp::ProtocolVersion] = &[#(#variants),*];
+                SUPPORTED
+            }
+        })
+    };
+    Ok(quote! {
         impl ::turbomcp::McpServerCore for #self_ty {
             fn server_info(&self) -> ::turbomcp::Implementation {
                 #[allow(unused_mut)]
@@ -584,16 +747,17 @@ fn gen_core_impl(self_ty: &Type, args: &ServerArgs) -> TokenStream {
                 __info
             }
             #instructions_fn
+            #protocols_fn
         }
-    }
+    })
 }
 
 // ---- codegen: tools ----------------------------------------------------------
 
 fn gen_tools_impl(self_ty: &Type, tools: &[Handler]) -> TokenStream {
-    let arg_structs = tools.iter().map(gen_args_struct);
-    let list_entries = tools.iter().map(gen_tool_list_entry);
-    let call_arms = tools.iter().map(gen_tool_call_arm);
+    let arg_structs = tools.iter().map(|t| gen_args_struct(self_ty, t));
+    let list_entries = tools.iter().map(|t| gen_tool_list_entry(self_ty, t));
+    let call_arms = tools.iter().map(|t| gen_tool_call_arm(self_ty, t));
 
     quote! {
         #(#arg_structs)*
@@ -628,12 +792,33 @@ fn gen_tools_impl(self_ty: &Type, tools: &[Handler]) -> TokenStream {
     }
 }
 
-fn args_struct_ident(t: &Handler) -> Ident {
-    format_ident!("__Tmcp_{}_Args", t.method)
+/// The generated argument struct's name.
+///
+/// Qualified by the *server type*, not just the method: two `#[server]` impls
+/// in one module may each have a tool of the same name, and a module-scoped
+/// name would collide — surfacing as a baffling "`__Tmcp_foo_Args` is defined
+/// multiple times" pointing at the attribute rather than the real cause.
+fn args_struct_ident(self_ty: &Type, t: &Handler) -> Ident {
+    format_ident!("__Tmcp_{}_{}_Args", type_tag(self_ty), t.method)
 }
 
-fn gen_args_struct(t: &Handler) -> TokenStream {
-    let ident = args_struct_ident(t);
+/// An identifier-safe tag for a server type: its final path segment
+/// (`foo::Bar` → `Bar`), or a hash of the tokens for anything that isn't a
+/// plain path, so the name stays unique either way.
+fn type_tag(self_ty: &Type) -> Ident {
+    if let Type::Path(p) = self_ty
+        && let Some(seg) = p.path.segments.last()
+    {
+        return seg.ident.clone();
+    }
+    use std::hash::{Hash as _, Hasher as _};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    self_ty.to_token_stream().to_string().hash(&mut hasher);
+    format_ident!("Ty{:016x}", hasher.finish())
+}
+
+fn gen_args_struct(self_ty: &Type, t: &Handler) -> TokenStream {
+    let ident = args_struct_ident(self_ty, t);
     let fields = t.args.iter().map(|a| {
         let name = &a.ident;
         let ty = &a.ty;
@@ -655,9 +840,9 @@ fn gen_args_struct(t: &Handler) -> TokenStream {
     }
 }
 
-fn gen_tool_list_entry(t: &Handler) -> TokenStream {
-    let ident = args_struct_ident(t);
-    let name = t.method.to_string();
+fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
+    let ident = args_struct_ident(self_ty, t);
+    let name = t.wire_name();
     let desc = t
         .description
         .as_ref()
@@ -722,9 +907,9 @@ fn gen_tool_list_entry(t: &Handler) -> TokenStream {
     }
 }
 
-fn gen_tool_call_arm(t: &Handler) -> TokenStream {
-    let ident = args_struct_ident(t);
-    let name = t.method.to_string();
+fn gen_tool_call_arm(self_ty: &Type, t: &Handler) -> TokenStream {
+    let ident = args_struct_ident(self_ty, t);
+    let name = t.wire_name();
     let method = &t.method;
     let call_args = t.call_args(|a| {
         let f = &a.ident;
@@ -944,7 +1129,7 @@ fn gen_prompts_impl(self_ty: &Type, prompts: &[Handler]) -> TokenStream {
 }
 
 fn gen_prompt_list_entry(p: &Handler) -> TokenStream {
-    let name = p.method.to_string();
+    let name = p.wire_name();
     let desc = p
         .description
         .as_ref()
@@ -962,7 +1147,7 @@ fn gen_prompt_list_entry(p: &Handler) -> TokenStream {
 }
 
 fn gen_prompt_get_arm(p: &Handler) -> TokenStream {
-    let name = p.method.to_string();
+    let name = p.wire_name();
     let method = &p.method;
     let extracts = p.args.iter().map(|a| {
         let ident = &a.ident;

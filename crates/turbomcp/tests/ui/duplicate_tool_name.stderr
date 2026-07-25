@@ -1,0 +1,5 @@
+error: two tools answer to the wire name `search`; it is already claimed by the method `search`. Wire names must be unique within a server — rename one, or give it a distinct `name = "…"`.
+  --> tests/ui/duplicate_tool_name.rs:15:14
+   |
+15 |     async fn search_v2(&self) -> String {
+   |              ^^^^^^^^^
