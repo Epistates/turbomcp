@@ -261,7 +261,7 @@ jobs:
     - name: Generate coverage
       env:
         CARGO_TARGET_DIR: /tmp/cargo-coverage
-        IGNORE_RE: '(tests?/|benches/|examples/|fuzz/|/(v2025_11_25|draft)/types\.rs|turbomcp-codegen/)'
+        IGNORE_RE: '(tests?/|benches/|examples/|fuzz/|/(v2025_06_18|v2025_11_25|draft)/types\.rs|turbomcp-codegen/)'
       run: |
         set -euo pipefail
         cargo llvm-cov --workspace --all-features --all-targets \

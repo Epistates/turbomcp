@@ -137,10 +137,10 @@ fn merge_object_into(target: &mut Map<String, Value>, src: &Map<String, Value>) 
 /// argument advertises a `$ref` into a `$defs` that was dropped (a dangling
 /// reference). The `draft` schema fixed this by adding `"additionalProperties":
 /// {}`, which typify turns into a flattened `extra` catch-all. Backport that to
-/// every version: inject `additionalProperties: {}` into any object node that
-/// declares both a `$schema` string property and a `type` property pinned to
-/// `{const: "object"}` (the distinctive shape of an embedded JSON Schema) and
-/// doesn't already set `additionalProperties`.
+/// every version: inject `additionalProperties: {}` into any object node whose
+/// `properties` pin a `type` field to `{const: "object"}` — the distinctive
+/// shape of an embedded JSON Schema — and that doesn't already set
+/// `additionalProperties`.
 pub fn open_embedded_schemas(schema: &mut Value) {
     walk(schema);
 
@@ -163,9 +163,17 @@ pub fn open_embedded_schemas(schema: &mut Value) {
         }
     }
 
-    /// A node describing an embedded JSON Schema: `type: "object"` with a
-    /// `properties` map that pins a nested `type` to `{const: "object"}` and
-    /// declares a `$schema` string field (as `inputSchema`/`outputSchema` do).
+    /// A node describing an embedded JSON Schema: `type: "object"` whose
+    /// `properties` pin a nested `type` field to `{const: "object"}`, as
+    /// `inputSchema`/`outputSchema`/`requestedSchema` do.
+    ///
+    /// The `const: "object"` pin is the whole discriminator. An earlier version
+    /// also required a `$schema` property, which holds for `2025-11-25` and the
+    /// draft but **not** for `2025-06-18` — so that revision's tool schemas were
+    /// left closed and would have silently dropped every keyword the struct
+    /// doesn't name. Across all three schemas this predicate matches exactly the
+    /// three schema-of-schema nodes and nothing else: a content block pins its
+    /// `type` to `"text"`/`"image"`/…, never to `"object"`.
     fn is_embedded_schema(map: &Map<String, Value>) -> bool {
         if map.get("type").and_then(Value::as_str) != Some("object") {
             return false;
@@ -173,14 +181,12 @@ pub fn open_embedded_schemas(schema: &mut Value) {
         let Some(props) = map.get("properties").and_then(Value::as_object) else {
             return false;
         };
-        let declares_schema = props.contains_key("$schema");
-        let type_is_object_const = props
+        props
             .get("type")
             .and_then(Value::as_object)
             .and_then(|t| t.get("const"))
             .and_then(Value::as_str)
-            == Some("object");
-        declares_schema && type_is_object_const
+            == Some("object")
     }
 }
 
@@ -366,5 +372,42 @@ mod tests {
         });
         open_embedded_schemas(&mut schema);
         assert_eq!(schema["additionalProperties"], json!(true), "unchanged");
+    }
+
+    /// `2025-06-18` describes `inputSchema` **without** a `$schema` property.
+    /// Requiring one left that revision's tool schemas closed, so typify emitted
+    /// a struct with no catch-all and every keyword it doesn't name — `$defs`,
+    /// `oneOf`, `additionalProperties` — was dropped on serialization. Any tool
+    /// taking a nested type would have advertised a `$ref` into a `$defs` that
+    /// no longer existed.
+    #[test]
+    fn an_embedded_schema_without_a_dollar_schema_property_is_still_opened() {
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "properties": { "type": "object" },
+                "required": { "items": { "type": "string" }, "type": "array" },
+                "type": { "const": "object", "type": "string" }
+            }
+        });
+        open_embedded_schemas(&mut schema);
+        assert_eq!(schema["additionalProperties"], json!({}));
+    }
+
+    /// The `const: "object"` pin is what distinguishes a schema-of-schema node.
+    /// A content block pins its `type` to its own tag, and must stay closed —
+    /// otherwise every wire struct grows a catch-all and typed round-trips stop
+    /// being able to reject unknown fields.
+    #[test]
+    fn a_tagged_object_that_is_not_a_schema_stays_closed() {
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "text": { "type": "string" },
+                "type": { "const": "text", "type": "string" }
+            }
+        });
+        open_embedded_schemas(&mut schema);
+        assert!(schema.get("additionalProperties").is_none());
     }
 }

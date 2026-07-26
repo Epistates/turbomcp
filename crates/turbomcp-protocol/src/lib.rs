@@ -29,5 +29,6 @@ use turbomcp_core as _;
 pub mod draft;
 pub mod methods;
 pub mod neutral;
+pub mod v2025_06_18;
 pub mod v2025_11_25;
 pub mod version;

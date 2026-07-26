@@ -22,6 +22,7 @@ use alloc::vec::Vec;
 use serde_json::{Map, Value};
 
 use crate::draft::types as draft;
+use crate::v2025_06_18::types as v06;
 use crate::v2025_11_25::types as legacy;
 
 /// Canonical draft `resultType` wire strings.
@@ -2961,6 +2962,54 @@ impl From<legacy::CompleteResult> for CompleteResult {
         }
     }
 }
+
+// ---- 2025-06-18 ----------------------------------------------------------------
+//
+// `2025-06-18` is `2025-11-25` minus a closed list of additions, so its
+// conversions are a step down from the `legacy` ones rather than a third
+// hand-written set — see [`crate::v2025_06_18::convert`] for why, and for the
+// per-type detail of what each step drops. These are only the entry points the
+// dispatcher and client name; everything they touch is converted there.
+
+/// Both directions of the neutral bridge for one result type, routed through
+/// the `2025-11-25` wire.
+macro_rules! neutral_via_legacy {
+    ($($ty:ident),+ $(,)?) => {$(
+        impl From<$ty> for v06::$ty {
+            fn from(n: $ty) -> Self {
+                legacy::$ty::from(n).into()
+            }
+        }
+
+        impl From<v06::$ty> for $ty {
+            fn from(w: v06::$ty) -> Self {
+                legacy::$ty::from(w).into()
+            }
+        }
+    )+};
+}
+
+neutral_via_legacy!(
+    // Results — the dispatch surface.
+    ListToolsResult,
+    CallToolResult,
+    ListResourcesResult,
+    ListResourceTemplatesResult,
+    ReadResourceResult,
+    ListPromptsResult,
+    GetPromptResult,
+    CompleteResult,
+    // Elements, matching what the `2025-11-25` family exposes.
+    Tool,
+    ToolAnnotations,
+    Resource,
+    ResourceTemplate,
+    Prompt,
+    PromptArgument,
+    PromptMessage,
+    Annotations,
+    Role,
+);
 
 #[cfg(test)]
 mod tests {
