@@ -390,6 +390,44 @@ mod tests {
         assert_eq!(params["arguments"]["region"], "us-west");
     }
 
+    /// The signal is built by the typed client, but it rides in `_meta` where
+    /// anything can put a value. A non-string entry is dropped rather than
+    /// stringified: `reqwest` would reject (or mangle) a header built from an
+    /// object, and a silently coerced `"[object]"` is worse than an absent
+    /// header. A signal that isn't a map at all yields nothing.
+    #[test]
+    fn malformed_header_signals_are_dropped_not_coerced() {
+        let mut msg = JsonRpcMessage::Request(JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({
+                "name": "locate",
+                "arguments": {},
+                "_meta": {
+                    crate::client::HEADER_PARAMS_META_KEY: {
+                        "good": "kept",
+                        "nested": { "not": "a header" },
+                        "numeric": 7,
+                    },
+                },
+            })),
+        ));
+        assert_eq!(
+            extract_header_params(&mut msg),
+            vec![("good".to_owned(), "kept".to_owned())]
+        );
+
+        let mut msg = JsonRpcMessage::Request(JsonRpcRequest::new(
+            2,
+            "tools/call",
+            Some(json!({
+                "name": "locate",
+                "_meta": { crate::client::HEADER_PARAMS_META_KEY: "not-a-map" },
+            })),
+        ));
+        assert!(extract_header_params(&mut msg).is_empty());
+    }
+
     #[test]
     fn no_signal_yields_no_headers() {
         let mut msg = JsonRpcMessage::Request(JsonRpcRequest::new(

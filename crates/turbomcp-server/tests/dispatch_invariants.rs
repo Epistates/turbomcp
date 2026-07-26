@@ -32,6 +32,11 @@ impl WithTools for Kitchen {
         params: neutral::ListParams,
     ) -> McpResult<neutral::ListToolsResult> {
         let name = match params.cursor {
+            // A cursor the server no longer honours (expired, or minted by
+            // another replica) is the realistic way a list handler fails.
+            Some(c) if c == "stale" => {
+                return Err(McpError::invalid_params("unknown cursor `stale`"));
+            }
             Some(c) => format!("page-{c}"),
             None => "page-first".into(),
         };
@@ -296,6 +301,33 @@ async fn list_cursor_reaches_the_handler_and_next_cursor_reaches_the_wire() {
     assert_eq!(out["result"]["tools"][0]["name"], "page-first", "{out}");
 }
 
+/// A list handler's error must come back as a JSON-RPC error carrying its own
+/// code — never an empty page. The list capabilities take the plain completion
+/// path (no MRTR turn to intercept), and an `Err` swallowed there would leave
+/// a client believing the server genuinely has no tools.
+#[tokio::test]
+async fn a_list_handler_error_surfaces_as_a_json_rpc_error() {
+    let mut svc = kitchen();
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/list",
+            Some(json!({ "cursor": "stale", "_meta": draft_meta() })),
+        ),
+    )
+    .await;
+    assert_eq!(out["error"]["code"], -32602, "{out}");
+    assert!(
+        out["error"]["message"].as_str().unwrap().contains("cursor"),
+        "{out}"
+    );
+    assert!(
+        out["result"].is_null(),
+        "no partial result alongside the error: {out}"
+    );
+}
+
 /// The `-32602` matrix for the param parsers: each distinct malformed shape is
 /// invalid-params and the message names what is missing/wrong.
 #[tokio::test]
@@ -304,6 +336,7 @@ async fn malformed_params_get_invalid_params() {
     let cases = [
         (1, "resources/read", json!({ "_meta": draft_meta() }), "uri"),
         (2, "prompts/get", json!({ "_meta": draft_meta() }), "name"),
+        (6, "tools/call", json!({ "_meta": draft_meta() }), "name"),
         (
             3,
             "completion/complete",

@@ -277,6 +277,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The client now closes its transport on shutdown.** When the last
+  `Connection` handle dropped, the actor exited and the transport was simply
+  dropped — `Transport::close` was never called, despite the actor's own
+  documentation saying it was. Each transport owes the peer something on the
+  way out that dropping a socket doesn't deliver: over HTTP that is the
+  spec's `DELETE` terminating the session, so a long-lived server accumulated
+  one session per client that ever connected, freed only by whatever timeout
+  it had; over WebSocket it is the Close frame, whose absence the peer sees as
+  an abnormal closure. Waiting requests are still failed *before* the close, so
+  a caller learns the connection died promptly rather than after a shutdown
+  round trip.
 - **`HttpJwks` now rate-limits its rotation refresh.** Its documentation
   promised a refresh "per the cooldown", but no cooldown existed: every `kid`
   the cache didn't hold forced an immediate fetch from the authorization

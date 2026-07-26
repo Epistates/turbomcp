@@ -32,7 +32,16 @@ rand = { workspace = true }
 regex = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+# `test-util` pauses the clock so the inline-bidi timeout is testable without
+# spending its two minutes of wall time.
+tokio = { workspace = true, features = [
+    "macros",
+    "rt",
+    "rt-multi-thread",
+    "sync",
+    "test-util",
+    "time",
+] }
 
 [package.metadata.docs.rs]
 all-features = true

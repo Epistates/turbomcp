@@ -134,6 +134,38 @@ async fn integer_tokens_echo_verbatim() {
     assert_eq!(frames[0]["params"]["progressToken"], 42);
 }
 
+/// The progress spec pins the token to a string or an integer. Anything else
+/// is ignored rather than echoed: a notification is required to carry the
+/// token *verbatim*, so honouring an object/float/null would put a value on
+/// the wire that no client can correlate — and the field is client-supplied,
+/// so the shape is not the server's to assume. The call itself must still
+/// succeed; a malformed token is not grounds to fail the tool.
+#[tokio::test]
+async fn a_token_that_is_not_a_string_or_integer_is_ignored() {
+    for token in [
+        json!({ "nested": true }),
+        json!([1, 2]),
+        json!(1.5),
+        json!(null),
+        json!(true),
+        json!(""),
+    ] {
+        let frames = run_one(draft_call(json!({ "progressToken": token }))).await;
+        let expected = if token.is_string() { 3 } else { 1 };
+        assert_eq!(
+            frames.len(),
+            expected,
+            "token {token} should{} have produced notifications: {frames:#?}",
+            if expected == 1 { " not" } else { "" }
+        );
+        assert_eq!(
+            frames.last().unwrap()["result"]["content"][0]["text"],
+            "done",
+            "the call must still succeed for token {token}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn no_token_means_no_notifications() {
     let frames = run_one(draft_call(json!({}))).await;

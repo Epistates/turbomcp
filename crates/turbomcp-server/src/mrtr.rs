@@ -963,6 +963,608 @@ mod tests {
         assert!(matches!(err, McpError::InvalidParams(_)));
     }
 
+    // ---- requestState verification edges ------------------------------------
+
+    /// A token with a *valid* MAC over `payload`. Lets a test reach the checks
+    /// that run after the MAC (expiry, shape), which `sign` can't be made to
+    /// violate.
+    fn crafted(signer: &StateSigner, payload: &Value) -> String {
+        let bytes = serde_json::to_vec(payload).expect("serializable");
+        let mut mac = signer.mac();
+        mac.update(&bytes);
+        format!(
+            "v1.{}.{}",
+            URL_SAFE_NO_PAD.encode(&bytes),
+            URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+        )
+    }
+
+    #[track_caller]
+    fn assert_uniform_rejection(result: McpResult<Value>, what: &str) {
+        match result {
+            Err(McpError::InvalidParams(m)) => assert_eq!(
+                m, "requestState failed verification",
+                "{what}: the message must not reveal which check failed"
+            ),
+            Err(other) => panic!("{what}: expected InvalidParams, got {other:?}"),
+            Ok(v) => panic!("{what}: accepted a bad token, yielding {v}"),
+        }
+    }
+
+    /// Every malformed shape must fail with the *same* message.
+    ///
+    /// `requestState` round-trips through the client, so it is attacker-
+    /// controlled. A forger who can tell "bad base64" from "bad MAC" from
+    /// "expired" learns which part to keep working on; one uniform rejection
+    /// tells them nothing. This also pins the length bound, which exists so a
+    /// huge token is discarded before it is decoded.
+    #[test]
+    fn malformed_state_tokens_are_rejected_uniformly() {
+        let signer = StateSigner::new();
+        let good = signer.sign("tools/call", None, &json!({ "a": 1 })).unwrap();
+        let mut parts = good.splitn(3, '.');
+        let (_v, payload, tag) = (
+            parts.next().unwrap(),
+            parts.next().unwrap().to_owned(),
+            parts.next().unwrap().to_owned(),
+        );
+
+        for (what, token) in [
+            ("empty", String::new()),
+            ("no version prefix", format!("{payload}.{tag}")),
+            ("unknown version", format!("v2.{payload}.{tag}")),
+            ("only two segments", format!("v1.{payload}")),
+            ("payload is not base64", format!("v1.~~~~.{tag}")),
+            ("tag is not base64", format!("v1.{payload}.~~~~")),
+            (
+                "over the length bound",
+                format!("v1.{}.{tag}", "A".repeat(2 * MAX_STATE_BYTES)),
+            ),
+            (
+                "valid MAC over a non-JSON payload",
+                crafted_bytes(&signer, b"not json at all"),
+            ),
+        ] {
+            assert_uniform_rejection(signer.verify("tools/call", None, &token), what);
+        }
+    }
+
+    /// As [`crafted`], for a payload that isn't valid JSON.
+    fn crafted_bytes(signer: &StateSigner, bytes: &[u8]) -> String {
+        let mut mac = signer.mac();
+        mac.update(bytes);
+        format!(
+            "v1.{}.{}",
+            URL_SAFE_NO_PAD.encode(bytes),
+            URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+        )
+    }
+
+    /// The TTL is the replay bound (the mrtr spec's SHOULD). It is the one
+    /// check `sign` cannot be coaxed into violating, so it needs a crafted
+    /// token — and the far-future control rules out "the crafted token was
+    /// simply malformed": identical construction, opposite verdict.
+    #[test]
+    fn an_expired_state_is_rejected_and_a_live_one_is_not() {
+        let signer = StateSigner::new();
+        let payload =
+            |exp: u64| json!({ "m": "tools/call", "sub": null, "exp": exp, "d": { "n": 7 } });
+
+        assert_uniform_rejection(
+            signer.verify("tools/call", None, &crafted(&signer, &payload(1))),
+            "expired in 1970",
+        );
+        assert_eq!(
+            signer
+                .verify("tools/call", None, &crafted(&signer, &payload(u64::MAX)))
+                .expect("an unexpired crafted token verifies"),
+            json!({ "n": 7 }),
+            "the control proves the rejection above was the expiry, not the shape"
+        );
+        // A payload with no `exp` at all is treated as expired, not as
+        // "unbounded" — the absent field must not become a forever token.
+        assert_uniform_rejection(
+            signer.verify(
+                "tools/call",
+                None,
+                &crafted(&signer, &json!({ "m": "tools/call", "sub": null, "d": {} })),
+            ),
+            "no exp field",
+        );
+    }
+
+    // ---- pending server→client requests --------------------------------------
+
+    /// Responses that nothing is waiting for are dropped, per JSON-RPC. The
+    /// interesting case is the *second* delivery for one id: the entry is
+    /// removed on the first, so a duplicate (or a replayed) response can't
+    /// resolve a later, unrelated wait that reused the id.
+    #[tokio::test]
+    async fn pending_requests_deliver_once_and_ignore_the_rest() {
+        let pending = Arc::new(PendingRequests::default());
+        let id = RequestId::from("srv-1");
+
+        assert!(
+            !pending.complete(JsonRpcResponse::success(id.clone(), json!({}))),
+            "nothing registered → dropped"
+        );
+
+        let (rx, guard) = pending.register(id.clone());
+        assert!(pending.complete(JsonRpcResponse::success(id.clone(), json!({ "ok": true }))));
+        assert_eq!(rx.await.unwrap().result, Some(json!({ "ok": true })));
+        assert!(
+            !pending.complete(JsonRpcResponse::success(id.clone(), json!({}))),
+            "the entry is consumed by the first delivery"
+        );
+        drop(guard);
+
+        // The guard's job: a handler that goes away (cancelled, timed out)
+        // must not leave its slot behind for a late response to land in.
+        let (_rx, guard) = pending.register(id.clone());
+        drop(guard);
+        assert!(
+            !pending.complete(JsonRpcResponse::success(id, json!({}))),
+            "dropping the guard unregisters the wait"
+        );
+    }
+
+    // ---- inline bidi (the 2025-11-25 path) -----------------------------------
+
+    /// A bidi handle on a fresh outbound connection, plus the channel a fake
+    /// client reads the server's request from.
+    fn bidi_handle(
+        connection: &str,
+    ) -> (
+        ClientHandle,
+        Arc<PendingRequests>,
+        tokio::sync::mpsc::Receiver<turbomcp_core::JsonRpcMessage>,
+        turbomcp_service::outbound::WriterGuard,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let guard = turbomcp_service::outbound::register(connection, tx);
+        let pending = Arc::new(PendingRequests::default());
+        let handle = ClientHandle::bidi(
+            "sess",
+            connection,
+            Arc::clone(&pending),
+            Some(json!({ "elicitation": {}, "sampling": {}, "roots": {} })),
+        );
+        (handle, pending, rx, guard)
+    }
+
+    /// Pull the one server→client request off `rx`.
+    async fn next_request(
+        rx: &mut tokio::sync::mpsc::Receiver<turbomcp_core::JsonRpcMessage>,
+    ) -> JsonRpcRequest {
+        match rx.recv().await.expect("a server→client request") {
+            turbomcp_core::JsonRpcMessage::Request(r) => r,
+            other => panic!("expected a request, got {other:?}"),
+        }
+    }
+
+    /// The client answering with a JSON-RPC *error* must surface as a handler
+    /// error that names the code and message — an operator reading the tool's
+    /// failure needs to know the client refused, and why.
+    #[tokio::test]
+    async fn a_client_error_answer_reaches_the_handler_with_code_and_message() {
+        let (handle, pending, mut rx, _guard) = bidi_handle("bidi-err");
+        let task = tokio::spawn(async move {
+            handle
+                .elicit("k", neutral::ElicitParams::new("?", json!({})))
+                .await
+        });
+
+        let req = next_request(&mut rx).await;
+        pending.complete(JsonRpcResponse::error(
+            req.id,
+            turbomcp_core::JsonRpcError {
+                code: -32601,
+                message: "elicitation unsupported".into(),
+                data: None,
+            },
+        ));
+
+        let err = task.await.unwrap().expect_err("the client refused");
+        let msg = err.to_string();
+        assert!(msg.contains("-32601"), "no code in: {msg}");
+        assert!(
+            msg.contains("elicitation unsupported"),
+            "no reason in: {msg}"
+        );
+    }
+
+    /// A frame with neither `result` nor `error` is malformed but wire-legal
+    /// to *parse* (both fields default to `None`), so the handler must get a
+    /// clean error rather than hanging until the 2-minute timeout.
+    #[tokio::test]
+    async fn an_empty_client_answer_is_an_error_not_a_hang() {
+        let (handle, pending, mut rx, _guard) = bidi_handle("bidi-empty");
+        let task = tokio::spawn(async move {
+            handle
+                .elicit("k", neutral::ElicitParams::new("?", json!({})))
+                .await
+        });
+
+        let req = next_request(&mut rx).await;
+        pending.complete(JsonRpcResponse {
+            jsonrpc: "2.0".into(),
+            id: req.id,
+            result: None,
+            error: None,
+        });
+
+        let err = task.await.unwrap().expect_err("neither result nor error");
+        assert!(matches!(err, McpError::Internal(ref m) if m.contains("empty response")));
+    }
+
+    /// No server→client channel (the GET stream was never opened, or the pipe
+    /// died) is a transport error naming the fix, not a silent stall.
+    #[tokio::test]
+    async fn an_elicit_with_no_server_to_client_channel_fails_fast() {
+        let pending = Arc::new(PendingRequests::default());
+        let handle = ClientHandle::bidi(
+            "",
+            "never-registered",
+            pending,
+            Some(json!({ "elicitation": {} })),
+        );
+        let err = handle
+            .elicit("k", neutral::ElicitParams::new("?", json!({})))
+            .await
+            .expect_err("nothing to write to");
+        assert!(
+            matches!(err, McpError::Transport(ref m) if m.contains("GET stream")),
+            "{err:?}"
+        );
+    }
+
+    /// The handler must not block forever on a client that accepts the request
+    /// and then never answers.
+    #[tokio::test(start_paused = true)]
+    async fn an_unanswered_inline_request_times_out() {
+        let (handle, _pending, mut rx, _guard) = bidi_handle("bidi-timeout");
+        let task = tokio::spawn(async move {
+            handle
+                .elicit("k", neutral::ElicitParams::new("?", json!({})))
+                .await
+        });
+        let _req = next_request(&mut rx).await;
+        // Paused time auto-advances once nothing is runnable, so this is
+        // instant rather than BIDI_TIMEOUT of wall clock.
+        let err = task.await.unwrap().expect_err("the client never answered");
+        assert!(matches!(err, McpError::Timeout(_)), "{err:?}");
+    }
+
+    /// `elicit_all` has no batched form on the inline path — there is no
+    /// abort to batch — so it degrades to one request at a time, in order.
+    #[tokio::test]
+    async fn elicit_all_degrades_to_sequential_requests_on_the_inline_path() {
+        let (handle, pending, mut rx, _guard) = bidi_handle("bidi-all");
+        let task = tokio::spawn(async move {
+            handle
+                .elicit_all(vec![
+                    ("first", neutral::ElicitParams::new("A", json!({}))),
+                    ("second", neutral::ElicitParams::new("B", json!({}))),
+                ])
+                .await
+        });
+
+        let first = next_request(&mut rx).await;
+        assert_eq!(first.params.as_ref().unwrap()["message"], "A");
+        assert!(
+            rx.try_recv().is_err(),
+            "the second request must wait for the first to be answered"
+        );
+        pending.complete(JsonRpcResponse::success(
+            first.id,
+            json!({ "action": "accept", "content": { "n": 1 } }),
+        ));
+
+        let second = next_request(&mut rx).await;
+        assert_eq!(second.params.as_ref().unwrap()["message"], "B");
+        pending.complete(JsonRpcResponse::success(
+            second.id,
+            json!({ "action": "decline" }),
+        ));
+
+        let outcomes = task.await.unwrap().expect("both answered");
+        assert_eq!(outcomes.len(), 2);
+        assert_eq!(outcomes[0].content["n"], 1);
+        assert_eq!(outcomes[1].action, neutral::ElicitAction::Decline);
+    }
+
+    // ---- MRTR batching -------------------------------------------------------
+
+    /// The point of `elicit_all` (PLAN MR-4): every missing input is recorded
+    /// in **one** abort, so the client makes one round trip instead of N.
+    #[tokio::test]
+    async fn elicit_all_records_every_missing_request_in_one_abort() {
+        let handle = ClientHandle::mrtr(
+            "",
+            Some(json!({ "elicitation": {} })),
+            BTreeMap::from([("first".to_owned(), json!({ "action": "accept" }))]),
+            None,
+            false,
+        );
+        let err = handle
+            .elicit_all(vec![
+                ("first", neutral::ElicitParams::new("A", json!({}))),
+                ("second", neutral::ElicitParams::new("B", json!({}))),
+                ("third", neutral::ElicitParams::new("C", json!({}))),
+            ])
+            .await
+            .expect_err("two of three are missing");
+        assert!(matches!(err, McpError::InputRequired));
+
+        let collected = handle.collected();
+        assert_eq!(
+            collected.keys().collect::<Vec<_>>(),
+            ["second", "third"],
+            "an already-answered key must not be asked again: {collected:?}"
+        );
+    }
+
+    /// Once every answer is present the retry resolves inline — no second
+    /// abort, which is what makes re-execution terminate.
+    #[tokio::test]
+    async fn elicit_all_returns_inline_once_every_answer_is_present() {
+        let handle = ClientHandle::mrtr(
+            "",
+            Some(json!({ "elicitation": {} })),
+            BTreeMap::from([
+                (
+                    "a".to_owned(),
+                    json!({ "action": "accept", "content": { "n": 1 } }),
+                ),
+                ("b".to_owned(), json!({ "action": "cancel" })),
+            ]),
+            None,
+            false,
+        );
+        let outcomes = handle
+            .elicit_all(vec![
+                ("a", neutral::ElicitParams::new("A", json!({}))),
+                ("b", neutral::ElicitParams::new("B", json!({}))),
+            ])
+            .await
+            .expect("all cached");
+        assert_eq!(outcomes[0].content["n"], 1);
+        assert_eq!(outcomes[1].action, neutral::ElicitAction::Cancel);
+        assert!(
+            handle.collected().is_empty(),
+            "a fully-answered batch records nothing"
+        );
+    }
+
+    /// URL-mode elicitation resolves from the retry's cached response too —
+    /// the path a real OAuth consent round trip returns on.
+    #[tokio::test]
+    async fn elicit_url_resolves_from_the_retry_response() {
+        let handle = ClientHandle::mrtr(
+            "",
+            Some(json!({ "elicitation": {} })),
+            BTreeMap::from([("k".to_owned(), json!({ "action": "accept" }))]),
+            None,
+            false,
+        );
+        let outcome = handle
+            .elicit_url(
+                "k",
+                neutral::ElicitUrlParams::new("Sign in", "https://auth.example/go"),
+            )
+            .await
+            .expect("the cached answer resolves it");
+        assert!(outcome.accepted());
+    }
+
+    // ---- sampling / roots ----------------------------------------------------
+
+    /// Both are gated on the client's declared capability and both record the
+    /// spec's method name — a typo here is a request no client can answer.
+    #[tokio::test]
+    #[allow(deprecated)] // functional in both versions; see the method docs
+    async fn sampling_and_roots_record_their_spec_methods() {
+        let handle = ClientHandle::mrtr(
+            "",
+            Some(json!({ "sampling": {}, "roots": {} })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+        assert!(matches!(
+            handle.create_message("s", json!({ "messages": [] })).await,
+            Err(McpError::InputRequired)
+        ));
+        assert!(matches!(
+            handle.list_roots("r").await,
+            Err(McpError::InputRequired)
+        ));
+
+        let collected = handle.collected();
+        assert_eq!(collected["s"]["method"], "sampling/createMessage");
+        assert_eq!(collected["s"]["params"], json!({ "messages": [] }));
+        assert_eq!(collected["r"]["method"], "roots/list");
+
+        // Undeclared is refused (SEP-2322 MUST NOT), per capability.
+        let bare = ClientHandle::mrtr(
+            "",
+            Some(json!({ "roots": {} })),
+            BTreeMap::new(),
+            None,
+            false,
+        );
+        assert!(matches!(
+            bare.create_message("s", json!({})).await,
+            Err(McpError::InvalidParams(_))
+        ));
+    }
+
+    // ---- task-mediated delivery (SEP-2663) -----------------------------------
+
+    /// A `tools/call` offered for augmentation whose extension never attached
+    /// a broker (it ran synchronously) has nowhere to put an input request.
+    /// The handler must learn that, not wait on a slot nobody will fill.
+    #[tokio::test]
+    async fn a_task_mediated_handle_without_a_broker_reports_it() {
+        let handle = ClientHandle::task_mediated(
+            Some(json!({ "elicitation": {} })),
+            crate::extension::TaskInputSlot::default(),
+        );
+        let err = handle
+            .elicit("k", neutral::ElicitParams::new("?", json!({})))
+            .await
+            .expect_err("no broker was attached");
+        assert!(
+            matches!(err, McpError::Internal(ref m) if m.contains("input broker")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_task_mediated_handle_delegates_to_its_broker() {
+        struct Broker;
+        impl crate::extension::TaskInputBroker for Broker {
+            fn obtain(
+                &self,
+                key: &str,
+                request: Value,
+            ) -> futures::future::BoxFuture<'static, McpResult<Value>> {
+                let key = key.to_owned();
+                Box::pin(async move {
+                    assert_eq!(request["method"], "elicitation/create");
+                    Ok(json!({ "action": "accept", "content": { "via": key } }))
+                })
+            }
+        }
+        let slot = crate::extension::TaskInputSlot::default();
+        slot.set(Arc::new(Broker) as Arc<dyn crate::extension::TaskInputBroker>)
+            .ok()
+            .expect("empty slot");
+
+        let handle = ClientHandle::task_mediated(Some(json!({ "elicitation": {} })), slot);
+        let outcome = handle
+            .elicit("k", neutral::ElicitParams::new("?", json!({})))
+            .await
+            .expect("the broker answered");
+        assert_eq!(outcome.content["via"], "k");
+
+        // `elicit_all` resolves through the broker one at a time as well.
+        let outcomes = handle
+            .elicit_all(vec![
+                ("a", neutral::ElicitParams::new("A", json!({}))),
+                ("b", neutral::ElicitParams::new("B", json!({}))),
+            ])
+            .await
+            .expect("both answered");
+        assert_eq!(outcomes[0].content["via"], "a");
+        assert_eq!(outcomes[1].content["via"], "b");
+    }
+
+    /// A handle built for a path with no client channel at all (e.g. stdio
+    /// `tools/list`) reports the reason it was constructed with, and reports
+    /// it the same way for every interaction.
+    #[tokio::test]
+    async fn an_unavailable_handle_reports_its_reason() {
+        let handle = ClientHandle::unavailable("no client channel on this path");
+        for err in [
+            handle
+                .elicit("k", neutral::ElicitParams::new("?", json!({})))
+                .await
+                .expect_err("unavailable"),
+            handle
+                .elicit_all(vec![("k", neutral::ElicitParams::new("?", json!({})))])
+                .await
+                .expect_err("unavailable"),
+        ] {
+            assert!(
+                matches!(err, McpError::Internal(ref m) if m == "no client channel on this path"),
+                "{err:?}"
+            );
+        }
+    }
+
+    // ---- resume state --------------------------------------------------------
+
+    /// `store_state`/`load_state` are the typed face of `requestState`: the
+    /// handler stashes a step marker before aborting and reads it back on the
+    /// re-execution.
+    #[test]
+    fn stored_state_round_trips_and_a_shape_mismatch_is_a_param_error() {
+        #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+        struct Resume {
+            step: u8,
+            order: String,
+        }
+
+        let handle = ClientHandle::mrtr("", None, BTreeMap::new(), None, false);
+        assert!(
+            handle.load_state::<Resume>().unwrap().is_none(),
+            "a first execution has no inbound state"
+        );
+        handle
+            .store_state(&Resume {
+                step: 2,
+                order: "o-1".into(),
+            })
+            .unwrap();
+        let out = handle.state_out().expect("stored");
+
+        // The retry: the dispatcher hands the verified blob back.
+        let retry = ClientHandle::mrtr("", None, BTreeMap::new(), Some(out), false);
+        assert_eq!(
+            retry.load_state::<Resume>().unwrap(),
+            Some(Resume {
+                step: 2,
+                order: "o-1".into()
+            })
+        );
+        // Deploying a handler whose state type changed shape must be a clean
+        // param error, not a panic in the middle of a retry.
+        assert!(matches!(
+            retry.load_state::<Vec<u8>>(),
+            Err(McpError::InvalidParams(_))
+        ));
+        // An explicit JSON null is "no state", the same as absent.
+        let null_state = ClientHandle::mrtr("", None, BTreeMap::new(), Some(Value::Null), false);
+        assert!(null_state.load_state::<Resume>().unwrap().is_none());
+    }
+
+    // ---- elicit response parsing ---------------------------------------------
+
+    /// A client that returns content alongside a decline/cancel must not have
+    /// it surface: the handler branches on `accepted()`, and content that
+    /// outlived a refusal is exactly the input a handler would wrongly trust.
+    #[test]
+    fn a_refused_elicitation_drops_any_content() {
+        for action in ["decline", "cancel"] {
+            let outcome = parse_elicit_outcome(
+                &json!({ "action": action, "content": { "secret": "leaked" } }),
+            )
+            .expect("a well-formed refusal");
+            assert!(!outcome.accepted());
+            assert!(
+                outcome.content.is_empty(),
+                "{action} must carry no content: {:?}",
+                outcome.content
+            );
+        }
+    }
+
+    #[test]
+    fn a_malformed_elicit_response_is_a_param_error() {
+        for raw in [
+            json!({ "action": "maybe" }),
+            json!({ "action": 7 }),
+            json!({ "content": {} }),
+            json!("accept"),
+        ] {
+            assert!(
+                matches!(parse_elicit_outcome(&raw), Err(McpError::InvalidParams(_))),
+                "accepted a malformed response: {raw}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn non_strict_keys_only_warn_on_conflict() {
         let handle = ClientHandle::mrtr(

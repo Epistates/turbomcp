@@ -8,9 +8,9 @@ use tower::{Service, ServiceExt};
 use turbomcp_core::{Implementation, JsonRpcMessage, JsonRpcRequest, McpError, McpResult};
 use turbomcp_protocol::neutral;
 use turbomcp_server::{
-    CallToolContext, GetPromptContext, ListPromptsContext, ListResourcesContext, ListToolsContext,
-    McpServerCore, MethodRouter, ReadResourceContext, VersionDispatcher, WithPrompts,
-    WithResources, WithTools,
+    CallToolContext, GetPromptContext, LegacySessionAdapter, ListPromptsContext,
+    ListResourcesContext, ListToolsContext, McpServerCore, MethodRouter, ReadResourceContext,
+    VersionDispatcher, WithPrompts, WithResources, WithTools,
 };
 
 /// Every MRTR-capable handler elicits a `confirm` key before answering; the
@@ -76,6 +76,16 @@ impl WithTools for Asker {
                     outcomes.len()
                 )))
             }
+            // A handler that returns the abort sentinel by hand, having asked
+            // for nothing — the misuse `finish_mrtr` has to catch.
+            "leak" => Err(McpError::InputRequired),
+            // Stores more resume state than a `requestState` may carry, so the
+            // failure lands at signing time, after the handler is done.
+            "hoard" => {
+                ctx.client.store_state(&"x".repeat(64 * 1024))?;
+                ctx.client.elicit("confirm", confirm_params()).await?;
+                Ok(neutral::CallToolResult::text("unreachable"))
+            }
             other => Err(McpError::tool_not_found(other)),
         }
     }
@@ -140,11 +150,37 @@ fn meta() -> Value {
     })
 }
 
+/// A dispatcher past the `2025-11-25` handshake gate. Legacy requests carry a
+/// session id, which only the adapter mints — the dispatcher rejects a legacy
+/// capability request without one before it ever reaches dispatch.
+async fn legacy_dispatcher() -> LegacySessionAdapter<VersionDispatcher<Asker>> {
+    let mut svc = LegacySessionAdapter::new(dispatcher());
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            0,
+            "initialize",
+            Some(json!({
+                "protocolVersion": "2025-11-25",
+                "capabilities": { "elicitation": {} },
+                "clientInfo": { "name": "legacy", "version": "1" },
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(out["protocolVersion"], "2025-11-25", "{out}");
+    svc
+}
+
 fn accept() -> Value {
     json!({ "action": "accept", "content": { "ok": true } })
 }
 
-async fn call(svc: &mut VersionDispatcher<Asker>, req: JsonRpcRequest) -> Value {
+async fn call<S>(svc: &mut S, req: JsonRpcRequest) -> Value
+where
+    S: Service<JsonRpcMessage, Response = Option<JsonRpcMessage>>,
+    S::Error: std::fmt::Debug,
+{
     let out = svc
         .ready()
         .await
@@ -342,6 +378,104 @@ async fn undeclared_elicitation_capability_is_an_error_not_input_required() {
     assert!(
         out.get("resultType").is_none() || out["resultType"] != "input_required",
         "must not answer input_required to a non-elicitation client: {out}"
+    );
+}
+
+/// The spec requires an `InputRequiredResult` to carry at least one of
+/// `inputRequests` / `requestState`. A handler that returns the sentinel
+/// without asking for anything would otherwise produce a turn the client can
+/// only answer by retrying identically — an infinite loop between a
+/// well-behaved client and a buggy server. It is reported as a server error
+/// instead.
+#[tokio::test]
+async fn a_bare_input_required_sentinel_is_a_server_error() {
+    let mut svc = dispatcher();
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "leak", "arguments": {}, "_meta": meta() })),
+        ),
+    )
+    .await;
+    assert_eq!(out["error"]["code"], -32603, "{out}");
+    assert!(
+        out["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no input requests"),
+        "{out}"
+    );
+}
+
+/// Resume state is capped (PLAN MR-5) and the cap is enforced when the turn is
+/// assembled — after the handler has already returned. That has to surface as
+/// a clean error naming the limit, not a panic or a turn with the state
+/// silently dropped (which would loop: the retry would re-store and re-fail).
+#[tokio::test]
+async fn an_oversized_resume_state_fails_the_turn_cleanly() {
+    let mut svc = dispatcher();
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "hoard", "arguments": {}, "_meta": meta() })),
+        ),
+    )
+    .await;
+    assert_eq!(out["error"]["code"], -32602, "{out}");
+    assert!(
+        out["error"]["message"].as_str().unwrap().contains("limit"),
+        "{out}"
+    );
+}
+
+/// MRTR is draft-only. On `2025-11-25` the same sentinel must come back as an
+/// error, because a client on that version has no `input_required` resultType
+/// — it would read the frame as a *successful* tool call and act on empty
+/// content.
+#[tokio::test]
+async fn the_legacy_wire_never_answers_input_required() {
+    let mut svc = legacy_dispatcher().await;
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "leak", "arguments": {} })),
+        ),
+    )
+    .await;
+    assert!(
+        out.get("resultType").is_none(),
+        "the legacy wire has no MRTR turn: {out}"
+    );
+    assert_eq!(out["error"]["code"], -32603, "{out}");
+}
+
+/// The legacy path delivers client interaction as *inline* bidirectional
+/// requests, which need a server→client channel. A client that initialized but
+/// never opened one (no `GET` stream) must get a transport error naming the
+/// fix — the alternative is the handler blocking for the full two-minute bidi
+/// timeout on a channel that will never exist.
+#[tokio::test]
+async fn a_legacy_elicit_with_no_server_to_client_channel_fails_fast() {
+    let mut svc = legacy_dispatcher().await;
+    let out = call(
+        &mut svc,
+        JsonRpcRequest::new(
+            1,
+            "tools/call",
+            Some(json!({ "name": "guarded", "arguments": {} })),
+        ),
+    )
+    .await;
+    let message = out["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("server→client channel"),
+        "the message should name what is missing: {out}"
     );
 }
 

@@ -36,6 +36,14 @@ struct MockState {
     omit_pkce: bool,
     /// Lie about the issuer in the AS metadata document (impersonation).
     issuer_override: Option<String>,
+    /// Redirect without `iss`, though the metadata advertises it (RFC 9207).
+    omit_iss: bool,
+    /// Redirect with `error`/`error_description` instead of a code (the user
+    /// refused consent, or the AS rejected the request).
+    deny: Option<(String, Option<String>)>,
+    /// Answer a refresh with no new `refresh_token` (an AS that doesn't
+    /// rotate).
+    no_refresh_rotation: bool,
 }
 
 type Shared = Arc<Mutex<MockState>>;
@@ -102,11 +110,26 @@ async fn authorize(
     let code = format!("code-{}", s.codes.len() + 1);
     s.codes.insert(code.clone(), challenge);
     let iss = s.iss_override.clone().unwrap_or(base);
+    let iss_param = if s.omit_iss {
+        String::new()
+    } else {
+        format!("&iss={}", urlencode(&iss))
+    };
+    let deny = s.deny.clone();
     s.authorize_queries.push(params);
+    if let Some((error, description)) = deny {
+        // The AS refused: no code, an `error`, optionally a description.
+        let described = description
+            .map(|d| format!("&error_description={}", urlencode(&d)))
+            .unwrap_or_default();
+        return Redirect::to(&format!(
+            "{redirect_uri}?error={}{described}&state={req_state}{iss_param}",
+            urlencode(&error)
+        ));
+    }
     // The user "consents" instantly: redirect with code + state + iss.
     Redirect::to(&format!(
-        "{redirect_uri}?code={code}&state={req_state}&iss={}",
-        urlencode(&iss)
+        "{redirect_uri}?code={code}&state={req_state}{iss_param}"
     ))
 }
 
@@ -125,13 +148,15 @@ async fn token(
             )
                 .into_response();
         }
-        return axum::Json(json!({
+        let mut body = json!({
             "access_token": "access-2",
             "token_type": "bearer",
             "expires_in": 3600,
-            "refresh_token": "refresh-2",
-        }))
-        .into_response();
+        });
+        if !s.no_refresh_rotation {
+            body["refresh_token"] = json!("refresh-2");
+        }
+        return axum::Json(body).into_response();
     }
     // authorization_code: verify PKCE — S256(verifier) must equal the
     // challenge recorded at /authorize.
@@ -376,5 +401,167 @@ async fn preregistered_credentials_bound_to_a_different_issuer_error_out() {
             turbomcp_auth::client::OAuthClientError::IssuerChanged { .. }
         ),
         "got {err}"
+    );
+}
+
+/// RFC 9207's other half: an AS that *advertises*
+/// `authorization_response_iss_parameter_supported` and then answers without
+/// `iss` must be refused. Accepting it would let an attacker strip the one
+/// parameter that identifies which authorization server actually answered —
+/// the mix-up defence is only worth anything if a missing `iss` fails closed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_advertised_iss_that_goes_missing_is_refused() {
+    let state = Shared::default();
+    state.lock().unwrap().omit_iss = true;
+    let base = spawn_mock(Arc::clone(&state)).await;
+    let engine = engine(&base);
+
+    let discovered = engine.discover(None).await.unwrap();
+    let credentials = engine.credentials(&discovered).await.unwrap();
+    let pending = engine.begin(&discovered, &credentials, &[]).unwrap();
+    let callback = browser(&pending.authorize_url).await;
+    assert!(callback.iss.is_none(), "the mock omitted it");
+
+    let err = engine
+        .complete(&discovered, &credentials, pending, &callback)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("omitted"),
+        "the message should say what is missing: {err}"
+    );
+    // Nothing was redeemed (the check runs before the token endpoint).
+    assert!(state.lock().unwrap().token_forms.is_empty());
+}
+
+/// The user refusing consent is an ordinary outcome, not a malformed one: the
+/// `error` and its description must reach the caller so it can tell "you
+/// declined" from "something broke".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_denied_authorization_surfaces_its_error_and_description() {
+    let state = Shared::default();
+    state.lock().unwrap().deny = Some((
+        "access_denied".into(),
+        Some("the user declined consent".into()),
+    ));
+    let base = spawn_mock(Arc::clone(&state)).await;
+    let engine = engine(&base);
+
+    let discovered = engine.discover(None).await.unwrap();
+    let credentials = engine.credentials(&discovered).await.unwrap();
+    let pending = engine.begin(&discovered, &credentials, &[]).unwrap();
+    let callback = browser(&pending.authorize_url).await;
+
+    let err = engine
+        .complete(&discovered, &credentials, pending, &callback)
+        .await
+        .unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("access_denied"), "{msg}");
+    assert!(msg.contains("the user declined consent"), "{msg}");
+    assert!(state.lock().unwrap().token_forms.is_empty());
+}
+
+/// A redirect that passes every check and still carries no `code` — an AS bug,
+/// or a truncated URL pasted by hand. It must be a named error rather than an
+/// exchange attempt with an empty code.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_callback_with_neither_code_nor_error_is_rejected() {
+    let state = Shared::default();
+    let base = spawn_mock(Arc::clone(&state)).await;
+    let engine = engine(&base);
+
+    let discovered = engine.discover(None).await.unwrap();
+    let credentials = engine.credentials(&discovered).await.unwrap();
+    let pending = engine.begin(&discovered, &credentials, &[]).unwrap();
+    let callback = CallbackParams::from_query(&format!(
+        "?state={}&iss={}",
+        urlencode(&pending.state),
+        urlencode(&base)
+    ));
+
+    let err = engine
+        .complete(&discovered, &credentials, pending, &callback)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("no code"), "got {err}");
+    assert!(state.lock().unwrap().token_forms.is_empty());
+}
+
+/// Refresh-token rotation is a SHOULD, not a MUST. An authorization server
+/// that answers a refresh without a new one has kept the old one live — and
+/// dropping it here would make the *next* refresh fail and force the user back
+/// through interactive consent for no reason.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_non_rotating_refresh_keeps_the_existing_token() {
+    let state = Shared::default();
+    state.lock().unwrap().no_refresh_rotation = true;
+    let base = spawn_mock(Arc::clone(&state)).await;
+    let engine = engine(&base);
+
+    let discovered = engine.discover(None).await.unwrap();
+    let credentials = engine.credentials(&discovered).await.unwrap();
+    let pending = engine.begin(&discovered, &credentials, &[]).unwrap();
+    let callback = browser(&pending.authorize_url).await;
+    let tokens = engine
+        .complete(&discovered, &credentials, pending, &callback)
+        .await
+        .unwrap();
+
+    let rotated = engine
+        .refresh(&discovered, &credentials, &tokens)
+        .await
+        .unwrap();
+    assert_eq!(rotated.access_token, "access-2");
+    assert_eq!(
+        rotated.refresh_token.as_deref(),
+        Some("refresh-1"),
+        "the previous refresh token must survive a non-rotating response"
+    );
+    // And it is what gets persisted, so a later refresh still works.
+    assert_eq!(
+        engine
+            .stored_tokens(&discovered)
+            .await
+            .unwrap()
+            .refresh_token
+            .as_deref(),
+        Some("refresh-1")
+    );
+}
+
+/// Refreshing a token set that never had a refresh token is a caller mistake
+/// with an obvious remedy, so it must say so rather than fail somewhere inside
+/// the token endpoint.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn refreshing_without_a_refresh_token_says_what_to_do() {
+    let state = Shared::default();
+    let base = spawn_mock(Arc::clone(&state)).await;
+    let engine = engine(&base);
+
+    let discovered = engine.discover(None).await.unwrap();
+    let credentials = engine.credentials(&discovered).await.unwrap();
+    let pending = engine.begin(&discovered, &credentials, &[]).unwrap();
+    let callback = browser(&pending.authorize_url).await;
+    let mut tokens = engine
+        .complete(&discovered, &credentials, pending, &callback)
+        .await
+        .unwrap();
+    // An AS that issues no refresh token at all (a public client on a
+    // short-lived grant) leaves the set in exactly this shape.
+    tokens.refresh_token = None;
+    state.lock().unwrap().token_forms.clear();
+
+    let err = engine
+        .refresh(&discovered, &credentials, &tokens)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("re-authorization required"),
+        "got {err}"
+    );
+    assert!(
+        state.lock().unwrap().token_forms.is_empty(),
+        "nothing should reach the token endpoint"
     );
 }

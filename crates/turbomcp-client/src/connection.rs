@@ -270,7 +270,19 @@ async fn actor<T>(
 
     // Connection is down: drop every waiting oneshot sender. A caller blocked in
     // `request` sees its receiver close and returns `ClientError::Closed`.
+    // This happens *before* the close below, which can block on I/O — a caller
+    // must learn the connection died promptly, not after a shutdown round trip.
     pending.lock().expect("pending mutex poisoned").clear();
+
+    // Shut the transport down deliberately rather than by drop. Each transport
+    // owes the peer something on the way out that dropping a socket does not
+    // deliver: HTTP sends the spec's `DELETE` to terminate its session (absent
+    // it, a long-lived server accumulates one session per client that ever
+    // connected), and WebSocket sends its Close frame. Best-effort — the
+    // connection is already going away, so a failure here has no one to tell.
+    if let Err(e) = transport.close().await {
+        tracing::debug!(error = %e, "client transport close failed");
+    }
 }
 
 /// Route one inbound frame. Returns `Some(reply)` for an *inline* reply the
