@@ -11,7 +11,7 @@ use turbomcp_core::{Implementation, JsonRpcMessage, McpResult};
 use turbomcp_protocol::neutral::{self, CachePolicy};
 use turbomcp_server::{
     CachePolicies, CallToolContext, ListToolsContext, McpServerCore, MethodRouter,
-    ReadResourceContext, VersionDispatcher, WithResources, WithTools,
+    ReadResourceContext, VersionDispatcher, WithPrompts, WithResources, WithTools,
 };
 use turbomcp_service::{ServeConfig, Transport, serve_with};
 
@@ -91,12 +91,35 @@ impl WithResources for Catalog {
     }
 }
 
+impl WithPrompts for Catalog {
+    async fn list_prompts(
+        &self,
+        _ctx: &turbomcp_server::ListPromptsContext,
+        _params: neutral::ListParams,
+    ) -> McpResult<neutral::ListPromptsResult> {
+        Ok(neutral::ListPromptsResult::new(vec![]))
+    }
+
+    async fn get_prompt(
+        &self,
+        _ctx: &turbomcp_server::GetPromptContext,
+        _params: neutral::GetPromptParams,
+    ) -> McpResult<neutral::GetPromptResult> {
+        Ok(neutral::GetPromptResult::new(vec![
+            neutral::PromptMessage::user_text("hi"),
+        ]))
+    }
+}
+
 /// Run `frames` through a serve loop over a dispatcher built with `cache` and
 /// collect everything the server writes.
 async fn run(server: Catalog, cache: Option<CachePolicies>, frames: Vec<Value>) -> Vec<Value> {
     let (in_tx, in_rx) = mpsc::channel(8);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel();
-    let router = MethodRouter::new().with_tools().with_resources();
+    let router = MethodRouter::new()
+        .with_tools()
+        .with_resources()
+        .with_prompts();
     let mut dispatcher = VersionDispatcher::new(server, router);
     if let Some(cache) = cache {
         dispatcher = dispatcher.with_cache_policy(cache);
@@ -255,4 +278,46 @@ async fn per_capability_policies_apply_independently() {
     let resources = result_of(&frames, 2);
     assert_eq!(resources["ttlMs"], json!(0));
     assert_eq!(resources["cacheScope"], json!("private"));
+}
+
+/// Every setter must write its own field.
+///
+/// `CachePolicies` is five near-identical builder methods over five near-
+/// identical fields — the shape that produces a copy-paste bug in which
+/// `prompts_list` quietly sets `resources_list`. Giving each capability a
+/// distinct TTL makes any such crossing show up as a specific wrong number
+/// rather than as "caching still basically works".
+#[tokio::test]
+async fn each_capability_setter_targets_its_own_method() {
+    let secs = |n| CachePolicy::public(Duration::from_secs(n));
+    let cache = CachePolicies::default()
+        .tools_list(secs(1))
+        .resources_list(secs(2))
+        .resource_templates_list(secs(3))
+        .resources_read(secs(4))
+        .prompts_list(secs(5));
+    let frames = run(
+        Catalog {
+            override_cache: false,
+        },
+        Some(cache),
+        vec![
+            draft_request(1, "tools/list", json!({})),
+            draft_request(2, "resources/list", json!({})),
+            draft_request(3, "resources/templates/list", json!({})),
+            draft_request(4, "resources/read", json!({ "uri": "mem://a" })),
+            draft_request(5, "prompts/list", json!({})),
+        ],
+    )
+    .await;
+
+    for (id, expected_secs) in [(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)] {
+        let result = result_of(&frames, id);
+        assert_eq!(
+            result["ttlMs"],
+            json!(expected_secs * 1000),
+            "id {id} got another capability's policy: {result}"
+        );
+        assert_eq!(result["cacheScope"], json!("public"), "id {id}");
+    }
 }

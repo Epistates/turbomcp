@@ -277,6 +277,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`HttpJwks` now rate-limits its rotation refresh.** Its documentation
+  promised a refresh "per the cooldown", but no cooldown existed: every `kid`
+  the cache didn't hold forced an immediate fetch from the authorization
+  server's `jwks_uri`. A `kid` is attacker-chosen — it is read out of the token
+  header *before* any signature is verified — so an unauthenticated caller
+  could turn one request into one upstream fetch and use a resource server as
+  an amplifier against its own authorization server. Misses inside the cooldown
+  (default 30s) are now served from cache at no upstream cost; rotation still
+  converges once it lapses. Tune with
+  `HttpJwks::refresh_cooldown(Duration)` — `Duration::ZERO` restores refresh-on-
+  every-miss, which is only reasonable for a local `jwks_uri`.
 - **Two `#[server]` impls in one module no longer collide.** The generated
   per-tool argument structs were named `__Tmcp_{method}_Args` — module-scoped —
   so two servers each having, say, a `search` tool failed to compile with

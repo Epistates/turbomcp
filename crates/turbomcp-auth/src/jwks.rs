@@ -86,12 +86,13 @@ mod http {
     use crate::error::AuthError;
 
     /// Fetches a JWKS document from an authorization server's `jwks_uri` and
-    /// caches it for `ttl`. A `kid` miss forces one refresh (key rotation) per
-    /// the cooldown before giving up.
+    /// caches it for `ttl`. A `kid` miss forces one refresh (key rotation),
+    /// rate-limited by a cooldown, before giving up.
     pub struct HttpJwks {
         jwks_uri: String,
         client: reqwest::Client,
         ttl: Duration,
+        refresh_cooldown: Duration,
         cache: RwLock<Option<Cached>>,
     }
 
@@ -101,6 +102,11 @@ mod http {
     }
 
     impl HttpJwks {
+        /// The default floor between `kid`-miss refreshes. Short enough that a
+        /// rotation is picked up promptly, long enough that a flood of unknown
+        /// `kid`s can't be turned into a flood of upstream fetches.
+        pub const DEFAULT_REFRESH_COOLDOWN: Duration = Duration::from_secs(30);
+
         /// A source backed by `jwks_uri`, caching for `ttl` (e.g. 1 hour).
         #[must_use]
         pub fn new(jwks_uri: impl Into<String>, ttl: Duration) -> Self {
@@ -108,15 +114,29 @@ mod http {
                 jwks_uri: jwks_uri.into(),
                 client: reqwest::Client::new(),
                 ttl,
+                refresh_cooldown: Self::DEFAULT_REFRESH_COOLDOWN,
                 cache: RwLock::new(None),
             }
         }
 
-        fn cached_fresh(&self) -> Option<JwkSet> {
+        /// Override how often a `kid` miss may force a refresh.
+        ///
+        /// The trade-off is rotation latency against upstream load: a token
+        /// signed with a key newer than the cache is rejected until a refresh
+        /// is allowed. `Duration::ZERO` refreshes on every miss — only sane
+        /// when the `jwks_uri` is local or the caller is already trusted.
+        #[must_use]
+        pub fn refresh_cooldown(mut self, cooldown: Duration) -> Self {
+            self.refresh_cooldown = cooldown;
+            self
+        }
+
+        /// The cached set if it is younger than `max_age`.
+        fn cached_within(&self, max_age: Duration) -> Option<JwkSet> {
             let guard = self.cache.read().expect("jwks cache poisoned");
             guard
                 .as_ref()
-                .filter(|c| c.fetched.elapsed() < self.ttl)
+                .filter(|c| c.fetched.elapsed() < max_age)
                 .map(|c| c.set.clone())
         }
 
@@ -138,7 +158,19 @@ mod http {
         }
 
         async fn key_set(&self, force: bool) -> Result<JwkSet, AuthError> {
-            if !force && let Some(set) = self.cached_fresh() {
+            // A `kid` is attacker-chosen — it is read from the token header
+            // before any signature is verified — so an unconditional refresh on
+            // every miss lets an unauthenticated caller drive one upstream
+            // fetch per request. The cooldown bounds that: within it, the
+            // forced path is served the cached set and simply fails to find the
+            // key, which is the same answer at no cost to the authorization
+            // server.
+            let max_age = if force {
+                self.refresh_cooldown
+            } else {
+                self.ttl
+            };
+            if let Some(set) = self.cached_within(max_age) {
                 return Ok(set);
             }
             self.fetch().await

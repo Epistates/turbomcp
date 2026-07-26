@@ -421,3 +421,136 @@ async fn resource_not_found_is_invalid_params_on_the_draft() {
     .await;
     assert_eq!(out["error"]["code"], -32602, "{out}");
 }
+
+/// The `2025-11-25`-only methods must not answer on the draft wire.
+///
+/// `resources/subscribe`, `resources/unsubscribe`, `logging/setLevel`, and the
+/// four core `tasks/*` methods are session-scoped RPCs the draft deliberately
+/// does not have — it replaced subscriptions with `subscriptions/listen`,
+/// logging opt-in with a per-request `_meta` key, and core Tasks with an
+/// extension. Each therefore routes on version *before* it routes on
+/// capability, and the draft arm must be a plain `-32601`: answering one would
+/// tell a draft client the server speaks a protocol it does not.
+#[tokio::test]
+async fn legacy_only_methods_are_method_not_found_on_the_draft() {
+    for method in [
+        "resources/subscribe",
+        "resources/unsubscribe",
+        "logging/setLevel",
+        "tasks/list",
+        "tasks/get",
+        "tasks/cancel",
+        "tasks/result",
+    ] {
+        let mut svc = kitchen();
+        let out = call(
+            &mut svc,
+            JsonRpcRequest::new(
+                1,
+                method,
+                Some(json!({ "uri": "mem://a", "level": "info", "_meta": draft_meta() })),
+            ),
+        )
+        .await;
+        assert_eq!(
+            out["error"]["code"], -32601,
+            "{method} must be method-not-found on the draft: {out}"
+        );
+        assert!(
+            out["result"].is_null(),
+            "{method} answered a result on the draft: {out}"
+        );
+    }
+}
+
+/// The same methods reach `-32004` — not `-32601` — for a version this build
+/// does not serve at all. The distinction matters to a client: "I don't have
+/// that method" is terminal, while "I don't speak that version" is something
+/// it can act on by re-issuing, which is why the RC requires the supported
+/// list to travel with the code.
+#[tokio::test]
+async fn legacy_only_methods_report_an_unsupported_version_as_32004() {
+    for method in [
+        "resources/subscribe",
+        "resources/unsubscribe",
+        "logging/setLevel",
+        "tasks/get",
+    ] {
+        let mut svc = kitchen();
+        let out = call(
+            &mut svc,
+            JsonRpcRequest::new(
+                1,
+                method,
+                Some(json!({
+                    "uri": "mem://a",
+                    "level": "info",
+                    "_meta": { "io.modelcontextprotocol/protocolVersion": "1999-01-01" }
+                })),
+            ),
+        )
+        .await;
+        assert_eq!(out["error"]["code"], -32004, "{method}: {out}");
+        assert_eq!(out["error"]["data"]["requested"], "1999-01-01", "{method}");
+    }
+}
+
+/// An unsolicited client→server response is dropped, not answered.
+///
+/// Responses only ever arrive as replies to a server-initiated inline bidi
+/// request (legacy elicitation/sampling/roots). One that matches nothing
+/// pending is either a confused peer or a stale reply after a timeout; either
+/// way, replying to a response would put a message on the wire that JSON-RPC
+/// has no room for.
+#[tokio::test]
+async fn an_unsolicited_response_is_ignored() {
+    let mut svc = kitchen();
+    let reply = svc
+        .ready()
+        .await
+        .unwrap()
+        .call(JsonRpcMessage::Response(
+            turbomcp_core::JsonRpcResponse::success(99, json!({ "action": "accept" })),
+        ))
+        .await
+        .unwrap();
+    assert!(reply.is_none(), "got {reply:?}");
+}
+
+/// `notifications/cancelled` is fire-and-forget: every malformed shape is
+/// swallowed silently. Per spec a notification never draws a reply, so the
+/// only failure this can have is a panic or a stray frame — which is exactly
+/// what an unwrap on missing params or an unparseable id would produce.
+#[tokio::test]
+async fn malformed_cancellations_are_swallowed() {
+    let cases = [
+        // No params at all — no connection id to key the cancellation on.
+        None,
+        // A connection but no `requestId`.
+        Some(json!({ "_meta": { "io.modelcontextprotocol/connectionId": "c1" } })),
+        // `requestId` of the wrong type.
+        Some(json!({
+            "requestId": { "not": "an id" },
+            "_meta": { "io.modelcontextprotocol/connectionId": "c1" }
+        })),
+        // Well-formed, but names a request that was never in flight.
+        Some(json!({
+            "requestId": 4242,
+            "reason": "user pressed stop",
+            "_meta": { "io.modelcontextprotocol/connectionId": "c1" }
+        })),
+    ];
+    for (i, params) in cases.into_iter().enumerate() {
+        let mut svc = kitchen();
+        let reply = svc
+            .ready()
+            .await
+            .unwrap()
+            .call(JsonRpcMessage::Notification(
+                turbomcp_core::JsonRpcNotification::new("notifications/cancelled", params),
+            ))
+            .await
+            .unwrap();
+        assert!(reply.is_none(), "case {i} drew a reply: {reply:?}");
+    }
+}
