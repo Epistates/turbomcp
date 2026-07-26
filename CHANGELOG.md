@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed — breaking (since `4.0.0-alpha.1`)
 
+- **`2025-06-18` is now served, so `ProtocolVersion::SUPPORTED` has three
+  entries** (`["2025-06-18", "2025-11-25", "2026-07-28"]`, chronological). A
+  server that doesn't pin `#[server(protocols(…))]` accepts all three, and both
+  `server/discover`'s `supportedVersions` and an unsupported-version error's
+  `data.supported` list them — anything asserting on those two payloads needs
+  updating. Pin explicitly to keep the old set:
+  `#[server(protocols("2025-11-25", "2026-07-28"))]`.
+
 - **JSON-RPC error codes renumbered to the `2026-07-28` RC allocation.** The
   draft reallocated its spec-assigned codes, so the numbers `4.0.0-alpha.1`
   emitted have moved. Anything matching on these values must be updated:
@@ -42,6 +50,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`2025-06-18` support** — the revision v3 served and v4 had dropped. A
+  client on it was previously answered `2025-11-25`, and the lifecycle spec
+  tells a client that receives a version it can't speak to disconnect; the
+  handshake now echoes `2025-06-18` and the session is dispatched in that
+  revision's wire shapes. Its type set is generated from the schema like the
+  other two (`crates/turbomcp-protocol/src/v2025_06_18/`).
+
+  It is `2025-11-25` minus a closed list: Tasks (`tasks/*`, `Tool.execution`,
+  the `tasks` server capability), `icons` on tools/resources/templates/prompts/
+  resource links, URL-mode elicitation, and `Implementation.description`/
+  `websiteUrl`. Those are dropped per-session on the way out and `tasks/*`
+  answers `-32601`, so a server written once serves all three revisions with no
+  per-version code — handlers stay on the neutral types as before. Everything
+  else, including the whole shared method surface, works unchanged.
+
+  `#[server(protocols("2025-06-18"))]` pins a server to it. New on
+  `ProtocolVersion`: `STATEFUL`, `is_stateful()`, `has_core_tasks()`.
 - **A panicking handler now answers its request.** A `#[tool]` (or any
   handler) that panics previously produced *no response at all*: on stdio and
   WebSocket the task died silently and the peer waited out its own timeout;
@@ -277,6 +302,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The client now adopts the version `initialize` negotiated.** It sent
+  `2025-11-25` and then assumed that was the answer, ignoring the
+  `protocolVersion` the server actually returned. Against a server that serves
+  something else — an older one answering `2025-06-18` — it would keep sending
+  shapes that server has never seen. It now reads the answer and uses it, or
+  fails the connection with `ClientError::Protocol` when the answer is a
+  version it cannot speak, which is what the lifecycle spec calls for.
 - **The client now closes its transport on shutdown.** When the last
   `Connection` handle dropped, the actor exited and the transport was simply
   dropped — `Transport::close` was never called, despite the actor's own

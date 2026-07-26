@@ -52,7 +52,7 @@ mod listen;
 mod params;
 
 use augment::try_augment_call;
-use capability::{DraftWire, LegacyWire, dispatch_capability};
+use capability::{DraftWire, Legacy0618Wire, LegacyWire, dispatch_capability};
 use handshake::{discover_response, handle_initialize};
 use legacy_tasks::{
     handle_tasks_method, has_task_field, legacy_list_tools_with_task_support, task_augmented_call,
@@ -646,7 +646,7 @@ async fn handle_request<S: McpServerCore>(
                             .await,
                     )
                 }
-                VersionRoute::Legacy => {
+                VersionRoute::Legacy(revision) => {
                     let mut ctx = match legacy_context(sessions.as_ref(), &req).await? {
                         Ok(ctx) => ctx,
                         Err(response) => return Ok(response),
@@ -659,7 +659,10 @@ async fn handle_request<S: McpServerCore>(
                     }
                     // Core Tasks hooks (2025-11-25 only): augmented tools/call
                     // detaches into a task; tools/list advertises taskSupport.
-                    if let Some(store) = tasks {
+                    // `2025-06-18` predates Tasks, so a `task` field on a call
+                    // from that revision is an unknown param it ignores, and
+                    // its `tools/list` must not carry `execution`.
+                    if let Some(store) = tasks.as_ref().filter(|_| revision.has_tasks()) {
                         if method == methods::request::TOOLS_CALL
                             && has_task_field(req.params.as_ref())
                         {
@@ -674,12 +677,20 @@ async fn handle_request<S: McpServerCore>(
                             .await);
                         }
                     }
-                    Ok(
-                        dispatch_capability::<S, LegacyWire>(
-                            server, router, &req, &ctx, shared, id,
-                        )
-                        .await,
-                    )
+                    Ok(match revision {
+                        LegacyRevision::V2025_11_25 => {
+                            dispatch_capability::<S, LegacyWire>(
+                                server, router, &req, &ctx, shared, id,
+                            )
+                            .await
+                        }
+                        LegacyRevision::V2025_06_18 => {
+                            dispatch_capability::<S, Legacy0618Wire>(
+                                server, router, &req, &ctx, shared, id,
+                            )
+                            .await
+                        }
+                    })
                 }
                 VersionRoute::Unsupported(requested) => {
                     Ok(unsupported_version(id, requested, supported))
@@ -691,7 +702,7 @@ async fn handle_request<S: McpServerCore>(
         // `subscriptions/listen` instead).
         methods::request::RESOURCES_SUBSCRIBE | methods::request::RESOURCES_UNSUBSCRIBE => {
             match classify_version(req.params.as_ref(), supported) {
-                VersionRoute::Legacy => {
+                VersionRoute::Legacy(_) => {
                     if let Err(response) = legacy_context(sessions.as_ref(), &req).await? {
                         return Ok(response);
                     }
@@ -722,7 +733,7 @@ async fn handle_request<S: McpServerCore>(
         // the RPC with the per-request `_meta` `logLevel` key).
         methods::request::LOGGING_SET_LEVEL => {
             match classify_version(req.params.as_ref(), supported) {
-                VersionRoute::Legacy => {
+                VersionRoute::Legacy(_) => {
                     if let Err(response) = legacy_context(sessions.as_ref(), &req).await? {
                         return Ok(response);
                     }
@@ -752,7 +763,13 @@ async fn handle_request<S: McpServerCore>(
         | methods::request::TASKS_CANCEL
         | methods::request::TASKS_RESULT => {
             match classify_version(req.params.as_ref(), supported) {
-                VersionRoute::Legacy => {
+                // `2025-06-18` predates Tasks entirely, so its clients get the
+                // same `-32601` the draft's do (the draft serves Tasks as an
+                // extension instead).
+                VersionRoute::Legacy(rev) if !rev.has_tasks() => {
+                    Ok(error_response(id, &McpError::method_not_found(method)))
+                }
+                VersionRoute::Legacy(_) => {
                     // Same session gate as every other legacy method.
                     if let Err(response) = legacy_context(sessions.as_ref(), &req).await? {
                         return Ok(response);
@@ -781,9 +798,36 @@ async fn handle_request<S: McpServerCore>(
 
 enum VersionRoute {
     Modern,
-    Legacy,
+    Legacy(LegacyRevision),
     /// Requested version (or `None` if absent) is not supported.
     Unsupported(Option<String>),
+}
+
+/// Which stateful revision a legacy-routed request speaks.
+///
+/// Both share the whole dispatch path — the `initialize` handshake, the
+/// session gate, inline bidirectional client interaction — and differ only in
+/// the wire types their results widen to, plus the methods `2025-11-25` added.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LegacyRevision {
+    V2025_06_18,
+    V2025_11_25,
+}
+
+impl LegacyRevision {
+    /// The wire version this revision names.
+    const fn version(self) -> ProtocolVersion {
+        match self {
+            Self::V2025_06_18 => ProtocolVersion::V2025_06_18,
+            Self::V2025_11_25 => ProtocolVersion::V2025_11_25,
+        }
+    }
+
+    /// Whether this revision has core Tasks (`tasks/*`, `Tool.execution`).
+    /// `2025-06-18` predates them entirely.
+    fn has_tasks(self) -> bool {
+        self.version().has_core_tasks()
+    }
 }
 
 fn classify_version(params: Option<&Value>, supported: &[ProtocolVersion]) -> VersionRoute {
@@ -791,7 +835,8 @@ fn classify_version(params: Option<&Value>, supported: &[ProtocolVersion]) -> Ve
         Some(v) if !supported.contains(&v) => {
             VersionRoute::Unsupported(Some(v.as_str().to_owned()))
         }
-        Some(ProtocolVersion::V2025_11_25) => VersionRoute::Legacy,
+        Some(ProtocolVersion::V2025_06_18) => VersionRoute::Legacy(LegacyRevision::V2025_06_18),
+        Some(ProtocolVersion::V2025_11_25) => VersionRoute::Legacy(LegacyRevision::V2025_11_25),
         Some(_) => VersionRoute::Modern,
         // Missing version on a stateless (modern) method: per PLAN §4.9 we treat
         // absence as unsupported and return the server's version list, so a

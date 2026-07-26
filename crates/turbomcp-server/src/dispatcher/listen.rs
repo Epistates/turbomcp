@@ -50,7 +50,7 @@ pub(super) async fn handle_subscriptions_listen<S: McpServerCore>(
     match classify_version(req.params.as_ref(), supported) {
         VersionRoute::Modern => {}
         // The legacy path subscribes via `resources/subscribe` instead.
-        VersionRoute::Legacy => {
+        VersionRoute::Legacy(_) => {
             return Ok(Some(error_response(
                 id,
                 &McpError::method_not_found(methods::request::SUBSCRIPTIONS_LISTEN),

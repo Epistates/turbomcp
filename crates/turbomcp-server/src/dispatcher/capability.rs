@@ -19,6 +19,7 @@ use turbomcp_core::{
     RequestId, meta,
 };
 use turbomcp_protocol::draft::types as draft;
+use turbomcp_protocol::v2025_06_18::types as v0618;
 use turbomcp_protocol::v2025_11_25::types as legacy;
 use turbomcp_protocol::{methods, neutral};
 
@@ -132,6 +133,28 @@ impl WireFamily for LegacyWire {
     type ListPrompts = legacy::ListPromptsResult;
     type GetPrompt = legacy::GetPromptResult;
     type Complete = legacy::CompleteResult;
+}
+
+/// `2025-06-18` (the previous stable revision, stateful).
+///
+/// Same dispatch path as [`LegacyWire`] — same methods, same session model,
+/// same inline-bidi client interaction. Only the result types differ, and only
+/// by the fields `2025-11-25` added (`icons`, task support); the conversions
+/// step down from the `2025-11-25` wire, see
+/// [`v2025_06_18::convert`](turbomcp_protocol::v2025_06_18::convert).
+pub(super) struct Legacy0618Wire;
+
+impl WireFamily for Legacy0618Wire {
+    const MRTR: bool = false;
+    const VERSION: ProtocolVersion = ProtocolVersion::V2025_06_18;
+    type ListTools = v0618::ListToolsResult;
+    type CallTool = v0618::CallToolResult;
+    type ListResources = v0618::ListResourcesResult;
+    type ListResourceTemplates = v0618::ListResourceTemplatesResult;
+    type ReadResource = v0618::ReadResourceResult;
+    type ListPrompts = v0618::ListPromptsResult;
+    type GetPrompt = v0618::GetPromptResult;
+    type Complete = v0618::CompleteResult;
 }
 
 pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(

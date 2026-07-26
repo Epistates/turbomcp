@@ -13,6 +13,7 @@ use turbomcp_core::{
 };
 use turbomcp_protocol::draft::types as draft;
 use turbomcp_protocol::neutral;
+use turbomcp_protocol::v2025_06_18::types as v0618;
 use turbomcp_protocol::v2025_11_25::types as legacy;
 
 use crate::extension::Extension;
@@ -72,7 +73,15 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
         protocol_version: negotiated.as_str().to_owned(),
         server_info: to_legacy_impl(server.server_info()),
     };
-    let mut value = match serde_json::to_value(&result) {
+    // `2025-06-18` predates `icons`, the extra `Implementation` fields, and
+    // Tasks; the step-down conversion is what drops them (see
+    // `v2025_06_18::convert`) rather than this function knowing the list.
+    let serialized = if negotiated == ProtocolVersion::V2025_06_18 {
+        serde_json::to_value(v0618::InitializeResult::from(result))
+    } else {
+        serde_json::to_value(&result)
+    };
+    let mut value = match serialized {
         Ok(v) => v,
         Err(e) => {
             return error_response(id, &McpError::internal(format!("serialize result: {e}")));
@@ -89,7 +98,10 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
         if router.has_logging() {
             caps.insert("logging".to_owned(), serde_json::json!({}));
         }
-        if tasks_enabled {
+        // Tasks are `2025-11-25`-only. Advertising them to a `2025-06-18`
+        // client would invite `tasks/*` calls that revision's dispatch can only
+        // answer `-32601`.
+        if tasks_enabled && negotiated.has_core_tasks() {
             caps.insert(
                 "tasks".to_owned(),
                 serde_json::json!({
@@ -103,20 +115,27 @@ pub(super) async fn handle_initialize<S: McpServerCore>(
     JsonRpcResponse::success(id, value).into()
 }
 
-/// Pick the version to answer `initialize` with. The spec: echo the requested
-/// version if supported, else "another version [the server] supports … SHOULD
-/// be the latest". Our latest *`initialize`-speaking* version is `2025-11-25`,
-/// so prefer it over the draft (which negotiates per-request instead).
+/// Pick the version to answer `initialize` with.
+///
+/// The spec: echo the requested version if supported, else "another version
+/// [the server] supports … SHOULD be the latest", and the client then
+/// disconnects if it can't speak what it gets back. So echoing matters — a
+/// server that answers a `2025-06-18` client with `2025-11-25` is telling it to
+/// go away.
+///
+/// The fallback is the latest *`initialize`-speaking* version, which is
+/// `2025-11-25`: the draft negotiates per-request and has no handshake to
+/// answer with.
 fn negotiate_initialize_version(requested: &str, supported: &[ProtocolVersion]) -> ProtocolVersion {
     let requested = ProtocolVersion::from_wire(requested);
     if supported.contains(&requested) {
         return requested;
     }
-    if supported.contains(&ProtocolVersion::V2025_11_25) {
-        return ProtocolVersion::V2025_11_25;
-    }
     supported
-        .first()
+        .iter()
+        .rev()
+        .find(|v| v.is_stateful())
+        .or_else(|| supported.first())
         .cloned()
         .unwrap_or(ProtocolVersion::LATEST)
 }

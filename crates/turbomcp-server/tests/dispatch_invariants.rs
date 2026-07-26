@@ -195,7 +195,7 @@ async fn unknown_protocol_version_gets_32004_with_the_supported_list() {
     let msg = out["error"]["message"].as_str().unwrap();
     assert!(msg.contains("1999-01-01"), "names the requested: {msg}");
     assert!(
-        msg.contains("2025-11-25") && msg.contains("2026-07-28"),
+        msg.contains("2025-06-18") && msg.contains("2025-11-25") && msg.contains("2026-07-28"),
         "names the supported versions: {msg}"
     );
     // The RC pins the machine-readable payload, not just the prose.
@@ -203,7 +203,7 @@ async fn unknown_protocol_version_gets_32004_with_the_supported_list() {
     assert_eq!(data["requested"], "1999-01-01", "{out}");
     assert_eq!(
         data["supported"],
-        json!(["2025-11-25", "2026-07-28"]),
+        json!(["2025-06-18", "2025-11-25", "2026-07-28"]),
         "{out}"
     );
 

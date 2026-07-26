@@ -9,8 +9,11 @@
 //! 1. On `initialize`, a session id is minted and attached; once the inner
 //!    service answers successfully, the connection is marked legacy.
 //! 2. Subsequent messages that don't carry their own protocol version (a
-//!    modern client states it per request) are stamped with the negotiated
-//!    legacy version and the connection's session id.
+//!    modern client states it per request) are stamped with the session's
+//!    *negotiated* version and its session id. Which version that is comes
+//!    from the handshake — a `2025-06-18` client must not have its requests
+//!    stamped `2025-11-25`, or it would be answered in a wire shape it does
+//!    not know.
 //!
 //! The adapter is itself an `McpService`, so it slots into `serve`/
 //! `serve_stdio` wherever a bare dispatcher would.
@@ -38,8 +41,17 @@ use uuid::Uuid;
 /// connection's session state.
 pub struct LegacySessionAdapter<S> {
     inner: S,
-    /// `Some(session_id)` once an `initialize` on this connection succeeded.
-    session: Arc<Mutex<Option<String>>>,
+    /// `Some(_)` once an `initialize` on this connection succeeded.
+    session: Arc<Mutex<Option<Session>>>,
+}
+
+/// What a completed handshake established for this connection.
+#[derive(Clone)]
+struct Session {
+    id: String,
+    /// The version `initialize` settled on — stamped onto every later
+    /// version-less message so dispatch answers in the right wire shape.
+    version: ProtocolVersion,
 }
 
 impl<S> LegacySessionAdapter<S> {
@@ -92,7 +104,19 @@ where
                 if let Some(JsonRpcMessage::Response(resp)) = &out
                     && !resp.is_error()
                 {
-                    *session.lock().expect("session state lock poisoned") = Some(candidate);
+                    // Read back what the handshake negotiated rather than
+                    // assuming: the server may answer a version other than the
+                    // one requested, and every later message is stamped with it.
+                    let version = resp
+                        .result
+                        .as_ref()
+                        .and_then(|r| r.get("protocolVersion"))
+                        .and_then(serde_json::Value::as_str)
+                        .map_or(ProtocolVersion::V2025_11_25, ProtocolVersion::from_wire);
+                    *session.lock().expect("session state lock poisoned") = Some(Session {
+                        id: candidate,
+                        version,
+                    });
                 }
                 Ok(out)
             });
@@ -103,7 +127,7 @@ where
             .lock()
             .expect("session state lock poisoned")
             .clone();
-        if let Some(sid) = session {
+        if let Some(session) = session {
             let params = match &msg {
                 JsonRpcMessage::Request(r) => r.params.as_ref(),
                 JsonRpcMessage::Notification(n) => n.params.as_ref(),
@@ -115,9 +139,9 @@ where
                 meta::set_request_meta(
                     &mut msg,
                     meta::keys::PROTOCOL_VERSION,
-                    json!(ProtocolVersion::V2025_11_25.as_str()),
+                    json!(session.version.as_str()),
                 );
-                meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!(sid));
+                meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!(session.id));
             }
         }
         Box::pin(self.inner.call(msg))

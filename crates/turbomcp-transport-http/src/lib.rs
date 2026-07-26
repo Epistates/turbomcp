@@ -709,14 +709,27 @@ where
         minted_session = Some(sid);
     } else if let Some(sid) = session_header {
         if !message_has_version(&msg) {
+            // Which stateful revision this session negotiated is carried by
+            // `MCP-Protocol-Version`, which both revisions require on every
+            // post-`initialize` request. Falling back to `2025-11-25` when the
+            // header is absent keeps tolerant clients (rmcp, Codex) working —
+            // but a `2025-06-18` client that sends its header must be answered
+            // in `2025-06-18` shapes, not stamped into the newer wire.
+            let session_version = header_version
+                .map(ProtocolVersion::from_wire)
+                .filter(ProtocolVersion::is_stateful)
+                .unwrap_or(ProtocolVersion::V2025_11_25);
             meta::set_request_meta(
                 &mut msg,
                 meta::keys::PROTOCOL_VERSION,
-                json!(ProtocolVersion::V2025_11_25.as_str()),
+                json!(session_version.as_str()),
             );
         }
         meta::set_request_meta(&mut msg, meta::internal::SESSION_ID, json!(sid));
-    } else if header_version == Some(ProtocolVersion::V2025_11_25.as_str()) {
+    } else if header_version
+        .map(ProtocolVersion::from_wire)
+        .is_some_and(|v| v.is_stateful())
+    {
         // Declared-legacy request with no session and not initialize: the
         // stateful path requires a session (spec §Session Management).
         return session_required_rejection();

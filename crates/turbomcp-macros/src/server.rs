@@ -306,13 +306,14 @@ impl ServerArgs {
 /// in the facade tests fails if the two fall out of step.
 fn protocol_variant(wire: &LitStr) -> syn::Result<proc_macro2::TokenStream> {
     match wire.value().as_str() {
+        "2025-06-18" => Ok(quote! { ::turbomcp::ProtocolVersion::V2025_06_18 }),
         "2025-11-25" => Ok(quote! { ::turbomcp::ProtocolVersion::V2025_11_25 }),
         "2026-07-28" => Ok(quote! { ::turbomcp::ProtocolVersion::Draft }),
         other => Err(syn::Error::new(
             wire.span(),
             format!(
                 "`{other}` is not a protocol version this build serves \
-                 (expected \"2025-11-25\" or \"2026-07-28\")"
+                 (expected \"2025-06-18\", \"2025-11-25\", or \"2026-07-28\")"
             ),
         )),
     }

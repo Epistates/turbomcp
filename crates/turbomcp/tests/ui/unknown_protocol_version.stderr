@@ -1,4 +1,4 @@
-error: `1999-01-01` is not a protocol version this build serves (expected "2025-11-25" or "2026-07-28")
+error: `1999-01-01` is not a protocol version this build serves (expected "2025-06-18", "2025-11-25", or "2026-07-28")
  --> tests/ui/unknown_protocol_version.rs:7:53
   |
 7 | #[server(name = "bad", version = "1.0.0", protocols("1999-01-01"))]

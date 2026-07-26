@@ -1,11 +1,12 @@
 //! `#[server(protocols(…))]` — pinning which protocol revisions a server
 //! accepts.
 //!
-//! The default is dual-stack, which is right for most servers but wrong for one
-//! shipping to production before the draft freezes: the draft's wire shapes can
-//! still change. These tests pin that the narrowing is real at the wire, not
-//! just advertised — a request naming an excluded version must be refused, and
-//! `server/discover` must report only what is served.
+//! The default is every revision this build serves, which is right for most
+//! servers but wrong for one shipping to production before the draft freezes:
+//! the draft's wire shapes can still change. These tests pin that the narrowing
+//! is real at the wire, not just advertised — a request naming an excluded
+//! version must be refused, and `server/discover` must report only what is
+//! served.
 
 use serde_json::{Value, json};
 use tower::{Service, ServiceExt};
@@ -14,8 +15,9 @@ use turbomcp::{JsonRpcMessage, JsonRpcRequest, McpServerCore, ProtocolVersion};
 
 const DRAFT_META: &str = "2026-07-28";
 const LEGACY: &str = "2025-11-25";
+const PREVIOUS: &str = "2025-06-18";
 
-/// Dual-stack — what every server gets without `protocols(…)`.
+/// Every supported revision — what a server gets without `protocols(…)`.
 #[derive(Clone)]
 struct DualStack;
 
@@ -34,6 +36,19 @@ struct StableOnly;
 
 #[server(name = "stable-only", version = "1.0.0", protocols("2025-11-25"))]
 impl StableOnly {
+    #[tool]
+    async fn noop(&self) -> String {
+        "ok".into()
+    }
+}
+
+/// Pinned to the previous stable revision, for a deployment whose clients
+/// haven't moved yet.
+#[derive(Clone)]
+struct PreviousOnly;
+
+#[server(name = "previous-only", version = "1.0.0", protocols("2025-06-18"))]
+impl PreviousOnly {
     #[tool]
     async fn noop(&self) -> String {
         "ok".into()
@@ -90,11 +105,15 @@ fn tools_list(version: &str) -> JsonRpcRequest {
 }
 
 #[test]
-fn the_default_is_still_dual_stack() {
+fn the_default_serves_every_supported_revision() {
     assert_eq!(DualStack.supported_versions(), ProtocolVersion::SUPPORTED);
     assert_eq!(
         ProtocolVersion::SUPPORTED,
-        &[ProtocolVersion::V2025_11_25, ProtocolVersion::Draft],
+        &[
+            ProtocolVersion::V2025_06_18,
+            ProtocolVersion::V2025_11_25,
+            ProtocolVersion::Draft
+        ],
         "the macro's `protocols(…)` table must cover exactly this set"
     );
 }
@@ -106,6 +125,10 @@ fn protocols_narrows_what_the_server_declares() {
         &[ProtocolVersion::V2025_11_25]
     );
     assert_eq!(DraftOnly.supported_versions(), &[ProtocolVersion::Draft]);
+    assert_eq!(
+        PreviousOnly.supported_versions(),
+        &[ProtocolVersion::V2025_06_18]
+    );
 }
 
 /// Every version in `SUPPORTED` must be expressible in `protocols(…)`. If the
@@ -114,6 +137,7 @@ fn protocols_narrows_what_the_server_declares() {
 #[test]
 fn protocols_accepts_every_supported_version() {
     let expressible = [
+        PreviousOnly.supported_versions(),
         StableOnly.supported_versions(),
         DraftOnly.supported_versions(),
     ]
@@ -210,5 +234,34 @@ async fn discover_advertises_only_the_pinned_versions() {
         .iter()
         .filter_map(Value::as_str)
         .collect::<Vec<_>>();
-    assert_eq!(versions, [LEGACY, DRAFT_META]);
+    assert_eq!(versions, [PREVIOUS, LEGACY, DRAFT_META]);
+}
+
+/// The mirror of the stable-only case: pinning to the previous revision must
+/// refuse the newer ones just as firmly, and still serve its own handshake.
+#[tokio::test]
+async fn a_previous_only_server_refuses_the_newer_revisions() {
+    for excluded in [LEGACY, DRAFT_META] {
+        let body = call(PreviousOnly.into_server().build(), tools_list(excluded)).await;
+        let err = body
+            .get("error")
+            .unwrap_or_else(|| panic!("{excluded} must be refused: {body}"));
+        assert_eq!(err["code"], -32004, "{excluded}: {body}");
+        assert_eq!(err["data"]["supported"], json!([PREVIOUS]));
+    }
+
+    let init = call(
+        PreviousOnly.into_server().build(),
+        JsonRpcRequest::new(
+            1,
+            "initialize",
+            Some(json!({
+                "protocolVersion": PREVIOUS,
+                "capabilities": {},
+                "clientInfo": { "name": "c", "version": "1.0" }
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(init["result"]["protocolVersion"], PREVIOUS);
 }

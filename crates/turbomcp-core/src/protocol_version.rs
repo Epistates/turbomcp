@@ -51,7 +51,33 @@ impl ProtocolVersion {
 
     /// Versions v4 actively supports as first-class (others may still be
     /// negotiated/named, but are not first-class dispatch targets).
-    pub const SUPPORTED: &'static [Self] = &[Self::V2025_11_25, Self::Draft];
+    ///
+    /// Chronological, which is also the order they are advertised in
+    /// `server/discover` and in an unsupported-version error's `supported`
+    /// list.
+    pub const SUPPORTED: &'static [Self] = &[Self::V2025_06_18, Self::V2025_11_25, Self::Draft];
+
+    /// The stateful revisions: those that negotiate with an `initialize`
+    /// handshake and carry per-session state, as opposed to the draft's
+    /// per-request model.
+    pub const STATEFUL: &'static [Self] = &[Self::V2025_06_18, Self::V2025_11_25];
+
+    /// Whether this version uses the `initialize` handshake and per-session
+    /// state (see [`STATEFUL`](Self::STATEFUL)).
+    #[must_use]
+    pub fn is_stateful(&self) -> bool {
+        Self::STATEFUL.contains(self)
+    }
+
+    /// Whether this version has **core** Tasks: the `tasks/*` methods, the
+    /// `tasks` server capability, and `Tool.execution`.
+    ///
+    /// Only `2025-11-25`. `2025-06-18` predates Tasks entirely, and the draft
+    /// moved them out into an extension.
+    #[must_use]
+    pub fn has_core_tasks(&self) -> bool {
+        matches!(self, Self::V2025_11_25)
+    }
 
     /// The wire string for this version.
     #[must_use]

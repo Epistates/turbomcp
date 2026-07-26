@@ -238,18 +238,42 @@ impl ClientBuilder {
     }
 
     /// The legacy, stateful handshake: `initialize` then `notifications/initialized`.
+    ///
+    /// # Errors
+    /// [`ClientError::Protocol`] when the server answers a version this build
+    /// cannot speak — the lifecycle spec's instruction in that case is to
+    /// disconnect, not to keep talking.
     async fn legacy_handshake(&self, conn: &Connection) -> ClientResult<Handshake> {
-        let version = ProtocolVersion::V2025_11_25;
+        let requested = ProtocolVersion::V2025_11_25;
         let params = json!({
-            "protocolVersion": version.as_str(),
+            "protocolVersion": requested.as_str(),
             "capabilities": self.capabilities,
             "clientInfo": serde_json::to_value(&self.client_info).unwrap_or(Value::Null),
         });
         let result = conn.request(request::INITIALIZE, Some(params)).await?;
+
+        // The *server* picks: it echoes what we asked for when it serves it,
+        // otherwise it names another version it does serve (an older server
+        // answers `2025-06-18`). Speaking on in the requested shapes regardless
+        // would mean sending it fields it has never heard of, so adopt its
+        // answer — or give up, which is what the spec says to do when the
+        // answer is unusable.
+        let negotiated = result
+            .get("protocolVersion")
+            .and_then(Value::as_str)
+            .map_or_else(|| requested.clone(), ProtocolVersion::from_wire);
+        if !negotiated.is_stateful() {
+            return Err(ClientError::Protocol(format!(
+                "server negotiated `{negotiated}`, which this client cannot speak \
+                 over the `initialize` handshake (it serves {:?})",
+                ProtocolVersion::STATEFUL,
+            )));
+        }
+
         // Per the lifecycle spec, the client confirms readiness before issuing
         // further requests.
         conn.notify(notification::INITIALIZED, None).await?;
-        Ok(Handshake::from_result(version, &result))
+        Ok(Handshake::from_result(negotiated, &result))
     }
 }
 
