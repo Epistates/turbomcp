@@ -191,6 +191,12 @@ impl ClientBuilder {
                 {
                     self.legacy_handshake(&conn).await?
                 }
+                // The server answered `server/discover` but doesn't serve the
+                // stateless path (it listed only stateful revisions). That is
+                // the same conclusion, reached from a success rather than an
+                // error — the method is version-agnostic, so answering it says
+                // nothing about which versions are served.
+                Err(ClientError::Protocol(_)) => self.legacy_handshake(&conn).await?,
                 Err(other) => return Err(other),
             },
         };
@@ -222,6 +228,14 @@ impl ClientBuilder {
     }
 
     /// The modern, stateless handshake: a single `server/discover`.
+    ///
+    /// # Errors
+    /// [`ClientError::Protocol`] when the server answers but its
+    /// `supportedVersions` doesn't include the version this client speaks
+    /// statelessly. `server/discover` is version-agnostic — a server that
+    /// serves only stateful revisions still answers it — so a successful
+    /// response is not on its own evidence that the draft path will work.
+    /// [`ConnectMode::Auto`] treats this as "fall back to `initialize`".
     async fn modern_handshake(&self, conn: &Connection) -> ClientResult<Handshake> {
         let version = ProtocolVersion::LATEST;
         let mut meta = Map::new();
@@ -234,6 +248,21 @@ impl ClientBuilder {
         let params = json!({ "_meta": Value::Object(meta) });
 
         let result = conn.request(request::DISCOVER, Some(params)).await?;
+
+        // The server lists what it serves; believe it. Proceeding on a
+        // successful discover alone would connect "fine" and then fail every
+        // subsequent request with `-32004`, since each one restates the version.
+        if let Some(supported) = result.get("supportedVersions").and_then(Value::as_array)
+            && !supported
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|v| v == version.as_str())
+        {
+            return Err(ClientError::Protocol(format!(
+                "server does not serve `{version}` (it lists {supported:?})"
+            )));
+        }
+
         Ok(Handshake::from_result(version, &result))
     }
 

@@ -7,14 +7,18 @@
 //! concentrating *all* per-version branching in one place. Above it (RPC
 //! middleware) and below it (typed handlers) are version-agnostic.
 //!
-//! Per-version status (Phase 5): both paths are live. The modern
-//! `2026-07-28` path is stateless (version in each request's `_meta`); the
-//! legacy `2025-11-25` path is stateful — `initialize` negotiates a version and
+//! Two dispatch models, three revisions. The modern `2026-07-28` path is
+//! stateless (version in each request's `_meta`). The stateful path serves
+//! both `2025-06-18` and `2025-11-25`: `initialize` negotiates a version and
 //! mints a session (via the transport-supplied internal session id, see
 //! [`turbomcp_core::meta::internal`]), and later requests are dispatched with
 //! the session's negotiated client info/capabilities injected into their
-//! [`RequestContext`]. Both paths converge on the same neutral handlers; only
-//! the wire types differ (selected via the private `WireFamily` trait).
+//! [`RequestContext`]. The two stateful revisions share this path entirely and
+//! differ only in the wire types results widen to — plus the methods
+//! `2025-11-25` added, which `2025-06-18` answers `-32601`.
+//!
+//! Every path converges on the same neutral handlers; only the wire family
+//! differs (selected via the private `WireFamily` trait).
 //!
 //! `_meta`→context extraction may still move to a `MetaExtractLayer` once
 //! Auth/RateLimit need to observe it between layers (Phase 6/7).

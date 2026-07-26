@@ -302,6 +302,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`ConnectMode::Auto` no longer picks the draft on a server that doesn't
+  serve it.** `server/discover` is version-agnostic — a server serving only
+  stateful revisions still answers it — so the probe treated a successful
+  response as proof the stateless path would work. Against such a server the
+  client connected "successfully" and then failed *every* subsequent request
+  with `-32004`, because each one restates the version. The probe now reads the
+  `supportedVersions` the server returned and falls back to `initialize` when
+  its own version isn't in the list.
 - **The client now adopts the version `initialize` negotiated.** It sent
   `2025-11-25` and then assumed that was the answer, ignoring the
   `protocolVersion` the server actually returned. Against a server that serves

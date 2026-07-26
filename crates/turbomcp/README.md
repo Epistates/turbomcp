@@ -9,7 +9,8 @@ zero-boilerplate surface and strict spec compliance as a feature.
 > `3.x`. Edition 2024, MSRV 1.88. Passes the official MCP conformance suite
 > with zero failures and interoperates with the official Rust SDK (rmcp 2.x)
 > in both directions, verified in-repo. The draft protocol revision
-> (`2026-07-28`) tracks the pre-freeze spec; `2025-11-25` support is stable.
+> (`2026-07-28`) tracks the pre-freeze spec; `2025-06-18` and `2025-11-25`
+> support is stable.
 
 ## What you get
 
@@ -18,10 +19,11 @@ zero-boilerplate surface and strict spec compliance as a feature.
   JSON schemas are generated from your function signatures at compile time, and
   the advertised capabilities are *derived* from which markers are present — they
   can't drift from the implementation.
-- **Two protocol versions, one handler.** The same server answers both
-  `2025-11-25` and the `2026-07-28` draft. Your handlers speak
+- **Three protocol revisions, one handler.** The same server answers
+  `2025-06-18`, `2025-11-25`, and the `2026-07-28` draft. Your handlers speak
   version-neutral types; the version-specific wire shapes are conversions, not
-  signature changes.
+  signature changes — including dropping, per session, the fields a revision
+  predates. Pin the set with `#[server(protocols("2025-11-25", …))]`.
 - **Transports behind one builder.** stdio (default), Streamable HTTP (axum),
   and WebSocket. `MyServer.run_stdio()`, `MyServer.into_server().run_http(addr,
   cfg)`, or `turbomcp::ws::serve_websocket(listener, dispatcher)`.

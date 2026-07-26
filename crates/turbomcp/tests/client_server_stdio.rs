@@ -38,13 +38,46 @@ impl Demo {
     }
 }
 
-/// Spawn the dual-stack server (the exact stack `run_stdio` wires) on one end of
-/// a duplex pipe and connect a typed [`Client`] in `mode` on the other.
+/// The same server pinned to the previous stable revision, so a client
+/// connecting to it is *forced* through the negotiate-down path.
+#[derive(Clone)]
+struct Previous;
+
+#[server(name = "previous", version = "1.0.0", protocols("2025-06-18"))]
+impl Previous {
+    /// Shout a word back, upper-cased.
+    #[tool(description = "Shout a word")]
+    async fn shout(&self, word: String) -> McpResult<String> {
+        Ok(word.to_uppercase())
+    }
+
+    /// A fixed greeting resource.
+    #[resource("demo://greeting")]
+    async fn greeting(&self) -> McpResult<String> {
+        Ok("hello there".to_string())
+    }
+
+    /// A welcome prompt.
+    #[prompt]
+    async fn welcome(&self, name: String) -> McpResult<String> {
+        Ok(format!("Welcome, {name}!"))
+    }
+}
+
+/// Spawn the server (the exact stack `run_stdio` wires) on one end of a duplex
+/// pipe and connect a typed [`Client`] in `mode` on the other.
 async fn connect(mode: ConnectMode) -> Client {
+    connect_to(Demo.into_server().build(), mode).await
+}
+
+async fn connect_to<S>(dispatcher: turbomcp::VersionDispatcher<S>, mode: ConnectMode) -> Client
+where
+    S: McpServerCore + Clone + Send + Sync + 'static,
+{
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let (s_rd, s_wr) = split(server_io);
     let transport = LineTransport::new(BufReader::new(s_rd), s_wr, SerdeJsonCodec);
-    let service = LegacySessionAdapter::new(Demo.into_server().build());
+    let service = LegacySessionAdapter::new(dispatcher);
     tokio::spawn(serve(transport, service));
 
     let (c_rd, c_wr) = split(client_io);
@@ -58,8 +91,15 @@ async fn connect(mode: ConnectMode) -> Client {
 
 /// Drive the whole typed read API and assert results — shared across modes.
 async fn exercise(client: &Client) {
+    exercise_named(client, "demo").await;
+}
+
+async fn exercise_named(client: &Client, server_name: &str) {
     // Handshake surfaced the server identity.
-    assert_eq!(client.server_info().map(|i| i.name.as_str()), Some("demo"));
+    assert_eq!(
+        client.server_info().map(|i| i.name.as_str()),
+        Some(server_name)
+    );
 
     // ping
     client.ping().await.expect("ping ok");
@@ -118,4 +158,29 @@ async fn auto_mode_resolves_to_modern_on_dual_stack() {
     // A dual-stack server answers server/discover, so Auto lands on the draft.
     assert_eq!(client.protocol_version(), &ProtocolVersion::Draft);
     exercise(&client).await;
+}
+
+/// The client asks for `2025-11-25`; this server serves only `2025-06-18`, so
+/// it answers with that instead. The client has to *adopt* the answer — it
+/// previously assumed the version it requested was the one in force, which
+/// against a server like this meant sending shapes the server has never seen.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_client_adopts_a_negotiated_down_version() {
+    let client = connect_to(Previous.into_server().build(), ConnectMode::Legacy).await;
+    assert_eq!(
+        client.protocol_version(),
+        &ProtocolVersion::V2025_06_18,
+        "the server's answer governs, not the client's request"
+    );
+    exercise_named(&client, "previous").await;
+}
+
+/// `Auto` probes `server/discover` first; a server that doesn't serve the
+/// draft refuses it, and the fallback lands on the version that server does
+/// serve.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_mode_falls_back_to_the_only_version_a_server_serves() {
+    let client = connect_to(Previous.into_server().build(), ConnectMode::Auto).await;
+    assert_eq!(client.protocol_version(), &ProtocolVersion::V2025_06_18);
+    exercise_named(&client, "previous").await;
 }

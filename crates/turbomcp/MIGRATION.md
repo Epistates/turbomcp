@@ -94,12 +94,22 @@ v3 had type-state capability builders. In v4, advertised capabilities are
 advertises the `resources` capability. There is no separate capabilities builder
 to keep in sync — it cannot drift from the implementation.
 
-## Two protocol versions, neutral handlers
+## Three protocol revisions, neutral handlers
 
-One server answers both `2025-11-25` and the `2026-07-28` draft. Handlers
-speak version-neutral types (`turbomcp::neutral`); the version-specific wire
-shapes are conversions applied at the edges, not changes to your signatures.
-Most servers never touch the wire types directly.
+One server answers `2025-06-18`, `2025-11-25`, and the `2026-07-28` draft —
+the same set v3 served, minus v3's placeholder draft string `DRAFT-2026-v1`
+(which no real client sends) and plus the spec's actual one. Handlers speak
+version-neutral types (`turbomcp::neutral`); the version-specific wire shapes
+are conversions applied at the edges, not changes to your signatures. Most
+servers never touch the wire types directly.
+
+That includes shedding what a revision predates. Write a `#[tool(task)]` with
+an icon and a title: a `2025-11-25` client sees all three, a `2025-06-18`
+client sees the title and neither of the others, and `tasks/*` answers `-32601`
+on that session. You write it once.
+
+Narrow the set with `#[server(protocols("2025-11-25", "2026-07-28"))]` — worth
+doing before the draft freezes, since its wire shapes can still change.
 
 ## Architecture changes (no drop-in equivalent yet)
 
