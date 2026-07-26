@@ -18,6 +18,13 @@ crates_dir := "crates"
 target_dir := "target"
 coverage_dir := "coverage"
 
+# Coverage: keep these in step with the `coverage` job in .github/workflows/test.yml.
+# Excluded are the things line coverage cannot speak to — `@generated` wire types
+# (emitted Default/From/Display impls the conversions never call; proven instead by
+# the conformance suite and round-trip tests) and turbomcp-codegen, a build tool.
+coverage_ignore := '(tests?/|benches/|examples/|fuzz/|/(v2025_11_25|draft)/types\.rs|turbomcp-codegen/)'
+coverage_min := "85"
+
 # v4 codegen: root of the checked-out MCP schema (override with MCP_SCHEMA_ROOT)
 mcp_schema_root := env_var_or_default("MCP_SCHEMA_ROOT", "../reference/modelcontextprotocol/schema")
 
@@ -367,21 +374,34 @@ coverage:
   #!/usr/bin/env bash
   echo "Generating coverage report..."
   if command -v cargo-llvm-cov >/dev/null 2>&1; then
-    cargo llvm-cov --html --output-dir {{coverage_dir}} {{workspace_flags}} {{all_features_flags}}
+    cargo llvm-cov --html --output-dir {{coverage_dir}} {{workspace_flags}} \
+      {{all_features_flags}} --all-targets --ignore-filename-regex '{{coverage_ignore}}'
     echo "Coverage report generated in {{coverage_dir}}/index.html"
   else
     echo "cargo-llvm-cov not installed. Install with: cargo install cargo-llvm-cov"
   fi
 
-# Show coverage summary in terminal
+# Show the coverage summary, and fail below the floor CI enforces
 [group: 'coverage']
 coverage-text:
   #!/usr/bin/env bash
-  echo "Coverage Summary:"
-  if command -v cargo-llvm-cov >/dev/null 2>&1; then
-    cargo llvm-cov {{workspace_flags}} {{all_features_flags}}
-  else
+  set -euo pipefail
+  if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
     echo "cargo-llvm-cov not installed. Install with: cargo install cargo-llvm-cov"
+    exit 1
+  fi
+  cargo llvm-cov {{workspace_flags}} {{all_features_flags}} --all-targets \
+    --summary-only --ignore-filename-regex '{{coverage_ignore}}'
+  COVERAGE=$(cargo llvm-cov report --json --summary-only \
+    --ignore-filename-regex '{{coverage_ignore}}' | jq -r '.data[0].totals.lines.percent')
+  if ! printf '%s' "$COVERAGE" | grep -Eq '^[0-9]+(\.[0-9]+)?$'; then
+    echo "could not parse a coverage percentage (got '${COVERAGE}')" >&2
+    exit 1
+  fi
+  printf 'Line coverage: %.2f%% (floor %s%%)\n' "$COVERAGE" '{{coverage_min}}'
+  if awk -v c="$COVERAGE" -v m='{{coverage_min}}' 'BEGIN { exit !(c < m) }'; then
+    echo "Coverage is below the {{coverage_min}}% floor CI enforces" >&2
+    exit 1
   fi
 
 # Generate coverage using tarpaulin

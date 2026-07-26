@@ -249,18 +249,40 @@ jobs:
         key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: ${{ runner.os }}-cargo-coverage-
 
+    # `--all-targets`, not `--lib`: this suite is deliberately integration-heavy
+    # — handlers are exercised through a real dispatcher and a real wire — so a
+    # lib-only measurement counts almost none of it and reports ~54% against a
+    # true ~90%.
+    #
+    # The excluded paths are code coverage cannot speak to: `@generated` wire
+    # types (~400 emitted Default/From/Display impls the conversions never call;
+    # their correctness is proven by the conformance suite and the round-trip
+    # tests, not by line counts) and `turbomcp-codegen`, a build tool.
     - name: Generate coverage
       env:
         CARGO_TARGET_DIR: /tmp/cargo-coverage
+        IGNORE_RE: '(tests?/|benches/|examples/|fuzz/|/(v2025_11_25|draft)/types\.rs|turbomcp-codegen/)'
       run: |
-        cargo llvm-cov --workspace --lib --lcov --output-path lcov.info \
-          --ignore-filename-regex '(tests?/|benches/|examples/)'
+        set -euo pipefail
+        cargo llvm-cov --workspace --all-features --all-targets \
+          --lcov --output-path lcov.info --ignore-filename-regex "$IGNORE_RE"
 
-        COVERAGE=$(cargo llvm-cov report --workspace --lib 2>/dev/null | grep -E 'TOTAL' | awk '{print $NF}' | tr -d '%')
-        echo "Coverage: ${COVERAGE}%"
+        # Read the JSON totals rather than scraping a column out of the text
+        # table. The previous `awk '{print $NF}'` picked up the *branch* column,
+        # which llvm-cov renders as "-" when branch coverage isn't instrumented;
+        # `bc` then failed, `[` errored, and the gate silently passed on every
+        # run since it was added. Hence the explicit numeric check below.
+        COVERAGE=$(cargo llvm-cov report --json --summary-only \
+          --ignore-filename-regex "$IGNORE_RE" | jq -r '.data[0].totals.lines.percent')
+        echo "Line coverage: ${COVERAGE}%"
 
-        MIN_COVERAGE=70
-        if [ "$(echo "$COVERAGE < $MIN_COVERAGE" | bc -l)" -eq 1 ]; then
+        if ! printf '%s' "$COVERAGE" | grep -Eq '^[0-9]+(\.[0-9]+)?$'; then
+          echo "::error::could not parse a coverage percentage (got '${COVERAGE}')"
+          exit 1
+        fi
+
+        MIN_COVERAGE=85
+        if awk -v c="$COVERAGE" -v m="$MIN_COVERAGE" 'BEGIN { exit !(c < m) }'; then
           echo "::error::Coverage ${COVERAGE}% is below minimum ${MIN_COVERAGE}%"
           exit 1
         fi
