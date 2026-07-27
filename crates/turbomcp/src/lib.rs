@@ -171,6 +171,31 @@ pub use tower;
 
 // ---- server -----------------------------------------------------------------
 
+/// Server composition: mount several servers under prefixes and serve them as
+/// one. Tools and prompts are namespaced `{prefix}.{name}`; resource URIs are
+/// left alone (a URI is already a namespace, and rewriting one makes it a lie).
+///
+/// ```no_run
+/// use turbomcp::prelude::*;
+/// use turbomcp::{Composite, Implementation};
+///
+/// # #[derive(Clone)] struct Weather;
+/// # #[server(name = "weather", version = "1.0.0")]
+/// # impl Weather { #[tool] async fn forecast(&self) -> String { "sunny".into() } }
+/// # #[derive(Clone)] struct News;
+/// # #[server(name = "news", version = "1.0.0")]
+/// # impl News { #[tool] async fn headlines(&self) -> String { "…".into() } }
+/// # async fn run() -> McpResult<()> {
+/// // Serves `weather.forecast` and `news.headlines`.
+/// let gateway = Composite::new(Implementation::new("gateway", "1.0.0"))
+///     .mount("weather", Weather.into_server())?
+///     .mount("news", News.into_server())?
+///     .into_server()
+///     .build();
+/// # Ok(()) }
+/// ```
+pub use turbomcp_server::{Composite, CompositeServer};
+
 pub use turbomcp_server::{
     Audio, CachePolicies, CallToolContext, ClientHandle, CompleteContext, GetPromptContext, Image,
     IntoCallToolResult, IntoGetPromptResult, IntoReadResourceResult, IntoServerBuilder, Json,

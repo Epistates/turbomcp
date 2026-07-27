@@ -31,6 +31,11 @@ zero-boilerplate surface and strict spec compliance as a feature.
   version, and speaks the same neutral API — interoperating with the official
   Rust SDK (rmcp) both directions. `call_tool` transparently drives task-shaped
   results (including mid-task `input_required`) to completion.
+- **Servers compose.** `Composite` mounts several servers under prefixes and
+  serves them as one — tools and prompts namespaced `{prefix}.{name}`, resource
+  URIs untouched, capabilities still derived from what the mounts actually have.
+  A mounted server is an ordinary `#[server]` impl that knows nothing about
+  being mounted.
 - **Middleware is `tower`.** The dispatcher *is* a `tower::Service<JsonRpcMessage>`,
   so cross-cutting concerns are ordinary `Layer`s — one `call` for every method
   under every transport, and `ServiceBuilder` / `timeout` / `ConcurrencyLimit`
@@ -196,6 +201,7 @@ In [`examples/`](examples/) — run with `cargo run -p turbomcp --example <name>
 | `structured_output` | `Json<T>` → `structuredContent` + generated `outputSchema` |
 | `elicitation` | asking the user for input (MRTR + legacy inline) |
 | `middleware` | `tower::Layer`s over the dispatcher: one that audits, one that refuses |
+| `composition` | three servers mounted under prefixes and served as one |
 | `dual_transport` | one server over stdio **and** HTTP (`--features http`) |
 | `tasks` | the draft Tasks extension (`--features ext-tasks`) |
 | `client` | the other half: a client that spawns `hello_world` and drives it (`--features client`) |

@@ -20,6 +20,7 @@
 
 mod adapter;
 mod builder;
+mod composite;
 mod context;
 mod dispatcher;
 mod extension;
@@ -37,6 +38,7 @@ mod traits;
 
 pub use adapter::LegacySessionAdapter;
 pub use builder::{IntoServerBuilder, ServerBuilder};
+pub use composite::{Composite, CompositeServer};
 pub use context::{
     CallToolContext, CompleteContext, GetPromptContext, ListPromptsContext,
     ListResourceTemplatesContext, ListResourcesContext, ListToolsContext, ReadResourceContext,

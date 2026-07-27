@@ -110,6 +110,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Two resources may not claim one URI.** `read_resource` matches on the URI,
   so the second handler was simply dead code; it is now a compile error, as the
   equivalent duplicate name already was for tools and prompts.
+- **`Composite`: mount several servers and serve them as one.** The v3
+  `CompositeHandler` capability, rebuilt on v4's seams:
+  `Composite::new(info).mount("weather", Weather.into_server())?` — a
+  `ServerBuilder` rather than a bare handler, because that is where capabilities
+  are registered, so the composite advertises exactly what its mounts provide
+  and capabilities stay derived. A mounted server is an ordinary `#[server]`
+  impl that knows nothing about being mounted.
+
+  Tools and prompts are namespaced `{prefix}.{name}` (`.`, not v3's `_`, which
+  is common *inside* tool names and so leaves the split ambiguous; a prefix may
+  not contain `.`). **Resource URIs are not rewritten** — v3 mounted them as
+  `{prefix}://{uri}`, producing `weather://config://app`, and a URI is a global
+  identifier a client may hand elsewhere. Two mounts claiming one URI is
+  reported by `resources/list`, matching the compile-time rule within a single
+  server. `mount` also rejects, rather than ignoring, a builder carrying
+  dispatcher-level settings and a sub-server that accepts fewer protocol
+  revisions than the composite.
 - **`tags("…", …)` on `#[tool]` / `#[resource]` / `#[prompt]`** — categorize a
   component for catalog policy (`admin`, `experimental`, `readonly`, whatever
   the deployment means), the way v3's `tags = [...]` did. Tags are carried in

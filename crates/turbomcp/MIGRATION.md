@@ -215,14 +215,60 @@ worth restating: a tag hides nothing and permits nothing by itself.
 `#[tool(scopes("admin"))]` is the authorization mechanism, checked against
 `ctx.base.identity`.
 
+## Composition: `CompositeHandler` → `Composite`
+
+v3's `CompositeHandler::new(name, version).mount(handler, "weather")` becomes:
+
+```rust
+use turbomcp::{Composite, Implementation};
+
+let gateway = Composite::new(Implementation::new("gateway", "1.0.0"))
+    .mount("weather", Weather.into_server())?
+    .mount("news", News.into_server())?
+    .into_server()
+    .build();
+```
+
+`mount` takes the prefix first and a `ServerBuilder` (what `into_server()`
+produces) rather than a bare handler, because that is where a server's
+capabilities are registered — the composite advertises exactly what its mounts
+between them provide, so capabilities stay derived rather than declared.
+
+Namespacing differs in one place, deliberately:
+
+| | v3 | v4 |
+|---|---|---|
+| Tools | `{prefix}_{name}` | `{prefix}.{name}` |
+| Prompts | `{prefix}_{name}` | `{prefix}.{name}` |
+| Resources | `{prefix}://{uri}` | **unchanged** |
+
+- **`.` rather than `_`.** `_` is common *inside* tool names, so
+  `weather_get_forecast` is ambiguous about where the prefix ends. `.` is in the
+  spec's name charset and already reads as a namespace. A mount prefix may
+  therefore not contain `.`, which is checked at `mount`.
+- **Resource URIs are no longer rewritten.** v3's rule produced
+  `weather://config://app` for a resource at `config://app` — and more
+  fundamentally, a URI is a global identifier a client may hand elsewhere, so
+  rewriting it makes it a lie. Two mounts claiming one URI is a genuine
+  ambiguity and `resources/list` reports it, the same way the `#[server]` macro
+  rejects a duplicate URI within one server. Give each mounted server its own
+  scheme or authority.
+
+Two things `mount` rejects rather than silently ignoring:
+
+- **Dispatcher-level settings on a mounted builder** (`with_tasks`,
+  `with_session_backend`, `cache_policy`, …). There is one dispatcher and it is
+  the composite's; configure it there.
+- **A mount that accepts fewer protocol revisions than the composite.**
+  Handlers are version-neutral, so a sub-server's `protocols(…)` pin cannot be
+  honored once it is mounted — the composite's dispatcher owns wire rendering.
+  Narrow the composite with `Composite::protocols(…)` instead.
+
 ## Not modeled in v4 yet
 
-These v3 constructs have no v4 equivalent, and code using them needs rethinking
-rather than a port:
-
-- **Composition** — `CompositeHandler` (mounting sub-servers under prefixes).
-- **Visibility / progressive disclosure** — `VisibilityLayer` / `ComponentFilter`.
-  Tags are in place (above); what is missing is the layer that acts on them.
+- **Visibility / progressive disclosure** — `VisibilityLayer` / `ComponentFilter`
+  have no v4 equivalent. Tags are in place (above); what is missing is the layer
+  that acts on them.
 
 ## Tasks
 

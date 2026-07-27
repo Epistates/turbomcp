@@ -240,6 +240,63 @@ impl<S: McpServerCore> ServerBuilder<S> {
         self
     }
 
+    /// The server and its capability registrations, dropping everything else.
+    ///
+    /// For [`Composite::mount`](crate::Composite::mount), which wants exactly
+    /// the pair `(server, what it implements)` and configures the one dispatcher
+    /// itself. Paired with [`dispatcher_setting`](Self::dispatcher_setting) so
+    /// dropping the rest is a checked error rather than a silent loss.
+    pub(crate) fn into_parts(self) -> (S, MethodRouter<S>) {
+        (self.server, self.router)
+    }
+
+    /// The name of a dispatcher-level setting made on this builder, if any.
+    ///
+    /// Every field here besides `server`/`router` configures the *dispatcher*,
+    /// not the server, so a builder that is about to be mounted (where the
+    /// dispatcher belongs to the composite) must carry none of them. Listed
+    /// explicitly rather than by a `..` catch-all: a new setting should make
+    /// this fail to compile until someone decides which side it belongs on.
+    pub(crate) fn dispatcher_setting(&self) -> Option<&'static str> {
+        let Self {
+            server: _,
+            router: _,
+            tasks,
+            strict_elicitation_keys,
+            session_idle_timeout,
+            session_backend,
+            task_backend,
+            extensions,
+            cache,
+            state_key,
+        } = self;
+        if *tasks {
+            return Some("with_tasks");
+        }
+        if *strict_elicitation_keys {
+            return Some("strict_elicitation_keys");
+        }
+        if session_idle_timeout.is_some() {
+            return Some("session_idle_timeout");
+        }
+        if session_backend.is_some() {
+            return Some("with_session_backend");
+        }
+        if task_backend.is_some() {
+            return Some("with_task_backend");
+        }
+        if !extensions.is_empty() {
+            return Some("with_extension");
+        }
+        if cache.is_some() {
+            return Some("cache_policy");
+        }
+        if state_key.is_some() {
+            return Some("with_state_key");
+        }
+        None
+    }
+
     /// Finish: produce the `tower::Service<JsonRpcMessage>` for this server.
     #[must_use]
     pub fn build(self) -> VersionDispatcher<S> {

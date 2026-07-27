@@ -109,6 +109,9 @@ name = "elicitation"
 name = "middleware"
 
 [[example]]
+name = "composition"
+
+[[example]]
 name = "tasks"
 required-features = ["ext-tasks"]
 
