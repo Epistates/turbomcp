@@ -32,6 +32,18 @@ pub mod keys {
     /// Absent ⇒ the server MUST NOT send `notifications/message` for the
     /// request.
     pub const LOG_LEVEL: &str = "io.modelcontextprotocol/logLevel";
+
+    /// Tags categorizing a *component* (a tool, resource, resource template, or
+    /// prompt) — an array of strings in that component's own `_meta`, not a
+    /// request key like the rest of this module. Written by
+    /// `#[tool(tags(…))]` and read back by catalog policy.
+    ///
+    /// Namespaced deliberately. The spec's `_meta` rules make a prefix optional,
+    /// but unprefixed names are where the schema reserves purpose-specific
+    /// metadata, so a bare `tags` would be squatting on a name MCP may define.
+    /// `io.turbomcp` is a legal prefix: the reservation covers prefixes whose
+    /// second label is `modelcontextprotocol` or `mcp`.
+    pub const TAGS: &str = "io.turbomcp/tags";
 }
 
 /// Internal `_meta` keys: the in-process side-channel a transport (or session

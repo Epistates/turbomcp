@@ -380,13 +380,16 @@ impl MarkerKind {
                     | "title"
                     | "task"
                     | "scopes"
+                    | "tags"
                     | "read_only"
                     | "destructive"
                     | "idempotent"
                     | "open_world"
             ),
-            Self::Prompt => matches!(key, "description" | "name" | "title"),
-            Self::Resource => matches!(key, "description" | "name" | "title" | "mime_type"),
+            Self::Prompt => matches!(key, "description" | "name" | "title" | "tags"),
+            Self::Resource => {
+                matches!(key, "description" | "name" | "title" | "mime_type" | "tags")
+            }
         }
     }
 
@@ -395,12 +398,15 @@ impl MarkerKind {
         match self {
             Self::Tool => {
                 "`description = \"…\"`, `name = \"…\"`, `title = \"…\"`, `task`, \
-                 `scopes(\"…\", …)`, or a behavior hint (`read_only`, `destructive`, \
-                 `idempotent`, `open_world`)"
+                 `scopes(\"…\", …)`, `tags(\"…\", …)`, or a behavior hint \
+                 (`read_only`, `destructive`, `idempotent`, `open_world`)"
             }
-            Self::Prompt => "`description = \"…\"`, `name = \"…\"`, or `title = \"…\"`",
+            Self::Prompt => {
+                "`description = \"…\"`, `name = \"…\"`, `title = \"…\"`, or `tags(\"…\", …)`"
+            }
             Self::Resource => {
-                "`description = \"…\"`, `name = \"…\"`, `title = \"…\"`, or `mime_type = \"…\"`"
+                "`description = \"…\"`, `name = \"…\"`, `title = \"…\"`, `mime_type = \"…\"`, \
+                 or `tags(\"…\", …)`"
             }
         }
     }
@@ -419,9 +425,9 @@ struct MarkerArg {
 
 /// A bare string (the URI on `#[resource]`, a description shorthand elsewhere),
 /// `description` / `name` / `title` / `mime_type = "…"`, the `task` flag,
-/// `scopes("…", …)` (required OAuth scopes), or a behavior hint — `read_only` /
-/// `destructive` / `idempotent` / `open_world`, each optionally `= true|false`
-/// (bare = `true`).
+/// `scopes("…", …)` (required OAuth scopes), `tags("…", …)` (categorization),
+/// or a behavior hint — `read_only` / `destructive` / `idempotent` /
+/// `open_world`, each optionally `= true|false` (bare = `true`).
 enum ArgKind {
     Positional(LitStr),
     Desc(String),
@@ -430,6 +436,7 @@ enum ArgKind {
     MimeType(String),
     Task,
     Scopes(Vec<String>),
+    Tags(Vec<String>),
     Hint(HintKind, bool),
     Unknown(String),
 }
@@ -445,6 +452,7 @@ impl ArgKind {
             Self::MimeType(_) => "mime_type",
             Self::Task => "task",
             Self::Scopes(_) => "scopes",
+            Self::Tags(_) => "tags",
             Self::Hint(k, _) => k.key(),
             Self::Unknown(k) => k,
         }
@@ -504,14 +512,8 @@ impl Parse for MarkerArg {
             "name" => ArgKind::Name(name_value_lit(&meta, &key)?),
             "title" => ArgKind::Title(name_value_str(&meta, &key)?),
             "mime_type" => ArgKind::MimeType(name_value_str(&meta, &key)?),
-            "scopes" => match &meta {
-                Meta::List(list) => {
-                    let lits =
-                        list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)?;
-                    ArgKind::Scopes(lits.iter().map(LitStr::value).collect())
-                }
-                _ => return Err(syn::Error::new(span, "expected `scopes(\"…\", …)`")),
-            },
+            "scopes" => ArgKind::Scopes(string_list(&meta, &key)?),
+            "tags" => ArgKind::Tags(nonempty_string_list(&meta, &key)?),
             _ => match HintKind::from_key(&key) {
                 Some(hint) => ArgKind::Hint(hint, hint_value(&meta)?),
                 None => ArgKind::Unknown(key),
@@ -519,6 +521,40 @@ impl Parse for MarkerArg {
         };
         Ok(Self { span, kind })
     }
+}
+
+/// The strings inside a list-shaped argument — `scopes("a", "b")`,
+/// `tags("a", "b")`.
+fn string_list(meta: &Meta, key: &str) -> syn::Result<Vec<String>> {
+    match meta {
+        Meta::List(list) => {
+            let lits = list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)?;
+            Ok(lits.iter().map(LitStr::value).collect())
+        }
+        _ => Err(syn::Error::new(
+            meta.path().span(),
+            format!("expected `{key}(\"…\", …)`"),
+        )),
+    }
+}
+
+/// [`string_list`], rejecting an empty string. A tag is a lookup key — an empty
+/// one can't be matched deliberately, so it is always a mistake, and catching it
+/// here beats shipping an unmatchable `_meta` entry.
+fn nonempty_string_list(meta: &Meta, key: &str) -> syn::Result<Vec<String>> {
+    let Meta::List(list) = meta else {
+        return string_list(meta, key);
+    };
+    let lits = list.parse_args_with(Punctuated::<LitStr, Token![,]>::parse_terminated)?;
+    for lit in &lits {
+        if lit.value().is_empty() {
+            return Err(syn::Error::new(
+                lit.span(),
+                format!("a {key} entry is empty"),
+            ));
+        }
+    }
+    Ok(lits.iter().map(LitStr::value).collect())
 }
 
 /// The boolean a behavior hint declares: bare (`read_only`) means `true`;
@@ -576,6 +612,7 @@ struct MarkerArgs {
     mime_type: Option<String>,
     task: bool,
     scopes: Vec<String>,
+    tags: Vec<String>,
     hints: ToolHints,
 }
 
@@ -621,6 +658,7 @@ impl MarkerArgs {
                 ArgKind::MimeType(s) => parsed.mime_type = Some(s),
                 ArgKind::Task => parsed.task = true,
                 ArgKind::Scopes(s) => parsed.scopes = s,
+                ArgKind::Tags(t) => parsed.tags = t,
                 ArgKind::Hint(HintKind::ReadOnly, v) => parsed.hints.read_only = Some(v),
                 ArgKind::Hint(HintKind::Destructive, v) => parsed.hints.destructive = Some(v),
                 ArgKind::Hint(HintKind::Idempotent, v) => parsed.hints.idempotent = Some(v),
@@ -724,6 +762,9 @@ struct Handler {
     task: bool,
     /// `#[tool(scopes(…))]`: OAuth scopes the caller must hold. Tools only.
     scopes: Vec<String>,
+    /// `tags(…)`: categorization for catalog policy, carried in the
+    /// component's `_meta`. All three kinds.
+    tags: Vec<String>,
     /// `title = "…"`: human-facing display name (all three kinds).
     title: Option<String>,
     /// `#[resource(mime_type = "…")]`: the MIME type of what this resource
@@ -742,7 +783,21 @@ impl Handler {
         self.mime_type = args.mime_type;
         self.task = args.task;
         self.scopes = args.scopes;
+        self.tags = args.tags;
         self.hints = args.hints;
+    }
+
+    /// `.with_meta_entry(TAGS, [...])`, or nothing when this handler declared no
+    /// tags — an empty array in `_meta` would be a lie a filter has to special-case.
+    fn tags_meta(&self) -> Option<TokenStream> {
+        if self.tags.is_empty() {
+            return None;
+        }
+        let tags = &self.tags;
+        Some(quote!(.with_meta_entry(
+            ::turbomcp::__macros::TAGS_META_KEY,
+            ::turbomcp::__macros::serde_json::json!([#(#tags),*]),
+        )))
     }
 
     /// The name this handler answers to on the wire.
@@ -848,6 +903,7 @@ impl Handler {
             ret_ty,
             task: false,
             scopes: Vec::new(),
+            tags: Vec::new(),
             title: None,
             mime_type: None,
             hints: ToolHints::default(),
@@ -1051,6 +1107,7 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
             __annotations
         }))
     });
+    let tags = t.tags_meta();
     quote! {
         {
             let mut __schema = ::turbomcp::__macros::close_object_schema(
@@ -1064,7 +1121,7 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
             );
             #(#header_marks)*
             ::turbomcp::neutral::Tool::new(#name, __schema)
-                #desc #title #annotations #output_schema #task_support
+                #desc #title #annotations #output_schema #task_support #tags
         }
     }
 }
@@ -1249,7 +1306,8 @@ fn resource_metadata(r: &Handler) -> TokenStream {
         .map(|d| quote!(.with_description(#d)));
     let title = r.title.as_ref().map(|t| quote!(.with_title(#t)));
     let mime = r.mime_type.as_ref().map(|m| quote!(.with_mime_type(#m)));
-    quote!(#desc #title #mime)
+    let tags = r.tags_meta();
+    quote!(#desc #title #mime #tags)
 }
 
 // ---- codegen: prompts --------------------------------------------------------
@@ -1304,7 +1362,8 @@ fn gen_prompt_list_entry(p: &Handler) -> TokenStream {
             .map(|d| quote!(.with_description(#d)));
         quote!(.with_argument(::turbomcp::neutral::PromptArgument::new(#arg_name) #req #adesc))
     });
-    quote!(::turbomcp::neutral::Prompt::new(#name) #desc #title #(#args)*)
+    let tags = p.tags_meta();
+    quote!(::turbomcp::neutral::Prompt::new(#name) #desc #title #tags #(#args)*)
 }
 
 fn gen_prompt_get_arm(p: &Handler) -> TokenStream {

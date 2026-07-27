@@ -62,9 +62,13 @@ pub fn server(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// Accepts `#[tool]`, `#[tool("description")]`, or a list of:
 /// `description = "…"`, `name = "…"`, `title = "…"`, `task`,
-/// `scopes("…", …)`, and the behavior hints `read_only` / `destructive` /
-/// `idempotent` / `open_world` (bare = true, or `= false` to declare the
-/// opposite — distinct from leaving a hint unset).
+/// `scopes("…", …)`, `tags("…", …)`, and the behavior hints `read_only` /
+/// `destructive` / `idempotent` / `open_world` (bare = true, or `= false` to
+/// declare the opposite — distinct from leaving a hint unset).
+///
+/// `tags` categorizes the tool for catalog policy and is *not* a security
+/// boundary — use `scopes` for that. See [`macro@prompt`] for the shared
+/// details.
 ///
 /// `name` sets the name the tool answers to on the wire, which otherwise
 /// defaults to the Rust method name. Set it when the two should not be
@@ -89,8 +93,8 @@ pub fn tool(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// The first argument is the URI and is required — either fixed
 /// (`"config://app"`) or an RFC 6570 template (`"file://{+path}"`), in which
 /// case every handler argument must name a template variable. It may be
-/// followed by `description = "…"`, `name = "…"`, `title = "…"`, and
-/// `mime_type = "…"`:
+/// followed by `description = "…"`, `name = "…"`, `title = "…"`,
+/// `mime_type = "…"`, and `tags("…", …)`:
 ///
 /// ```ignore
 /// #[resource(
@@ -114,9 +118,21 @@ pub fn resource(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// Marker: declares a method as an MCP prompt. Consumed by [`macro@server`].
 ///
 /// Accepts `#[prompt]`, `#[prompt("description")]`, or a list of
-/// `description = "…"`, `name = "…"`, and `title = "…"`. As with `#[tool]`,
-/// `name` decouples the wire name from the Rust method name and must be unique
-/// within the server.
+/// `description = "…"`, `name = "…"`, `title = "…"`, and `tags("…", …)`. As
+/// with `#[tool]`, `name` decouples the wire name from the Rust method name and
+/// must be unique within the server.
+///
+/// # Tags
+///
+/// `tags("…", …)` — accepted by all three markers — categorizes a component so
+/// a catalog policy can decide who is offered it (`admin`, `experimental`,
+/// `readonly`, whatever the deployment means). Tags are carried in the
+/// component's `_meta` under `io.turbomcp/tags`, so they survive every protocol
+/// revision and a mounted sub-server's components carry their own — read them
+/// back with `turbomcp::tags`.
+///
+/// They are **descriptive, not enforcing**: a tag hides nothing and permits
+/// nothing by itself. `#[tool(scopes(…))]` is the authorization mechanism.
 #[proc_macro_attribute]
 pub fn prompt(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item

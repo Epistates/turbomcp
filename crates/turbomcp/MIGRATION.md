@@ -173,6 +173,48 @@ because both need the HTTP request (headers, peer address) that a JSON-RPC frame
 no longer carries. Per-tool authorization is `#[tool(scopes(…))]`, checked
 against `ctx.base.identity`.
 
+## Tags: `ComponentMeta` → `tags(…)` on the markers
+
+v3 attached tags with `#[tool(tags = ["admin"])]` and read them back through
+`ComponentMeta`. v4 spells it `tags("admin", "dangerous")` — the same shape as
+`scopes(…)` — and accepts it on all three markers:
+
+```rust
+// v3
+#[tool(description = "Wipe", tags = ["admin", "dangerous"])]
+// v4
+#[tool(description = "Wipe", tags("admin", "dangerous"))]
+```
+
+Read them back with `turbomcp::tags`:
+
+```rust
+use turbomcp::tags;
+
+if tags::has(&tool.meta, "admin") { /* … */ }
+tags::has_any(&tool.meta, &["experimental", "deprecated"]);
+```
+
+Two deliberate differences:
+
+- **The `_meta` key is namespaced.** v3 wrote bare `tags` / `version` keys.
+  That is spec-legal — a `_meta` prefix is optional — but unprefixed names are
+  exactly where the MCP schema reserves purpose-specific metadata, so a bare
+  `tags` squats on a name the spec may define. v4 writes
+  `io.turbomcp/tags`. A client or proxy reading v3's key needs updating.
+- **There is no per-component `version`.** v3's `ComponentMeta.version` was a
+  string whose only operation was exact equality, with no consumer but the
+  filter. v4 answers component evolution where clients actually look: the wire
+  name (`#[tool(name = "search.v2")]`), which is decoupled from the Rust method
+  name for exactly this. `_meta` stays open, so
+  `.with_meta_entry("com.example/version", …)` on a hand-built component still
+  works if you want one.
+
+Tags **describe, they do not enforce** — the same was true in v3, but it is
+worth restating: a tag hides nothing and permits nothing by itself.
+`#[tool(scopes("admin"))]` is the authorization mechanism, checked against
+`ctx.base.identity`.
+
 ## Not modeled in v4 yet
 
 These v3 constructs have no v4 equivalent, and code using them needs rethinking
@@ -180,7 +222,7 @@ rather than a port:
 
 - **Composition** — `CompositeHandler` (mounting sub-servers under prefixes).
 - **Visibility / progressive disclosure** — `VisibilityLayer` / `ComponentFilter`.
-- **Tags & versioning metadata** on components.
+  Tags are in place (above); what is missing is the layer that acts on them.
 
 ## Tasks
 

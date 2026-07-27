@@ -110,6 +110,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Two resources may not claim one URI.** `read_resource` matches on the URI,
   so the second handler was simply dead code; it is now a compile error, as the
   equivalent duplicate name already was for tools and prompts.
+- **`tags("…", …)` on `#[tool]` / `#[resource]` / `#[prompt]`** — categorize a
+  component for catalog policy (`admin`, `experimental`, `readonly`, whatever
+  the deployment means), the way v3's `tags = [...]` did. Tags are carried in
+  the component's own `_meta` under `io.turbomcp/tags` rather than a
+  compile-time table, so they survive every protocol revision and components a
+  mounted sub-server contributes carry their own — read them back with
+  `turbomcp::tags` (`of`, `has`, `has_any`, `has_all`). Tags *describe*; they
+  hide nothing and permit nothing. `#[tool(scopes(…))]` remains the
+  authorization mechanism. Unlike v3 there is no per-component `version` field:
+  its only operation was exact string equality with no consumer but the filter,
+  and `#[tool(name = "search.v2")]` versions a component where clients actually
+  look. An empty tag is a compile error.
 - **RPC middleware is reachable and documented.** The dispatcher has always been
   a `tower::Service<JsonRpcMessage>`, so middleware has always been a plain
   `tower::Layer` — but nothing a user needed to write one was exported from the

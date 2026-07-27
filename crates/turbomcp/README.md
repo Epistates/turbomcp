@@ -126,6 +126,18 @@ render the bytes:
 async fn config(&self) -> McpResult<String> { … }
 ```
 
+All three also take `tags("…", …)`, which categorizes a component for catalog
+policy — which tools a deployment or a caller should be offered. Tags ride in
+the component's `_meta` (`io.turbomcp/tags`), so they survive every protocol
+revision and components a sub-server contributes carry their own; read them
+back with `turbomcp::tags`. They describe, they don't enforce:
+`#[tool(scopes("admin"))]` is the authorization mechanism.
+
+```rust,ignore
+#[tool(tags("admin", "dangerous"), scopes("admin"))]
+async fn wipe(&self, ctx: &CallToolContext) -> McpResult<String> { … }
+```
+
 A server answers both protocol revisions by default. Pin it to the frozen
 stable one — the draft's wire shapes can still change before it freezes — with
 `protocols(…)`; an excluded version is refused with `-32004` plus the list of

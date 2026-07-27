@@ -114,6 +114,10 @@ pub use turbomcp_protocol::neutral;
 /// renamed method silently stops matching.
 pub use turbomcp_protocol::methods;
 
+/// Reading the component tags that `#[tool(tags(…))]` / `#[resource(tags(…))]`
+/// / `#[prompt(tags(…))]` write into a component's `_meta`.
+pub use turbomcp_server::tags;
+
 // ---- service seam + codec ---------------------------------------------------
 
 pub use turbomcp_codec::{Codec, CodecError, DefaultCodec, SerdeJsonCodec};
@@ -352,6 +356,7 @@ pub mod __macros {
     pub use serde;
     pub use serde_json;
 
+    pub use turbomcp_core::meta::keys::TAGS as TAGS_META_KEY;
     pub use turbomcp_core::{McpError, McpResult};
     pub use turbomcp_protocol::neutral;
     pub use turbomcp_server::__macro_support::{

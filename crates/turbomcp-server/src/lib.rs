@@ -31,6 +31,7 @@ mod response;
 mod router;
 mod session;
 mod subscriptions;
+pub mod tags;
 mod tasks;
 mod traits;
 

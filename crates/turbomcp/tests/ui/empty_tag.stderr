@@ -1,0 +1,5 @@
+error: a tags entry is empty
+  --> tests/ui/empty_tag.rs:11:26
+   |
+11 |     #[tool(tags("admin", ""))]
+   |                          ^^
