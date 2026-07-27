@@ -44,6 +44,16 @@ pub mod keys {
     /// `io.turbomcp` is a legal prefix: the reservation covers prefixes whose
     /// second label is `modelcontextprotocol` or `mcp`.
     pub const TAGS: &str = "io.turbomcp/tags";
+
+    /// The OAuth scopes a *component* requires, as an array of strings in its
+    /// own `_meta` — what `#[tool(scopes(…))]` declares.
+    ///
+    /// On the wire because that is the only place a catalog policy can read it
+    /// from: the requirement has to be visible at `tools/list` time to filter
+    /// the list, and a component contributed by a mounted or proxied server
+    /// carries its own. It discloses nothing new — a caller learns the same
+    /// requirement by calling and reading the refusal.
+    pub const SCOPES: &str = "io.turbomcp/scopes";
 }
 
 /// Internal `_meta` keys: the in-process side-channel a transport (or session

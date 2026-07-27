@@ -32,6 +32,7 @@ use crate::mrtr::{ClientHandle, PendingRequests, StateSigner};
 use crate::progress::ProgressReporter;
 use crate::router::MethodRouter;
 use crate::traits::McpServerCore;
+use crate::visibility::{self, ComponentKind, VisibleComponent};
 
 use super::params::{
     parse_call_tool_params, parse_complete_params, parse_get_prompt_params, parse_list_params,
@@ -157,6 +158,131 @@ impl WireFamily for Legacy0618Wire {
     type Complete = v0618::CompleteResult;
 }
 
+/// Apply the installed visibility policy to a list result before it is widened
+/// to the wire.
+fn with_visibility<N>(
+    fut: Option<BoxFuture<'static, Result<N, McpError>>>,
+    shared: &Shared,
+    ctx: &RequestContext,
+    filter: fn(&visibility::Policy, &RequestContext, &mut N),
+) -> Option<BoxFuture<'static, Result<N, McpError>>>
+where
+    N: Send + 'static,
+{
+    let policy = shared.visibility.clone();
+    if policy.is_none() {
+        return fut;
+    }
+    let ctx = ctx.clone();
+    fut.map(|f| {
+        async move {
+            f.await.map(|mut n| {
+                filter(&policy, &ctx, &mut n);
+                n
+            })
+        }
+        .boxed()
+    })
+}
+
+/// What a call is addressing, for the pre-dispatch visibility check.
+enum Component<'a> {
+    Tool(&'a str),
+    Resource(&'a str),
+    Prompt(&'a str),
+}
+
+/// Whether the installed policy hides the component a call is addressing.
+///
+/// A policy decides on a component's *metadata*, but a `tools/call` carries
+/// only a name — so this lists the corresponding capability to find it. That
+/// extra list is the price of "hidden means unreachable"; it is paid only when
+/// a policy is installed, and skipped entirely otherwise.
+///
+/// A component no list mentions is **not** treated as hidden: the handler owns
+/// that answer, and it already produces the right unknown-tool /
+/// unknown-prompt / not-found reply.
+async fn hidden<S: McpServerCore>(
+    shared: &Shared,
+    router: &MethodRouter<S>,
+    server: &S,
+    ctx: &RequestContext,
+    component: Component<'_>,
+) -> bool {
+    let Some(policy) = shared.visibility.as_ref() else {
+        return false;
+    };
+    let params = neutral::ListParams::default();
+    let judge = |kind, id: &str, meta: &Map<String, Value>| {
+        !policy.is_visible(&VisibleComponent {
+            kind,
+            id,
+            meta,
+            request: ctx,
+        })
+    };
+    match component {
+        Component::Tool(name) => {
+            let Some(fut) = router.dispatch_list_tools(
+                server.clone(),
+                ListToolsContext::new(ctx.clone()),
+                params,
+            ) else {
+                return false;
+            };
+            let Ok(listed) = fut.await else { return false };
+            listed
+                .tools
+                .iter()
+                .find(|t| t.name == name)
+                .is_some_and(|t| judge(ComponentKind::Tool, &t.name, &t.meta))
+        }
+        Component::Prompt(name) => {
+            let Some(fut) = router.dispatch_list_prompts(
+                server.clone(),
+                ListPromptsContext::new(ctx.clone()),
+                params,
+            ) else {
+                return false;
+            };
+            let Ok(listed) = fut.await else { return false };
+            listed
+                .prompts
+                .iter()
+                .find(|p| p.name == name)
+                .is_some_and(|p| judge(ComponentKind::Prompt, &p.name, &p.meta))
+        }
+        Component::Resource(uri) => {
+            if let Some(fut) = router.dispatch_list_resources(
+                server.clone(),
+                ListResourcesContext::new(ctx.clone()),
+                params.clone(),
+            ) && let Ok(listed) = fut.await
+                && let Some(r) = listed.resources.iter().find(|r| r.uri == uri)
+            {
+                return judge(ComponentKind::Resource, &r.uri, &r.meta);
+            }
+            // Not a concrete resource — it may still be produced by a template,
+            // which is where the policy's decision was recorded.
+            let Some(fut) = router.dispatch_list_resource_templates(
+                server.clone(),
+                ListResourceTemplatesContext::new(ctx.clone()),
+                params,
+            ) else {
+                return false;
+            };
+            let Ok(listed) = fut.await else { return false };
+            listed
+                .resource_templates
+                .iter()
+                .find(|t| {
+                    crate::__macro_support::match_uri_template(&t.uri_template, uri).is_some()
+                })
+                .is_some_and(|t| judge(ComponentKind::ResourceTemplate, &t.uri_template, &t.meta))
+        }
+    }
+}
+
 pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
     server: S,
     router: &MethodRouter<S>,
@@ -172,7 +298,9 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
     let list_params = parse_list_params(req.params.as_ref());
     match method {
         methods::request::TOOLS_LIST => {
-            let fut = router.dispatch_list_tools(server, ListToolsContext::new(ctx), list_params);
+            let fut =
+                router.dispatch_list_tools(server, ListToolsContext::new(ctx.clone()), list_params);
+            let fut = with_visibility(fut, shared, &ctx, visibility::filter_tools);
             let fut = with_cache_default(fut, shared.cache.tools_list);
             finish::<_, W::ListTools>(id, method, &W::VERSION, fut).await
         }
@@ -181,6 +309,18 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 Ok(p) => p,
                 Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
+            // A hidden tool must be unreachable, not merely unlisted — and
+            // refused exactly as an unknown one, or the refusal discloses what
+            // the policy is hiding.
+            if hidden(shared, router, &server, &ctx, Component::Tool(&params.name)).await {
+                return ok_value(
+                    id,
+                    &W::CallTool::from(neutral::CallToolResult::error(format!(
+                        "unknown tool: {}",
+                        params.name
+                    ))),
+                );
+            }
             let handle = match mrtr_handle::<W>(
                 req,
                 &ctx,
@@ -215,17 +355,22 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
             .await
         }
         methods::request::RESOURCES_LIST => {
-            let fut =
-                router.dispatch_list_resources(server, ListResourcesContext::new(ctx), list_params);
+            let fut = router.dispatch_list_resources(
+                server,
+                ListResourcesContext::new(ctx.clone()),
+                list_params,
+            );
+            let fut = with_visibility(fut, shared, &ctx, visibility::filter_resources);
             let fut = with_cache_default(fut, shared.cache.resources_list);
             finish::<_, W::ListResources>(id, method, &W::VERSION, fut).await
         }
         methods::request::RESOURCES_TEMPLATES_LIST => {
             let fut = router.dispatch_list_resource_templates(
                 server,
-                ListResourceTemplatesContext::new(ctx),
+                ListResourceTemplatesContext::new(ctx.clone()),
                 list_params,
             );
+            let fut = with_visibility(fut, shared, &ctx, visibility::filter_resource_templates);
             let fut = with_cache_default(fut, shared.cache.resource_templates_list);
             finish::<_, W::ListResourceTemplates>(id, method, &W::VERSION, fut).await
         }
@@ -234,6 +379,21 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 Ok(p) => p,
                 Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
+            if hidden(
+                shared,
+                router,
+                &server,
+                &ctx,
+                Component::Resource(&params.uri),
+            )
+            .await
+            {
+                return error_response_for(
+                    id,
+                    &W::VERSION,
+                    &McpError::resource_not_found(params.uri),
+                );
+            }
             let handle = match mrtr_handle::<W>(
                 req,
                 &ctx,
@@ -269,8 +429,12 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
             .await
         }
         methods::request::PROMPTS_LIST => {
-            let fut =
-                router.dispatch_list_prompts(server, ListPromptsContext::new(ctx), list_params);
+            let fut = router.dispatch_list_prompts(
+                server,
+                ListPromptsContext::new(ctx.clone()),
+                list_params,
+            );
+            let fut = with_visibility(fut, shared, &ctx, visibility::filter_prompts);
             let fut = with_cache_default(fut, shared.cache.prompts_list);
             finish::<_, W::ListPrompts>(id, method, &W::VERSION, fut).await
         }
@@ -279,6 +443,21 @@ pub(super) async fn dispatch_capability<S: McpServerCore, W: WireFamily>(
                 Ok(p) => p,
                 Err(e) => return error_response_for(id, &W::VERSION, &e),
             };
+            if hidden(
+                shared,
+                router,
+                &server,
+                &ctx,
+                Component::Prompt(&params.name),
+            )
+            .await
+            {
+                return error_response_for(
+                    id,
+                    &W::VERSION,
+                    &McpError::invalid_params(format!("unknown prompt: {}", params.name)),
+                );
+            }
             let handle = match mrtr_handle::<W>(
                 req,
                 &ctx,

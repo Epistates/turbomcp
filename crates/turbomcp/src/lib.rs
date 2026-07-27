@@ -118,6 +118,20 @@ pub use turbomcp_protocol::methods;
 /// / `#[prompt(tags(…))]` write into a component's `_meta`.
 pub use turbomcp_server::tags;
 
+/// Progressive disclosure: which components a given caller may see — and
+/// therefore reach. Install with
+/// [`ServerBuilder::with_visibility`](ServerBuilder::with_visibility).
+///
+/// A hidden component is refused *exactly as one that does not exist*, since a
+/// distinct "forbidden" answer would disclose what the policy is hiding.
+/// [`Visibility`] covers the two common cases (hide by tag, hide what the
+/// caller lacks the scopes for); implement [`VisibilityPolicy`] — a bare
+/// closure will do — for anything else, including per-session unlocking keyed
+/// on your own store.
+pub use turbomcp_server::visibility;
+
+pub use turbomcp_server::{ComponentKind, Visibility, VisibilityPolicy, VisibleComponent};
+
 // ---- service seam + codec ---------------------------------------------------
 
 pub use turbomcp_codec::{Codec, CodecError, DefaultCodec, SerdeJsonCodec};
@@ -381,6 +395,7 @@ pub mod __macros {
     pub use serde;
     pub use serde_json;
 
+    pub use turbomcp_core::meta::keys::SCOPES as SCOPES_META_KEY;
     pub use turbomcp_core::meta::keys::TAGS as TAGS_META_KEY;
     pub use turbomcp_core::{McpError, McpResult};
     pub use turbomcp_protocol::neutral;

@@ -31,6 +31,10 @@ zero-boilerplate surface and strict spec compliance as a feature.
   version, and speaks the same neutral API — interoperating with the official
   Rust SDK (rmcp) both directions. `call_tool` transparently drives task-shaped
   results (including mid-task `input_required`) to completion.
+- **Progressive disclosure.** `with_visibility(…)` decides per caller which
+  components exist — by tag, by the scopes a tool declares, or by any closure
+  you write. Hidden means *unreachable*, not merely unlisted, and refused
+  exactly as something that doesn't exist.
 - **Servers compose.** `Composite` mounts several servers under prefixes and
   serves them as one — tools and prompts namespaced `{prefix}.{name}`, resource
   URIs untouched, capabilities still derived from what the mounts actually have.

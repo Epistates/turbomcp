@@ -98,6 +98,9 @@ struct Shared {
     /// Per-capability cache defaults (SEP-2549), applied to draft cacheable
     /// results whose handler didn't set a policy.
     cache: CachePolicies,
+    /// Opt-in progressive disclosure: which components a given caller may see,
+    /// and therefore reach. `None` (the default) shows everything.
+    visibility: crate::visibility::Policy,
 }
 
 /// Per-capability cache defaults (SEP-2549) for the `2026-07-28` wire's
@@ -256,8 +259,18 @@ impl<S: McpServerCore> VersionDispatcher<S> {
                 extensions: Arc::new(Vec::new()),
                 strict_elicitation_keys: false,
                 cache: CachePolicies::default(),
+                visibility: None,
             },
         }
+    }
+
+    /// Install a [`VisibilityPolicy`](crate::VisibilityPolicy): the components
+    /// it hides are dropped from every list *and* answered as though they did
+    /// not exist. See [the module docs](crate::visibility).
+    #[must_use]
+    pub fn with_visibility(mut self, policy: Arc<dyn crate::VisibilityPolicy>) -> Self {
+        self.shared.visibility = Some(policy);
+        self
     }
 
     /// A cloneable handle for publishing change notifications

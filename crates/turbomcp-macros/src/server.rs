@@ -523,6 +523,19 @@ impl Parse for MarkerArg {
     }
 }
 
+/// `.with_meta_entry(key, [values…])`, or nothing when `values` is empty — an
+/// empty array in `_meta` would be a distinct-looking value every reader then
+/// has to special-case.
+fn string_meta(values: &[String], key: TokenStream) -> Option<TokenStream> {
+    if values.is_empty() {
+        return None;
+    }
+    Some(quote!(.with_meta_entry(
+        #key,
+        ::turbomcp::__macros::serde_json::json!([#(#values),*]),
+    )))
+}
+
 /// The strings inside a list-shaped argument — `scopes("a", "b")`,
 /// `tags("a", "b")`.
 fn string_list(meta: &Meta, key: &str) -> syn::Result<Vec<String>> {
@@ -790,14 +803,16 @@ impl Handler {
     /// `.with_meta_entry(TAGS, [...])`, or nothing when this handler declared no
     /// tags — an empty array in `_meta` would be a lie a filter has to special-case.
     fn tags_meta(&self) -> Option<TokenStream> {
-        if self.tags.is_empty() {
-            return None;
-        }
-        let tags = &self.tags;
-        Some(quote!(.with_meta_entry(
-            ::turbomcp::__macros::TAGS_META_KEY,
-            ::turbomcp::__macros::serde_json::json!([#(#tags),*]),
-        )))
+        string_meta(&self.tags, quote!(::turbomcp::__macros::TAGS_META_KEY))
+    }
+
+    /// `.with_meta_entry(SCOPES, [...])` for `#[tool(scopes(…))]`.
+    ///
+    /// The requirement is enforced in the call arm regardless; publishing it
+    /// here is what lets a catalog policy filter `tools/list` by it, and what
+    /// carries it across a mount.
+    fn scopes_meta(&self) -> Option<TokenStream> {
+        string_meta(&self.scopes, quote!(::turbomcp::__macros::SCOPES_META_KEY))
     }
 
     /// The name this handler answers to on the wire.
@@ -1108,6 +1123,7 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
         }))
     });
     let tags = t.tags_meta();
+    let scopes = t.scopes_meta();
     quote! {
         {
             let mut __schema = ::turbomcp::__macros::close_object_schema(
@@ -1121,7 +1137,7 @@ fn gen_tool_list_entry(self_ty: &Type, t: &Handler) -> TokenStream {
             );
             #(#header_marks)*
             ::turbomcp::neutral::Tool::new(#name, __schema)
-                #desc #title #annotations #output_schema #task_support #tags
+                #desc #title #annotations #output_schema #task_support #tags #scopes
         }
     }
 }

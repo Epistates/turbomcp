@@ -35,6 +35,7 @@ mod subscriptions;
 pub mod tags;
 mod tasks;
 mod traits;
+pub mod visibility;
 
 pub use adapter::LegacySessionAdapter;
 pub use builder::{IntoServerBuilder, ServerBuilder};
@@ -59,6 +60,7 @@ pub use session::{SessionBackend, SessionState, SessionStore};
 pub use subscriptions::ServerNotifier;
 pub use tasks::{TaskBackend, TaskError, TaskSnapshot, TaskStatus, TaskStore};
 pub use traits::{McpServerCore, WithCompletions, WithPrompts, WithResources, WithTools};
+pub use visibility::{ComponentKind, Visibility, VisibilityPolicy, VisibleComponent};
 
 /// Support items called by `#[server]`-generated code. Not part of the stable
 /// API — do not depend on it directly.

@@ -110,6 +110,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Two resources may not claim one URI.** `read_resource` matches on the URI,
   so the second handler was simply dead code; it is now a compile error, as the
   equivalent duplicate name already was for tools and prompts.
+- **`ServerBuilder::with_visibility`: progressive disclosure.** A
+  `VisibilityPolicy` decides, per caller, which components exist —
+  `Visibility::new().hiding_tagged(["internal"]).requiring_declared_scopes()`
+  covers the common cases, and a bare closure over `VisibleComponent` covers the
+  rest. Three things distinguish it from v3's `VisibilityLayer`:
+
+  **Hidden means unreachable.** v3 filtered lists; v4 also refuses the call, and
+  refuses it *exactly as a component that does not exist*, since a distinct
+  "forbidden" answer would disclose the existence being hidden. A hidden
+  template's URIs are refused too — a template's URIs aren't enumerable, so
+  checking the concrete list alone would leave the whole template readable. The
+  guarantee costs one list per guarded call, paid only when a policy is
+  installed.
+
+  **`requiring_declared_scopes()` closes a real gap:** `#[tool(scopes(…))]`
+  refused the call but the tool still appeared in `tools/list` for a caller who
+  could never use it. Declared scopes are now published in the tool's `_meta`
+  (`io.turbomcp/scopes`) so a filter can read them at list time and so they
+  survive being mounted into a `Composite`. This discloses nothing new — a
+  caller learns the same requirement by calling.
+
+  **There is no session map.** v3 owned a per-session enable/disable map whose
+  own docs warned it leaks without explicit cleanup. A v4 policy is a function
+  of `(component, request)` with the whole `RequestContext` in hand, so a
+  deployment wanting per-session unlocking owns its own store and its lifecycle.
 - **`Composite`: mount several servers and serve them as one.** The v3
   `CompositeHandler` capability, rebuilt on v4's seams:
   `Composite::new(info).mount("weather", Weather.into_server())?` — a

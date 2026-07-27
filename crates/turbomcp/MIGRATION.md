@@ -264,11 +264,57 @@ Two things `mount` rejects rather than silently ignoring:
   honored once it is mounted — the composite's dispatcher owns wire rendering.
   Narrow the composite with `Composite::protocols(…)` instead.
 
-## Not modeled in v4 yet
+## Visibility: `VisibilityLayer` → `with_visibility`
 
-- **Visibility / progressive disclosure** — `VisibilityLayer` / `ComponentFilter`
-  have no v4 equivalent. Tags are in place (above); what is missing is the layer
-  that acts on them.
+v3's `VisibilityLayer::new(handler).with_disabled(ComponentFilter::with_tags(["admin"]))`
+becomes a builder setting:
+
+```rust
+use std::sync::Arc;
+use turbomcp::Visibility;
+
+let dispatcher = MyServer
+    .into_server()
+    .with_visibility(Arc::new(
+        Visibility::new()
+            .hiding_tagged(["internal"])
+            .requiring_declared_scopes(),
+    ))
+    .build();
+```
+
+Three differences worth knowing:
+
+- **Hidden means unreachable.** v3 filtered lists. v4 also refuses the call —
+  and refuses it *exactly as a component that does not exist* (unknown tool,
+  unknown prompt, resource-not-found), because a distinct "forbidden" answer
+  would disclose the existence the policy is hiding. This costs one list per
+  guarded call, paid only when a policy is installed. A hidden *template's*
+  URIs are refused too, since a template's URIs are not enumerable and checking
+  only the concrete list would leave the whole template readable.
+- **`requiring_declared_scopes()` closes a real gap.** `#[tool(scopes("admin"))]`
+  has always refused the call, but the tool still appeared in `tools/list` for a
+  caller who could never use it. Turning this on makes the catalog agree with
+  the enforcement. The scopes a tool declares are published in its `_meta`
+  (`io.turbomcp/scopes`) so the filter can read them at list time — and so they
+  survive being mounted into a `Composite`.
+- **There is no session map.** v3's `VisibilityLayer` owned a per-session
+  enable/disable map, and its own documentation warned the map leaks without
+  explicit cleanup. A v4 policy is a function of `(component, request)` — and
+  `VisibleComponent::request` is the whole `RequestContext`, identity included —
+  so a deployment that wants per-session unlocking implements `VisibilityPolicy`
+  over its own store and owns that store's lifecycle. A bare closure is a
+  policy:
+
+  ```rust
+  let policy = Arc::new(|c: &VisibleComponent<'_>| {
+      c.id != "rotate_keys" || unlocked_for(c.request.identity.subject())
+  });
+  ```
+
+`ComponentFilter`'s include/exclude/version triple has no direct counterpart:
+`hiding_tagged` covers exclusion, inclusion is the complement of it, and there
+is no per-component version to filter on (see the tags section above).
 
 ## Tasks
 

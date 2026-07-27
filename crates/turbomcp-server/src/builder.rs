@@ -37,6 +37,7 @@ pub struct ServerBuilder<S> {
     extensions: Vec<Arc<dyn Extension>>,
     cache: Option<CachePolicies>,
     state_key: Option<[u8; 32]>,
+    visibility: Option<Arc<dyn crate::VisibilityPolicy>>,
 }
 
 impl<S: McpServerCore> ServerBuilder<S> {
@@ -54,6 +55,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             extensions: Vec::new(),
             cache: None,
             state_key: None,
+            visibility: None,
         }
     }
 
@@ -72,6 +74,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             extensions: Vec::new(),
             cache: None,
             state_key: None,
+            visibility: None,
         }
     }
 
@@ -156,6 +159,37 @@ impl<S: McpServerCore> ServerBuilder<S> {
     #[must_use]
     pub fn with_extension(mut self, extension: Arc<dyn Extension>) -> Self {
         self.extensions.push(extension);
+        self
+    }
+
+    /// Install a [`VisibilityPolicy`](crate::VisibilityPolicy) — progressive
+    /// disclosure. Components it hides are dropped from every list *and*
+    /// answered as though they did not exist, since filtering a list without
+    /// refusing the call would be theatre.
+    ///
+    /// ```
+    /// # use turbomcp_server::{IntoServerBuilder, McpServerCore, Visibility};
+    /// # use turbomcp_core::Implementation;
+    /// # use std::sync::Arc;
+    /// # #[derive(Clone)] struct MyServer;
+    /// # impl McpServerCore for MyServer {
+    /// #     fn server_info(&self) -> Implementation { Implementation::new("s", "1.0") }
+    /// # }
+    /// let dispatcher = MyServer
+    ///     .into_server()
+    ///     .with_visibility(Arc::new(
+    ///         Visibility::new()
+    ///             .hiding_tagged(["internal"])
+    ///             .requiring_declared_scopes(),
+    ///     ))
+    ///     .build();
+    /// ```
+    ///
+    /// See [the module docs](crate::visibility) for the cost (one list per
+    /// guarded call) and for writing a policy of your own.
+    #[must_use]
+    pub fn with_visibility(mut self, policy: Arc<dyn crate::VisibilityPolicy>) -> Self {
+        self.visibility = Some(policy);
         self
     }
 
@@ -269,6 +303,7 @@ impl<S: McpServerCore> ServerBuilder<S> {
             extensions,
             cache,
             state_key,
+            visibility,
         } = self;
         if *tasks {
             return Some("with_tasks");
@@ -293,6 +328,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if state_key.is_some() {
             return Some("with_state_key");
+        }
+        if visibility.is_some() {
+            return Some("with_visibility");
         }
         None
     }
@@ -322,6 +360,9 @@ impl<S: McpServerCore> ServerBuilder<S> {
         }
         if let Some(key) = self.state_key {
             dispatcher = dispatcher.with_state_key(key);
+        }
+        if let Some(policy) = self.visibility {
+            dispatcher = dispatcher.with_visibility(policy);
         }
         dispatcher
     }
