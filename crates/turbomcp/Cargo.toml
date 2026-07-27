@@ -55,6 +55,9 @@ turbomcp-ext-tasks = { workspace = true, optional = true }
 turbomcp-macros = { workspace = true }
 # `run_http` spawns the graceful subscription-close watcher (feature `http`).
 tokio = { workspace = true, features = ["rt"], optional = true }
+# Re-exported as `turbomcp::tower`: `McpService` *is* a `tower::Service`, so
+# users writing RPC middleware need the same tower, not a second copy.
+tower = { workspace = true }
 
 # Re-exported for `#[server]`-generated code (schema derivation + (de)serialization).
 schemars = { workspace = true }
@@ -72,7 +75,6 @@ tokio = { workspace = true, features = [
 insta = { workspace = true }
 trybuild = { workspace = true }
 criterion = { workspace = true, features = ["async_tokio"] }
-tower = { workspace = true, features = ["util"] }
 axum = { workspace = true }
 http-body-util = "0.1"
 reqwest = { workspace = true }
@@ -102,6 +104,9 @@ required-features = ["http"]
 
 [[example]]
 name = "elicitation"
+
+[[example]]
+name = "middleware"
 
 [[example]]
 name = "tasks"

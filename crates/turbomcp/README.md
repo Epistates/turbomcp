@@ -31,6 +31,11 @@ zero-boilerplate surface and strict spec compliance as a feature.
   version, and speaks the same neutral API — interoperating with the official
   Rust SDK (rmcp) both directions. `call_tool` transparently drives task-shaped
   results (including mid-task `input_required`) to completion.
+- **Middleware is `tower`.** The dispatcher *is* a `tower::Service<JsonRpcMessage>`,
+  so cross-cutting concerns are ordinary `Layer`s — one `call` for every method
+  under every transport, and `ServiceBuilder` / `timeout` / `ConcurrencyLimit`
+  compose onto an MCP server unchanged. No hook list to keep in sync with the
+  protocol.
 - **Production seams.** OAuth 2.1 on both halves (resource-server bearer
   validation and the client auth-code + PKCE flow), identity-keyed rate
   limiting, OpenTelemetry tracing + metrics, progress/logging, subscriptions,
@@ -178,6 +183,7 @@ In [`examples/`](examples/) — run with `cargo run -p turbomcp --example <name>
 | `resources_prompts` | the non-tool surface: resources + prompts |
 | `structured_output` | `Json<T>` → `structuredContent` + generated `outputSchema` |
 | `elicitation` | asking the user for input (MRTR + legacy inline) |
+| `middleware` | `tower::Layer`s over the dispatcher: one that audits, one that refuses |
 | `dual_transport` | one server over stdio **and** HTTP (`--features http`) |
 | `tasks` | the draft Tasks extension (`--features ext-tasks`) |
 | `client` | the other half: a client that spawns `hello_world` and drives it (`--features client`) |

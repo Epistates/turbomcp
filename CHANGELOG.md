@@ -110,6 +110,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Two resources may not claim one URI.** `read_resource` matches on the URI,
   so the second handler was simply dead code; it is now a compile error, as the
   equivalent duplicate name already was for tools and prompts.
+- **RPC middleware is reachable and documented.** The dispatcher has always been
+  a `tower::Service<JsonRpcMessage>`, so middleware has always been a plain
+  `tower::Layer` — but nothing a user needed to write one was exported from the
+  facade, which made a strictly better mechanism than v3's `McpMiddleware` read
+  as a missing feature. Now exported: `tower` itself (version-matched, so the
+  `Layer` you write is the one `McpService` expects), `TracingLayer`/`Tracing`,
+  `mcp_to_jsonrpc_error` / `mcp_to_jsonrpc_error_for` (so a layer that refuses a
+  request emits the same code the dispatcher would), the `methods` constants
+  (match on `methods::request::TOOLS_CALL`, not a string literal), and
+  `JsonRpcError`. Added a `middleware` example — one layer that audits, one that
+  refuses — plus a `MIGRATION.md` section mapping each v3 `McpMiddleware` hook to
+  the method it matches on. The seam is universal by construction: unlike a
+  per-operation hook list, a layer written today sees methods added tomorrow.
 
 - **`ServerBuilder::with_state_key`** — sign MRTR `requestState` with a key you
   supply instead of the per-process random secret. The default is correct for a

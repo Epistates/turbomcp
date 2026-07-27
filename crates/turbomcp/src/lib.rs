@@ -75,6 +75,21 @@
 //! Note: on the `2025-11-25` wire `structuredContent` must be a JSON object,
 //! so a `Json<T>` serializing to a scalar or array carries its value in the
 //! text mirror only there; the `2026-07-28` wire accepts any JSON value.
+//!
+//! ## RPC middleware
+//!
+//! Cross-cutting concerns wrap the built dispatcher as [`tower::Layer`]s over
+//! `Service<JsonRpcMessage>` — one `call` for every method under every
+//! transport, and the tower ecosystem (`ServiceBuilder`, `timeout`,
+//! `ConcurrencyLimit`, …) composes onto an MCP server unchanged. `tower` itself
+//! is re-exported as [`tower`] so the `Layer` you write is the one the SDK
+//! expects. Start from [`TracingLayer`] (the shape in 30 lines) and the
+//! [`middleware` example](https://github.com/Epistates/turbomcp/blob/main/crates/turbomcp/examples/middleware.rs).
+//!
+//! Auth and rate limiting are *not* RPC middleware here: both need the HTTP
+//! request a JSON-RPC frame no longer carries, so they are transport-level seams
+//! (`HttpConfig::with_authenticator` / `with_rate_limiter`, feature `http`).
+//! Per-tool authorization is `#[tool(scopes(…))]`.
 #![forbid(unsafe_code)]
 // docs.rs builds with `--cfg docsrs` on nightly so every feature-gated item
 // renders with the feature that unlocks it.
@@ -86,12 +101,18 @@
 // ---- foundation -------------------------------------------------------------
 
 pub use turbomcp_core::{
-    Claims, Identity, Implementation, JsonRpcMessage, JsonRpcNotification, JsonRpcRequest,
-    JsonRpcResponse, LogLevel, McpError, McpResult, ProtocolVersion, RequestContext, RequestId,
+    Claims, Identity, Implementation, JsonRpcError, JsonRpcMessage, JsonRpcNotification,
+    JsonRpcRequest, JsonRpcResponse, LogLevel, McpError, McpResult, ProtocolVersion,
+    RequestContext, RequestId,
 };
 
 /// Version-stable, handler-facing types (the surface user handlers speak).
 pub use turbomcp_protocol::neutral;
+
+/// The MCP method-name constants (`methods::request::TOOLS_CALL`, …). Match on
+/// these rather than string literals in RPC middleware — a literal is where a
+/// renamed method silently stops matching.
+pub use turbomcp_protocol::methods;
 
 // ---- service seam + codec ---------------------------------------------------
 
@@ -99,6 +120,50 @@ pub use turbomcp_codec::{Codec, CodecError, DefaultCodec, SerdeJsonCodec};
 pub use turbomcp_service::{
     CancellationToken, McpService, ProtocolError, ServeConfig, Transport, serve, serve_with,
 };
+
+/// RPC middleware: [`tower::Layer`]s over the `Service<JsonRpcMessage>` seam,
+/// applying identically under stdio, HTTP, and WebSocket.
+///
+/// [`TracingLayer`] wraps each RPC in a `tracing` span naming the method — it is
+/// also the smallest complete worked example of the shape (see its source).
+/// Compose it, or your own, around the built dispatcher:
+///
+/// ```no_run
+/// use turbomcp::prelude::*;
+/// use turbomcp::{LegacySessionAdapter, TracingLayer, serve_stdio, tower::Layer};
+///
+/// # #[derive(Clone)]
+/// # struct MyServer;
+/// # #[server(name = "my-server", version = "1.0.0")]
+/// # impl MyServer {
+/// #     #[tool]
+/// #     async fn ping(&self) -> String { "pong".into() }
+/// # }
+/// # async fn run() -> Result<(), turbomcp::ProtocolError> {
+/// // What `run_stdio()` does, with one layer added.
+/// let service = TracingLayer.layer(LegacySessionAdapter::new(MyServer.into_server().build()));
+/// serve_stdio(service).await
+/// # }
+/// ```
+///
+/// See the [`middleware` example](https://github.com/Epistates/turbomcp/blob/main/crates/turbomcp/examples/middleware.rs)
+/// for an observing layer and a short-circuiting one, and
+/// [`MIGRATION.md`](https://github.com/Epistates/turbomcp/blob/main/crates/turbomcp/MIGRATION.md)
+/// for the mapping from v3's `McpMiddleware` hooks.
+pub use turbomcp_service::TracingLayer;
+
+/// The service [`TracingLayer`] produces.
+pub use turbomcp_service::Tracing;
+
+/// The canonical [`McpError`] → JSON-RPC error mapping, for middleware that
+/// rejects a request before it reaches a handler. Use
+/// [`mcp_to_jsonrpc_error_for`] when the negotiated [`ProtocolVersion`] is in
+/// hand — two codes are version-split.
+pub use turbomcp_service::{mcp_to_jsonrpc_error, mcp_to_jsonrpc_error_for};
+
+/// Re-export of [`tower`], version-matched to the one behind [`McpService`], so
+/// middleware written against it composes without a duplicate-crate mismatch.
+pub use tower;
 
 // ---- server -----------------------------------------------------------------
 

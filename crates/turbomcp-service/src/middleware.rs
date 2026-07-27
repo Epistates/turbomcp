@@ -1,10 +1,52 @@
-//! Shared RPC middleware — `tower::Layer`s that wrap any [`McpService`] and
-//! compose identically under every transport (stdio, HTTP, WS).
+//! Shared RPC middleware — `tower::Layer`s that wrap any
+//! [`McpService`](crate::McpService) and compose identically under every
+//! transport (stdio, HTTP, WebSocket).
 //!
-//! Phase 2 ships [`TracingLayer`], which proves the seam: a transport-agnostic
-//! layer over `Service<JsonRpcMessage>`. The `_meta`→`RequestContext` extraction
-//! layer joins it in Phase 4 once the task-local context plumbing lands; until
-//! then the `VersionDispatcher` extracts `_meta` itself.
+//! # Writing a layer
+//!
+//! An MCP middleware is an ordinary [`tower::Layer`] over
+//! `Service<JsonRpcMessage, Response = Option<JsonRpcMessage>, Error =
+//! ProtocolError>`. There is no MCP-specific middleware trait to learn and no
+//! per-method hook list to keep in sync with the protocol: one `call`, every
+//! method, every transport. [`TracingLayer`] below is the whole shape in 30
+//! lines.
+//!
+//! Three things the frame-level seam implies:
+//!
+//! - **`Option<JsonRpcMessage>` responses.** `None` means "notification, no
+//!   reply" — a layer that fabricates a response must only do so for
+//!   [`JsonRpcMessage::Request`], which is the only variant carrying an id.
+//! - **Handler errors are not `Err`.** A `#[tool]` returning `McpError` arrives
+//!   as `Ok(Some(Response { error }))`. `Err(ProtocolError)` means the
+//!   connection-level machinery failed. A layer that logs failures usually wants
+//!   the former (see [`JsonRpcResponse::is_error`](turbomcp_core::JsonRpcResponse::is_error)).
+//! - **Services are cloned per request.** The driver clones the stack for every
+//!   inbound frame, so layer state must be shared (`Arc<…>`), not owned.
+//!
+//! To short-circuit — reject before the inner service runs — build the response
+//! yourself and skip `inner.call`. Use
+//! [`mcp_to_jsonrpc_error`](crate::mcp_to_jsonrpc_error) so the code matches the
+//! rest of the SDK rather than hand-picking one.
+//!
+//! # Where a layer sits
+//!
+//! Both of these are valid and they see different things:
+//!
+//! ```text
+//! serve_stdio(MyLayer.layer(LegacySessionAdapter::new(dispatcher)))   // outside
+//! serve_stdio(LegacySessionAdapter::new(MyLayer.layer(dispatcher)))   // inside
+//! ```
+//!
+//! Outside the adapter a layer sees the frame as the client sent it. Inside, it
+//! sees the negotiated protocol version and session id that the adapter stamped
+//! into `_meta` — which is what a layer keyed on protocol version needs. Either
+//! way the layer is already behind the wire trust boundary: [`serve`](crate::serve)
+//! (and the HTTP endpoint) sanitize forged internal `_meta` keys and assert the
+//! connection's own identity *before* the service is called, so
+//! `io.turbomcp.internal/*` keys are trustworthy at every layer.
+//!
+//! Stack several with `tower::ServiceBuilder`; the first layer added is the
+//! outermost.
 
 use std::task::{Context, Poll};
 

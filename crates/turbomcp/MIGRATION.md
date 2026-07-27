@@ -111,21 +111,76 @@ on that session. You write it once.
 Narrow the set with `#[server(protocols("2025-11-25", "2026-07-28"))]` — worth
 doing before the draft freezes, since its wire shapes can still change.
 
-## Architecture changes (no drop-in equivalent yet)
+## Middleware: `McpMiddleware` → `tower::Layer`
 
-These v3 constructs were replaced by different v4 mechanisms; code using them
-needs rethinking rather than a mechanical port:
+v3's `McpMiddleware` was a trait with one hook per operation (`on_call_tool`,
+`on_read_resource`, `on_list_tools`, …), each returning a boxed future, assembled
+into a `MiddlewareStack`. v4 has no MCP-specific middleware trait: the dispatcher
+*is* a `tower::Service<JsonRpcMessage>`, so middleware is a plain
+[`tower::Layer`] over it — one `call`, every method, every transport.
 
-- **Middleware** — v3's `McpMiddleware` / `McpHandler` is replaced by
-  `tower::Layer` composition over the `Service<JsonRpcMessage>` dispatcher (e.g.
-  the telemetry `TraceContextLayer`). Cross-cutting concerns like auth and rate
-  limiting are HTTP-transport-level seams (`HttpConfig::with_authenticator` /
-  `with_rate_limiter`), not RPC middleware.
-- **Composition** — `CompositeHandler` (mounting sub-servers under prefixes) has
-  no v4 equivalent yet.
-- **Visibility / progressive disclosure** — `VisibilityLayer` / `ComponentFilter`
-  have no v4 equivalent yet.
-- **Tags & versioning metadata** on components — not yet modeled in v4.
+The practical differences:
+
+- **The hook list can't fall behind the protocol.** v3 needed a new trait method
+  for every new MCP operation, and a middleware written before `completion/complete`
+  or `tasks/*` simply never saw them. A v4 layer sees every frame, including
+  methods added after it was written.
+- **It composes with the tower ecosystem.** `ServiceBuilder`, `timeout`,
+  `ConcurrencyLimit`, `load_shed`, `retry`, and anything else written against
+  `tower::Service` stack onto an MCP server unchanged.
+- **No boxing is required.** v3's hooks returned `Pin<Box<dyn Future>>` per call
+  by signature. A v4 layer names its future type, so a pass-through layer like
+  `TracingLayer` allocates nothing.
+
+`tower` is re-exported as `turbomcp::tower`, version-matched to the one behind
+`McpService` — use it rather than a separate dependency, or the `Layer` you write
+won't be the `Layer` the SDK expects.
+
+### Porting a hook
+
+Where v3 gave you a parsed `name: &str` / `args: Value`, v4 gives you the frame;
+match on `req.method()` and read `params`. Use the `turbomcp::methods` constants
+rather than string literals.
+
+| v3 hook | v4: match `req.method()` on |
+|---|---|
+| `on_initialize` | `methods::request::INITIALIZE` |
+| `on_list_tools` | `methods::request::TOOLS_LIST` |
+| `on_call_tool` | `methods::request::TOOLS_CALL` (tool name: `params["name"]`) |
+| `on_list_resources` | `methods::request::RESOURCES_LIST` |
+| `on_list_resource_templates` | `methods::request::RESOURCES_TEMPLATES_LIST` |
+| `on_read_resource` | `methods::request::RESOURCES_READ` (uri: `params["uri"]`) |
+| `on_list_prompts` | `methods::request::PROMPTS_LIST` |
+| `on_get_prompt` | `methods::request::PROMPTS_GET` |
+| `on_shutdown` | not a hook — fire `ServeConfig::shutdown` (a `CancellationToken`) and the driver drains in-flight handlers |
+
+`Next` becomes `self.inner.call(req)`; not calling it is how you short-circuit.
+Two things have no v3 analogue and are worth knowing:
+
+- A handler's `McpError` arrives as `Ok(Some(Response { error }))`, not `Err`.
+  `Err(ProtocolError)` means the connection machinery failed.
+- The driver clones the service stack per request, so layer state must sit behind
+  an `Arc`.
+
+Build refusals with `turbomcp::mcp_to_jsonrpc_error` so the code matches what the
+dispatcher would have produced. See
+[`examples/middleware.rs`](examples/middleware.rs) for an observing layer and a
+short-circuiting one, end to end.
+
+Note that **auth and rate limiting are not RPC middleware in v4** — they are
+transport-level seams (`HttpConfig::with_authenticator` / `with_rate_limiter`),
+because both need the HTTP request (headers, peer address) that a JSON-RPC frame
+no longer carries. Per-tool authorization is `#[tool(scopes(…))]`, checked
+against `ctx.base.identity`.
+
+## Not modeled in v4 yet
+
+These v3 constructs have no v4 equivalent, and code using them needs rethinking
+rather than a port:
+
+- **Composition** — `CompositeHandler` (mounting sub-servers under prefixes).
+- **Visibility / progressive disclosure** — `VisibilityLayer` / `ComponentFilter`.
+- **Tags & versioning metadata** on components.
 
 ## Tasks
 
