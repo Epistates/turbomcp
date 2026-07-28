@@ -249,7 +249,8 @@ struct Mount {
 
 // ---- the builder -------------------------------------------------------------
 
-/// Assembles several servers into one. See the [module docs](self).
+/// Assembles several servers into one. See [`CompositeServer`] for what a mount
+/// does and does not bring with it.
 pub struct Composite {
     info: Implementation,
     instructions: Option<String>,
@@ -318,8 +319,9 @@ impl Composite {
     ///   tool-name set (`[A-Za-z0-9_-]`) — the composed name has to remain a
     ///   legal tool name.
     /// - `prefix` is already mounted.
-    /// - `server` accepts fewer protocol revisions than this composite (see the
-    ///   [module docs](self)).
+    /// - `server` accepts fewer protocol revisions than this composite —
+    ///   handlers are version-neutral, so a sub-server's pin cannot be honored
+    ///   once mounted; narrow the composite with [`protocols`](Self::protocols).
     /// - `server`'s builder carries dispatcher-level configuration, which
     ///   belongs on the composite's own builder.
     pub fn mount<S>(mut self, prefix: &str, server: ServerBuilder<S>) -> McpResult<Self>

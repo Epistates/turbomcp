@@ -88,7 +88,7 @@ pub struct VisibleComponent<'a> {
     /// prefixed one (`weather.forecast`) — which is what the caller sends.
     pub id: &'a str,
     /// The component's `_meta`, holding whatever the markers wrote:
-    /// [`tags`](crate::tags) and declared scopes among them.
+    /// [`crate::tags`] and declared scopes among them.
     pub meta: &'a Map<String, Value>,
     /// The request asking. Carries `identity`, the protocol version, and the
     /// propagated `_meta` — everything a policy needs to key on a caller or a
@@ -153,8 +153,8 @@ impl Visibility {
         Self::default()
     }
 
-    /// Hide any component carrying one of `tags` (see
-    /// [`tags(…)`](macro@turbomcp_macros::tool) on the markers).
+    /// Hide any component carrying one of `tags` — what the markers'
+    /// `tags("a", "b")` argument wrote into the component's `_meta`.
     #[must_use]
     pub fn hiding_tagged<I, T>(mut self, tags: I) -> Self
     where

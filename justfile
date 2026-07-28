@@ -173,11 +173,13 @@ test:
   cargo clippy -p turbomcp -- -D warnings
   echo "Step 4/6: Testing non-default foundation configs (no_std core/protocol, no-simd codec)..."
   cargo test -p turbomcp-core -p turbomcp-protocol -p turbomcp-codec --no-default-features
-  echo "Step 5/6: Checking formatting on all code..."
+  echo "Step 5/7: Checking formatting on all code..."
   cargo fmt --all -- --check
-  echo "Step 6/6: Verifying wasm portability (no_std foundation, default + no-default)..."
+  echo "Step 6/7: Verifying wasm portability (no_std foundation, default + no-default)..."
   cargo build -p turbomcp-core -p turbomcp-protocol --target wasm32-unknown-unknown
   cargo build -p turbomcp-core -p turbomcp-protocol -p turbomcp-codec --no-default-features --target wasm32-unknown-unknown
+  echo "Step 7/7: Building docs the way docs.rs does (nightly, --cfg docsrs)..."
+  just docs-rs
   echo "All tests, linting, and formatting checks passed!"
 
 # Run tests only (no linting/formatting)
